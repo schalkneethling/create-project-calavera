@@ -1,0 +1,48 @@
+{
+  "name": "create-project-calavera",
+  "version": "0.0.1",
+  "description": "A simple starting skeleton for common web projects.",
+  "main": "src/index.js",
+  "type": "module",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1",
+    "prettier:lint": "prettier .",
+    "prettier:format": "prettier --write .",
+    "lint:js": "eslint .",
+    "lint:css": "stylelint **/*.css"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/schalkneethling/create-project-calavera.git"
+  },
+  "keywords": [
+    "scaffold",
+    "project",
+    "starter",
+    "linting",
+    "javascript",
+    "css",
+    "html",
+    "cli"
+  ],
+  "author": "Schalk Neethling",
+  "license": "MIT",
+  "bugs": {
+    "url": "https://github.com/schalkneethling/create-project-calavera/issues"
+  },
+  "homepage": "https://github.com/schalkneethling/create-project-calavera#readme",
+  "dependencies": {
+    "@clack/prompts": "^0.8.2",
+    "chalk": "^5.3.0",
+    "execa": "^9.5.2"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.17.0",
+    "eslint": "^9.17.0",
+    "globals": "^15.13.0",
+    "prettier": "^3.4.2",
+    "stylelint": "^16.11.0",
+    "stylelint-config-standard": "^36.0.1",
+    "stylelint-order": "^6.0.4"
+  }
+}
