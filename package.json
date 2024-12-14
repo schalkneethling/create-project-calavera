@@ -1,8 +1,11 @@
 {
   "name": "create-project-calavera",
-  "version": "0.0.1",
+  "version": "0.0.2",
   "description": "A simple starting skeleton for common web projects.",
   "exports": "./src/index.js",
+  "bin": {
+    "create-project-calavera": "./src/index.js"
+  },
   "type": "module",
   "scripts": {
     "test": "echo \"Error: no test specified\" && exit 1",
