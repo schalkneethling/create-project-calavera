@@ -4,7 +4,7 @@
   "description": "A simple starting skeleton for common web projects.",
   "exports": "./src/index.js",
   "bin": {
-    "create-project-calavera": "./src/index.js"
+    "create-project-calavera": "src/index.js"
   },
   "type": "module",
   "scripts": {
