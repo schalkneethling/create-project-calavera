@@ -1,16 +1,8 @@
 #!/usr/bin/env node
-import {
-  cancel,
-  isCancel,
-  intro,
-  multiselect,
-  outro,
-  text,
-} from "@clack/prompts";
+import { cancel, isCancel, intro, multiselect, outro } from "@clack/prompts";
 import { execa } from "execa";
 
 import { FileWriteError } from "./utils/file-write-error.js";
-import { findProjectRoot } from "./utils/filesystem.js";
 import { logger } from "./utils/logger.js";
 
 import configureEditorConfig from "./installers/editorconfig.js";
@@ -44,38 +36,28 @@ const main = async () => {
     },
   ];
 
-  const rootFolderName = await text({
-    message: "What is the name of the root folder?",
-    validate(input) {
-      if (input.length === 0) {
-        return "Please enter a valid folder name.";
-      }
-    },
-  });
-
   const tools = await multiselect({
     message: "Choose your tools from the skeleton closet",
     options,
     required: true,
   });
 
-  const rootFolderPath = findProjectRoot(rootFolderName);
   if (tools.includes("prettier")) {
-    const prettierDeps = await configurePrettier(rootFolderPath);
+    const prettierDeps = await configurePrettier();
     dependencies = [...dependencies, ...prettierDeps];
   }
 
   if (tools.includes("editorconfig")) {
-    await configureEditorConfig(rootFolderPath);
+    await configureEditorConfig();
   }
 
   if (tools.includes("eslint")) {
-    const eslintDeps = await configureESLint(rootFolderPath);
+    const eslintDeps = await configureESLint();
     dependencies = [...dependencies, ...eslintDeps];
   }
 
   if (tools.includes("stylelint")) {
-    const stylelintDeps = await configureStylelint(rootFolderPath);
+    const stylelintDeps = await configureStylelint();
     dependencies = [...dependencies, ...stylelintDeps];
   }
 
@@ -88,7 +70,7 @@ const main = async () => {
 
   outro("All done! 🎉 Happy coding 👩‍💻");
 
-  if (isCancel(rootFolderName) || isCancel(tools)) {
+  if (isCancel(tools)) {
     cancel("Setup cancelled 👋");
     process.exit(0);
   }

@@ -1,10 +1,9 @@
 import { writeFile } from "node:fs/promises";
-import { resolve } from "node:path";
 
 import { FileWriteError } from "../utils/file-write-error.js";
 import { logger } from "../utils/logger.js";
 
-const configureEditorConfig = async (rootFolderPath) => {
+const configureEditorConfig = async () => {
   const editorConfig = `root = true
 
 [*]
@@ -17,8 +16,7 @@ trim_trailing_whitespace = true\n`;
 
   try {
     logger.info("🧶 Adding EditorConfig to the project...");
-
-    await writeFile(resolve(rootFolderPath, ".editorconfig"), editorConfig);
+    await writeFile(`.editorconfig`, editorConfig);
   } catch (error) {
     throw new FileWriteError("Failed to add EditorConfig.", {
       cause: error,

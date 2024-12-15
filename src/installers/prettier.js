@@ -4,9 +4,9 @@ import { resolve } from "node:path";
 import { FileWriteError } from "../utils/file-write-error.js";
 import { logger } from "../utils/logger.js";
 
-const configurePrettier = async (rootFolderPath) => {
+const configurePrettier = async () => {
   const dependencies = ["prettier"];
-  const packageJSONPath = resolve(rootFolderPath, "package.json");
+  const packageJSONPath = resolve("package.json");
 
   try {
     const packageJSON = JSON.parse(await readFile(packageJSONPath));
@@ -14,8 +14,7 @@ const configurePrettier = async (rootFolderPath) => {
     packageJSON.scripts["prettier:format"] = "prettier --write .";
 
     logger.info("🧶 Adding Prettier to the project...");
-
-    await writeFile(resolve(rootFolderPath, ".prettierrc.json"), `{}\n`);
+    await writeFile(".prettierrc.json", `{}\n`);
 
     const updatedPackageJSON = JSON.stringify(packageJSON, null, 2);
     await writeFile(packageJSONPath, `${updatedPackageJSON}\n`);

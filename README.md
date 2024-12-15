@@ -11,6 +11,8 @@ Add common linters, formatters, and _hopefully_ sane configurations, for common 
 
 ## Using the CLI
 
+From the root of your project, run the following command:
+
 ```bash
 npm create project-calavera
 ```

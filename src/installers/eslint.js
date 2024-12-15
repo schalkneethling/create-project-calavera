@@ -4,9 +4,9 @@ import { resolve } from "node:path";
 import { FileWriteError } from "../utils/file-write-error.js";
 import { logger } from "../utils/logger.js";
 
-const configureESLint = async (rootFolderPath) => {
+const configureESLint = async () => {
   const dependencies = ["eslint", "@eslint/js", "globals"];
-  const packageJSONPath = resolve(rootFolderPath, "package.json");
+  const packageJSONPath = resolve("package.json");
 
   const eslintConfig = `import js from "@eslint/js";
 import globals from "globals";
@@ -32,7 +32,7 @@ export default [
 
     logger.info("🧶 Adding ESLint to the project...");
 
-    await writeFile(resolve(rootFolderPath, "eslint.config.js"), eslintConfig);
+    await writeFile("eslint.config.js", eslintConfig);
 
     const updatedPackageJSON = JSON.stringify(packageJSON, null, 2);
     await writeFile(packageJSONPath, `${updatedPackageJSON}\n`);
