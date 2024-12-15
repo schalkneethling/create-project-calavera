@@ -4,13 +4,13 @@ import { resolve } from "node:path";
 import { FileWriteError } from "../utils/file-write-error.js";
 import { logger } from "../utils/logger.js";
 
-const configureStylelint = async (rootFolderPath) => {
+const configureStylelint = async () => {
   const dependencies = [
     "stylelint",
     "stylelint-config-standard",
     "stylelint-order",
   ];
-  const packageJSONPath = resolve(rootFolderPath, "package.json");
+  const packageJSONPath = resolve("package.json");
 
   const stylelintConfig = {
     extends: "stylelint-config-standard",
@@ -27,10 +27,7 @@ const configureStylelint = async (rootFolderPath) => {
     logger.info("🧶 Adding Stylelint to the project...");
 
     const stylelintConfigString = JSON.stringify(stylelintConfig, null, 2);
-    await writeFile(
-      resolve(rootFolderPath, ".stylelintrc.json"),
-      `${stylelintConfigString}\n`,
-    );
+    await writeFile(".stylelintrc.json", `${stylelintConfigString}\n`);
 
     const updatedPackageJSON = JSON.stringify(packageJSON, null, 2);
     await writeFile(packageJSONPath, `${updatedPackageJSON}\n`);

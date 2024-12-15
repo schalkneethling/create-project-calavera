@@ -3,6 +3,9 @@
 import chalk from "chalk";
 
 export const logger = {
+  debug(...args) {
+    console.info(chalk.white(...args));
+  },
   error(...args) {
     console.info(chalk.red(...args));
   },
