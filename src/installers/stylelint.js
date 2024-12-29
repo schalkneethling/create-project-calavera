@@ -17,6 +17,7 @@ const configureStylelint = async () => {
     plugins: ["stylelint-order"],
     rules: {
       "order/properties-alphabetical-order": true,
+      "custom-property-empty-line-before": null,
     },
   };
 

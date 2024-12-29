@@ -1,5 +1,15 @@
 #!/usr/bin/env node
-import { cancel, isCancel, intro, multiselect, spinner } from "@clack/prompts";
+import { access, constants } from "node:fs/promises";
+import { resolve } from "node:path";
+
+import {
+  cancel,
+  confirm,
+  isCancel,
+  intro,
+  multiselect,
+  spinner,
+} from "@clack/prompts";
 import { execa } from "execa";
 
 import { FileWriteError } from "./utils/file-write-error.js";
@@ -12,12 +22,48 @@ import configureStylelint from "./installers/stylelint.js";
 import configureTSConfig from "./installers/tsconfig.js";
 import configureTSESLint from "./installers/ts-eslint.js";
 
-const main = async () => {
-  let dependencies = [];
+/**
+ * Checks for the presence of an existing package.json file.
+ * If not found, prompts the user to create a default package.json.
+ * Exits the process if the user cancels the creation.
+ * @returns {Promise<void>}
+ */
+async function checkPrerequisites() {
+  logger.info("Checking for presence of an existing package.json...");
 
+  const packageJSON = resolve("package.json");
+
+  let createPackageJSON;
+  try {
+    await access(packageJSON, constants.F_OK);
+  } catch {
+    createPackageJSON = await confirm({
+      message:
+        "No package.json found. You will need one to continue, create a default?",
+    });
+
+    if (!createPackageJSON) {
+      cancel("Setup cancelled 👋");
+      process.exit(0);
+    }
+
+    const spin = spinner();
+
+    spin.start("📦 Creating package.json...");
+    await execa("npm", ["init", "-y"], {
+      stderr: "inherit",
+    });
+
+    spin.stop("📦 Created package.json");
+  }
+}
+
+const main = async () => {
   console.clear();
 
   intro("Let's get you linting and formatting! 🧶");
+
+  await checkPrerequisites();
 
   const options = [
     { value: "editorconfig", label: "EditorConfig", hint: "Recommended" },
@@ -54,6 +100,12 @@ const main = async () => {
     required: true,
   });
 
+  if (isCancel(tools)) {
+    cancel("Setup cancelled 👋");
+    process.exit(0);
+  }
+
+  let dependencies = [];
   let withPrettier = tools.includes("prettier");
   let withTypeScript =
     tools.includes("tsconfig") || tools.includes("tsconfig-noemit");
@@ -89,20 +141,16 @@ const main = async () => {
     dependencies = [...dependencies, ...stylelintDeps];
   }
 
-  const spin = spinner();
   if (dependencies.length > 0) {
+    const spin = spinner();
     spin.start("📦 Installing dependencies...");
     await execa("npm", ["install", "--save-dev", ...dependencies], {
       stderr: "inherit",
     });
+    spin.stop("Dependencies installed 👍");
   }
 
-  spin.stop("All done! 🎉 Happy coding 🙌");
-
-  if (isCancel(tools)) {
-    cancel("Setup cancelled 👋");
-    process.exit(0);
-  }
+  logger.info("\nAll done! 🎉 Happy coding 🙌");
 };
 
 main().catch((error) => {
