@@ -53,9 +53,11 @@ const main = async () => {
     required: true,
   });
 
+  let withPrettier = false;
   if (tools.includes("prettier")) {
     const prettierDeps = await configurePrettier();
     dependencies = [...dependencies, ...prettierDeps];
+    withPrettier = true;
   }
 
   if (tools.includes("editorconfig")) {
@@ -63,7 +65,7 @@ const main = async () => {
   }
 
   if (tools.includes("eslint")) {
-    const eslintDeps = await configureESLint();
+    const eslintDeps = await configureESLint(withPrettier);
     dependencies = [...dependencies, ...eslintDeps];
   }
 
