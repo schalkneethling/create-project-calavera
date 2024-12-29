@@ -4,6 +4,13 @@ import { resolve } from "node:path";
 import { FileWriteError } from "../utils/file-write-error.js";
 import { logger } from "../utils/logger.js";
 
+/**
+ * Configures the TypeScript configuration for the project.
+ *
+ * @param {boolean} [noEmit=false] - If true, uses the noEmit configuration option.
+ * @returns {Promise<string[]>} - A promise that resolves to an array of dependencies to be installed.
+ * @throws {FileWriteError} - Throws an error if writing the TypeScript configuration files fails.
+ */
 const configureTSConfig = async (noEmit = false) => {
   const dependencies = ["typescript"];
   const packageJSONPath = resolve("package.json");
