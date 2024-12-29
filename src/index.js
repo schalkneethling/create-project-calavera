@@ -65,7 +65,7 @@ const main = async () => {
   }
 
   if (tools.includes("eslint")) {
-    const eslintDeps = await configureESLint(withPrettier || false);
+    const eslintDeps = await configureESLint(withPrettier);
     dependencies = [...dependencies, ...eslintDeps];
   }
 

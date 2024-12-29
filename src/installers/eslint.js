@@ -45,7 +45,7 @@ export default [
     logger.info("🧶 Adding ESLint to the project...");
 
     const formattedConfig = await prettier.format(eslintConfig, {
-      parser: "espree",
+      parser: "babel",
     });
     await writeFile("eslint.config.js", formattedConfig);
 
