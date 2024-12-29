@@ -20,14 +20,13 @@ const configureTSConfig = async (noEmit = false) => {
   };
 
   const baseConfig = {
-    include: ["src/**/*.ts*"],
-    exclude: ["node_modules"],
+    include: ["../src/**/*.ts*"],
+    exclude: ["../node_modules"],
   };
 
   const tsConfig = {
     ...baseConfig,
     compilerOptions: {
-      allowImportingTsExtensions: true,
       allowJs: true, // Allow JavaScript files to be imported
       esModuleInterop: true, // Properly support importing CJS modules in ESM
       forceConsistentCasingInFileNames: true,

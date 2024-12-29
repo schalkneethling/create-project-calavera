@@ -10,6 +10,7 @@ import configureESLint from "./installers/eslint.js";
 import configurePrettier from "./installers/prettier.js";
 import configureStylelint from "./installers/stylelint.js";
 import configureTSConfig from "./installers/tsconfig.js";
+import configureTSESLint from "./installers/ts-eslint.js";
 
 const main = async () => {
   let dependencies = [];
@@ -28,7 +29,7 @@ const main = async () => {
     {
       value: "eslint",
       label: "ESLint",
-      hint: "Writing JavaScript? You need this",
+      hint: "Writing JavaScript or TypeScript? You need this",
     },
     {
       value: "tsconfig",
@@ -53,11 +54,13 @@ const main = async () => {
     required: true,
   });
 
-  let withPrettier = false;
+  let withPrettier = tools.includes("prettier");
+  let withTypeScript =
+    tools.includes("tsconfig") || tools.includes("tsconfig-noemit");
+
   if (tools.includes("prettier")) {
     const prettierDeps = await configurePrettier();
     dependencies = [...dependencies, ...prettierDeps];
-    withPrettier = true;
   }
 
   if (tools.includes("editorconfig")) {
@@ -65,7 +68,9 @@ const main = async () => {
   }
 
   if (tools.includes("eslint")) {
-    const eslintDeps = await configureESLint(withPrettier);
+    const eslintDeps = withTypeScript
+      ? await configureTSESLint(withPrettier)
+      : await configureESLint(withPrettier);
     dependencies = [...dependencies, ...eslintDeps];
   }
 
