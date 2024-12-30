@@ -1,6 +1,8 @@
 # create-project-calavera
 
-Add common linters, formatters, and _hopefully_ sane configurations, for common web projects with an intuative CLI.
+Add common linters, formatters, and _hopefully_ sane configurations, for common web projects with an intuitive CLI.
+
+https://github.com/user-attachments/assets/156e8b86-f389-41d8-8ab7-0817e3c3d094
 
 ## Current Features
 
