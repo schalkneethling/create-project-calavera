@@ -49,7 +49,7 @@ export default [
     .replace(
       /%HTML_CONFIG%/,
       withHTML
-        ? '{...html.configs["flat/recommended"],files: ["**/*.html"],},'
+        ? '{...html.configs["flat/recommended"],files: ["**/*.html"], rules: { "@html-eslint/indent": "off" },},'
         : "",
     );
 
