@@ -6,18 +6,23 @@ import * as prettier from "prettier";
 import { FileWriteError } from "../utils/file-write-error.js";
 import { logger } from "../utils/logger.js";
 
-const configureESLint = async (withPrettier = false) => {
+const configureESLint = async (withPrettier = false, withHTML = false) => {
   const dependencies = withPrettier
     ? ["eslint", "@eslint/js", "globals", "eslint-config-prettier"]
     : ["eslint", "@eslint/js", "globals"];
+
+  if (withHTML) {
+    dependencies.push(...["@html-eslint/parser", "@html-eslint/eslint-plugin"]);
+  }
+
   const packageJSONPath = resolve("package.json");
 
   const eslintConfig = `import js from "@eslint/js";
 import globals from "globals";
-%PRETTIER_IMPORT%
+%PRETTIER_IMPORT%%HTML_IMPORT%
 
 export default [
-  js.configs.recommended,%PRETTIER_CONFIG%
+  js.configs.recommended,%PRETTIER_CONFIG%%HTML_CONFIG%
   {
     languageOptions: {
       globals: {
@@ -36,7 +41,17 @@ export default [
         ? 'import eslintConfigPrettier from "eslint-config-prettier";'
         : "",
     )
-    .replace(/%PRETTIER_CONFIG%/, withPrettier ? "eslintConfigPrettier," : "");
+    .replace(
+      /%HTML_IMPORT%/,
+      withHTML ? 'import html from "@html-eslint/eslint-plugin";' : "",
+    )
+    .replace(/%PRETTIER_CONFIG%/, withPrettier ? "eslintConfigPrettier," : "")
+    .replace(
+      /%HTML_CONFIG%/,
+      withHTML
+        ? '{...html.configs["flat/recommended"],files: ["**/*.html"],},'
+        : "",
+    );
 
   try {
     const packageJSON = JSON.parse(await readFile(packageJSONPath));

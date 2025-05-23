@@ -92,6 +92,11 @@ const main = async () => {
       label: "Stylelint",
       hint: "Writing CSS? input:checked",
     },
+    {
+      value: "eslint-html",
+      label: "ESLint HTML",
+      hint: "Writing HTML? Of course you are [x]",
+    },
   ];
 
   const tools = await multiselect({
@@ -119,10 +124,11 @@ const main = async () => {
     await configureEditorConfig();
   }
 
-  if (tools.includes("eslint")) {
+  if (tools.includes("eslint") || tools.includes("eslint-html")) {
+    const withHTML = tools.includes("eslint-html");
     const eslintDeps = withTypeScript
-      ? await configureTSESLint(withPrettier)
-      : await configureESLint(withPrettier);
+      ? await configureTSESLint(withPrettier, withHTML)
+      : await configureESLint(withPrettier, withHTML);
     dependencies = [...dependencies, ...eslintDeps];
   }
 

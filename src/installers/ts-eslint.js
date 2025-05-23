@@ -6,7 +6,7 @@ import * as prettier from "prettier";
 import { FileWriteError } from "../utils/file-write-error.js";
 import { logger } from "../utils/logger.js";
 
-const configureTSESLint = async (withPrettier = false) => {
+const configureTSESLint = async (withPrettier = false, withHTML = false) => {
   const dependencies = withPrettier
     ? [
         "eslint",
@@ -16,17 +16,22 @@ const configureTSESLint = async (withPrettier = false) => {
         "eslint-config-prettier",
       ]
     : ["eslint", "@eslint/js", "globals", "typescript-eslint"];
+
+  if (withHTML) {
+    dependencies.push(...["@html-eslint/parser", "@html-eslint/eslint-plugin"]);
+  }
+
   const packageJSONPath = resolve("package.json");
 
   const tsEslintConfig = `import js from "@eslint/js";
 import globals from "globals";
 import tseslint from 'typescript-eslint';
-%PRETTIER_IMPORT%
+%PRETTIER_IMPORT%%HTML_IMPORT%
 
 export default tseslint.config(
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
-  tseslint.configs.stylisticTypeChecked,%PRETTIER_CONFIG%
+  tseslint.configs.stylisticTypeChecked,%PRETTIER_CONFIG%%HTML_CONFIG%
   {
     languageOptions: {
       globals: {
@@ -51,7 +56,17 @@ export default tseslint.config(
         ? 'import eslintConfigPrettier from "eslint-config-prettier";'
         : "",
     )
-    .replace(/%PRETTIER_CONFIG%/, withPrettier ? "eslintConfigPrettier," : "");
+    .replace(
+      /%HTML_IMPORT%/,
+      withHTML ? 'import html from "@html-eslint/eslint-plugin";' : "",
+    )
+    .replace(/%PRETTIER_CONFIG%/, withPrettier ? "eslintConfigPrettier," : "")
+    .replace(
+      /%HTML_CONFIG%/,
+      withHTML
+        ? '{...html.configs["flat/recommended"],files: ["**/*.html"],},'
+        : "",
+    );
 
   try {
     const packageJSON = JSON.parse(await readFile(packageJSONPath));

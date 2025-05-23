@@ -1,6 +1,6 @@
 {
   "name": "create-project-calavera",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "description": "A simple starting skeleton for common web projects.",
   "exports": "./src/index.js",
   "bin": {
