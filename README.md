@@ -24,3 +24,7 @@ npm create project-calavera
 All that is left to do is to follow the prompts.
 
 > **NOTE:** If you do not have a `package.json` Calavera will offer to create one for you. If you choose this option, one is created using `npm init -y`.
+
+### Thanks!
+
+Thank you [Nik on Unsplash](https://unsplash.com/@helloimnik?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash) for the photo I used on the social preview.
