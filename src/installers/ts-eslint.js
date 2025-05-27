@@ -64,13 +64,13 @@ export default tseslint.config(
     .replace(
       /%HTML_CONFIG%/,
       withHTML
-        ? '{...html.configs["flat/recommended"],files: ["**/*.html"], rules: { "@html-eslint/indent": "off" },},'
+        ? '{...html.configs["flat/recommended"],files: ["**/*.html"], rules: { "@html-eslint/indent": "off", "@html-eslint/use-baseline": "warn", },},'
         : "",
     );
 
   try {
     const packageJSON = JSON.parse(await readFile(packageJSONPath));
-    packageJSON.scripts["lint:ts"] = "eslint .";
+    packageJSON.scripts["lint:eslint"] = "eslint .";
 
     logger.info("🧶 Adding typescript-eslint to the project...");
 

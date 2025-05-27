@@ -49,13 +49,13 @@ export default [
     .replace(
       /%HTML_CONFIG%/,
       withHTML
-        ? '{...html.configs["flat/recommended"],files: ["**/*.html"], rules: { "@html-eslint/indent": "off" },},'
+        ? '{...html.configs["flat/recommended"],files: ["**/*.html"], rules: { "@html-eslint/indent": "off", "@html-eslint/use-baseline": "warn", },},'
         : "",
     );
 
   try {
     const packageJSON = JSON.parse(await readFile(packageJSONPath));
-    packageJSON.scripts["lint:js"] = "eslint .";
+    packageJSON.scripts["lint:eslint"] = "eslint .";
 
     logger.info("🧶 Adding ESLint to the project...");
 
