@@ -1,6 +1,6 @@
 {
   "name": "create-project-calavera",
-  "version": "0.1.4",
+  "version": "0.1.5",
   "description": "A simple starting skeleton of linters and formatters for common web projects.",
   "exports": "./src/index.js",
   "bin": {
