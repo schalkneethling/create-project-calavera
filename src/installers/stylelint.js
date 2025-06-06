@@ -9,15 +9,17 @@ const configureStylelint = async () => {
     "stylelint",
     "stylelint-config-standard",
     "stylelint-order",
+    "stylelint-plugin-use-baseline",
   ];
   const packageJSONPath = resolve("package.json");
 
   const stylelintConfig = {
     extends: "stylelint-config-standard",
-    plugins: ["stylelint-order"],
+    plugins: ["stylelint-order", "stylelint-plugin-use-baseline"],
     rules: {
       "order/properties-alphabetical-order": true,
       "custom-property-empty-line-before": null,
+      "plugin/use-baseline": true, // default availability is set to Baseline widely available
     },
   };
 
