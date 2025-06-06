@@ -98,6 +98,11 @@ const main = async () => {
       hint: "Writing CSS? input:checked",
     },
     {
+      value: "eslint-css",
+      label: "ESLint CSS",
+      hint: "Writing CSS? All in with ESLint? [x]",
+    },
+    {
       value: "eslint-html",
       label: "ESLint HTML",
       hint: "Writing HTML? Of course you are [x]",
@@ -129,11 +134,16 @@ const main = async () => {
     await configureEditorConfig();
   }
 
-  if (tools.includes("eslint") || tools.includes("eslint-html")) {
+  const useESLint =
+    tools.includes("eslint") ||
+    tools.includes("eslint-css") ||
+    tools.includes("eslint-html");
+  if (useESLint) {
     const withHTML = tools.includes("eslint-html");
+    const withCSS = tools.includes("eslint-css");
     const eslintDeps = withTypeScript
-      ? await configureTSESLint(withPrettier, withHTML)
-      : await configureESLint(withPrettier, withHTML);
+      ? await configureTSESLint(withPrettier, withHTML, withCSS)
+      : await configureESLint(withPrettier, withHTML, withCSS);
     dependencies = [...dependencies, ...eslintDeps];
   }
 
