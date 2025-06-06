@@ -8,11 +8,13 @@ https://github.com/user-attachments/assets/156e8b86-f389-41d8-8ab7-0817e3c3d094
 
 - [x] EditorConfig
 - [x] ESLint (If using TypeScript, this will be configured using [typescript-eslint](https://typescript-eslint.io/))
-- [x] [ESLint HTML](https://html-eslint.org/)
+- [x] [ESLint HTML](https://html-eslint.org/) - with use-baseline
+- [x] [ESLint CSS](https://github.com/eslint/css) - with use-baseline
 - [x] `tsconfig`
 - [x] `tsconfig` (noEmit - when used with a bundler)
+- [x] `tsconfig` (noEmit and erasableSyntaxOnly - when used with a bundler)
 - [x] Prettier
-- [x] Stylelint
+- [x] Stylelint - with use-baseline
 
 ## Using the CLI
 
