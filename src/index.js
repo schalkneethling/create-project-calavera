@@ -80,12 +80,17 @@ const main = async () => {
     {
       value: "tsconfig",
       label: "TSConfig",
-      hint: "Writing Bundleless TypeScript? Type the spacebar",
+      hint: "Writing Bundleless TypeScript? Press the spacebar",
     },
     {
       value: "tsconfig-noemit",
       label: "TSConfig (noEmit)",
       hint: "Writing TypeScript but also use a bunler? Bundle up to this one",
+    },
+    {
+      value: "tsconfig-noemit-erasable",
+      label: "TSConfig (noEmit, erasableSyntaxOnly)",
+      hint: "Same as above, but with erasable syntax only",
     },
     {
       value: "stylelint",
@@ -139,6 +144,14 @@ const main = async () => {
 
   if (tools.includes("tsconfig-noemit")) {
     const tsConfigDeps = await configureTSConfig(/* noEmit */ true);
+    dependencies = [...dependencies, ...tsConfigDeps];
+  }
+
+  if (tools.includes("tsconfig-noemit-erasable")) {
+    const tsConfigDeps = await configureTSConfig(
+      /* noEmit */ true,
+      /* erasableOnly */ true,
+    );
     dependencies = [...dependencies, ...tsConfigDeps];
   }
 
