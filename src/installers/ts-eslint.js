@@ -6,7 +6,11 @@ import * as prettier from "prettier";
 import { FileWriteError } from "../utils/file-write-error.js";
 import { logger } from "../utils/logger.js";
 
-const configureTSESLint = async (withPrettier = false, withHTML = false) => {
+const configureTSESLint = async (
+  withPrettier = false,
+  withHTML = false,
+  withCSS = false,
+) => {
   const dependencies = withPrettier
     ? [
         "eslint",
@@ -21,17 +25,21 @@ const configureTSESLint = async (withPrettier = false, withHTML = false) => {
     dependencies.push(...["@html-eslint/parser", "@html-eslint/eslint-plugin"]);
   }
 
+  if (withCSS) {
+    dependencies.push("@eslint/css");
+  }
+
   const packageJSONPath = resolve("package.json");
 
   const tsEslintConfig = `import js from "@eslint/js";
 import globals from "globals";
 import tseslint from 'typescript-eslint';
-%PRETTIER_IMPORT%%HTML_IMPORT%
+%PRETTIER_IMPORT%%HTML_IMPORT%%CSS_IMPORT%
 
 export default tseslint.config(
   js.configs.recommended,
   tseslint.configs.strictTypeChecked,
-  tseslint.configs.stylisticTypeChecked,%PRETTIER_CONFIG%%HTML_CONFIG%
+  tseslint.configs.stylisticTypeChecked,%PRETTIER_CONFIG%%HTML_CONFIG%%CSS_CONFIG%
   {
     languageOptions: {
       globals: {
@@ -60,11 +68,18 @@ export default tseslint.config(
       /%HTML_IMPORT%/,
       withHTML ? 'import html from "@html-eslint/eslint-plugin";' : "",
     )
+    .replace(/%CSS_IMPORT%/, withCSS ? 'import css from "@eslint/css";' : "")
     .replace(/%PRETTIER_CONFIG%/, withPrettier ? "eslintConfigPrettier," : "")
     .replace(
       /%HTML_CONFIG%/,
       withHTML
         ? '{...html.configs["flat/recommended"],files: ["**/*.html"], rules: { "@html-eslint/indent": "off", "@html-eslint/use-baseline": "warn", },},'
+        : "",
+    )
+    .replace(
+      /%CSS_CONFIG%/,
+      withCSS
+        ? '{files: ["**/*.css"], language: "css/css", plugins: { css }, extends: ["css/recommended"], rules: {"css/prefer-logical-properties": "error", "css/relative-font-units": "error",},},'
         : "",
     );
 
