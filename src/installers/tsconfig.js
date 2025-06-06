@@ -8,7 +8,7 @@ import { logger } from "../utils/logger.js";
  * Configures the TypeScript configuration for the project.
  *
  * @param {boolean} [noEmit=false] - If true, sets the noEmit configuration option.
- * @param {boolean} [erasableOnly=false] - If true, sets the erasableSyntaxOnly configuration option.
+ * @param {boolean} [erasableOnly=false] - If true, sets the erasableSyntaxOnly no-emit configuration option.
  * @returns {Promise<string[]>} - A promise that resolves to an array of dependencies to be installed.
  * @throws {FileWriteError} - Throws an error if writing the TypeScript configuration files fails.
  */
@@ -69,12 +69,11 @@ const configureTSConfig = async (noEmit = false, erasableOnly = false) => {
     },
   };
 
-  const config =
-    noEmit && erasableOnly
-      ? tsConfigErasableOnly
-      : noEmit
-        ? tsConfigNoEmit
-        : tsConfig;
+  const config = erasableOnly
+    ? tsConfigErasableOnly
+    : noEmit
+      ? tsConfigNoEmit
+      : tsConfig;
 
   try {
     const packageJSON = JSON.parse(await readFile(packageJSONPath));

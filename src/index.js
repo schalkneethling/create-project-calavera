@@ -142,15 +142,12 @@ const main = async () => {
     dependencies = [...dependencies, ...tsConfigDeps];
   }
 
-  if (tools.includes("tsconfig-noemit")) {
-    const tsConfigDeps = await configureTSConfig(/* noEmit */ true);
-    dependencies = [...dependencies, ...tsConfigDeps];
-  }
-
-  if (tools.includes("tsconfig-noemit-erasable")) {
+  const tsConfigNoEmit = tools.includes("tsconfig-noemit");
+  const tsConfigNoEmitErasableOnly = tools.includes("tsconfig-noemit-erasable");
+  if (tsConfigNoEmit || tsConfigNoEmitErasableOnly) {
     const tsConfigDeps = await configureTSConfig(
-      /* noEmit */ true,
-      /* erasableOnly */ true,
+      /* noEmit */ tsConfigNoEmit,
+      /* erasableOnly */ tsConfigNoEmitErasableOnly,
     );
     dependencies = [...dependencies, ...tsConfigDeps];
   }
