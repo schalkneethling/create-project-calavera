@@ -68,7 +68,7 @@ const supportedPackageManagers = Object.keys(packageManagerCommands);
 const args = process.argv.slice(2);
 
 function exitUnsupportedPackageManager(packageManager) {
-  console.error(
+  logger.error(
     `Unsupported package manager "${packageManager}". Supported package managers: ${supportedPackageManagers.join(", ")}.`,
   );
   process.exit(1);
@@ -128,6 +128,16 @@ async function fileExists(path) {
 
 async function readJSON(path) {
   return JSON.parse(await readFile(path, "utf8"));
+}
+
+async function readPackageJSONIfPresent() {
+  const packageJSONPath = resolve("package.json");
+
+  if (await fileExists(packageJSONPath)) {
+    return readJSON(packageJSONPath);
+  }
+
+  return {};
 }
 
 async function writeJSON(path, value, dryRun) {
@@ -588,8 +598,9 @@ async function applyRecipe(options) {
   const dependencyList = unique(
     integrations.flatMap((integration) => integration.dependencies ?? []),
   );
+  const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = assertSupportedPackageManager(
-    options.packageManager ?? recipe.packageManager ?? detectPackageManager(),
+    options.packageManager ?? recipe.packageManager ?? detectPackageManager(detectedPackageJSON),
   );
   const packageJSON = await ensurePackageJSON(
     packageManager,
@@ -748,8 +759,9 @@ async function initRecipe(options) {
     process.exit(0);
   }
 
+  const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = assertSupportedPackageManager(
-    options.packageManager ?? detectPackageManager(),
+    options.packageManager ?? detectPackageManager(detectedPackageJSON),
   );
   const recipe = buildRecipe(profile, selected, packageManager);
 
