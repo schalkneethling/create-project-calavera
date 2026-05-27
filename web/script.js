@@ -11,7 +11,13 @@ const catalog = [
   entry("oxlint-unicorn", "Modern JS/TS linting", "Oxc Unicorn rules", "recommended", ["modern"]),
   entry("oxlint-oxc", "Modern JS/TS linting", "Oxc native rules", "recommended", ["modern"]),
   entry("oxlint-import", "Imports and modules", "Oxc import rules", "optional", ["modern"]),
-  entry("oxlint-react", "React correctness", "Oxc React rules", "framework-specific", ["modern"]),
+  entry("oxlint-react", "React best practices", "Oxc React rules", "framework-specific", [
+    "modern",
+  ]),
+  entry("react-doctor", "React best practices", "React Doctor", "framework-specific", [
+    "modern",
+    "classic",
+  ]),
   entry("oxlint-jsx-a11y", "Accessibility", "Oxc JSX accessibility rules", "optional", ["modern"]),
   entry("oxlint-node", "Node package rules", "Oxc Node rules", "optional", ["modern"]),
   entry("oxlint-promise", "Promise safety", "Oxc Promise rules", "optional", ["modern"]),
@@ -28,7 +34,7 @@ const catalog = [
   entry("eslint-config-prettier", "Formatting", "Prettier compatibility", "recommended", [
     "classic",
   ]),
-  entry("eslint-react", "React correctness", "ESLint React rules", "framework-specific", [
+  entry("eslint-react", "React best practices", "ESLint React rules", "framework-specific", [
     "classic",
   ]),
   entry("eslint-jsx-a11y", "Accessibility", "ESLint JSX accessibility rules", "optional", [
@@ -94,13 +100,44 @@ const defaults = {
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
 const output = document.querySelector("#output");
+const webMcpBanner = document.querySelector("#webmcp-banner");
+const profiles = Object.keys(defaults);
+const packageManagers = ["npm", "pnpm", "yarn", "bun"];
+const profileDescriptions = {
+  modern: "Newer, faster JavaScript, TypeScript, CSS linting, and formatting defaults.",
+  classic: "Widely used JavaScript, TypeScript, CSS linting, and formatting defaults.",
+  minimal: "Only basic editor consistency settings.",
+};
+const packageManagerDescriptions = {
+  npm: "npm, the default Node.js package manager.",
+  pnpm: "pnpm, a fast disk-efficient package manager.",
+  yarn: "Yarn package manager.",
+  bun: "Bun package manager and runtime.",
+};
+
 function selectedProfile() {
   return new FormData(form).get("profile");
 }
 
-function visibleCatalog() {
-  const profile = selectedProfile();
+function visibleCatalog(profile = selectedProfile()) {
   return catalog.filter(({ profiles }) => profiles.includes(profile));
+}
+
+function integrationIdsForProfile(profile) {
+  return visibleCatalog(profile).map(({ id }) => id);
+}
+
+function normalizedToolToken(value) {
+  return value.trim().toLowerCase();
+}
+
+function integrationIdForTool(value) {
+  const token = normalizedToolToken(value);
+  const match = catalog.find(
+    ({ id, label }) => normalizedToolToken(id) === token || normalizedToolToken(label) === token,
+  );
+
+  return match?.id;
 }
 
 function renderIntegrations() {
@@ -118,8 +155,9 @@ function renderIntegrations() {
 
     for (const { id, label, status } of items) {
       const option = document.createElement("label");
+      option.htmlFor = `integration-${id}`;
       option.innerHTML = `
-        <input type="checkbox" name="integration" value="${id}" />
+        <input id="integration-${id}" type="checkbox" name="integration" value="${id}" />
         <span>${label}</span>
         <small>${status}</small>
       `;
@@ -127,6 +165,21 @@ function renderIntegrations() {
     }
 
     integrations.append(section);
+  }
+}
+
+function selectProfile(profile) {
+  const radio = form.querySelector(`[name="profile"][value="${profile}"]`);
+  radio.checked = true;
+}
+
+function selectPackageManager(packageManager) {
+  form.querySelector('[name="packageManager"]').value = packageManager;
+}
+
+function selectIntegrations(integrationIds) {
+  for (const checkbox of form.querySelectorAll('[name="integration"]')) {
+    checkbox.checked = integrationIds.includes(checkbox.value);
   }
 }
 
@@ -157,12 +210,64 @@ function setDefaults() {
   const profile = selectedProfile();
 
   renderIntegrations();
+  selectIntegrations(defaults[profile]);
+  render();
+}
 
-  for (const checkbox of form.querySelectorAll('[name="integration"]')) {
-    checkbox.checked = defaults[profile].includes(checkbox.value);
+function assertString(name, value) {
+  if (typeof value !== "string") {
+    throw new TypeError(`${name} must be a string.`);
+  }
+}
+
+function assertStringArray(name, value) {
+  if (!Array.isArray(value) || value.some((item) => typeof item !== "string")) {
+    throw new TypeError(`${name} must be an array of strings.`);
+  }
+}
+
+function assertKnownValue(name, value, allowedValues) {
+  assertString(name, value);
+
+  if (!allowedValues.includes(value)) {
+    throw new Error(`Invalid ${name}: ${value}. Allowed values: ${allowedValues.join(", ")}.`);
+  }
+}
+
+function normalizeIntegrationInputs(integrationInputs) {
+  assertStringArray("tools", integrationInputs);
+
+  return integrationInputs.map((value) => integrationIdForTool(value) ?? value);
+}
+
+function validateConfigurationInput({ profile, packageManager = "npm", tools } = {}) {
+  assertKnownValue("profile", profile, profiles);
+  assertKnownValue("packageManager", packageManager, packageManagers);
+
+  const allowedIntegrationIds = integrationIdsForProfile(profile);
+  const integrationIds = tools ? normalizeIntegrationInputs(tools) : defaults[profile];
+
+  const invalidIntegrationIds = integrationIds.filter((id) => !allowedIntegrationIds.includes(id));
+
+  if (invalidIntegrationIds.length > 0) {
+    throw new Error(
+      `Invalid tools for the ${profile} profile: ${invalidIntegrationIds.join(", ")}. Use tool IDs or labels from get_project_tooling_options. Allowed IDs: ${allowedIntegrationIds.join(", ")}.`,
+    );
   }
 
+  return { profile, packageManager, tools: integrationIds };
+}
+
+function applyRecipeState(configurationInput = {}) {
+  const { profile, packageManager, tools } = validateConfigurationInput(configurationInput);
+
+  selectProfile(profile);
+  renderIntegrations();
+  selectPackageManager(packageManager);
+  selectIntegrations(tools);
   render();
+
+  return recipe();
 }
 
 async function saveFile() {
@@ -187,16 +292,154 @@ async function saveFile() {
   await writable.close();
 }
 
-function downloadFile() {
-  const blob = new Blob([`${JSON.stringify(recipe(), null, 2)}\n`], {
+function downloadFile(recipeContents = recipe()) {
+  const blob = new Blob([`${JSON.stringify(recipeContents, null, 2)}\n`], {
     type: "application/json",
   });
   const url = URL.createObjectURL(blob);
   const link = document.createElement("a");
   link.href = url;
   link.download = "calavera.config.json";
+  document.body.append(link);
   link.click();
-  URL.revokeObjectURL(url);
+
+  setTimeout(() => {
+    link.remove();
+    URL.revokeObjectURL(url);
+  }, 100);
+}
+
+function catalogResponse() {
+  return {
+    profiles: profiles.map((id) => ({
+      id,
+      label: id,
+      description: profileDescriptions[id],
+      defaultIntegrations: defaults[id],
+    })),
+    packageManagers: packageManagers.map((id) => ({
+      id,
+      label: id,
+      description: packageManagerDescriptions[id],
+    })),
+    integrations: catalog.map(({ id, group, label, status, profiles }) => ({
+      id,
+      label,
+      group,
+      status,
+      profiles,
+      description: `${label}. Category: ${group}. Status: ${status}.`,
+    })),
+    toolInput: {
+      accepts:
+        "Use either an integration id or its label in the configure_project_tooling tools array. Matching is case-insensitive.",
+      examples: ["typescript", "Stylelint", "Oxc JSX accessibility rules"],
+    },
+    defaults,
+    currentConfiguration: recipe(),
+  };
+}
+
+function configureProjectTooling({ profile, packageManager, tools } = {}) {
+  return applyRecipeState({ profile, packageManager, tools });
+}
+
+function downloadConfigurationJson() {
+  const recipeContents = recipe();
+  downloadFile(recipeContents);
+
+  return {
+    downloaded: true,
+    filename: "calavera.config.json",
+    mimeType: "application/json",
+    configuration: recipeContents,
+  };
+}
+
+function revealWebMcpBanner() {
+  webMcpBanner.hidden = false;
+}
+
+function registerWebMcpTools() {
+  if (!navigator.modelContext?.registerTool) {
+    return;
+  }
+
+  try {
+    navigator.modelContext.registerTool({
+      name: "get_project_tooling_options",
+      description:
+        "Read available package managers, preset profiles, linting options, formatting options, and the current project tooling configuration. Use this before updating the form when you need valid option IDs.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: true,
+        untrustedContentHint: false,
+      },
+      execute: async () => catalogResponse(),
+    });
+
+    navigator.modelContext.registerTool({
+      name: "configure_project_tooling",
+      description:
+        "Update the visible form for a project tooling configuration. Choose a preset profile, package manager, and optional tools for linters, formatters, TypeScript, CSS tooling, accessibility checks, and test rules. Returns the configuration JSON shown on the page.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          profile: {
+            type: "string",
+            enum: profiles,
+            description:
+              "Preset configuration to start from: modern uses newer fast tools, classic uses widely adopted tools, and minimal uses only basic editor consistency settings.",
+          },
+          packageManager: {
+            type: "string",
+            enum: packageManagers,
+            default: "npm",
+            description: "Package manager used to install and run the selected project tooling.",
+          },
+          tools: {
+            type: "array",
+            items: {
+              type: "string",
+            },
+            description:
+              "Tool IDs or labels to include in the configuration, such as linters, formatters, TypeScript support, CSS checks, accessibility checks, and test rules. Omit this field to use the selected profile defaults. Use get_project_tooling_options to see valid IDs and labels.",
+          },
+        },
+        required: ["profile"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: false,
+        untrustedContentHint: false,
+      },
+      execute: async (input) => configureProjectTooling(input),
+    });
+
+    navigator.modelContext.registerTool({
+      name: "download_configuration_json",
+      description:
+        "Download the current project tooling configuration as calavera.config.json. Use configure_project_tooling first when you need to change the selected profile, package manager, linters, formatters, or code quality tools before downloading.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: false,
+        untrustedContentHint: false,
+      },
+      execute: async () => downloadConfigurationJson(),
+    });
+
+    revealWebMcpBanner();
+  } catch (error) {
+    console.info("WebMCP tool registration failed.", error);
+  }
 }
 
 form.addEventListener("change", (event) => {
@@ -214,6 +457,9 @@ document.querySelector("#save").addEventListener("click", () => {
     }
   });
 });
-document.querySelector("#download").addEventListener("click", downloadFile);
+document.querySelector("#download").addEventListener("click", () => {
+  downloadFile();
+});
 
 setDefaults();
+registerWebMcpTools();

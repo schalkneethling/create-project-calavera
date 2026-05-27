@@ -75,6 +75,24 @@ select {
   padding-inline: 0;
 }
 
+.webmcp-banner {
+  background: rgb(255 250 240 / 76%);
+  border: 0.0625rem solid rgb(47 129 112 / 42%);
+  border-radius: 0.5rem;
+  color: var(--teal-deep);
+  font-size: 0.9rem;
+  font-weight: 700;
+  line-height: 1.4;
+  margin-block: 0 1.25rem;
+  margin-inline: 0;
+  padding-block: 0.625rem;
+  padding-inline: 0.875rem;
+}
+
+[hidden] {
+  display: none;
+}
+
 .intro {
   margin-block-end: 2rem;
   max-inline-size: 47.5rem;

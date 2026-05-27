@@ -1,6 +1,6 @@
 # create-project-calavera
 
-Compose and apply modern tooling recipes for JavaScript and TypeScript projects.
+Compose and apply modern tooling recipes for web development projects.
 
 Calavera is focused on project tooling, not application scaffolding. Use it in an
 empty folder, or run it after scaffolding with Vite, Astro, Next.js, Bun, or any
@@ -28,7 +28,7 @@ environment of choice.
 
 Calavera includes curated integration packs grouped by outcome:
 
-- React correctness
+- React best practices
 - Accessibility
 - Imports and modules
 - Promise safety
@@ -37,6 +37,10 @@ Calavera includes curated integration packs grouped by outcome:
 - CSS Baseline
 - CSS property ordering
 - CSS property type validation
+
+React best-practice checks can include React Doctor, a deterministic scanner for
+React codebases that complements linting with security, performance,
+correctness, accessibility, bundle-size, and architecture diagnostics.
 
 The CSS catalog includes
 `@schalkneethling/stylelint-plugin-css-property-type-validator` as a curated
@@ -73,6 +77,12 @@ Update managed tooling from the recipe:
 npm create project-calavera update
 ```
 
+Remove stale managed files:
+
+```bash
+npm create project-calavera clean
+```
+
 Inspect machine-readable output for agent workflows:
 
 ```bash
@@ -97,6 +107,8 @@ The recipe composer runs as a small Vite app:
 ```bash
 npm run web:dev
 ```
+
+> **Note**: You can also access the UI via [https://calavera.schalkneethling.com](https://calavera.schalkneethling.com)
 
 Open the printed local URL, choose your packs, then either:
 
@@ -137,5 +149,5 @@ pnpm workflow:check
 
 Create a release by tagging the version and publishing a GitHub release for that
 tag. The publish workflow checks the project, builds the web composer, packs the
-package, audits the workflow with zizmor, then publishes the packed tarball with
+package, audits the workflow with [zizmor](https://zizmor.sh), then publishes the packed tarball with
 npm provenance.

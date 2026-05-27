@@ -4,6 +4,35 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Calavera Composer</title>
+    <meta
+      name="description"
+      content="Compose a modern project tooling recipe and export calavera.config.json."
+    />
+    <meta property="og:title" content="Calavera Composer" />
+    <meta
+      property="og:description"
+      content="Compose a modern project tooling recipe and export calavera.config.json."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://calavera.schalkneethling.com/" />
+    <meta
+      property="og:image"
+      content="https://calavera.schalkneethling.com/calavera-social-share.png"
+    />
+    <meta property="og:image:alt" content="Calavera Composer tooling recipe builder" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Calavera Composer" />
+    <meta
+      name="twitter:description"
+      content="Compose a modern project tooling recipe and export calavera.config.json."
+    />
+    <meta
+      name="twitter:image"
+      content="https://calavera.schalkneethling.com/calavera-social-share.png"
+    />
+    <meta name="twitter:image:alt" content="Calavera Composer tooling recipe builder" />
     <link rel="icon" type="image/png" href="/favicon-96x96.png" sizes="96x96" />
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <link rel="shortcut icon" href="/favicon.ico" />
@@ -14,6 +43,10 @@
   </head>
   <body>
     <main class="shell">
+      <aside class="webmcp-banner" id="webmcp-banner" hidden>
+        WebMCP available: agents can compose and download recipes from this page.
+      </aside>
+
       <section class="intro">
         <p class="eyebrow">Calavera</p>
         <h1>Compose a tooling recipe for any project.</h1>
@@ -27,23 +60,23 @@
         <form class="panel" id="composer">
           <fieldset>
             <legend>Profile</legend>
-            <label>
-              <input type="radio" name="profile" value="modern" checked />
+            <label for="profile-modern">
+              <input id="profile-modern" type="radio" name="profile" value="modern" checked />
               Modern: Oxlint, Oxfmt, Stylelint
             </label>
-            <label>
-              <input type="radio" name="profile" value="classic" />
+            <label for="profile-classic">
+              <input id="profile-classic" type="radio" name="profile" value="classic" />
               Classic: ESLint, Prettier, Stylelint
             </label>
-            <label>
-              <input type="radio" name="profile" value="minimal" />
+            <label for="profile-minimal">
+              <input id="profile-minimal" type="radio" name="profile" value="minimal" />
               Minimal: EditorConfig only
             </label>
           </fieldset>
 
-          <label class="field">
+          <label class="field" for="package-manager">
             Package manager
-            <select name="packageManager">
+            <select id="package-manager" name="packageManager">
               <option value="npm">npm</option>
               <option value="pnpm">pnpm</option>
               <option value="yarn">yarn</option>

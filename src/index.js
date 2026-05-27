@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { existsSync } from "node:fs";
 import { access, constants, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
@@ -63,7 +64,23 @@ const packageManagerCommands = {
   },
 };
 
+const supportedPackageManagers = Object.keys(packageManagerCommands);
 const args = process.argv.slice(2);
+
+function exitUnsupportedPackageManager(packageManager) {
+  console.error(
+    `Unsupported package manager "${packageManager}". Supported package managers: ${supportedPackageManagers.join(", ")}.`,
+  );
+  process.exit(1);
+}
+
+function assertSupportedPackageManager(packageManager) {
+  if (!supportedPackageManagers.includes(packageManager)) {
+    exitUnsupportedPackageManager(packageManager);
+  }
+
+  return packageManager;
+}
 
 function parseArgs(rawArgs) {
   const parsed = {
@@ -89,7 +106,7 @@ function parseArgs(rawArgs) {
     } else if (arg === "--yes") {
       parsed.yes = true;
     } else if (arg === "--package-manager") {
-      parsed.packageManager = rawArgs[index + 1];
+      parsed.packageManager = assertSupportedPackageManager(rawArgs[index + 1]);
       index += 1;
     } else if (arg === "--profile") {
       parsed.profile = rawArgs[index + 1];
@@ -170,6 +187,22 @@ function detectPackageManager(packageJSON = {}) {
     return "bun";
   }
 
+  if (existsSync("pnpm-lock.yaml") || existsSync("shrinkwrap.yaml")) {
+    return "pnpm";
+  }
+
+  if (existsSync("yarn.lock")) {
+    return "yarn";
+  }
+
+  if (existsSync("bun.lockb")) {
+    return "bun";
+  }
+
+  if (existsSync("package-lock.json")) {
+    return "npm";
+  }
+
   return "npm";
 }
 
@@ -185,6 +218,7 @@ function removeDefaultTestScript(packageJSON) {
 }
 
 async function ensurePackageJSON(packageManager, dryRun, yes, json) {
+  const supportedPackageManager = assertSupportedPackageManager(packageManager);
   const packageJSONPath = resolve("package.json");
 
   if (await fileExists(packageJSONPath)) {
@@ -204,7 +238,7 @@ async function ensurePackageJSON(packageManager, dryRun, yes, json) {
   }
 
   if (!dryRun) {
-    const [command, commandArgs] = packageManagerCommands[packageManager].init;
+    const [command, commandArgs] = packageManagerCommands[supportedPackageManager].init;
     const spin = json ? null : spinner();
     spin?.start("Creating package.json...");
     await execa(command, commandArgs, { stderr: "inherit" });
@@ -219,15 +253,18 @@ function runIfFiles(label, extensions, command) {
 }
 
 function buildScripts(recipe, integrations, packageManager) {
+  const supportedPackageManager = assertSupportedPackageManager(packageManager);
   const has = (id) => integrations.some((integration) => integration.id === id);
   const usesOxlint = has("oxlint");
   const usesESLint = has("eslint");
   const usesStylelint = has("stylelint");
   const usesOxfmt = has("oxfmt");
   const usesPrettier = has("prettier");
+  const usesReactDoctor = has("react-doctor");
   const usesTypeScript = has("typescript");
   const jsExtensions = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
   const cssExtensions = ["css", "scss"];
+  const reactExtensions = ["js", "jsx", "ts", "tsx"];
   const tsExtensions = ["ts", "tsx"];
 
   const lintParts = [
@@ -276,10 +313,24 @@ function buildScripts(recipe, integrations, packageManager) {
     scripts.typecheck = runIfFiles("TypeScript", tsExtensions, "tsc --noEmit");
   }
 
+  if (usesReactDoctor) {
+    scripts["react:doctor"] = runIfFiles("React", reactExtensions, "react-doctor --offline");
+    scripts["react:doctor:diff"] = runIfFiles(
+      "React",
+      reactExtensions,
+      "react-doctor --offline --diff",
+    );
+  }
+
   if (recipe.scripts?.check) {
-    scripts.check = ["lint", "format:check", usesTypeScript ? "typecheck" : null]
-      .filter((script) => scripts[script] || script === "typecheck")
-      .map((script) => packageManagerCommands[packageManager].run(script))
+    scripts.check = [
+      "lint",
+      "format:check",
+      usesTypeScript && recipe.scripts?.typecheck ? "typecheck" : null,
+      usesReactDoctor ? "react:doctor" : null,
+    ]
+      .filter((script) => script && scripts[script])
+      .map((script) => packageManagerCommands[supportedPackageManager].run(script))
       .join(" && ");
   }
 
@@ -501,9 +552,17 @@ function createTSConfig() {
   };
 }
 
+function createReactDoctorConfig() {
+  return {
+    offline: true,
+  };
+}
+
 function usesRunIfFilesHelper(integrations) {
   return integrations.some((integration) =>
-    ["eslint", "oxfmt", "oxlint", "stylelint", "typescript"].includes(integration.id),
+    ["eslint", "oxfmt", "oxlint", "react-doctor", "stylelint", "typescript"].includes(
+      integration.id,
+    ),
   );
 }
 
@@ -529,7 +588,9 @@ async function applyRecipe(options) {
   const dependencyList = unique(
     integrations.flatMap((integration) => integration.dependencies ?? []),
   );
-  const packageManager = options.packageManager ?? recipe.packageManager ?? detectPackageManager();
+  const packageManager = assertSupportedPackageManager(
+    options.packageManager ?? recipe.packageManager ?? detectPackageManager(),
+  );
   const packageJSON = await ensurePackageJSON(
     packageManager,
     options.dryRun,
@@ -596,6 +657,11 @@ async function applyRecipe(options) {
   if (integrations.some((integration) => integration.id === "stylelint")) {
     await writeJSON(".stylelintrc.json", createStylelintConfig(integrations), options.dryRun);
     changes.push({ type: "write", path: ".stylelintrc.json" });
+  }
+
+  if (integrations.some((integration) => integration.id === "react-doctor")) {
+    await writeJSON("react-doctor.config.json", createReactDoctorConfig(), options.dryRun);
+    changes.push({ type: "write", path: "react-doctor.config.json" });
   }
 
   if (integrations.some((integration) => integration.id === "typescript")) {
@@ -682,7 +748,10 @@ async function initRecipe(options) {
     process.exit(0);
   }
 
-  const recipe = buildRecipe(profile, selected, options.packageManager ?? detectPackageManager());
+  const packageManager = assertSupportedPackageManager(
+    options.packageManager ?? detectPackageManager(),
+  );
+  const recipe = buildRecipe(profile, selected, packageManager);
 
   await writeJSON(options.config, recipe, options.dryRun);
 
@@ -723,8 +792,12 @@ async function doctor(options) {
       integrations.some((integration) => integration.id === "oxlint") ? "oxlint.json" : null,
       integrations.some((integration) => integration.id === "eslint") ? "eslint.config.js" : null,
       integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
+      integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,
       integrations.some((integration) => integration.id === "stylelint")
         ? ".stylelintrc.json"
+        : null,
+      integrations.some((integration) => integration.id === "react-doctor")
+        ? "react-doctor.config.json"
         : null,
       integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
       usesRunIfFilesHelper(integrations) ? ".calavera/run-if-files.mjs" : null,
@@ -755,6 +828,9 @@ function expectedManagedFiles(integrations) {
     integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
     integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,
     integrations.some((integration) => integration.id === "stylelint") ? ".stylelintrc.json" : null,
+    integrations.some((integration) => integration.id === "react-doctor")
+      ? "react-doctor.config.json"
+      : null,
     integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
     usesRunIfFilesHelper(integrations) ? ".calavera/run-if-files.mjs" : null,
   ].filter(Boolean);

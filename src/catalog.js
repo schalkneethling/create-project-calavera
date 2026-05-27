@@ -70,12 +70,20 @@ export const integrationCatalog = [
   },
   {
     id: "oxlint-react",
-    label: "React correctness",
-    group: "React correctness",
+    label: "Oxc React best practices",
+    group: "React best practices",
     platform: "oxlint-plugin",
     plugin: "react",
     status: "framework-specific",
     includes: ["oxlint"],
+  },
+  {
+    id: "react-doctor",
+    label: "React Doctor",
+    group: "React best practices",
+    platform: "react-doctor",
+    status: "framework-specific",
+    dependencies: ["react-doctor"],
   },
   {
     id: "oxlint-jsx-a11y",
@@ -185,8 +193,8 @@ export const integrationCatalog = [
   },
   {
     id: "eslint-react",
-    label: "React correctness",
-    group: "React correctness",
+    label: "ESLint React best practices",
+    group: "React best practices",
     platform: "eslint-plugin",
     status: "framework-specific",
     dependencies: ["eslint-plugin-react", "eslint-plugin-react-hooks"],
