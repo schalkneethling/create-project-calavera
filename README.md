@@ -1,33 +1,141 @@
 # create-project-calavera
 
-Add common linters, formatters, and _hopefully_ sane configurations, for common web projects with an intuitive CLI.
+Compose and apply modern tooling recipes for JavaScript and TypeScript projects.
 
-https://github.com/user-attachments/assets/156e8b86-f389-41d8-8ab7-0817e3c3d094
+Calavera is focused on project tooling, not application scaffolding. Use it in an
+empty folder, or run it after scaffolding with Vite, Astro, Next.js, Bun, or any
+other project starter.
 
-## Current Features
+## What Calavera Manages
 
-- [x] EditorConfig
-- [x] ESLint (If using TypeScript, this will be configured using [typescript-eslint](https://typescript-eslint.io/))
-- [x] [ESLint HTML](https://html-eslint.org/) - with use-baseline
-- [x] [ESLint CSS](https://github.com/eslint/css) - with use-baseline
-- [x] `tsconfig`
-- [x] `tsconfig` (noEmit - when used with a bundler)
-- [x] `tsconfig` (noEmit and erasableSyntaxOnly - when used with a bundler)
-- [x] Prettier
-- [x] Stylelint - with use-baseline
+- Linting and formatting tools
+- TypeScript config
+- Stylelint and CSS quality plugins
+- `package.json` scripts
+- A repeatable `calavera.config.json` recipe
 
-## Using the CLI
+Editor extensions, global apps, shell setup, and machine-level configuration are
+out of scope. Install the matching editor integrations for your development
+environment of choice.
 
-From the root of your project, run the following command:
+## Profiles
+
+- **Modern**: Oxlint, Oxfmt, Stylelint, TypeScript
+- **Classic**: ESLint flat config, Prettier, Stylelint, TypeScript
+- **Minimal**: EditorConfig only
+
+## Integration Catalog
+
+Calavera includes curated integration packs grouped by outcome:
+
+- React correctness
+- Accessibility
+- Imports and modules
+- Promise safety
+- Node package rules
+- Test rules
+- CSS Baseline
+- CSS property ordering
+- CSS property type validation
+
+The CSS catalog includes
+`@schalkneethling/stylelint-plugin-css-property-type-validator` as a curated
+experimental integration.
+
+Adding a new integration should be a catalog-first change. For example, a
+Stylelint plugin entry can declare its package dependency, parent `stylelint`
+integration, plugin name, and default rules in `src/catalog.js`; the CLI then
+uses that metadata when generating `.stylelintrc.json`.
+
+## CLI
+
+Create a recipe:
 
 ```bash
-npm create project-calavera
+npm create project-calavera init
 ```
 
-All that is left to do is to follow the prompts.
+Apply a recipe:
 
-> **NOTE:** If you do not have a `package.json` Calavera will offer to create one for you. If you choose this option, one is created using `npm init -y`.
+```bash
+npm create project-calavera apply
+```
 
-### Thanks!
+Inspect the current project:
 
-Thank you [Nik on Unsplash](https://unsplash.com/@helloimnik?utm_content=creditCopyText&utm_medium=referral&utm_source=unsplash) for the photo I used on the social preview.
+```bash
+npm create project-calavera doctor
+```
+
+Update managed tooling from the recipe:
+
+```bash
+npm create project-calavera update
+```
+
+Inspect machine-readable output for agent workflows:
+
+```bash
+npm create project-calavera doctor --json
+npm create project-calavera apply --dry-run --json
+```
+
+## Common Flags
+
+- `--config calavera.config.json`
+- `--profile modern|classic|minimal`
+- `--package-manager npm|pnpm|yarn|bun`
+- `--dry-run`
+- `--no-install`
+- `--yes`
+- `--json`
+
+## Web Composer
+
+The recipe composer runs as a small Vite app:
+
+```bash
+npm run web:dev
+```
+
+Open the printed local URL, choose your packs, then either:
+
+- save `calavera.config.json` directly with the browser file picker, or
+- download `calavera.config.json`.
+
+Both options are shown by default so users can choose the flow they are most
+comfortable with.
+
+Build the composer with:
+
+```bash
+npm run web:build
+```
+
+## Publishing
+
+Calavera publishes to npm from GitHub releases with npm trusted publishing. The
+repository workflow is `.github/workflows/publish.yml`, and npm should be
+configured with that workflow as a trusted publisher for
+`create-project-calavera`.
+
+Before the first trusted publish:
+
+- enable 2FA on npm and GitHub;
+- remove any `NPM_TOKEN` repository secret;
+- create a GitHub environment named `publish` and restrict it to `main`;
+- configure npm trusted publishing for this repository, workflow, and
+  environment.
+
+To validate the package locally:
+
+```bash
+pnpm publish:check
+pnpm pack --dry-run
+pnpm workflow:check
+```
+
+Create a release by tagging the version and publishing a GitHub release for that
+tag. The publish workflow checks the project, builds the web composer, packs the
+package, audits the workflow with zizmor, then publishes the packed tarball with
+npm provenance.

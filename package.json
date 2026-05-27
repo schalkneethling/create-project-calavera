@@ -1,38 +1,62 @@
 {
   "name": "create-project-calavera",
   "version": "0.2.0",
-  "description": "A simple starting skeleton of linters and formatters for common web projects.",
-  "exports": "./src/index.js",
-  "bin": {
-    "create-project-calavera": "src/index.js"
+  "description": "Compose and apply modern tooling recipes for JavaScript and TypeScript projects.",
+  "keywords": [
+    "cli",
+    "css",
+    "html",
+    "javascript",
+    "linting",
+    "oxlint",
+    "prettier",
+    "project",
+    "scaffold",
+    "starter",
+    "stylelint",
+    "tooling"
+  ],
+  "homepage": "https://github.com/schalkneethling/create-project-calavera#readme",
+  "bugs": {
+    "url": "https://github.com/schalkneethling/create-project-calavera/issues"
   },
-  "type": "module",
-  "scripts": {
-    "prettier:lint": "prettier .",
-    "prettier:format": "prettier --write .",
-    "lint:js": "eslint .",
-    "lint:css": "stylelint **/*.css"
-  },
+  "license": "MIT",
+  "author": "Schalk Neethling",
   "repository": {
     "type": "git",
     "url": "git+ssh://git@github.com/schalkneethling/create-project-calavera.git"
   },
-  "keywords": [
-    "scaffold",
-    "project",
-    "starter",
-    "linting",
-    "javascript",
-    "css",
-    "html",
-    "cli"
-  ],
-  "author": "Schalk Neethling",
-  "license": "MIT",
-  "bugs": {
-    "url": "https://github.com/schalkneethling/create-project-calavera/issues"
+  "bin": {
+    "create-project-calavera": "src/index.js"
   },
-  "homepage": "https://github.com/schalkneethling/create-project-calavera#readme",
+  "files": [
+    "src",
+    "LICENSE",
+    "README.md"
+  ],
+  "type": "module",
+  "exports": "./src/index.js",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "prettier:lint": "prettier .",
+    "prettier:format": "prettier --write .",
+    "lint:js": "eslint .",
+    "lint:css": "stylelint **/*.css",
+    "web:dev": "vite --host 127.0.0.1",
+    "web:build": "vite build",
+    "web:preview": "vite preview --host 127.0.0.1",
+    "check": "pnpm lint && pnpm format:check && pnpm typecheck",
+    "lint": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxlint . && node .calavera/run-if-files.mjs \"CSS\" \"css,scss\" -- stylelint \"**/*.{css,scss}\"",
+    "lint:fix": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxlint --fix . && node .calavera/run-if-files.mjs \"CSS\" \"css,scss\" -- stylelint \"**/*.{css,scss}\" --fix",
+    "format": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxfmt --write .",
+    "format:check": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxfmt --check .",
+    "typecheck": "node .calavera/run-if-files.mjs \"TypeScript\" \"ts,tsx\" -- tsc --noEmit",
+    "publish:check": "publint",
+    "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
+  },
   "dependencies": {
     "@clack/prompts": "^0.11.0",
     "chalk": "^5.3.0",
@@ -41,10 +65,18 @@
   },
   "devDependencies": {
     "@eslint/js": "^9.17.0",
+    "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
     "eslint": "^9.27.0",
     "globals": "^16.2.0",
-    "stylelint": "^16.11.0",
+    "oxfmt": "^0.52.0",
+    "oxlint": "^1.67.0",
+    "publint": "^0.3.21",
+    "stylelint": "^16.26.1",
     "stylelint-config-standard": "^38.0.0",
-    "stylelint-order": "^7.0.0"
-  }
+    "stylelint-order": "^7.0.1",
+    "stylelint-plugin-use-baseline": "^1.4.2",
+    "typescript": "^6.0.3",
+    "vite": "^8.0.14"
+  },
+  "packageManager": "pnpm@11.3.0"
 }

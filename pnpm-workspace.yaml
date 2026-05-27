@@ -1,0 +1,4 @@
+minimumReleaseAge: 1440
+minimumReleaseAgeExclude:
+  - "@schalkneethling/css-property-type-validator-core"
+  - "@schalkneethling/stylelint-plugin-css-property-type-validator"

@@ -6,17 +6,13 @@ import * as prettier from "prettier";
 import { FileWriteError } from "../utils/file-write-error.js";
 import { logger } from "../utils/logger.js";
 
-const configureESLint = async (
-  withPrettier = false,
-  withHTML = false,
-  withCSS = false,
-) => {
+const configureESLint = async (withPrettier = false, withHTML = false, withCSS = false) => {
   const dependencies = withPrettier
     ? ["eslint", "@eslint/js", "globals", "eslint-config-prettier"]
     : ["eslint", "@eslint/js", "globals"];
 
   if (withHTML) {
-    dependencies.push(...["@html-eslint/parser", "@html-eslint/eslint-plugin"]);
+    dependencies.push("@html-eslint/parser", "@html-eslint/eslint-plugin");
   }
 
   if (withCSS) {
@@ -45,14 +41,9 @@ export default [
 ];\n`
     .replace(
       /%PRETTIER_IMPORT%/,
-      withPrettier
-        ? 'import eslintConfigPrettier from "eslint-config-prettier";'
-        : "",
+      withPrettier ? 'import eslintConfigPrettier from "eslint-config-prettier";' : "",
     )
-    .replace(
-      /%HTML_IMPORT%/,
-      withHTML ? 'import html from "@html-eslint/eslint-plugin";' : "",
-    )
+    .replace(/%HTML_IMPORT%/, withHTML ? 'import html from "@html-eslint/eslint-plugin";' : "")
     .replace(/%CSS_IMPORT%/, withCSS ? 'import css from "@eslint/css";' : "")
     .replace(/%PRETTIER_CONFIG%/, withPrettier ? "eslintConfigPrettier," : "")
     .replace(
