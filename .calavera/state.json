@@ -1,0 +1,27 @@
+{
+  "version": 1,
+  "profile": "modern",
+  "integrations": [
+    "editorconfig",
+    "typescript",
+    "oxlint",
+    "oxlint-eslint",
+    "oxlint-typescript",
+    "oxlint-unicorn",
+    "oxlint-oxc",
+    "oxlint-jsdoc",
+    "oxfmt",
+    "stylelint",
+    "stylelint-standard",
+    "stylelint-order",
+    "stylelint-baseline",
+    "css-property-type-validator"
+  ],
+  "files": [
+    ".editorconfig",
+    ".calavera/run-if-files.mjs",
+    "oxlint.json",
+    ".stylelintrc.json",
+    "tsconfig.json"
+  ]
+}

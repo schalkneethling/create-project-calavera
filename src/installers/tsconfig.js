@@ -69,11 +69,7 @@ const configureTSConfig = async (noEmit = false, erasableOnly = false) => {
     },
   };
 
-  const config = erasableOnly
-    ? tsConfigErasableOnly
-    : noEmit
-      ? tsConfigNoEmit
-      : tsConfig;
+  const config = erasableOnly ? tsConfigErasableOnly : noEmit ? tsConfigNoEmit : tsConfig;
 
   try {
     const packageJSON = JSON.parse(await readFile(packageJSONPath));
@@ -86,10 +82,7 @@ const configureTSConfig = async (noEmit = false, erasableOnly = false) => {
     await mkdir(".project-calavera", { recursive: true });
     await writeFile(".project-calavera/tsconfig.json", `${tsConfigString}\n`);
 
-    await writeFile(
-      "tsconfig.json",
-      `${JSON.stringify(rootTSConfig, null, 2)}\n`,
-    );
+    await writeFile("tsconfig.json", `${JSON.stringify(rootTSConfig, null, 2)}\n`);
 
     const updatedPackageJSON = JSON.stringify(packageJSON, null, 2);
     await writeFile(packageJSONPath, `${updatedPackageJSON}\n`);

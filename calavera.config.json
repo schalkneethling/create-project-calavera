@@ -1,0 +1,30 @@
+{
+  "$schema": "https://calavera.dev/schema/calavera.config.schema.json",
+  "version": 1,
+  "profile": "modern",
+  "packageManager": "pnpm",
+  "integrations": [
+    "editorconfig",
+    "typescript",
+    "oxlint",
+    "oxlint-eslint",
+    "oxlint-typescript",
+    "oxlint-unicorn",
+    "oxlint-oxc",
+    "oxlint-jsdoc",
+    "oxfmt",
+    "stylelint",
+    "stylelint-standard",
+    "stylelint-order",
+    "stylelint-baseline",
+    "css-property-type-validator"
+  ],
+  "scripts": {
+    "lint": true,
+    "lint:fix": true,
+    "format": true,
+    "format:check": true,
+    "typecheck": true,
+    "check": true
+  }
+}
