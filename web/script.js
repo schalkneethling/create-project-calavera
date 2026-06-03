@@ -1,6 +1,7 @@
 const catalog = [
   entry("editorconfig", "Project consistency", "EditorConfig", "recommended"),
   entry("typescript", "Type checking", "TypeScript type checking", "recommended"),
+  entry("varlock", "Environment variables", "Varlock", "optional"),
   entry("oxlint", "Modern JS/TS linting", "Oxlint", "recommended", ["modern"]),
   entry("oxlint-eslint", "Modern JS/TS linting", "Oxc ESLint compatibility rules", "recommended", [
     "modern",

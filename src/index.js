@@ -272,6 +272,7 @@ function buildScripts(recipe, integrations, packageManager) {
   const usesPrettier = has("prettier");
   const usesReactDoctor = has("react-doctor");
   const usesTypeScript = has("typescript");
+  const usesVarlock = has("varlock");
   const jsExtensions = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
   const cssExtensions = ["css", "scss"];
   const reactExtensions = ["js", "jsx", "ts", "tsx"];
@@ -332,12 +333,17 @@ function buildScripts(recipe, integrations, packageManager) {
     );
   }
 
+  if (usesVarlock) {
+    scripts["env:load"] = "varlock load";
+  }
+
   if (recipe.scripts?.check) {
     scripts.check = [
       "lint",
       "format:check",
       usesTypeScript && recipe.scripts?.typecheck ? "typecheck" : null,
       usesReactDoctor ? "react:doctor" : null,
+      usesVarlock ? "env:load" : null,
     ]
       .filter((script) => script && scripts[script])
       .map((script) => packageManagerCommands[supportedPackageManager].run(script))
@@ -568,6 +574,57 @@ function createReactDoctorConfig() {
   };
 }
 
+function createVarlockSchema() {
+  return `# @defaultSensitive=false
+# @defaultRequired=infer
+
+# Application environment
+# @type=enum(development, staging, production)
+# @required
+APP_ENV=development
+`;
+}
+
+const varlockGitignoreLines = ["!.env.schema", "!.env.*", ".env.local"];
+
+function mergeVarlockGitignore(existing) {
+  const lines = existing.split("\n");
+  const hasLine = (target) => lines.some((line) => line.trim() === target);
+  const missing = varlockGitignoreLines.filter((line) => !hasLine(line));
+
+  if (missing.length === 0) {
+    return null;
+  }
+
+  const trimmedExisting = existing.replace(/\n+$/, "");
+  const prefix = trimmedExisting.length > 0 ? `${trimmedExisting}\n\n` : "";
+  return `${prefix}# Varlock\n${missing.join("\n")}\n`;
+}
+
+async function scaffoldVarlock(dryRun, changes) {
+  const schemaPath = ".env.schema";
+
+  if (!(await fileExists(schemaPath))) {
+    changes.push({ type: "write", path: schemaPath, scaffold: true });
+
+    if (!dryRun) {
+      await writeFile(schemaPath, createVarlockSchema());
+    }
+  }
+
+  const gitignorePath = ".gitignore";
+  const existing = (await fileExists(gitignorePath)) ? await readFile(gitignorePath, "utf8") : "";
+  const updated = mergeVarlockGitignore(existing);
+
+  if (updated !== null) {
+    changes.push({ type: "update", path: gitignorePath, scaffold: true });
+
+    if (!dryRun) {
+      await writeFile(gitignorePath, updated);
+    }
+  }
+}
+
 function usesRunIfFilesHelper(integrations) {
   return integrations.some((integration) =>
     ["eslint", "oxfmt", "oxlint", "react-doctor", "stylelint", "typescript"].includes(
@@ -680,13 +737,19 @@ async function applyRecipe(options) {
     changes.push({ type: "write", path: "tsconfig.json" });
   }
 
+  if (integrations.some((integration) => integration.id === "varlock")) {
+    await scaffoldVarlock(options.dryRun, changes);
+  }
+
   if (!options.dryRun) {
     await mkdir(".calavera", { recursive: true });
     await writeJSON(STATE_FILE, {
       version: 1,
       profile: recipe.profile,
       integrations: integrations.map((integration) => integration.id),
-      files: changes.filter((change) => change.type === "write").map((change) => change.path),
+      files: changes
+        .filter((change) => change.type === "write" && !change.scaffold)
+        .map((change) => change.path),
     });
   }
 
@@ -812,6 +875,7 @@ async function doctor(options) {
         ? "react-doctor.config.json"
         : null,
       integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
+      integrations.some((integration) => integration.id === "varlock") ? ".env.schema" : null,
       usesRunIfFilesHelper(integrations) ? ".calavera/run-if-files.mjs" : null,
     ].filter(Boolean);
 
@@ -953,13 +1017,13 @@ function printResult(result, asJSON = false) {
 
     for (const change of result.changes) {
       if (change.type === "write") {
-        logger.info(`Would write ${change.path}`);
+        logger.info(`Would ${change.scaffold ? "scaffold" : "write"} ${change.path}`);
       }
 
       if (change.type === "update") {
         logger.info(`Would update ${change.path}`);
 
-        if (change.scripts.length > 0) {
+        if (change.scripts?.length > 0) {
           logger.info(`Would add scripts: ${change.scripts.join(", ")}`);
         }
 
