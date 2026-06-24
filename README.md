@@ -90,6 +90,29 @@ npm create project-calavera doctor --json
 npm create project-calavera apply --dry-run --json
 ```
 
+### Bun-managed projects and npm `devEngines`
+
+Some starters declare Bun in `devEngines.packageManager`. npm 11 fails before
+Calavera can run when `npm create` is used from one of those projects:
+
+```text
+Invalid devEngines.packageManager
+Invalid name "bun" does not match "npm" for "packageManager"
+```
+
+Use the package manager declared by the project instead:
+
+```bash
+bunx create-project-calavera apply
+```
+
+If you intentionally want to launch through npm anyway, npm requires `--force`
+to bypass its own `devEngines` preflight:
+
+```bash
+npm --force create project-calavera apply
+```
+
 ## Common Flags
 
 - `--config calavera.config.json`
