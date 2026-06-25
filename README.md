@@ -37,6 +37,7 @@ Calavera includes curated integration packs grouped by outcome:
 - CSS Baseline
 - CSS property ordering
 - CSS property type validation
+- Environment variable schema and validation with [Varlock](https://varlock.dev)
 
 React best-practice checks can include React Doctor, a deterministic scanner for
 React codebases that complements linting with security, performance,

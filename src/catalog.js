@@ -16,6 +16,14 @@ export const integrationCatalog = [
     dependencies: ["typescript"],
   },
   {
+    id: "varlock",
+    label: "Varlock",
+    group: "Environment variables",
+    platform: "varlock",
+    status: "optional",
+    dependencies: ["varlock"],
+  },
+  {
     id: "oxlint",
     label: "Oxlint",
     group: "Modern JS/TS linting",
