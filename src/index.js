@@ -197,6 +197,18 @@ function detectPackageManager(packageJSON = {}) {
     return "bun";
   }
 
+  const devPackageManagers = [packageJSON.devEngines?.packageManager]
+    .flat()
+    .filter(Boolean)
+    .map((packageManager) => packageManager.name);
+  const devPackageManager = devPackageManagers.find((packageManager) =>
+    supportedPackageManagers.includes(packageManager),
+  );
+
+  if (devPackageManager) {
+    return devPackageManager;
+  }
+
   if (existsSync("pnpm-lock.yaml") || existsSync("shrinkwrap.yaml")) {
     return "pnpm";
   }

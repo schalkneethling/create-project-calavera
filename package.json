@@ -1,6 +1,6 @@
 {
   "name": "create-project-calavera",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Compose and apply modern tooling recipes for JavaScript and TypeScript projects.",
   "keywords": [
     "cli",
@@ -68,7 +68,7 @@
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
     "eslint": "^10.4.0",
     "globals": "^17.6.0",
-    "oxfmt": "^0.52.0",
+    "oxfmt": "^0.54.0",
     "oxlint": "^1.67.0",
     "publint": "^0.3.21",
     "stylelint": "^17.12.0",
