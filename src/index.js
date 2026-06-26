@@ -106,6 +106,8 @@ import { logger } from "./utils/logger.js";
 
 const CONFIG_FILE = "calavera.config.json";
 const STATE_FILE = ".calavera/state.json";
+const SCRIPT_SOURCE_EXTENSIONS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
+const TSC_INCLUDE_PATTERNS = SCRIPT_SOURCE_EXTENSIONS.map((extension) => `src/**/*.${extension}`);
 
 /** @type {Record<string, string[]>} */
 const profileDefaults = {
@@ -462,19 +464,22 @@ function buildScripts(recipe, integrations, packageManager) {
   const usesPrettier = has("prettier");
   const usesReactDoctor = has("react-doctor");
   const usesTypeScript = has("typescript");
-  const jsExtensions = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
   const cssExtensions = ["css", "scss"];
   const reactExtensions = ["js", "jsx", "ts", "tsx"];
 
   const lintParts = [
-    usesOxlint ? runIfFiles("JavaScript/TypeScript", jsExtensions, "oxlint .") : null,
-    usesESLint ? runIfFiles("JavaScript/TypeScript", jsExtensions, "eslint .") : null,
+    usesOxlint ? runIfFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "oxlint .") : null,
+    usesESLint ? runIfFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "eslint .") : null,
     usesStylelint ? runIfFiles("CSS", cssExtensions, 'stylelint "**/*.{css,scss}"') : null,
   ].filter(Boolean);
 
   const lintFixParts = [
-    usesOxlint ? runIfFiles("JavaScript/TypeScript", jsExtensions, "oxlint --fix .") : null,
-    usesESLint ? runIfFiles("JavaScript/TypeScript", jsExtensions, "eslint --fix .") : null,
+    usesOxlint
+      ? runIfFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "oxlint --fix .")
+      : null,
+    usesESLint
+      ? runIfFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "eslint --fix .")
+      : null,
     usesStylelint ? runIfFiles("CSS", cssExtensions, 'stylelint "**/*.{css,scss}" --fix') : null,
   ].filter(Boolean);
 
@@ -491,7 +496,11 @@ function buildScripts(recipe, integrations, packageManager) {
 
   if (recipe.scripts?.format) {
     if (usesOxfmt) {
-      scripts.format = runIfFiles("JavaScript/TypeScript", jsExtensions, "oxfmt --write .");
+      scripts.format = runIfFiles(
+        "JavaScript/TypeScript",
+        SCRIPT_SOURCE_EXTENSIONS,
+        "oxfmt --write .",
+      );
     } else if (usesPrettier) {
       scripts.format = "prettier --write .";
     }
@@ -501,7 +510,7 @@ function buildScripts(recipe, integrations, packageManager) {
     if (usesOxfmt) {
       scripts["format:check"] = runIfFiles(
         "JavaScript/TypeScript",
-        jsExtensions,
+        SCRIPT_SOURCE_EXTENSIONS,
         "oxfmt --check .",
       );
     } else if (usesPrettier) {
@@ -510,7 +519,11 @@ function buildScripts(recipe, integrations, packageManager) {
   }
 
   if (recipe.scripts?.typecheck && usesTypeScript) {
-    scripts.typecheck = runIfFiles("JavaScript/TypeScript", jsExtensions, "tsc --noEmit");
+    scripts.typecheck = runIfFiles(
+      "JavaScript/TypeScript",
+      SCRIPT_SOURCE_EXTENSIONS,
+      "tsc --noEmit",
+    );
   }
 
   if (usesReactDoctor) {
@@ -764,7 +777,7 @@ function createTSConfig() {
       types: ["node"],
       verbatimModuleSyntax: true,
     },
-    include: ["src/**/*.js", "src/**/*.ts", "src/**/*.tsx"],
+    include: TSC_INCLUDE_PATTERNS,
     exclude: ["node_modules"],
   };
 }
@@ -818,6 +831,16 @@ async function assertSafeManagedFileWrite(path, contents, previousState) {
 }
 
 /**
+ * @param {{ path: string, contents: string }[]} filePlans
+ * @param {CalaveraState} previousState
+ */
+async function assertSafeManagedFileWrites(filePlans, previousState) {
+  for (const filePlan of filePlans) {
+    await assertSafeManagedFileWrite(filePlan.path, filePlan.contents, previousState);
+  }
+}
+
+/**
  * @param {string} path
  * @param {string} contents
  * @param {boolean} dryRun
@@ -868,6 +891,64 @@ async function writeManagedJSONFile(path, value, dryRun, changes, previousState)
 }
 
 /**
+ * @param {Integration[]} integrations
+ * @returns {{ path: string, contents: string }[]}
+ */
+function plannedManagedFiles(integrations) {
+  const plans = [];
+
+  if (integrations.some((integration) => integration.id === "editorconfig")) {
+    plans.push({ path: ".editorconfig", contents: createEditorConfig() });
+  }
+
+  if (usesRunIfFilesHelper(integrations)) {
+    plans.push({ path: ".calavera/run-if-files.mjs", contents: createRunIfFilesHelper() });
+  }
+
+  if (integrations.some((integration) => integration.id === "oxlint")) {
+    plans.push({
+      path: "oxlint.json",
+      contents: `${JSON.stringify(createOxlintConfig(integrations), null, 2)}\n`,
+    });
+  }
+
+  if (integrations.some((integration) => integration.id === "eslint")) {
+    plans.push({ path: "eslint.config.js", contents: createESLintConfig(integrations) });
+  }
+
+  if (integrations.some((integration) => integration.id === "prettier")) {
+    plans.push({ path: ".prettierrc.json", contents: `${JSON.stringify({}, null, 2)}\n` });
+    plans.push({
+      path: ".prettierignore",
+      contents: "node_modules\npackage-lock.json\npnpm-lock.yaml\nyarn.lock\nbun.lockb\n",
+    });
+  }
+
+  if (integrations.some((integration) => integration.id === "stylelint")) {
+    plans.push({
+      path: ".stylelintrc.json",
+      contents: `${JSON.stringify(createStylelintConfig(integrations), null, 2)}\n`,
+    });
+  }
+
+  if (integrations.some((integration) => integration.id === "react-doctor")) {
+    plans.push({
+      path: "react-doctor.config.json",
+      contents: `${JSON.stringify(createReactDoctorConfig(), null, 2)}\n`,
+    });
+  }
+
+  if (integrations.some((integration) => integration.id === "typescript")) {
+    plans.push({
+      path: "tsconfig.json",
+      contents: `${JSON.stringify(createTSConfig(), null, 2)}\n`,
+    });
+  }
+
+  return plans;
+}
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<ApplyResult>}
  */
@@ -894,6 +975,12 @@ async function applyRecipe(options) {
   /** @type {ManagedFileState[]} */
   const managedFiles = [];
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
+  const managedFilePlans = plannedManagedFiles(integrations);
+
+  if (!options.dryRun) {
+    await assertSafeManagedFileWrites(managedFilePlans, previousState);
+  }
+
   const aiResult = await buildAiApplyResult(recipe, options, previousState);
 
   packageJSON.scripts = {
@@ -906,10 +993,6 @@ async function applyRecipe(options) {
     scripts: Object.keys(scripts),
     removedDefaultTestScript,
   });
-
-  if (!options.dryRun) {
-    await writeJSON("package.json", packageJSON, false);
-  }
 
   if (integrations.some((integration) => integration.id === "editorconfig")) {
     managedFiles.push(
@@ -1008,6 +1091,10 @@ async function applyRecipe(options) {
         previousState,
       ),
     );
+  }
+
+  if (!options.dryRun) {
+    await writeJSON("package.json", packageJSON, false);
   }
 
   if (!options.dryRun) {
@@ -1244,9 +1331,13 @@ async function clean(options) {
   const staleAiArtifacts = state.aiArtifacts.filter(
     (artifact) => !expectedAiPaths.has(artifact.path),
   );
+  /** @type {ManagedFileState[]} */
   const staleFilesSafeToRemove = [];
+  /** @type {Array<ManagedFileState & { reason?: string, installedHash?: string }>} */
   const staleFilesWithLocalEdits = [];
+  /** @type {AiArtifactState[]} */
   const staleAiArtifactsSafeToRemove = [];
+  /** @type {Array<AiArtifactState & { installedHash: string }>} */
   const staleAiArtifactsWithLocalEdits = [];
 
   for (const file of staleFiles) {
@@ -1256,7 +1347,11 @@ async function clean(options) {
     }
 
     if (!file.hash) {
-      staleFilesSafeToRemove.push(file);
+      staleFilesWithLocalEdits.push({
+        ...file,
+        reason:
+          "Managed file has legacy state without a hash; run apply before clean can remove it safely.",
+      });
       continue;
     }
 
@@ -1297,7 +1392,9 @@ async function clean(options) {
         ...staleFilesWithLocalEdits.map((file) => ({
           type: "skip",
           path: file.path,
-          reason: `Managed file has local edits (installed=${file.installedHash}, state=${file.hash}).`,
+          reason:
+            file.reason ??
+            `Managed file has local edits (installed=${file.installedHash}, state=${file.hash}).`,
         })),
         ...staleAiArtifactsWithLocalEdits.map((artifact) => ({
           type: "skip",
@@ -1332,7 +1429,9 @@ async function clean(options) {
     ...staleFilesWithLocalEdits.map((file) => ({
       type: "skip",
       path: file.path,
-      reason: `Managed file has local edits (installed=${file.installedHash}, state=${file.hash}).`,
+      reason:
+        file.reason ??
+        `Managed file has local edits (installed=${file.installedHash}, state=${file.hash}).`,
     })),
     ...staleAiArtifactsSafeToRemove.map((artifact) => ({
       type: "delete",

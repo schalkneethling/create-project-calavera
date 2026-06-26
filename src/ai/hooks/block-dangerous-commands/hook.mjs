@@ -21,7 +21,8 @@ const rules = [
     },
     {
         id: "git-push-protected",
-        test: (c) => /\bgit\s+push\b(?:\s+\S+)*\s+(?:origin\s+)?(?:main|master|production|prod|release)(?:\s|$)/.test(c),
+        test: (c) => /\bgit\s+push\b(?:\s+\S+)*\s+(?:origin\s+)?(?:main|master|production|prod|release)(?:\s|$)/.test(c) ||
+            /\bgit\s+push\b.*\S+:(?:refs\/heads\/)?(?:main|master|production|prod|release)(?:\s|$)/.test(c),
         message: "Direct push to a protected branch (main/master/production/prod/release) is blocked. Open a pull request instead.",
     },
     {

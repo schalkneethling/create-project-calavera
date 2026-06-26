@@ -77,8 +77,10 @@ Document this to the user when relevant:
 
 If the project uses additional package ecosystems (e.g. `pip`, `cargo`, `bundler`,
 `docker`, `composer`), add an additional `updates` block per ecosystem using the
-same `schedule` and `cooldown` values. Keep `npm` and `github-actions` blocks
-unchanged. Use the references file for additional ecosystem identifiers if needed.
+same schedule. Keep `npm` and `github-actions` blocks unchanged. Apply
+semver-specific cooldown fields only to semver-capable ecosystems; omit those
+cooldown fields for ecosystems such as `docker` and `composer`. Use the
+references file for additional ecosystem identifiers if needed.
 
 ### 3. Handle directory variations
 

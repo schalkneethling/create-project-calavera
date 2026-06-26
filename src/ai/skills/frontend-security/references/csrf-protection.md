@@ -57,10 +57,20 @@ fetch("/api/action", {
 });
 
 // Server validates cookie matches header
+import { timingSafeEqual } from "node:crypto";
+
 function validateDoubleSubmit(req) {
   const cookieToken = req.cookies.csrf_token;
   const headerToken = req.headers["x-csrf-token"];
-  return cookieToken && cookieToken === headerToken;
+
+  if (typeof cookieToken !== "string" || typeof headerToken !== "string") {
+    return false;
+  }
+
+  const cookieBuffer = Buffer.from(cookieToken);
+  const headerBuffer = Buffer.from(headerToken);
+
+  return cookieBuffer.length === headerBuffer.length && timingSafeEqual(cookieBuffer, headerBuffer);
 }
 ```
 

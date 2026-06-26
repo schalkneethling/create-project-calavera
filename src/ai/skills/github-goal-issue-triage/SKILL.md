@@ -77,7 +77,7 @@ If label creation or issue updates fail, capture the error and include a read-on
 
 ## HTML Report Requirements
 
-Generate a self-contained HTML file with readable CSS and no external dependencies. Escape issue titles, labels, body excerpts, and rationale text before writing HTML.
+Generate a self-contained HTML file with readable CSS and no external dependencies. Escape every dynamic value before writing HTML, including repository names, `GOAL.md` summaries, generated status text, skipped reasons, issue URLs/numbers/titles, labels, body excerpts, rationale, impact, nominee text, and notes. Prefer a single `escapeHtml()` helper at the interpolation boundary.
 
 The report must include:
 

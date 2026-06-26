@@ -93,6 +93,10 @@ function validateToken(token, fingerprintCookie) {
 
 ### Recommended: sessionStorage + Fingerprint Cookie
 
+`sessionStorage` is still readable by XSS. This pattern limits persistence
+across tabs and browser sessions, but an `httpOnly` cookie remains preferable
+when the server can own token storage.
+
 ```javascript
 // Store token in sessionStorage
 sessionStorage.setItem("token", jwt);

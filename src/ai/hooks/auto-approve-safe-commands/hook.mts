@@ -118,7 +118,20 @@ const SAFE_PATTERNS: { pattern: RegExp; label: string }[] = [
   { pattern: /^git\s+--version\b/, label: "git --version" },
 ];
 
+const UNSAFE_SHELL_SYNTAX = /[;&|<>`]|\$\(|\r|\n/;
+const SAFE_COMMAND_WORDS = /^[\w@%+=:,./\s-]+$/;
+const DESTRUCTIVE_OPTIONS =
+  /(?:^|\s)(?:--force|--fix|--write|--delete|-delete|-f|-r|-R|-rf|-fr|--recursive)(?:\s|$)/;
+
 // --- Helpers ---
+
+function isSafeCommandShape(command: string): boolean {
+  return (
+    !UNSAFE_SHELL_SYNTAX.test(command) &&
+    SAFE_COMMAND_WORDS.test(command) &&
+    !DESTRUCTIVE_OPTIONS.test(command)
+  );
+}
 
 function approve(): void {
   const output: ApproveOutput = {
@@ -173,6 +186,11 @@ function main(): void {
   }
 
   const trimmed = command.trim();
+
+  if (!isSafeCommandShape(trimmed)) {
+    defer();
+    return;
+  }
 
   for (const { pattern, label } of SAFE_PATTERNS) {
     if (pattern.test(trimmed)) {

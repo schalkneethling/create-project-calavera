@@ -237,8 +237,8 @@ npx playwright test --update-snapshots
 ```bash
 # See what changed
 git diff --stat
-# Review each screenshot
-open tests/screenshots/
+# Review visual diffs in the Playwright report or configured snapshot directory
+npx playwright show-report
 ```
 
 ### Workflow

@@ -47,6 +47,8 @@ const AI_SOURCE_DIRECTORIES = Object.freeze({
   agent: "agents",
 });
 
+const AI_HOOK_FILES = Object.freeze(["hook.mjs", "settings-fragment.json"]);
+
 /**
  * @param {string} type
  * @param {number} index
@@ -98,7 +100,15 @@ function normalizeAiTarget(type, item, index) {
     return undefined;
   }
 
-  return item.target?.trim() || DEFAULT_AI_TARGET;
+  const target = item.target?.trim() || DEFAULT_AI_TARGET;
+
+  if (target.includes("/") || target.includes("\\") || target === "." || target === "..") {
+    throw new Error(
+      `AI item at index ${index} target must be a single directory name without path separators or traversal.`,
+    );
+  }
+
+  return target;
 }
 
 /**
@@ -216,6 +226,40 @@ function aiInstallPath(type, name, target) {
 }
 
 /**
+ * @param {string} hookPath
+ * @returns {string}
+ */
+function hookSettingsInstallPath(hookPath) {
+  return join(dirname(hookPath), `${basename(hookPath, ".mjs")}.settings-fragment.json`);
+}
+
+/**
+ * @param {string} directory
+ * @returns {Promise<string>}
+ */
+async function hashHookDirectory(directory) {
+  const hashes = await Promise.all(
+    AI_HOOK_FILES.map((fileName) => hashFile(join(directory, fileName))),
+  );
+  return hashes.join(".");
+}
+
+/**
+ * @param {string} hookPath
+ * @returns {Promise<string>}
+ */
+async function hashHookInstall(hookPath) {
+  const settingsPath = hookSettingsInstallPath(hookPath);
+  const hashes = [await hashFile(hookPath)];
+
+  if (await fileExists(settingsPath)) {
+    hashes.push(await hashFile(settingsPath));
+  }
+
+  return hashes.join(".");
+}
+
+/**
  * @param {AiArtifactType} type
  * @param {string} sourcePath
  * @param {number} index
@@ -257,7 +301,7 @@ async function hashAiSource(type, sourcePath) {
   }
 
   if (type === "hook") {
-    return hashFile(join(sourcePath, "hook.mjs"));
+    return hashHookDirectory(sourcePath);
   }
 
   return hashFile(sourcePath);
@@ -271,6 +315,10 @@ async function hashAiSource(type, sourcePath) {
 export async function hashAiInstall(type, installPath) {
   if (type === "skill") {
     return hashDirectory(installPath);
+  }
+
+  if (type === "hook") {
+    return hashHookInstall(installPath);
   }
 
   return hashFile(installPath);
@@ -329,11 +377,19 @@ async function copyAiArtifact(artifact) {
     return;
   }
 
-  const sourcePath =
-    artifact.type === "hook" ? join(artifact.sourcePath, "hook.mjs") : artifact.sourcePath;
-
   await mkdir(dirname(installPath), { recursive: true });
-  await writeFile(installPath, await readFile(sourcePath));
+
+  if (artifact.type === "hook") {
+    await writeFile(installPath, await readFile(join(artifact.sourcePath, "hook.mjs")));
+    await writeFile(
+      hookSettingsInstallPath(installPath),
+      await readFile(join(artifact.sourcePath, "settings-fragment.json")),
+    );
+
+    return;
+  }
+
+  await writeFile(installPath, await readFile(artifact.sourcePath));
 }
 
 /**

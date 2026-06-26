@@ -93,16 +93,20 @@ app.use(
 
 ```javascript
 // astro.config.mjs
+// Development-only fallback. Prefer production headers from your hosting edge,
+// adapter middleware, or server response so each request can receive a fresh
+// nonce and avoid unsafe-inline.
 export default defineConfig({
   vite: {
     plugins: [
       {
-        name: "csp-plugin",
+        name: "dev-csp-plugin",
+        apply: "serve",
         configureServer(server) {
           server.middlewares.use((req, res, next) => {
             res.setHeader(
               "Content-Security-Policy",
-              "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';",
+              "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';",
             );
             next();
           });
@@ -118,11 +122,13 @@ export default defineConfig({
 ```html
 <meta
   http-equiv="Content-Security-Policy"
-  content="default-src 'self'; script-src 'self' 'nonce-abc123';"
+  content="default-src 'self'; script-src 'self' 'sha256-<base64-script-hash>'; object-src 'none'; base-uri 'none';"
 />
 ```
 
 **Note**: Meta tag CSP cannot set `frame-ancestors`, `report-uri`, or `sandbox`.
+Use hashes for static fallback pages. Use a response header when you need a
+per-request nonce.
 
 ## Report-Only Mode
 
@@ -139,7 +145,12 @@ Report endpoint:
 
 ```javascript
 app.post("/csp-report", express.json({ type: "application/csp-report" }), (req, res) => {
-  console.log("CSP Violation:", req.body);
+  const report = req.body?.["csp-report"] ?? {};
+  console.warn("CSP Violation:", {
+    blockedUri: report["blocked-uri"],
+    violatedDirective: report["violated-directive"],
+    documentUri: report["document-uri"],
+  });
   res.status(204).end();
 });
 ```

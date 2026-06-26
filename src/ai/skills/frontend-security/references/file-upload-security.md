@@ -258,6 +258,13 @@ function safeExtractZip(zipPath, destDir, maxSize = 100 * 1024 * 1024) {
     }
 
     // Check compression ratio (zip bomb indicator)
+    if (entry.header.compressedSize === 0) {
+      if (entry.header.size > 0) {
+        throw new Error("Suspicious zero-compressed entry");
+      }
+      continue;
+    }
+
     const ratio = entry.header.size / entry.header.compressedSize;
     if (ratio > 100) {
       throw new Error("Suspicious compression ratio");

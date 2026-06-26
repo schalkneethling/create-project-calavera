@@ -54,7 +54,7 @@
   --radius-md: var(--size-8);
   --radius-lg: var(--size-12);
   --radius-xl: var(--size-16);
-  --radius-full: 50%;
+  --radius-full: 9999px;
 
   /* ========================================
    * Z-Index Layers

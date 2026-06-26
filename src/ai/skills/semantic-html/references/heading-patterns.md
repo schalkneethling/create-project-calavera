@@ -18,7 +18,8 @@ Make heading level a prop/parameter with a sensible default.
 ```jsx
 // React example
 function Card({ title, headingLevel = 3, children }) {
-  const Heading = `h${headingLevel}`;
+  const safeHeadingLevel = Math.min(6, Math.max(1, Number(headingLevel) || 3));
+  const Heading = `h${safeHeadingLevel}`;
   return (
     <article className="card">
       <Heading>{title}</Heading>
@@ -30,7 +31,8 @@ function Card({ title, headingLevel = 3, children }) {
 
 ```twig
 {# Twig example #}
-{% set heading_tag = heading_level|default(3) %}
+{% set requested_level = heading_level|default(3) %}
+{% set heading_tag = requested_level < 1 ? 1 : requested_level > 6 ? 6 : requested_level %}
 <article class="card">
   <h{{ heading_tag }}>{{ title }}</h{{ heading_tag }}>
   {{ content }}
@@ -55,10 +57,11 @@ Set defaults based on known component relationships.
 
 ```jsx
 // Section always starts a new heading context
-function Section({ title, children }) {
+function Section({ id, title, children }) {
+  const headingId = `${id}-section-title`;
   return (
-    <section aria-labelledby="section-title">
-      <h2 id="section-title">{title}</h2>
+    <section aria-labelledby={headingId}>
+      <h2 id={headingId}>{title}</h2>
       {children}
     </section>
   );
@@ -96,8 +99,10 @@ Create a heading component that handles both semantic and visual concerns.
 
 ```jsx
 function Heading({ level, visualLevel = level, children, className = "" }) {
-  const Tag = `h${level}`;
-  const visualClass = `u-heading-${visualLevel}`;
+  const semanticLevel = Math.min(6, Math.max(1, Number(level) || 2));
+  const visualHeadingLevel = Math.min(6, Math.max(1, Number(visualLevel) || semanticLevel));
+  const Tag = `h${semanticLevel}`;
+  const visualClass = `u-heading-${visualHeadingLevel}`;
 
   return <Tag className={`${visualClass} ${className}`}>{children}</Tag>;
 }
@@ -127,7 +132,8 @@ Generic components inherit heading config when specialised.
 ```jsx
 // Generic card
 function Card({ title, headingLevel = 3, headingClass, children }) {
-  const Heading = `h${headingLevel}`;
+  const safeHeadingLevel = Math.min(6, Math.max(1, Number(headingLevel) || 3));
+  const Heading = `h${safeHeadingLevel}`;
   return (
     <article className="card">
       <Heading className={headingClass}>{title}</Heading>
@@ -147,10 +153,11 @@ function ProductCard({ product, headingLevel = 3 }) {
 }
 
 // Page section - sets context for children
-function FeaturedProducts({ products }) {
+function FeaturedProducts({ id, products }) {
+  const headingId = `${id}-featured-heading`;
   return (
-    <section aria-labelledby="featured-heading">
-      <h2 id="featured-heading">Featured Products</h2>
+    <section aria-labelledby={headingId}>
+      <h2 id={headingId}>Featured Products</h2>
       <ul className="product-grid">
         {products.map((product) => (
           <li key={product.id}>

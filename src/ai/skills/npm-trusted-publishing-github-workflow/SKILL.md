@@ -209,10 +209,29 @@ jobs:
         # No-op on Node >= 24.8.0; the guard only matters if Node is pinned lower.
         run: |
           required="11.5.1"
+          pinned_npm="11.6.0"
           current="$(npm --version)"
-          if npx -y semver -r "<$required" --include-prerelease "$current" > /dev/null 2>&1; then
-            echo "npm $current is below $required; upgrading."
-            npm install -g npm@latest
+          if node - "$current" "$required" <<'NODE'
+          const [current, required] = process.argv.slice(2);
+          const parse = (version) => version.split(".").map((part) => Number.parseInt(part, 10));
+          const [currentMajor, currentMinor, currentPatch] = parse(current);
+          const [requiredMajor, requiredMinor, requiredPatch] = parse(required);
+          const currentParts = [currentMajor, currentMinor, currentPatch];
+          const requiredParts = [requiredMajor, requiredMinor, requiredPatch];
+          let isBelow = false;
+          for (const [index, part] of currentParts.entries()) {
+            if (part !== requiredParts[index]) {
+              isBelow = part < requiredParts[index];
+              break;
+            }
+          }
+          process.exit(isBelow ? 1 : 0);
+          NODE
+          then
+            echo "npm $current satisfies $required."
+          else
+            echo "npm $current is below $required; upgrading to pinned npm $pinned_npm."
+            npm install -g "npm@$pinned_npm"
           fi
           npm --version
 

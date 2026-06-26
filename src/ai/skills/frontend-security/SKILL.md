@@ -24,20 +24,20 @@ Perform comprehensive security audits of frontend codebases to identify vulnerab
 grep -rn "dangerouslySetInnerHTML" --include="*.jsx" --include="*.tsx" --include="*.js"
 
 # Direct DOM manipulation
-grep -rn "\.innerHTML\s*=" --include="*.js" --include="*.ts" --include="*.jsx" --include="*.tsx"
-grep -rn "\.outerHTML\s*=" --include="*.js" --include="*.ts"
+grep -rn "\.innerHTML[[:space:]]*=" --include="*.js" --include="*.ts" --include="*.jsx" --include="*.tsx"
+grep -rn "\.outerHTML[[:space:]]*=" --include="*.js" --include="*.ts"
 grep -rn "document\.write" --include="*.js" --include="*.ts"
 
 # URL-based injection
-grep -rn "location\.href\s*=" --include="*.js" --include="*.ts"
+grep -rn "location\.href[[:space:]]*=" --include="*.js" --include="*.ts"
 grep -rn "location\.replace" --include="*.js" --include="*.ts"
 grep -rn "window\.open" --include="*.js" --include="*.ts"
 
 # Eval and code execution
-grep -rn "eval\s*(" --include="*.js" --include="*.ts"
-grep -rn "new Function\s*(" --include="*.js" --include="*.ts"
-grep -rn "setTimeout\s*(\s*['\"]" --include="*.js" --include="*.ts"
-grep -rn "setInterval\s*(\s*['\"]" --include="*.js" --include="*.ts"
+grep -rn "eval[[:space:]]*(" --include="*.js" --include="*.ts"
+grep -rn "new Function[[:space:]]*(" --include="*.js" --include="*.ts"
+grep -rn "setTimeout[[:space:]]*([[:space:]]*['\"]" --include="*.js" --include="*.ts"
+grep -rn "setInterval[[:space:]]*([[:space:]]*['\"]" --include="*.js" --include="*.ts"
 
 # Twig unescaped output
 grep -rn "|raw" --include="*.twig" --include="*.html.twig"
@@ -51,8 +51,8 @@ grep -rn "{% autoescape false %}" --include="*.twig"
 grep -rn "<form" --include="*.html" --include="*.jsx" --include="*.tsx" --include="*.twig"
 
 # State-changing requests without protection
-grep -rn "fetch\s*(" --include="*.js" --include="*.ts" | grep -E "(POST|PUT|DELETE|PATCH)"
-grep -rn "axios\.(post|put|delete|patch)" --include="*.js" --include="*.ts"
+rg -nUP "fetch[[:space:]]*\([^)]*method[[:space:]]*:[[:space:]]*['\"](?:POST|PUT|DELETE|PATCH)['\"]" --glob "*.{js,ts,jsx,tsx}"
+rg -nP "axios\.(post|put|delete|patch)" --glob "*.{js,ts,jsx,tsx}"
 ```
 
 ### Sensitive Data Exposure
@@ -63,9 +63,9 @@ grep -rn "localStorage\." --include="*.js" --include="*.ts"
 grep -rn "sessionStorage\." --include="*.js" --include="*.ts"
 
 # Hardcoded secrets
-grep -rn "api[_-]?key\s*[:=]" --include="*.js" --include="*.ts" --include="*.env"
-grep -rn "secret\s*[:=]" --include="*.js" --include="*.ts"
-grep -rn "password\s*[:=]" --include="*.js" --include="*.ts"
+grep -rn "api[_-]?key[[:space:]]*[:=]" --include="*.js" --include="*.ts" --include="*.env"
+grep -rn "secret[[:space:]]*[:=]" --include="*.js" --include="*.ts"
+grep -rn "password[[:space:]]*[:=]" --include="*.js" --include="*.ts"
 ```
 
 ## Reference Documentation

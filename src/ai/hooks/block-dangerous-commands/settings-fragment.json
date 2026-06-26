@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/block-dangerous-commands.mjs"
+            "command": "node .agents/hooks/claude-code/block-dangerous-commands.mjs"
           }
         ]
       }

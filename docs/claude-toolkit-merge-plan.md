@@ -12,9 +12,9 @@ at Calavera, then it is deprecated and the repository is archived.
 ## Repositories
 
 - Calavera local checkout:
-  `/Users/schalkneethling/dev/opensource/create-project-calavera`
+  `create-project-calavera/`
 - Toolkit local checkout:
-  `/Users/schalkneethling/dev/opensource/claude-toolkit`
+  `claude-toolkit/`
 - Calavera GitHub:
   <https://github.com/schalkneethling/create-project-calavera>
 - Toolkit GitHub:

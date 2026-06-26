@@ -6,7 +6,7 @@
         "hooks": [
           {
             "type": "command",
-            "command": "node .claude/hooks/auto-approve-safe-commands.mjs",
+            "command": "node .agents/hooks/claude-code/auto-approve-safe-commands.mjs",
             "timeout": 5,
             "statusMessage": "Checking if command can be auto-approved..."
           }

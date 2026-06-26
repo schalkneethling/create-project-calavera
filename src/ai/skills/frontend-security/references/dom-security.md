@@ -133,8 +133,15 @@ const element = document.getElementById("config");
 const userConfig = new Map();
 userConfig.set(userKey, userValue);
 
-// 4. Freeze global objects
-Object.freeze(window.config);
+// 4. Freeze only owned objects after validating shape
+if (
+  Object.hasOwn(window, "config") &&
+  typeof window.config === "object" &&
+  window.config !== null &&
+  !(window.config instanceof Element)
+) {
+  Object.freeze(window.config);
+}
 
 // 5. Use nullish coalescing with type checking
 const config = window.config ?? {};

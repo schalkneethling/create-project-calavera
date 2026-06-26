@@ -43,13 +43,18 @@ window.open(userInput); // XSS
 element.textContent = userInput; // Safe
 element.innerText = userInput; // Safe
 
-// Safe attribute setting (for safe attributes)
-element.setAttribute("title", userInput); // Safe for non-event attributes
+// Safe attribute setting (only for explicitly benign attributes)
+element.setAttribute("title", userInput); // Safe for plain text attributes
+// Do not treat href, src, style, or event-handler attributes as safe sinks.
 
 // Safe URL handling
-const url = new URL(userInput, window.location.origin);
-if (url.protocol === "https:") {
-  location.href = url.href;
+try {
+  const url = new URL(userInput, window.location.origin);
+  if (url.origin === window.location.origin && url.protocol === "https:") {
+    location.href = url.href;
+  }
+} catch {
+  // Reject invalid URLs.
 }
 ```
 
