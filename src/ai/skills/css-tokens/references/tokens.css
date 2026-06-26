@@ -1,0 +1,158 @@
+:root {
+  /* ========================================
+   * Typography - Font Families
+   * ======================================== */
+  --font-family-base:
+    inter, "Source Sans 3", "IBM Plex Sans", -apple-system, blinkmacsystemfont, "Segoe UI", roboto,
+    helvetica, arial, sans-serif;
+  --font-family-mono:
+    ui-monospace, "SF Mono", "Cascadia Code", "Segoe UI Mono", "Liberation Mono", menlo, monaco,
+    consolas, monospace;
+
+  /* ========================================
+   * Typography - Font Weights
+   * ======================================== */
+  --font-weight-regular: 400;
+  --font-weight-medium: 500;
+  --font-weight-semibold: 600;
+  --font-weight-bold: 700;
+
+  /* ========================================
+   * Typography - Font Sizes
+   * Token name = approximate pixel value
+   * ======================================== */
+  --text-xs: 0.75rem; /* 12px */
+  --text-sm: 0.875rem; /* 14px */
+  --text-base: 1rem; /* 16px */
+  --text-lg: 1.125rem; /* 18px */
+  --text-xl: 1.25rem; /* 20px */
+  --text-2xl: 1.5rem; /* 24px */
+  --text-3xl: 1.875rem; /* 30px */
+  --text-4xl: 2.25rem; /* 36px */
+
+  /* ========================================
+   * Spacing / Size Scale
+   * Token name = pixel value (--size-16 = 16px = 1rem)
+   * ======================================== */
+  --size-4: 0.25rem; /* 4px */
+  --size-8: 0.5rem; /* 8px */
+  --size-12: 0.75rem; /* 12px */
+  --size-16: 1rem; /* 16px */
+  --size-20: 1.25rem; /* 20px */
+  --size-24: 1.5rem; /* 24px */
+  --size-32: 2rem; /* 32px */
+  --size-40: 2.5rem; /* 40px */
+  --size-48: 3rem; /* 48px */
+  --size-64: 4rem; /* 64px */
+  --size-80: 5rem; /* 80px */
+  --size-96: 6rem; /* 96px */
+
+  /* ========================================
+   * Border Radius (uses size tokens)
+   * ======================================== */
+  --radius-sm: var(--size-4);
+  --radius-md: var(--size-8);
+  --radius-lg: var(--size-12);
+  --radius-xl: var(--size-16);
+  --radius-full: 50%;
+
+  /* ========================================
+   * Z-Index Layers
+   * ======================================== */
+  --layer-send-to-back: -1;
+  --layer-dropdown: 100;
+  --layer-modal: 300;
+  --layer-toast: 400;
+  --layer-bring-to-front: 9999;
+
+  /* ========================================
+   * Transitions
+   * ======================================== */
+  --transition-fast: 150ms ease;
+  --transition-base: 250ms ease;
+  --transition-slow: 400ms ease;
+
+  /* ========================================
+   * Colors - Light Mode (Default)
+   * Using oklch() for perceptual uniformity
+   * ======================================== */
+
+  /* Surfaces */
+  --color-surface: oklch(98% 0.005 250deg); /* Near white */
+  --color-surface-raised: oklch(100% 0 0deg); /* Pure white */
+  --color-surface-sunken: oklch(95% 0.01 250deg); /* Slightly darker */
+
+  /* Text */
+  --color-text: oklch(25% 0.02 250deg); /* Dark slate */
+  --color-text-muted: oklch(50% 0.015 250deg); /* Medium gray */
+  --color-text-inverted: oklch(98% 0.005 250deg); /* Light for dark backgrounds */
+
+  /* Logo Colors - derived from brand */
+  --color-logo-maker: oklch(40% 0.025 220deg); /* Dark slate-blue */
+  --color-logo-bench: oklch(55% 0.15 185deg); /* Teal */
+
+  /* Primary - Teal (matches logo "Bench") */
+  --color-primary: oklch(50% 0.14 185deg);
+  --color-primary-hover: oklch(45% 0.14 185deg);
+  --color-primary-active: oklch(40% 0.14 185deg);
+
+  /* Accent - Coral/Orange for CTAs */
+  --color-accent: oklch(65% 0.18 35deg);
+  --color-accent-hover: oklch(60% 0.18 35deg);
+
+  /* Borders */
+  --color-border: oklch(88% 0.01 250deg);
+  --color-border-strong: oklch(75% 0.015 250deg);
+
+  /* States */
+  --color-success: oklch(55% 0.15 145deg);
+  --color-error: oklch(55% 0.2 25deg);
+  --color-warning: oklch(70% 0.15 80deg);
+  --color-info: oklch(55% 0.12 240deg);
+
+  /* Focus ring */
+  --color-focus-ring: oklch(55% 0.15 185deg / 50%);
+}
+
+/* ========================================
+ * Colors - Dark Mode
+ * ======================================== */
+@media (prefers-color-scheme: dark) {
+  :root {
+    /* Surfaces */
+    --color-surface: oklch(18% 0.015 250deg); /* Deep charcoal */
+    --color-surface-raised: oklch(22% 0.015 250deg); /* Elevated dark */
+    --color-surface-sunken: oklch(14% 0.015 250deg); /* Deeper */
+
+    /* Text */
+    --color-text: oklch(92% 0.01 250deg); /* Light gray */
+    --color-text-muted: oklch(65% 0.01 250deg); /* Muted gray */
+    --color-text-inverted: oklch(18% 0.015 250deg); /* Dark for light backgrounds */
+
+    /* Logo Colors - brighter for dark mode */
+    --color-logo-maker: oklch(75% 0.02 220deg); /* Lighter slate */
+    --color-logo-bench: oklch(65% 0.15 185deg); /* Brighter teal */
+
+    /* Primary - Brighter teal for dark mode */
+    --color-primary: oklch(60% 0.14 185deg);
+    --color-primary-hover: oklch(65% 0.14 185deg);
+    --color-primary-active: oklch(55% 0.14 185deg);
+
+    /* Accent */
+    --color-accent: oklch(70% 0.16 35deg);
+    --color-accent-hover: oklch(75% 0.16 35deg);
+
+    /* Borders */
+    --color-border: oklch(30% 0.015 250deg);
+    --color-border-strong: oklch(40% 0.015 250deg);
+
+    /* States */
+    --color-success: oklch(60% 0.15 145deg);
+    --color-error: oklch(60% 0.18 25deg);
+    --color-warning: oklch(75% 0.15 80deg);
+    --color-info: oklch(60% 0.12 240deg);
+
+    /* Focus ring */
+    --color-focus-ring: oklch(60% 0.15 185deg / 50%);
+  }
+}

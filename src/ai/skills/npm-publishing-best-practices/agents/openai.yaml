@@ -1,0 +1,3 @@
+display_name: npm Publishing Security
+short_description: Audit and improve secure npm package publishing workflows.
+default_prompt: Audit this package's npm publishing setup and recommend secure trusted publishing, token, workflow, and release hardening improvements.

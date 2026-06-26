@@ -1,18 +1,113 @@
 #!/usr/bin/env node
+// @ts-check
 import { existsSync } from "node:fs";
-import { access, constants, mkdir, readFile, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 
 import { cancel, confirm, intro, isCancel, multiselect, select, spinner } from "@clack/prompts";
 import { execa } from "execa";
 
+import {
+  assertAiSourceExists,
+  buildAiApplyResult,
+  hashAiInstall,
+  resolveAiArtifacts,
+} from "./ai/artifacts.js";
 import { integrationCatalog } from "./catalog.js";
+import {
+  createEmptyState,
+  managedFileStateForPath,
+  managedFilesFromState,
+  normalizeState,
+  optionalStringArray,
+} from "./state.js";
 import { FileWriteError } from "./utils/file-write-error.js";
+import { fileExists, readJSON, writeJSON } from "./utils/fs.js";
+import { isNotEmptyString, isPlainObject } from "./utils/guards.js";
+import { textHash } from "./utils/hash.js";
 import { logger } from "./utils/logger.js";
+
+/**
+ * @typedef {"npm" | "pnpm" | "yarn" | "bun"} PackageManager
+ * @typedef {import("./ai/artifacts.js").AiArtifactState} AiArtifactState
+ * @typedef {import("./state.js").CalaveraState} CalaveraState
+ * @typedef {import("./state.js").ManagedFileState} ManagedFileState
+ *
+ * @typedef {object} CliOptions
+ * @property {string} command
+ * @property {string} config
+ * @property {boolean} dryRun
+ * @property {boolean} json
+ * @property {boolean} noInstall
+ * @property {boolean} assumeYes
+ * @property {PackageManager} [packageManager]
+ * @property {string} [profile]
+ *
+ * @typedef {object} PackageManagerCommands
+ * @property {[string, string[]]} init
+ * @property {(dependencies: string[]) => [string, string[]]} installDev
+ * @property {(script: string) => string} run
+ *
+ * @typedef {object} PackageJSON
+ * @property {Record<string, string | boolean>} [scripts]
+ * @property {string} [packageManager]
+ * @property {{ packageManager?: { name?: string } | Array<{ name?: string }> }} [devEngines]
+ *
+ * @typedef {object} Integration
+ * @property {string} id
+ * @property {string} [label]
+ * @property {string} [group]
+ * @property {string} [platform]
+ * @property {string} [plugin]
+ * @property {string} [status]
+ * @property {string[]} [dependencies]
+ * @property {string[]} [includes]
+ * @property {{ extends?: string[], plugins?: string[], rules?: Record<string, unknown> }} [stylelint]
+ *
+ * @typedef {object} Recipe
+ * @property {string} [$schema]
+ * @property {number} [version]
+ * @property {string} [profile]
+ * @property {PackageManager} [packageManager]
+ * @property {string[]} [integrations]
+ * @property {Record<string, boolean>} [scripts]
+ * @property {unknown} [ai]
+ *
+ * @typedef {{ type: string, path: string, category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], removedDefaultTestScript?: boolean }} Change
+ *
+ * @typedef {object} ApplyResult
+ * @property {"apply"} command
+ * @property {boolean} dryRun
+ * @property {PackageManager} packageManager
+ * @property {string[]} dependencies
+ * @property {string[]} integrations
+ * @property {Change[]} changes
+ * @property {string[]} pointers
+ *
+ * @typedef {object} CleanResult
+ * @property {"clean"} command
+ * @property {boolean} [dryRun]
+ * @property {Change[]} changes
+ * @property {string} message
+ *
+ * @typedef {object} DoctorResult
+ * @property {"doctor"} command
+ * @property {boolean} ok
+ * @property {{ level: "error" | "warning", message: string }[]} issues
+ *
+ * @typedef {object} InitResult
+ * @property {"init"} command
+ * @property {string} config
+ * @property {boolean} dryRun
+ * @property {Recipe} recipe
+ *
+ * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult} CommandResult
+ */
 
 const CONFIG_FILE = "calavera.config.json";
 const STATE_FILE = ".calavera/state.json";
 
+/** @type {Record<string, string[]>} */
 const profileDefaults = {
   modern: [
     "editorconfig",
@@ -41,6 +136,7 @@ const profileDefaults = {
   minimal: ["editorconfig"],
 };
 
+/** @type {Record<PackageManager, PackageManagerCommands>} */
 const packageManagerCommands = {
   npm: {
     init: ["npm", ["init", "-y"]],
@@ -64,32 +160,52 @@ const packageManagerCommands = {
   },
 };
 
-const supportedPackageManagers = Object.keys(packageManagerCommands);
+/** @type {PackageManager[]} */
+const supportedPackageManagers = /** @type {PackageManager[]} */ (
+  Object.keys(packageManagerCommands)
+);
 const args = process.argv.slice(2);
 
+/**
+ * @param {string} packageManager
+ * @returns {never}
+ */
 function exitUnsupportedPackageManager(packageManager) {
   logger.error(
     `Unsupported package manager "${packageManager}". Supported package managers: ${supportedPackageManagers.join(", ")}.`,
   );
   process.exit(1);
+  throw new Error(`Unsupported package manager "${packageManager}".`);
 }
 
+/**
+ * @param {string | undefined} packageManager
+ * @returns {PackageManager}
+ */
 function assertSupportedPackageManager(packageManager) {
-  if (!supportedPackageManagers.includes(packageManager)) {
-    exitUnsupportedPackageManager(packageManager);
+  if (
+    !packageManager ||
+    !supportedPackageManagers.includes(/** @type {PackageManager} */ (packageManager))
+  ) {
+    exitUnsupportedPackageManager(packageManager ?? "<missing>");
   }
 
-  return packageManager;
+  return /** @type {PackageManager} */ (packageManager);
 }
 
+/**
+ * @param {string[]} rawArgs
+ * @returns {CliOptions}
+ */
 function parseArgs(rawArgs) {
+  /** @type {CliOptions} */
   const parsed = {
     command: rawArgs[0]?.startsWith("-") ? "init" : (rawArgs[0] ?? "init"),
     config: CONFIG_FILE,
     dryRun: false,
     json: false,
     noInstall: false,
-    yes: false,
+    assumeYes: false,
   };
 
   for (let index = 0; index < rawArgs.length; index += 1) {
@@ -104,12 +220,12 @@ function parseArgs(rawArgs) {
     } else if (arg === "--no-install") {
       parsed.noInstall = true;
     } else if (arg === "--yes") {
-      parsed.yes = true;
+      parsed.assumeYes = true;
     } else if (arg === "--package-manager") {
       parsed.packageManager = assertSupportedPackageManager(rawArgs[index + 1]);
       index += 1;
     } else if (arg === "--profile") {
-      parsed.profile = rawArgs[index + 1];
+      parsed.profile = rawArgs[index + 1] ?? undefined;
       index += 1;
     }
   }
@@ -117,45 +233,70 @@ function parseArgs(rawArgs) {
   return parsed;
 }
 
-async function fileExists(path) {
-  try {
-    await access(path, constants.F_OK);
-    return true;
-  } catch {
-    return false;
-  }
-}
-
-async function readJSON(path) {
-  return JSON.parse(await readFile(path, "utf8"));
-}
-
+/**
+ * @returns {Promise<PackageJSON>}
+ */
 async function readPackageJSONIfPresent() {
   const packageJSONPath = resolve("package.json");
 
   if (await fileExists(packageJSONPath)) {
-    return readJSON(packageJSONPath);
+    return /** @type {Promise<PackageJSON>} */ (readJSON(packageJSONPath));
   }
 
   return {};
 }
 
-async function writeJSON(path, value, dryRun) {
-  if (dryRun) {
-    return;
+/**
+ * @param {string} path
+ * @returns {Promise<Recipe>}
+ */
+async function readRecipe(path) {
+  const recipe = await readJSON(path);
+
+  if (!isPlainObject(recipe)) {
+    throw new Error(`${path} must contain a JSON object.`);
   }
 
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+  optionalStringArray(recipe.integrations, `${path} integrations`);
+
+  if (Object.hasOwn(recipe, "packageManager") && !isNotEmptyString(recipe.packageManager)) {
+    throw new Error(`${path} packageManager must be a non-empty string.`);
+  }
+
+  if (Object.hasOwn(recipe, "scripts") && !isPlainObject(recipe.scripts)) {
+    throw new Error(`${path} scripts must be an object.`);
+  }
+
+  return /** @type {Recipe} */ (recipe);
 }
 
+/**
+ * @param {Array<string | null | undefined | false>} values
+ * @returns {string[]}
+ */
 function unique(values) {
-  return [...new Set(values.filter(Boolean))];
+  return [...new Set(values.filter(isNotEmptyString))];
 }
 
+/**
+ * @returns {Promise<CalaveraState>}
+ */
+async function readStateIfPresent() {
+  if (!(await fileExists(STATE_FILE))) {
+    return createEmptyState();
+  }
+
+  return normalizeState(await readJSON(STATE_FILE));
+}
+
+/**
+ * @param {Recipe} recipe
+ * @returns {Integration[]}
+ */
 function resolveIntegrations(recipe) {
   const selected = new Set(recipe.integrations ?? []);
 
-  for (const integration of integrationCatalog) {
+  for (const integration of /** @type {Integration[]} */ (integrationCatalog)) {
     if (selected.has(integration.id)) {
       for (const includes of integration.includes ?? []) {
         selected.add(includes);
@@ -163,9 +304,17 @@ function resolveIntegrations(recipe) {
     }
   }
 
-  return integrationCatalog.filter((integration) => selected.has(integration.id));
+  return /** @type {Integration[]} */ (integrationCatalog).filter((integration) =>
+    selected.has(integration.id),
+  );
 }
 
+/**
+ * @param {string} profile
+ * @param {string[]} integrations
+ * @param {PackageManager} [packageManager]
+ * @returns {Recipe}
+ */
 function buildRecipe(profile, integrations, packageManager = "npm") {
   return {
     $schema: "https://calavera.dev/schema/calavera.config.schema.json",
@@ -184,6 +333,10 @@ function buildRecipe(profile, integrations, packageManager = "npm") {
   };
 }
 
+/**
+ * @param {PackageJSON} [packageJSON]
+ * @returns {PackageManager}
+ */
 function detectPackageManager(packageJSON = {}) {
   if (packageJSON.packageManager?.startsWith("pnpm")) {
     return "pnpm";
@@ -199,14 +352,15 @@ function detectPackageManager(packageJSON = {}) {
 
   const devPackageManagers = [packageJSON.devEngines?.packageManager]
     .flat()
-    .filter(Boolean)
-    .map((packageManager) => packageManager.name);
+    .flatMap((packageManager) =>
+      packageManager && typeof packageManager.name === "string" ? [packageManager.name] : [],
+    );
   const devPackageManager = devPackageManagers.find((packageManager) =>
-    supportedPackageManagers.includes(packageManager),
+    supportedPackageManagers.includes(/** @type {PackageManager} */ (packageManager)),
   );
 
   if (devPackageManager) {
-    return devPackageManager;
+    return /** @type {PackageManager} */ (devPackageManager);
   }
 
   if (existsSync("pnpm-lock.yaml") || existsSync("shrinkwrap.yaml")) {
@@ -228,6 +382,10 @@ function detectPackageManager(packageJSON = {}) {
   return "npm";
 }
 
+/**
+ * @param {PackageJSON} packageJSON
+ * @returns {boolean}
+ */
 function removeDefaultTestScript(packageJSON) {
   const defaultNpmTestScript = 'echo "Error: no test specified" && exit 1';
 
@@ -239,15 +397,22 @@ function removeDefaultTestScript(packageJSON) {
   return false;
 }
 
-async function ensurePackageJSON(packageManager, dryRun, yes, json) {
+/**
+ * @param {PackageManager} packageManager
+ * @param {boolean} dryRun
+ * @param {boolean} assumeYes
+ * @param {boolean} json
+ * @returns {Promise<PackageJSON>}
+ */
+async function ensurePackageJSON(packageManager, dryRun, assumeYes, json) {
   const supportedPackageManager = assertSupportedPackageManager(packageManager);
   const packageJSONPath = resolve("package.json");
 
   if (await fileExists(packageJSONPath)) {
-    return readJSON(packageJSONPath);
+    return /** @type {Promise<PackageJSON>} */ (readJSON(packageJSONPath));
   }
 
-  if (!yes) {
+  if (!assumeYes) {
     const createPackageJSON = await confirm({
       message:
         "No package.json found. Calavera needs one to manage tooling. Create a default package.json?",
@@ -267,15 +432,28 @@ async function ensurePackageJSON(packageManager, dryRun, yes, json) {
     spin?.stop("Created package.json");
   }
 
-  return dryRun ? { scripts: {} } : readJSON(packageJSONPath);
+  return dryRun ? { scripts: {} } : /** @type {Promise<PackageJSON>} */ (readJSON(packageJSONPath));
 }
 
+/**
+ * @param {string} label
+ * @param {string[]} extensions
+ * @param {string} command
+ * @returns {string}
+ */
 function runIfFiles(label, extensions, command) {
   return `node .calavera/run-if-files.mjs "${label}" "${extensions.join(",")}" -- ${command}`;
 }
 
+/**
+ * @param {Recipe} recipe
+ * @param {Integration[]} integrations
+ * @param {PackageManager} packageManager
+ * @returns {Record<string, string>}
+ */
 function buildScripts(recipe, integrations, packageManager) {
   const supportedPackageManager = assertSupportedPackageManager(packageManager);
+  /** @param {string} id */
   const has = (id) => integrations.some((integration) => integration.id === id);
   const usesOxlint = has("oxlint");
   const usesESLint = has("eslint");
@@ -287,7 +465,6 @@ function buildScripts(recipe, integrations, packageManager) {
   const jsExtensions = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
   const cssExtensions = ["css", "scss"];
   const reactExtensions = ["js", "jsx", "ts", "tsx"];
-  const tsExtensions = ["ts", "tsx"];
 
   const lintParts = [
     usesOxlint ? runIfFiles("JavaScript/TypeScript", jsExtensions, "oxlint .") : null,
@@ -301,6 +478,7 @@ function buildScripts(recipe, integrations, packageManager) {
     usesStylelint ? runIfFiles("CSS", cssExtensions, 'stylelint "**/*.{css,scss}" --fix') : null,
   ].filter(Boolean);
 
+  /** @type {Record<string, string>} */
   const scripts = {};
 
   if (recipe.scripts?.lint && lintParts.length > 0) {
@@ -332,7 +510,7 @@ function buildScripts(recipe, integrations, packageManager) {
   }
 
   if (recipe.scripts?.typecheck && usesTypeScript) {
-    scripts.typecheck = runIfFiles("TypeScript", tsExtensions, "tsc --noEmit");
+    scripts.typecheck = runIfFiles("JavaScript/TypeScript", jsExtensions, "tsc --noEmit");
   }
 
   if (usesReactDoctor) {
@@ -345,13 +523,16 @@ function buildScripts(recipe, integrations, packageManager) {
   }
 
   if (recipe.scripts?.check) {
-    scripts.check = [
+    const checkScripts = [
       "lint",
       "format:check",
       usesTypeScript && recipe.scripts?.typecheck ? "typecheck" : null,
       usesReactDoctor ? "react:doctor" : null,
     ]
-      .filter((script) => script && scripts[script])
+      .filter(isNotEmptyString)
+      .filter((script) => Boolean(scripts[script]));
+
+    scripts.check = checkScripts
       .map((script) => packageManagerCommands[supportedPackageManager].run(script))
       .join(" && ");
   }
@@ -455,6 +636,10 @@ trim_trailing_whitespace = true
 `;
 }
 
+/**
+ * @param {Integration[]} integrations
+ * @returns {{ plugins: string[], rules: Record<string, unknown> }}
+ */
 function createOxlintConfig(integrations) {
   const pluginNames = integrations
     .filter((integration) => integration.platform === "oxlint-plugin")
@@ -466,6 +651,10 @@ function createOxlintConfig(integrations) {
   };
 }
 
+/**
+ * @param {Integration[]} integrations
+ * @returns {string}
+ */
 function createESLintConfig(integrations) {
   const useTypeScript = integrations.some((integration) => integration.id === "typescript-eslint");
   const usePrettier = integrations.some(
@@ -525,7 +714,12 @@ export default [
 `;
 }
 
+/**
+ * @param {Integration[]} integrations
+ * @returns {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }}
+ */
 function createStylelintConfig(integrations) {
+  /** @type {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }} */
   const config = {
     extends: [],
     ignoreFiles: ["coverage/**", "dist/**", "dist-web/**", "node_modules/**"],
@@ -567,9 +761,10 @@ function createTSConfig() {
       skipLibCheck: true,
       strict: true,
       target: "ESNext",
+      types: ["node"],
       verbatimModuleSyntax: true,
     },
-    include: ["src/**/*.ts", "src/**/*.tsx"],
+    include: ["src/**/*.js", "src/**/*.ts", "src/**/*.tsx"],
     exclude: ["node_modules"],
   };
 }
@@ -580,6 +775,10 @@ function createReactDoctorConfig() {
   };
 }
 
+/**
+ * @param {Integration[]} integrations
+ * @returns {boolean}
+ */
 function usesRunIfFilesHelper(integrations) {
   return integrations.some((integration) =>
     ["eslint", "oxfmt", "oxlint", "react-doctor", "stylelint", "typescript"].includes(
@@ -588,12 +787,57 @@ function usesRunIfFilesHelper(integrations) {
   );
 }
 
-async function writeManagedFile(path, contents, dryRun, changes) {
-  changes.push({ type: "write", path });
-
-  if (dryRun) {
+/**
+ * @param {string} path
+ * @param {string} contents
+ * @param {CalaveraState} previousState
+ */
+async function assertSafeManagedFileWrite(path, contents, previousState) {
+  if (!(await fileExists(path))) {
     return;
   }
+
+  const targetHash = textHash(contents);
+  const installedHash = textHash(await readFile(path, "utf8"));
+
+  if (installedHash === targetHash) {
+    return;
+  }
+
+  const stateFile = managedFileStateForPath(previousState, path);
+
+  if (stateFile?.hash === installedHash) {
+    return;
+  }
+
+  const reason = stateFile
+    ? `It appears to have local edits (installed=${installedHash}, state=${stateFile.hash}).`
+    : "It is not recorded as Calavera-managed.";
+
+  throw new Error(`Refusing to overwrite existing managed file: ${path}. ${reason}`);
+}
+
+/**
+ * @param {string} path
+ * @param {string} contents
+ * @param {boolean} dryRun
+ * @param {Change[]} changes
+ * @param {CalaveraState} previousState
+ * @returns {Promise<ManagedFileState>}
+ */
+async function writeManagedFile(path, contents, dryRun, changes, previousState) {
+  changes.push({ type: "write", path });
+
+  const managedFile = {
+    path,
+    hash: textHash(contents),
+  };
+
+  if (dryRun) {
+    return managedFile;
+  }
+
+  await assertSafeManagedFileWrite(path, contents, previousState);
 
   const directory = dirname(path);
   if (directory !== ".") {
@@ -601,11 +845,36 @@ async function writeManagedFile(path, contents, dryRun, changes) {
   }
 
   await writeFile(path, contents);
+
+  return managedFile;
 }
 
+/**
+ * @param {string} path
+ * @param {unknown} value
+ * @param {boolean} dryRun
+ * @param {Change[]} changes
+ * @param {CalaveraState} previousState
+ * @returns {Promise<ManagedFileState>}
+ */
+async function writeManagedJSONFile(path, value, dryRun, changes, previousState) {
+  return writeManagedFile(
+    path,
+    `${JSON.stringify(value, null, 2)}\n`,
+    dryRun,
+    changes,
+    previousState,
+  );
+}
+
+/**
+ * @param {CliOptions} options
+ * @returns {Promise<ApplyResult>}
+ */
 async function applyRecipe(options) {
   const configPath = resolve(options.config);
-  const recipe = await readJSON(configPath);
+  const recipe = await readRecipe(configPath);
+  const previousState = await readStateIfPresent();
   const integrations = resolveIntegrations(recipe);
   const dependencyList = unique(
     integrations.flatMap((integration) => integration.dependencies ?? []),
@@ -617,12 +886,15 @@ async function applyRecipe(options) {
   const packageJSON = await ensurePackageJSON(
     packageManager,
     options.dryRun,
-    options.yes,
+    options.assumeYes,
     options.json,
   );
   const scripts = buildScripts(recipe, integrations, packageManager);
   const changes = [];
+  /** @type {ManagedFileState[]} */
+  const managedFiles = [];
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
+  const aiResult = await buildAiApplyResult(recipe, options, previousState);
 
   packageJSON.scripts = {
     ...packageJSON.scripts,
@@ -640,66 +912,118 @@ async function applyRecipe(options) {
   }
 
   if (integrations.some((integration) => integration.id === "editorconfig")) {
-    await writeManagedFile(".editorconfig", createEditorConfig(), options.dryRun, changes);
+    managedFiles.push(
+      await writeManagedFile(
+        ".editorconfig",
+        createEditorConfig(),
+        options.dryRun,
+        changes,
+        previousState,
+      ),
+    );
   }
 
   if (usesRunIfFilesHelper(integrations)) {
-    await writeManagedFile(
-      ".calavera/run-if-files.mjs",
-      createRunIfFilesHelper(),
-      options.dryRun,
-      changes,
+    managedFiles.push(
+      await writeManagedFile(
+        ".calavera/run-if-files.mjs",
+        createRunIfFilesHelper(),
+        options.dryRun,
+        changes,
+        previousState,
+      ),
     );
   }
 
   if (integrations.some((integration) => integration.id === "oxlint")) {
-    await writeJSON("oxlint.json", createOxlintConfig(integrations), options.dryRun);
-    changes.push({ type: "write", path: "oxlint.json" });
+    managedFiles.push(
+      await writeManagedJSONFile(
+        "oxlint.json",
+        createOxlintConfig(integrations),
+        options.dryRun,
+        changes,
+        previousState,
+      ),
+    );
   }
 
   if (integrations.some((integration) => integration.id === "eslint")) {
-    await writeManagedFile(
-      "eslint.config.js",
-      createESLintConfig(integrations),
-      options.dryRun,
-      changes,
+    managedFiles.push(
+      await writeManagedFile(
+        "eslint.config.js",
+        createESLintConfig(integrations),
+        options.dryRun,
+        changes,
+        previousState,
+      ),
     );
   }
 
   if (integrations.some((integration) => integration.id === "prettier")) {
-    await writeJSON(".prettierrc.json", {}, options.dryRun);
-    changes.push({ type: "write", path: ".prettierrc.json" });
-    await writeManagedFile(
-      ".prettierignore",
-      "node_modules\npackage-lock.json\npnpm-lock.yaml\nyarn.lock\nbun.lockb\n",
-      options.dryRun,
-      changes,
+    managedFiles.push(
+      await writeManagedJSONFile(".prettierrc.json", {}, options.dryRun, changes, previousState),
+    );
+    managedFiles.push(
+      await writeManagedFile(
+        ".prettierignore",
+        "node_modules\npackage-lock.json\npnpm-lock.yaml\nyarn.lock\nbun.lockb\n",
+        options.dryRun,
+        changes,
+        previousState,
+      ),
     );
   }
 
   if (integrations.some((integration) => integration.id === "stylelint")) {
-    await writeJSON(".stylelintrc.json", createStylelintConfig(integrations), options.dryRun);
-    changes.push({ type: "write", path: ".stylelintrc.json" });
+    managedFiles.push(
+      await writeManagedJSONFile(
+        ".stylelintrc.json",
+        createStylelintConfig(integrations),
+        options.dryRun,
+        changes,
+        previousState,
+      ),
+    );
   }
 
   if (integrations.some((integration) => integration.id === "react-doctor")) {
-    await writeJSON("react-doctor.config.json", createReactDoctorConfig(), options.dryRun);
-    changes.push({ type: "write", path: "react-doctor.config.json" });
+    managedFiles.push(
+      await writeManagedJSONFile(
+        "react-doctor.config.json",
+        createReactDoctorConfig(),
+        options.dryRun,
+        changes,
+        previousState,
+      ),
+    );
   }
 
   if (integrations.some((integration) => integration.id === "typescript")) {
-    await writeJSON("tsconfig.json", createTSConfig(), options.dryRun);
-    changes.push({ type: "write", path: "tsconfig.json" });
+    managedFiles.push(
+      await writeManagedJSONFile(
+        "tsconfig.json",
+        createTSConfig(),
+        options.dryRun,
+        changes,
+        previousState,
+      ),
+    );
   }
 
   if (!options.dryRun) {
     await mkdir(".calavera", { recursive: true });
-    await writeJSON(STATE_FILE, {
-      version: 1,
-      profile: recipe.profile,
-      integrations: integrations.map((integration) => integration.id),
-      files: changes.filter((change) => change.type === "write").map((change) => change.path),
-    });
+    await writeJSON(
+      STATE_FILE,
+      {
+        version: 1,
+        profile: recipe.profile,
+        integrations: integrations.map((integration) => integration.id),
+        files: managedFiles.map((file) => file.path),
+        managedFiles,
+        aiArtifacts: aiResult.artifacts,
+      },
+      false,
+    );
   }
 
   if (dependencyList.length > 0 && !options.noInstall && !options.dryRun) {
@@ -717,10 +1041,15 @@ async function applyRecipe(options) {
     packageManager,
     dependencies: dependencyList,
     integrations: integrations.map((integration) => integration.id),
-    changes,
+    changes: [...changes, ...aiResult.changes],
+    pointers: aiResult.pointers,
   };
 }
 
+/**
+ * @param {CliOptions} options
+ * @returns {Promise<InitResult>}
+ */
 async function initRecipe(options) {
   if (!options.json) {
     console.clear();
@@ -747,8 +1076,9 @@ async function initRecipe(options) {
     process.exit(0);
   }
 
-  const defaults = profileDefaults[profile] ?? profileDefaults.modern;
-  const optionalOptions = integrationCatalog
+  const profileName = typeof profile === "string" ? profile : "modern";
+  const defaults = profileDefaults[profileName] ?? profileDefaults.modern;
+  const optionalOptions = /** @type {Integration[]} */ (integrationCatalog)
     .filter((integration) => integration.status !== "required")
     .map((integration) => ({
       value: integration.id,
@@ -757,7 +1087,7 @@ async function initRecipe(options) {
     }));
 
   const selected =
-    options.yes || options.profile
+    options.assumeYes || options.profile
       ? defaults
       : await multiselect({
           message: "Choose integration packs",
@@ -771,11 +1101,18 @@ async function initRecipe(options) {
     process.exit(0);
   }
 
+  if (
+    !Array.isArray(selected) ||
+    !selected.every((integration) => typeof integration === "string")
+  ) {
+    throw new Error("Selected integration values must be strings.");
+  }
+
   const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = assertSupportedPackageManager(
     options.packageManager ?? detectPackageManager(detectedPackageJSON),
   );
-  const recipe = buildRecipe(profile, selected, packageManager);
+  const recipe = buildRecipe(profileName, selected, packageManager);
 
   await writeJSON(options.config, recipe, options.dryRun);
 
@@ -787,9 +1124,14 @@ async function initRecipe(options) {
   };
 }
 
+/**
+ * @param {CliOptions} options
+ * @returns {Promise<DoctorResult>}
+ */
 async function doctor(options) {
   const hasConfig = await fileExists(options.config);
   const hasPackageJSON = await fileExists("package.json");
+  /** @type {{ level: "error" | "warning", message: string }[]} */
   const issues = [];
 
   if (!hasConfig) {
@@ -807,8 +1149,9 @@ async function doctor(options) {
   }
 
   if (hasConfig) {
-    const recipe = await readJSON(options.config);
+    const recipe = await readRecipe(options.config);
     const integrations = resolveIntegrations(recipe);
+    const aiArtifacts = resolveAiArtifacts(recipe);
     const expectedFiles = [
       integrations.some((integration) => integration.id === "editorconfig")
         ? ".editorconfig"
@@ -825,13 +1168,24 @@ async function doctor(options) {
         : null,
       integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
       usesRunIfFilesHelper(integrations) ? ".calavera/run-if-files.mjs" : null,
-    ].filter(Boolean);
+    ].filter(isNotEmptyString);
 
     for (const file of expectedFiles) {
       if (!(await fileExists(file))) {
         issues.push({
           level: "warning",
           message: `Missing managed file: ${file}. Run create-project-calavera apply to regenerate managed files.`,
+        });
+      }
+    }
+
+    for (const artifact of aiArtifacts) {
+      await assertAiSourceExists(artifact.type, artifact.sourcePath, artifact.index);
+
+      if (!(await fileExists(artifact.path))) {
+        issues.push({
+          level: "warning",
+          message: `Missing managed AI ${artifact.type}: ${artifact.path}. Run create-project-calavera apply to regenerate managed AI artifacts.`,
         });
       }
     }
@@ -844,6 +1198,10 @@ async function doctor(options) {
   };
 }
 
+/**
+ * @param {Integration[]} integrations
+ * @returns {string[]}
+ */
 function expectedManagedFiles(integrations) {
   return [
     integrations.some((integration) => integration.id === "editorconfig") ? ".editorconfig" : null,
@@ -857,9 +1215,13 @@ function expectedManagedFiles(integrations) {
       : null,
     integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
     usesRunIfFilesHelper(integrations) ? ".calavera/run-if-files.mjs" : null,
-  ].filter(Boolean);
+  ].filter(isNotEmptyString);
 }
 
+/**
+ * @param {CliOptions} options
+ * @returns {Promise<CleanResult>}
+ */
 async function clean(options) {
   const hasState = await fileExists(STATE_FILE);
 
@@ -871,25 +1233,89 @@ async function clean(options) {
     };
   }
 
-  const state = await readJSON(STATE_FILE);
+  const state = await readStateIfPresent();
   const recipe = (await fileExists(options.config))
-    ? await readJSON(options.config)
+    ? await readRecipe(options.config)
     : { integrations: [] };
   const integrations = resolveIntegrations(recipe);
+  const expectedAiPaths = new Set(resolveAiArtifacts(recipe).map((artifact) => artifact.path));
   const expectedFiles = new Set(expectedManagedFiles(integrations));
-  const staleFiles = (state.files ?? []).filter((file) => !expectedFiles.has(file));
+  const staleFiles = managedFilesFromState(state).filter((file) => !expectedFiles.has(file.path));
+  const staleAiArtifacts = state.aiArtifacts.filter(
+    (artifact) => !expectedAiPaths.has(artifact.path),
+  );
+  const staleFilesSafeToRemove = [];
+  const staleFilesWithLocalEdits = [];
+  const staleAiArtifactsSafeToRemove = [];
+  const staleAiArtifactsWithLocalEdits = [];
 
-  if (staleFiles.length === 0) {
+  for (const file of staleFiles) {
+    if (!(await fileExists(file.path))) {
+      staleFilesSafeToRemove.push(file);
+      continue;
+    }
+
+    if (!file.hash) {
+      staleFilesSafeToRemove.push(file);
+      continue;
+    }
+
+    const installedHash = textHash(await readFile(file.path, "utf8"));
+
+    if (installedHash === file.hash) {
+      staleFilesSafeToRemove.push(file);
+    } else {
+      staleFilesWithLocalEdits.push({
+        ...file,
+        installedHash,
+      });
+    }
+  }
+
+  for (const artifact of staleAiArtifacts) {
+    if (!(await fileExists(artifact.path))) {
+      staleAiArtifactsSafeToRemove.push(artifact);
+      continue;
+    }
+
+    const installedHash = await hashAiInstall(artifact.type, artifact.path);
+
+    if (installedHash === artifact.hash) {
+      staleAiArtifactsSafeToRemove.push(artifact);
+    } else {
+      staleAiArtifactsWithLocalEdits.push({
+        ...artifact,
+        installedHash,
+      });
+    }
+  }
+
+  if (staleFilesSafeToRemove.length === 0 && staleAiArtifactsSafeToRemove.length === 0) {
     return {
       command: "clean",
-      changes: [],
-      message: "No stale managed files found.",
+      changes: [
+        ...staleFilesWithLocalEdits.map((file) => ({
+          type: "skip",
+          path: file.path,
+          reason: `Managed file has local edits (installed=${file.installedHash}, state=${file.hash}).`,
+        })),
+        ...staleAiArtifactsWithLocalEdits.map((artifact) => ({
+          type: "skip",
+          path: artifact.path,
+          reason: `AI artifact has local edits (installed=${artifact.installedHash}, state=${artifact.hash}).`,
+        })),
+      ],
+      message:
+        staleFilesWithLocalEdits.length > 0 || staleAiArtifactsWithLocalEdits.length > 0
+          ? "No stale managed items were safe to remove. Some stale items have local edits."
+          : "No stale managed files found.",
     };
   }
 
-  if (!options.yes && !options.dryRun) {
+  if (!options.assumeYes && !options.dryRun) {
+    const staleCount = staleFilesSafeToRemove.length + staleAiArtifactsSafeToRemove.length;
     const shouldClean = await confirm({
-      message: `Remove ${staleFiles.length} stale Calavera-managed file(s)?`,
+      message: `Remove ${staleCount} stale Calavera-managed item(s)?`,
     });
 
     if (!shouldClean || isCancel(shouldClean)) {
@@ -901,19 +1327,53 @@ async function clean(options) {
     }
   }
 
-  const changes = staleFiles.map((path) => ({ type: "delete", path }));
+  const changes = [
+    ...staleFilesSafeToRemove.map((file) => ({ type: "delete", path: file.path })),
+    ...staleFilesWithLocalEdits.map((file) => ({
+      type: "skip",
+      path: file.path,
+      reason: `Managed file has local edits (installed=${file.installedHash}, state=${file.hash}).`,
+    })),
+    ...staleAiArtifactsSafeToRemove.map((artifact) => ({
+      type: "delete",
+      path: artifact.path,
+      category: "ai",
+      aiType: artifact.type,
+      name: artifact.name,
+    })),
+    ...staleAiArtifactsWithLocalEdits.map((artifact) => ({
+      type: "skip",
+      path: artifact.path,
+      category: "ai",
+      aiType: artifact.type,
+      name: artifact.name,
+      reason: `AI artifact has local edits (installed=${artifact.installedHash}, state=${artifact.hash}).`,
+    })),
+  ];
 
   if (!options.dryRun) {
-    for (const path of staleFiles) {
-      if (await fileExists(path)) {
-        await unlink(path);
+    for (const file of staleFilesSafeToRemove) {
+      if (await fileExists(file.path)) {
+        await unlink(file.path);
       }
     }
 
-    await writeJSON(STATE_FILE, {
-      ...state,
-      files: (state.files ?? []).filter((file) => expectedFiles.has(file)),
-    });
+    for (const artifact of staleAiArtifactsSafeToRemove) {
+      await rm(artifact.path, { force: true, recursive: true });
+    }
+
+    await writeJSON(
+      STATE_FILE,
+      {
+        ...state,
+        files: managedFilesFromState(state)
+          .filter((file) => expectedFiles.has(file.path))
+          .map((file) => file.path),
+        managedFiles: managedFilesFromState(state).filter((file) => expectedFiles.has(file.path)),
+        aiArtifacts: state.aiArtifacts.filter((artifact) => expectedAiPaths.has(artifact.path)),
+      },
+      false,
+    );
   }
 
   return {
@@ -926,6 +1386,10 @@ async function clean(options) {
   };
 }
 
+/**
+ * @param {CommandResult} result
+ * @param {boolean} [asJSON]
+ */
 function printResult(result, asJSON = false) {
   if (asJSON) {
     console.info(JSON.stringify(result, null, 2));
@@ -965,13 +1429,17 @@ function printResult(result, asJSON = false) {
 
     for (const change of result.changes) {
       if (change.type === "write") {
-        logger.info(`Would write ${change.path}`);
+        logger.info(
+          change.category === "ai"
+            ? `Would write AI ${change.aiType} ${change.name} to ${change.path}`
+            : `Would write ${change.path}`,
+        );
       }
 
       if (change.type === "update") {
         logger.info(`Would update ${change.path}`);
 
-        if (change.scripts.length > 0) {
+        if (change.scripts && change.scripts.length > 0) {
           logger.info(`Would add scripts: ${change.scripts.join(", ")}`);
         }
 
@@ -981,10 +1449,20 @@ function printResult(result, asJSON = false) {
       }
     }
 
+    for (const pointer of result.pointers ?? []) {
+      logger.info(`Pointer: ${pointer}`);
+    }
+
     return;
   }
 
   logger.success(`Calavera ${result.command} complete.`);
+
+  if (result.command === "apply") {
+    for (const pointer of result.pointers) {
+      logger.info(pointer);
+    }
+  }
 }
 
 async function main() {

@@ -1,0 +1,4 @@
+interface:
+  display_name: "GitHub Goal Issue Triage"
+  short_description: "Prioritize GitHub issues by project goal"
+  default_prompt: "Use $github-goal-issue-triage to triage open issues across these repositories and generate an HTML report."

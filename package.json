@@ -53,7 +53,7 @@
     "lint:fix": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxlint --fix . && node .calavera/run-if-files.mjs \"CSS\" \"css,scss\" -- stylelint \"**/*.{css,scss}\" --fix",
     "format": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxfmt --write .",
     "format:check": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxfmt --check .",
-    "typecheck": "node .calavera/run-if-files.mjs \"TypeScript\" \"ts,tsx\" -- tsc --noEmit",
+    "typecheck": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- tsc --noEmit",
     "publish:check": "publint",
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
   },
@@ -66,6 +66,7 @@
   "devDependencies": {
     "@eslint/js": "^10.0.1",
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
+    "@types/node": "^26.0.1",
     "eslint": "^10.4.0",
     "globals": "^17.6.0",
     "oxfmt": "^0.54.0",
