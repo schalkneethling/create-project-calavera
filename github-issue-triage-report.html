@@ -3,284 +3,477 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Calavera GitHub Issue Triage Report</title>
+    <title>GitHub Issue Triage Report</title>
     <style>
+      :root {
+        color-scheme: light dark;
+        --bg: #f7f7f4;
+        --fg: #1f2328;
+        --muted: #5f6a72;
+        --border: #d6d8db;
+        --panel: #ffffff;
+        --p0: #b60205;
+        --p1: #d93f0b;
+        --p2: #a87800;
+        --p3: #0e8a16;
+      }
+
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --bg: #111315;
+          --fg: #f0f3f6;
+          --muted: #a8b3bd;
+          --border: #343a40;
+          --panel: #181b1f;
+          --p2: #d8a200;
+        }
+      }
+
       body {
-        color: #1f2933;
-        font-family:
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font:
+          14px/1.5 ui-sans-serif,
           system-ui,
           -apple-system,
           BlinkMacSystemFont,
           "Segoe UI",
           sans-serif;
-        line-height: 1.5;
-        margin: 2rem;
+      }
+
+      main {
+        max-width: 1180px;
+        margin: 0 auto;
+        padding: 32px 20px;
       }
 
       h1,
-      h2 {
+      h2,
+      h3 {
         line-height: 1.2;
       }
 
-      table {
-        border-collapse: collapse;
-        margin: 1rem 0;
-        width: 100%;
+      .meta,
+      .note {
+        color: var(--muted);
       }
 
-      th,
-      td {
-        border: 1px solid #d9e2ec;
-        padding: 0.5rem;
-        text-align: left;
-        vertical-align: top;
+      .summary-grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+        gap: 12px;
+        margin: 20px 0;
       }
 
-      th {
-        background: #f0f4f8;
+      .stat,
+      details {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 8px;
+      }
+
+      .stat {
+        padding: 14px;
+      }
+
+      .stat strong {
+        display: block;
+        font-size: 24px;
       }
 
       details {
-        border: 1px solid #d9e2ec;
-        margin: 1rem 0;
-        padding: 1rem;
+        margin-top: 20px;
+        overflow: hidden;
       }
 
       summary {
         cursor: pointer;
         font-weight: 700;
+        padding: 16px;
       }
 
-      .label {
+      .details-body {
+        border-top: 1px solid var(--border);
+        padding: 16px;
+      }
+
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        margin-top: 16px;
+      }
+
+      th,
+      td {
+        border-top: 1px solid var(--border);
+        padding: 10px;
+        text-align: left;
+        vertical-align: top;
+      }
+
+      th {
+        color: var(--muted);
+        font-size: 12px;
+        text-transform: uppercase;
+      }
+
+      a {
+        color: inherit;
+      }
+
+      .badge {
         border-radius: 999px;
+        color: #fff;
         display: inline-block;
-        font-size: 0.875rem;
-        margin: 0.125rem;
-        padding: 0.125rem 0.5rem;
+        font-size: 12px;
+        font-weight: 700;
+        min-width: 28px;
+        padding: 2px 8px;
+        text-align: center;
+      }
+
+      .p0 {
+        background: var(--p0);
       }
 
       .p1 {
-        background: #d93f0b;
-        color: white;
+        background: var(--p1);
       }
 
       .p2 {
-        background: #fbca04;
-        color: #1f2933;
+        background: var(--p2);
       }
 
       .p3 {
-        background: #0e8a16;
-        color: white;
+        background: var(--p3);
       }
 
-      .next {
-        background: #5319e7;
-        color: white;
+      .labels {
+        color: var(--muted);
+        font-size: 12px;
       }
     </style>
   </head>
   <body>
-    <h1>Calavera GitHub Issue Triage Report</h1>
-    <p><strong>Generated:</strong> 2026-06-27T08:28:17Z</p>
-    <p>
-      <strong>Repository:</strong>
-      <a href="https://github.com/schalkneethling/create-project-calavera">schalkneethling/create-project-calavera</a>
-    </p>
-    <p>
-      <strong>Also checked:</strong>
-      <a href="https://github.com/schalkneethling/claude-toolkit">schalkneethling/claude-toolkit</a>
-      was skipped for priority triage because no repository-root <code>GOAL.md</code> was found.
-    </p>
+    <main>
+      <h1>GitHub Issue Triage Report</h1>
+      <p class="meta">Generated 2026-06-27T12:20:33+02:00.</p>
+      <p><strong>Input repository:</strong> schalkneethling/create-project-calavera</p>
 
-    <h2>Goal Summary</h2>
-    <p>
-      Calavera helps web developers compose, apply, inspect, and refresh repeatable project tooling recipes without
-      coupling those recipes to one application framework or starter. Current focus is the recipe-driven CLI, shared
-      integration catalog, automation-friendly outputs, and parity with the web composer.
-    </p>
+      <section aria-labelledby="summary">
+        <h2 id="summary">Summary</h2>
+        <div class="summary-grid">
+          <div class="stat"><span>Total open issues</span><strong>16</strong></div>
+          <div class="stat"><span>Skipped</span><strong>0</strong></div>
+          <div class="stat"><span>p0</span><strong>0</strong></div>
+          <div class="stat"><span>p1</span><strong>7</strong></div>
+          <div class="stat"><span>p2</span><strong>6</strong></div>
+          <div class="stat"><span>p3</span><strong>3</strong></div>
+          <div class="stat"><span>Next issue</span><strong>#147</strong></div>
+        </div>
+        <p class="note">
+          Skipped repositories are counted explicitly. Label status: p0, p1, p2, and p3 already
+          exist. Every open issue has exactly one priority label, so no GitHub label edits were
+          needed.
+        </p>
+      </section>
 
-    <h2>Summary</h2>
-    <table>
-      <thead>
-        <tr>
-          <th>Repository</th>
-          <th>Open issues</th>
-          <th>p0</th>
-          <th>p1</th>
-          <th>p2</th>
-          <th>p3</th>
-          <th>Next issue</th>
-        </tr>
-      </thead>
-      <tbody>
-        <tr>
-          <td>schalkneethling/create-project-calavera</td>
-          <td>15</td>
-          <td>0</td>
-          <td>7</td>
-          <td>5</td>
-          <td>3</td>
-          <td>
-            <a href="https://github.com/schalkneethling/create-project-calavera/issues/131">#131 Add and publish Calavera config JSON Schema</a>
-          </td>
-        </tr>
-        <tr>
-          <td>schalkneethling/claude-toolkit</td>
-          <td>Skipped</td>
-          <td>—</td>
-          <td>—</td>
-          <td>—</td>
-          <td>—</td>
-          <td>No GOAL.md found; deprecation remains tracked in #51.</td>
-        </tr>
-      </tbody>
-    </table>
+      <details open>
+        <summary>
+          schalkneethling/create-project-calavera - triaged - 16 open issues - p0: 0, p1: 7, p2: 6,
+          p3: 3 - next: #147 Improve frontend-security audit workflow, severity model, and scope
+          routing
+        </summary>
+        <div class="details-body">
+          <h2>Project Goal Summary</h2>
+          <p>
+            Calavera helps developers compose, apply, inspect, and refresh repeatable project
+            tooling recipes without becoming an application scaffold. Near-term work should preserve
+            CLI/composer parity, improve generated tooling quality, keep integrations catalog-first,
+            and maintain automation-friendly dry-run and JSON behavior.
+          </p>
 
-    <details open>
-      <summary>
-        schalkneethling/create-project-calavera - 15 open issues - next: #131 Add and publish Calavera config JSON Schema
-      </summary>
+          <h3>Next-Issue Nomination</h3>
+          <p>
+            <a href="https://github.com/schalkneethling/create-project-calavera/issues/147"
+              >#147 Improve frontend-security audit workflow, severity model, and scope routing</a
+            >
+            is the best next actionable p1 because it improves a bundled AI artifact that users can
+            install through Calavera, replaces brittle grep-first guidance with context-aware
+            auditing, and establishes the routing model needed by the more specific
+            security-reference issues (#148-#152). Issue #131 is also p1, but the schema file,
+            generated recipe references, checked-in config reference, and GOAL.md publication note
+            are already present in the current tree, so it appears ready for verification or closure
+            rather than new implementation work.
+          </p>
 
-      <p>
-        <strong>Label update status:</strong> Applied priority labels p1, p2, and p3. No p0 issues were identified.
-        Applied <code>next-release</code> to #131 and #147-#152.
-      </p>
-
-      <table>
-        <thead>
-          <tr>
-            <th>Priority</th>
-            <th>Issue</th>
-            <th>Rationale</th>
-            <th>Impact</th>
-            <th>Labels</th>
-            <th>Notes</th>
-          </tr>
-        </thead>
-        <tbody>
-          <tr>
-            <td><span class="label p1">p1</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/131">#131 Add and publish Calavera config JSON Schema</a></td>
-            <td>Directly supports repeatable recipes, composer parity, and machine-readable config validation.</td>
-            <td>High release-readiness and automation impact.</td>
-            <td><span class="label p1">p1</span><span class="label next">next-release</span> enhancement</td>
-            <td>Nominated next because it is concrete, core to the goal, and already called out in GOAL.md.</td>
-          </tr>
-          <tr>
-            <td><span class="label p1">p1</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/147">#147 Improve frontend-security audit workflow, severity model, and scope routing</a></td>
-            <td>Improves trust in bundled AI guidance before the next release ships it to users.</td>
-            <td>High documentation and security-guidance impact.</td>
-            <td><span class="label p1">p1</span><span class="label next">next-release</span> documentation</td>
-            <td>Part of the transferred Toolkit hardening queue.</td>
-          </tr>
-          <tr>
-            <td><span class="label p1">p1</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/148">#148 Tighten XSS, DOM, URL, and CSP guidance in frontend-security skill</a></td>
-            <td>Unsafe copied examples could harm users and reduce confidence in the bundled catalog.</td>
-            <td>High user-trust impact.</td>
-            <td><span class="label p1">p1</span><span class="label next">next-release</span> documentation</td>
-            <td>Some review-thread fixes landed, but the broader issue remains useful.</td>
-          </tr>
-          <tr>
-            <td><span class="label p1">p1</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/149">#149 Align CSRF, JWT, and browser token storage guidance</a></td>
-            <td>Authentication and token-storage guidance is sensitive enough to prioritize before release.</td>
-            <td>High security-guidance impact.</td>
-            <td><span class="label p1">p1</span><span class="label next">next-release</span> documentation</td>
-            <td>Part of next-release hardening.</td>
-          </tr>
-          <tr>
-            <td><span class="label p1">p1</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/150">#150 Correct input validation, parsing, and output encoding examples</a></td>
-            <td>Validation and encoding examples are likely to be copied directly by agents or users.</td>
-            <td>High guidance correctness impact.</td>
-            <td><span class="label p1">p1</span><span class="label next">next-release</span> documentation</td>
-            <td>Part of next-release hardening.</td>
-          </tr>
-          <tr>
-            <td><span class="label p1">p1</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/151">#151 Harden file upload and archive handling guidance</a></td>
-            <td>Upload and archive advice touches high-risk application behavior.</td>
-            <td>High security-guidance impact.</td>
-            <td><span class="label p1">p1</span><span class="label next">next-release</span> documentation</td>
-            <td>Part of next-release hardening.</td>
-          </tr>
-          <tr>
-            <td><span class="label p1">p1</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/152">#152 Revise Node/npm supply-chain and command execution guidance</a></td>
-            <td>Supply-chain and command-execution examples affect automation safety.</td>
-            <td>High agent and maintainer trust impact.</td>
-            <td><span class="label p1">p1</span><span class="label next">next-release</span> documentation</td>
-            <td>Part of next-release hardening.</td>
-          </tr>
-          <tr>
-            <td><span class="label p2">p2</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/130">#130 Clean up legacy installer modules</a></td>
-            <td>Supports catalog-first architecture but does not block the next release.</td>
-            <td>Medium maintainability impact.</td>
-            <td><span class="label p2">p2</span> enhancement</td>
-            <td>Useful cleanup after release-critical items.</td>
-          </tr>
-          <tr>
-            <td><span class="label p2">p2</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/154">#154 Add composer UI controls for AI artifact selection</a></td>
-            <td>Improves composer parity for the new AI recipe surface.</td>
-            <td>Medium product parity impact.</td>
-            <td><span class="label p2">p2</span> enhancement</td>
-            <td>Important, but can follow the first AI-enabled release.</td>
-          </tr>
-          <tr>
-            <td><span class="label p2">p2</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/155">#155 Register WebMCP tools for AI configuration operations</a></td>
-            <td>Strengthens agent workflows but depends on the stable recipe and catalog surface.</td>
-            <td>Medium automation impact.</td>
-            <td><span class="label p2">p2</span> enhancement</td>
-            <td>Good follow-up after schema and docs settle.</td>
-          </tr>
-          <tr>
-            <td><span class="label p2">p2</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/156">#156 Add Codex custom-agent adapter for bundled agent Markdown</a></td>
-            <td>Useful portability work, but not required for the canonical `.agents/` layout to function.</td>
-            <td>Medium AI interoperability impact.</td>
-            <td><span class="label p2">p2</span> enhancement</td>
-            <td>Needs adapter design before implementation.</td>
-          </tr>
-          <tr>
-            <td><span class="label p2">p2</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/157">#157 Document vendor-specific AI adapter guidance</a></td>
-            <td>Helps users map canonical Calavera output to vendor-specific expectations.</td>
-            <td>Medium documentation impact.</td>
-            <td><span class="label p2">p2</span> documentation</td>
-            <td>Useful once more adapter behavior is known.</td>
-          </tr>
-          <tr>
-            <td><span class="label p3">p3</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/158">#158 Add Vite+ awareness and lint/format delta mode</a></td>
-            <td>Potentially useful, but more speculative and not central to current release readiness.</td>
-            <td>Low immediate impact.</td>
-            <td><span class="label p3">p3</span> enhancement</td>
-            <td>Keep parked until core release work is done.</td>
-          </tr>
-          <tr>
-            <td><span class="label p3">p3</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/159">#159 Define the @schalkneethling/create template path</a></td>
-            <td>Needs a boundary decision but is adjacent to Calavera’s non-goal of scaffolding.</td>
-            <td>Low immediate impact.</td>
-            <td><span class="label p3">p3</span> enhancement</td>
-            <td>Good strategic follow-up, not urgent.</td>
-          </tr>
-          <tr>
-            <td><span class="label p3">p3</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/160">#160 Make bundled AI artifacts vendor-neutral over time</a></td>
-            <td>Longer-term polish once the preserved Toolkit content has shipped safely.</td>
-            <td>Low immediate impact.</td>
-            <td><span class="label p3">p3</span> documentation</td>
-            <td>Track as gradual cleanup.</td>
-          </tr>
-        </tbody>
-      </table>
-    </details>
+          <table>
+            <thead>
+              <tr>
+                <th>Priority</th>
+                <th>Issue</th>
+                <th>Rationale</th>
+                <th>Impact</th>
+                <th>Current Labels</th>
+                <th>Notes</th>
+              </tr>
+            </thead>
+            <tbody>
+              <tr>
+                <td><span class="badge p1">p1</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/147"
+                    >#147 Improve frontend-security audit workflow, severity model, and scope
+                    routing</a
+                  >
+                </td>
+                <td>
+                  Strongly aligned with generated tooling quality and trust in bundled AI artifacts.
+                  It gives the security skill a safer methodology before the individual reference
+                  fixes are handled.
+                </td>
+                <td>
+                  High unblock value for #148-#152 and direct user safety impact when the skill is
+                  installed.
+                </td>
+                <td class="labels">documentation, next-release, p1</td>
+                <td>Nominated and implemented in this work session.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p1">p1</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/148"
+                    >#148 Tighten XSS, DOM, URL, and CSP guidance in frontend-security skill</a
+                  >
+                </td>
+                <td>
+                  High trust impact because copied security examples can create unsafe fixes.
+                  Follows naturally after the workflow/routing cleanup.
+                </td>
+                <td>Improves security guidance for common frontend vulnerability classes.</td>
+                <td class="labels">documentation, next-release, p1</td>
+                <td>Keep p1.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p1">p1</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/149"
+                    >#149 Align CSRF, JWT, and browser token storage guidance</a
+                  >
+                </td>
+                <td>
+                  Auth/session guidance has high user-harm potential if presented as universal
+                  advice.
+                </td>
+                <td>Reduces risk of insecure token storage and incomplete CSRF defenses.</td>
+                <td class="labels">documentation, next-release, p1</td>
+                <td>Keep p1.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p1">p1</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/150"
+                    >#150 Correct input validation, parsing, and output encoding examples</a
+                  >
+                </td>
+                <td>
+                  Parser confusion and wrong encoding context can lead directly to vulnerabilities
+                  in user projects.
+                </td>
+                <td>Improves correctness of copied validation and encoding examples.</td>
+                <td class="labels">documentation, next-release, p1</td>
+                <td>Keep p1.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p1">p1</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/151"
+                    >#151 Harden file upload and archive handling guidance</a
+                  >
+                </td>
+                <td>
+                  Upload handling has substantial security impact and belongs in trustworthy bundled
+                  guidance.
+                </td>
+                <td>
+                  Reduces risk around path traversal, malware hosting, unsafe serving, and archive
+                  extraction.
+                </td>
+                <td class="labels">documentation, next-release, p1</td>
+                <td>Keep p1.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p1">p1</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/152"
+                    >#152 Revise Node/npm supply-chain and command execution guidance</a
+                  >
+                </td>
+                <td>
+                  Supply-chain and command-execution guidance affects user trust and automation
+                  safety.
+                </td>
+                <td>
+                  Improves dependency, lifecycle-script, and command execution recommendations.
+                </td>
+                <td class="labels">documentation, next-release, p1</td>
+                <td>Keep p1.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p1">p1</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/131"
+                    >#131 Add and publish Calavera config JSON Schema</a
+                  >
+                </td>
+                <td>
+                  Schema support is central to repeatable recipes and automation. Current tree
+                  appears to satisfy the acceptance criteria.
+                </td>
+                <td>
+                  High value for validation and composer publication, but likely no implementation
+                  remains.
+                </td>
+                <td class="labels">enhancement, next-release, p1</td>
+                <td>Verify deployed URL and consider closing rather than reprioritizing.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p2">p2</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/154"
+                    >#154 Add composer UI controls for AI artifact selection</a
+                  >
+                </td>
+                <td>
+                  Aligned with composer/CLI parity, but AI artifact selection is optional and less
+                  urgent than trust fixes.
+                </td>
+                <td>Improves web composer completeness for AI recipes.</td>
+                <td class="labels">enhancement, p2</td>
+                <td>Keep p2.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p2">p2</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/155"
+                    >#155 Register WebMCP tools for AI configuration operations</a
+                  >
+                </td>
+                <td>
+                  Supports automation-friendly composer operations, but depends on settled AI
+                  catalog/UI behavior.
+                </td>
+                <td>Helps capable agents compose AI recipe sections programmatically.</td>
+                <td class="labels">enhancement, p2</td>
+                <td>Keep p2.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p2">p2</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/156"
+                    >#156 Add Codex custom-agent adapter for bundled agent Markdown</a
+                  >
+                </td>
+                <td>
+                  Useful portability work, but requires adapter design and carries more
+                  compatibility risk than documentation fixes.
+                </td>
+                <td>Improves support for Codex-compatible agent artifacts.</td>
+                <td class="labels">enhancement, p2</td>
+                <td>Keep p2.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p2">p2</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/157"
+                    >#157 Document vendor-specific AI adapter guidance</a
+                  >
+                </td>
+                <td>
+                  Helpful for user agency and clarity around installed artifacts, but does not block
+                  core CLI behavior.
+                </td>
+                <td>Reduces confusion around vendor-specific consumption of .agents output.</td>
+                <td class="labels">documentation, p2</td>
+                <td>Keep p2.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p2">p2</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/161"
+                    >#161 Write integration-contribution blog post using Varlock as the example</a
+                  >
+                </td>
+                <td>
+                  Supports catalog-first contribution quality and community growth, but is not a
+                  product blocker.
+                </td>
+                <td>Improves contributor onboarding and documents post-install pointers.</td>
+                <td class="labels">documentation, p2</td>
+                <td>Keep p2.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p2">p2</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/130"
+                    >#130 Clean up legacy installer modules</a
+                  >
+                </td>
+                <td>
+                  Directly supports the catalog-first architecture, but is a cleanup/clarification
+                  task rather than an urgent blocker.
+                </td>
+                <td>Reduces architectural ambiguity and maintenance drag.</td>
+                <td class="labels">enhancement, p2</td>
+                <td>Keep p2.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p3">p3</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/158"
+                    >#158 Add Vite+ awareness and lint/format delta mode</a
+                  >
+                </td>
+                <td>
+                  Potentially useful, but exploratory and should not displace stable full-project
+                  tooling scripts.
+                </td>
+                <td>Could improve ergonomics for changed-file workflows.</td>
+                <td class="labels">enhancement, p3</td>
+                <td>Keep p3 until the design is clearer.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p3">p3</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/159"
+                    >#159 Define the @schalkneethling/create template path</a
+                  >
+                </td>
+                <td>
+                  Boundary-setting is useful, but it is intentionally outside Calavera's
+                  application-scaffold non-goal.
+                </td>
+                <td>Prevents future scope drift.</td>
+                <td class="labels">enhancement, p3</td>
+                <td>Keep p3.</td>
+              </tr>
+              <tr>
+                <td><span class="badge p3">p3</span></td>
+                <td>
+                  <a href="https://github.com/schalkneethling/create-project-calavera/issues/160"
+                    >#160 Make bundled AI artifacts vendor-neutral over time</a
+                  >
+                </td>
+                <td>Good long-term polish, but intentionally gradual and not urgent.</td>
+                <td>Improves portability without changing core recipe behavior.</td>
+                <td class="labels">documentation, p3</td>
+                <td>Keep p3.</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </details>
+    </main>
   </body>
 </html>

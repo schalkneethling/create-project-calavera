@@ -89,30 +89,16 @@ function validateToken(token, fingerprintCookie) {
 }
 ```
 
-## Token Storage (Client-Side)
+## Token Storage and Browser Architecture
 
-### Recommended: sessionStorage + Fingerprint Cookie
+Choose token handling from the application architecture. Do not present
+Web Storage as a universal default.
 
-`sessionStorage` is still readable by XSS. This pattern limits persistence
-across tabs and browser sessions, but an `httpOnly` cookie remains preferable
-when the server can own token storage.
+### Traditional Web App or BFF: httpOnly Cookie
 
-```javascript
-// Store token in sessionStorage
-sessionStorage.setItem("token", jwt);
-
-// Clear on logout
-sessionStorage.removeItem("token");
-
-// Send in Authorization header
-fetch("/api/data", {
-  headers: {
-    Authorization: `Bearer ${sessionStorage.getItem("token")}`,
-  },
-});
-```
-
-### Alternative: httpOnly Cookie
+Prefer server-owned sessions or a backend-for-frontend (BFF) that stores tokens
+server-side and sends only `httpOnly`, `Secure`, SameSite cookies to the
+browser. Cookie-based auth needs CSRF protection on state-changing requests.
 
 ```javascript
 // Server sets cookie
@@ -124,6 +110,49 @@ res.cookie("token", jwt, {
 });
 
 // Need CSRF protection with cookie-based auth
+```
+
+### SPA: In-Memory Access Token
+
+For browser-only SPAs, prefer short-lived access tokens kept in memory, refresh
+token rotation where appropriate, and a clear re-authentication path. Avoid
+long-lived bearer tokens in Web Storage.
+
+```javascript
+let accessToken = null;
+const trustedApiOrigin = "https://api.example.com";
+
+export function setAccessToken(token) {
+  accessToken = token;
+}
+
+export async function apiFetch(url, options = {}) {
+  const target = new URL(url, trustedApiOrigin);
+  if (target.origin !== trustedApiOrigin) {
+    throw new Error("Refusing to send bearer token to an untrusted origin");
+  }
+
+  return fetch(target.href, {
+    ...options,
+    headers: {
+      ...options.headers,
+      ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+    },
+  });
+}
+```
+
+### Constrained Fallback: sessionStorage + Fingerprint Cookie
+
+`sessionStorage` is a last-resort compromise for browser-held bearer tokens, not
+a security improvement over in-memory storage. It is readable by XSS. Use it
+only when the architecture requires browser-held tokens and the risk is
+explicitly accepted. Keep token lifetimes short, bind tokens to an `httpOnly`
+fingerprint cookie when possible, and clear tokens on logout.
+
+```javascript
+sessionStorage.setItem("token", jwt);
+sessionStorage.removeItem("token");
 ```
 
 ### Avoid: localStorage
@@ -226,7 +255,7 @@ const token = jwt.sign(
   secret,
 );
 
-// If sensitive data required, encrypt the token
+// If sensitive claims are unavoidable, use JWE or keep the data server-side.
 const encryptedToken = encrypt(token, encryptionKey);
 ```
 
@@ -281,8 +310,9 @@ function authenticateToken(req, res, next) {
 - [ ] Validate issuer (iss) and audience (aud) claims
 - [ ] Implement token revocation mechanism
 - [ ] No sensitive data in payload
-- [ ] Store in sessionStorage (not localStorage)
-- [ ] Send via Authorization header
+- [ ] Choose storage based on architecture: server-side session/BFF, in-memory SPA token, or constrained sessionStorage fallback
+- [ ] Avoid long-lived bearer tokens in Web Storage
+- [ ] Protect cookie-based auth with CSRF defenses
 - [ ] Use HTTPS only
 
 OWASP Reference: https://cheatsheetseries.owasp.org/cheatsheets/JSON_Web_Token_for_Java_Cheat_Sheet.html

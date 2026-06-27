@@ -47,15 +47,26 @@ element.innerText = userInput; // Safe
 element.setAttribute("title", userInput); // Safe for plain text attributes
 // Do not treat href, src, style, or event-handler attributes as safe sinks.
 
-// Safe URL handling
-try {
-  const url = new URL(userInput, window.location.origin);
-  if (url.origin === window.location.origin && url.protocol === "https:") {
-    location.href = url.href;
-  }
-} catch {
-  // Reject invalid URLs.
+// Safe URL handling: parse, normalize, then enforce the actual policy.
+function matchesPathPrefix(pathname, allowedPrefix) {
+  return pathname === allowedPrefix || pathname.startsWith(`${allowedPrefix}/`);
 }
+
+function toAllowedInternalUrl(input) {
+  try {
+    const url = new URL(input, window.location.origin);
+    if (url.origin !== window.location.origin) return null;
+    if (!["/account", "/settings", "/help"].some((path) => matchesPathPrefix(url.pathname, path))) {
+      return null;
+    }
+    return url.href;
+  } catch {
+    return null;
+  }
+}
+
+const safeUrl = toAllowedInternalUrl(userInput);
+if (safeUrl) location.assign(safeUrl);
 ```
 
 ## HTML Sanitization
@@ -92,12 +103,24 @@ element.setHTML(userInput, { sanitizer });
 // SAFE - React auto-escapes
 <div>{userInput}</div>
 
-// DANGEROUS - href with javascript:
-<a href={userInput}>Link</a> // If userInput = "javascript:alert(1)"
+// DANGEROUS - href can contain javascript:, phishing, or redirect targets.
+<a href={userInput}>Link</a>
 
-// SAFE - validate URL protocol
-const safeUrl = userInput.startsWith('https://') ? userInput : '#';
-<a href={safeUrl}>Link</a>
+// SAFER - parse and enforce the allowed destinations for this component.
+function toSafeExternalHref(input) {
+  try {
+    const url = new URL(input, window.location.origin);
+    if (!["https:"].includes(url.protocol)) return "#";
+    if (!["example.com", "docs.example.com"].includes(url.hostname)) return "#";
+    return url.href;
+  } catch {
+    return "#";
+  }
+}
+
+<a href={toSafeExternalHref(userInput)} rel="noopener noreferrer">
+  Link
+</a>;
 ```
 
 ### Twig
@@ -132,29 +155,32 @@ const safeUrl = userInput.startsWith('https://') ? userInput : '#';
 
 ## URL Validation
 
+URL checks should return a parsed, normalized value for the exact sink. A scheme
+allowlist is necessary but not sufficient for redirects, links, downloads, or
+navigation.
+
 ```javascript
-function isValidUrl(input) {
+function matchesPathPrefix(pathname, allowedPrefix) {
+  return pathname === allowedPrefix || pathname.startsWith(`${allowedPrefix}/`);
+}
+
+function normalizeAllowedHref(input, { baseUrl, allowedOrigins, allowedPathPrefixes = ["/"] }) {
   try {
-    const url = new URL(input);
-    return ["http:", "https:"].includes(url.protocol);
+    const url = new URL(input, baseUrl);
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (!allowedOrigins.includes(url.origin)) return null;
+    if (!allowedPathPrefixes.some((prefix) => matchesPathPrefix(url.pathname, prefix))) return null;
+    return url.href;
   } catch {
-    return false;
+    return null;
   }
 }
 
-// Prevent javascript: URLs
-function sanitizeHref(input) {
-  if (!input) return "#";
-  const trimmed = input.trim().toLowerCase();
-  if (
-    trimmed.startsWith("javascript:") ||
-    trimmed.startsWith("data:") ||
-    trimmed.startsWith("vbscript:")
-  ) {
-    return "#";
-  }
-  return input;
-}
+const href = normalizeAllowedHref(userInput, {
+  baseUrl: window.location.origin,
+  allowedOrigins: [window.location.origin, "https://docs.example.com"],
+  allowedPathPrefixes: ["/docs", "/account"],
+});
 ```
 
 ## Content-Type Headers

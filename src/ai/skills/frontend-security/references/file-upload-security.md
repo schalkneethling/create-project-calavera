@@ -3,12 +3,12 @@
 ## Core Protection Checklist
 
 - [ ] Validate file extension (allowlist only)
-- [ ] Validate Content-Type header
-- [ ] Validate file signature (magic bytes)
-- [ ] Generate new random filename
+- [ ] Treat client Content-Type as advisory only
+- [ ] Validate content with maintained type detection or domain-specific parsers
+- [ ] Generate a new random storage filename
 - [ ] Enforce file size limits
 - [ ] Store outside webroot
-- [ ] Scan for malware
+- [ ] Quarantine and scan risky files before serving
 - [ ] Require authentication
 - [ ] Implement CSRF protection
 
@@ -81,17 +81,14 @@ const DANGEROUS_EXTENSIONS = [
 ];
 ```
 
-### Double Extension Prevention
+### Storage Filename Generation
+
+Do not store files using attacker-controlled names, even after stripping
+characters or double extensions. Preserve the original display name only as
+metadata if the product needs it.
 
 ```javascript
-function sanitizeFilename(filename) {
-  // Remove all extensions except the last
-  const parts = filename.split(".");
-  if (parts.length > 2) {
-    return `${parts[0]}.${parts[parts.length - 1]}`;
-  }
-
-  // Or generate completely new filename
+function generateStorageName(filename) {
   const ext = path.extname(filename).toLowerCase();
   const uuid = crypto.randomUUID();
   return `${uuid}${ext}`;
@@ -99,6 +96,10 @@ function sanitizeFilename(filename) {
 ```
 
 ## Content-Type Validation
+
+The browser-supplied MIME type is useful for quick rejection and UX, but it is
+client controlled. Validate stored content with a maintained file-type detector
+or a parser for the expected domain before trusting the file.
 
 ```javascript
 const ALLOWED_MIME_TYPES = {
@@ -120,32 +121,22 @@ function validateMimeType(file) {
 }
 ```
 
-## File Signature (Magic Bytes) Validation
+## Content Signature Validation
 
 ```javascript
-const FILE_SIGNATURES = {
-  jpg: Buffer.from([0xff, 0xd8, 0xff]),
-  png: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
-  gif: Buffer.from([0x47, 0x49, 0x46, 0x38]),
-  pdf: Buffer.from([0x25, 0x50, 0x44, 0x46]),
-  zip: Buffer.from([0x50, 0x4b, 0x03, 0x04]),
-};
+import { fileTypeFromBuffer } from "file-type";
 
-async function validateFileSignature(filePath, expectedType) {
-  const buffer = Buffer.alloc(8);
-  const fd = await fs.open(filePath, "r");
-  try {
-    await fd.read(buffer, 0, 8, 0);
-  } finally {
-    await fd.close();
+async function detectAllowedType(buffer, allowedMimeTypes) {
+  const detected = await fileTypeFromBuffer(buffer);
+  if (!detected || !allowedMimeTypes.includes(detected.mime)) {
+    return null;
   }
-
-  const signature = FILE_SIGNATURES[expectedType];
-  if (!signature) return false;
-
-  return buffer.slice(0, signature.length).equals(signature);
+  return detected;
 }
 ```
+
+Magic-byte checks are only one signal. Polyglot files, container formats, and
+domain-specific payloads may need deeper parsing, re-encoding, or manual review.
 
 ## Safe Storage
 
@@ -180,6 +171,7 @@ const upload = multer({
     files: 1,
   },
   fileFilter: (req, file, cb) => {
+    // Early rejection only. Validate actual content after receiving the file.
     if (!validateMimeType(file)) {
       cb(new Error("Invalid file type"));
       return;
@@ -192,6 +184,8 @@ const upload = multer({
 ## Secure File Serving
 
 ```javascript
+const contentDisposition = require("content-disposition");
+
 // Serve files through application, not directly
 app.get("/files/:id", async (req, res) => {
   // Verify user authorization
@@ -205,7 +199,7 @@ app.get("/files/:id", async (req, res) => {
 
   // Set safe headers
   res.setHeader("Content-Type", fileRecord.mimeType);
-  res.setHeader("Content-Disposition", `attachment; filename="${fileRecord.safeName}"`);
+  res.setHeader("Content-Disposition", contentDisposition(fileRecord.displayName));
   res.setHeader("X-Content-Type-Options", "nosniff");
 
   // Stream file
@@ -231,33 +225,76 @@ async function sanitizeImage(inputPath, outputPath) {
 
 ## ZIP File Handling
 
-```javascript
-const AdmZip = require("adm-zip");
-const path = require("path");
+Prefer not to extract user-provided archives. If extraction is a product
+requirement, use a streaming library, extract into a dedicated temporary
+directory, reject links/devices, normalize paths across platforms, enforce
+limits while reading, and move accepted files into final storage only after all
+checks pass.
 
-function safeExtractZip(zipPath, destDir, maxSize = 100 * 1024 * 1024) {
+```javascript
+import AdmZip from "adm-zip";
+import { fileTypeFromBuffer } from "file-type";
+import path from "node:path";
+
+const ARCHIVE_MIME_TYPES = new Set([
+  "application/zip",
+  "application/x-tar",
+  "application/gzip",
+  "application/x-7z-compressed",
+  "application/vnd.rar",
+]);
+
+async function validateZipBeforeExtract(zipPath, destDir, options = {}) {
+  const {
+    maxTotalSize = 100 * 1024 * 1024,
+    maxEntrySize = 10 * 1024 * 1024,
+    maxEntries = 1000,
+    maxDepth = 8,
+  } = options;
   const zip = new AdmZip(zipPath);
   const entries = zip.getEntries();
 
+  if (entries.length > maxEntries) {
+    throw new Error("Too many archive entries");
+  }
+
   let totalSize = 0;
+  const seenTargets = new Set();
 
   for (const entry of entries) {
-    // Check for path traversal
+    const normalizedName = entry.entryName.replace(/\\/g, "/");
+    const depth = normalizedName.split("/").filter(Boolean).length;
+    if (depth > maxDepth) {
+      throw new Error("Archive entry is too deeply nested");
+    }
+
     const resolvedDest = path.resolve(destDir);
-    const resolvedEntry = path.resolve(destDir, entry.entryName);
+    const resolvedEntry = path.resolve(destDir, normalizedName);
     const relativeEntry = path.relative(resolvedDest, resolvedEntry);
 
     if (relativeEntry.startsWith("..") || path.isAbsolute(relativeEntry)) {
       throw new Error("Path traversal detected");
     }
 
-    // Check for zip bomb
+    if (seenTargets.has(resolvedEntry)) {
+      throw new Error("Duplicate archive target path");
+    }
+    seenTargets.add(resolvedEntry);
+
+    if (entry.header.fileNameLength === 0 || entry.isDirectory) continue;
+    if (entry.attr & 0o120000) {
+      throw new Error("Archive symlink entries are not allowed");
+    }
+
+    if (entry.header.size > maxEntrySize) {
+      throw new Error("Archive entry exceeds per-file limit");
+    }
+
     totalSize += entry.header.size;
-    if (totalSize > maxSize) {
+    if (totalSize > maxTotalSize) {
       throw new Error("Extracted size exceeds limit");
     }
 
-    // Check compression ratio (zip bomb indicator)
     if (entry.header.compressedSize === 0) {
       if (entry.header.size > 0) {
         throw new Error("Suspicious zero-compressed entry");
@@ -269,9 +306,12 @@ function safeExtractZip(zipPath, destDir, maxSize = 100 * 1024 * 1024) {
     if (ratio > 100) {
       throw new Error("Suspicious compression ratio");
     }
-  }
 
-  zip.extractAllTo(destDir, true);
+    const detected = await fileTypeFromBuffer(entry.getData());
+    if (detected && ARCHIVE_MIME_TYPES.has(detected.mime)) {
+      throw new Error("Nested archives are not allowed");
+    }
+  }
 }
 ```
 
@@ -283,6 +323,7 @@ const multer = require("multer");
 const path = require("path");
 const crypto = require("crypto");
 const fs = require("fs").promises;
+const sharp = require("sharp");
 
 const app = express();
 
@@ -296,6 +337,7 @@ const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE },
   fileFilter: (req, file, cb) => {
+    // Early rejection only. Validate actual content after upload.
     if (!ALLOWED_TYPES.includes(file.mimetype)) {
       cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE"));
       return;
@@ -315,26 +357,27 @@ app.post(
       const file = req.file;
       if (!file) return res.status(400).json({ error: "No file" });
 
-      // Validate magic bytes
-      if (!validateMagicBytes(file.buffer, file.mimetype)) {
+      const detected = await detectAllowedType(file.buffer, ALLOWED_TYPES);
+      if (!detected) {
         return res.status(400).json({ error: "Invalid file" });
       }
 
-      // Generate safe filename
-      const ext = path.extname(file.originalname).toLowerCase();
-      const filename = `${crypto.randomUUID()}${ext}`;
+      // Generate safe storage filename for the re-encoded JPEG.
+      const filename = `${crypto.randomUUID()}.jpg`;
       const filepath = path.join(UPLOAD_DIR, filename);
 
-      // Save file
-      await fs.writeFile(filepath, file.buffer);
+      // Re-encode images before they become downloadable.
+      const output = await sharp(file.buffer).rotate().toFormat("jpeg", { quality: 90 }).toBuffer();
+      await fs.writeFile(filepath, output);
 
       // Store metadata in database
       const fileRecord = await db.createFile({
         userId: req.user.id,
         filename,
         originalName: file.originalname,
-        mimeType: file.mimetype,
-        size: file.size,
+        mimeType: "image/jpeg",
+        size: output.length,
+        status: "available",
       });
 
       res.json({ id: fileRecord.id });

@@ -8,10 +8,11 @@
 # Check for vulnerabilities
 npm audit
 
-# Fix automatically where possible
+# Fix automatically where possible, after reviewing the proposed changes
 npm audit fix
 
-# Force fix (may have breaking changes)
+# Force fix can apply breaking transitive upgrades. Use only after reviewing
+# release notes, lockfile diffs, and test results.
 npm audit fix --force
 
 # Generate detailed report
@@ -30,14 +31,19 @@ npm ci --ignore-scripts  # Safer for first run
 
 ### Package.json Security
 
+Avoid package lifecycle scripts that fetch or audit during ordinary installs.
+Install-time `npx` expands supply-chain trust, and `postinstall` audits make
+local installs depend on network and registry behavior. Prefer pinned
+devDependencies, package-manager-native overrides, CI checks, and scheduled
+dependency automation.
+
 ```json
 {
-  "scripts": {
-    "preinstall": "npx npm-force-resolutions",
-    "postinstall": "npm audit"
-  },
   "overrides": {
     "vulnerable-package": "^2.0.0"
+  },
+  "scripts": {
+    "audit:ci": "npm audit --audit-level=high"
   }
 }
 ```
@@ -69,14 +75,29 @@ setTimeout(() => {
 const { exec } = require("child_process");
 exec(`ls ${userInput}`); // Shell injection
 
-// SAFER - use execFile with arguments array
+// SAFER - use execFile with arguments array and no shell
 const { execFile } = require("child_process");
-execFile("ls", [userInput], callback); // Arguments not interpreted by shell
+execFile("ls", ["--", userInput], { shell: false }, callback);
 
-// SAFEST - use spawn with shell: false
+// SAFEST - avoid shelling out when a library API can do the work.
+// If a command is necessary, allowlist the command and argument shapes.
 const { spawn } = require("child_process");
-spawn("ls", [userInput], { shell: false });
+const allowedFormats = new Set(["json", "text"]);
+if (!allowedFormats.has(userSelectedFormat)) {
+  throw new Error("Invalid format");
+}
+spawn("tool", ["--format", userSelectedFormat, "--", userPath], {
+  shell: false,
+  cwd: "/srv/app",
+  env: { PATH: "/usr/bin:/bin" },
+});
 ```
+
+Argument arrays prevent shell metacharacter expansion, but they do not make
+user-controlled arguments safe automatically. Some programs treat values as
+options, paths, patterns, or expressions. Use `--` before user-controlled path
+arguments when supported, validate option values, set `cwd` and `env`
+explicitly, run with least privilege, and treat command output as untrusted.
 
 ### File System
 
@@ -170,7 +191,7 @@ app.use(
       directives: {
         defaultSrc: ["'self'"],
         scriptSrc: ["'self'"],
-        styleSrc: ["'self'", "'unsafe-inline'"],
+        styleSrc: ["'self'"],
         imgSrc: ["'self'", "data:", "https:"],
         objectSrc: ["'none'"],
         upgradeInsecureRequests: [],
@@ -258,10 +279,10 @@ const pattern = new RE2(userProvidedRegex);
 - [ ] Use lockfiles and commit them
 - [ ] Review new dependencies before installation
 - [ ] Use `--ignore-scripts` for untrusted packages
-- [ ] Set up automated vulnerability scanning (Snyk, Dependabot)
+- [ ] Set up automated vulnerability scanning such as Dependabot or Renovate
 - [ ] Keep dependencies updated
 - [ ] Avoid typosquatting by double-checking package names
-- [ ] Use `npm-shrinkwrap.json` for published packages
+- [ ] Use `npm-shrinkwrap.json` only when publishing a deployable app or CLI that must lock transitive dependencies; avoid it for libraries unless you intentionally want to constrain consumers
 
 OWASP References:
 

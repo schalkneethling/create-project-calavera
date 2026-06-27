@@ -45,8 +45,9 @@ element.setAttribute("onclick", userInput);
 element.setAttribute("href", userInput); // javascript: URLs
 element.setAttribute("src", userInput); // script injection
 
-// SAFE - safe attributes only
-const safeAttributes = ["title", "alt", "class", "id", "name"];
+// SAFER - only allow attributes whose semantics are plain text in this element.
+// Avoid user-controlled id/name because they can contribute to DOM clobbering.
+const safeAttributes = ["title", "alt", "aria-label", "data-value"];
 if (safeAttributes.includes(attributeName)) {
   element.setAttribute(attributeName, userInput);
 }
@@ -77,12 +78,12 @@ location.href = userInput;
 window.open(userInput);
 element.setAttribute("href", userInput);
 
-// SAFE - validate URL protocol
-function validateUrl(input) {
+// SAFER - parse, normalize, and enforce destination policy.
+function normalizeAllowedUrl(input) {
   try {
     const url = new URL(input, window.location.origin);
-    const allowedProtocols = ["http:", "https:", "mailto:"];
-    if (!allowedProtocols.includes(url.protocol)) {
+    if (!["https:", "mailto:"].includes(url.protocol)) return null;
+    if (url.protocol === "https:" && !["example.com", "docs.example.com"].includes(url.hostname)) {
       return null;
     }
     return url.href;
@@ -91,9 +92,9 @@ function validateUrl(input) {
   }
 }
 
-const safeUrl = validateUrl(userInput);
+const safeUrl = normalizeAllowedUrl(userInput);
 if (safeUrl) {
-  location.href = safeUrl;
+  location.assign(safeUrl);
 }
 ```
 
@@ -169,7 +170,7 @@ const clean = DOMPurify.sanitize(dirty, {
 element.textContent = userInput;
 document.createTextNode(userInput);
 
-// Attribute manipulation (for safe attributes)
+// Attribute manipulation (for plain-text safe attributes)
 element.setAttribute("data-value", userInput);
 element.classList.add(sanitizedClass);
 
