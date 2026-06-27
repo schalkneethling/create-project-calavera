@@ -124,7 +124,7 @@ Defer these until after the merge:
 
 ```json
 {
-  "$schema": "https://calavera.dev/schema/calavera.config.schema.json",
+  "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
   "version": 1,
   "profile": "modern",
   "packageManager": "pnpm",

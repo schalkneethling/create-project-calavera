@@ -105,6 +105,7 @@ import { logger } from "./utils/logger.js";
  */
 
 const CONFIG_FILE = "calavera.config.json";
+const CONFIG_SCHEMA_URL = "https://calavera.schalkneethling.com/calavera.config.schema.json";
 const STATE_FILE = ".calavera/state.json";
 const SCRIPT_SOURCE_EXTENSIONS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
 const TSC_INCLUDE_PATTERNS = SCRIPT_SOURCE_EXTENSIONS.map((extension) => `src/**/*.${extension}`);
@@ -319,7 +320,7 @@ function resolveIntegrations(recipe) {
  */
 function buildRecipe(profile, integrations, packageManager = "npm") {
   return {
-    $schema: "https://calavera.dev/schema/calavera.config.schema.json",
+    $schema: CONFIG_SCHEMA_URL,
     version: 1,
     profile,
     packageManager,
@@ -330,7 +331,7 @@ function buildRecipe(profile, integrations, packageManager = "npm") {
       format: true,
       "format:check": true,
       typecheck: true,
-      check: true,
+      quality: true,
     },
   };
 }
@@ -535,8 +536,8 @@ function buildScripts(recipe, integrations, packageManager) {
     );
   }
 
-  if (recipe.scripts?.check) {
-    const checkScripts = [
+  if (recipe.scripts?.quality) {
+    const qualityScripts = [
       "lint",
       "format:check",
       usesTypeScript && recipe.scripts?.typecheck ? "typecheck" : null,
@@ -545,7 +546,7 @@ function buildScripts(recipe, integrations, packageManager) {
       .filter(isNotEmptyString)
       .filter((script) => Boolean(scripts[script]));
 
-    scripts.check = checkScripts
+    scripts.quality = qualityScripts
       .map((script) => packageManagerCommands[supportedPackageManager].run(script))
       .join(" && ");
   }

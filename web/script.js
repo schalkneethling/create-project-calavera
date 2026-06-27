@@ -101,6 +101,7 @@ const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
 const output = document.querySelector("#output");
 const webMcpBanner = document.querySelector("#webmcp-banner");
+const configSchemaUrl = "https://calavera.schalkneethling.com/calavera.config.schema.json";
 const profiles = Object.keys(defaults);
 const packageManagers = ["npm", "pnpm", "yarn", "bun"];
 const profileDescriptions = {
@@ -186,7 +187,7 @@ function selectIntegrations(integrationIds) {
 function recipe() {
   const data = new FormData(form);
   return {
-    $schema: "https://calavera.dev/schema/calavera.config.schema.json",
+    $schema: configSchemaUrl,
     version: 1,
     profile: data.get("profile"),
     packageManager: data.get("packageManager"),
@@ -197,7 +198,7 @@ function recipe() {
       format: true,
       "format:check": true,
       typecheck: true,
-      check: true,
+      quality: true,
     },
   };
 }
