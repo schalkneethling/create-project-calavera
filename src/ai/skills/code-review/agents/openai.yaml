@@ -1,0 +1,6 @@
+interface:
+  display_name: "Code Review"
+  short_description: "Review code changes for risk and quality."
+  default_prompt: "Use $code-review to review my current changes and prioritize actionable findings."
+policy:
+  allow_implicit_invocation: false

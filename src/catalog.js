@@ -13,7 +13,7 @@ export const integrationCatalog = [
     group: "Type checking",
     platform: "typescript",
     status: "recommended",
-    dependencies: ["typescript"],
+    dependencies: ["typescript", "@types/node"],
   },
   {
     id: "oxlint",
