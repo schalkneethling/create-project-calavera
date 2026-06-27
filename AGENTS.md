@@ -1,3 +1,5 @@
 - _Always_ ensure that we have the latest changes from the remote repository.
 - _Always_ ensure that no feature work is started from main. Always use a feature branch.
+- When creating the feature branch, always include the GitHub issue number in the branch name.
+- When writing the pull request description, always include fix #<issue_number> at the end of the description. If the pull request fixes multiple issues, include all of them.
 - Do _not_ write types for the sake of types in TypeScript. Only define types when TypeScript cannot cleanly infer from usage.
