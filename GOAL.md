@@ -75,4 +75,4 @@ The public draft 2020-12 recipe schema is maintained in `web/public/calavera.con
 
 ## Open Questions
 
-- Several older installer modules remain under `src/installers/` while the main CLI now generates files directly from `src/index.js` and `src/catalog.js`. Decide whether those modules are legacy code to remove, future extraction points, or part of a planned public API. Tracked in [issue #130](https://github.com/schalkneethling/create-project-calavera/issues/130).
+- None currently tracked.
