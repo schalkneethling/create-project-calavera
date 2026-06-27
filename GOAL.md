@@ -71,7 +71,8 @@ Calavera helps web developers compose, apply, inspect, and refresh repeatable pr
 
 The current project centers on the recipe-driven CLI, the shared integration catalog, and the Vite-based Calavera Composer. Near-term work should preserve parity between the CLI and composer, improve generated tooling quality, and keep automation-friendly outputs stable.
 
+The public draft 2020-12 recipe schema is maintained in `web/public/calavera.config.schema.json` and published with the composer at `https://calavera.schalkneethling.com/calavera.config.schema.json`.
+
 ## Open Questions
 
-- A public configuration schema does not exist yet. Implement a draft 2020-12 JSON Schema for Calavera recipes and publish it with the web composer so it is accessible at `https://calavera.schalkneethling.com/calavera.config.schema.json`. Tracked in [issue #131](https://github.com/schalkneethling/create-project-calavera/issues/131).
 - Several older installer modules remain under `src/installers/` while the main CLI now generates files directly from `src/index.js` and `src/catalog.js`. Decide whether those modules are legacy code to remove, future extraction points, or part of a planned public API. Tracked in [issue #130](https://github.com/schalkneethling/create-project-calavera/issues/130).

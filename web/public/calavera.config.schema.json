@@ -1,0 +1,169 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://calavera.schalkneethling.com/calavera.config.schema.json",
+  "title": "Calavera configuration recipe",
+  "description": "A repeatable project tooling recipe for create-project-calavera.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["version", "profile", "packageManager", "integrations", "scripts"],
+  "properties": {
+    "$schema": {
+      "description": "The published JSON Schema for Calavera recipe files.",
+      "type": "string",
+      "format": "uri",
+      "const": "https://calavera.schalkneethling.com/calavera.config.schema.json"
+    },
+    "version": {
+      "description": "The Calavera recipe format version.",
+      "type": "integer",
+      "const": 1
+    },
+    "profile": {
+      "description": "The base tooling profile used to compose the recipe.",
+      "type": "string",
+      "enum": ["modern", "classic", "minimal"]
+    },
+    "packageManager": {
+      "description": "The package manager used for dependency installation and generated scripts.",
+      "type": "string",
+      "enum": ["npm", "pnpm", "yarn", "bun"]
+    },
+    "integrations": {
+      "description": "Calavera integration IDs to apply. Some integrations include their required parent integration automatically.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/integrationId"
+      },
+      "uniqueItems": true
+    },
+    "scripts": {
+      "description": "Boolean package script flags. Calavera generates scripts for known enabled flags when the selected integrations support them.",
+      "type": "object",
+      "additionalProperties": {
+        "type": "boolean"
+      },
+      "properties": {
+        "lint": {
+          "type": "boolean",
+          "description": "Generate a lint script when linting integrations are selected."
+        },
+        "lint:fix": {
+          "type": "boolean",
+          "description": "Generate a lint fix script when linting integrations are selected."
+        },
+        "format": {
+          "type": "boolean",
+          "description": "Generate a format script when formatting integrations are selected."
+        },
+        "format:check": {
+          "type": "boolean",
+          "description": "Generate a format check script when formatting integrations are selected."
+        },
+        "typecheck": {
+          "type": "boolean",
+          "description": "Generate a TypeScript typecheck script when the TypeScript integration is selected."
+        },
+        "quality": {
+          "type": "boolean",
+          "description": "Generate a combined quality script from the available lint, format, typecheck, and React Doctor scripts."
+        }
+      }
+    },
+    "ai": {
+      "description": "Optional bundled AI skills, hooks, and agents to install under .agents/.",
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/aiItem"
+      }
+    }
+  },
+  "$defs": {
+    "integrationId": {
+      "type": "string",
+      "enum": [
+        "editorconfig",
+        "typescript",
+        "oxlint",
+        "oxlint-eslint",
+        "oxlint-typescript",
+        "oxlint-unicorn",
+        "oxlint-oxc",
+        "oxlint-import",
+        "oxlint-react",
+        "react-doctor",
+        "oxlint-jsx-a11y",
+        "oxlint-node",
+        "oxlint-promise",
+        "oxlint-vitest",
+        "oxlint-jest",
+        "oxlint-nextjs",
+        "oxlint-vue",
+        "oxlint-jsdoc",
+        "oxfmt",
+        "eslint",
+        "typescript-eslint",
+        "eslint-config-prettier",
+        "eslint-react",
+        "eslint-jsx-a11y",
+        "eslint-import",
+        "eslint-n",
+        "eslint-promise",
+        "eslint-unicorn",
+        "eslint-sonarjs",
+        "eslint-vitest",
+        "eslint-jest",
+        "stylelint",
+        "stylelint-standard",
+        "stylelint-order",
+        "stylelint-baseline",
+        "stylelint-scss",
+        "stylelint-stylistic",
+        "css-property-type-validator",
+        "prettier",
+        "prettier-tailwind",
+        "prettier-svelte",
+        "prettier-astro"
+      ]
+    },
+    "aiItem": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "src"],
+      "properties": {
+        "type": {
+          "description": "The bundled AI artifact type.",
+          "type": "string",
+          "enum": ["skill", "hook", "agent"]
+        },
+        "src": {
+          "description": "Path to a bundled artifact under src/ai/.",
+          "type": "string",
+          "minLength": 1
+        },
+        "target": {
+          "description": "Output target directory name for hook and agent artifacts. Skill artifacts do not use target.",
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!(?:\\.|\\.\\.)$)[^/\\\\]+$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "type": {
+                "const": "skill"
+              }
+            },
+            "required": ["type"]
+          },
+          "then": {
+            "not": {
+              "required": ["target"]
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -48,7 +48,7 @@
     "web:dev": "vite --host 127.0.0.1",
     "web:build": "vite build",
     "web:preview": "vite preview --host 127.0.0.1",
-    "check": "pnpm lint && pnpm format:check && pnpm typecheck",
+    "quality": "pnpm lint && pnpm format:check && pnpm typecheck",
     "lint": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxlint . && node .calavera/run-if-files.mjs \"CSS\" \"css,scss\" -- stylelint \"**/*.{css,scss}\"",
     "lint:fix": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxlint --fix . && node .calavera/run-if-files.mjs \"CSS\" \"css,scss\" -- stylelint \"**/*.{css,scss}\" --fix",
     "format": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxfmt --write .",

@@ -1,0 +1,3 @@
+- _Always_ ensure that we have the latest changes from the remote repository.
+- _Always_ ensure that no feature work is started from main. Always use a feature branch.
+- Do _not_ write types for the sake of types in TypeScript. Only define types when TypeScript cannot cleanly infer from usage.
