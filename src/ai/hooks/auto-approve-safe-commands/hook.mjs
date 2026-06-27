@@ -84,11 +84,16 @@ const SAFE_PATTERNS = [
 const UNSAFE_SHELL_SYNTAX = /[;&|<>`]|\$\(|\r|\n/;
 const SAFE_COMMAND_WORDS = /^[\w@%+=:,./\s-]+$/;
 const DESTRUCTIVE_OPTIONS = /(?:^|\s)(?:--force|--fix|--write|--delete|-delete|-f|-r|-R|-rf|-fr|--recursive)(?:\s|$)/;
+const COMMAND_SPECIFIC_UNSAFE_PATTERNS = [
+    /^git\s+branch\s+-(?:d|D)\b/,
+    /^find\b.*\s-exec(?:dir)?\b.*(?:\+|\\;)\s*$/,
+];
 // --- Helpers ---
 function isSafeCommandShape(command) {
     return (!UNSAFE_SHELL_SYNTAX.test(command) &&
         SAFE_COMMAND_WORDS.test(command) &&
-        !DESTRUCTIVE_OPTIONS.test(command));
+        !DESTRUCTIVE_OPTIONS.test(command) &&
+        !COMMAND_SPECIFIC_UNSAFE_PATTERNS.some((pattern) => pattern.test(command)));
 }
 function approve() {
     const output = {

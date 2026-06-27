@@ -69,7 +69,10 @@ Document this to the user when relevant:
 
 - Determine whether a `.github/dependabot.yml` already exists in the project.
   - **Exists**: read the file, explain any differences from the canonical config,
-    then overwrite it with the canonical config using a file tool.
+    and check whether the file is Calavera-managed or its installed hash matches
+    the recorded Calavera state. Only overwrite it with a file tool when those
+    managed-file safety conditions are satisfied. If the file is unmanaged or
+    has local edits, report the differences and do not force a write.
   - **Does not exist**: create `.github/dependabot.yml` with the canonical config
     using a file tool.
 
