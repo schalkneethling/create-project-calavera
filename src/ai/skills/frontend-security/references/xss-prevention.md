@@ -48,11 +48,15 @@ element.setAttribute("title", userInput); // Safe for plain text attributes
 // Do not treat href, src, style, or event-handler attributes as safe sinks.
 
 // Safe URL handling: parse, normalize, then enforce the actual policy.
+function matchesPathPrefix(pathname, allowedPrefix) {
+  return pathname === allowedPrefix || pathname.startsWith(`${allowedPrefix}/`);
+}
+
 function toAllowedInternalUrl(input) {
   try {
     const url = new URL(input, window.location.origin);
     if (url.origin !== window.location.origin) return null;
-    if (!["/account", "/settings", "/help"].some((path) => url.pathname.startsWith(path))) {
+    if (!["/account", "/settings", "/help"].some((path) => matchesPathPrefix(url.pathname, path))) {
       return null;
     }
     return url.href;
@@ -156,12 +160,16 @@ allowlist is necessary but not sufficient for redirects, links, downloads, or
 navigation.
 
 ```javascript
+function matchesPathPrefix(pathname, allowedPrefix) {
+  return pathname === allowedPrefix || pathname.startsWith(`${allowedPrefix}/`);
+}
+
 function normalizeAllowedHref(input, { baseUrl, allowedOrigins, allowedPathPrefixes = ["/"] }) {
   try {
     const url = new URL(input, baseUrl);
     if (!["http:", "https:"].includes(url.protocol)) return null;
     if (!allowedOrigins.includes(url.origin)) return null;
-    if (!allowedPathPrefixes.some((prefix) => url.pathname.startsWith(prefix))) return null;
+    if (!allowedPathPrefixes.some((prefix) => matchesPathPrefix(url.pathname, prefix))) return null;
     return url.href;
   } catch {
     return null;

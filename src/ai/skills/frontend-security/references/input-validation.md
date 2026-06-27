@@ -42,12 +42,16 @@ return input.checkValidity();
 ### URL
 
 ```javascript
+function matchesPathPrefix(pathname, allowedPrefix) {
+  return pathname === allowedPrefix || pathname.startsWith(`${allowedPrefix}/`);
+}
+
 function parseAllowedUrl(input, { baseUrl, allowedOrigins, allowedPathPrefixes = ["/"] }) {
   try {
     const url = new URL(input, baseUrl);
     if (!["http:", "https:"].includes(url.protocol)) return null;
     if (!allowedOrigins.includes(url.origin)) return null;
-    if (!allowedPathPrefixes.some((prefix) => url.pathname.startsWith(prefix))) return null;
+    if (!allowedPathPrefixes.some((prefix) => matchesPathPrefix(url.pathname, prefix))) return null;
     return url;
   } catch {
     return null;
@@ -74,8 +78,10 @@ function validateInteger(input, min, max) {
 
 function validateDecimal(input, min, max, decimals) {
   if (typeof input !== "string") return false;
+  if (!Number.isInteger(decimals) || decimals < 0 || decimals > 20) return false;
 
-  const pattern = new RegExp(`^-?(?:0|[1-9]\\d*)(?:\\.\\d{1,${decimals}})?$`);
+  const decimalPart = decimals === 0 ? "" : `(?:\\.\\d{1,${decimals}})?`;
+  const pattern = new RegExp(`^-?(?:0|[1-9]\\d*)${decimalPart}$`);
   if (!pattern.test(input)) return false;
 
   const num = Number(input);

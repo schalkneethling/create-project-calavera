@@ -120,13 +120,19 @@ long-lived bearer tokens in Web Storage.
 
 ```javascript
 let accessToken = null;
+const trustedApiOrigin = "https://api.example.com";
 
 export function setAccessToken(token) {
   accessToken = token;
 }
 
 export async function apiFetch(url, options = {}) {
-  return fetch(url, {
+  const target = new URL(url, trustedApiOrigin);
+  if (target.origin !== trustedApiOrigin) {
+    throw new Error("Refusing to send bearer token to an untrusted origin");
+  }
+
+  return fetch(target.href, {
     ...options,
     headers: {
       ...options.headers,
@@ -138,10 +144,11 @@ export async function apiFetch(url, options = {}) {
 
 ### Constrained Fallback: sessionStorage + Fingerprint Cookie
 
-`sessionStorage` is readable by XSS. Use it only when the architecture requires
-browser-held bearer tokens and the risk is explicitly accepted. Keep token
-lifetimes short, bind tokens to an `httpOnly` fingerprint cookie when possible,
-and clear tokens on logout.
+`sessionStorage` is a last-resort compromise for browser-held bearer tokens, not
+a security improvement over in-memory storage. It is readable by XSS. Use it
+only when the architecture requires browser-held tokens and the risk is
+explicitly accepted. Keep token lifetimes short, bind tokens to an `httpOnly`
+fingerprint cookie when possible, and clear tokens on logout.
 
 ```javascript
 sessionStorage.setItem("token", jwt);

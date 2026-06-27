@@ -45,37 +45,14 @@ defense. Use signed, session-bound double-submit tokens when the synchronizer
 token pattern is not practical.
 
 ```javascript
-// Incomplete pattern shown for recognition during audits.
-res.cookie("csrf_token", token, {
-  httpOnly: false, // Must be readable by JavaScript
-  secure: true,
-  sameSite: "Strict",
-});
-
-// Client sends token in header
-fetch("/api/action", {
-  method: "POST",
-  headers: {
-    "X-CSRF-Token": getCookie("csrf_token"),
-  },
-});
-
-// Server validates cookie matches header
-import { timingSafeEqual } from "node:crypto";
-
-function validateDoubleSubmit(req) {
-  const cookieToken = req.cookies.csrf_token;
-  const headerToken = req.headers["x-csrf-token"];
-
-  if (typeof cookieToken !== "string" || typeof headerToken !== "string") {
-    return false;
-  }
-
-  const cookieBuffer = Buffer.from(cookieToken);
-  const headerBuffer = Buffer.from(headerToken);
-
-  return cookieBuffer.length === headerBuffer.length && timingSafeEqual(cookieBuffer, headerBuffer);
-}
+// Recognition-only pseudocode for audits. Do not paste into production.
+// If all the server checks is:
+//
+//   cookie.csrf_token === header["x-csrf-token"]
+//
+// then an attacker who can set or inject the cookie value may be able to satisfy
+// both sides. Replace this pattern with a signed, session-bound token flow such
+// as the Express.js example below.
 ```
 
 ## SameSite Cookie Attribute

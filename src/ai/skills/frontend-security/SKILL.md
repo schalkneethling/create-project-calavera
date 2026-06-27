@@ -61,7 +61,7 @@ AST-aware tools or Semgrep for final confirmation when syntax or multiline
 structure matters.
 
 ```bash
-FRONTEND_GLOBS='*.{js,jsx,ts,tsx,mjs,cjs,astro,vue,svelte,html,htm,twig,html.twig}'
+FRONTEND_GLOBS='*.{js,jsx,ts,tsx,mjs,cjs,mts,cts,astro,vue,svelte,html,htm,twig,html.twig,njk,ejs,hbs,mustache,liquid,mdx}'
 ```
 
 ### XSS, DOM, and Navigation Leads
@@ -108,7 +108,7 @@ rg -n -i "(api[_-]?key|client[_-]?secret|password|private[_-]?key|token)\\s*[:=]
 rg -n "(multer|busboy|formidable|FileReader|URL\\.createObjectURL|Content-Disposition|extractAllTo|adm-zip|yauzl)" --glob "$FRONTEND_GLOBS" --glob "package.json"
 
 # npm and command-execution risk
-rg -n "\"(preinstall|install|postinstall|prepare)\"|child_process|exec\\(|execFile\\(|spawn\\(" --glob "package.json" --glob "*.{js,ts,mjs,cjs}"
+rg -n "\"(preinstall|install|postinstall|prepare)\"|child_process|exec\\(|execFile\\(|spawn\\(" --glob "package.json" --glob "*.{js,ts,mjs,cjs,mts,cts,sh,bash,zsh,yml,yaml,toml,json}" --glob "Dockerfile" --glob "*.dockerfile" --glob ".github/workflows/*"
 ```
 
 When a search has many matches, sample representative paths first, then follow

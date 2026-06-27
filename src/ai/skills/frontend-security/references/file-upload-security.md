@@ -232,10 +232,19 @@ limits while reading, and move accepted files into final storage only after all
 checks pass.
 
 ```javascript
-const AdmZip = require("adm-zip");
-const path = require("path");
+import AdmZip from "adm-zip";
+import { fileTypeFromBuffer } from "file-type";
+import path from "node:path";
 
-function validateZipBeforeExtract(zipPath, destDir, options = {}) {
+const ARCHIVE_MIME_TYPES = new Set([
+  "application/zip",
+  "application/x-tar",
+  "application/gzip",
+  "application/x-7z-compressed",
+  "application/vnd.rar",
+]);
+
+async function validateZipBeforeExtract(zipPath, destDir, options = {}) {
   const {
     maxTotalSize = 100 * 1024 * 1024,
     maxEntrySize = 10 * 1024 * 1024,
@@ -250,6 +259,7 @@ function validateZipBeforeExtract(zipPath, destDir, options = {}) {
   }
 
   let totalSize = 0;
+  const seenTargets = new Set();
 
   for (const entry of entries) {
     const normalizedName = entry.entryName.replace(/\\/g, "/");
@@ -265,6 +275,11 @@ function validateZipBeforeExtract(zipPath, destDir, options = {}) {
     if (relativeEntry.startsWith("..") || path.isAbsolute(relativeEntry)) {
       throw new Error("Path traversal detected");
     }
+
+    if (seenTargets.has(resolvedEntry)) {
+      throw new Error("Duplicate archive target path");
+    }
+    seenTargets.add(resolvedEntry);
 
     if (entry.header.fileNameLength === 0 || entry.isDirectory) continue;
     if (entry.attr & 0o120000) {
@@ -292,7 +307,8 @@ function validateZipBeforeExtract(zipPath, destDir, options = {}) {
       throw new Error("Suspicious compression ratio");
     }
 
-    if (/\.(zip|tar|gz|tgz|rar|7z)$/i.test(normalizedName)) {
+    const detected = await fileTypeFromBuffer(entry.getData());
+    if (detected && ARCHIVE_MIME_TYPES.has(detected.mime)) {
       throw new Error("Nested archives are not allowed");
     }
   }
@@ -346,13 +362,13 @@ app.post(
         return res.status(400).json({ error: "Invalid file" });
       }
 
-      // Generate safe storage filename
-      const ext = detected.ext === "jpeg" ? ".jpg" : `.${detected.ext}`;
-      const filename = `${crypto.randomUUID()}${ext}`;
+      // Generate safe storage filename for the re-encoded JPEG.
+      const filename = `${crypto.randomUUID()}.jpg`;
       const filepath = path.join(UPLOAD_DIR, filename);
 
       // Re-encode images before they become downloadable.
-      await sharp(file.buffer).rotate().toFormat("jpeg", { quality: 90 }).toFile(filepath);
+      const output = await sharp(file.buffer).rotate().toFormat("jpeg", { quality: 90 }).toBuffer();
+      await fs.writeFile(filepath, output);
 
       // Store metadata in database
       const fileRecord = await db.createFile({
@@ -360,7 +376,7 @@ app.post(
         filename,
         originalName: file.originalname,
         mimeType: "image/jpeg",
-        size: file.size,
+        size: output.length,
         status: "available",
       });
 
