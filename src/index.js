@@ -21,6 +21,7 @@ import {
   normalizeState,
   optionalStringArray,
 } from "./state.js";
+import { buildRecipe, profileDefaults } from "./recipe.js";
 import { FileWriteError } from "./utils/file-write-error.js";
 import { fileExists, readJSON, writeJSON } from "./utils/fs.js";
 import { isNotEmptyString, isPlainObject } from "./utils/guards.js";
@@ -105,39 +106,9 @@ import { logger } from "./utils/logger.js";
  */
 
 const CONFIG_FILE = "calavera.config.json";
-const CONFIG_SCHEMA_URL = "https://calavera.schalkneethling.com/calavera.config.schema.json";
 const STATE_FILE = ".calavera/state.json";
 const SCRIPT_SOURCE_EXTENSIONS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
 const TSC_INCLUDE_PATTERNS = SCRIPT_SOURCE_EXTENSIONS.map((extension) => `src/**/*.${extension}`);
-
-/** @type {Record<string, string[]>} */
-const profileDefaults = {
-  modern: [
-    "editorconfig",
-    "typescript",
-    "oxlint",
-    "oxlint-eslint",
-    "oxlint-typescript",
-    "oxlint-unicorn",
-    "oxlint-oxc",
-    "oxfmt",
-    "stylelint",
-    "stylelint-standard",
-    "stylelint-baseline",
-  ],
-  classic: [
-    "editorconfig",
-    "typescript",
-    "eslint",
-    "typescript-eslint",
-    "eslint-config-prettier",
-    "prettier",
-    "stylelint",
-    "stylelint-standard",
-    "stylelint-baseline",
-  ],
-  minimal: ["editorconfig"],
-};
 
 /** @type {Record<PackageManager, PackageManagerCommands>} */
 const packageManagerCommands = {
@@ -310,30 +281,6 @@ function resolveIntegrations(recipe) {
   return /** @type {Integration[]} */ (integrationCatalog).filter((integration) =>
     selected.has(integration.id),
   );
-}
-
-/**
- * @param {string} profile
- * @param {string[]} integrations
- * @param {PackageManager} [packageManager]
- * @returns {Recipe}
- */
-function buildRecipe(profile, integrations, packageManager = "npm") {
-  return {
-    $schema: CONFIG_SCHEMA_URL,
-    version: 1,
-    profile,
-    packageManager,
-    integrations,
-    scripts: {
-      lint: true,
-      "lint:fix": true,
-      format: true,
-      "format:check": true,
-      typecheck: true,
-      quality: true,
-    },
-  };
 }
 
 /**

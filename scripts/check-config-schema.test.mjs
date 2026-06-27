@@ -2,9 +2,12 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { integrationCatalog } from "../src/catalog.js";
+import Ajv2020 from "ajv/dist/2020.js";
 
-const schemaUrl = "https://calavera.schalkneethling.com/calavera.config.schema.json";
+import { integrationCatalog } from "../src/catalog.js";
+import { buildRecipe, CONFIG_SCHEMA_URL } from "../src/recipe.js";
+
+const schemaUrl = CONFIG_SCHEMA_URL;
 const rootProperties = [
   "$schema",
   "version",
@@ -29,12 +32,15 @@ async function readProjectJson(path) {
 
 const schema = await readProjectJson("web/public/calavera.config.schema.json");
 const config = await readProjectJson("calavera.config.json");
-const cliSource = await readProjectFile("src/index.js");
-const composerSource = await readProjectFile("web/script.js");
 const integrationIds = integrationCatalog.map(({ id }) => id);
 const schemaProperties = schema.properties ?? {};
 const scriptProperties = schemaProperties.scripts?.properties ?? {};
 const schemaIntegrationIds = schema.$defs?.integrationId?.enum;
+const ajv = new Ajv2020({ allErrors: true, validateFormats: false });
+
+function assertValid(validate, value) {
+  assert.equal(validate(value), true, ajv.errorsText(validate.errors));
+}
 
 test("config schema is the published draft 2020-12 schema", () => {
   assert.equal(schema.$schema, "https://json-schema.org/draft/2020-12/schema");
@@ -43,6 +49,15 @@ test("config schema is the published draft 2020-12 schema", () => {
   assert.equal(schema.additionalProperties, false);
   assert.equal(schemaProperties.$schema?.const, schemaUrl);
   assert.equal(schemaProperties.version?.const, 1);
+});
+
+test("published config schema is valid JSON Schema and validates the example config", () => {
+  assert.equal(ajv.validateSchema(schema), true, ajv.errorsText(ajv.errors));
+
+  const validate = ajv.compile(schema);
+
+  assertValid(validate, config);
+  assertValid(validate, buildRecipe("modern", ["editorconfig"], "pnpm"));
 });
 
 test("config schema root shape matches the maintained recipe contract", () => {
@@ -90,7 +105,8 @@ test("checked-in example config uses known boolean script flags", () => {
   }
 });
 
-test("CLI and composer generated recipes reference the published schema URL", () => {
-  assert.ok(cliSource.includes(schemaUrl));
-  assert.ok(composerSource.includes(schemaUrl));
+test("generated recipes reference the published schema URL", () => {
+  const recipe = buildRecipe("modern", ["editorconfig"], "pnpm");
+
+  assert.equal(recipe.$schema, schemaUrl);
 });

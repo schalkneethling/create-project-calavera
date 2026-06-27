@@ -30,6 +30,9 @@ importers:
       '@types/node':
         specifier: ^26.0.1
         version: 26.0.1
+      ajv:
+        specifier: 8.20.0
+        version: 8.20.0
       eslint:
         specifier: ^10.4.0
         version: 10.4.1
