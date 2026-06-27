@@ -40,6 +40,16 @@ Transferred Toolkit follow-up work:
 - [#151 Harden file upload and archive handling guidance](https://github.com/schalkneethling/create-project-calavera/issues/151)
 - [#152 Revise Node/npm supply-chain and command execution guidance](https://github.com/schalkneethling/create-project-calavera/issues/152)
 
+Post-merge follow-up work:
+
+- [#154 Add composer UI controls for AI artifact selection](https://github.com/schalkneethling/create-project-calavera/issues/154)
+- [#155 Register WebMCP tools for AI configuration operations](https://github.com/schalkneethling/create-project-calavera/issues/155)
+- [#156 Add Codex custom-agent adapter for bundled agent Markdown](https://github.com/schalkneethling/create-project-calavera/issues/156)
+- [#157 Document vendor-specific AI adapter guidance](https://github.com/schalkneethling/create-project-calavera/issues/157)
+- [#158 Add Vite+ awareness and lint/format delta mode](https://github.com/schalkneethling/create-project-calavera/issues/158)
+- [#159 Define the @schalkneethling/create template path](https://github.com/schalkneethling/create-project-calavera/issues/159)
+- [#160 Make bundled AI artifacts vendor-neutral over time](https://github.com/schalkneethling/create-project-calavera/issues/160)
+
 Toolkit deprecation:
 
 - [claude-toolkit #51 Deprecate claude-toolkit after the Calavera AI merge ships](https://github.com/schalkneethling/claude-toolkit/issues/51)
@@ -102,13 +112,13 @@ The phase includes:
 
 Defer these until after the merge:
 
-- Vite+ awareness or lint/format delta mode
-- the `@schalkneethling/create` template
-- composer UI controls for the `ai` section
-- WebMCP tool registration for AI operations
-- adapters that transform Toolkit agent Markdown into Codex custom-agent TOML
-- vendor-specific adapter prompts beyond migration guidance
-- editing or renaming Toolkit's existing skill, hook, or agent content
+- Vite+ awareness or lint/format delta mode: #158
+- the `@schalkneethling/create` template: #159
+- composer UI controls for the `ai` section: #154
+- WebMCP tool registration for AI operations: #155
+- adapters that transform Toolkit agent Markdown into Codex custom-agent TOML: #156
+- vendor-specific adapter prompts beyond migration guidance: #157
+- editing or renaming Toolkit's existing skill, hook, or agent content: #160
 
 ## Target Config Shape
 
@@ -211,10 +221,5 @@ Do not deprecate Toolkit until all of these are true:
 
 ## Open Decisions
 
-- Whether Claude-specific settings fragments are copied, transformed, or
-  documented only.
-- Whether and how to add a Codex custom-agent adapter for Toolkit agent
-  Markdown.
-- How strongly Calavera should detect local edits for directory-based skills,
-  where Toolkit currently tracks source hashes but does not check installed
-  directory modifications.
+The remaining post-merge decisions are tracked as focused GitHub issues rather
+than loose plan notes. See #154 through #160 above.
