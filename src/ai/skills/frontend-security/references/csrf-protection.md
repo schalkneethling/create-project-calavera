@@ -38,10 +38,14 @@ function validateCSRF(req, res, next) {
 }
 ```
 
-### Double Submit Cookie Pattern
+### Naive Double Submit Cookie Pattern (Insufficient Alone)
+
+Do not rely on a plain "cookie equals header" comparison as the main CSRF
+defense. Use signed, session-bound double-submit tokens when the synchronizer
+token pattern is not practical.
 
 ```javascript
-// Set CSRF cookie
+// Incomplete pattern shown for recognition during audits.
 res.cookie("csrf_token", token, {
   httpOnly: false, // Must be readable by JavaScript
   secure: true,
@@ -91,7 +95,9 @@ res.cookie("session", value, { sameSite: "None", secure: true, httpOnly: true })
 
 ## Fetch Metadata Headers
 
-Validate request origin using Sec-Fetch-\* headers:
+Validate request origin using Sec-Fetch-\* headers as a layered control. Fetch
+Metadata does not replace CSRF tokens for cookie-authenticated state-changing
+requests.
 
 ```javascript
 function validateFetchMetadata(req, res, next) {
@@ -99,22 +105,56 @@ function validateFetchMetadata(req, res, next) {
   const mode = req.headers["sec-fetch-mode"];
   const dest = req.headers["sec-fetch-dest"];
   const method = req.method;
+  const safeMethod = ["GET", "HEAD", "OPTIONS"].includes(method);
 
   // Allow same-origin requests
   if (site === "same-origin") return next();
 
-  // Allow user-initiated browser navigations
-  if (site === "none") return next();
+  // Allow browser-initiated top-level navigations only for safe methods.
+  if (site === "none" && mode === "navigate" && dest === "document" && safeMethod) {
+    return next();
+  }
 
-  // Allow same-site top-level navigations and safe methods
-  if (
-    site === "same-site" &&
-    (mode === "navigate" || ["GET", "HEAD", "OPTIONS"].includes(method))
-  ) {
+  // Same-site can include sibling subdomains. Only allow it where those
+  // subdomains share the same trust boundary.
+  if (site === "same-site" && safeMethod) {
     return next();
   }
 
   return res.status(403).json({ error: "Fetch metadata validation failed" });
+}
+```
+
+## Origin and Referer Checks
+
+Check `Origin` for state-changing requests and fall back to `Referer` only when
+needed. Treat missing headers according to the endpoint risk and client support.
+
+```javascript
+function validateOrigin(req, res, next) {
+  const expectedOrigin = "https://app.example.com";
+  const origin = req.headers.origin;
+  const referer = req.headers.referer;
+
+  if (origin) {
+    if (origin !== expectedOrigin) {
+      return res.status(403).json({ error: "Invalid origin" });
+    }
+    return next();
+  }
+
+  if (referer) {
+    try {
+      if (new URL(referer).origin !== expectedOrigin) {
+        return res.status(403).json({ error: "Invalid referer" });
+      }
+      return next();
+    } catch {
+      return res.status(403).json({ error: "Invalid referer" });
+    }
+  }
+
+  return res.status(403).json({ error: "Missing origin" });
 }
 ```
 
@@ -336,6 +376,7 @@ async function secureFetch(url, options = {}) {
 - [ ] Tokens validated server-side before processing
 - [ ] SameSite cookie attribute set appropriately
 - [ ] Fetch Metadata headers validated for sensitive endpoints
+- [ ] Origin or Referer validated for state-changing requests
 - [ ] GET requests are idempotent (no state changes)
 
 OWASP Reference: https://cheatsheetseries.owasp.org/cheatsheets/Cross-Site_Request_Forgery_Prevention_Cheat_Sheet.html

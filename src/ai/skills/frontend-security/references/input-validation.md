@@ -42,44 +42,45 @@ return input.checkValidity();
 ### URL
 
 ```javascript
-function validateUrl(input) {
+function parseAllowedUrl(input, { baseUrl, allowedOrigins, allowedPathPrefixes = ["/"] }) {
   try {
-    const url = new URL(input);
-    return ["http:", "https:"].includes(url.protocol);
+    const url = new URL(input, baseUrl);
+    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (!allowedOrigins.includes(url.origin)) return null;
+    if (!allowedPathPrefixes.some((prefix) => url.pathname.startsWith(prefix))) return null;
+    return url;
   } catch {
-    return false;
+    return null;
   }
 }
 
-// For user-facing URLs, also check for malicious patterns
-function validateSafeUrl(input) {
-  const url = validateUrl(input);
-  if (!url) return false;
-
-  // Block data: and javascript: schemes
-  const dangerous = ["javascript:", "data:", "vbscript:"];
-  return !dangerous.some((scheme) => input.toLowerCase().startsWith(scheme));
-}
+const url = parseAllowedUrl(input, {
+  baseUrl: "https://example.com",
+  allowedOrigins: ["https://example.com", "https://docs.example.com"],
+  allowedPathPrefixes: ["/account", "/docs"],
+});
+if (!url) throw new Error("Invalid URL");
 ```
 
 ### Numbers
 
 ```javascript
 function validateInteger(input, min, max) {
-  const num = parseInt(input, 10);
-  if (isNaN(num)) return false;
-  if (num.toString() !== input.toString()) return false; // Reject "123abc"
+  if (typeof input !== "string" || !/^-?(0|[1-9]\d*)$/.test(input)) return false;
+  const num = Number(input);
+  if (!Number.isSafeInteger(num)) return false;
   return num >= min && num <= max;
 }
 
 function validateDecimal(input, min, max, decimals) {
-  const num = parseFloat(input);
-  if (isNaN(num)) return false;
-  if (num < min || num > max) return false;
+  if (typeof input !== "string") return false;
 
-  const parts = input.split(".");
-  if (parts.length > 2) return false;
-  if (parts[1] && parts[1].length > decimals) return false;
+  const pattern = new RegExp(`^-?(?:0|[1-9]\\d*)(?:\\.\\d{1,${decimals}})?$`);
+  if (!pattern.test(input)) return false;
+
+  const num = Number(input);
+  if (!Number.isFinite(num)) return false;
+  if (num < min || num > max) return false;
 
   return true;
 }
@@ -89,13 +90,19 @@ function validateDecimal(input, min, max, decimals) {
 
 ```javascript
 function validateDate(input) {
-  const date = new Date(input);
-  return date instanceof Date && !isNaN(date);
+  if (typeof input !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(input)) return false;
+
+  const [year, month, day] = input.split("-").map(Number);
+  const date = new Date(Date.UTC(year, month - 1, day));
+
+  return (
+    date.getUTCFullYear() === year && date.getUTCMonth() === month - 1 && date.getUTCDate() === day
+  );
 }
 
 function validateDateRange(input, minDate, maxDate) {
-  const date = new Date(input);
-  if (isNaN(date)) return false;
+  if (!validateDate(input)) return false;
+  const date = new Date(`${input}T00:00:00.000Z`);
   return date >= minDate && date <= maxDate;
 }
 ```
@@ -113,9 +120,11 @@ function validatePhone(input) {
 
 ## Sanitization Functions
 
-### HTML Entities
+### HTML Text Encoding
 
 ```javascript
+// Only use this for HTML text-node content. Attribute, JavaScript, CSS, and URL
+// contexts need their own encoders or framework-supported safe APIs.
 function escapeHtml(input) {
   const map = {
     "&": "&amp;",

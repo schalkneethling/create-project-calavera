@@ -22,19 +22,28 @@ import DOMPurify from 'dompurify';
 // DANGEROUS - javascript: URLs in href
 <a href={userInput}>Link</a>;
 
-// SAFE - validate URL protocol
+// SAFER - parse and enforce allowed protocols and destinations
 function SafeLink({ href, children }) {
   const safeHref = useMemo(() => {
     try {
       const url = new URL(href, window.location.origin);
-      if (["http:", "https:", "mailto:"].includes(url.protocol)) {
-        return href;
+      if (!["https:", "mailto:"].includes(url.protocol)) return "#";
+      if (
+        url.protocol === "https:" &&
+        !["example.com", "docs.example.com"].includes(url.hostname)
+      ) {
+        return "#";
       }
+      return url.href;
     } catch {}
     return "#";
   }, [href]);
 
-  return <a href={safeHref}>{children}</a>;
+  return (
+    <a href={safeHref} rel="noopener noreferrer">
+      {children}
+    </a>
+  );
 }
 ```
 
@@ -248,12 +257,9 @@ function safeReadFile(userPath) {
 // NEVER store sensitive data in localStorage
 localStorage.setItem("token", jwt); // DANGEROUS
 
-// Use httpOnly cookies for tokens instead
-// Or store in memory with short expiration
-
-// If localStorage is necessary, encrypt
-import { encrypt, decrypt } from "./crypto";
-localStorage.setItem("data", encrypt(sensitiveData, key));
+// Prefer server-side sessions, httpOnly cookies, or in-memory short-lived tokens.
+// Client-side encryption does not protect sensitive data from XSS when the key
+// is also available to frontend JavaScript.
 ```
 
 ### postMessage
