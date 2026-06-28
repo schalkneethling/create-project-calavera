@@ -128,6 +128,13 @@ npm --force create project-calavera apply
 - `--yes`
 - `--json`
 
+## Recipe Schema
+
+Generated recipes reference the public draft 2020-12 schema at
+[`https://calavera.schalkneethling.com/calavera.config.schema.json`](https://calavera.schalkneethling.com/calavera.config.schema.json).
+The maintained schema lives at `web/public/calavera.config.schema.json` so it is
+published with the web composer.
+
 ## AI Artifacts
 
 Calavera can install bundled AI skills, hooks, and agents from the optional

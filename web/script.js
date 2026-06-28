@@ -1,3 +1,5 @@
+import { buildRecipe } from "../src/recipe.js";
+
 const catalog = [
   entry("editorconfig", "Project consistency", "EditorConfig", "recommended"),
   entry("typescript", "Type checking", "TypeScript type checking", "recommended"),
@@ -101,7 +103,6 @@ const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
 const output = document.querySelector("#output");
 const webMcpBanner = document.querySelector("#webmcp-banner");
-const configSchemaUrl = "https://calavera.schalkneethling.com/calavera.config.schema.json";
 const profiles = Object.keys(defaults);
 const packageManagers = ["npm", "pnpm", "yarn", "bun"];
 const profileDescriptions = {
@@ -186,21 +187,13 @@ function selectIntegrations(integrationIds) {
 
 function recipe() {
   const data = new FormData(form);
-  return {
-    $schema: configSchemaUrl,
-    version: 1,
-    profile: data.get("profile"),
-    packageManager: data.get("packageManager"),
-    integrations: data.getAll("integration"),
-    scripts: {
-      lint: true,
-      "lint:fix": true,
-      format: true,
-      "format:check": true,
-      typecheck: true,
-      quality: true,
-    },
-  };
+  const packageManager = data.get("packageManager");
+
+  return buildRecipe(
+    String(data.get("profile") ?? ""),
+    data.getAll("integration").map(String),
+    packageManager ? String(packageManager) : undefined,
+  );
 }
 
 function render() {
