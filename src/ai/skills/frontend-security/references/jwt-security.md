@@ -50,7 +50,10 @@ const token = jwt.sign(payload, privateKey, { algorithm: "RS256" });
 
 ## Token Sidejacking Prevention
 
-Add fingerprint to prevent stolen token reuse:
+For browser-held bearer tokens, a hardened fingerprint cookie can reduce reuse
+of a stolen token. Treat it as defense in depth, not a substitute for short
+lifetimes, XSS prevention, revocation, or keeping tokens out of browser storage
+when the architecture allows it.
 
 ```javascript
 const crypto = require("crypto");
@@ -98,7 +101,9 @@ Web Storage as a universal default.
 
 Prefer server-owned sessions or a backend-for-frontend (BFF) that stores tokens
 server-side and sends only `httpOnly`, `Secure`, SameSite cookies to the
-browser. Cookie-based auth needs CSRF protection on state-changing requests.
+browser. Cookie-based auth needs CSRF protection on state-changing requests;
+SameSite is useful defense in depth but does not replace tokens plus
+Origin/Referer checks for sensitive operations.
 
 ```javascript
 // Server sets cookie
@@ -116,7 +121,9 @@ res.cookie("token", jwt, {
 
 For browser-only SPAs, prefer short-lived access tokens kept in memory, refresh
 token rotation where appropriate, and a clear re-authentication path. Avoid
-long-lived bearer tokens in Web Storage.
+long-lived bearer tokens in Web Storage. If refresh tokens are issued to browser
+clients, rotate them, expire them, detect reuse, and avoid storing them in
+`localStorage` or other long-lived JavaScript-readable storage.
 
 ```javascript
 let accessToken = null;
@@ -163,6 +170,11 @@ localStorage.setItem("token", jwt); // Not recommended
 ```
 
 ## Token Expiration
+
+The refresh-token example is a server-side sketch. For browser clients, do not
+pair it with long-lived refresh tokens stored in Web Storage; prefer a BFF,
+server-side session, or refresh-token rotation with storage and replay controls
+chosen for the client architecture.
 
 ```javascript
 // Short-lived access tokens (15-60 minutes)
@@ -261,6 +273,11 @@ const encryptedToken = encrypt(token, encryptionKey);
 
 ## Validation Middleware
 
+This middleware validates bearer tokens after they reach an API. It does not
+recommend where the browser should store those tokens; use the storage guidance
+above before deciding whether a browser should send an `Authorization` header at
+all.
+
 ```javascript
 function authenticateToken(req, res, next) {
   // Get token from header
@@ -306,11 +323,12 @@ function authenticateToken(req, res, next) {
 - [ ] Explicit algorithm specification (never auto-detect)
 - [ ] Strong secret (256+ bits) or RSA keys
 - [ ] Short expiration times (15-60 minutes for access tokens)
-- [ ] Token fingerprint with httpOnly cookie
+- [ ] Fingerprint cookie considered for browser-held bearer tokens where appropriate
 - [ ] Validate issuer (iss) and audience (aud) claims
 - [ ] Implement token revocation mechanism
 - [ ] No sensitive data in payload
 - [ ] Choose storage based on architecture: server-side session/BFF, in-memory SPA token, or constrained sessionStorage fallback
+- [ ] Refresh tokens are rotated, replay-detected, and not kept in long-lived Web Storage
 - [ ] Avoid long-lived bearer tokens in Web Storage
 - [ ] Protect cookie-based auth with CSRF defenses
 - [ ] Use HTTPS only
