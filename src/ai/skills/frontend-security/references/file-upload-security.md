@@ -9,6 +9,8 @@
 - [ ] Enforce file size limits
 - [ ] Store outside webroot
 - [ ] Quarantine and scan risky files before serving
+- [ ] Re-encode images or apply CDR where appropriate
+- [ ] Serve downloads through an authorization-checked handler with safe headers
 - [ ] Require authentication
 - [ ] Implement CSRF protection
 
@@ -94,6 +96,10 @@ function generateStorageName(filename) {
   return `${uuid}${ext}`;
 }
 ```
+
+Prefer deriving the final extension from the server-validated or rewritten file,
+not from `file.originalname`. For example, image rewrite pipelines that always
+emit JPEG should store a random `*.jpg` name regardless of the uploaded name.
 
 ## Content-Type Validation
 
@@ -196,10 +202,14 @@ app.get("/files/:id", async (req, res) => {
   // Get file from database (not from user input)
   const fileRecord = await db.getFile(req.params.id);
   if (!fileRecord) return res.status(404).send("Not found");
+  if (fileRecord.status !== "available") return res.status(404).send("Not found");
 
   // Set safe headers
   res.setHeader("Content-Type", fileRecord.mimeType);
-  res.setHeader("Content-Disposition", contentDisposition(fileRecord.displayName));
+  res.setHeader(
+    "Content-Disposition",
+    contentDisposition(fileRecord.displayName, { type: "attachment" }),
+  );
   res.setHeader("X-Content-Type-Options", "nosniff");
 
   // Stream file
@@ -218,10 +228,64 @@ const sharp = require("sharp");
 async function sanitizeImage(inputPath, outputPath) {
   await sharp(inputPath)
     .rotate() // Apply EXIF orientation
-    .toFormat("jpeg", { quality: 90 }) // Re-encode
+    .toFormat("jpeg", { quality: 90 }) // Re-encode without preserving metadata
     .toFile(outputPath);
 }
 ```
+
+Do not call `withMetadata()` unless the product explicitly requires metadata
+retention and the fields have been reviewed for privacy and scriptable payload
+risk. For PDF, DOCX, and other active document formats, use a dedicated
+Content Disarm and Reconstruction (CDR) flow or hold files for manual review.
+
+## Quarantine and Scanning Workflow
+
+Treat upload completion as the start of processing, not approval to serve the
+file. Store new files in a private quarantine location, record `quarantined`
+metadata, and make the download route refuse anything that is not explicitly
+`available`.
+
+```javascript
+async function quarantineUpload({ buffer, detected, originalName, userId }) {
+  const quarantinedName = `${crypto.randomUUID()}.bin`;
+  const quarantinePath = path.join(QUARANTINE_DIR, quarantinedName);
+
+  await fs.writeFile(quarantinePath, buffer, { mode: 0o600 });
+
+  const fileRecord = await db.createFile({
+    userId,
+    originalName,
+    storageName: quarantinedName,
+    mimeType: detected.mime,
+    status: "quarantined",
+  });
+
+  await scanQueue.enqueue({ fileId: fileRecord.id, path: quarantinePath });
+  return fileRecord;
+}
+
+async function releaseAfterScan(fileRecord, cleanPath, releaseMetadata) {
+  if (fileRecord.status !== "quarantined") {
+    throw new Error("Only quarantined files can be released");
+  }
+
+  const storageName = `${crypto.randomUUID()}${releaseMetadata.extension}`;
+  const storagePath = path.join(UPLOAD_DIR, storageName);
+
+  await fs.rename(cleanPath, storagePath);
+  await db.updateFile(fileRecord.id, {
+    storageName,
+    mimeType: releaseMetadata.mimeType,
+    size: releaseMetadata.size,
+    status: "available",
+  });
+}
+```
+
+The scanner can be antivirus, sandbox detonation, CDR, image re-encoding, or a
+manual review queue depending on file type and risk. Avoid sending sensitive
+customer files to public scanning APIs unless that data-sharing model is
+explicitly approved.
 
 ## ZIP File Handling
 
@@ -232,9 +296,12 @@ limits while reading, and move accepted files into final storage only after all
 checks pass.
 
 ```javascript
-import AdmZip from "adm-zip";
 import { fileTypeFromBuffer } from "file-type";
+import { createWriteStream } from "node:fs";
+import fs from "node:fs/promises";
 import path from "node:path";
+import { pipeline } from "node:stream/promises";
+import yauzl from "yauzl";
 
 const ARCHIVE_MIME_TYPES = new Set([
   "application/zip",
@@ -244,76 +311,228 @@ const ARCHIVE_MIME_TYPES = new Set([
   "application/vnd.rar",
 ]);
 
-async function validateZipBeforeExtract(zipPath, destDir, options = {}) {
+const UNIX_FILE_TYPE_MASK = 0o170000;
+const UNIX_SYMLINK = 0o120000;
+const UNIX_CHARACTER_DEVICE = 0o020000;
+const UNIX_BLOCK_DEVICE = 0o060000;
+const UNIX_FIFO = 0o010000;
+const UNIX_SOCKET = 0o140000;
+
+function openZip(zipPath) {
+  return new Promise((resolve, reject) => {
+    yauzl.open(zipPath, { lazyEntries: true, validateEntrySizes: true }, (error, zip) =>
+      error ? reject(error) : resolve(zip),
+    );
+  });
+}
+
+function nextZipEntry(zip) {
+  return new Promise((resolve, reject) => {
+    function cleanup() {
+      zip.off("entry", onEntry);
+      zip.off("end", onEnd);
+      zip.off("error", onError);
+    }
+
+    function onEntry(entry) {
+      cleanup();
+      resolve(entry);
+    }
+
+    function onEnd() {
+      cleanup();
+      resolve(null);
+    }
+
+    function onError(error) {
+      cleanup();
+      reject(error);
+    }
+
+    zip.once("entry", onEntry);
+    zip.once("end", onEnd);
+    zip.once("error", onError);
+    zip.readEntry();
+  });
+}
+
+async function* readZipEntries(zip) {
+  while (true) {
+    const entry = await nextZipEntry(zip);
+    if (!entry) return;
+    yield entry;
+  }
+}
+
+function assertSafeArchiveName(entryName, destDir, seenTargets, maxDepth) {
+  const normalizedName = entryName.replace(/\\/g, "/");
+  if (normalizedName.includes("\0") || /^[a-zA-Z]:/.test(normalizedName)) {
+    throw new Error("Unsafe archive entry name");
+  }
+
+  const parts = normalizedName.split("/").filter(Boolean);
+  if (parts.length === 0 || parts.length > maxDepth) {
+    throw new Error("Archive entry has invalid depth");
+  }
+
+  if (path.posix.isAbsolute(normalizedName) || parts.includes("..")) {
+    throw new Error("Path traversal detected");
+  }
+
+  const resolvedDest = path.resolve(destDir);
+  const resolvedEntry = path.resolve(resolvedDest, ...parts);
+  const relativeEntry = path.relative(resolvedDest, resolvedEntry);
+
+  if (relativeEntry.startsWith("..") || path.isAbsolute(relativeEntry)) {
+    throw new Error("Path traversal detected");
+  }
+
+  if (seenTargets.has(resolvedEntry)) {
+    throw new Error("Duplicate archive target path");
+  }
+  seenTargets.add(resolvedEntry);
+
+  return { normalizedName: parts.join("/"), resolvedEntry };
+}
+
+function assertSafeArchiveMode(entry) {
+  const mode = (entry.externalFileAttributes >>> 16) & 0o777777;
+  const fileType = mode & UNIX_FILE_TYPE_MASK;
+  const unsafeTypes = new Set([
+    UNIX_SYMLINK,
+    UNIX_CHARACTER_DEVICE,
+    UNIX_BLOCK_DEVICE,
+    UNIX_FIFO,
+    UNIX_SOCKET,
+  ]);
+
+  if (unsafeTypes.has(fileType)) {
+    throw new Error("Archive links and device entries are not allowed");
+  }
+}
+
+function openReadStream(zip, entry) {
+  return new Promise((resolve, reject) => {
+    zip.openReadStream(entry, (error, stream) => (error ? reject(error) : resolve(stream)));
+  });
+}
+
+async function inspectAndExtractEntry(zip, entry, resolvedEntry, maxEntrySize) {
+  const tempPath = `${resolvedEntry}.tmp`;
+  await fs.mkdir(path.dirname(tempPath), { recursive: true, mode: 0o700 });
+
+  try {
+    const readStream = await openReadStream(zip, entry);
+    const chunks = [];
+    let signatureBytes = 0;
+    let bytesRead = 0;
+
+    readStream.on("data", (chunk) => {
+      bytesRead += chunk.length;
+      if (bytesRead > maxEntrySize) {
+        readStream.destroy(new Error("Archive entry exceeds per-file limit"));
+        return;
+      }
+      if (signatureBytes < 4100) {
+        const remainingBytes = 4100 - signatureBytes;
+        const signatureChunk = chunk.subarray(0, remainingBytes);
+        chunks.push(signatureChunk);
+        signatureBytes += signatureChunk.length;
+      }
+    });
+
+    await pipeline(readStream, createWriteStream(tempPath, { flags: "wx", mode: 0o600 }));
+
+    const detected = await fileTypeFromBuffer(Buffer.concat(chunks));
+    if (detected && ARCHIVE_MIME_TYPES.has(detected.mime)) {
+      throw new Error("Nested archives are not allowed");
+    }
+
+    return tempPath;
+  } catch (error) {
+    await fs.rm(tempPath, { force: true });
+    throw error;
+  }
+}
+
+async function extractZipSafely(zipPath, destDir, options = {}) {
   const {
     maxTotalSize = 100 * 1024 * 1024,
     maxEntrySize = 10 * 1024 * 1024,
     maxEntries = 1000,
     maxDepth = 8,
+    maxCompressionRatio = 100,
   } = options;
-  const zip = new AdmZip(zipPath);
-  const entries = zip.getEntries();
 
-  if (entries.length > maxEntries) {
-    throw new Error("Too many archive entries");
-  }
+  const zip = await openZip(zipPath);
 
   let totalSize = 0;
+  let entryCount = 0;
   const seenTargets = new Set();
+  const extractedTempPaths = [];
 
-  for (const entry of entries) {
-    const normalizedName = entry.entryName.replace(/\\/g, "/");
-    const depth = normalizedName.split("/").filter(Boolean).length;
-    if (depth > maxDepth) {
-      throw new Error("Archive entry is too deeply nested");
-    }
-
-    const resolvedDest = path.resolve(destDir);
-    const resolvedEntry = path.resolve(destDir, normalizedName);
-    const relativeEntry = path.relative(resolvedDest, resolvedEntry);
-
-    if (relativeEntry.startsWith("..") || path.isAbsolute(relativeEntry)) {
-      throw new Error("Path traversal detected");
-    }
-
-    if (seenTargets.has(resolvedEntry)) {
-      throw new Error("Duplicate archive target path");
-    }
-    seenTargets.add(resolvedEntry);
-
-    if (entry.header.fileNameLength === 0 || entry.isDirectory) continue;
-    if (entry.attr & 0o120000) {
-      throw new Error("Archive symlink entries are not allowed");
-    }
-
-    if (entry.header.size > maxEntrySize) {
-      throw new Error("Archive entry exceeds per-file limit");
-    }
-
-    totalSize += entry.header.size;
-    if (totalSize > maxTotalSize) {
-      throw new Error("Extracted size exceeds limit");
-    }
-
-    if (entry.header.compressedSize === 0) {
-      if (entry.header.size > 0) {
-        throw new Error("Suspicious zero-compressed entry");
+  try {
+    for await (const entry of readZipEntries(zip)) {
+      entryCount += 1;
+      if (entryCount > maxEntries) {
+        throw new Error("Too many archive entries");
       }
-      continue;
+
+      const isDirectory = entry.fileName.replace(/\\/g, "/").endsWith("/");
+      const { normalizedName, resolvedEntry } = assertSafeArchiveName(
+        entry.fileName,
+        destDir,
+        seenTargets,
+        maxDepth,
+      );
+
+      assertSafeArchiveMode(entry);
+
+      if (isDirectory) continue;
+
+      if (entry.uncompressedSize > maxEntrySize) {
+        throw new Error("Archive entry exceeds per-file limit");
+      }
+
+      totalSize += entry.uncompressedSize;
+      if (totalSize > maxTotalSize) {
+        throw new Error("Extracted size exceeds limit");
+      }
+
+      if (entry.compressedSize === 0) {
+        if (entry.uncompressedSize > 0) {
+          throw new Error("Suspicious zero-compressed entry");
+        }
+        continue;
+      }
+
+      const ratio = entry.uncompressedSize / entry.compressedSize;
+      if (ratio > maxCompressionRatio) {
+        throw new Error("Suspicious compression ratio");
+      }
+
+      const tempPath = await inspectAndExtractEntry(zip, entry, resolvedEntry, maxEntrySize);
+      extractedTempPaths.push({ tempPath, finalPath: resolvedEntry });
     }
 
-    const ratio = entry.header.size / entry.header.compressedSize;
-    if (ratio > 100) {
-      throw new Error("Suspicious compression ratio");
+    for (const { tempPath, finalPath } of extractedTempPaths) {
+      await fs.rename(tempPath, finalPath);
     }
-
-    const detected = await fileTypeFromBuffer(entry.getData());
-    if (detected && ARCHIVE_MIME_TYPES.has(detected.mime)) {
-      throw new Error("Nested archives are not allowed");
+  } catch (error) {
+    for (const { tempPath } of extractedTempPaths) {
+      await fs.rm(tempPath, { force: true });
     }
+    throw error;
+  } finally {
+    zip.close();
   }
 }
 ```
+
+Some ZIP libraries expose directory entries without reliable Unix mode bits,
+and other archive formats have different metadata fields. Treat this as a
+pattern: choose a library that can stream entries, expose link/device metadata,
+and validate declared sizes while still enforcing byte counts during extraction.
 
 ## Express.js Complete Example
 
@@ -329,6 +548,7 @@ const app = express();
 
 // Configuration
 const UPLOAD_DIR = "/var/app/uploads";
+const QUARANTINE_DIR = "/var/app/quarantine";
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif"];
 
@@ -362,23 +582,27 @@ app.post(
         return res.status(400).json({ error: "Invalid file" });
       }
 
-      // Generate safe storage filename for the re-encoded JPEG.
-      const filename = `${crypto.randomUUID()}.jpg`;
-      const filepath = path.join(UPLOAD_DIR, filename);
+      // Generate a safe quarantine filename. The final storage name is created
+      // by the scanner/release worker after approval.
+      const quarantinedName = `${crypto.randomUUID()}.upload`;
+      const quarantinePath = path.join(QUARANTINE_DIR, quarantinedName);
 
-      // Re-encode images before they become downloadable.
+      // Re-encode images before scanning and release.
       const output = await sharp(file.buffer).rotate().toFormat("jpeg", { quality: 90 }).toBuffer();
-      await fs.writeFile(filepath, output);
+      await fs.writeFile(quarantinePath, output, { mode: 0o600 });
 
-      // Store metadata in database
+      // Store quarantined metadata. A separate scanner/review worker flips this
+      // to available and moves it into UPLOAD_DIR only after approval.
       const fileRecord = await db.createFile({
         userId: req.user.id,
-        filename,
+        storageName: quarantinedName,
+        storageRoot: "quarantine",
         originalName: file.originalname,
         mimeType: "image/jpeg",
         size: output.length,
-        status: "available",
+        status: "quarantined",
       });
+      await scanQueue.enqueue({ fileId: fileRecord.id, path: quarantinePath });
 
       res.json({ id: fileRecord.id });
     } catch (error) {
