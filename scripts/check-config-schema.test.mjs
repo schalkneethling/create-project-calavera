@@ -1,9 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
 import Ajv2020 from "ajv/dist/2020.js";
 
+import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
 import { integrationCatalog } from "../src/catalog.js";
 import { buildRecipe, CONFIG_SCHEMA_URL } from "../src/recipe.js";
 
@@ -58,6 +59,13 @@ test("published config schema is valid JSON Schema and validates the example con
 
   assertValid(validate, config);
   assertValid(validate, buildRecipe("modern", ["editorconfig"], "pnpm"));
+  assertValid(
+    validate,
+    buildRecipe("modern", ["editorconfig"], "pnpm", [
+      { type: "skill", src: "skills/semantic-html" },
+      { type: "hook", src: "hooks/block-dangerous-commands", target: DEFAULT_AI_TARGET },
+    ]),
+  );
 });
 
 test("config schema root shape matches the maintained recipe contract", () => {
@@ -69,6 +77,37 @@ test("config schema root shape matches the maintained recipe contract", () => {
 
 test("config schema integration enum stays in catalog order", () => {
   assert.deepEqual(schemaIntegrationIds, integrationIds);
+});
+
+test("AI artifact catalog exposes unique complete recipe items", async () => {
+  const ids = new Set();
+
+  for (const artifact of aiArtifactCatalog) {
+    const sourceStats = await stat(new URL(`../src/ai/${artifact.src}`, import.meta.url));
+
+    assert.equal(typeof artifact.id, "string");
+    assert.equal(typeof artifact.label, "string");
+    assert.equal(typeof artifact.group, "string");
+    assert.equal(artifact.status, "bundled");
+    assert.ok(["skill", "hook", "agent"].includes(artifact.type));
+    assert.equal(ids.has(artifact.id), false, `Duplicate AI artifact id: ${artifact.id}`);
+
+    if (artifact.type === "skill") {
+      assert.match(artifact.src, /^skills\/[^/]+$/);
+      assert.equal(artifact.defaultTarget, undefined);
+      assert.equal(sourceStats.isDirectory(), true);
+    } else if (artifact.type === "hook") {
+      assert.match(artifact.src, /^hooks\/[^/]+$/);
+      assert.equal(artifact.defaultTarget, DEFAULT_AI_TARGET);
+      assert.equal(sourceStats.isDirectory(), true);
+    } else {
+      assert.match(artifact.src, /^agents\/[^/]+\.md$/);
+      assert.equal(artifact.defaultTarget, DEFAULT_AI_TARGET);
+      assert.equal(sourceStats.isFile(), true);
+    }
+
+    ids.add(artifact.id);
+  }
 });
 
 test("config schema defines known boolean script flags", () => {

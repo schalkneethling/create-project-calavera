@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { fileExists } from "../utils/fs.js";
 import { isNotEmptyString, isPlainObject } from "../utils/guards.js";
 import { hashDirectory, hashFile } from "../utils/hash.js";
+import { DEFAULT_AI_TARGET } from "./catalog.js";
 
 /**
  * @typedef {import("../state.js").CalaveraState} CalaveraState
@@ -39,8 +40,6 @@ import { hashDirectory, hashFile } from "../utils/hash.js";
 
 const SOURCE_DIR = dirname(fileURLToPath(import.meta.url));
 const AI_SOURCE_ROOT = SOURCE_DIR;
-const DEFAULT_AI_TARGET = "claude-code";
-
 const AI_SOURCE_DIRECTORIES = Object.freeze({
   skill: "skills",
   hook: "hooks",
