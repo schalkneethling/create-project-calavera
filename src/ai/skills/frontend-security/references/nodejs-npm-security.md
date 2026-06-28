@@ -8,7 +8,7 @@
 # Check for vulnerabilities
 npm audit
 
-# Fix automatically only after reviewing the proposed changes and lockfile diff
+# Preview the proposed changes and lockfile diff first, then run `npm audit fix`
 npm audit fix
 
 # Force fix can apply breaking direct or transitive upgrades. Use only after
