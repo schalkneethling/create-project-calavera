@@ -8,11 +8,11 @@
 # Check for vulnerabilities
 npm audit
 
-# Fix automatically where possible, after reviewing the proposed changes
+# Fix automatically only after reviewing the proposed changes and lockfile diff
 npm audit fix
 
-# Force fix can apply breaking transitive upgrades. Use only after reviewing
-# release notes, lockfile diffs, and test results.
+# Force fix can apply breaking direct or transitive upgrades. Use only after
+# reviewing release notes, dependency graphs, lockfile diffs, and test results.
 npm audit fix --force
 
 # Generate detailed report
@@ -28,6 +28,19 @@ npm ci  # Instead of npm install
 # Verify lockfile integrity
 npm ci --ignore-scripts  # Safer for first run
 ```
+
+### Dependency Update Review
+
+Treat automated dependency updates as reviewable changes, not background
+maintenance. Dependabot or Renovate PRs are useful because they isolate the
+package, lockfile, release notes, provenance or publisher signals where
+available, and CI result for each update. Review dependency diffs carefully for
+new install scripts, ownership changes, unexpected transitive churn, native
+build steps, and broad permission or runtime changes.
+
+Run audits in CI and scheduled automation so ordinary installs are predictable.
+Use `npm audit fix --force` only when the breaking-change and transitive-update
+effects are understood.
 
 ### Package.json Security
 
@@ -280,6 +293,7 @@ const pattern = new RE2(userProvidedRegex);
 - [ ] Review new dependencies before installation
 - [ ] Use `--ignore-scripts` for untrusted packages
 - [ ] Set up automated vulnerability scanning such as Dependabot or Renovate
+- [ ] Review dependency and lockfile diffs for risky scripts, publisher changes, and unexpected transitive churn
 - [ ] Keep dependencies updated
 - [ ] Avoid typosquatting by double-checking package names
 - [ ] Use `npm-shrinkwrap.json` only when publishing a deployable app or CLI that must lock transitive dependencies; avoid it for libraries unless you intentionally want to constrain consumers
@@ -288,3 +302,7 @@ OWASP References:
 
 - https://cheatsheetseries.owasp.org/cheatsheets/Nodejs_Security_Cheat_Sheet.html
 - https://cheatsheetseries.owasp.org/cheatsheets/NPM_Security_Cheat_Sheet.html
+- https://cheatsheetseries.owasp.org/cheatsheets/OS_Command_Injection_Defense_Cheat_Sheet.html
+- https://docs.npmjs.com/cli/commands/npm-audit
+- https://docs.github.com/en/code-security/dependabot
+- https://nodejs.org/api/child_process.html
