@@ -201,7 +201,7 @@ function renderAiArtifacts() {
         targetField.className = "artifact-target";
         targetField.htmlFor = `ai-target-${artifact.id}`;
         targetField.innerHTML = `
-          Target
+          Target for ${artifact.label}
           <input id="ai-target-${artifact.id}" type="text" value="${artifact.defaultTarget}" data-ai-target="${artifact.id}" disabled />
         `;
         option.append(targetField);
