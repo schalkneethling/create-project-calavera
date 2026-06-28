@@ -37,9 +37,10 @@ export const profileDefaults = {
  * @param {string} profile
  * @param {string[]} integrations
  * @param {PackageManager} [packageManager]
+ * @param {{ type: string, src: string, target?: string }[]} [ai]
  */
-export function buildRecipe(profile, integrations, packageManager = "npm") {
-  return {
+export function buildRecipe(profile, integrations, packageManager = "npm", ai = []) {
+  const recipe = {
     $schema: CONFIG_SCHEMA_URL,
     version: 1,
     profile,
@@ -54,4 +55,10 @@ export function buildRecipe(profile, integrations, packageManager = "npm") {
       quality: true,
     },
   };
+
+  if (ai.length > 0) {
+    recipe.ai = ai;
+  }
+
+  return recipe;
 }

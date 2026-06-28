@@ -1,4 +1,5 @@
 import { buildRecipe } from "../src/recipe.js";
+import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
 
 const catalog = [
   entry("editorconfig", "Project consistency", "EditorConfig", "recommended"),
@@ -101,6 +102,7 @@ const defaults = {
 
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
+const aiArtifacts = document.querySelector("#ai-artifacts");
 const output = document.querySelector("#output");
 const webMcpBanner = document.querySelector("#webmcp-banner");
 const profiles = Object.keys(defaults);
@@ -170,6 +172,48 @@ function renderIntegrations() {
   }
 }
 
+function renderAiArtifacts() {
+  aiArtifacts.replaceChildren();
+
+  const groups = aiArtifactCatalog.reduce((grouped, item) => {
+    grouped.set(item.group, [...(grouped.get(item.group) ?? []), item]);
+    return grouped;
+  }, new Map());
+
+  for (const [group, items] of groups) {
+    const section = document.createElement("section");
+    section.className = "integration-group";
+    section.innerHTML = `<h2>${group}</h2>`;
+
+    for (const artifact of items) {
+      const option = document.createElement("div");
+      option.className = "artifact-option";
+      option.innerHTML = `
+        <label for="ai-artifact-${artifact.id}">
+          <input id="ai-artifact-${artifact.id}" type="checkbox" name="aiArtifact" value="${artifact.id}" />
+          <span>${artifact.label}</span>
+          <small>${artifact.status}</small>
+        </label>
+      `;
+
+      if (artifact.defaultTarget) {
+        const targetField = document.createElement("label");
+        targetField.className = "artifact-target";
+        targetField.htmlFor = `ai-target-${artifact.id}`;
+        targetField.innerHTML = `
+          Target
+          <input id="ai-target-${artifact.id}" type="text" value="${artifact.defaultTarget}" data-ai-target="${artifact.id}" disabled />
+        `;
+        option.append(targetField);
+      }
+
+      section.append(option);
+    }
+
+    aiArtifacts.append(section);
+  }
+}
+
 function selectProfile(profile) {
   const radio = form.querySelector(`[name="profile"][value="${profile}"]`);
   radio.checked = true;
@@ -185,6 +229,32 @@ function selectIntegrations(integrationIds) {
   }
 }
 
+function syncAiTargetStates() {
+  for (const targetInput of form.querySelectorAll("[data-ai-target]")) {
+    const checkbox = form.querySelector(
+      `[name="aiArtifact"][value="${targetInput.dataset.aiTarget}"]`,
+    );
+    targetInput.disabled = !checkbox?.checked;
+  }
+}
+
+function selectedAiItems() {
+  return [...form.querySelectorAll('[name="aiArtifact"]:checked')].map((checkbox) => {
+    const artifact = aiArtifactCatalog.find(({ id }) => id === checkbox.value);
+    const item = {
+      type: artifact.type,
+      src: artifact.src,
+    };
+
+    if (artifact.defaultTarget) {
+      const targetInput = form.querySelector(`[data-ai-target="${artifact.id}"]`);
+      item.target = targetInput?.value.trim() || DEFAULT_AI_TARGET;
+    }
+
+    return item;
+  });
+}
+
 function recipe() {
   const data = new FormData(form);
   const packageManager = data.get("packageManager");
@@ -193,6 +263,7 @@ function recipe() {
     String(data.get("profile") ?? ""),
     data.getAll("integration").map(String),
     packageManager ? String(packageManager) : undefined,
+    selectedAiItems(),
   );
 }
 
@@ -205,6 +276,7 @@ function setDefaults() {
 
   renderIntegrations();
   selectIntegrations(defaults[profile]);
+  syncAiTargetStates();
   render();
 }
 
@@ -324,6 +396,18 @@ function catalogResponse() {
       profiles,
       description: `${label}. Category: ${group}. Status: ${status}.`,
     })),
+    aiArtifacts: aiArtifactCatalog.map(
+      ({ id, type, src, group, label, status, defaultTarget }) => ({
+        id,
+        type,
+        src,
+        label,
+        group,
+        status,
+        defaultTarget,
+        description: `${label}. Type: ${type}. Source: ${src}.`,
+      }),
+    ),
     toolInput: {
       accepts:
         "Use either an integration id or its label in the configure_project_tooling tools array. Matching is case-insensitive.",
@@ -440,6 +524,7 @@ form.addEventListener("change", (event) => {
   if (event.target.name === "profile") {
     setDefaults();
   } else {
+    syncAiTargetStates();
     render();
   }
 });
@@ -455,5 +540,6 @@ document.querySelector("#download").addEventListener("click", () => {
   downloadFile();
 });
 
+renderAiArtifacts();
 setDefaults();
 registerWebMcpTools();
