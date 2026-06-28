@@ -83,7 +83,10 @@ function normalizeAllowedUrl(input) {
   try {
     const url = new URL(input, window.location.origin);
     if (!["https:", "mailto:"].includes(url.protocol)) return null;
-    if (url.protocol === "https:" && !["example.com", "docs.example.com"].includes(url.hostname)) {
+    if (
+      url.protocol === "https:" &&
+      !["https://example.com", "https://docs.example.com"].includes(url.origin)
+    ) {
       return null;
     }
     return url.href;
@@ -95,6 +98,11 @@ function normalizeAllowedUrl(input) {
 const safeUrl = normalizeAllowedUrl(userInput);
 if (safeUrl) {
   location.assign(safeUrl);
+}
+
+// If opening a separate browsing context, also prevent tabnabbing.
+if (safeUrl) {
+  window.open(safeUrl, "_blank", "noopener,noreferrer");
 }
 ```
 
@@ -232,7 +240,9 @@ const policy = trustedTypes.createPolicy("default", {
   },
   createScriptURL: (input) => {
     const url = new URL(input, location.origin);
-    if (url.origin === location.origin) return input;
+    if (url.origin === location.origin && url.pathname.startsWith("/assets/")) {
+      return url.href;
+    }
     throw new Error("Invalid script URL");
   },
 });

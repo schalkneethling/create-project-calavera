@@ -6,9 +6,12 @@
 
 ```http
 Content-Security-Policy:
-  script-src 'nonce-{random}' 'strict-dynamic';
+  default-src 'self';
+  script-src 'nonce-{per_request_nonce}' 'strict-dynamic';
   object-src 'none';
   base-uri 'none';
+  form-action 'self';
+  frame-ancestors 'none';
 ```
 
 Implementation:
@@ -21,7 +24,14 @@ const nonce = crypto.randomBytes(16).toString("base64");
 // Set header
 res.setHeader(
   "Content-Security-Policy",
-  `script-src 'nonce-${nonce}' 'strict-dynamic'; object-src 'none'; base-uri 'none';`,
+  [
+    "default-src 'self'",
+    `script-src 'nonce-${nonce}' 'strict-dynamic'`,
+    "object-src 'none'",
+    "base-uri 'none'",
+    "form-action 'self'",
+    "frame-ancestors 'none'",
+  ].join("; "),
 );
 
 // Include nonce in script tags
@@ -32,9 +42,12 @@ res.send(`<script nonce="${nonce}">/* safe code */</script>`);
 
 ```http
 Content-Security-Policy:
+  default-src 'self';
   script-src 'sha256-{hash}' 'strict-dynamic';
   object-src 'none';
   base-uri 'none';
+  form-action 'self';
+  frame-ancestors 'none';
 ```
 
 Generate hash:
@@ -45,19 +58,19 @@ echo -n 'console.log("hello");' | openssl sha256 -binary | openssl base64
 
 ## Essential Directives
 
-| Directive         | Purpose                       | Recommended Value                   |
-| ----------------- | ----------------------------- | ----------------------------------- |
-| `default-src`     | Fallback for other directives | `'self'`                            |
-| `script-src`      | JavaScript sources            | `'nonce-{random}' 'strict-dynamic'` |
-| `style-src`       | CSS sources                   | `'self'` or nonce/hash-based styles |
-| `img-src`         | Image sources                 | `'self' data: https:`               |
-| `font-src`        | Font sources                  | `'self'`                            |
-| `connect-src`     | AJAX/WebSocket/Fetch          | `'self' https://api.example.com`    |
-| `frame-src`       | iframe sources                | `'none'` or specific origins        |
-| `object-src`      | Plugin content                | `'none'`                            |
-| `base-uri`        | Base URL restrictions         | `'none'`                            |
-| `form-action`     | Form submission targets       | `'self'`                            |
-| `frame-ancestors` | Who can embed page            | `'self'` or `'none'`                |
+| Directive         | Purpose                       | Recommended Value                              |
+| ----------------- | ----------------------------- | ---------------------------------------------- |
+| `default-src`     | Fallback for other directives | `'self'`                                       |
+| `script-src`      | JavaScript sources            | `'nonce-{per_request_nonce}' 'strict-dynamic'` |
+| `style-src`       | CSS sources                   | `'self'` or nonce/hash-based styles            |
+| `img-src`         | Image sources                 | `'self' data: https:`                          |
+| `font-src`        | Font sources                  | `'self'`                                       |
+| `connect-src`     | AJAX/WebSocket/Fetch          | `'self' https://api.example.com`               |
+| `frame-src`       | iframe sources                | `'none'` or specific origins                   |
+| `object-src`      | Plugin content                | `'none'`                                       |
+| `base-uri`        | Base URL restrictions         | `'none'`                                       |
+| `form-action`     | Form submission targets       | `'self'`                                       |
+| `frame-ancestors` | Who can embed page            | `'self'` or `'none'`                           |
 
 ## Framework Integration
 
@@ -106,7 +119,7 @@ export default defineConfig({
           server.middlewares.use((req, res, next) => {
             res.setHeader(
               "Content-Security-Policy",
-              "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none';",
+              "default-src 'self'; script-src 'self'; object-src 'none'; base-uri 'none'; form-action 'self'; frame-ancestors 'none';",
             );
             next();
           });
@@ -137,7 +150,11 @@ Test policies without enforcement:
 ```http
 Content-Security-Policy-Report-Only:
   default-src 'self';
-  script-src 'self';
+  script-src 'nonce-{per_request_nonce}' 'strict-dynamic';
+  object-src 'none';
+  base-uri 'none';
+  form-action 'self';
+  frame-ancestors 'none';
   report-uri /csp-report;
 ```
 

@@ -41,6 +41,7 @@
     "provenance": true
   },
   "scripts": {
+    "check": "pnpm quality",
     "prettier:lint": "prettier .",
     "prettier:format": "prettier --write .",
     "lint:js": "eslint .",

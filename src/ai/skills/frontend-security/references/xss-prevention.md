@@ -67,6 +67,13 @@ function toAllowedInternalUrl(input) {
 
 const safeUrl = toAllowedInternalUrl(userInput);
 if (safeUrl) location.assign(safeUrl);
+
+// New tabs/windows need opener protection when the destination is untrusted or
+// external.
+if (safeUrl) {
+  const opened = window.open(safeUrl, "_blank", "noopener,noreferrer");
+  if (opened) opened.opener = null;
+}
 ```
 
 ## HTML Sanitization
@@ -111,14 +118,14 @@ function toSafeExternalHref(input) {
   try {
     const url = new URL(input, window.location.origin);
     if (!["https:"].includes(url.protocol)) return "#";
-    if (!["example.com", "docs.example.com"].includes(url.hostname)) return "#";
+    if (!["https://example.com", "https://docs.example.com"].includes(url.origin)) return "#";
     return url.href;
   } catch {
     return "#";
   }
 }
 
-<a href={toSafeExternalHref(userInput)} rel="noopener noreferrer">
+<a href={toSafeExternalHref(userInput)} target="_blank" rel="noopener noreferrer">
   Link
 </a>;
 ```
@@ -161,13 +168,17 @@ navigation.
 
 ```javascript
 function matchesPathPrefix(pathname, allowedPrefix) {
+  if (allowedPrefix === "/") return pathname.startsWith("/");
   return pathname === allowedPrefix || pathname.startsWith(`${allowedPrefix}/`);
 }
 
-function normalizeAllowedHref(input, { baseUrl, allowedOrigins, allowedPathPrefixes = ["/"] }) {
+function normalizeAllowedHref(
+  input,
+  { baseUrl, allowedOrigins, allowedPathPrefixes = ["/"], allowedProtocols = ["https:"] },
+) {
   try {
     const url = new URL(input, baseUrl);
-    if (!["http:", "https:"].includes(url.protocol)) return null;
+    if (!allowedProtocols.includes(url.protocol)) return null;
     if (!allowedOrigins.includes(url.origin)) return null;
     if (!allowedPathPrefixes.some((prefix) => matchesPathPrefix(url.pathname, prefix))) return null;
     return url.href;
@@ -180,8 +191,13 @@ const href = normalizeAllowedHref(userInput, {
   baseUrl: window.location.origin,
   allowedOrigins: [window.location.origin, "https://docs.example.com"],
   allowedPathPrefixes: ["/docs", "/account"],
+  allowedProtocols: ["https:"],
 });
 ```
+
+For links that open in a new browsing context, pair normalized URLs with
+`rel="noopener noreferrer"` or `window.open(..., "noopener,noreferrer")` so the
+new page cannot control the opener.
 
 ## Content-Type Headers
 

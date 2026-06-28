@@ -30,7 +30,7 @@ function SafeLink({ href, children }) {
       if (!["https:", "mailto:"].includes(url.protocol)) return "#";
       if (
         url.protocol === "https:" &&
-        !["example.com", "docs.example.com"].includes(url.hostname)
+        !["https://example.com", "https://docs.example.com"].includes(url.origin)
       ) {
         return "#";
       }
@@ -40,7 +40,7 @@ function SafeLink({ href, children }) {
   }, [href]);
 
   return (
-    <a href={safeHref} rel="noopener noreferrer">
+    <a href={safeHref} target="_blank" rel="noopener noreferrer">
       {children}
     </a>
   );

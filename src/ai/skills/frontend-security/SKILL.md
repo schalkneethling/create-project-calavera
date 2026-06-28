@@ -54,6 +54,11 @@ Name the boundary when a finding is outside pure frontend code. For example,
 "package-script supply-chain risk" is clearer than treating every issue as a
 frontend vulnerability.
 
+State scope limits in the report. This skill can identify frontend-triggered
+server/API, upload, auth, or supply-chain risks, but deep backend authorization,
+database, infrastructure, malware, or incident-response review should be routed
+to the appropriate specialist workflow.
+
 ## Evidence Searches
 
 Start with the broad extension set below, then narrow it to the project. Prefer
