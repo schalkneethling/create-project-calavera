@@ -107,6 +107,7 @@ const output = document.querySelector("#output");
 const webMcpBanner = document.querySelector("#webmcp-banner");
 const profiles = Object.keys(defaults);
 const packageManagers = ["npm", "pnpm", "yarn", "bun"];
+const aiArtifactTypes = ["skill", "hook", "agent"];
 const profileDescriptions = {
   modern: "Newer, faster JavaScript, TypeScript, CSS linting, and formatting defaults.",
   classic: "Widely used JavaScript, TypeScript, CSS linting, and formatting defaults.",
@@ -139,6 +140,18 @@ function integrationIdForTool(value) {
   const token = normalizedToolToken(value);
   const match = catalog.find(
     ({ id, label }) => normalizedToolToken(id) === token || normalizedToolToken(label) === token,
+  );
+
+  return match?.id;
+}
+
+function aiArtifactIdForInput(value) {
+  const token = normalizedToolToken(value);
+  const match = aiArtifactCatalog.find(
+    ({ id, label, src }) =>
+      normalizedToolToken(id) === token ||
+      normalizedToolToken(label) === token ||
+      normalizedToolToken(src) === token,
   );
 
   return match?.id;
@@ -229,6 +242,21 @@ function selectIntegrations(integrationIds) {
   }
 }
 
+function selectAiArtifacts(artifactInputs) {
+  const selectedArtifacts = new Map(artifactInputs.map((item) => [item.id, item]));
+
+  for (const checkbox of form.querySelectorAll('[name="aiArtifact"]')) {
+    checkbox.checked = selectedArtifacts.has(checkbox.value);
+  }
+
+  for (const targetInput of form.querySelectorAll("[data-ai-target]")) {
+    const selectedArtifact = selectedArtifacts.get(targetInput.dataset.aiTarget);
+    targetInput.value = selectedArtifact?.target ?? DEFAULT_AI_TARGET;
+  }
+
+  syncAiTargetStates();
+}
+
 function syncAiTargetStates() {
   for (const targetInput of form.querySelectorAll("[data-ai-target]")) {
     const checkbox = form.querySelector(
@@ -292,6 +320,15 @@ function assertStringArray(name, value) {
   }
 }
 
+function assertObjectArray(name, value) {
+  if (
+    !Array.isArray(value) ||
+    value.some((item) => item === null || typeof item !== "object" || Array.isArray(item))
+  ) {
+    throw new TypeError(`${name} must be an array of objects.`);
+  }
+}
+
 function assertKnownValue(name, value, allowedValues) {
   assertString(name, value);
 
@@ -306,7 +343,51 @@ function normalizeIntegrationInputs(integrationInputs) {
   return integrationInputs.map((value) => integrationIdForTool(value) ?? value);
 }
 
-function validateConfigurationInput({ profile, packageManager = "npm", tools } = {}) {
+function assertValidAiTarget(target, index) {
+  assertString(`aiArtifacts[${index}].target`, target);
+
+  if (target === "." || target === ".." || target.includes("/") || target.includes("\\")) {
+    throw new Error(
+      `Invalid aiArtifacts[${index}].target: ${target}. Targets must be a single directory name without path separators or traversal.`,
+    );
+  }
+}
+
+function normalizeAiArtifactInputs(artifactInputs = []) {
+  assertObjectArray("aiArtifacts", artifactInputs);
+
+  return artifactInputs.map((item, index) => {
+    assertString(`aiArtifacts[${index}].id`, item.id);
+
+    const id = aiArtifactIdForInput(item.id) ?? item.id;
+    const artifact = aiArtifactCatalog.find((candidate) => candidate.id === id);
+
+    if (!artifact) {
+      throw new Error(
+        `Invalid aiArtifacts[${index}].id: ${item.id}. Use artifact IDs, labels, or sources from get_ai_artifact_options.`,
+      );
+    }
+
+    let target;
+
+    if (item.target !== undefined) {
+      assertString(`aiArtifacts[${index}].target`, item.target);
+      target = item.target.trim();
+      assertValidAiTarget(target, index);
+    }
+
+    if (artifact.type === "skill" && item.target !== undefined) {
+      throw new Error(`Invalid aiArtifacts[${index}].target: skill artifacts do not use target.`);
+    }
+
+    return {
+      id,
+      target: artifact.defaultTarget ? target || artifact.defaultTarget : undefined,
+    };
+  });
+}
+
+function validateConfigurationInput({ profile, packageManager = "npm", tools, aiArtifacts } = {}) {
   assertKnownValue("profile", profile, profiles);
   assertKnownValue("packageManager", packageManager, packageManagers);
 
@@ -321,16 +402,25 @@ function validateConfigurationInput({ profile, packageManager = "npm", tools } =
     );
   }
 
-  return { profile, packageManager, tools: integrationIds };
+  return {
+    profile,
+    packageManager,
+    tools: integrationIds,
+    aiArtifacts: aiArtifacts ? normalizeAiArtifactInputs(aiArtifacts) : undefined,
+  };
 }
 
 function applyRecipeState(configurationInput = {}) {
-  const { profile, packageManager, tools } = validateConfigurationInput(configurationInput);
+  const { profile, packageManager, tools, aiArtifacts } =
+    validateConfigurationInput(configurationInput);
 
   selectProfile(profile);
   renderIntegrations();
   selectPackageManager(packageManager);
   selectIntegrations(tools);
+  if (aiArtifacts) {
+    selectAiArtifacts(aiArtifacts);
+  }
   render();
 
   return recipe();
@@ -418,8 +508,44 @@ function catalogResponse() {
   };
 }
 
-function configureProjectTooling({ profile, packageManager, tools } = {}) {
-  return applyRecipeState({ profile, packageManager, tools });
+function aiArtifactsResponse() {
+  return {
+    defaultTarget: DEFAULT_AI_TARGET,
+    artifactTypes: aiArtifactTypes,
+    artifacts: aiArtifactCatalog.map(({ id, type, src, group, label, status, defaultTarget }) => ({
+      id,
+      type,
+      src,
+      label,
+      group,
+      status,
+      defaultTarget,
+      description: `${label}. Type: ${type}. Source: ${src}.`,
+    })),
+    input: {
+      accepts:
+        "Use artifact IDs, labels, or sources in configure_ai_artifacts. Add target for hook and agent artifacts when the default target is not correct.",
+      examples: [
+        { id: "skill-semantic-html" },
+        { id: "hooks/block-dangerous-commands", target: "claude-code" },
+        { id: "Technical devil's advocate", target: "claude-code" },
+      ],
+    },
+    currentConfiguration: recipe().ai ?? [],
+  };
+}
+
+function configureProjectTooling({ profile, packageManager, tools, aiArtifacts } = {}) {
+  return applyRecipeState({ profile, packageManager, tools, aiArtifacts });
+}
+
+function configureAiArtifacts({ aiArtifacts = [] } = {}) {
+  const normalizedAiArtifacts = normalizeAiArtifactInputs(aiArtifacts);
+
+  selectAiArtifacts(normalizedAiArtifacts);
+  render();
+
+  return recipe();
 }
 
 function downloadConfigurationJson() {
@@ -461,6 +587,22 @@ function registerWebMcpTools() {
     });
 
     navigator.modelContext.registerTool({
+      name: "get_ai_artifact_options",
+      description:
+        "Read available bundled AI skills, hooks, and agents for the Calavera recipe ai array. Use this before configuring AI artifacts when you need valid artifact IDs, sources, labels, types, or default hook and agent targets.",
+      inputSchema: {
+        type: "object",
+        properties: {},
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: true,
+        untrustedContentHint: false,
+      },
+      execute: async () => aiArtifactsResponse(),
+    });
+
+    navigator.modelContext.registerTool({
       name: "configure_project_tooling",
       description:
         "Update the visible form for a project tooling configuration. Choose a preset profile, package manager, and optional tools for linters, formatters, TypeScript, CSS tooling, accessibility checks, and test rules. Returns the configuration JSON shown on the page.",
@@ -487,6 +629,28 @@ function registerWebMcpTools() {
             description:
               "Tool IDs or labels to include in the configuration, such as linters, formatters, TypeScript support, CSS checks, accessibility checks, and test rules. Omit this field to use the selected profile defaults. Use get_project_tooling_options to see valid IDs and labels.",
           },
+          aiArtifacts: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description:
+                    "AI artifact ID, label, or source from get_ai_artifact_options, such as skill-semantic-html or hooks/block-dangerous-commands.",
+                },
+                target: {
+                  type: "string",
+                  description:
+                    "Optional target directory for hook and agent artifacts. Skills do not use target.",
+                },
+              },
+              required: ["id"],
+              additionalProperties: false,
+            },
+            description:
+              "Bundled AI skills, hooks, and agents to include in the recipe ai array. Omit to keep current AI selections unchanged.",
+          },
         },
         required: ["profile"],
         additionalProperties: false,
@@ -496,6 +660,47 @@ function registerWebMcpTools() {
         untrustedContentHint: false,
       },
       execute: async (input) => configureProjectTooling(input),
+    });
+
+    navigator.modelContext.registerTool({
+      name: "configure_ai_artifacts",
+      description:
+        "Update only the AI artifact selections for the Calavera recipe ai array. Choose bundled skills, hooks, and agents from get_ai_artifact_options. Returns the full configuration JSON shown on the page.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          aiArtifacts: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description:
+                    "AI artifact ID, label, or source from get_ai_artifact_options, such as skill-semantic-html or hooks/block-dangerous-commands.",
+                },
+                target: {
+                  type: "string",
+                  description:
+                    "Optional target directory for hook and agent artifacts. Skills do not use target.",
+                },
+              },
+              required: ["id"],
+              additionalProperties: false,
+            },
+            default: [],
+            description:
+              "Bundled AI artifact selections. Pass an empty array to clear the recipe ai array.",
+          },
+        },
+        required: ["aiArtifacts"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: false,
+        untrustedContentHint: false,
+      },
+      execute: async (input) => configureAiArtifacts(input),
     });
 
     navigator.modelContext.registerTool({
