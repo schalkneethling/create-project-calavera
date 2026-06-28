@@ -368,8 +368,12 @@ function normalizeAiArtifactInputs(artifactInputs = []) {
       );
     }
 
+    let target;
+
     if (item.target !== undefined) {
-      assertValidAiTarget(item.target, index);
+      assertString(`aiArtifacts[${index}].target`, item.target);
+      target = item.target.trim();
+      assertValidAiTarget(target, index);
     }
 
     if (artifact.type === "skill" && item.target !== undefined) {
@@ -378,7 +382,7 @@ function normalizeAiArtifactInputs(artifactInputs = []) {
 
     return {
       id,
-      target: artifact.defaultTarget ? (item.target?.trim() ?? artifact.defaultTarget) : undefined,
+      target: artifact.defaultTarget ? target || artifact.defaultTarget : undefined,
     };
   });
 }
