@@ -168,6 +168,7 @@ navigation.
 
 ```javascript
 function matchesPathPrefix(pathname, allowedPrefix) {
+  if (allowedPrefix === "/") return pathname.startsWith("/");
   return pathname === allowedPrefix || pathname.startsWith(`${allowedPrefix}/`);
 }
 
