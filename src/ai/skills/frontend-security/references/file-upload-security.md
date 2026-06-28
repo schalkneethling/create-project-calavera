@@ -90,11 +90,14 @@ characters or double extensions. Preserve the original display name only as
 metadata if the product needs it.
 
 ```javascript
-function generateStorageName(filename) {
-  const ext = path.extname(filename).toLowerCase();
+function generateStorageName(serverValidatedExtension) {
+  const ext = serverValidatedExtension.toLowerCase();
   const uuid = crypto.randomUUID();
   return `${uuid}${ext}`;
 }
+
+const outputExtension = ".jpg"; // Chosen by the server-side image rewrite pipeline.
+const storageName = generateStorageName(outputExtension);
 ```
 
 Prefer deriving the final extension from the server-validated or rewritten file,
@@ -273,12 +276,19 @@ async function releaseAfterScan(fileRecord, cleanPath, releaseMetadata) {
   const storagePath = path.join(UPLOAD_DIR, storageName);
 
   await fs.rename(cleanPath, storagePath);
-  await db.updateFile(fileRecord.id, {
-    storageName,
-    mimeType: releaseMetadata.mimeType,
-    size: releaseMetadata.size,
-    status: "available",
-  });
+  try {
+    await db.updateFile(fileRecord.id, {
+      storageName,
+      storagePath,
+      storageRoot: "uploads",
+      mimeType: releaseMetadata.mimeType,
+      size: releaseMetadata.size,
+      status: "available",
+    });
+  } catch (error) {
+    await fs.rename(storagePath, cleanPath).catch(() => {});
+    throw error;
+  }
 }
 ```
 
@@ -516,6 +526,14 @@ async function extractZipSafely(zipPath, destDir, options = {}) {
     }
 
     for (const { tempPath, finalPath } of extractedTempPaths) {
+      await fs
+        .stat(finalPath)
+        .then(() => {
+          throw new Error("Archive target already exists");
+        })
+        .catch((error) => {
+          if (error.code !== "ENOENT") throw error;
+        });
       await fs.rename(tempPath, finalPath);
     }
   } catch (error) {
@@ -591,18 +609,24 @@ app.post(
       const output = await sharp(file.buffer).rotate().toFormat("jpeg", { quality: 90 }).toBuffer();
       await fs.writeFile(quarantinePath, output, { mode: 0o600 });
 
-      // Store quarantined metadata. A separate scanner/review worker flips this
-      // to available and moves it into UPLOAD_DIR only after approval.
-      const fileRecord = await db.createFile({
-        userId: req.user.id,
-        storageName: quarantinedName,
-        storageRoot: "quarantine",
-        originalName: file.originalname,
-        mimeType: "image/jpeg",
-        size: output.length,
-        status: "quarantined",
-      });
-      await scanQueue.enqueue({ fileId: fileRecord.id, path: quarantinePath });
+      let fileRecord;
+      try {
+        // Store quarantined metadata. A separate scanner/review worker flips
+        // this to available and moves it into UPLOAD_DIR only after approval.
+        fileRecord = await db.createFile({
+          userId: req.user.id,
+          storageName: quarantinedName,
+          storageRoot: "quarantine",
+          originalName: file.originalname,
+          mimeType: "image/jpeg",
+          size: output.length,
+          status: "quarantined",
+        });
+        await scanQueue.enqueue({ fileId: fileRecord.id, path: quarantinePath });
+      } catch (error) {
+        await fs.rm(quarantinePath, { force: true });
+        throw error;
+      }
 
       res.json({ id: fileRecord.id });
     } catch (error) {
