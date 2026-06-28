@@ -187,10 +187,12 @@ function selectIntegrations(integrationIds) {
 
 function recipe() {
   const data = new FormData(form);
+  const packageManager = data.get("packageManager");
+
   return buildRecipe(
     String(data.get("profile") ?? ""),
     data.getAll("integration").map(String),
-    String(data.get("packageManager") ?? ""),
+    packageManager ? String(packageManager) : undefined,
   );
 }
 
