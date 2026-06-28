@@ -74,7 +74,10 @@ res.cookie("session", value, { sameSite: "None", secure: true, httpOnly: true })
 
 Validate request origin using Sec-Fetch-\* headers as a layered control. Fetch
 Metadata does not replace CSRF tokens for cookie-authenticated state-changing
-requests.
+requests. `Sec-Fetch-Site: none` usually represents user-initiated browser
+navigations and should be allowed only for safe top-level navigations.
+`same-site` can include sibling subdomains, so allow it only when every same-site
+origin shares the same trust boundary.
 
 ```javascript
 function validateFetchMetadata(req, res, next) {
@@ -83,18 +86,24 @@ function validateFetchMetadata(req, res, next) {
   const dest = req.headers["sec-fetch-dest"];
   const method = req.method;
   const safeMethod = ["GET", "HEAD", "OPTIONS"].includes(method);
+  const trustSameSiteSubdomains = false;
+
+  // Absence is not proof of safety. Continue only to rely on CSRF tokens and
+  // Origin/Referer validation in later middleware.
+  if (!site) return next();
 
   // Allow same-origin requests
   if (site === "same-origin") return next();
 
-  // Allow browser-initiated top-level navigations only for safe methods.
-  if (site === "none" && mode === "navigate" && dest === "document" && safeMethod) {
+  // Same-site can include sibling subdomains. Only allow it where those
+  // subdomains share the same trust boundary, and do not use it to permit
+  // state-changing requests without CSRF token validation.
+  if (site === "same-site" && trustSameSiteSubdomains && safeMethod) {
     return next();
   }
 
-  // Same-site can include sibling subdomains. Only allow it where those
-  // subdomains share the same trust boundary.
-  if (site === "same-site" && safeMethod) {
+  // Allow browser-initiated top-level navigations only for safe methods.
+  if (site === "none" && mode === "navigate" && dest === "document" && safeMethod) {
     return next();
   }
 
@@ -138,6 +147,13 @@ function validateOrigin(req, res, next) {
 ## Framework Integration
 
 ### Express.js with Signed Double-Submit Tokens
+
+This server-rendered variant stores the signed token in an `httpOnly` cookie and
+also injects the same token into the form response. Do not combine this exact
+cookie setting with client libraries that expect JavaScript to read the CSRF
+cookie automatically. For AJAX-only clients, inject the token into the page or
+use a readable signed CSRF cookie only when that exposure is an accepted tradeoff;
+the server must still verify the signature and session binding.
 
 ```javascript
 const crypto = require("crypto");
@@ -320,17 +336,19 @@ function Form({ csrfToken }) {
 
 ## Client-Side CSRF (AJAX)
 
-Protect against CSRF in single-page applications:
+Protect AJAX requests by sending a server-provided CSRF token in a header. Avoid
+using a plain cookie-to-header mirror as the only defense; the token must still
+be signed and session-bound or backed by a server-side synchronizer token.
 
 ```javascript
-// Set up axios defaults
+// If the server intentionally exposes a signed CSRF cookie to JavaScript:
 import axios from "axios";
 
 axios.defaults.xsrfCookieName = "csrf_token";
 axios.defaults.xsrfHeaderName = "X-CSRF-Token";
 axios.defaults.withCredentials = true;
 
-// Or with fetch
+// Prefer server-rendered meta tags or a bootstrap response when using fetch.
 async function secureFetch(url, options = {}) {
   const csrfToken = document.querySelector('meta[name="csrf-token"]')?.content;
 
