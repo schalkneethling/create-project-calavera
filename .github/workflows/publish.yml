@@ -84,4 +84,16 @@ jobs:
           name: package
           path: package
       - name: Publish package
-        run: npm publish package/*.tgz --provenance --access public
+        run: |
+          mapfile -t tarballs < <(find package -maxdepth 1 -name "*.tgz" -print)
+          if [ "${#tarballs[@]}" -eq 0 ]; then
+            echo "No package tarball found in package/."
+            exit 1
+          fi
+          if [ "${#tarballs[@]}" -gt 1 ]; then
+            echo "Expected exactly one package tarball in package/, found ${#tarballs[@]}."
+            printf '%s\n' "${tarballs[@]}"
+            exit 1
+          fi
+          tarball="${tarballs[0]}"
+          npm publish "$(realpath "$tarball")" --provenance --access public
