@@ -259,14 +259,13 @@ project-owned files that Calavera intentionally does not track. Varlock needed
 that custom branch because `.env.schema` and `.gitignore` are assets project
 developers are expected to edit.
 
-Dry-run output should also describe the intent accurately. In the Varlock case,
-`apply --dry-run` needed to say it would scaffold `.env.schema`, not imply that
-Calavera would take long-term ownership of the file.
+Dry-run output should also describe the intent accurately. The current
+`apply --dry-run --json` payload uses the shared `changes` shape from
+[`src/index.js`](../src/index.js): `type`, `path`, and optional fields such as
+`scripts` and `removedDefaultTestScript`. It does not currently include
+ownership markers such as `managed` or `scaffold`.
 
-That distinction should be visible in JSON output too. If an integration adds a
-new change shape, make the ownership explicit enough for humans and automation to
-tell managed files from scaffolded project files. A useful `apply --dry-run
---json` result for a fresh project would include changes like:
+A useful dry-run result for a fresh project would therefore include changes like:
 
 ```json
 {
@@ -283,51 +282,49 @@ tell managed files from scaffolded project files. A useful `apply --dry-run
     },
     {
       "type": "write",
-      "path": ".editorconfig",
-      "managed": true
+      "path": ".editorconfig"
     },
     {
       "type": "write",
-      "path": ".calavera/run-if-files.mjs",
-      "managed": true
+      "path": ".calavera/run-if-files.mjs"
     },
     {
       "type": "write",
-      "path": "oxlint.json",
-      "managed": true
+      "path": "oxlint.json"
     },
     {
       "type": "write",
-      "path": "tsconfig.json",
-      "managed": true
+      "path": "tsconfig.json"
     },
     {
       "type": "write",
-      "path": ".env.schema",
-      "scaffold": true
+      "path": ".env.schema"
     },
     {
       "type": "update",
-      "path": ".gitignore",
-      "scaffold": true
+      "path": ".gitignore"
     }
   ],
   "pointers": []
 }
 ```
 
-The corresponding human output should use the same vocabulary:
+The corresponding human output should follow the current dry-run printer:
 
 ```text
 Would update package.json
 Would add scripts: lint, format:check, typecheck, env:load, quality
-Would write and own .editorconfig
-Would write and own .calavera/run-if-files.mjs
-Would write and own oxlint.json
-Would write and own tsconfig.json
-Would scaffold .env.schema
-Would merge .gitignore
+Would write .editorconfig
+Would write .calavera/run-if-files.mjs
+Would write oxlint.json
+Would write tsconfig.json
+Would write .env.schema
+Would update .gitignore
 ```
+
+Because the change list does not encode ownership, use the surrounding
+documentation, state-file assertions, and tests to make the managed versus
+project-owned distinction clear.
 
 ## Add Doctor Coverage
 
