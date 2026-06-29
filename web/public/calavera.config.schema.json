@@ -70,7 +70,7 @@
       }
     },
     "ai": {
-      "description": "Optional bundled AI skills, hooks, and agents to install under .agents/.",
+      "description": "Optional bundled AI skills, hooks, and agents to install under .agents/, or under .codex/agents/ when adapting agent artifacts with target codex.",
       "type": "array",
       "items": {
         "$ref": "#/$defs/aiItem"
@@ -141,7 +141,7 @@
           "minLength": 1
         },
         "target": {
-          "description": "Output target directory name for hook and agent artifacts. Skill artifacts do not use target.",
+          "description": "Output target directory name for hook and agent artifacts. Use target codex on agent artifacts to generate Codex custom-agent TOML under .codex/agents/. Skill artifacts do not use target.",
           "type": "string",
           "minLength": 1,
           "pattern": "^(?!(?:\\.|\\.\\.)$)[^/\\\\]+$"

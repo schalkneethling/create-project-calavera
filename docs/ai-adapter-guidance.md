@@ -66,15 +66,28 @@ material for Claude-style agent workflows rather than as a generic agent schema.
 
 ## Codex
 
-Codex can use skill directories, but Calavera does not currently install
-directly into a Codex runtime skill directory. Use `.agents/skills/` as the
-reviewable project source, then copy, import, or symlink selected skills into
-the Codex location your environment supports.
+Codex supports repository skills under `.agents/skills/`, so Calavera-installed
+skills are already in the project-scoped location Codex scans when launched from
+the repository. Keep those files checked in when the workflow should travel with
+the project. Use a personal skill location only when a skill should apply across
+repositories instead of living with this project.
 
-Do not install the bundled Markdown agent files as Codex custom agents
-unchanged. Codex custom agents use a different schema from the preserved Toolkit
-Markdown/frontmatter files. A future adapter should transform those files
-explicitly before they are treated as Codex agents.
+For bundled agent artifacts, set `target` to `codex` when you want Calavera to
+write a Codex custom-agent TOML file:
+
+```json
+{
+  "type": "agent",
+  "src": "agents/technical-devils-advocate.md",
+  "target": "codex"
+}
+```
+
+That installs `.codex/agents/technical-devils-advocate.toml`. The adapter carries
+over the source name, description, and body instructions as Codex `name`,
+`description`, and `developer_instructions`. It omits the Claude-specific source
+`model` field because Codex custom agents use Codex model IDs and can inherit the
+active model configuration when no model is set.
 
 Hook scripts are also not Codex hooks. The current bundled hooks read Claude
 Code hook payloads from stdin and expect Claude Code event names.
@@ -98,10 +111,11 @@ runtime.
 
 ## Ownership Rules
 
-Calavera-managed files remain under `.agents/` and are tracked in
+Calavera-managed files remain under `.agents/`, except for Codex-adapted agent
+TOML files under `.codex/agents/`. Managed paths are tracked in
 `.calavera/state.json`. Manual copies, symlinks, merged settings files, and
-vendor runtime directories are user-owned unless a future adapter explicitly
-adds managed support for them.
+other vendor runtime directories are user-owned unless a future adapter
+explicitly adds managed support for them.
 
 When in doubt, re-run `create-project-calavera apply --dry-run` or
 `create-project-calavera doctor` to inspect Calavera-owned state before changing

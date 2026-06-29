@@ -53,7 +53,7 @@ vendor-neutral rewrites are follow-up work.
 
 ## Output Layout
 
-Calavera writes AI artifacts to `.agents/`:
+Calavera writes canonical AI artifacts to `.agents/`:
 
 ```text
 .agents/
@@ -67,8 +67,9 @@ Calavera writes AI artifacts to `.agents/`:
 Skills are vendor-neutral and install directly under `.agents/skills/`.
 Toolkit's current hooks are Claude Code-specific, so they default to the
 `claude-code` target directory. Toolkit's current agent files are preserved in
-their original Markdown/frontmatter format and default to the same target until
-Calavera has an explicit adapter for another subagent schema.
+their original Markdown/frontmatter format by default. When an agent item sets
+`target` to `codex`, Calavera adapts the source Markdown into a Codex
+custom-agent TOML file under `.codex/agents/`.
 
 Vendor-specific consumption guidance lives in
 [`docs/ai-adapter-guidance.md`](ai-adapter-guidance.md). That guidance is about

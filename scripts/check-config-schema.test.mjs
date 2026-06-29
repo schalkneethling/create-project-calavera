@@ -4,8 +4,10 @@ import test from "node:test";
 
 import Ajv2020 from "ajv/dist/2020.js";
 
+import { buildAiApplyResult, createCodexAgentToml } from "../src/ai/artifacts.js";
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
 import { integrationCatalog } from "../src/catalog.js";
+import { createEmptyState } from "../src/state.js";
 import { buildRecipe, CONFIG_SCHEMA_URL } from "../src/recipe.js";
 
 const schemaUrl = CONFIG_SCHEMA_URL;
@@ -64,6 +66,7 @@ test("published config schema is valid JSON Schema and validates the example con
     buildRecipe("modern", ["editorconfig"], "pnpm", [
       { type: "skill", src: "skills/semantic-html" },
       { type: "hook", src: "hooks/block-dangerous-commands", target: DEFAULT_AI_TARGET },
+      { type: "agent", src: "agents/technical-devils-advocate.md", target: "codex" },
     ]),
   );
 });
@@ -148,4 +151,41 @@ test("generated recipes reference the published schema URL", () => {
   const recipe = buildRecipe("modern", ["editorconfig"], "pnpm");
 
   assert.equal(recipe.$schema, schemaUrl);
+});
+
+test("Codex agent adapter emits required TOML fields without Claude model metadata", async () => {
+  const source = await readProjectFile("src/ai/agents/technical-devils-advocate.md");
+  const toml = createCodexAgentToml(source);
+
+  assert.match(toml, /^name = "technical-devils-advocate"$/m);
+  assert.match(toml, /^description = "Technical devil's advocate/m);
+  assert.match(toml, /^developer_instructions = "You are a technical devil's advocate/m);
+  assert.doesNotMatch(toml, /^model = /m);
+  assert.doesNotMatch(toml, /claude-4\.6-opus-high-thinking/);
+});
+
+test("Codex-targeted agent recipes resolve to .codex custom-agent TOML", async () => {
+  const result = await buildAiApplyResult(
+    {
+      ai: [{ type: "agent", src: "agents/technical-devils-advocate.md", target: "codex" }],
+    },
+    { dryRun: true },
+    createEmptyState(),
+  );
+
+  assert.deepEqual(result.changes, [
+    {
+      type: "write",
+      path: ".codex/agents/technical-devils-advocate.toml",
+      category: "ai",
+      aiType: "agent",
+      name: "technical-devils-advocate",
+    },
+  ]);
+  assert.equal(result.artifacts[0].path, ".codex/agents/technical-devils-advocate.toml");
+  assert.equal(result.artifacts[0].target, "codex");
+  assert.equal(typeof result.artifacts[0].hash, "string");
+  assert.ok(
+    result.pointers.includes("Codex custom agent files are installed under .codex/agents/."),
+  );
 });

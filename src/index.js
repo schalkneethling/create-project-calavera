@@ -1321,7 +1321,7 @@ async function clean(options) {
       continue;
     }
 
-    const installedHash = await hashAiInstall(artifact.type, artifact.path);
+    const installedHash = await hashAiInstall(artifact.type, artifact.path, artifact.target);
 
     if (installedHash === artifact.hash) {
       staleAiArtifactsSafeToRemove.push(artifact);
