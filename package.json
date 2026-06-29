@@ -31,6 +31,8 @@
   },
   "files": [
     "src",
+    "docs",
+    "MIGRATION.md",
     "LICENSE",
     "README.md"
   ],

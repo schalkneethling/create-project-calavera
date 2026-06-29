@@ -77,6 +77,12 @@ agent file schema, so installing these as Codex subagents should be handled by a
 explicit adapter rather than by assuming the original Toolkit file works
 unchanged.
 
+For tool-specific wiring, see
+[`docs/ai-adapter-guidance.md`](docs/ai-adapter-guidance.md). It covers the
+Claude Code settings-fragment review step, why Codex custom agents need a
+separate adapter, and how to treat `.agents/` as the stable handoff boundary for
+other agent tools.
+
 ## Deprecation Timing
 
 Do not deprecate `claude-toolkit` until a Calavera release exists that can

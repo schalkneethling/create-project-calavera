@@ -163,6 +163,11 @@ choose their `.agents/hooks/<target>/` or `.agents/agents/<target>/` directory.
 The current bundled hooks and agents come from `claude-toolkit` and default to
 `claude-code`.
 
+Calavera owns the canonical `.agents/` files, but vendor tools may need their
+own settings, symlinks, or import step before they consume those files. See
+[`docs/ai-adapter-guidance.md`](docs/ai-adapter-guidance.md) for Claude Code,
+Codex, and other agent-tool guidance.
+
 ## Web Composer
 
 The recipe composer runs as a small Vite app:

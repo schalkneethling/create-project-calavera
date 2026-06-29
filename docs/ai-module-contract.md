@@ -70,6 +70,11 @@ Toolkit's current hooks are Claude Code-specific, so they default to the
 their original Markdown/frontmatter format and default to the same target until
 Calavera has an explicit adapter for another subagent schema.
 
+Vendor-specific consumption guidance lives in
+[`docs/ai-adapter-guidance.md`](ai-adapter-guidance.md). That guidance is about
+using the canonical `.agents/` output with specific tools; it does not expand
+Calavera ownership to vendor runtime directories or settings files.
+
 ## Source Resolution
 
 AI item `src` values resolve against the bundled `src/ai/` root and must stay
