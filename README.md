@@ -128,16 +128,15 @@ npm --force create project-calavera apply
 - `--yes`
 - `--json`
 
-## Optional Delta Scripts
+## Vite+ And Delta Workflows
 
-Full-project lint, format, typecheck, and quality scripts remain the default.
-Recipes can opt into changed-file scripts such as `lint:changed`,
-`format:check:changed`, and `quality:changed` by setting those script flags to
-`true`. Delta scripts use Git state through `.calavera/run-changed-files.mjs` and
-can compare against a specific ref with `CALAVERA_CHANGED_BASE`.
+Calavera keeps generated package scripts as ordinary tool commands. It can add
+tooling, configuration, dependencies, and package scripts, but delta execution
+belongs to tool-native options, project-specific scripts, Vite+/`vp`, or CI
+workflow logic rather than a Calavera changed-file wrapper.
 
 See [`docs/vite-plus-and-delta-mode.md`](docs/vite-plus-and-delta-mode.md) for
-the Vite+ design boundary and the changed-file script model.
+the Vite+ design boundary and delta workflow guidance.
 
 ## Recipe Schema
 

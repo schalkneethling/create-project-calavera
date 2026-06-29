@@ -1,11 +1,6 @@
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
-import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
 
 import Ajv2020 from "ajv/dist/2020.js";
 
@@ -28,16 +23,7 @@ const rootProperties = [
 const requiredProperties = ["version", "profile", "packageManager", "integrations", "scripts"];
 const profiles = ["modern", "classic", "minimal"];
 const packageManagers = ["npm", "pnpm", "yarn", "bun"];
-const defaultScriptFlags = ["lint", "lint:fix", "format", "format:check", "typecheck", "quality"];
-const scriptFlags = [
-  ...defaultScriptFlags,
-  "lint:changed",
-  "lint:fix:changed",
-  "format:changed",
-  "format:check:changed",
-  "quality:changed",
-];
-const execFileAsync = promisify(execFile);
+const scriptFlags = ["lint", "lint:fix", "format", "format:check", "typecheck", "quality"];
 
 async function readProjectFile(path) {
   return readFile(new URL(`../${path}`, import.meta.url), "utf8");
@@ -156,7 +142,7 @@ test("checked-in example config uses known unique integrations", () => {
 });
 
 test("checked-in example config uses known boolean script flags", () => {
-  for (const flag of defaultScriptFlags) {
+  for (const flag of scriptFlags) {
     assert.equal(typeof config.scripts?.[flag], "boolean", `scripts.${flag} must be boolean.`);
   }
 });
@@ -202,47 +188,4 @@ test("Codex-targeted agent recipes resolve to .codex custom-agent TOML", async (
   assert.ok(
     result.pointers.includes("Codex custom agent files are installed under .codex/agents/."),
   );
-});
-
-test("changed-file script flags generate opt-in delta scripts", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "calavera-delta-scripts-"));
-  const cliPath = new URL("../src/index.js", import.meta.url);
-  const deltaConfig = {
-    $schema: schemaUrl,
-    version: 1,
-    profile: "modern",
-    packageManager: "pnpm",
-    integrations: ["oxlint", "oxfmt", "stylelint", "stylelint-standard"],
-    scripts: {
-      "lint:changed": true,
-      "lint:fix:changed": true,
-      "format:changed": true,
-      "format:check:changed": true,
-      "quality:changed": true,
-    },
-  };
-
-  await writeFile(join(cwd, "package.json"), `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
-  await writeFile(join(cwd, "calavera.config.json"), `${JSON.stringify(deltaConfig, null, 2)}\n`);
-
-  await execFileAsync(
-    process.execPath,
-    [fileURLToPath(cliPath), "apply", "--yes", "--no-install"],
-    {
-      cwd,
-    },
-  );
-
-  const packageJSON = JSON.parse(await readFile(join(cwd, "package.json"), "utf8"));
-  const helper = await readFile(join(cwd, ".calavera/run-changed-files.mjs"), "utf8");
-
-  assert.match(packageJSON.scripts["lint:changed"], /run-changed-files\.mjs/);
-  assert.match(packageJSON.scripts["lint:changed"], /oxlint/);
-  assert.match(packageJSON.scripts["lint:changed"], /stylelint/);
-  assert.match(packageJSON.scripts["lint:fix:changed"], /oxlint --fix/);
-  assert.match(packageJSON.scripts["format:changed"], /oxfmt --write/);
-  assert.match(packageJSON.scripts["format:check:changed"], /oxfmt --check/);
-  assert.match(packageJSON.scripts["quality:changed"], /pnpm lint:changed/);
-  assert.match(packageJSON.scripts["quality:changed"], /pnpm format:check:changed/);
-  assert.match(helper, /CALAVERA_CHANGED_BASE/);
 });

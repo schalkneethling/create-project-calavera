@@ -1,8 +1,8 @@
-# Vite+ Awareness And Delta Scripts
+# Vite+ Awareness And Delta Workflows
 
 Calavera remains a tooling composer, not an application scaffold. Vite+ awareness
 should therefore live in catalog metadata and doctor guidance rather than in
-generated scripts that assume a specific app starter.
+generated scripts that assume a specific app starter or task runner.
 
 ## Vite+ Awareness
 
@@ -20,57 +20,22 @@ different lint, format, or typecheck command. If Vite+-specific behavior becomes
 useful later, it should be modeled as an explicit catalog integration so the CLI
 and composer can expose it consistently.
 
-## Delta Scripts
+## Delta Workflows
 
-Full-project scripts remain the default. Delta scripts are opt-in recipe flags
-for local review loops and pull request checks that only need to inspect changed
-files:
+Full-project lint, format, typecheck, and quality scripts remain the default.
+Calavera should not generate changed-file runners or package scripts such as
+`lint:changed`, `format:check:changed`, or `quality:changed`.
 
-```json
-{
-  "scripts": {
-    "lint": true,
-    "format:check": true,
-    "quality": true,
-    "lint:changed": true,
-    "format:check:changed": true,
-    "quality:changed": true
-  }
-}
-```
+Calavera can install tools, write configuration, add dependencies, and add
+ordinary package scripts that call those tools. From there, execution should be
+delegated to the tool or project workflow itself. Delta execution belongs in:
 
-When a changed-file script is enabled, Calavera writes
-`.calavera/run-changed-files.mjs`. The helper requires a Git working tree and
-collects:
+- tool-native changed-file or cache-aware options;
+- project-specific package scripts;
+- Vite+/`vp` commands when a project explicitly adopts them;
+- CI workflow logic that already knows the pull request base and changed paths.
 
-- files changed from the comparison base to `HEAD`;
-- unstaged changes;
-- staged changes;
-- untracked files.
-
-The default comparison base is the remote default branch from `origin/HEAD`, or
-`HEAD` when that is unavailable. Set `CALAVERA_CHANGED_BASE` to compare against a
-specific branch or ref:
-
-```bash
-CALAVERA_CHANGED_BASE=origin/main npm run lint:changed
-```
-
-The helper filters files by extension, ignores common generated directories, and
-then appends the matching file list to the configured tool command. If no
-matching files changed, it exits successfully.
-
-## Generated Scripts
-
-The optional flags are:
-
-- `lint:changed`
-- `lint:fix:changed`
-- `format:changed`
-- `format:check:changed`
-- `quality:changed`
-
-`quality:changed` composes the generated package-manager commands explicitly,
-for example `pnpm lint:changed && pnpm format:check:changed`. It does not replace
-the full `quality` script and does not run TypeScript in a partial mode because
-TypeScript project checking is not reliably file-local.
+Future support should only be added when a tool exposes a stable native delta
+command that Calavera can call directly as that tool's documented interface.
+Calavera should not filter file lists itself and pass them through as a
+man-in-the-middle.

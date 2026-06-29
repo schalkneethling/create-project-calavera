@@ -396,16 +396,6 @@ function runIfFiles(label, extensions, command) {
 }
 
 /**
- * @param {string} label
- * @param {string[]} extensions
- * @param {string} command
- * @returns {string}
- */
-function runChangedFiles(label, extensions, command) {
-  return `node .calavera/run-changed-files.mjs "${label}" "${extensions.join(",")}" -- ${command}`;
-}
-
-/**
  * @param {Recipe} recipe
  * @param {Integration[]} integrations
  * @param {PackageManager} packageManager
@@ -441,26 +431,6 @@ function buildScripts(recipe, integrations, packageManager) {
     usesStylelint ? runIfFiles("CSS", cssExtensions, 'stylelint "**/*.{css,scss}" --fix') : null,
   ].filter(Boolean);
 
-  const lintChangedParts = [
-    usesOxlint
-      ? runChangedFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "oxlint")
-      : null,
-    usesESLint
-      ? runChangedFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "eslint")
-      : null,
-    usesStylelint ? runChangedFiles("CSS", cssExtensions, "stylelint") : null,
-  ].filter(Boolean);
-
-  const lintFixChangedParts = [
-    usesOxlint
-      ? runChangedFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "oxlint --fix")
-      : null,
-    usesESLint
-      ? runChangedFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "eslint --fix")
-      : null,
-    usesStylelint ? runChangedFiles("CSS", cssExtensions, "stylelint --fix") : null,
-  ].filter(Boolean);
-
   /** @type {Record<string, string>} */
   const scripts = {};
 
@@ -470,14 +440,6 @@ function buildScripts(recipe, integrations, packageManager) {
 
   if (recipe.scripts?.["lint:fix"] && lintFixParts.length > 0) {
     scripts["lint:fix"] = lintFixParts.join(" && ");
-  }
-
-  if (recipe.scripts?.["lint:changed"] && lintChangedParts.length > 0) {
-    scripts["lint:changed"] = lintChangedParts.join(" && ");
-  }
-
-  if (recipe.scripts?.["lint:fix:changed"] && lintFixChangedParts.length > 0) {
-    scripts["lint:fix:changed"] = lintFixChangedParts.join(" && ");
   }
 
   if (recipe.scripts?.format) {
@@ -492,36 +454,6 @@ function buildScripts(recipe, integrations, packageManager) {
     }
   }
 
-  if (recipe.scripts?.["format:changed"]) {
-    if (usesOxfmt) {
-      scripts["format:changed"] = runChangedFiles(
-        "JavaScript/TypeScript",
-        SCRIPT_SOURCE_EXTENSIONS,
-        "oxfmt --write",
-      );
-    } else if (usesPrettier) {
-      scripts["format:changed"] = runChangedFiles(
-        "Prettier-supported",
-        [
-          "css",
-          "html",
-          "js",
-          "jsx",
-          "json",
-          "jsonc",
-          "md",
-          "mjs",
-          "scss",
-          "ts",
-          "tsx",
-          "yaml",
-          "yml",
-        ],
-        "prettier --write",
-      );
-    }
-  }
-
   if (recipe.scripts?.["format:check"]) {
     if (usesOxfmt) {
       scripts["format:check"] = runIfFiles(
@@ -531,36 +463,6 @@ function buildScripts(recipe, integrations, packageManager) {
       );
     } else if (usesPrettier) {
       scripts["format:check"] = "prettier --check .";
-    }
-  }
-
-  if (recipe.scripts?.["format:check:changed"]) {
-    if (usesOxfmt) {
-      scripts["format:check:changed"] = runChangedFiles(
-        "JavaScript/TypeScript",
-        SCRIPT_SOURCE_EXTENSIONS,
-        "oxfmt --check",
-      );
-    } else if (usesPrettier) {
-      scripts["format:check:changed"] = runChangedFiles(
-        "Prettier-supported",
-        [
-          "css",
-          "html",
-          "js",
-          "jsx",
-          "json",
-          "jsonc",
-          "md",
-          "mjs",
-          "scss",
-          "ts",
-          "tsx",
-          "yaml",
-          "yml",
-        ],
-        "prettier --check",
-      );
     }
   }
 
@@ -594,22 +496,6 @@ function buildScripts(recipe, integrations, packageManager) {
     scripts.quality = qualityScripts
       .map((script) => packageManagerCommands[supportedPackageManager].run(script))
       .join(" && ");
-  }
-
-  if (recipe.scripts?.["quality:changed"]) {
-    const qualityChangedScripts = [
-      "lint:changed",
-      "format:check:changed",
-      usesReactDoctor ? "react:doctor:diff" : null,
-    ]
-      .filter(isNotEmptyString)
-      .filter((script) => Boolean(scripts[script]));
-
-    if (qualityChangedScripts.length > 0) {
-      scripts["quality:changed"] = qualityChangedScripts
-        .map((script) => packageManagerCommands[supportedPackageManager].run(script))
-        .join(" && ");
-    }
   }
 
   return scripts;
@@ -673,123 +559,6 @@ if (!(await hasMatchingFile(process.cwd()))) {
 }
 
 const child = spawn(command[0], command.slice(1), {
-  env: {
-    ...process.env,
-    PATH: [join(process.cwd(), "node_modules", ".bin"), process.env.PATH]
-      .filter(Boolean)
-      .join(delimiter),
-  },
-  stdio: "inherit",
-});
-
-child.on("error", (error) => {
-  console.info(\`Failed to start "\${command[0]}": \${error.message}\`);
-  process.exit(1);
-});
-
-child.on("exit", (code, signal) => {
-  if (signal) {
-    console.info(\`Command stopped by signal \${signal}.\`);
-    process.exit(1);
-  }
-
-  process.exit(code ?? 1);
-});
-`;
-}
-
-function createRunChangedFilesHelper() {
-  return `#!/usr/bin/env node
-import { spawn, spawnSync } from "node:child_process";
-import { delimiter, extname, join, normalize } from "node:path";
-
-const ignoredDirectories = new Set([
-  ".calavera",
-  ".git",
-  "coverage",
-  "dist",
-  "dist-web",
-  "node_modules",
-]);
-
-const [label, extensionList, separator, ...command] = process.argv.slice(2);
-
-if (separator !== "--" || command.length === 0) {
-  console.info("Usage: run-changed-files <label> <extensions> -- <command>");
-  process.exit(1);
-}
-
-const extensions = new Set(
-  extensionList.split(",").map((extension) => \`.\${extension.trim()}\`),
-);
-
-function git(args, allowFailure = false) {
-  const result = spawnSync("git", args, {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-
-  if (result.status === 0) {
-    return result.stdout;
-  }
-
-  if (allowFailure) {
-    return "";
-  }
-
-  console.info(result.stderr.trim() || \`Failed to run git \${args.join(" ")}.\`);
-  process.exit(1);
-}
-
-function gitFiles(args) {
-  return git(args, true)
-    .split("\\n")
-    .map((file) => file.trim())
-    .filter(Boolean);
-}
-
-function defaultBaseRef() {
-  return (
-    process.env.CALAVERA_CHANGED_BASE ||
-    git(["symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD"], true).trim() ||
-    "HEAD"
-  );
-}
-
-function isIgnored(file) {
-  return normalize(file)
-    .split(/[\\\\/]+/)
-    .some((part) => ignoredDirectories.has(part));
-}
-
-if (git(["rev-parse", "--is-inside-work-tree"], true).trim() !== "true") {
-  console.info("Changed-file scripts require a Git working tree.");
-  process.exit(1);
-}
-
-const baseRef = defaultBaseRef();
-const baseDiff =
-  baseRef === "HEAD"
-    ? gitFiles(["diff", "--name-only", "--diff-filter=ACMR", "--relative", "HEAD"])
-    : gitFiles(["diff", "--name-only", "--diff-filter=ACMR", "--relative", \`\${baseRef}...HEAD\`]);
-
-const changedFiles = [
-  ...baseDiff,
-  ...gitFiles(["diff", "--name-only", "--diff-filter=ACMR", "--relative"]),
-  ...gitFiles(["diff", "--cached", "--name-only", "--diff-filter=ACMR", "--relative"]),
-  ...gitFiles(["ls-files", "--others", "--exclude-standard"]),
-];
-
-const files = [...new Set(changedFiles)].filter(
-  (file) => extensions.has(extname(file)) && !isIgnored(file),
-);
-
-if (files.length === 0) {
-  console.info(\`No changed \${label} files found. Skipping.\`);
-  process.exit(0);
-}
-
-const child = spawn(command[0], [...command.slice(1), ...files], {
   env: {
     ...process.env,
     PATH: [join(process.cwd(), "node_modules", ".bin"), process.env.PATH]
@@ -980,27 +749,6 @@ function usesRunIfFilesHelper(integrations) {
 }
 
 /**
- * @param {Recipe} recipe
- * @param {Integration[]} integrations
- * @returns {boolean}
- */
-function usesRunChangedFilesHelper(recipe, integrations) {
-  const usesChangedScript = [
-    "lint:changed",
-    "lint:fix:changed",
-    "format:changed",
-    "format:check:changed",
-  ].some((script) => recipe.scripts?.[script]);
-
-  return (
-    usesChangedScript &&
-    integrations.some((integration) =>
-      ["eslint", "oxfmt", "oxlint", "prettier", "stylelint"].includes(integration.id),
-    )
-  );
-}
-
-/**
  * @param {string} path
  * @param {string} contents
  * @param {CalaveraState} previousState
@@ -1091,11 +839,10 @@ async function writeManagedJSONFile(path, value, dryRun, changes, previousState)
 }
 
 /**
- * @param {Recipe} recipe
  * @param {Integration[]} integrations
  * @returns {{ path: string, contents: string }[]}
  */
-function plannedManagedFiles(recipe, integrations) {
+function plannedManagedFiles(integrations) {
   const plans = [];
 
   if (integrations.some((integration) => integration.id === "editorconfig")) {
@@ -1104,13 +851,6 @@ function plannedManagedFiles(recipe, integrations) {
 
   if (usesRunIfFilesHelper(integrations)) {
     plans.push({ path: ".calavera/run-if-files.mjs", contents: createRunIfFilesHelper() });
-  }
-
-  if (usesRunChangedFilesHelper(recipe, integrations)) {
-    plans.push({
-      path: ".calavera/run-changed-files.mjs",
-      contents: createRunChangedFilesHelper(),
-    });
   }
 
   if (integrations.some((integration) => integration.id === "oxlint")) {
@@ -1183,7 +923,7 @@ async function applyRecipe(options) {
   /** @type {ManagedFileState[]} */
   const managedFiles = [];
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
-  const managedFilePlans = plannedManagedFiles(recipe, integrations);
+  const managedFilePlans = plannedManagedFiles(integrations);
 
   if (!options.dryRun) {
     await assertSafeManagedFileWrites(managedFilePlans, previousState);
@@ -1219,18 +959,6 @@ async function applyRecipe(options) {
       await writeManagedFile(
         ".calavera/run-if-files.mjs",
         createRunIfFilesHelper(),
-        options.dryRun,
-        changes,
-        previousState,
-      ),
-    );
-  }
-
-  if (usesRunChangedFilesHelper(recipe, integrations)) {
-    managedFiles.push(
-      await writeManagedFile(
-        ".calavera/run-changed-files.mjs",
-        createRunChangedFilesHelper(),
         options.dryRun,
         changes,
         previousState,
@@ -1475,7 +1203,6 @@ async function doctor(options) {
         : null,
       integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
       usesRunIfFilesHelper(integrations) ? ".calavera/run-if-files.mjs" : null,
-      usesRunChangedFilesHelper(recipe, integrations) ? ".calavera/run-changed-files.mjs" : null,
     ].filter(isNotEmptyString);
 
     for (const file of expectedFiles) {
@@ -1507,11 +1234,10 @@ async function doctor(options) {
 }
 
 /**
- * @param {Recipe} recipe
  * @param {Integration[]} integrations
  * @returns {string[]}
  */
-function expectedManagedFiles(recipe, integrations) {
+function expectedManagedFiles(integrations) {
   return [
     integrations.some((integration) => integration.id === "editorconfig") ? ".editorconfig" : null,
     integrations.some((integration) => integration.id === "oxlint") ? "oxlint.json" : null,
@@ -1524,7 +1250,6 @@ function expectedManagedFiles(recipe, integrations) {
       : null,
     integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
     usesRunIfFilesHelper(integrations) ? ".calavera/run-if-files.mjs" : null,
-    usesRunChangedFilesHelper(recipe, integrations) ? ".calavera/run-changed-files.mjs" : null,
   ].filter(isNotEmptyString);
 }
 
@@ -1549,7 +1274,7 @@ async function clean(options) {
     : { integrations: [] };
   const integrations = resolveIntegrations(recipe);
   const expectedAiPaths = new Set(resolveAiArtifacts(recipe).map((artifact) => artifact.path));
-  const expectedFiles = new Set(expectedManagedFiles(recipe, integrations));
+  const expectedFiles = new Set(expectedManagedFiles(integrations));
   const staleFiles = managedFilesFromState(state).filter((file) => !expectedFiles.has(file.path));
   const staleAiArtifacts = state.aiArtifacts.filter(
     (artifact) => !expectedAiPaths.has(artifact.path),
