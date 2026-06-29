@@ -223,3 +223,8 @@ Do not deprecate Toolkit until all of these are true:
 
 The remaining post-merge decisions are tracked as focused GitHub issues rather
 than loose plan notes. See #154 through #160 above.
+
+The deferred `@schalkneethling/create` path is scoped in
+[`docs/create-template-and-agent-composition.md`](create-template-and-agent-composition.md).
+That work should begin with Vite+ template research and MCP/WebMCP recipe
+composition design, not with application scaffolding inside Calavera.

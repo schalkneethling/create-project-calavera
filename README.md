@@ -138,6 +138,21 @@ workflow logic rather than a Calavera changed-file wrapper.
 See [`docs/vite-plus-and-delta-mode.md`](docs/vite-plus-and-delta-mode.md) for
 the Vite+ design boundary and delta workflow guidance.
 
+## Template And Agent Composition
+
+A future `@schalkneethling/create` package may collapse Vite+ scaffolding,
+Calavera recipe composition, Calavera apply, and project startup into a single
+creation path. It should remain separate from Calavera's tooling-composition
+responsibilities.
+
+Calavera should also expose agent-native recipe composition through WebMCP and,
+if needed, a standard MCP server so coding agents can compose recipes directly
+instead of driving the human web UI.
+
+See
+[`docs/create-template-and-agent-composition.md`](docs/create-template-and-agent-composition.md)
+for the current boundary, research questions, and phase-two handoff plan.
+
 ## Recipe Schema
 
 Generated recipes reference the public draft 2020-12 schema at
