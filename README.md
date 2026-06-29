@@ -128,6 +128,16 @@ npm --force create project-calavera apply
 - `--yes`
 - `--json`
 
+## Vite+ And Delta Workflows
+
+Calavera keeps generated package scripts as ordinary tool commands. It can add
+tooling, configuration, dependencies, and package scripts, but delta execution
+belongs to tool-native options, project-specific scripts, Vite+/`vp`, or CI
+workflow logic rather than a Calavera changed-file wrapper.
+
+See [`docs/vite-plus-and-delta-mode.md`](docs/vite-plus-and-delta-mode.md) for
+the Vite+ design boundary and delta workflow guidance.
+
 ## Recipe Schema
 
 Generated recipes reference the public draft 2020-12 schema at
