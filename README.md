@@ -128,6 +128,17 @@ npm --force create project-calavera apply
 - `--yes`
 - `--json`
 
+## Optional Delta Scripts
+
+Full-project lint, format, typecheck, and quality scripts remain the default.
+Recipes can opt into changed-file scripts such as `lint:changed`,
+`format:check:changed`, and `quality:changed` by setting those script flags to
+`true`. Delta scripts use Git state through `.calavera/run-changed-files.mjs` and
+can compare against a specific ref with `CALAVERA_CHANGED_BASE`.
+
+See [`docs/vite-plus-and-delta-mode.md`](docs/vite-plus-and-delta-mode.md) for
+the Vite+ design boundary and the changed-file script model.
+
 ## Recipe Schema
 
 Generated recipes reference the public draft 2020-12 schema at

@@ -51,6 +51,14 @@
           "type": "boolean",
           "description": "Generate a lint fix script when linting integrations are selected."
         },
+        "lint:changed": {
+          "type": "boolean",
+          "description": "Generate an opt-in lint script that runs configured linters only against changed matching files."
+        },
+        "lint:fix:changed": {
+          "type": "boolean",
+          "description": "Generate an opt-in lint fix script that runs configured linters only against changed matching files."
+        },
         "format": {
           "type": "boolean",
           "description": "Generate a format script when formatting integrations are selected."
@@ -59,6 +67,14 @@
           "type": "boolean",
           "description": "Generate a format check script when formatting integrations are selected."
         },
+        "format:changed": {
+          "type": "boolean",
+          "description": "Generate an opt-in format script that writes formatting only for changed matching files."
+        },
+        "format:check:changed": {
+          "type": "boolean",
+          "description": "Generate an opt-in format check script that checks only changed matching files."
+        },
         "typecheck": {
           "type": "boolean",
           "description": "Generate a TypeScript typecheck script when the TypeScript integration is selected."
@@ -66,6 +82,10 @@
         "quality": {
           "type": "boolean",
           "description": "Generate a combined quality script from the available lint, format, typecheck, and React Doctor scripts."
+        },
+        "quality:changed": {
+          "type": "boolean",
+          "description": "Generate an opt-in combined quality script from changed-file lint and format checks plus React Doctor diff when available."
         }
       }
     },
