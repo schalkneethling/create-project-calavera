@@ -56,6 +56,10 @@ Stylelint plugin entry can declare its package dependency, parent `stylelint`
 integration, plugin name, and default rules in `src/catalog.js`; the CLI then
 uses that metadata when generating `.stylelintrc.json`.
 
+See
+[`docs/contributing-calavera-integration-varlock.md`](docs/contributing-calavera-integration-varlock.md)
+for a draft contributor walkthrough based on Theo Ephraim's Varlock integration.
+
 ## CLI
 
 Create a recipe:
