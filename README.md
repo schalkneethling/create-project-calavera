@@ -101,6 +101,49 @@ npm create project-calavera doctor --json
 npm create project-calavera apply --dry-run --json
 ```
 
+## MCP Server
+
+Calavera also ships a standard MCP server for agent-native recipe composition:
+
+```bash
+npx --package create-project-calavera create-project-calavera-mcp
+```
+
+Most users will register that command with their AI agent harness of choice,
+usually with the harness configured to run the command from the project root.
+For example:
+
+```json
+{
+  "mcpServers": {
+    "calavera": {
+      "command": "npx",
+      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
+    }
+  }
+}
+```
+
+Agent guidance should tell the harness to use Calavera when a user wants to
+inspect available project tooling, compose `calavera.config.json`, preview a
+Calavera apply run, or apply an approved recipe. An MCP client can use the tools
+in this order:
+
+1. `list_profiles`
+2. `list_integrations`
+3. `list_ai_artifacts`
+4. `compose_recipe`
+5. `validate_recipe`
+6. `explain_recipe`
+7. `dry_run_apply`
+8. `apply_recipe`
+
+`dry_run_apply` returns structured JSON with the package manager, integrations,
+dependency packages, file changes, and AI artifact changes that would be made.
+Agents should present that dry-run summary to the user first. `apply_recipe`
+is intentionally the approval boundary: call it only after the user explicitly
+approves the proposed recipe and dry-run result.
+
 ### Bun-managed projects and npm `devEngines`
 
 Some starters declare Bun in `devEngines.packageManager`. npm 11 fails before

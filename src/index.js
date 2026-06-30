@@ -3,6 +3,7 @@
 import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { cancel, confirm, intro, isCancel, multiselect, select, spinner } from "@clack/prompts";
 import { execa } from "execa";
@@ -880,9 +881,25 @@ function plannedManagedFiles(integrations) {
  * @param {CliOptions} options
  * @returns {Promise<ApplyResult>}
  */
-async function applyRecipe(options) {
+export async function applyRecipe(options) {
   const configPath = resolve(options.config);
   const recipe = await readRecipe(configPath);
+  return applyRecipeObject(recipe, options);
+}
+
+/**
+ * @param {Recipe} recipe
+ * @param {Partial<CliOptions>} options
+ * @returns {Promise<ApplyResult>}
+ */
+export async function applyRecipeObject(recipe, options = {}) {
+  const applyOptions = {
+    dryRun: false,
+    json: false,
+    noInstall: false,
+    assumeYes: false,
+    ...options,
+  };
   const previousState = await readStateIfPresent();
   const integrations = resolveRecipeIntegrations(recipe);
   const dependencyList = unique(
@@ -890,13 +907,15 @@ async function applyRecipe(options) {
   );
   const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = assertSupportedPackageManager(
-    options.packageManager ?? recipe.packageManager ?? detectPackageManager(detectedPackageJSON),
+    applyOptions.packageManager ??
+      recipe.packageManager ??
+      detectPackageManager(detectedPackageJSON),
   );
   const packageJSON = await ensurePackageJSON(
     packageManager,
-    options.dryRun,
-    options.assumeYes,
-    options.json,
+    applyOptions.dryRun,
+    applyOptions.assumeYes,
+    applyOptions.json,
   );
   const scripts = buildScripts(recipe, integrations, packageManager);
   const changes = [];
@@ -905,11 +924,11 @@ async function applyRecipe(options) {
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
   const managedFilePlans = plannedManagedFiles(integrations);
 
-  if (!options.dryRun) {
+  if (!applyOptions.dryRun) {
     await assertSafeManagedFileWrites(managedFilePlans, previousState);
   }
 
-  const aiResult = await buildAiApplyResult(recipe, options, previousState);
+  const aiResult = await buildAiApplyResult(recipe, applyOptions, previousState);
 
   packageJSON.scripts = {
     ...packageJSON.scripts,
@@ -927,7 +946,7 @@ async function applyRecipe(options) {
       await writeManagedFile(
         ".editorconfig",
         createEditorConfig(),
-        options.dryRun,
+        applyOptions.dryRun,
         changes,
         previousState,
       ),
@@ -939,7 +958,7 @@ async function applyRecipe(options) {
       await writeManagedFile(
         ".calavera/run-if-files.mjs",
         createRunIfFilesHelper(),
-        options.dryRun,
+        applyOptions.dryRun,
         changes,
         previousState,
       ),
@@ -951,7 +970,7 @@ async function applyRecipe(options) {
       await writeManagedJSONFile(
         "oxlint.json",
         createOxlintConfig(integrations),
-        options.dryRun,
+        applyOptions.dryRun,
         changes,
         previousState,
       ),
@@ -963,7 +982,7 @@ async function applyRecipe(options) {
       await writeManagedFile(
         "eslint.config.js",
         createESLintConfig(integrations),
-        options.dryRun,
+        applyOptions.dryRun,
         changes,
         previousState,
       ),
@@ -972,13 +991,19 @@ async function applyRecipe(options) {
 
   if (integrations.some((integration) => integration.id === "prettier")) {
     managedFiles.push(
-      await writeManagedJSONFile(".prettierrc.json", {}, options.dryRun, changes, previousState),
+      await writeManagedJSONFile(
+        ".prettierrc.json",
+        {},
+        applyOptions.dryRun,
+        changes,
+        previousState,
+      ),
     );
     managedFiles.push(
       await writeManagedFile(
         ".prettierignore",
         "node_modules\npackage-lock.json\npnpm-lock.yaml\nyarn.lock\nbun.lockb\n",
-        options.dryRun,
+        applyOptions.dryRun,
         changes,
         previousState,
       ),
@@ -990,7 +1015,7 @@ async function applyRecipe(options) {
       await writeManagedJSONFile(
         ".stylelintrc.json",
         createStylelintConfig(integrations),
-        options.dryRun,
+        applyOptions.dryRun,
         changes,
         previousState,
       ),
@@ -1002,7 +1027,7 @@ async function applyRecipe(options) {
       await writeManagedJSONFile(
         "react-doctor.config.json",
         createReactDoctorConfig(),
-        options.dryRun,
+        applyOptions.dryRun,
         changes,
         previousState,
       ),
@@ -1014,18 +1039,18 @@ async function applyRecipe(options) {
       await writeManagedJSONFile(
         "tsconfig.json",
         createTSConfig(),
-        options.dryRun,
+        applyOptions.dryRun,
         changes,
         previousState,
       ),
     );
   }
 
-  if (!options.dryRun) {
+  if (!applyOptions.dryRun) {
     await writeJSON("package.json", packageJSON, false);
   }
 
-  if (!options.dryRun) {
+  if (!applyOptions.dryRun) {
     await mkdir(".calavera", { recursive: true });
     await writeJSON(
       STATE_FILE,
@@ -1041,7 +1066,7 @@ async function applyRecipe(options) {
     );
   }
 
-  if (dependencyList.length > 0 && !options.noInstall && !options.dryRun) {
+  if (dependencyList.length > 0 && !applyOptions.noInstall && !applyOptions.dryRun) {
     const [command, commandArgs] =
       packageManagerCommands[packageManager].installDev(dependencyList);
     const spin = spinner();
@@ -1052,7 +1077,7 @@ async function applyRecipe(options) {
 
   return {
     command: "apply",
-    dryRun: options.dryRun,
+    dryRun: applyOptions.dryRun,
     packageManager,
     dependencies: dependencyList,
     integrations: integrations.map((integration) => integration.id),
@@ -1524,12 +1549,14 @@ async function main() {
   process.exitCode = 1;
 }
 
-main().catch((error) => {
-  if (error instanceof FileWriteError) {
-    logger.error(error.message);
-    logger.error(error.cause);
-  } else {
-    logger.error(error);
-  }
-  process.exitCode = 1;
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((error) => {
+    if (error instanceof FileWriteError) {
+      logger.error(error.message);
+      logger.error(error.cause);
+    } else {
+      logger.error(error);
+    }
+    process.exitCode = 1;
+  });
+}

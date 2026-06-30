@@ -2,15 +2,19 @@ import assert from "node:assert/strict";
 import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import Ajv2020 from "ajv/dist/2020.js";
 
 import { buildAiApplyResult, createCodexAgentToml } from "../src/ai/artifacts.js";
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
 import { integrationCatalog } from "../src/catalog.js";
+import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { createEmptyState } from "../src/state.js";
 import {
   assertKnownValue,
   assertObjectArray,
+  assertPlainObject,
   assertString,
   assertStringArray,
 } from "../src/utils/assertions.js";
@@ -280,6 +284,86 @@ test("shared explanation helpers include selected and included integration reaso
   assert.match(explanation.find(({ id }) => id === "oxlint-react").reason, /Explicitly selected/);
 });
 
+test("standard MCP server exposes Calavera recipe composition tools", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createMcpServer();
+  const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  try {
+    const { tools } = await client.listTools();
+    const toolNames = tools.map(({ name }) => name);
+
+    assert.deepEqual(toolNames, [
+      "list_profiles",
+      "list_integrations",
+      "describe_integration",
+      "list_ai_artifacts",
+      "compose_recipe",
+      "validate_recipe",
+      "explain_recipe",
+      "dry_run_apply",
+      "apply_recipe",
+    ]);
+    assert.equal(
+      tools.find(({ name }) => name === "apply_recipe")?.annotations?.destructiveHint,
+      true,
+    );
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("standard MCP compose_recipe returns structured schema-valid content", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createMcpServer();
+  const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  try {
+    const result = await client.callTool({
+      name: "compose_recipe",
+      arguments: {
+        profile: "modern",
+        packageManager: "pnpm",
+        tools: ["Oxlint", "Stylelint"],
+        aiArtifacts: [{ id: "Semantic HTML" }],
+      },
+    });
+    const recipe = result.structuredContent.recipe;
+
+    assert.deepEqual(recipe.integrations, ["oxlint", "stylelint"]);
+    assert.deepEqual(recipe.ai, [{ type: "skill", src: "skills/semantic-html" }]);
+    assertValid(ajv.compile(schema), recipe);
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("standard MCP validation and dry-run tools return agent-readable JSON", async () => {
+  const recipe = composeRecipe({
+    profile: "minimal",
+    packageManager: "npm",
+    aiArtifacts: [{ id: "skill-semantic-html" }],
+  });
+  const validation = await callMcpTool("validate_recipe", { recipe });
+  const dryRun = await callMcpTool("dry_run_apply", { recipe });
+
+  assert.equal(validation.ok, true);
+  assert.match(dryRun.approvalBoundary, /before calling apply_recipe/);
+  assert.equal(dryRun.result.dryRun, true);
+  assert.equal(
+    dryRun.result.changes.some(({ path }) => path === ".agents/skills/semantic-html"),
+    true,
+  );
+});
+
 test("shared integration resolution expands nested includes without catalog-order coupling", () => {
   const fixtures = [
     {
@@ -328,6 +412,7 @@ test("shared assertion helpers reject unexpected value shapes", () => {
   assert.doesNotThrow(() => assertStringArray("items", []));
   assert.doesNotThrow(() => assertObjectArray("objects", [{ id: "one" }]));
   assert.doesNotThrow(() => assertObjectArray("objects", []));
+  assert.doesNotThrow(() => assertPlainObject("object", { id: "one" }));
   assert.doesNotThrow(() => assertKnownValue("profile", "modern", profiles));
 
   assert.throws(() => assertString("name", 1), /name must be a string/);
@@ -336,6 +421,8 @@ test("shared assertion helpers reject unexpected value shapes", () => {
   assert.throws(() => assertObjectArray("objects", "one"), /objects must be an array of objects/);
   assert.throws(() => assertObjectArray("objects", [null]), /objects must be an array of objects/);
   assert.throws(() => assertObjectArray("objects", [[]]), /objects must be an array of objects/);
+  assert.throws(() => assertPlainObject("object", null), /object must be an object/);
+  assert.throws(() => assertPlainObject("object", []), /object must be an object/);
   assert.throws(() => assertKnownValue("profile", 1, profiles), /profile must be a string/);
   assert.throws(() => assertKnownValue("profile", "future", profiles), /Invalid profile: future/);
 });
