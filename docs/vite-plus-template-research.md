@@ -170,7 +170,7 @@ Agent-first flow:
 ```text
 vp create
 cd generated-project
-npm create @schalkneethling/project-calavera -- --init
+npm create project-calavera -- --init
 start an agent
 ask the agent to use the Project Calavera skill
 describe linting, formatting, TypeScript, and AI artifact needs
@@ -191,7 +191,7 @@ Rich CLI flow:
 ```text
 vp create
 cd generated-project
-npm create @schalkneethling/project-calavera
+npm create project-calavera
 select tooling and AI artifacts in the interactive CLI
 write calavera.config.json
 run the printed apply command
@@ -209,23 +209,27 @@ run the printed apply command
 The CLI may later support a write-and-apply mode, but the durable contract should
 remain the recipe file plus an explicit apply step.
 
-## Package Naming Verification
+## Package Naming Notes
 
-The scoped npm create syntax was verified against npm 11.16.0 behavior:
+The currently published npm package is `create-project-calavera`, so current
+docs should use the unscoped create command:
 
 ```text
-npm create @schalkneethling/project-calavera
-  -> @schalkneethling/create-project-calavera@*
+npm create project-calavera
+  -> create-project-calavera@*
 ```
 
-That means `@schalkneethling/create-project-calavera` can remain the published
-package while the user-facing command uses the product-centered
-`project-calavera` name. When passing arguments to the create package, docs
-should use npm's argument separator:
+npm's argument separator is still required when passing arguments to the create
+package:
 
 ```sh
-npm create @schalkneethling/project-calavera -- --init
+npm create project-calavera -- --init
 ```
+
+If a future scoped package is published, npm create can map
+`@schalkneethling/project-calavera` to
+`@schalkneethling/create-project-calavera`, but that package is not currently
+published.
 
 The `@schalkneethling/create` package name remains relevant only if Calavera
 later publishes a Vite+ org manifest for `vp create @schalkneethling`.
