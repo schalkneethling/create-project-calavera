@@ -8,7 +8,27 @@ import { buildAiApplyResult, createCodexAgentToml } from "../src/ai/artifacts.js
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
 import { integrationCatalog } from "../src/catalog.js";
 import { createEmptyState } from "../src/state.js";
-import { buildRecipe, CONFIG_SCHEMA_URL } from "../src/recipe.js";
+import {
+  assertKnownValue,
+  assertObjectArray,
+  assertString,
+  assertStringArray,
+} from "../src/utils/assertions.js";
+import {
+  aiArtifactRecipeItems,
+  buildRecipe,
+  catalogResponse,
+  composeRecipe,
+  CONFIG_SCHEMA_URL,
+  explainRecipeIntegrations,
+  listIntegrationOptions,
+  normalizeAiArtifactInputs,
+  normalizeIntegrationInputs,
+  profileDefaults,
+  resolveRecipeIntegrations,
+  validateRecipe,
+  validateRecipeCompositionInput,
+} from "../src/recipe.js";
 
 const schemaUrl = CONFIG_SCHEMA_URL;
 const rootProperties = [
@@ -151,6 +171,173 @@ test("generated recipes reference the published schema URL", () => {
   const recipe = buildRecipe("modern", ["editorconfig"], "pnpm");
 
   assert.equal(recipe.$schema, schemaUrl);
+});
+
+test("shared composition uses profile defaults when tools are omitted", () => {
+  assert.deepEqual(composeRecipe({ profile: "minimal" }), buildRecipe("minimal", ["editorconfig"]));
+  assert.deepEqual(composeRecipe({ profile: "modern" }).integrations, profileDefaults.modern);
+});
+
+test("shared composition normalizes explicit tool labels and package managers", () => {
+  const input = validateRecipeCompositionInput({
+    profile: "classic",
+    packageManager: "pnpm",
+    tools: ["TypeScript type checking", "ESLint flat config", "Prettier"],
+  });
+
+  assert.deepEqual(input, {
+    profile: "classic",
+    packageManager: "pnpm",
+    tools: ["typescript", "eslint", "prettier"],
+    aiArtifacts: undefined,
+  });
+});
+
+test("shared composition resolves duplicate tool labels within the active profile", () => {
+  assert.deepEqual(normalizeIntegrationInputs(["Accessibility"], "modern"), ["oxlint-jsx-a11y"]);
+  assert.deepEqual(normalizeIntegrationInputs(["Accessibility"], "classic"), ["eslint-jsx-a11y"]);
+});
+
+test("shared composition copies profile defaults before returning recipes", () => {
+  const recipe = composeRecipe({ profile: "minimal" });
+  recipe.integrations.push("mutated");
+
+  assert.deepEqual(profileDefaults.minimal, ["editorconfig"]);
+  assert.notEqual(composeRecipe({ profile: "modern" }).integrations, profileDefaults.modern);
+});
+
+test("shared composition normalizes AI artifact inputs into recipe items", () => {
+  const input = normalizeAiArtifactInputs([
+    { id: "Semantic HTML" },
+    { id: "hooks/block-dangerous-commands", target: "codex" },
+    { id: "Technical devil's advocate" },
+  ]);
+
+  assert.deepEqual(input, [
+    { id: "skill-semantic-html", target: undefined },
+    { id: "hook-block-dangerous-commands", target: "codex" },
+    { id: "agent-technical-devils-advocate", target: DEFAULT_AI_TARGET },
+  ]);
+  assert.deepEqual(aiArtifactRecipeItems(input), [
+    { type: "skill", src: "skills/semantic-html" },
+    { type: "hook", src: "hooks/block-dangerous-commands", target: "codex" },
+    {
+      type: "agent",
+      src: "agents/technical-devils-advocate.md",
+      target: DEFAULT_AI_TARGET,
+    },
+  ]);
+});
+
+test("shared composition rejects whitespace-padded unsafe AI artifact targets", () => {
+  for (const target of [" .. ", " . ", " nested/path ", " nested\\path "]) {
+    assert.throws(
+      () => normalizeAiArtifactInputs([{ id: "hooks/block-dangerous-commands", target }]),
+      /Targets must be a single directory name/,
+    );
+  }
+});
+
+test("shared composition output validates against the published schema", () => {
+  const validate = ajv.compile(schema);
+  const recipe = composeRecipe({
+    profile: "modern",
+    packageManager: "bun",
+    tools: ["Oxlint", "Oxc React best practices", "Stylelint"],
+    aiArtifacts: [{ id: "skill-semantic-html" }],
+  });
+
+  assertValid(validate, recipe);
+  assert.equal(validateRecipe(recipe), recipe);
+});
+
+test("shared catalog helpers expose WebMCP-ready profile scoped options", () => {
+  const modernToolIds = listIntegrationOptions("modern").map(({ id }) => id);
+  const classicToolIds = listIntegrationOptions("classic").map(({ id }) => id);
+  const response = catalogResponse(composeRecipe({ profile: "minimal" }));
+
+  assert.ok(modernToolIds.includes("oxlint-react"));
+  assert.equal(modernToolIds.includes("eslint-react"), false);
+  assert.ok(classicToolIds.includes("eslint-react"));
+  assert.equal(classicToolIds.includes("oxlint-react"), false);
+  assert.deepEqual(
+    response.profiles.map(({ id }) => id),
+    profiles,
+  );
+  assert.deepEqual(response.defaults, profileDefaults);
+});
+
+test("shared explanation helpers include selected and included integration reasons", () => {
+  const explanation = explainRecipeIntegrations(
+    buildRecipe("modern", ["oxlint-react", "stylelint-standard"]),
+  );
+
+  assert.deepEqual(
+    explanation.map(({ id }) => id),
+    ["oxlint", "oxlint-react", "stylelint", "stylelint-standard"],
+  );
+  assert.match(explanation.find(({ id }) => id === "oxlint").reason, /requires it/);
+  assert.match(explanation.find(({ id }) => id === "oxlint-react").reason, /Explicitly selected/);
+});
+
+test("shared integration resolution expands nested includes without catalog-order coupling", () => {
+  const fixtures = [
+    {
+      id: "test-grandchild",
+      label: "Test grandchild",
+      group: "Test",
+      platform: "test",
+      status: "optional",
+      dependencies: [],
+    },
+    {
+      id: "test-child",
+      label: "Test child",
+      group: "Test",
+      platform: "test",
+      status: "optional",
+      dependencies: [],
+      includes: ["test-grandchild"],
+    },
+    {
+      id: "test-parent",
+      label: "Test parent",
+      group: "Test",
+      platform: "test",
+      status: "optional",
+      dependencies: [],
+      includes: ["test-child"],
+    },
+  ];
+
+  integrationCatalog.unshift(...fixtures);
+
+  try {
+    assert.deepEqual(
+      resolveRecipeIntegrations({ integrations: ["test-parent"] }).map(({ id }) => id),
+      ["test-grandchild", "test-child", "test-parent"],
+    );
+  } finally {
+    integrationCatalog.splice(0, fixtures.length);
+  }
+});
+
+test("shared assertion helpers reject unexpected value shapes", () => {
+  assert.doesNotThrow(() => assertString("name", "value"));
+  assert.doesNotThrow(() => assertStringArray("items", ["one", "two"]));
+  assert.doesNotThrow(() => assertStringArray("items", []));
+  assert.doesNotThrow(() => assertObjectArray("objects", [{ id: "one" }]));
+  assert.doesNotThrow(() => assertObjectArray("objects", []));
+  assert.doesNotThrow(() => assertKnownValue("profile", "modern", profiles));
+
+  assert.throws(() => assertString("name", 1), /name must be a string/);
+  assert.throws(() => assertStringArray("items", "one"), /items must be an array of strings/);
+  assert.throws(() => assertStringArray("items", ["one", 2]), /items must be an array of strings/);
+  assert.throws(() => assertObjectArray("objects", "one"), /objects must be an array of objects/);
+  assert.throws(() => assertObjectArray("objects", [null]), /objects must be an array of objects/);
+  assert.throws(() => assertObjectArray("objects", [[]]), /objects must be an array of objects/);
+  assert.throws(() => assertKnownValue("profile", 1, profiles), /profile must be a string/);
+  assert.throws(() => assertKnownValue("profile", "future", profiles), /Invalid profile: future/);
 });
 
 test("Codex agent adapter emits required TOML fields without Claude model metadata", async () => {

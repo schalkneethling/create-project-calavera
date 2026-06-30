@@ -82,10 +82,9 @@ The matching recipe entry a project developer would write is intentionally small
 }
 ```
 
-That recipe should be enough for the CLI to resolve Varlock from the catalog.
-Today the composer still has its own compact browser catalog, so contributor
-changes may need to update `web/script.js` too. A future improvement should make
-the composer derive from the shared catalog so this duplication disappears.
+That recipe should be enough for the CLI and web composer to resolve Varlock
+from the shared catalog. The composer now derives integration options from the
+shared recipe core instead of carrying a browser-only catalog copy.
 
 ## Add Dependencies Through Metadata
 
@@ -367,27 +366,21 @@ restore the starter file.
 ## Expose the Integration in the Composer
 
 The web composer should not drift from the CLI catalog model. When a new
-integration should be available in the composer, expose it in
-[`web/script.js`](../web/script.js) with the same ID, label, group, and status
-language used by the CLI.
+integration should be available in the composer, add it to
+[`src/catalog.js`](../src/catalog.js) and make sure
+[`src/recipe.js`](../src/recipe.js) exposes it for the intended profile or
+profiles through the shared recipe core.
 
 For Varlock, that meant adding it to the Environment variables group so a project
 developer could include it in a generated `calavera.config.json` without
-hand-editing the recipe. This currently duplicates the shared catalog entry in
-the compact helper format used by the browser UI:
+hand-editing the recipe.
 
-```js
-entry("varlock", "Environment variables", "Varlock", "optional");
-```
-
-If the composer exports a schema or static catalog artifact for the browser,
-update the matching test or drift check. Calavera's public recipe schema lives at
+If the integration changes recipe shape, profile scoping, schema behavior, or
+the shared catalog response exposed to WebMCP, update the matching test or drift
+check. Calavera's public recipe schema lives at
 [`web/public/calavera.config.schema.json`](../web/public/calavera.config.schema.json),
 and repository drift checks live in
 [`scripts/check-config-schema.test.mjs`](../scripts/check-config-schema.test.mjs).
-
-Longer term, the right shape is for the composer to consume the shared catalog
-instead of requiring contributors to update both places by hand.
 
 ## Test the Contribution
 
