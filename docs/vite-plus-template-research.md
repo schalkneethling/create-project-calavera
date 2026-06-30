@@ -232,12 +232,12 @@ later publishes a Vite+ org manifest for `vp create @schalkneethling`.
 
 ## MCP And WebMCP Composition Surface
 
-Recipe composition should be extracted into shared project logic first, not
+Recipe composition now lives in shared project logic rather than being
 duplicated between the web UI, WebMCP tools, future MCP server, and rich CLI.
 That shared core is the main dependency for keeping the agent-first, CLI, and
 Web UI paths in parity.
 
-The shared surface should be able to power:
+The shared surface in `src/recipe.js` powers or should power:
 
 - existing web composer controls;
 - existing WebMCP tools in `web/script.js`;
@@ -245,7 +245,10 @@ The shared surface should be able to power:
 - the rich interactive CLI composer;
 - CLI commands that need recipe inspection or validation.
 
-Candidate shared operations:
+Shared operations already include catalog listing, composition, validation, AI
+artifact normalization, integration explanation, and WebMCP-ready response
+helpers. Future MCP and rich CLI work should build on those entry points before
+adding more operations such as:
 
 - `list_profiles`
 - `list_integrations`

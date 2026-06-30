@@ -21,7 +21,7 @@ import {
   normalizeState,
   optionalStringArray,
 } from "./state.js";
-import { buildRecipe, profileDefaults } from "./recipe.js";
+import { buildRecipe, profileDefaults, resolveRecipeIntegrations } from "./recipe.js";
 import { FileWriteError } from "./utils/file-write-error.js";
 import { fileExists, readJSON, writeJSON } from "./utils/fs.js";
 import { isNotEmptyString, isPlainObject } from "./utils/guards.js";
@@ -261,26 +261,6 @@ async function readStateIfPresent() {
   }
 
   return normalizeState(await readJSON(STATE_FILE));
-}
-
-/**
- * @param {Recipe} recipe
- * @returns {Integration[]}
- */
-function resolveIntegrations(recipe) {
-  const selected = new Set(recipe.integrations ?? []);
-
-  for (const integration of /** @type {Integration[]} */ (integrationCatalog)) {
-    if (selected.has(integration.id)) {
-      for (const includes of integration.includes ?? []) {
-        selected.add(includes);
-      }
-    }
-  }
-
-  return /** @type {Integration[]} */ (integrationCatalog).filter((integration) =>
-    selected.has(integration.id),
-  );
 }
 
 /**
@@ -904,7 +884,7 @@ async function applyRecipe(options) {
   const configPath = resolve(options.config);
   const recipe = await readRecipe(configPath);
   const previousState = await readStateIfPresent();
-  const integrations = resolveIntegrations(recipe);
+  const integrations = resolveRecipeIntegrations(recipe);
   const dependencyList = unique(
     integrations.flatMap((integration) => integration.dependencies ?? []),
   );
@@ -1185,7 +1165,7 @@ async function doctor(options) {
 
   if (hasConfig) {
     const recipe = await readRecipe(options.config);
-    const integrations = resolveIntegrations(recipe);
+    const integrations = resolveRecipeIntegrations(recipe);
     const aiArtifacts = resolveAiArtifacts(recipe);
     const expectedFiles = [
       integrations.some((integration) => integration.id === "editorconfig")
@@ -1272,7 +1252,7 @@ async function clean(options) {
   const recipe = (await fileExists(options.config))
     ? await readRecipe(options.config)
     : { integrations: [] };
-  const integrations = resolveIntegrations(recipe);
+  const integrations = resolveRecipeIntegrations(recipe);
   const expectedAiPaths = new Set(resolveAiArtifacts(recipe).map((artifact) => artifact.path));
   const expectedFiles = new Set(expectedManagedFiles(integrations));
   const staleFiles = managedFilesFromState(state).filter((file) => !expectedFiles.has(file.path));

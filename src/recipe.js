@@ -1,8 +1,60 @@
+import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./ai/catalog.js";
+import { integrationCatalog } from "./catalog.js";
+import {
+  assertKnownValue,
+  assertObjectArray,
+  assertString,
+  assertStringArray,
+} from "./utils/assertions.js";
+
 export const CONFIG_SCHEMA_URL = "https://calavera.schalkneethling.com/calavera.config.schema.json";
 
 /**
  * @typedef {"npm" | "pnpm" | "yarn" | "bun"} PackageManager
  */
+
+export const profileCatalog = [
+  {
+    id: "modern",
+    label: "modern",
+    description: "Newer, faster JavaScript, TypeScript, CSS linting, and formatting defaults.",
+  },
+  {
+    id: "classic",
+    label: "classic",
+    description: "Widely used JavaScript, TypeScript, CSS linting, and formatting defaults.",
+  },
+  {
+    id: "minimal",
+    label: "minimal",
+    description: "Only basic editor consistency settings.",
+  },
+];
+
+export const packageManagerCatalog = [
+  {
+    id: "npm",
+    label: "npm",
+    description: "npm, the default Node.js package manager.",
+  },
+  {
+    id: "pnpm",
+    label: "pnpm",
+    description: "pnpm, a fast disk-efficient package manager.",
+  },
+  {
+    id: "yarn",
+    label: "yarn",
+    description: "Yarn package manager.",
+  },
+  {
+    id: "bun",
+    label: "bun",
+    description: "Bun package manager and runtime.",
+  },
+];
+
+export const aiArtifactTypes = ["skill", "hook", "agent"];
 
 /** @type {Record<string, string[]>} */
 export const profileDefaults = {
@@ -33,6 +85,339 @@ export const profileDefaults = {
   minimal: ["editorconfig"],
 };
 
+const profileIds = profileCatalog.map(({ id }) => id);
+const packageManagerIds = packageManagerCatalog.map(({ id }) => id);
+
+const profileSpecificIntegrations = {
+  oxlint: ["modern"],
+  "oxlint-eslint": ["modern"],
+  "oxlint-typescript": ["modern"],
+  "oxlint-unicorn": ["modern"],
+  "oxlint-oxc": ["modern"],
+  "oxlint-import": ["modern"],
+  "oxlint-react": ["modern"],
+  "oxlint-jsx-a11y": ["modern"],
+  "oxlint-node": ["modern"],
+  "oxlint-promise": ["modern"],
+  "oxlint-vitest": ["modern"],
+  "oxlint-jest": ["modern"],
+  "oxlint-nextjs": ["modern"],
+  "oxlint-vue": ["modern"],
+  "oxlint-jsdoc": ["modern"],
+  oxfmt: ["modern"],
+  "react-doctor": ["modern", "classic"],
+  eslint: ["classic"],
+  "typescript-eslint": ["classic"],
+  "eslint-config-prettier": ["classic"],
+  "eslint-react": ["classic"],
+  "eslint-jsx-a11y": ["classic"],
+  "eslint-import": ["classic"],
+  "eslint-n": ["classic"],
+  "eslint-promise": ["classic"],
+  "eslint-unicorn": ["classic"],
+  "eslint-sonarjs": ["classic"],
+  "eslint-vitest": ["classic"],
+  "eslint-jest": ["classic"],
+  prettier: ["classic"],
+  "prettier-tailwind": ["classic"],
+  "prettier-svelte": ["classic"],
+  "prettier-astro": ["classic"],
+};
+
+export const defaultScriptFlags = {
+  lint: true,
+  "lint:fix": true,
+  format: true,
+  "format:check": true,
+  typecheck: true,
+  quality: true,
+};
+
+function normalizedToken(value) {
+  return value.trim().toLowerCase();
+}
+
+function integrationProfiles(id) {
+  return profileSpecificIntegrations[id] ?? profileIds;
+}
+
+function integrationIdForInput(value) {
+  const token = normalizedToken(value);
+  const match = integrationCatalog.find(
+    ({ id, label }) => normalizedToken(id) === token || normalizedToken(label) === token,
+  );
+
+  return match?.id;
+}
+
+function aiArtifactIdForInput(value) {
+  const token = normalizedToken(value);
+  const match = aiArtifactCatalog.find(
+    ({ id, label, src }) =>
+      normalizedToken(id) === token ||
+      normalizedToken(label) === token ||
+      normalizedToken(src) === token,
+  );
+
+  return match?.id;
+}
+
+function normalizeAiTarget(target, index) {
+  assertString(`aiArtifacts[${index}].target`, target);
+
+  const normalizedTarget = target.trim();
+
+  if (
+    normalizedTarget === "." ||
+    normalizedTarget === ".." ||
+    normalizedTarget.includes("/") ||
+    normalizedTarget.includes("\\")
+  ) {
+    throw new Error(
+      `Invalid aiArtifacts[${index}].target: ${normalizedTarget}. Targets must be a single directory name without path separators or traversal.`,
+    );
+  }
+
+  return normalizedTarget;
+}
+
+export function profileIdsForRecipe() {
+  return [...profileIds];
+}
+
+export function packageManagerIdsForRecipe() {
+  return [...packageManagerIds];
+}
+
+export function listIntegrationOptions(profile) {
+  return integrationCatalog
+    .map((integration) => ({
+      ...integration,
+      profiles: integrationProfiles(integration.id),
+      description: `${integration.label}. Category: ${integration.group}. Status: ${integration.status}.`,
+    }))
+    .filter((integration) => !profile || integration.profiles.includes(profile));
+}
+
+export function listAiArtifactOptions() {
+  return aiArtifactCatalog.map(({ id, type, src, group, label, status, defaultTarget }) => ({
+    id,
+    type,
+    src,
+    label,
+    group,
+    status,
+    defaultTarget,
+    description: `${label}. Type: ${type}. Source: ${src}.`,
+  }));
+}
+
+export function normalizeIntegrationInputs(integrationInputs) {
+  assertStringArray("tools", integrationInputs);
+
+  return integrationInputs.map((value) => integrationIdForInput(value) ?? value);
+}
+
+export function normalizeAiArtifactInputs(artifactInputs = []) {
+  assertObjectArray("aiArtifacts", artifactInputs);
+
+  return artifactInputs.map((item, index) => {
+    assertString(`aiArtifacts[${index}].id`, item.id);
+
+    const id = aiArtifactIdForInput(item.id) ?? item.id;
+    const artifact = aiArtifactCatalog.find((candidate) => candidate.id === id);
+
+    if (!artifact) {
+      throw new Error(
+        `Invalid aiArtifacts[${index}].id: ${item.id}. Use artifact IDs, labels, or sources from get_ai_artifact_options.`,
+      );
+    }
+
+    let target;
+
+    if (item.target !== undefined) {
+      target = normalizeAiTarget(item.target, index);
+    }
+
+    if (artifact.type === "skill" && item.target !== undefined) {
+      throw new Error(`Invalid aiArtifacts[${index}].target: skill artifacts do not use target.`);
+    }
+
+    return {
+      id,
+      target: artifact.defaultTarget ? target || artifact.defaultTarget : undefined,
+    };
+  });
+}
+
+export function aiArtifactRecipeItems(artifactInputs = []) {
+  return normalizeAiArtifactInputs(artifactInputs).map(({ id, target }) => {
+    const artifact = aiArtifactCatalog.find((candidate) => candidate.id === id);
+    const item = {
+      type: artifact.type,
+      src: artifact.src,
+    };
+
+    if (artifact.defaultTarget) {
+      item.target = target ?? artifact.defaultTarget;
+    }
+
+    return item;
+  });
+}
+
+export function validateRecipeCompositionInput({
+  profile,
+  packageManager = "npm",
+  tools,
+  aiArtifacts,
+} = {}) {
+  assertKnownValue("profile", profile, profileIds);
+  assertKnownValue("packageManager", packageManager, packageManagerIds);
+
+  const allowedIntegrationIds = listIntegrationOptions(profile).map(({ id }) => id);
+  const integrationIds = tools ? normalizeIntegrationInputs(tools) : profileDefaults[profile];
+  const invalidIntegrationIds = integrationIds.filter((id) => !allowedIntegrationIds.includes(id));
+
+  if (invalidIntegrationIds.length > 0) {
+    throw new Error(
+      `Invalid tools for the ${profile} profile: ${invalidIntegrationIds.join(", ")}. Use tool IDs or labels from get_project_tooling_options. Allowed IDs: ${allowedIntegrationIds.join(", ")}.`,
+    );
+  }
+
+  return {
+    profile,
+    packageManager,
+    tools: integrationIds,
+    aiArtifacts: aiArtifacts ? normalizeAiArtifactInputs(aiArtifacts) : undefined,
+  };
+}
+
+export function composeRecipe(configurationInput = {}) {
+  const { profile, packageManager, tools, aiArtifacts } =
+    validateRecipeCompositionInput(configurationInput);
+
+  return buildRecipe(
+    profile,
+    tools,
+    packageManager,
+    aiArtifacts ? aiArtifactRecipeItems(aiArtifacts) : [],
+  );
+}
+
+export function resolveRecipeIntegrations(recipe) {
+  const selected = new Set(recipe.integrations ?? []);
+
+  for (const integration of integrationCatalog) {
+    if (selected.has(integration.id)) {
+      for (const includes of integration.includes ?? []) {
+        selected.add(includes);
+      }
+    }
+  }
+
+  return integrationCatalog.filter((integration) => selected.has(integration.id));
+}
+
+export function explainRecipeIntegrations(recipe) {
+  const selected = new Set(recipe.integrations ?? []);
+  const defaults = new Set(profileDefaults[recipe.profile] ?? []);
+  const reasons = new Map();
+
+  for (const id of selected) {
+    reasons.set(
+      id,
+      defaults.has(id)
+        ? `Included by the ${recipe.profile} profile defaults.`
+        : "Explicitly selected in the recipe.",
+    );
+  }
+
+  for (const integration of integrationCatalog) {
+    if (!selected.has(integration.id)) {
+      continue;
+    }
+
+    for (const includedId of integration.includes ?? []) {
+      if (!reasons.has(includedId)) {
+        reasons.set(includedId, `Included because ${integration.label} requires it.`);
+      }
+    }
+  }
+
+  return resolveRecipeIntegrations(recipe).map(({ id, label, group, status }) => ({
+    id,
+    label,
+    group,
+    status,
+    reason: reasons.get(id) ?? "Selected by the composed recipe.",
+  }));
+}
+
+export function validateRecipe(recipe) {
+  if (recipe === null || typeof recipe !== "object" || Array.isArray(recipe)) {
+    throw new TypeError("Recipe must be an object.");
+  }
+
+  assertKnownValue("profile", recipe.profile, profileIds);
+  assertKnownValue("packageManager", recipe.packageManager, packageManagerIds);
+  assertStringArray("integrations", recipe.integrations);
+
+  const knownIntegrationIds = integrationCatalog.map(({ id }) => id);
+  const unknownIntegrationIds = recipe.integrations.filter(
+    (id) => !knownIntegrationIds.includes(id),
+  );
+
+  if (unknownIntegrationIds.length > 0) {
+    throw new Error(`Unknown integrations: ${unknownIntegrationIds.join(", ")}.`);
+  }
+
+  if (Object.hasOwn(recipe, "ai")) {
+    assertObjectArray("ai", recipe.ai);
+  }
+
+  return recipe;
+}
+
+export function catalogResponse(currentConfiguration) {
+  return {
+    profiles: profileCatalog.map(({ id, label, description }) => ({
+      id,
+      label,
+      description,
+      defaultIntegrations: profileDefaults[id],
+    })),
+    packageManagers: packageManagerCatalog,
+    integrations: listIntegrationOptions(),
+    aiArtifacts: listAiArtifactOptions(),
+    toolInput: {
+      accepts:
+        "Use either an integration id or its label in the configure_project_tooling tools array. Matching is case-insensitive.",
+      examples: ["typescript", "Stylelint", "Oxc JSX accessibility rules"],
+    },
+    defaults: profileDefaults,
+    currentConfiguration,
+  };
+}
+
+export function aiArtifactsResponse(currentConfiguration = []) {
+  return {
+    defaultTarget: DEFAULT_AI_TARGET,
+    artifactTypes: aiArtifactTypes,
+    artifacts: listAiArtifactOptions(),
+    input: {
+      accepts:
+        "Use artifact IDs, labels, or sources in configure_ai_artifacts. Add target for hook and agent artifacts when the default target is not correct.",
+      examples: [
+        { id: "skill-semantic-html" },
+        { id: "hooks/block-dangerous-commands", target: "claude-code" },
+        { id: "Technical devil's advocate", target: "claude-code" },
+      ],
+    },
+    currentConfiguration,
+  };
+}
+
 /**
  * @param {string} profile
  * @param {string[]} integrations
@@ -46,14 +431,7 @@ export function buildRecipe(profile, integrations, packageManager = "npm", ai = 
     profile,
     packageManager,
     integrations,
-    scripts: {
-      lint: true,
-      "lint:fix": true,
-      format: true,
-      "format:check": true,
-      typecheck: true,
-      quality: true,
-    },
+    scripts: { ...defaultScriptFlags },
   };
 
   if (ai.length > 0) {
