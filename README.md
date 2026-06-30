@@ -1,10 +1,12 @@
 # create-project-calavera
 
-Compose and apply modern tooling recipes for web development projects.
-
-Calavera is focused on project tooling, not application scaffolding. Use it in an
-empty folder, or run it after scaffolding with Vite, Astro, Next.js, Bun, or any
-other project starter.
+[Project Calavera](https://github.com/schalkneethling/create-project-calavera/)
+is an open-source CLI tool that scaffolds linters, formatters, TypeScript
+configs, AI tooling such as agent skills, hooks, and subagents, and other common
+project infrastructure for web projects. It works standalone for vanilla
+JavaScript, TypeScript, and library projects, and it works as a complement to
+framework scaffolding tools like Vite+ and `vp create`, giving any project a
+consistent, repeatable setup through a single recipe file.
 
 ## What Calavera Manages
 
