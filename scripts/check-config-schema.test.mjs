@@ -365,6 +365,11 @@ test("CLI parser accepts scripted rich composer options", () => {
   ]);
   assert.equal(options.apply, true);
   assert.equal(options.assumeYes, true);
+
+  assert.deepEqual(
+    parseArgs(["init", "--ai-artifact", "hook-block-dangerous-commands@team@codex"]).aiArtifacts,
+    [{ id: "hook-block-dangerous-commands", target: "team@codex" }],
+  );
 });
 
 test("CLI rich composer writes a schema-valid config without applying by default", async () => {
@@ -422,6 +427,11 @@ test("CLI rich composer dry-run apply keeps the review boundary non-destructive"
     });
 
     assert.equal(result.applyDryRun?.dryRun, true);
+    assert.deepEqual(
+      result.applyDryRun?.changes.map(({ path }) => path),
+      ["package.json", ".editorconfig"],
+    );
+    assert.deepEqual(result.applyDryRun?.integrations, ["editorconfig"]);
     assert.equal(result.applyResult, undefined);
     await assertPathMissing("calavera.config.json", "dry-run compose must not write config");
     await assertPathMissing("package.json", "dry-run apply must not create package.json");

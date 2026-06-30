@@ -246,7 +246,7 @@ function optionalStringValue(value) {
  * @returns {{ id: string, target?: string }}
  */
 function parseAiArtifactFlag(value) {
-  const separatorIndex = value.lastIndexOf("@");
+  const separatorIndex = value.indexOf("@");
 
   if (separatorIndex <= 0 || separatorIndex === value.length - 1) {
     return { id: value };

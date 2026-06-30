@@ -5,10 +5,10 @@ export const logger = {
     console.info(...styledValues("white", args));
   },
   error(...args) {
-    console.info(...styledValues("red", args));
+    console.error(...styledValues("red", args));
   },
   warn(...args) {
-    console.info(...styledValues("yellow", args));
+    console.warn(...styledValues("yellow", args));
   },
   info(...args) {
     console.info(...styledValues("cyan", args));

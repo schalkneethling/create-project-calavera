@@ -1,5 +1,5 @@
 // @ts-check
-import { styleText } from "node:util";
+import * as util from "node:util";
 
 /**
  * @param {import("node:util").InspectColor | readonly import("node:util").InspectColor[]} format
@@ -7,7 +7,9 @@ import { styleText } from "node:util";
  * @returns {string}
  */
 export function style(format, value) {
-  return styleText(format, String(value));
+  const text = String(value);
+
+  return typeof util.styleText === "function" ? util.styleText(format, text) : text;
 }
 
 /**

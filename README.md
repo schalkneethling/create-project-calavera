@@ -81,6 +81,10 @@ options. Use selection flags only for scripted or CI flows:
 npm create project-calavera init -- --profile modern --package-manager pnpm --tool Oxlint --tool Stylelint
 ```
 
+Wrap labels that contain spaces in quotes, for example
+`--tool "Oxc React best practices"`. Prefer ids such as `oxlint-react` in
+scripts and CI so commands stay copy-pastable.
+
 Apply a recipe:
 
 ```bash
@@ -208,7 +212,7 @@ npm --force create project-calavera apply
 - `--profile modern|classic|minimal`
 - `--package-manager npm|pnpm|yarn|bun`
 - `--integration <id-or-label>` or `--tool <id-or-label>` for scripted
-  composition; omit these flags to select from the interactive option list
+  composition; quote labels with spaces, or use ids/slugs in scripts and CI
 - `--ai-artifact <id-or-label-or-source>`; use `<artifact>@<target>` for hook
   and agent targets, or omit this flag to select from the interactive option list
 - `--apply` with `init` to preview and then confirm applying the composed recipe
