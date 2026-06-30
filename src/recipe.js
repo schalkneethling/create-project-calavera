@@ -458,7 +458,7 @@ export function listProfilesResponse(options = {}) {
       id,
       label,
       description,
-      defaultIntegrations: profileDefaults[id],
+      defaultIntegrations: [...profileDefaults[id]],
     })),
     packageManagers: packageManagerCatalog,
     workflow: recipeWorkflow(options),

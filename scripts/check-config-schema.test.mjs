@@ -299,6 +299,7 @@ test("shared explanation helpers include selected and included integration reaso
 });
 
 test("shared composition operation responses expose catalog, recipe, and explanation data", () => {
+  const profilesResponse = listProfilesResponse();
   const recipeResponse = composeRecipeResponse({
     profile: "modern",
     packageManager: "pnpm",
@@ -307,8 +308,12 @@ test("shared composition operation responses expose catalog, recipe, and explana
   });
 
   assert.deepEqual(
-    listProfilesResponse().profiles.map(({ id }) => id),
+    profilesResponse.profiles.map(({ id }) => id),
     profiles,
+  );
+  assert.notEqual(
+    profilesResponse.profiles.find(({ id }) => id === "modern").defaultIntegrations,
+    profileDefaults.modern,
   );
   assert.deepEqual(
     listIntegrationsResponse({ profile: "classic" }).integrations.map(({ id }) => id),
@@ -355,20 +360,24 @@ test("WebMCP workflow exposes browser download instead of filesystem apply tools
 
 test("WebMCP registers browser parity tools from the shared contract", async () => {
   const script = await readProjectFile("web/script.js");
-  const registeredToolNames = [...script.matchAll(/name: "([^"]+)"/g)].map((match) => match[1]);
-
-  for (const name of webMcpToolNames) {
-    assert.equal(registeredToolNames.includes(name), true, `Missing WebMCP tool: ${name}`);
-  }
-
-  for (const legacyName of [
+  const registeredToolNames = [...script.matchAll(/registerTool\(\{\s*name: "([^"]+)"/g)].map(
+    (match) => match[1],
+  );
+  const legacyToolNames = [
     "get_project_tooling_options",
     "get_ai_artifact_options",
     "configure_project_tooling",
     "configure_ai_artifacts",
     "download_configuration_json",
-  ]) {
-    assert.equal(script.includes(legacyName), false, `Legacy WebMCP tool remains: ${legacyName}`);
+  ];
+
+  assert.deepEqual(registeredToolNames.sort(), [...webMcpToolNames].sort());
+  for (const legacyName of legacyToolNames) {
+    assert.equal(
+      registeredToolNames.includes(legacyName),
+      false,
+      `Legacy WebMCP tool remains: ${legacyName}`,
+    );
   }
 });
 
