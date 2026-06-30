@@ -1,21 +1,19 @@
-/* Thanks goes to https://github.com/t3-oss/create-t3-app/blob/main/cli/src/utils/logger.ts */
-
-import chalk from "chalk";
+import { styledValues } from "./text.js";
 
 export const logger = {
   debug(...args) {
-    console.info(chalk.white(...args));
+    console.info(...styledValues("white", args));
   },
   error(...args) {
-    console.info(chalk.red(...args));
+    console.info(...styledValues("red", args));
   },
   warn(...args) {
-    console.info(chalk.yellow(...args));
+    console.info(...styledValues("yellow", args));
   },
   info(...args) {
-    console.info(chalk.cyan(...args));
+    console.info(...styledValues("cyan", args));
   },
   success(...args) {
-    console.info(chalk.green(...args));
+    console.info(...styledValues("green", args));
   },
 };

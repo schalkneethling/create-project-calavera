@@ -4,8 +4,20 @@ import { existsSync } from "node:fs";
 import { mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
+import { parseArgs as parseNodeArgs } from "node:util";
 
-import { cancel, confirm, intro, isCancel, multiselect, select, spinner } from "@clack/prompts";
+import {
+  cancel,
+  confirm,
+  groupMultiselect,
+  intro,
+  isCancel,
+  note,
+  outro,
+  select,
+  spinner,
+  text,
+} from "@clack/prompts";
 import { execa } from "execa";
 
 import {
@@ -14,7 +26,6 @@ import {
   hashAiInstall,
   resolveAiArtifacts,
 } from "./ai/artifacts.js";
-import { integrationCatalog } from "./catalog.js";
 import {
   createEmptyState,
   managedFileStateForPath,
@@ -22,12 +33,25 @@ import {
   normalizeState,
   optionalStringArray,
 } from "./state.js";
-import { buildRecipe, profileDefaults, resolveRecipeIntegrations } from "./recipe.js";
+import {
+  composeRecipe,
+  explainRecipeResponse,
+  listAiArtifactOptions,
+  listIntegrationOptions,
+  packageManagerIdsForRecipe,
+  profileIdsForRecipe,
+  profileDefaults,
+  resolveRecipeIntegrations,
+  validateRecipeResponse,
+} from "./recipe.js";
+import { assertKnownValue } from "./utils/assertions.js";
 import { FileWriteError } from "./utils/file-write-error.js";
 import { fileExists, readJSON, writeJSON } from "./utils/fs.js";
 import { isNotEmptyString, isPlainObject } from "./utils/guards.js";
 import { textHash } from "./utils/hash.js";
 import { logger } from "./utils/logger.js";
+import { groupedPromptOptions } from "./utils/prompt-options.js";
+import { pluralizeCount, style, titleCase } from "./utils/text.js";
 
 /**
  * @typedef {"npm" | "pnpm" | "yarn" | "bun"} PackageManager
@@ -42,8 +66,11 @@ import { logger } from "./utils/logger.js";
  * @property {boolean} json
  * @property {boolean} noInstall
  * @property {boolean} assumeYes
+ * @property {boolean} apply
  * @property {PackageManager} [packageManager]
  * @property {string} [profile]
+ * @property {string[]} integrations
+ * @property {{ id: string, target?: string }[]} aiArtifacts
  *
  * @typedef {object} PackageManagerCommands
  * @property {[string, string[]]} init
@@ -102,6 +129,10 @@ import { logger } from "./utils/logger.js";
  * @property {string} config
  * @property {boolean} dryRun
  * @property {Recipe} recipe
+ * @property {{ ok: boolean, recipe?: Recipe, errors?: string[] }} validation
+ * @property {{ integrations: unknown[], dependencies: string[], aiArtifacts: unknown[] }} explanation
+ * @property {ApplyResult} [applyDryRun]
+ * @property {ApplyResult} [applyResult]
  *
  * @typedef {object} AgentInitResult
  * @property {"agent-init"} command
@@ -155,18 +186,76 @@ const packageManagerCommands = {
 const supportedPackageManagers = /** @type {PackageManager[]} */ (
   Object.keys(packageManagerCommands)
 );
+const supportedProfiles = profileIdsForRecipe();
+const recipePackageManagers = packageManagerIdsForRecipe();
 const args = process.argv.slice(2);
+/** @type {import("node:util").ParseArgsOptionsConfig} */
+const cliParseOptions = {
+  config: { type: "string", default: CONFIG_FILE },
+  apply: { type: "boolean" },
+  "dry-run": { type: "boolean" },
+  init: { type: "boolean" },
+  json: { type: "boolean" },
+  "no-install": { type: "boolean" },
+  yes: { type: "boolean" },
+  "package-manager": { type: "string" },
+  profile: { type: "string" },
+  integration: { type: "string", multiple: true, default: [] },
+  integrations: { type: "string", multiple: true, default: [] },
+  tool: { type: "string", multiple: true, default: [] },
+  tools: { type: "string", multiple: true, default: [] },
+  "ai-artifact": { type: "string", multiple: true, default: [] },
+  "ai-artifacts": { type: "string", multiple: true, default: [] },
+};
 
 /**
- * @param {string} packageManager
- * @returns {never}
+ * @param {string | undefined} value
+ * @returns {string[]}
  */
-function exitUnsupportedPackageManager(packageManager) {
-  logger.error(
-    `Unsupported package manager "${packageManager}". Supported package managers: ${supportedPackageManagers.join(", ")}.`,
+function listFlagValues(value) {
+  return (value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
+}
+
+/**
+ * @param {unknown[]} values
+ * @returns {string[]}
+ */
+function collectListValues(...values) {
+  return values.flatMap((value) =>
+    Array.isArray(value)
+      ? value.flatMap((item) => (typeof item === "string" ? listFlagValues(item) : []))
+      : typeof value === "string"
+        ? listFlagValues(value)
+        : [],
   );
-  process.exit(1);
-  throw new Error(`Unsupported package manager "${packageManager}".`);
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string | undefined}
+ */
+function optionalStringValue(value) {
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * @param {string} value
+ * @returns {{ id: string, target?: string }}
+ */
+function parseAiArtifactFlag(value) {
+  const separatorIndex = value.lastIndexOf("@");
+
+  if (separatorIndex <= 0 || separatorIndex === value.length - 1) {
+    return { id: value };
+  }
+
+  return {
+    id: value.slice(0, separatorIndex),
+    target: value.slice(separatorIndex + 1),
+  };
 }
 
 /**
@@ -178,7 +267,9 @@ function assertSupportedPackageManager(packageManager) {
     !packageManager ||
     !supportedPackageManagers.includes(/** @type {PackageManager} */ (packageManager))
   ) {
-    exitUnsupportedPackageManager(packageManager ?? "<missing>");
+    throw new Error(
+      `Invalid package manager: ${packageManager ?? "<missing>"}. Allowed values: ${supportedPackageManagers.join(", ")}.`,
+    );
   }
 
   return /** @type {PackageManager} */ (packageManager);
@@ -188,39 +279,41 @@ function assertSupportedPackageManager(packageManager) {
  * @param {string[]} rawArgs
  * @returns {CliOptions}
  */
-function parseArgs(rawArgs) {
+export function parseArgs(rawArgs) {
+  const { values, positionals } = parseNodeArgs({
+    args: rawArgs,
+    options: cliParseOptions,
+    allowPositionals: true,
+  });
+  const profile = optionalStringValue(values.profile);
+  const packageManager = optionalStringValue(values["package-manager"]);
   /** @type {CliOptions} */
   const parsed = {
-    command: rawArgs[0]?.startsWith("-") ? "init" : (rawArgs[0] ?? "init"),
-    config: CONFIG_FILE,
-    dryRun: false,
-    json: false,
-    noInstall: false,
-    assumeYes: false,
+    command: values.init ? "agent-init" : (positionals[0] ?? "init"),
+    config: optionalStringValue(values.config) ?? CONFIG_FILE,
+    dryRun: values["dry-run"] === true,
+    json: values.json === true,
+    noInstall: values["no-install"] === true,
+    assumeYes: values.yes === true,
+    apply: values.apply === true,
+    integrations: collectListValues(
+      values.integration,
+      values.integrations,
+      values.tool,
+      values.tools,
+    ),
+    aiArtifacts: collectListValues(values["ai-artifact"], values["ai-artifacts"]).map(
+      parseAiArtifactFlag,
+    ),
   };
 
-  for (let index = 0; index < rawArgs.length; index += 1) {
-    const arg = rawArgs[index];
-    if (arg === "--config") {
-      parsed.config = rawArgs[index + 1] ?? CONFIG_FILE;
-      index += 1;
-    } else if (arg === "--dry-run") {
-      parsed.dryRun = true;
-    } else if (arg === "--init") {
-      parsed.command = "agent-init";
-    } else if (arg === "--json") {
-      parsed.json = true;
-    } else if (arg === "--no-install") {
-      parsed.noInstall = true;
-    } else if (arg === "--yes") {
-      parsed.assumeYes = true;
-    } else if (arg === "--package-manager") {
-      parsed.packageManager = assertSupportedPackageManager(rawArgs[index + 1]);
-      index += 1;
-    } else if (arg === "--profile") {
-      parsed.profile = rawArgs[index + 1] ?? undefined;
-      index += 1;
-    }
+  if (profile !== undefined) {
+    assertKnownValue("profile", profile, supportedProfiles);
+    parsed.profile = profile;
+  }
+
+  if (packageManager !== undefined) {
+    parsed.packageManager = assertSupportedPackageManager(packageManager);
   }
 
   return parsed;
@@ -1343,59 +1436,119 @@ export async function agentBootstrap(options = {}) {
 }
 
 /**
- * @param {CliOptions} options
- * @returns {Promise<InitResult>}
+ * @param {unknown} value
+ * @returns {never | void}
  */
-async function initRecipe(options) {
-  if (!options.json) {
-    console.clear();
-    intro("Compose your Calavera tooling recipe");
+function exitIfCancel(value) {
+  if (isCancel(value)) {
+    cancel("Setup cancelled");
+    process.exit(0);
   }
+}
 
-  const profile =
+/**
+ * @param {Recipe} recipe
+ * @param {{ integrations: unknown[], dependencies: string[], aiArtifacts: unknown[] }} explanation
+ * @returns {string}
+ */
+function formatRecipeSummary(recipe, explanation) {
+  return [
+    `${style("bold", "Profile")}: ${recipe.profile}`,
+    `${style("bold", "Package manager")}: ${recipe.packageManager}`,
+    `${style("bold", "Integrations")}: ${pluralizeCount((recipe.integrations ?? []).length, "item")}`,
+    `${style("bold", "Dependencies")}: ${
+      explanation.dependencies.length > 0 ? explanation.dependencies.join(", ") : "none"
+    }`,
+    `${style("bold", "AI artifacts")}: ${explanation.aiArtifacts.length}`,
+  ].join("\n");
+}
+
+/**
+ * @param {ApplyResult} result
+ * @returns {string}
+ */
+function formatApplySummary(result) {
+  const changedPaths = result.changes.map((change) => change.path);
+
+  return [
+    `${style("bold", "Package manager")}: ${result.packageManager}`,
+    `${style("bold", "Integrations")}: ${result.integrations.join(", ") || "none"}`,
+    `${style("bold", "Dev dependencies")}: ${result.dependencies.join(", ") || "none"}`,
+    `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
+  ].join("\n");
+}
+
+/**
+ * @param {CliOptions} options
+ * @returns {Promise<string>}
+ */
+async function promptForProfile(options) {
+  const selected =
     options.profile ??
     (await select({
       message: "Choose a tooling profile",
-      options: [
-        { value: "modern", label: "Modern", hint: "Oxlint, Oxfmt, Stylelint" },
-        {
-          value: "classic",
-          label: "Classic",
-          hint: "ESLint, Prettier, Stylelint",
-        },
-        { value: "minimal", label: "Minimal", hint: "EditorConfig only" },
-      ],
+      options: supportedProfiles.map((id) => ({
+        value: id,
+        label: titleCase(id),
+        hint: `${profileDefaults[id]?.length ?? 0} default integrations`,
+      })),
     }));
 
-  if (isCancel(profile)) {
-    cancel("Setup cancelled");
-    process.exit(0);
-  }
+  exitIfCancel(selected);
+  return typeof selected === "string" ? selected : "modern";
+}
 
-  const profileName = typeof profile === "string" ? profile : "modern";
-  const defaults = profileDefaults[profileName] ?? profileDefaults.modern;
-  const optionalOptions = /** @type {Integration[]} */ (integrationCatalog)
-    .filter((integration) => integration.status !== "required")
-    .map((integration) => ({
-      value: integration.id,
-      label: integration.label,
-      hint: `${integration.group} · ${integration.status}`,
-    }));
-
+/**
+ * @param {CliOptions} options
+ * @param {PackageManager} detectedPackageManager
+ * @returns {Promise<PackageManager>}
+ */
+async function promptForPackageManager(options, detectedPackageManager) {
   const selected =
-    options.assumeYes || options.profile
-      ? defaults
-      : await multiselect({
-          message: "Choose integration packs",
-          options: optionalOptions,
-          initialValues: defaults,
-          required: true,
-        });
+    options.packageManager ??
+    (options.assumeYes
+      ? detectedPackageManager
+      : await select({
+          message: "Choose a package manager",
+          initialValue: detectedPackageManager,
+          options: recipePackageManagers.map((id) => ({
+            value: id,
+            label: id,
+            hint: id === detectedPackageManager ? "detected" : undefined,
+          })),
+        }));
 
-  if (isCancel(selected)) {
-    cancel("Setup cancelled");
-    process.exit(0);
+  exitIfCancel(selected);
+
+  return assertSupportedPackageManager(
+    typeof selected === "string" ? selected : detectedPackageManager,
+  );
+}
+
+/**
+ * @param {CliOptions} options
+ * @param {string} profile
+ * @returns {Promise<string[]>}
+ */
+async function promptForIntegrations(options, profile) {
+  const defaults = profileDefaults[profile] ?? profileDefaults.modern ?? [];
+
+  if (options.integrations.length > 0) {
+    return options.integrations;
   }
+
+  if (options.assumeYes || options.profile) {
+    return defaults;
+  }
+
+  const selected = await groupMultiselect({
+    message: "Choose integration packs",
+    options: groupedPromptOptions(listIntegrationOptions(profile)),
+    initialValues: defaults,
+    required: true,
+  });
+
+  exitIfCancel(selected);
 
   if (
     !Array.isArray(selected) ||
@@ -1404,19 +1557,142 @@ async function initRecipe(options) {
     throw new Error("Selected integration values must be strings.");
   }
 
+  return selected;
+}
+
+/**
+ * @param {CliOptions} options
+ * @returns {Promise<{ id: string, target?: string }[]>}
+ */
+async function promptForAiArtifacts(options) {
+  if (options.aiArtifacts.length > 0 || options.assumeYes) {
+    return options.aiArtifacts;
+  }
+
+  const artifactOptions = listAiArtifactOptions();
+  const selected = await groupMultiselect({
+    message: "Choose AI artifacts",
+    options: groupedPromptOptions(artifactOptions),
+    initialValues: [],
+    required: false,
+  });
+
+  exitIfCancel(selected);
+
+  if (!Array.isArray(selected) || !selected.every((artifact) => typeof artifact === "string")) {
+    throw new Error("Selected AI artifact values must be strings.");
+  }
+
+  /** @type {{ id: string, target?: string }[]} */
+  const aiArtifacts = [];
+
+  for (const id of selected) {
+    const artifact = artifactOptions.find((option) => option.id === id);
+
+    if (!artifact?.defaultTarget) {
+      aiArtifacts.push({ id });
+      continue;
+    }
+
+    const target = await text({
+      message: `Target directory for ${artifact.label}`,
+      defaultValue: artifact.defaultTarget,
+      placeholder: artifact.defaultTarget,
+    });
+
+    exitIfCancel(target);
+    aiArtifacts.push({ id, target: typeof target === "string" ? target : artifact.defaultTarget });
+  }
+
+  return aiArtifacts;
+}
+
+/**
+ * @param {CliOptions} options
+ * @returns {Promise<InitResult>}
+ */
+export async function initRecipe(options) {
+  if (!options.json) {
+    console.clear();
+    intro("Compose your Calavera tooling recipe");
+  }
+
   const detectedPackageJSON = await readPackageJSONIfPresent();
-  const packageManager = assertSupportedPackageManager(
-    options.packageManager ?? detectPackageManager(detectedPackageJSON),
+  const detectedPackageManager = assertSupportedPackageManager(
+    detectPackageManager(detectedPackageJSON),
   );
-  const recipe = buildRecipe(profileName, selected, packageManager);
+  const profile = await promptForProfile(options);
+  const packageManager = await promptForPackageManager(options, detectedPackageManager);
+  const integrations = await promptForIntegrations(options, profile);
+  const aiArtifacts = await promptForAiArtifacts(options);
+  const recipe = composeRecipe({
+    profile,
+    packageManager,
+    tools: integrations,
+    aiArtifacts,
+  });
+  const validation = validateRecipeResponse(recipe);
+  const explanation = explainRecipeResponse(recipe);
 
   await writeJSON(options.config, recipe, options.dryRun);
+
+  if (!options.json) {
+    note(formatRecipeSummary(recipe, explanation), "Recipe summary");
+  }
+
+  /** @type {ApplyResult | undefined} */
+  let applyDryRun;
+  /** @type {ApplyResult | undefined} */
+  let applyResult;
+
+  if (options.apply) {
+    applyDryRun = await applyRecipeObject(recipe, {
+      ...options,
+      dryRun: true,
+      assumeYes: true,
+      packageManager,
+    });
+
+    if (!options.json) {
+      note(formatApplySummary(applyDryRun), "Apply dry run");
+    }
+
+    const shouldApply =
+      options.assumeYes ||
+      (await confirm({
+        message: "Apply these Calavera-managed changes now?",
+        initialValue: false,
+      }));
+
+    exitIfCancel(shouldApply);
+
+    if (shouldApply && !options.dryRun) {
+      applyResult = await applyRecipeObject(recipe, {
+        ...options,
+        dryRun: false,
+        assumeYes: true,
+        packageManager,
+      });
+    }
+  }
+
+  if (!options.json) {
+    outro(
+      applyResult
+        ? "Calavera recipe composed and applied."
+        : `Calavera recipe ${options.dryRun ? "previewed" : "written"}.`,
+    );
+  }
 
   return {
     command: "init",
     config: options.config,
     dryRun: options.dryRun,
     recipe,
+    validation,
+    explanation,
+    applyDryRun,
+    applyResult,
   };
 }
 
@@ -1747,6 +2023,35 @@ function printResult(result, asJSON = false) {
     }
 
     logger.info(`Next prompt: ${result.nextPrompt}`);
+    return;
+  }
+
+  if (result.command === "init") {
+    if (result.dryRun) {
+      logger.info(`Calavera recipe dry run complete. Would write ${result.config}.`);
+    } else {
+      logger.success(`Wrote ${result.config}.`);
+    }
+
+    logger.info(`Profile: ${result.recipe.profile}`);
+    logger.info(`Package manager: ${result.recipe.packageManager}`);
+    logger.info(`Integrations: ${(result.recipe.integrations ?? []).join(", ")}`);
+
+    if (Array.isArray(result.recipe.ai) && result.recipe.ai.length > 0) {
+      logger.info(`AI artifacts: ${result.recipe.ai.length}`);
+    }
+
+    if (result.applyDryRun && !result.applyResult) {
+      logger.info("Apply was previewed but not run.");
+    }
+
+    if (result.applyResult) {
+      logger.success("Calavera apply complete.");
+      for (const pointer of result.applyResult.pointers) {
+        logger.info(pointer);
+      }
+    }
+
     return;
   }
 

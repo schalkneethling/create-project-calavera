@@ -70,6 +70,17 @@ Create a recipe:
 npm create project-calavera init
 ```
 
+The interactive recipe composer lets you choose a profile, package manager,
+integration packs, and bundled AI artifacts. By default it only writes
+`calavera.config.json`.
+
+Run `init` without selection flags for guided prompts that present the available
+options. Use selection flags only for scripted or CI flows:
+
+```bash
+npm create project-calavera init -- --profile modern --package-manager pnpm --tool Oxlint --tool Stylelint
+```
+
 Apply a recipe:
 
 ```bash
@@ -196,6 +207,11 @@ npm --force create project-calavera apply
 - `--config calavera.config.json`
 - `--profile modern|classic|minimal`
 - `--package-manager npm|pnpm|yarn|bun`
+- `--integration <id-or-label>` or `--tool <id-or-label>` for scripted
+  composition; omit these flags to select from the interactive option list
+- `--ai-artifact <id-or-label-or-source>`; use `<artifact>@<target>` for hook
+  and agent targets, or omit this flag to select from the interactive option list
+- `--apply` with `init` to preview and then confirm applying the composed recipe
 - `--dry-run`
 - `--no-install`
 - `--yes`

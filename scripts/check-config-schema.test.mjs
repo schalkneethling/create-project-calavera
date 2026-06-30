@@ -11,7 +11,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { buildAiApplyResult, createCodexAgentToml } from "../src/ai/artifacts.js";
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
 import { integrationCatalog } from "../src/catalog.js";
-import { agentBootstrap, applyRecipeObject } from "../src/index.js";
+import { agentBootstrap, applyRecipeObject, initRecipe, parseArgs } from "../src/index.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { createEmptyState } from "../src/state.js";
 import {
@@ -81,6 +81,10 @@ const ajv = new Ajv2020({ allErrors: true, validateFormats: false });
 
 function assertValid(validate, value) {
   assert.equal(validate(value), true, ajv.errorsText(validate.errors));
+}
+
+async function assertPathMissing(path, message = `${path} should not exist`) {
+  await assert.rejects(() => stat(path), /ENOENT/, message);
 }
 
 test("config schema is the published draft 2020-12 schema", () => {
@@ -330,6 +334,101 @@ test("shared composition operation responses expose catalog, recipe, and explana
     explainRecipeResponse(recipeResponse.recipe).aiArtifacts[0].id,
     "skill-semantic-html",
   );
+});
+
+test("CLI parser accepts scripted rich composer options", () => {
+  const options = parseArgs([
+    "init",
+    "--profile",
+    "modern",
+    "--package-manager",
+    "pnpm",
+    "--integration",
+    "Oxlint,Stylelint",
+    "--tool",
+    "Oxc React best practices",
+    "--ai-artifact",
+    "skill-semantic-html",
+    "--ai-artifact",
+    "hook-block-dangerous-commands@codex",
+    "--apply",
+    "--yes",
+  ]);
+
+  assert.equal(options.command, "init");
+  assert.equal(options.profile, "modern");
+  assert.equal(options.packageManager, "pnpm");
+  assert.deepEqual(options.integrations, ["Oxlint", "Stylelint", "Oxc React best practices"]);
+  assert.deepEqual(options.aiArtifacts, [
+    { id: "skill-semantic-html" },
+    { id: "hook-block-dangerous-commands", target: "codex" },
+  ]);
+  assert.equal(options.apply, true);
+  assert.equal(options.assumeYes, true);
+});
+
+test("CLI rich composer writes a schema-valid config without applying by default", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-rich-cli-"));
+
+  try {
+    process.chdir(projectDirectory);
+
+    const result = await initRecipe({
+      command: "init",
+      config: "calavera.config.json",
+      dryRun: false,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+      apply: false,
+      profile: "modern",
+      packageManager: "pnpm",
+      integrations: ["Oxlint", "Stylelint"],
+      aiArtifacts: [{ id: "Semantic HTML" }],
+    });
+    const writtenConfig = JSON.parse(await readFile("calavera.config.json", "utf8"));
+
+    assert.equal(result.validation.ok, true);
+    assert.deepEqual(writtenConfig, result.recipe);
+    assert.deepEqual(writtenConfig.integrations, ["oxlint", "stylelint"]);
+    assert.deepEqual(writtenConfig.ai, [{ type: "skill", src: "skills/semantic-html" }]);
+    assertValid(ajv.compile(schema), writtenConfig);
+    await assertPathMissing("package.json", "config-only compose must not create package.json");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("CLI rich composer dry-run apply keeps the review boundary non-destructive", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-rich-cli-apply-dry-run-"));
+
+  try {
+    process.chdir(projectDirectory);
+
+    const result = await initRecipe({
+      command: "init",
+      config: "calavera.config.json",
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+      apply: true,
+      profile: "minimal",
+      packageManager: "npm",
+      integrations: ["editorconfig"],
+      aiArtifacts: [],
+    });
+
+    assert.equal(result.applyDryRun?.dryRun, true);
+    assert.equal(result.applyResult, undefined);
+    await assertPathMissing("calavera.config.json", "dry-run compose must not write config");
+    await assertPathMissing("package.json", "dry-run apply must not create package.json");
+    await assertPathMissing(".editorconfig", "dry-run apply must not write managed files");
+  } finally {
+    process.chdir(originalDirectory);
+  }
 });
 
 test("standard MCP workflow exposes dry-run and apply tools", () => {
