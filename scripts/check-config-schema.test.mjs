@@ -23,7 +23,9 @@ import {
   explainRecipeIntegrations,
   listIntegrationOptions,
   normalizeAiArtifactInputs,
+  normalizeIntegrationInputs,
   profileDefaults,
+  resolveRecipeIntegrations,
   validateRecipe,
   validateRecipeCompositionInput,
 } from "../src/recipe.js";
@@ -191,6 +193,19 @@ test("shared composition normalizes explicit tool labels and package managers", 
   });
 });
 
+test("shared composition resolves duplicate tool labels within the active profile", () => {
+  assert.deepEqual(normalizeIntegrationInputs(["Accessibility"], "modern"), ["oxlint-jsx-a11y"]);
+  assert.deepEqual(normalizeIntegrationInputs(["Accessibility"], "classic"), ["eslint-jsx-a11y"]);
+});
+
+test("shared composition copies profile defaults before returning recipes", () => {
+  const recipe = composeRecipe({ profile: "minimal" });
+  recipe.integrations.push("mutated");
+
+  assert.deepEqual(profileDefaults.minimal, ["editorconfig"]);
+  assert.notEqual(composeRecipe({ profile: "modern" }).integrations, profileDefaults.modern);
+});
+
 test("shared composition normalizes AI artifact inputs into recipe items", () => {
   const input = normalizeAiArtifactInputs([
     { id: "Semantic HTML" },
@@ -263,6 +278,48 @@ test("shared explanation helpers include selected and included integration reaso
   );
   assert.match(explanation.find(({ id }) => id === "oxlint").reason, /requires it/);
   assert.match(explanation.find(({ id }) => id === "oxlint-react").reason, /Explicitly selected/);
+});
+
+test("shared integration resolution expands nested includes without catalog-order coupling", () => {
+  const fixtures = [
+    {
+      id: "test-grandchild",
+      label: "Test grandchild",
+      group: "Test",
+      platform: "test",
+      status: "optional",
+      dependencies: [],
+    },
+    {
+      id: "test-child",
+      label: "Test child",
+      group: "Test",
+      platform: "test",
+      status: "optional",
+      dependencies: [],
+      includes: ["test-grandchild"],
+    },
+    {
+      id: "test-parent",
+      label: "Test parent",
+      group: "Test",
+      platform: "test",
+      status: "optional",
+      dependencies: [],
+      includes: ["test-child"],
+    },
+  ];
+
+  integrationCatalog.unshift(...fixtures);
+
+  try {
+    assert.deepEqual(
+      resolveRecipeIntegrations({ integrations: ["test-parent"] }).map(({ id }) => id),
+      ["test-grandchild", "test-child", "test-parent"],
+    );
+  } finally {
+    integrationCatalog.splice(0, fixtures.length);
+  }
 });
 
 test("shared assertion helpers reject unexpected value shapes", () => {

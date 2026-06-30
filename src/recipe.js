@@ -141,9 +141,9 @@ function integrationProfiles(id) {
   return profileSpecificIntegrations[id] ?? profileIds;
 }
 
-function integrationIdForInput(value) {
+function integrationIdForInput(value, integrationOptions = integrationCatalog) {
   const token = normalizedToken(value);
-  const match = integrationCatalog.find(
+  const match = integrationOptions.find(
     ({ id, label }) => normalizedToken(id) === token || normalizedToken(label) === token,
   );
 
@@ -162,7 +162,7 @@ function aiArtifactIdForInput(value) {
   return match?.id;
 }
 
-function normalizeAiTarget(target, index) {
+export function normalizeAiTarget(target, index) {
   assertString(`aiArtifacts[${index}].target`, target);
 
   const normalizedTarget = target.trim();
@@ -212,10 +212,14 @@ export function listAiArtifactOptions() {
   }));
 }
 
-export function normalizeIntegrationInputs(integrationInputs) {
+export function normalizeIntegrationInputs(integrationInputs, profile) {
   assertStringArray("tools", integrationInputs);
 
-  return integrationInputs.map((value) => integrationIdForInput(value) ?? value);
+  const integrationOptions = profile ? listIntegrationOptions(profile) : integrationCatalog;
+
+  return integrationInputs.map(
+    (value) => integrationIdForInput(value, integrationOptions) ?? value,
+  );
 }
 
 export function normalizeAiArtifactInputs(artifactInputs = []) {
@@ -276,7 +280,9 @@ export function validateRecipeCompositionInput({
   assertKnownValue("packageManager", packageManager, packageManagerIds);
 
   const allowedIntegrationIds = listIntegrationOptions(profile).map(({ id }) => id);
-  const integrationIds = tools ? normalizeIntegrationInputs(tools) : profileDefaults[profile];
+  const integrationIds = tools
+    ? normalizeIntegrationInputs(tools, profile)
+    : [...profileDefaults[profile]];
   const invalidIntegrationIds = integrationIds.filter((id) => !allowedIntegrationIds.includes(id));
 
   if (invalidIntegrationIds.length > 0) {
@@ -307,11 +313,15 @@ export function composeRecipe(configurationInput = {}) {
 
 export function resolveRecipeIntegrations(recipe) {
   const selected = new Set(recipe.integrations ?? []);
+  const queue = [...selected];
 
-  for (const integration of integrationCatalog) {
-    if (selected.has(integration.id)) {
-      for (const includes of integration.includes ?? []) {
-        selected.add(includes);
+  for (let index = 0; index < queue.length; index += 1) {
+    const integration = integrationCatalog.find(({ id }) => id === queue[index]);
+
+    for (const includedId of integration?.includes ?? []) {
+      if (!selected.has(includedId)) {
+        selected.add(includedId);
+        queue.push(includedId);
       }
     }
   }

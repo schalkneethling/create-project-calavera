@@ -5,6 +5,7 @@ import {
   listAiArtifactOptions,
   listIntegrationOptions,
   normalizeAiArtifactInputs,
+  normalizeAiTarget,
   packageManagerIdsForRecipe,
   profileDefaults,
   profileIdsForRecipe,
@@ -139,7 +140,7 @@ function syncAiTargetStates() {
 }
 
 function selectedAiItems() {
-  return [...form.querySelectorAll('[name="aiArtifact"]:checked')].map((checkbox) => {
+  return [...form.querySelectorAll('[name="aiArtifact"]:checked')].map((checkbox, index) => {
     const artifact = aiArtifactOptions.find(({ id }) => id === checkbox.value);
     const item = {
       type: artifact.type,
@@ -148,7 +149,8 @@ function selectedAiItems() {
 
     if (artifact.defaultTarget) {
       const targetInput = form.querySelector(`[data-ai-target="${artifact.id}"]`);
-      item.target = targetInput?.value.trim() || DEFAULT_AI_TARGET;
+      item.target =
+        normalizeAiTarget(targetInput?.value ?? DEFAULT_AI_TARGET, index) || DEFAULT_AI_TARGET;
     }
 
     return item;
