@@ -26,15 +26,26 @@ import {
   buildRecipe,
   catalogResponse,
   composeRecipe,
+  composeRecipeResponse,
   CONFIG_SCHEMA_URL,
+  describeIntegrationResponse,
   explainRecipeIntegrations,
+  explainRecipeResponse,
   listIntegrationOptions,
+  listIntegrationsResponse,
+  listAiArtifactsResponse,
+  listProfilesResponse,
   normalizeAiArtifactInputs,
   normalizeIntegrationInputs,
   profileDefaults,
+  recipeWorkflow,
+  recipeToolDescriptions,
   resolveRecipeIntegrations,
+  standardMcpToolNames,
   validateRecipe,
   validateRecipeCompositionInput,
+  validateRecipeResponse,
+  webMcpToolNames,
 } from "../src/recipe.js";
 
 const schemaUrl = CONFIG_SCHEMA_URL;
@@ -287,6 +298,80 @@ test("shared explanation helpers include selected and included integration reaso
   assert.match(explanation.find(({ id }) => id === "oxlint-react").reason, /Explicitly selected/);
 });
 
+test("shared composition operation responses expose catalog, recipe, and explanation data", () => {
+  const recipeResponse = composeRecipeResponse({
+    profile: "modern",
+    packageManager: "pnpm",
+    tools: ["Oxlint", "Stylelint"],
+    aiArtifacts: [{ id: "Semantic HTML" }],
+  });
+
+  assert.deepEqual(
+    listProfilesResponse().profiles.map(({ id }) => id),
+    profiles,
+  );
+  assert.deepEqual(
+    listIntegrationsResponse({ profile: "classic" }).integrations.map(({ id }) => id),
+    listIntegrationOptions("classic").map(({ id }) => id),
+  );
+  assert.equal(describeIntegrationResponse("Oxlint").id, "oxlint");
+  assert.equal(
+    listAiArtifactsResponse().artifacts.some(({ id }) => id === "skill-semantic-html"),
+    true,
+  );
+  assert.deepEqual(recipeResponse.recipe.integrations, ["oxlint", "stylelint"]);
+  assert.equal(validateRecipeResponse(recipeResponse.recipe).ok, true);
+  assert.equal(
+    explainRecipeResponse(recipeResponse.recipe).aiArtifacts[0].id,
+    "skill-semantic-html",
+  );
+});
+
+test("standard MCP workflow exposes dry-run and apply tools", () => {
+  assert.deepEqual(recipeWorkflow(), standardMcpToolNames);
+  assert.deepEqual(
+    composeRecipeResponse({
+      profile: "minimal",
+    }).workflow,
+    standardMcpToolNames,
+  );
+});
+
+test("WebMCP workflow exposes browser download instead of filesystem apply tools", () => {
+  assert.deepEqual(recipeWorkflow({ browser: true }), webMcpToolNames);
+  assert.deepEqual(
+    composeRecipeResponse(
+      {
+        profile: "minimal",
+      },
+      { browser: true },
+    ).workflow,
+    webMcpToolNames,
+  );
+  assert.equal(webMcpToolNames.includes("download_recipe"), true);
+  assert.equal(webMcpToolNames.includes("dry_run_apply"), false);
+  assert.equal(webMcpToolNames.includes("apply_recipe"), false);
+});
+
+test("WebMCP registers browser parity tools from the shared contract", async () => {
+  const script = await readProjectFile("web/script.js");
+  const registeredToolNames = [...script.matchAll(/name: "([^"]+)"/g)].map((match) => match[1]);
+
+  for (const name of webMcpToolNames) {
+    assert.equal(registeredToolNames.includes(name), true, `Missing WebMCP tool: ${name}`);
+  }
+
+  for (const legacyName of [
+    "get_project_tooling_options",
+    "get_ai_artifact_options",
+    "configure_project_tooling",
+    "configure_ai_artifacts",
+    "download_configuration_json",
+  ]) {
+    assert.equal(script.includes(legacyName), false, `Legacy WebMCP tool remains: ${legacyName}`);
+  }
+});
+
 test("standard MCP server exposes Calavera recipe composition tools", async () => {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const server = createMcpServer();
@@ -298,19 +383,12 @@ test("standard MCP server exposes Calavera recipe composition tools", async () =
   try {
     const { tools } = await client.listTools();
     const toolNames = tools.map(({ name }) => name).sort();
-    const expectedToolNames = [
-      "list_profiles",
-      "list_integrations",
-      "describe_integration",
-      "list_ai_artifacts",
-      "compose_recipe",
-      "validate_recipe",
-      "explain_recipe",
-      "dry_run_apply",
-      "apply_recipe",
-    ].sort();
 
-    assert.deepEqual(toolNames, expectedToolNames);
+    assert.deepEqual(toolNames, [...standardMcpToolNames].sort());
+    assert.equal(
+      tools.find(({ name }) => name === "compose_recipe")?.description,
+      recipeToolDescriptions.compose_recipe,
+    );
     assert.equal(
       tools.find(({ name }) => name === "apply_recipe")?.annotations?.destructiveHint,
       true,

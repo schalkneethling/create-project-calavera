@@ -1,15 +1,21 @@
 import {
-  aiArtifactsResponse as buildAiArtifactsResponse,
   buildRecipe,
-  catalogResponse as buildCatalogResponse,
+  composeRecipeResponse,
+  describeIntegrationResponse,
+  explainRecipeResponse,
+  listAiArtifactsResponse,
   listAiArtifactOptions,
   listIntegrationOptions,
-  normalizeAiArtifactInputs,
+  listIntegrationsResponse,
+  listProfilesResponse,
   normalizeAiTarget,
   packageManagerIdsForRecipe,
   profileDefaults,
   profileIdsForRecipe,
-  validateRecipeCompositionInput,
+  recipeToolDescriptions,
+  recipeToolInputDescriptions,
+  validateRecipe,
+  validateRecipeResponse,
 } from "../src/recipe.js";
 import { DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
 
@@ -100,34 +106,10 @@ function renderAiArtifacts() {
   }
 }
 
-function selectProfile(profile) {
-  const radio = form.querySelector(`[name="profile"][value="${profile}"]`);
-  radio.checked = true;
-}
-
-function selectPackageManager(packageManager) {
-  form.querySelector('[name="packageManager"]').value = packageManager;
-}
-
 function selectIntegrations(integrationIds) {
   for (const checkbox of form.querySelectorAll('[name="integration"]')) {
     checkbox.checked = integrationIds.includes(checkbox.value);
   }
-}
-
-function selectAiArtifacts(artifactInputs) {
-  const selectedArtifacts = new Map(artifactInputs.map((item) => [item.id, item]));
-
-  for (const checkbox of form.querySelectorAll('[name="aiArtifact"]')) {
-    checkbox.checked = selectedArtifacts.has(checkbox.value);
-  }
-
-  for (const targetInput of form.querySelectorAll("[data-ai-target]")) {
-    const selectedArtifact = selectedArtifacts.get(targetInput.dataset.aiTarget);
-    targetInput.value = selectedArtifact?.target ?? DEFAULT_AI_TARGET;
-  }
-
-  syncAiTargetStates();
 }
 
 function syncAiTargetStates() {
@@ -182,32 +164,6 @@ function setDefaults() {
   render();
 }
 
-function validateConfigurationInput({ profile, packageManager = "npm", tools, aiArtifacts } = {}) {
-  const validated = validateRecipeCompositionInput({ profile, packageManager, tools, aiArtifacts });
-  return {
-    profile: validated.profile,
-    packageManager: validated.packageManager,
-    tools: validated.tools,
-    aiArtifacts: validated.aiArtifacts,
-  };
-}
-
-function applyRecipeState(configurationInput = {}) {
-  const { profile, packageManager, tools, aiArtifacts } =
-    validateConfigurationInput(configurationInput);
-
-  selectProfile(profile);
-  renderIntegrations();
-  selectPackageManager(packageManager);
-  selectIntegrations(tools);
-  if (aiArtifacts) {
-    selectAiArtifacts(aiArtifacts);
-  }
-  render();
-
-  return recipe();
-}
-
 async function saveFile() {
   const contents = JSON.stringify(recipe(), null, 2);
 
@@ -247,36 +203,17 @@ function downloadFile(recipeContents = recipe()) {
   }, 100);
 }
 
-function catalogResponse() {
-  return buildCatalogResponse(recipe());
-}
-
-function aiArtifactsResponse() {
-  return buildAiArtifactsResponse(recipe().ai ?? []);
-}
-
-function configureProjectTooling({ profile, packageManager, tools, aiArtifacts } = {}) {
-  return applyRecipeState({ profile, packageManager, tools, aiArtifacts });
-}
-
-function configureAiArtifacts({ aiArtifacts = [] } = {}) {
-  const normalizedAiArtifacts = normalizeAiArtifactInputs(aiArtifacts);
-
-  selectAiArtifacts(normalizedAiArtifacts);
-  render();
-
-  return recipe();
-}
-
-function downloadConfigurationJson() {
-  const recipeContents = recipe();
+function downloadRecipe({ recipe: recipeInput } = {}) {
+  const recipeContents = recipeInput === undefined ? recipe() : validateRecipe(recipeInput);
   downloadFile(recipeContents);
 
   return {
     downloaded: true,
     filename: "calavera.config.json",
     mimeType: "application/json",
-    configuration: recipeContents,
+    recipe: recipeContents,
+    browserConstraint:
+      "WebMCP can download recipes from the browser, but cannot dry-run or apply them to a project filesystem.",
   };
 }
 
@@ -291,9 +228,8 @@ function registerWebMcpTools() {
 
   try {
     navigator.modelContext.registerTool({
-      name: "get_project_tooling_options",
-      description:
-        "Read available package managers, preset profiles, linting options, formatting options, and the current project tooling configuration. Use this before updating the form when you need valid option IDs.",
+      name: "list_profiles",
+      description: recipeToolDescriptions.list_profiles,
       inputSchema: {
         type: "object",
         properties: {},
@@ -303,140 +239,180 @@ function registerWebMcpTools() {
         readOnlyHint: true,
         untrustedContentHint: false,
       },
-      execute: async () => catalogResponse(),
+      execute: async () => listProfilesResponse({ browser: true }),
     });
 
     navigator.modelContext.registerTool({
-      name: "get_ai_artifact_options",
-      description:
-        "Read available bundled AI skills, hooks, and agents for the Calavera recipe ai array. Use this before configuring AI artifacts when you need valid artifact IDs, sources, labels, types, or default hook and agent targets.",
-      inputSchema: {
-        type: "object",
-        properties: {},
-        additionalProperties: false,
-      },
-      annotations: {
-        readOnlyHint: true,
-        untrustedContentHint: false,
-      },
-      execute: async () => aiArtifactsResponse(),
-    });
-
-    navigator.modelContext.registerTool({
-      name: "configure_project_tooling",
-      description:
-        "Update the visible form for a project tooling configuration. Choose a preset profile, package manager, and optional tools for linters, formatters, TypeScript, CSS tooling, accessibility checks, and test rules. Returns the configuration JSON shown on the page.",
+      name: "list_integrations",
+      description: recipeToolDescriptions.list_integrations,
       inputSchema: {
         type: "object",
         properties: {
           profile: {
             type: "string",
             enum: profiles,
-            description:
-              "Preset configuration to start from: modern uses newer fast tools, classic uses widely adopted tools, and minimal uses only basic editor consistency settings.",
-          },
-          packageManager: {
-            type: "string",
-            enum: packageManagers,
-            default: "npm",
-            description: "Package manager used to install and run the selected project tooling.",
-          },
-          tools: {
-            type: "array",
-            items: {
-              type: "string",
-            },
-            description:
-              "Tool IDs or labels to include in the configuration, such as linters, formatters, TypeScript support, CSS checks, accessibility checks, and test rules. Omit this field to use the selected profile defaults. Use get_project_tooling_options to see valid IDs and labels.",
-          },
-          aiArtifacts: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: {
-                  type: "string",
-                  description:
-                    "AI artifact ID, label, or source from get_ai_artifact_options, such as skill-semantic-html or hooks/block-dangerous-commands.",
-                },
-                target: {
-                  type: "string",
-                  description:
-                    "Optional target directory for hook and agent artifacts. Skills do not use target.",
-                },
-              },
-              required: ["id"],
-              additionalProperties: false,
-            },
-            description:
-              "Bundled AI skills, hooks, and agents to include in the recipe ai array. Omit to keep current AI selections unchanged.",
+            description: recipeToolInputDescriptions.profileFilter,
           },
         },
-        required: ["profile"],
         additionalProperties: false,
       },
       annotations: {
-        readOnlyHint: false,
+        readOnlyHint: true,
         untrustedContentHint: false,
       },
-      execute: async (input) => configureProjectTooling(input),
+      execute: async (input) => listIntegrationsResponse(input),
     });
 
     navigator.modelContext.registerTool({
-      name: "configure_ai_artifacts",
-      description:
-        "Update only the AI artifact selections for the Calavera recipe ai array. Choose bundled skills, hooks, and agents from get_ai_artifact_options. Returns the full configuration JSON shown on the page.",
+      name: "describe_integration",
+      description: recipeToolDescriptions.describe_integration,
       inputSchema: {
         type: "object",
         properties: {
-          aiArtifacts: {
-            type: "array",
-            items: {
-              type: "object",
-              properties: {
-                id: {
-                  type: "string",
-                  description:
-                    "AI artifact ID, label, or source from get_ai_artifact_options, such as skill-semantic-html or hooks/block-dangerous-commands.",
-                },
-                target: {
-                  type: "string",
-                  description:
-                    "Optional target directory for hook and agent artifacts. Skills do not use target.",
-                },
-              },
-              required: ["id"],
-              additionalProperties: false,
-            },
-            default: [],
-            description:
-              "Bundled AI artifact selections. Pass an empty array to clear the recipe ai array.",
+          id: {
+            type: "string",
+            description: recipeToolInputDescriptions.integrationId,
           },
         },
-        required: ["aiArtifacts"],
+        required: ["id"],
         additionalProperties: false,
       },
       annotations: {
-        readOnlyHint: false,
+        readOnlyHint: true,
         untrustedContentHint: false,
       },
-      execute: async (input) => configureAiArtifacts(input),
+      execute: async (input) => describeIntegrationResponse(input.id),
     });
 
     navigator.modelContext.registerTool({
-      name: "download_configuration_json",
-      description:
-        "Download the current project tooling configuration as calavera.config.json. Use configure_project_tooling first when you need to change the selected profile, package manager, linters, formatters, or code quality tools before downloading.",
+      name: "list_ai_artifacts",
+      description: recipeToolDescriptions.list_ai_artifacts,
       inputSchema: {
         type: "object",
         properties: {},
         additionalProperties: false,
       },
       annotations: {
+        readOnlyHint: true,
+        untrustedContentHint: false,
+      },
+      execute: async () => listAiArtifactsResponse(recipe().ai ?? []),
+    });
+
+    navigator.modelContext.registerTool({
+      name: "compose_recipe",
+      description: recipeToolDescriptions.compose_recipe,
+      inputSchema: {
+        type: "object",
+        properties: {
+          profile: {
+            type: "string",
+            enum: profiles,
+            description: recipeToolInputDescriptions.profile,
+          },
+          packageManager: {
+            type: "string",
+            enum: packageManagers,
+            default: "npm",
+            description: recipeToolInputDescriptions.packageManager,
+          },
+          tools: {
+            type: "array",
+            items: {
+              type: "string",
+            },
+            description: recipeToolInputDescriptions.tools,
+          },
+          aiArtifacts: {
+            type: "array",
+            items: {
+              type: "object",
+              properties: {
+                id: {
+                  type: "string",
+                  description: recipeToolInputDescriptions.aiArtifactId,
+                },
+                target: {
+                  type: "string",
+                  description: recipeToolInputDescriptions.aiArtifactTarget,
+                },
+              },
+              required: ["id"],
+              additionalProperties: false,
+            },
+            description: recipeToolInputDescriptions.aiArtifacts,
+          },
+        },
+        required: ["profile"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: true,
+        untrustedContentHint: false,
+      },
+      execute: async (input) => composeRecipeResponse(input, { browser: true }),
+    });
+
+    navigator.modelContext.registerTool({
+      name: "validate_recipe",
+      description: recipeToolDescriptions.validate_recipe,
+      inputSchema: {
+        type: "object",
+        properties: {
+          recipe: {
+            type: "object",
+            description: recipeToolInputDescriptions.recipe,
+          },
+        },
+        required: ["recipe"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: true,
+        untrustedContentHint: false,
+      },
+      execute: async (input) => validateRecipeResponse(input.recipe),
+    });
+
+    navigator.modelContext.registerTool({
+      name: "explain_recipe",
+      description: recipeToolDescriptions.explain_recipe,
+      inputSchema: {
+        type: "object",
+        properties: {
+          recipe: {
+            type: "object",
+            description: recipeToolInputDescriptions.recipe,
+          },
+        },
+        required: ["recipe"],
+        additionalProperties: false,
+      },
+      annotations: {
+        readOnlyHint: true,
+        untrustedContentHint: false,
+      },
+      execute: async (input) => explainRecipeResponse(input.recipe),
+    });
+
+    navigator.modelContext.registerTool({
+      name: "download_recipe",
+      description: recipeToolDescriptions.download_recipe,
+      inputSchema: {
+        type: "object",
+        properties: {
+          recipe: {
+            type: "object",
+            description: recipeToolInputDescriptions.optionalDownloadRecipe,
+          },
+        },
+        additionalProperties: false,
+      },
+      annotations: {
         readOnlyHint: false,
         untrustedContentHint: false,
       },
-      execute: async () => downloadConfigurationJson(),
+      execute: async (input) => downloadRecipe(input),
     });
 
     revealWebMcpBanner();
