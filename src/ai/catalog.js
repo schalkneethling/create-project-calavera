@@ -1,6 +1,7 @@
 export const DEFAULT_AI_TARGET = "claude-code";
 
 export const aiArtifactCatalog = [
+  aiArtifact("skill-calavera", "skill", "skills/calavera", "Calavera", "Skills"),
   aiArtifact("skill-code-review", "skill", "skills/code-review", "Code review", "Skills"),
   aiArtifact("skill-css-coder", "skill", "skills/css-coder", "CSS coder", "Skills"),
   aiArtifact("skill-css-tokens", "skill", "skills/css-tokens", "CSS tokens", "Skills"),

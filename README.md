@@ -101,6 +101,18 @@ npm create project-calavera doctor --json
 npm create project-calavera apply --dry-run --json
 ```
 
+Bootstrap an existing project for agent-first Calavera usage without
+scaffolding app code:
+
+```bash
+npm create project-calavera -- --init
+```
+
+The `--init` bootstrap installs the base Calavera skill, adds concise project
+guidance, writes MCP setup notes, and prints a recommended first prompt for the
+user to give their agent. It leaves existing guidance files unchanged and writes
+fallback Calavera guidance when `AGENTS.md` already exists.
+
 ## MCP Server
 
 Calavera also ships a standard MCP server for agent-native recipe composition:
@@ -144,6 +156,17 @@ dependency packages, file changes, and AI artifact changes that would be made.
 Agents should present that dry-run summary to the user first. `apply_recipe`
 is intentionally the approval boundary: call it only after the user explicitly
 approves the proposed recipe and dry-run result.
+
+## Agent-First Flow
+
+Use Calavera after a project already exists, whether it came from `vp create`,
+Vite, another scaffold tool, or a manually maintained repository:
+
+1. Open the project directory.
+2. Run `npm create project-calavera -- --init`.
+3. Register the MCP server using the generated `.agents/calavera/mcp.md` notes.
+4. Start the agent from the project root.
+5. Ask it: `Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.`
 
 ### Bun-managed projects and npm `devEngines`
 

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 import { existsSync } from "node:fs";
-import { mkdir, readFile, rm, unlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -103,11 +103,27 @@ import { logger } from "./utils/logger.js";
  * @property {boolean} dryRun
  * @property {Recipe} recipe
  *
- * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult} CommandResult
+ * @typedef {object} AgentInitResult
+ * @property {"agent-init"} command
+ * @property {boolean} dryRun
+ * @property {Change[]} changes
+ * @property {string[]} pointers
+ * @property {string} nextPrompt
+ *
+ * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult} CommandResult
  */
 
 const CONFIG_FILE = "calavera.config.json";
 const STATE_FILE = ".calavera/state.json";
+const AGENT_BOOTSTRAP_GUIDANCE_FILE = "AGENTS.md";
+const AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE = "AGENTS.calavera.md";
+const AGENT_BOOTSTRAP_MCP_FILE = ".agents/calavera/mcp.md";
+const AGENT_BOOTSTRAP_MARKER = "<!-- calavera-agent-bootstrap -->";
+const AGENT_BOOTSTRAP_SKILL_RECIPE = {
+  ai: [{ type: "skill", src: "skills/calavera" }],
+};
+const AGENT_BOOTSTRAP_NEXT_PROMPT =
+  "Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const SCRIPT_SOURCE_EXTENSIONS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
 const TSC_INCLUDE_PATTERNS = SCRIPT_SOURCE_EXTENSIONS.map((extension) => `src/**/*.${extension}`);
 
@@ -190,6 +206,8 @@ function parseArgs(rawArgs) {
       index += 1;
     } else if (arg === "--dry-run") {
       parsed.dryRun = true;
+    } else if (arg === "--init") {
+      parsed.command = "agent-init";
     } else if (arg === "--json") {
       parsed.json = true;
     } else if (arg === "--no-install") {
@@ -575,6 +593,71 @@ insert_final_newline = true
 indent_style = space
 indent_size = 2
 trim_trailing_whitespace = true
+`;
+}
+
+function createAgentBootstrapGuidance() {
+  return `${AGENT_BOOTSTRAP_MARKER}
+# Calavera Agent Guidance
+
+- Use Calavera when the user wants to inspect, compose, preview, apply, or update project tooling.
+- Prefer the Calavera MCP server over hand-authoring \`calavera.config.json\`.
+- If the Calavera MCP tools are not available, help the user register the MCP server from \`${AGENT_BOOTSTRAP_MCP_FILE}\` or fall back to the Calavera Web UI.
+- Inspect existing project tooling before composing a recipe and raise likely config conflicts early.
+- Start with \`list_profiles\`, \`list_integrations\`, and \`list_ai_artifacts\`; use \`describe_integration\` when the user asks for more information or an option needs explanation.
+- Compose recipes with \`compose_recipe\`, validate them with \`validate_recipe\`, and explain the selected integrations with \`explain_recipe\`.
+- Always present \`dry_run_apply\` output to the user before changing files.
+- Call \`apply_recipe\` only after the user explicitly approves the dry-run result.
+- Use AskUserTool or the agent client's equivalent when available for profile choices, conflict decisions, and apply approval.
+
+MCP setup notes live in \`${AGENT_BOOTSTRAP_MCP_FILE}\`.
+`;
+}
+
+function createAgentBootstrapMcpInstructions() {
+  return `# Calavera MCP Setup
+
+Register the Calavera MCP server from the project root:
+
+\`\`\`json
+{
+  "mcpServers": {
+    "calavera": {
+      "command": "npx",
+      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
+    }
+  }
+}
+\`\`\`
+
+If your agent exposes an MCP setup UI or config writer, use the snippet above.
+If the agent needs approval before editing its own config, ask first.
+
+Use the tools in this order:
+
+1. \`list_profiles\`
+2. \`list_integrations\`
+3. \`describe_integration\`
+4. \`list_ai_artifacts\`
+5. \`compose_recipe\`
+6. \`validate_recipe\`
+7. \`explain_recipe\`
+8. \`dry_run_apply\`
+9. \`apply_recipe\`
+
+\`dry_run_apply\` is the review boundary. Show its result to the user and wait for explicit approval before calling \`apply_recipe\`.
+
+Before composing a recipe, inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes.
+
+If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
+
+https://calavera.schalkneethling.com
+
+Then run \`create-project-calavera apply --dry-run\` and ask for approval before running \`create-project-calavera apply\`.
+
+Suggested first prompt:
+
+> ${AGENT_BOOTSTRAP_NEXT_PROMPT}
 `;
 }
 
@@ -1085,6 +1168,179 @@ export async function applyRecipeObject(recipe, options = {}) {
 }
 
 /**
+ * @param {CalaveraState} previousState
+ * @param {AiArtifactState[]} aiArtifacts
+ * @returns {CalaveraState}
+ */
+function mergeAiArtifactsIntoState(previousState, aiArtifacts) {
+  const artifactsByPath = new Map(
+    previousState.aiArtifacts.map((artifact) => [artifact.path, artifact]),
+  );
+
+  for (const artifact of aiArtifacts) {
+    artifactsByPath.set(artifact.path, artifact);
+  }
+
+  return {
+    ...previousState,
+    version: 1,
+    aiArtifacts: [...artifactsByPath.values()],
+  };
+}
+
+/**
+ * @param {string} path
+ * @param {string} contents
+ * @param {boolean} dryRun
+ * @param {Change[]} changes
+ * @param {string} conflictReason
+ * @returns {Promise<boolean>}
+ */
+async function writeBootstrapTextFile(path, contents, dryRun, changes, conflictReason) {
+  const targetPath = path.trim();
+
+  if (!targetPath) {
+    throw new Error("Bootstrap file path must be a non-empty string.");
+  }
+
+  if (await fileExists(targetPath)) {
+    const currentContents = await readFile(targetPath, "utf8");
+
+    changes.push({
+      type: "skip",
+      path: targetPath,
+      reason: currentContents === contents ? "Already up to date." : conflictReason,
+    });
+
+    return currentContents === contents;
+  }
+
+  changes.push({ type: "write", path: targetPath });
+
+  if (!dryRun) {
+    const directory = dirname(targetPath);
+    if (directory !== ".") {
+      await mkdir(directory, { recursive: true });
+    }
+
+    await writeFile(targetPath, contents);
+  }
+
+  return true;
+}
+
+/**
+ * @param {string} path
+ */
+async function assertBootstrapDirectoryAvailable(path) {
+  if (!(await fileExists(path))) {
+    return;
+  }
+
+  const pathStats = await stat(path);
+
+  if (!pathStats.isDirectory()) {
+    throw new Error(
+      `Cannot write Calavera bootstrap state because ${path} exists and is not a directory.`,
+    );
+  }
+}
+
+/**
+ * @param {boolean} dryRun
+ * @param {Change[]} changes
+ */
+async function writeAgentBootstrapGuidance(dryRun, changes) {
+  const guidance = createAgentBootstrapGuidance();
+
+  if (!(await fileExists(AGENT_BOOTSTRAP_GUIDANCE_FILE))) {
+    await writeBootstrapTextFile(
+      AGENT_BOOTSTRAP_GUIDANCE_FILE,
+      guidance,
+      dryRun,
+      changes,
+      "Existing agent guidance differs and was left unchanged.",
+    );
+    return;
+  }
+
+  const currentGuidance = await readFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, "utf8");
+
+  if (currentGuidance === guidance) {
+    changes.push({
+      type: "skip",
+      path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
+      reason: "Already up to date.",
+    });
+    return;
+  }
+
+  changes.push({
+    type: "skip",
+    path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
+    reason: "Existing AGENTS.md left unchanged; Calavera guidance was written separately.",
+  });
+
+  await writeBootstrapTextFile(
+    AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+    guidance,
+    dryRun,
+    changes,
+    "Existing fallback Calavera guidance differs and was left unchanged.",
+  );
+}
+
+/**
+ * @param {Partial<CliOptions>} [options]
+ * @returns {Promise<AgentInitResult>}
+ */
+export async function agentBootstrap(options = {}) {
+  const bootstrapOptions = {
+    dryRun: false,
+    ...options,
+  };
+  const previousState = await readStateIfPresent();
+  const aiResult = await buildAiApplyResult(
+    AGENT_BOOTSTRAP_SKILL_RECIPE,
+    { dryRun: bootstrapOptions.dryRun },
+    previousState,
+  );
+  /** @type {Change[]} */
+  const changes = [...aiResult.changes];
+
+  await writeAgentBootstrapGuidance(bootstrapOptions.dryRun, changes);
+  await writeBootstrapTextFile(
+    AGENT_BOOTSTRAP_MCP_FILE,
+    createAgentBootstrapMcpInstructions(),
+    bootstrapOptions.dryRun,
+    changes,
+    "Existing Calavera MCP setup notes differ and were left unchanged.",
+  );
+
+  if (!bootstrapOptions.dryRun) {
+    await assertBootstrapDirectoryAvailable(".calavera");
+    await mkdir(".calavera", { recursive: true });
+    await writeJSON(
+      STATE_FILE,
+      mergeAiArtifactsIntoState(previousState, aiResult.artifacts),
+      false,
+    );
+  }
+
+  return {
+    command: "agent-init",
+    dryRun: bootstrapOptions.dryRun,
+    changes,
+    pointers: [
+      ...aiResult.pointers,
+      `Agent guidance: ${AGENT_BOOTSTRAP_GUIDANCE_FILE} or ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE}`,
+      `MCP setup notes: ${AGENT_BOOTSTRAP_MCP_FILE}`,
+    ],
+    nextPrompt: AGENT_BOOTSTRAP_NEXT_PROMPT,
+  };
+}
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<InitResult>}
  */
@@ -1463,6 +1719,27 @@ function printResult(result, asJSON = false) {
     return;
   }
 
+  if (result.command === "agent-init") {
+    logger.success("Calavera agent bootstrap complete.");
+
+    for (const change of result.changes) {
+      if (change.type === "write") {
+        logger.info(`Wrote ${change.path}`);
+      }
+
+      if (change.type === "skip") {
+        logger.info(`Skipped ${change.path}: ${change.reason}`);
+      }
+    }
+
+    for (const pointer of result.pointers) {
+      logger.info(pointer);
+    }
+
+    logger.info(`Next prompt: ${result.nextPrompt}`);
+    return;
+  }
+
   if (result.command === "apply" && result.dryRun) {
     logger.info("Calavera apply dry run complete. No files were changed.");
     logger.info(`Package manager: ${result.packageManager}`);
@@ -1520,6 +1797,11 @@ async function main() {
 
   if (options.command === "init") {
     printResult(await initRecipe(options), options.json);
+    return;
+  }
+
+  if (options.command === "agent-init" || options.command === "bootstrap") {
+    printResult(await agentBootstrap(options), options.json);
     return;
   }
 

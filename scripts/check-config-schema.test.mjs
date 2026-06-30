@@ -11,7 +11,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { buildAiApplyResult, createCodexAgentToml } from "../src/ai/artifacts.js";
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
 import { integrationCatalog } from "../src/catalog.js";
-import { applyRecipeObject } from "../src/index.js";
+import { agentBootstrap, applyRecipeObject } from "../src/index.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { createEmptyState } from "../src/state.js";
 import {
@@ -453,6 +453,96 @@ test("standard MCP validation and dry-run tools return agent-readable JSON", asy
     dryRun.result.changes.some(({ path }) => path === ".agents/skills/semantic-html"),
     true,
   );
+});
+
+test("agent bootstrap dry-run previews guidance without writing files", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-dry-run-"));
+
+  try {
+    process.chdir(projectDirectory);
+
+    const result = await agentBootstrap({ dryRun: true, json: true });
+
+    assert.equal(result.command, "agent-init");
+    assert.equal(result.dryRun, true);
+    assert.equal(
+      result.changes.some(({ path }) => path === ".agents/skills/calavera"),
+      true,
+    );
+    assert.equal(
+      result.changes.some(({ path }) => path === "AGENTS.md"),
+      true,
+    );
+    assert.equal(
+      result.changes.some(({ path }) => path === ".agents/calavera/mcp.md"),
+      true,
+    );
+    assert.match(result.nextPrompt, /Use Calavera for this project/);
+    await assert.rejects(() => stat("AGENTS.md"), /ENOENT/);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("AGENTS.md", "Existing project guidance.\n");
+
+    const result = await agentBootstrap({ json: true });
+    const existingGuidance = await readFile("AGENTS.md", "utf8");
+    const fallbackGuidance = await readFile("AGENTS.calavera.md", "utf8");
+    const mcpGuidance = await readFile(".agents/calavera/mcp.md", "utf8");
+    const skill = await readFile(".agents/skills/calavera/SKILL.md", "utf8");
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+
+    assert.equal(existingGuidance, "Existing project guidance.\n");
+    assert.match(fallbackGuidance, /Calavera Agent Guidance/);
+    assert.match(mcpGuidance, /create-project-calavera-mcp/);
+    assert.match(mcpGuidance, /AskUserTool|approval/);
+    assert.match(mcpGuidance, /existing tooling files/);
+    assert.match(mcpGuidance, /calavera\.schalkneethling\.com/);
+    assert.match(skill, /name: calavera/);
+    assert.match(skill, /MCP Setup/);
+    assert.match(skill, /Fallbacks/);
+    assert.equal(
+      result.changes.some(
+        ({ type, path, reason }) =>
+          type === "skip" && path === "AGENTS.md" && reason.includes("left unchanged"),
+      ),
+      true,
+    );
+    assert.equal(
+      state.aiArtifacts.some(
+        ({ type, name, path }) =>
+          type === "skill" && name === "calavera" && path === ".agents/skills/calavera",
+      ),
+      true,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("agent bootstrap rejects conflicting Calavera state path", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-conflict-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile(".calavera", "not a directory\n");
+
+    await assert.rejects(
+      () => agentBootstrap({ json: true }),
+      /Cannot write Calavera bootstrap state/,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
 });
 
 test("apply dry runs surface managed file overwrite conflicts", async () => {

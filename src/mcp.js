@@ -346,7 +346,7 @@ export async function startMcpServer(transport = new StdioServerTransport()) {
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
   startMcpServer().catch((error) => {
-    console.error(error);
+    console.info(error);
     process.exitCode = 1;
   });
 }
