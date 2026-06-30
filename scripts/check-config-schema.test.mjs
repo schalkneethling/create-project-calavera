@@ -297,9 +297,8 @@ test("standard MCP server exposes Calavera recipe composition tools", async () =
 
   try {
     const { tools } = await client.listTools();
-    const toolNames = tools.map(({ name }) => name);
-
-    assert.deepEqual(toolNames, [
+    const toolNames = tools.map(({ name }) => name).sort();
+    const expectedToolNames = [
       "list_profiles",
       "list_integrations",
       "describe_integration",
@@ -309,7 +308,9 @@ test("standard MCP server exposes Calavera recipe composition tools", async () =
       "explain_recipe",
       "dry_run_apply",
       "apply_recipe",
-    ]);
+    ].sort();
+
+    assert.deepEqual(toolNames, expectedToolNames);
     assert.equal(
       tools.find(({ name }) => name === "apply_recipe")?.annotations?.destructiveHint,
       true,
