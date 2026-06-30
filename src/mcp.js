@@ -2,6 +2,7 @@
 // @ts-check
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { isAbsolute, relative, resolve, sep } from "node:path";
 import { pathToFileURL } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import * as z from "zod";
@@ -202,6 +203,29 @@ function dependencyListForRecipe(recipe) {
   ];
 }
 
+/**
+ * @param {unknown} requestedPath
+ */
+function projectConfigPath(requestedPath) {
+  const projectRoot = process.cwd();
+  const configPath = resolve(
+    projectRoot,
+    typeof requestedPath === "string" ? requestedPath : "calavera.config.json",
+  );
+  const relativeConfigPath = relative(projectRoot, configPath);
+
+  if (
+    !relativeConfigPath ||
+    relativeConfigPath === ".." ||
+    relativeConfigPath.startsWith(`..${sep}`) ||
+    isAbsolute(relativeConfigPath)
+  ) {
+    throw new Error("apply_recipe config path must stay inside the current project workspace.");
+  }
+
+  return configPath;
+}
+
 function listProfilesTool() {
   return {
     profiles: profileCatalog.map(({ id, label, description }) => ({
@@ -311,7 +335,7 @@ async function dryRunApplyTool(args) {
  */
 async function applyRecipeTool(args) {
   const recipe = assertRecipeInput(args.recipe);
-  const config = typeof args.config === "string" ? args.config : "calavera.config.json";
+  const config = projectConfigPath(args.config);
   const writeConfig = args.writeConfig !== false;
 
   if (writeConfig) {

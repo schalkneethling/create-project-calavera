@@ -924,9 +924,7 @@ export async function applyRecipeObject(recipe, options = {}) {
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
   const managedFilePlans = plannedManagedFiles(integrations);
 
-  if (!applyOptions.dryRun) {
-    await assertSafeManagedFileWrites(managedFilePlans, previousState);
-  }
+  await assertSafeManagedFileWrites(managedFilePlans, previousState);
 
   const aiResult = await buildAiApplyResult(recipe, applyOptions, previousState);
 

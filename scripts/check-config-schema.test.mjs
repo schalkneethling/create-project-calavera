@@ -1,5 +1,7 @@
 import assert from "node:assert/strict";
-import { readFile, stat } from "node:fs/promises";
+import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
@@ -9,6 +11,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { buildAiApplyResult, createCodexAgentToml } from "../src/ai/artifacts.js";
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
 import { integrationCatalog } from "../src/catalog.js";
+import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { createEmptyState } from "../src/state.js";
 import {
@@ -362,6 +365,51 @@ test("standard MCP validation and dry-run tools return agent-readable JSON", asy
     dryRun.result.changes.some(({ path }) => path === ".agents/skills/semantic-html"),
     true,
   );
+});
+
+test("apply dry runs surface managed file overwrite conflicts", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-dry-run-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile(".editorconfig", "local edits\n");
+
+    await assert.rejects(
+      () =>
+        applyRecipeObject(buildRecipe("minimal", ["editorconfig"], "npm"), {
+          dryRun: true,
+          json: true,
+          noInstall: true,
+          assumeYes: true,
+        }),
+      /Refusing to overwrite existing managed file: \.editorconfig/,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("MCP apply_recipe rejects config paths outside the current workspace", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-apply-"));
+
+  try {
+    process.chdir(projectDirectory);
+
+    await assert.rejects(
+      () =>
+        callMcpTool("apply_recipe", {
+          recipe: composeRecipe({ profile: "minimal", packageManager: "npm" }),
+          config: "../calavera.config.json",
+          noInstall: true,
+        }),
+      /config path must stay inside the current project workspace/,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
 });
 
 test("shared integration resolution expands nested includes without catalog-order coupling", () => {
