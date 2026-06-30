@@ -240,8 +240,8 @@ Web UI paths in parity.
 The shared surface in `src/recipe.js` powers or should power:
 
 - existing web composer controls;
-- existing WebMCP tools in `web/script.js`;
-- future standard MCP tools;
+- WebMCP tools in `web/script.js`;
+- standard MCP tools;
 - the rich interactive CLI composer;
 - CLI commands that need recipe inspection or validation.
 
@@ -261,17 +261,21 @@ adding more operations such as:
 - `dry_run_apply`
 - `doctor_project`
 
-The current WebMCP tools already expose these concepts partially:
+The current WebMCP tools mirror the standard MCP recipe composition concepts:
 
-- `get_project_tooling_options`
-- `get_ai_artifact_options`
-- `configure_project_tooling`
-- `configure_ai_artifacts`
-- `download_configuration_json`
+- `list_profiles`
+- `list_integrations`
+- `describe_integration`
+- `list_ai_artifacts`
+- `compose_recipe`
+- `validate_recipe`
+- `explain_recipe`
+- `download_recipe`
 
-The future standard MCP server should use the same catalog and recipe builders
-as the web composer. It should not teach agents to drive the browser form when
-the same recipe can be composed directly.
+The intentional browser difference is that WebMCP downloads a composed recipe
+instead of previewing or applying project filesystem changes. Standard MCP owns
+`dry_run_apply` and `apply_recipe` because those operations need project-root
+filesystem and process access.
 
 ## Versioning Implications
 

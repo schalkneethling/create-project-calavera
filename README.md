@@ -131,12 +131,13 @@ in this order:
 
 1. `list_profiles`
 2. `list_integrations`
-3. `list_ai_artifacts`
-4. `compose_recipe`
-5. `validate_recipe`
-6. `explain_recipe`
-7. `dry_run_apply`
-8. `apply_recipe`
+3. `describe_integration`
+4. `list_ai_artifacts`
+5. `compose_recipe`
+6. `validate_recipe`
+7. `explain_recipe`
+8. `dry_run_apply`
+9. `apply_recipe`
 
 `dry_run_apply` returns structured JSON with the package manager, integrations,
 dependency packages, file changes, and AI artifact changes that would be made.
@@ -264,6 +265,23 @@ Open the printed local URL, choose your packs, then either:
 
 Both options are shown by default so users can choose the flow they are most
 comfortable with.
+
+When the browser exposes WebMCP, the composer registers a browser parity surface
+for the MCP recipe composition workflow:
+
+1. `list_profiles`
+2. `list_integrations`
+3. `describe_integration`
+4. `list_ai_artifacts`
+5. `compose_recipe`
+6. `validate_recipe`
+7. `explain_recipe`
+8. `download_recipe`
+
+WebMCP uses the same shared recipe composition model as the standard MCP server,
+but it cannot inspect, dry-run, or apply files in a local project workspace from
+the browser. Use `download_recipe` to save `calavera.config.json`, then apply it
+with the CLI or standard MCP server from the project root.
 
 Build the composer with:
 

@@ -56,6 +56,65 @@ export const packageManagerCatalog = [
 
 export const aiArtifactTypes = ["skill", "hook", "agent"];
 
+export const recipeCompositionToolNames = Object.freeze([
+  "list_profiles",
+  "list_integrations",
+  "describe_integration",
+  "list_ai_artifacts",
+  "compose_recipe",
+  "validate_recipe",
+  "explain_recipe",
+]);
+
+export const standardMcpToolNames = Object.freeze([
+  ...recipeCompositionToolNames,
+  "dry_run_apply",
+  "apply_recipe",
+]);
+
+export const webMcpToolNames = Object.freeze([...recipeCompositionToolNames, "download_recipe"]);
+
+export const recipeToolDescriptions = Object.freeze({
+  list_profiles:
+    "List Calavera profiles, package managers, and default integrations. Use this first when composing a recipe.",
+  list_integrations:
+    "List available Calavera integration options. Pass a profile to see only integrations valid for that profile.",
+  describe_integration:
+    "Describe one Calavera integration, including its profile availability, dependency packages, and included parent integrations.",
+  list_ai_artifacts:
+    "List bundled AI skills, hooks, and agents that can be included in a Calavera recipe.",
+  compose_recipe:
+    "Compose a schema-valid Calavera recipe from a profile, package manager, integration IDs or labels, and optional AI artifacts.",
+  validate_recipe:
+    "Validate a Calavera recipe object before previewing, applying, or downloading it. Returns validation status and errors instead of writing files.",
+  explain_recipe:
+    "Explain the integrations selected by a Calavera recipe, including profile defaults and automatically included parent integrations.",
+  dry_run_apply:
+    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe.",
+  apply_recipe:
+    "Apply an approved Calavera recipe in the current project. Call only after presenting dry_run_apply output and receiving explicit user approval.",
+  download_recipe:
+    "Download a Calavera recipe as calavera.config.json. Pass a recipe from compose_recipe, or omit recipe to download the current visible composer recipe.",
+});
+
+export const recipeToolInputDescriptions = Object.freeze({
+  profile: "Base Calavera tooling profile.",
+  profileFilter: "Optional profile filter.",
+  packageManager: "Package manager used for dependency installation and generated scripts.",
+  tools: "Integration IDs or labels. Omit to use the selected profile defaults from list_profiles.",
+  integrationId: "Integration ID or label from list_integrations.",
+  aiArtifactId: "AI artifact ID, source, or label from list_ai_artifacts.",
+  aiArtifactTarget: "Optional target directory for hook and agent artifacts.",
+  aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
+  recipe: "A Calavera recipe object.",
+  packageManagerOverride: "Optional package manager override.",
+  config: "Recipe file path to write before applying.",
+  writeConfig: "Write the approved recipe to the config path before applying.",
+  noInstall: "Skip package manager dependency installation.",
+  optionalDownloadRecipe:
+    "Optional Calavera recipe object. When omitted, the current visible composer recipe is downloaded.",
+});
+
 /** @type {Record<string, string[]>} */
 export const profileDefaults = {
   modern: [
@@ -233,7 +292,7 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
 
     if (!artifact) {
       throw new Error(
-        `Invalid aiArtifacts[${index}].id: ${item.id}. Use artifact IDs, labels, or sources from get_ai_artifact_options.`,
+        `Invalid aiArtifacts[${index}].id: ${item.id}. Use artifact IDs, labels, or sources from list_ai_artifacts.`,
       );
     }
 
@@ -287,7 +346,7 @@ export function validateRecipeCompositionInput({
 
   if (invalidIntegrationIds.length > 0) {
     throw new Error(
-      `Invalid tools for the ${profile} profile: ${invalidIntegrationIds.join(", ")}. Use tool IDs or labels from get_project_tooling_options. Allowed IDs: ${allowedIntegrationIds.join(", ")}.`,
+      `Invalid tools for the ${profile} profile: ${invalidIntegrationIds.join(", ")}. Use tool IDs or labels from list_integrations. Allowed IDs: ${allowedIntegrationIds.join(", ")}.`,
     );
   }
 
@@ -389,6 +448,85 @@ export function validateRecipe(recipe) {
   return recipe;
 }
 
+export function recipeWorkflow({ browser = false } = {}) {
+  return browser ? [...webMcpToolNames] : [...standardMcpToolNames];
+}
+
+export function listProfilesResponse(options = {}) {
+  return {
+    profiles: profileCatalog.map(({ id, label, description }) => ({
+      id,
+      label,
+      description,
+      defaultIntegrations: [...profileDefaults[id]],
+    })),
+    packageManagers: packageManagerCatalog,
+    workflow: recipeWorkflow(options),
+  };
+}
+
+export function listIntegrationsResponse({ profile } = {}) {
+  return {
+    profile: profile ?? null,
+    integrations: listIntegrationOptions(profile),
+  };
+}
+
+export function describeIntegrationResponse(id) {
+  const token = normalizedToken(String(id));
+  const integration = listIntegrationOptions().find(
+    ({ id: candidateId, label }) =>
+      normalizedToken(candidateId) === token || normalizedToken(label) === token,
+  );
+
+  if (!integration) {
+    throw new Error(`Unknown integration: ${String(id)}.`);
+  }
+
+  return integration;
+}
+
+export function composeRecipeResponse(configurationInput = {}, options = {}) {
+  return {
+    recipe: composeRecipe(configurationInput),
+    workflow: recipeWorkflow(options),
+  };
+}
+
+export function validateRecipeResponse(recipe) {
+  try {
+    validateRecipe(recipe);
+    return { ok: true, recipe };
+  } catch (error) {
+    return {
+      ok: false,
+      errors: [error instanceof Error ? error.message : String(error)],
+    };
+  }
+}
+
+export function dependencyListForRecipe(recipe) {
+  return [
+    ...new Set(
+      resolveRecipeIntegrations(recipe).flatMap((integration) => integration.dependencies ?? []),
+    ),
+  ];
+}
+
+export function explainRecipeResponse(recipeInput) {
+  const recipe = validateRecipe(recipeInput);
+
+  return {
+    integrations: explainRecipeIntegrations(recipe),
+    dependencies: dependencyListForRecipe(recipe),
+    aiArtifacts: listAiArtifactOptions().filter((artifact) =>
+      Array.isArray(recipe.ai)
+        ? recipe.ai.some((item) => item.type === artifact.type && item.src === artifact.src)
+        : false,
+    ),
+  };
+}
+
 export function catalogResponse(currentConfiguration) {
   return {
     profiles: profileCatalog.map(({ id, label, description }) => ({
@@ -402,7 +540,7 @@ export function catalogResponse(currentConfiguration) {
     aiArtifacts: listAiArtifactOptions(),
     toolInput: {
       accepts:
-        "Use either an integration id or its label in the configure_project_tooling tools array. Matching is case-insensitive.",
+        "Use either an integration id or its label in the compose_recipe tools array. Matching is case-insensitive.",
       examples: ["typescript", "Stylelint", "Oxc JSX accessibility rules"],
     },
     defaults: profileDefaults,
@@ -417,7 +555,7 @@ export function aiArtifactsResponse(currentConfiguration = []) {
     artifacts: listAiArtifactOptions(),
     input: {
       accepts:
-        "Use artifact IDs, labels, or sources in configure_ai_artifacts. Add target for hook and agent artifacts when the default target is not correct.",
+        "Use artifact IDs, labels, or sources in compose_recipe aiArtifacts. Add target for hook and agent artifacts when the default target is not correct.",
       examples: [
         { id: "skill-semantic-html" },
         { id: "hooks/block-dangerous-commands", target: "claude-code" },
@@ -426,6 +564,10 @@ export function aiArtifactsResponse(currentConfiguration = []) {
     },
     currentConfiguration,
   };
+}
+
+export function listAiArtifactsResponse(currentConfiguration = []) {
+  return aiArtifactsResponse(currentConfiguration);
 }
 
 /**
