@@ -43,7 +43,7 @@ If the MCP server cannot be registered, use the hosted Calavera Web UI to compos
 
 https://calavera.schalkneethling.com
 
-After a recipe exists, preview local changes with `create-project-calavera apply --dry-run`. Ask the user to approve the preview before running `create-project-calavera apply`.
+After a recipe exists, preview local changes with `npm create project-calavera apply --dry-run`. Ask the user to approve the preview before running `npm create project-calavera apply`.
 
 ## User Prompt
 

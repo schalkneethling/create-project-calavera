@@ -540,6 +540,7 @@ test("agent bootstrap rejects conflicting Calavera state path", async () => {
       () => agentBootstrap({ json: true }),
       /Cannot write Calavera bootstrap state/,
     );
+    await assert.rejects(() => stat(".agents"), /ENOENT/);
   } finally {
     process.chdir(originalDirectory);
   }

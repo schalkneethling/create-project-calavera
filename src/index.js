@@ -653,7 +653,7 @@ If the MCP server cannot be registered, use the hosted Web UI to compose and dow
 
 https://calavera.schalkneethling.com
 
-Then run \`create-project-calavera apply --dry-run\` and ask for approval before running \`create-project-calavera apply\`.
+Then run \`npm create project-calavera apply --dry-run\` and ask for approval before running \`npm create project-calavera apply\`.
 
 Suggested first prompt:
 
@@ -1299,6 +1299,9 @@ export async function agentBootstrap(options = {}) {
     dryRun: false,
     ...options,
   };
+
+  await assertBootstrapDirectoryAvailable(".calavera");
+
   const previousState = await readStateIfPresent();
   const aiResult = await buildAiApplyResult(
     AGENT_BOOTSTRAP_SKILL_RECIPE,
@@ -1318,7 +1321,6 @@ export async function agentBootstrap(options = {}) {
   );
 
   if (!bootstrapOptions.dryRun) {
-    await assertBootstrapDirectoryAvailable(".calavera");
     await mkdir(".calavera", { recursive: true });
     await writeJSON(
       STATE_FILE,
@@ -1720,15 +1722,23 @@ function printResult(result, asJSON = false) {
   }
 
   if (result.command === "agent-init") {
-    logger.success("Calavera agent bootstrap complete.");
+    if (result.dryRun) {
+      logger.info("Calavera agent bootstrap dry run complete. No files were changed.");
+    } else {
+      logger.success("Calavera agent bootstrap complete.");
+    }
 
     for (const change of result.changes) {
       if (change.type === "write") {
-        logger.info(`Wrote ${change.path}`);
+        logger.info(result.dryRun ? `Would write ${change.path}` : `Wrote ${change.path}`);
       }
 
       if (change.type === "skip") {
-        logger.info(`Skipped ${change.path}: ${change.reason}`);
+        logger.info(
+          result.dryRun
+            ? `Would skip ${change.path}: ${change.reason}`
+            : `Skipped ${change.path}: ${change.reason}`,
+        );
       }
     }
 
