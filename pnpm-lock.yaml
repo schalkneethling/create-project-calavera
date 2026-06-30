@@ -59,7 +59,7 @@ importers:
         version: 8.1.1(stylelint@17.14.0(typescript@6.0.3))
       stylelint-plugin-use-baseline:
         specifier: ^1.4.2
-        version: 1.4.2(stylelint@17.14.0(typescript@6.0.3))
+        version: 1.4.4(stylelint@17.14.0(typescript@6.0.3))
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -1365,8 +1365,8 @@ packages:
     peerDependencies:
       stylelint: ^16.18.0 || ^17.0.0
 
-  stylelint-plugin-use-baseline@1.4.2:
-    resolution: {integrity: sha512-VTPqkL1Cmy+6cjbLobXo0DUyANgHyHJuJ6nuPQOXnwpu3ovK7wD6tkk79boWA18Ter0C8uvWOU5TaiQsJhoZmA==}
+  stylelint-plugin-use-baseline@1.4.4:
+    resolution: {integrity: sha512-AHLlNRmnP+8FQZ7OqwWyzVapnAUAPTLhWVdR9+0lfVf9ahuxbsoGn2Oi+BURpcbNvAXRIu9V/8aC4F9j56PnFA==}
     peerDependencies:
       stylelint: ^16.0.2 || ^17.0.0
 
@@ -2551,11 +2551,11 @@ snapshots:
       postcss-sorting: 10.0.0(postcss@8.5.15)
       stylelint: 17.14.0(typescript@6.0.3)
 
-  stylelint-plugin-use-baseline@1.4.2(stylelint@17.14.0(typescript@6.0.3)):
+  stylelint-plugin-use-baseline@1.4.4(stylelint@17.14.0(typescript@6.0.3)):
     dependencies:
       css-tree: 3.2.1
       is-plain-object: 5.0.0
-      postcss: 8.5.15
+      postcss: 8.5.16
       postcss-value-parser: 4.2.0
       stylelint: 17.14.0(typescript@6.0.3)
 
