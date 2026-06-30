@@ -39,6 +39,17 @@ export function assertObjectArray(name, value) {
 /**
  * @param {string} name
  * @param {unknown} value
+ * @returns {asserts value is Record<string, unknown>}
+ */
+export function assertPlainObject(name, value) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) {
+    throw new TypeError(`${name} must be an object.`);
+  }
+}
+
+/**
+ * @param {string} name
+ * @param {unknown} value
  * @param {string[]} allowedValues
  * @returns {asserts value is string}
  */
