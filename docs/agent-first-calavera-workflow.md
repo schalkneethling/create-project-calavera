@@ -27,7 +27,10 @@ See [Package-Manager Commands](#package-manager-commands) below for the full
 command table.
 
 The bootstrap writes Calavera guidance for agents, MCP setup notes, and the base
-Calavera skill. It does not scaffold app code.
+Calavera skill. It does not scaffold app code. When `AGENTS.md` already exists,
+interactive runs ask whether to append marked Calavera guidance directly to that
+file or write `AGENTS.calavera.md` for manual merging. Scripted runs keep
+`AGENTS.md` unchanged unless `--agents-md=append` is passed.
 
 Register the MCP server from the generated `.agents/calavera/mcp.md` notes:
 

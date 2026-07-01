@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.0.2
+
+### Added
+
+- Ask interactive agent bootstrap users before appending marked Calavera
+  guidance to an existing `AGENTS.md`, with `--agents-md=append|fallback` for
+  scripted runs.
+
+### Changed
+
+- Keep existing non-interactive `AGENTS.md` handling non-destructive by writing
+  Calavera guidance to `AGENTS.calavera.md` unless append mode is explicit.
+
 ## 2.0.1
 
 ### Fixed

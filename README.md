@@ -133,8 +133,10 @@ or install `create-project-calavera` globally.
 
 The `--init` bootstrap installs the base Calavera skill, adds concise project
 guidance, writes MCP setup notes, and prints a recommended first prompt for the
-user to give their agent. It leaves existing guidance files unchanged and writes
-fallback Calavera guidance when `AGENTS.md` already exists.
+user to give their agent. When `AGENTS.md` already exists, interactive runs ask
+whether to append marked Calavera guidance directly to that file or leave it
+unchanged and write fallback guidance to `AGENTS.calavera.md`. Scripted runs
+keep the fallback-only behavior unless `--agents-md=append` is passed.
 
 ## MCP Server
 
@@ -267,6 +269,8 @@ npm --force create project-calavera apply
   composition; quote labels with spaces, or use ids/slugs in scripts and CI
 - `--ai-artifact <id-or-label-or-source>`; use `<artifact>@<target>` for hook
   and agent targets, or omit this flag to select from the interactive option list
+- `--agents-md append|fallback` with `--init` to script how existing `AGENTS.md`
+  files are handled
 - `--apply` with `init` to preview and then confirm applying the composed recipe
 - `--dry-run`
 - `--no-install`
