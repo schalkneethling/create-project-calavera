@@ -1,9 +1,9 @@
 #!/usr/bin/env node
 // @ts-check
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import { parseArgs as parseNodeArgs } from "node:util";
 
 import {
@@ -281,8 +281,9 @@ function assertSupportedPackageManager(packageManager) {
  * @returns {CliOptions}
  */
 export function parseArgs(rawArgs) {
+  const args = rawArgs.filter((arg) => arg.trim() !== "--");
   const { values, positionals } = parseNodeArgs({
-    args: rawArgs,
+    args,
     options: cliParseOptions,
     allowPositionals: true,
   });
@@ -2034,6 +2035,7 @@ function printResult(result, asJSON = false) {
       logger.info(pointer);
     }
 
+    logger.info("Review the files above to confirm what Calavera changed or skipped.");
     logger.info(`Next prompt: ${result.nextPrompt}`);
     return;
   }
@@ -2156,7 +2158,19 @@ async function main() {
   process.exitCode = 1;
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function isDirectEntryPoint() {
+  if (!process.argv[1]) {
+    return false;
+  }
+
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isDirectEntryPoint()) {
   main().catch((error) => {
     if (error instanceof FileWriteError) {
       logger.error(error.message);
