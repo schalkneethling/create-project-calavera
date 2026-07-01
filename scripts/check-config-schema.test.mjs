@@ -673,6 +673,12 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.equal(existingGuidance, "Existing project guidance.\n");
     assert.match(fallbackGuidance, /Calavera Agent Guidance/);
     assert.match(mcpGuidance, /create-project-calavera-mcp/);
+    assert.match(mcpGuidance, /Claude Code/);
+    assert.match(mcpGuidance, /\.mcp\.json/);
+    assert.match(mcpGuidance, /claude mcp add/);
+    assert.match(mcpGuidance, /\.claude\/settings\.json/);
+    assert.match(mcpGuidance, /persistent code-execution change/);
+    assert.match(mcpGuidance, /explicit user approval/);
     assert.match(mcpGuidance, /AskUserTool|approval/);
     assert.match(mcpGuidance, /existing tooling files/);
     assert.match(mcpGuidance, /calavera\.schalkneethling\.com/);

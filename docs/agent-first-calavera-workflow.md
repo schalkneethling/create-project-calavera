@@ -45,6 +45,15 @@ Register the MCP server from the generated `.agents/calavera/mcp.md` notes:
 }
 ```
 
+For Claude Code, prefer a project-scoped `.mcp.json` in the project root when
+the team should share the registration. Do not put MCP server registrations in
+`.claude/settings.json`; Claude Code does not load MCP servers from that file.
+`claude mcp add` can also register the same command if you want Claude Code to
+manage the entry. Because the server command runs
+`npx --package create-project-calavera create-project-calavera-mcp`, Claude Code
+may require explicit approval before creating the persistent registration or
+launching the server for the first time.
+
 Then ask the agent to inspect the project before composing a recipe:
 
 ```text

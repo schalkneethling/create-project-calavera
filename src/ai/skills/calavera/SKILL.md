@@ -38,6 +38,10 @@ If the Calavera MCP tools are not available, help the user register this server 
 
 If this project was bootstrapped with `create-project-calavera --init`, also check `.agents/calavera/mcp.md` for local setup notes.
 
+For Claude Code, prefer a project-scoped `.mcp.json` in the project root when the team should share the Calavera server registration. Do not put the server under `.claude/settings.json`; Claude Code does not load MCP servers from that file. You can also use `claude mcp add` to register the same `npx --package create-project-calavera create-project-calavera-mcp` command.
+
+Registering the Calavera MCP server is a persistent code-execution change that runs an external `npx` package, so ask for explicit user approval before creating `.mcp.json`, running `claude mcp add`, or approving the first server launch.
+
 ## Fallbacks
 
 If the MCP server cannot be registered, use the hosted Calavera Web UI to compose and download a recipe:

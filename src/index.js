@@ -756,6 +756,31 @@ Register the Calavera MCP server from the project root:
 If your agent exposes an MCP setup UI or config writer, use the snippet above.
 If the agent needs approval before editing its own config, ask first.
 
+## Claude Code
+
+For Claude Code, prefer a project-scoped \`.mcp.json\` in the project root when
+the team should share the Calavera server registration:
+
+\`\`\`json
+{
+  "mcpServers": {
+    "calavera": {
+      "command": "npx",
+      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
+    }
+  }
+}
+\`\`\`
+
+Do not put this server registration in \`.claude/settings.json\`; Claude Code
+does not load MCP servers from that file. You can also register the same command
+with \`claude mcp add\` if you want Claude Code to manage the entry.
+
+Registering this MCP server is a persistent code-execution change because it
+runs \`npx --package create-project-calavera create-project-calavera-mcp\`.
+Ask for explicit user approval before creating \`.mcp.json\`, running
+\`claude mcp add\`, or approving the first server launch.
+
 Use the tools in this order:
 
 1. \`list_profiles\`

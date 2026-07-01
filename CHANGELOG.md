@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.0.4
+
+### Added
+
+- Document Claude Code MCP registration with project-scoped `.mcp.json`,
+  `claude mcp add`, and explicit approval guidance for persistent `npx`
+  execution.
+
 ## 2.0.3
 
 ### Fixed
