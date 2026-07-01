@@ -1,5 +1,14 @@
 # Changelog
 
+## 2.0.1
+
+### Fixed
+
+- Run the CLI entry point correctly when launched through package-manager
+  shims, including `bunx create-project-calavera --init`.
+- Accept forwarded `-- --init` argument separators for agent bootstrap.
+- Make agent bootstrap output clearer about written or skipped files.
+
 ## 2.0.0
 
 This release completes the agent-first Calavera composition milestone tracked in

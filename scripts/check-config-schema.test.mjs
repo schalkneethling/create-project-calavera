@@ -1,8 +1,11 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
+import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
@@ -49,6 +52,8 @@ import {
   validateRecipeResponse,
   webMcpToolNames,
 } from "../src/recipe.js";
+
+const execFileAsync = promisify(execFile);
 
 const schemaUrl = CONFIG_SCHEMA_URL;
 const rootProperties = [
@@ -396,6 +401,34 @@ test("CLI parser accepts scripted rich composer options", () => {
   assert.deepEqual(
     parseArgs(["init", "--ai-artifact", "hook-block-dangerous-commands@team@codex"]).aiArtifacts,
     [{ id: "hook-block-dangerous-commands", target: "team@codex" }],
+  );
+});
+
+test("CLI parser ignores package-manager forwarding separators", () => {
+  assert.equal(parseArgs(["--", "--init"]).command, "agent-init");
+  assert.equal(parseArgs([" -- ", "--init"]).command, "agent-init");
+  assert.equal(parseArgs(["apply", "--", "--dry-run"]).command, "apply");
+  assert.equal(parseArgs(["apply", "--", "--dry-run"]).dryRun, true);
+});
+
+test("CLI entry point runs through package-manager-style symlinks", async () => {
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-cli-symlink-"));
+  const binPath = join(projectDirectory, "create-project-calavera");
+
+  await symlink(fileURLToPath(new URL("../src/index.js", import.meta.url)), binPath);
+
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [binPath, "--", "--init", "--dry-run", "--json"],
+    { cwd: projectDirectory },
+  );
+  const result = JSON.parse(stdout);
+
+  assert.equal(result.command, "agent-init");
+  assert.equal(result.dryRun, true);
+  assert.equal(
+    result.changes.some(({ path }) => path === ".agents/skills/calavera"),
+    true,
   );
 });
 
