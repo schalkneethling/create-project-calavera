@@ -1,5 +1,20 @@
 # Changelog
 
+## 2.0.5
+
+### Fixed
+
+- Use the target project's package manager in generated MCP setup guidance,
+  including version-pinned Bun MCP commands.
+- Keep JSON/MCP apply output from writing dependency-install spinner UI to
+  stdout.
+
+### Changed
+
+- Document how agents should handle ambiguous MCP disconnects after
+  `apply_recipe` and treat Calavera-managed dry-run files as apply-owned
+  outputs.
+
 ## 2.0.4
 
 ### Added

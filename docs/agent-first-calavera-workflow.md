@@ -39,20 +39,40 @@ Register the MCP server from the generated `.agents/calavera/mcp.md` notes:
   "mcpServers": {
     "calavera": {
       "command": "npx",
-      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
     }
   }
 }
 ```
 
+Use the package manager declared by the target project's `package.json` when
+creating the MCP registration. The generated notes choose the matching command,
+such as `npx` for npm-managed projects, `pnpm dlx` for pnpm, `yarn dlx` for
+Yarn, or `bunx` for Bun. Project-scoped MCP servers run from the project root,
+so matching the package manager avoids preflight failures before Calavera can
+start.
+
+For manual MCP setup, choose the matching command and split it into the harness
+configuration fields:
+
+- npm: `npx --package create-project-calavera@<version> create-project-calavera-mcp`
+- pnpm: `pnpm dlx --package create-project-calavera@<version> create-project-calavera-mcp`
+- Yarn: `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`
+- Bun: `bunx --package create-project-calavera@<version> create-project-calavera-mcp`
+
+In JSON-based MCP configs, the first word becomes `command` and the remaining
+words become `args`.
+Keep an explicit package version specifier so package-manager launchers resolve
+the `create-project-calavera-mcp` bin reliably without making the persistent MCP
+registration float to a later package release.
+
 For Claude Code, prefer a project-scoped `.mcp.json` in the project root when
 the team should share the registration. Do not put MCP server registrations in
 `.claude/settings.json`; Claude Code does not load MCP servers from that file.
 `claude mcp add` can also register the same command if you want Claude Code to
-manage the entry. Because the server command runs
-`npx --package create-project-calavera create-project-calavera-mcp`, Claude Code
-may require explicit approval before creating the persistent registration or
-launching the server for the first time.
+manage the entry. Because the server command runs an external package, Claude
+Code may require explicit approval before creating the persistent registration
+or launching the server for the first time.
 
 Then ask the agent to inspect the project before composing a recipe:
 
@@ -63,6 +83,13 @@ Use Calavera for this project. Inspect the current project for existing tooling 
 The approval boundary is the dry run. Agents should call `dry_run_apply`, show
 the proposed file changes, package scripts, dependencies, and AI artifacts, then
 call `apply_recipe` only after explicit approval.
+If the MCP transport closes or reports `-32000` during or immediately after
+`apply_recipe`, agents should treat the apply outcome as unknown instead of
+failed. Inspect `calavera.config.json`, `.calavera/state.json`, generated files,
+and package metadata before retrying the apply.
+Files listed by `dry_run_apply`, including `.calavera/run-if-files.mjs`, are
+Calavera-managed outputs. Agents should not hand-write or edit them;
+`apply_recipe` or `create-project-calavera apply` creates them after approval.
 
 If inspection finds likely conflicts, the agent should pause before applying
 changes and list each conflict as either a hard stop or a migration decision the

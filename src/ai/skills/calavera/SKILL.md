@@ -18,29 +18,34 @@ Use Calavera to compose and apply project tooling through its MCP tools whenever
 6. Validate and explain it with `validate_recipe` and `explain_recipe`.
 7. Present `dry_run_apply` output to the user before changing files.
 8. Call `apply_recipe` only after the user explicitly approves the dry run.
+9. If the MCP transport closes or reports `-32000` during or immediately after `apply_recipe`, treat the outcome as unknown instead of failed. Inspect `calavera.config.json`, `.calavera/state.json`, generated files, and package metadata before retrying the apply.
 
 Do not hand-author `calavera.config.json` when the Calavera MCP server is available. Let Calavera compose, validate, dry-run, and apply the recipe so generated files, package scripts, dependencies, AI artifacts, and managed state stay consistent.
 
+Treat files listed by `dry_run_apply`, including `.calavera/run-if-files.mjs`, as Calavera-managed outputs. Do not hand-write or edit them; let `apply_recipe` or `create-project-calavera apply` create them after approval.
+
 ## MCP Setup
 
-If the Calavera MCP tools are not available, help the user register this server from the project root:
+If the Calavera MCP tools are not available, help the user register this server from the project root. Check the target project's `package.json` first and use the package manager declared by `packageManager` or `devEngines.packageManager`.
 
 ```json
 {
   "mcpServers": {
     "calavera": {
       "command": "npx",
-      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
     }
   }
 }
 ```
 
+For manual MCP setup, use `npx --package create-project-calavera@<version> create-project-calavera-mcp` for npm-managed projects, `pnpm dlx --package create-project-calavera@<version> create-project-calavera-mcp` for pnpm, `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp` for Yarn, and `bunx --package create-project-calavera@<version> create-project-calavera-mcp` for Bun. In JSON-based MCP configs, put the first word in `command` and the remaining words in `args`. Matching the project package manager prevents package-manager preflight failures before Calavera can start, such as npm rejecting a Bun-managed project. Keep an explicit version so package-manager launchers resolve the `create-project-calavera-mcp` bin reliably without making the persistent MCP registration float to a later package release.
+
 If this project was bootstrapped with `create-project-calavera --init`, also check `.agents/calavera/mcp.md` for local setup notes.
 
-For Claude Code, prefer a project-scoped `.mcp.json` in the project root when the team should share the Calavera server registration. Do not put the server under `.claude/settings.json`; Claude Code does not load MCP servers from that file. You can also use `claude mcp add` to register the same `npx --package create-project-calavera create-project-calavera-mcp` command.
+For Claude Code, prefer a project-scoped `.mcp.json` in the project root when the team should share the Calavera server registration. Do not put the server under `.claude/settings.json`; Claude Code does not load MCP servers from that file. You can also use `claude mcp add` to register the same package-manager-specific command.
 
-Registering the Calavera MCP server is a persistent code-execution change that runs an external `npx` package, so ask for explicit user approval before creating `.mcp.json`, running `claude mcp add`, or approving the first server launch.
+Registering the Calavera MCP server is a persistent code-execution change that runs an external package, so ask for explicit user approval before creating `.mcp.json`, running `claude mcp add`, or approving the first server launch.
 
 ## Fallbacks
 
@@ -48,7 +53,7 @@ If the MCP server cannot be registered, use the hosted Calavera Web UI to compos
 
 https://calavera.schalkneethling.com
 
-After a recipe exists, preview local changes with `npm create project-calavera apply --dry-run`. Ask the user to approve the preview before running `npm create project-calavera apply`.
+After a recipe exists, preview local changes with the package-manager-specific apply dry-run command: `npm create project-calavera apply -- --dry-run` for npm, `pnpm dlx create-project-calavera apply --dry-run` for pnpm, `yarn dlx create-project-calavera apply --dry-run` for Yarn, or `bunx create-project-calavera apply --dry-run` for Bun. Ask the user to approve the preview before running the matching apply command.
 
 ## User Prompt
 

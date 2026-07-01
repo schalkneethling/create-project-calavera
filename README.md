@@ -143,31 +143,60 @@ keep the fallback-only behavior unless `--agents-md=append` is passed.
 Calavera also ships a standard MCP server for agent-native recipe composition:
 
 ```bash
-npx --package create-project-calavera create-project-calavera-mcp
+npx --package create-project-calavera@<version> create-project-calavera-mcp
 ```
 
-Most users will register that command with their AI agent harness of choice,
-usually with the harness configured to run the command from the project root.
-For example:
+Most users will register the equivalent command with their AI agent harness of
+choice, usually with the harness configured to run the command from the project
+root. Use the package manager declared by the target project's `package.json`.
+When configuring the MCP server manually, choose the matching command and put
+the first word in the MCP `command` field and the remaining words in `args`:
+
+- npm: `npx --package create-project-calavera@<version> create-project-calavera-mcp`
+- pnpm: `pnpm dlx --package create-project-calavera@<version> create-project-calavera-mcp`
+- Yarn: `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`
+- Bun: `bunx --package create-project-calavera@<version> create-project-calavera-mcp`
+
+For npm-managed projects, pin the package version that is current when you
+register the MCP server:
 
 ```json
 {
   "mcpServers": {
     "calavera": {
       "command": "npx",
-      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
     }
   }
 }
 ```
 
+For Bun-managed projects, pin the package version that is current when you
+register the MCP server:
+
+```json
+{
+  "mcpServers": {
+    "calavera": {
+      "command": "bunx",
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
+    }
+  }
+}
+```
+
+Project-scoped MCP servers run from the project root. Matching the project
+package manager prevents package-manager preflight failures before Calavera can
+start, such as npm 11 rejecting a Bun-managed project through
+`devEngines.packageManager`.
+
 For Claude Code, use a project-scoped `.mcp.json` in the project root when the
 registration should be shared with teammates, or use `claude mcp add` to let
 Claude Code manage the same command. Do not put MCP server registrations in
 `.claude/settings.json`; Claude Code does not load MCP servers from that file.
-Because this registration runs an external `npx` package persistently, expect
-Claude Code to ask for explicit approval before creating the config or launching
-the server for the first time.
+Because this registration runs an external package persistently, expect Claude
+Code to ask for explicit approval before creating the config or launching the
+server for the first time.
 
 Agent guidance should tell the harness to use Calavera when a user wants to
 inspect available project tooling, compose `calavera.config.json`, preview a
@@ -260,6 +289,14 @@ Use the package manager declared by the project instead:
 ```bash
 bunx create-project-calavera apply
 ```
+
+The same rule applies to manual MCP server registration. Use
+`bunx --package create-project-calavera@<version> create-project-calavera-mcp`
+instead of `npx --package create-project-calavera@<version> create-project-calavera-mcp`
+when the agent harness launches Calavera from a Bun-managed project root. The
+explicit version avoids Bun dropping the non-default `create-project-calavera-mcp`
+bin during ad-hoc `--package` resolution and keeps every persistent MCP
+registration from floating to a later package release.
 
 If you intentionally want to launch through npm anyway, npm requires `--force`
 to bypass its own `devEngines` preflight:
