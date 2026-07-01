@@ -4,6 +4,8 @@
 
 ### Fixed
 
+- Start the MCP server when `create-project-calavera-mcp` is launched through a
+  package-manager bin symlink.
 - Remove the standalone Calavera marker from appended `AGENTS.md` guidance
   sections.
 
