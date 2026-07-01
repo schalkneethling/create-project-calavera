@@ -54,6 +54,42 @@ export const packageManagerCatalog = [
   },
 ];
 
+export const projectLocalCommandCatalog = Object.freeze({
+  npm: Object.freeze({
+    label: "npm",
+    agentBootstrap: "npm create project-calavera -- --init",
+    applyDryRun: "npm create project-calavera apply -- --dry-run",
+    applyRecipe: "npm create project-calavera apply",
+  }),
+  pnpm: Object.freeze({
+    label: "pnpm",
+    agentBootstrap: "pnpm dlx create-project-calavera --init",
+    applyDryRun: "pnpm dlx create-project-calavera apply --dry-run",
+    applyRecipe: "pnpm dlx create-project-calavera apply",
+  }),
+  yarn: Object.freeze({
+    label: "Yarn",
+    agentBootstrap: "yarn dlx create-project-calavera --init",
+    applyDryRun: "yarn dlx create-project-calavera apply --dry-run",
+    applyRecipe: "yarn dlx create-project-calavera apply",
+  }),
+  bun: Object.freeze({
+    label: "Bun",
+    agentBootstrap: "bunx create-project-calavera --init",
+    applyDryRun: "bunx create-project-calavera apply --dry-run",
+    applyRecipe: "bunx create-project-calavera apply",
+  }),
+});
+
+export const projectLocalCommandNotes = Object.freeze({
+  projectDirectory:
+    "Run these commands from the project folder where you saved calavera.config.json.",
+  agentBootstrap:
+    "Optional. Bootstrap Calavera guidance when you want an agent to inspect, compose, preview, and apply recipes with approval.",
+  applyDryRun: "Preview the saved recipe before changing files or installing dependencies.",
+  applyRecipe: "Apply the saved recipe after reviewing and approving the dry-run output.",
+});
+
 export const aiArtifactTypes = ["skill", "hook", "agent"];
 
 export const recipeCompositionToolNames = Object.freeze([
@@ -246,6 +282,36 @@ export function profileIdsForRecipe() {
 
 export function packageManagerIdsForRecipe() {
   return [...packageManagerIds];
+}
+
+export function projectLocalCommandsForPackageManager(packageManager = "npm") {
+  assertKnownValue("packageManager", packageManager, packageManagerIds);
+  return projectLocalCommandCatalog[packageManager];
+}
+
+export function projectLocalCommandSteps(packageManager = "npm") {
+  const commands = projectLocalCommandsForPackageManager(packageManager);
+
+  return [
+    {
+      id: "agentBootstrap",
+      label: "Optional agent bootstrap",
+      command: commands.agentBootstrap,
+      description: projectLocalCommandNotes.agentBootstrap,
+    },
+    {
+      id: "applyDryRun",
+      label: "Review recipe changes",
+      command: commands.applyDryRun,
+      description: projectLocalCommandNotes.applyDryRun,
+    },
+    {
+      id: "applyRecipe",
+      label: "Apply approved recipe",
+      command: commands.applyRecipe,
+      description: projectLocalCommandNotes.applyRecipe,
+    },
+  ];
 }
 
 export function listIntegrationOptions(profile) {

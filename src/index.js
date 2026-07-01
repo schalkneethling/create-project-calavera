@@ -39,6 +39,7 @@ import {
   listAiArtifactOptions,
   listIntegrationOptions,
   packageManagerIdsForRecipe,
+  projectLocalCommandCatalog,
   profileIdsForRecipe,
   profileDefaults,
   resolveRecipeIntegrations,
@@ -697,6 +698,7 @@ function createAgentBootstrapGuidance() {
 - Prefer the Calavera MCP server over hand-authoring \`calavera.config.json\`.
 - If the Calavera MCP tools are not available, help the user register the MCP server from \`${AGENT_BOOTSTRAP_MCP_FILE}\` or fall back to the Calavera Web UI.
 - Inspect existing project tooling before composing a recipe and raise likely config conflicts early.
+- If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use \`dry_run_apply\` to show concrete impact when adoption still looks possible.
 - Start with \`list_profiles\`, \`list_integrations\`, and \`list_ai_artifacts\`; use \`describe_integration\` when the user asks for more information or an option needs explanation.
 - Compose recipes with \`compose_recipe\`, validate them with \`validate_recipe\`, and explain the selected integrations with \`explain_recipe\`.
 - Always present \`dry_run_apply\` output to the user before changing files.
@@ -707,7 +709,13 @@ MCP setup notes live in \`${AGENT_BOOTSTRAP_MCP_FILE}\`.
 `;
 }
 
-function createAgentBootstrapMcpInstructions() {
+/**
+ * @param {PackageManager} packageManager
+ * @returns {string}
+ */
+function createAgentBootstrapMcpInstructions(packageManager) {
+  const commands = projectLocalCommandCatalog[packageManager];
+
   return `# Calavera MCP Setup
 
 Register the Calavera MCP server from the project root:
@@ -740,13 +748,13 @@ Use the tools in this order:
 
 \`dry_run_apply\` is the review boundary. Show its result to the user and wait for explicit approval before calling \`apply_recipe\`.
 
-Before composing a recipe, inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes.
+Before composing a recipe, inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
 
 If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
 
 https://calavera.schalkneethling.com
 
-Then run \`npm create project-calavera apply --dry-run\` and ask for approval before running \`npm create project-calavera apply\`.
+Then run \`${commands.applyDryRun}\` and ask for approval before running \`${commands.applyRecipe}\`.
 
 Suggested first prompt:
 
@@ -1392,6 +1400,10 @@ export async function agentBootstrap(options = {}) {
     dryRun: false,
     ...options,
   };
+  const detectedPackageJSON = await readPackageJSONIfPresent();
+  const packageManager = assertSupportedPackageManager(
+    bootstrapOptions.packageManager ?? detectPackageManager(detectedPackageJSON),
+  );
 
   await assertBootstrapDirectoryAvailable(".calavera");
 
@@ -1407,7 +1419,7 @@ export async function agentBootstrap(options = {}) {
   await writeAgentBootstrapGuidance(bootstrapOptions.dryRun, changes);
   await writeBootstrapTextFile(
     AGENT_BOOTSTRAP_MCP_FILE,
-    createAgentBootstrapMcpInstructions(),
+    createAgentBootstrapMcpInstructions(packageManager),
     bootstrapOptions.dryRun,
     changes,
     "Existing Calavera MCP setup notes differ and were left unchanged.",

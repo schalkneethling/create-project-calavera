@@ -37,6 +37,8 @@ import {
   listProfilesResponse,
   normalizeAiArtifactInputs,
   normalizeIntegrationInputs,
+  projectLocalCommandCatalog,
+  projectLocalCommandSteps,
   profileDefaults,
   recipeWorkflow,
   recipeToolDescriptions,
@@ -218,6 +220,31 @@ test("shared composition normalizes explicit tool labels and package managers", 
 test("shared composition resolves duplicate tool labels within the active profile", () => {
   assert.deepEqual(normalizeIntegrationInputs(["Accessibility"], "modern"), ["oxlint-jsx-a11y"]);
   assert.deepEqual(normalizeIntegrationInputs(["Accessibility"], "classic"), ["eslint-jsx-a11y"]);
+});
+
+test("project-local command guidance covers every package manager", () => {
+  assert.deepEqual(Object.keys(projectLocalCommandCatalog), packageManagers);
+  assert.equal(
+    projectLocalCommandCatalog.npm.agentBootstrap,
+    "npm create project-calavera -- --init",
+  );
+  assert.equal(
+    projectLocalCommandCatalog.npm.applyDryRun,
+    "npm create project-calavera apply -- --dry-run",
+  );
+
+  for (const packageManager of packageManagers) {
+    const steps = projectLocalCommandSteps(packageManager);
+
+    assert.deepEqual(
+      steps.map(({ id }) => id),
+      ["agentBootstrap", "applyDryRun", "applyRecipe"],
+    );
+    assert.equal(
+      steps.every(({ command }) => command.includes("project-calavera")),
+      true,
+    );
+  }
 });
 
 test("shared composition copies profile defaults before returning recipes", () => {
@@ -601,6 +628,7 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
   try {
     process.chdir(projectDirectory);
     await writeFile("AGENTS.md", "Existing project guidance.\n");
+    await writeFile("package.json", JSON.stringify({ packageManager: "pnpm@11.3.0" }));
 
     const result = await agentBootstrap({ json: true });
     const existingGuidance = await readFile("AGENTS.md", "utf8");
@@ -615,6 +643,7 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(mcpGuidance, /AskUserTool|approval/);
     assert.match(mcpGuidance, /existing tooling files/);
     assert.match(mcpGuidance, /calavera\.schalkneethling\.com/);
+    assert.match(mcpGuidance, /pnpm dlx create-project-calavera apply --dry-run/);
     assert.match(skill, /name: calavera/);
     assert.match(skill, /MCP Setup/);
     assert.match(skill, /Fallbacks/);
