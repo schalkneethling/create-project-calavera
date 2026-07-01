@@ -69,6 +69,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {boolean} assumeYes
  * @property {boolean} apply
  * @property {PackageManager} [packageManager]
+ * @property {"append" | "fallback"} [agentsMd]
  * @property {string} [profile]
  * @property {string[]} integrations
  * @property {{ id: string, target?: string }[]} aiArtifacts
@@ -151,6 +152,8 @@ const AGENT_BOOTSTRAP_GUIDANCE_FILE = "AGENTS.md";
 const AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE = "AGENTS.calavera.md";
 const AGENT_BOOTSTRAP_MCP_FILE = ".agents/calavera/mcp.md";
 const AGENT_BOOTSTRAP_MARKER = "<!-- calavera-agent-bootstrap -->";
+const AGENT_BOOTSTRAP_SECTION_START = "<!-- calavera-agent-bootstrap:start -->";
+const AGENT_BOOTSTRAP_SECTION_END = "<!-- calavera-agent-bootstrap:end -->";
 const AGENT_BOOTSTRAP_SKILL_RECIPE = {
   ai: [{ type: "skill", src: "skills/calavera" }],
 };
@@ -197,6 +200,7 @@ const cliParseOptions = {
   "dry-run": { type: "boolean" },
   init: { type: "boolean" },
   json: { type: "boolean" },
+  "agents-md": { type: "string" },
   "no-install": { type: "boolean" },
   yes: { type: "boolean" },
   "package-manager": { type: "string" },
@@ -289,6 +293,7 @@ export function parseArgs(rawArgs) {
   });
   const profile = optionalStringValue(values.profile);
   const packageManager = optionalStringValue(values["package-manager"]);
+  const agentsMd = optionalStringValue(values["agents-md"]);
   /** @type {CliOptions} */
   const parsed = {
     command: values.init ? "agent-init" : (positionals[0] ?? "init"),
@@ -316,6 +321,11 @@ export function parseArgs(rawArgs) {
 
   if (packageManager !== undefined) {
     parsed.packageManager = assertSupportedPackageManager(packageManager);
+  }
+
+  if (agentsMd !== undefined) {
+    assertKnownValue("agents-md", agentsMd, ["append", "fallback"]);
+    parsed.agentsMd = /** @type {"append" | "fallback"} */ (agentsMd);
   }
 
   return parsed;
@@ -707,6 +717,13 @@ function createAgentBootstrapGuidance() {
 - Use AskUserTool or the agent client's equivalent when available for profile choices, conflict decisions, and apply approval.
 
 MCP setup notes live in \`${AGENT_BOOTSTRAP_MCP_FILE}\`.
+`;
+}
+
+function createAgentBootstrapGuidanceSection() {
+  return `${AGENT_BOOTSTRAP_SECTION_START}
+${createAgentBootstrapGuidance().trimEnd()}
+${AGENT_BOOTSTRAP_SECTION_END}
 `;
 }
 
@@ -1349,17 +1366,146 @@ async function assertBootstrapDirectoryAvailable(path) {
 }
 
 /**
+ * @param {CliOptions} options
+ * @returns {Promise<"append" | "fallback">}
+ */
+async function resolveAgentBootstrapGuidanceMode(options) {
+  if (options.agentsMd) {
+    return options.agentsMd;
+  }
+
+  if (options.json || options.assumeYes || !process.stdin.isTTY) {
+    return "fallback";
+  }
+
+  const selected = await select({
+    message: `${AGENT_BOOTSTRAP_GUIDANCE_FILE} already exists. How should Calavera add guidance?`,
+    options: [
+      {
+        value: "append",
+        label: "Append guidance",
+        hint: "Add marked Calavera guidance directly to AGENTS.md",
+      },
+      {
+        value: "fallback",
+        label: "Fallback only",
+        hint: `Leave AGENTS.md unchanged and write ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE}`,
+      },
+    ],
+  });
+
+  exitIfCancel(selected);
+
+  return selected === "append" ? "append" : "fallback";
+}
+
+/**
+ * @param {string} contents
+ * @param {string} section
+ * @returns {{ contents: string, changed: boolean }}
+ */
+function upsertAgentBootstrapGuidanceSection(contents, section) {
+  const startIndex = contents.indexOf(AGENT_BOOTSTRAP_SECTION_START);
+  const endIndex = contents.indexOf(AGENT_BOOTSTRAP_SECTION_END);
+
+  if (startIndex === -1 || endIndex === -1 || endIndex < startIndex) {
+    return {
+      contents: `${contents.trimEnd()}\n\n${section}`,
+      changed: true,
+    };
+  }
+
+  const replaceEndIndex = endIndex + AGENT_BOOTSTRAP_SECTION_END.length;
+  const nextContents = `${contents.slice(0, startIndex)}${section.trimEnd()}${contents.slice(
+    replaceEndIndex,
+  )}`;
+
+  return {
+    contents: nextContents,
+    changed: nextContents !== contents,
+  };
+}
+
+/**
+ * @param {string} currentGuidance
  * @param {boolean} dryRun
  * @param {Change[]} changes
+ * @param {CliOptions} options
  */
-async function writeAgentBootstrapGuidance(dryRun, changes) {
+async function handleExistingAgentBootstrapGuidance(currentGuidance, dryRun, changes, options) {
+  const guidance = createAgentBootstrapGuidance();
+  const guidanceSection = createAgentBootstrapGuidanceSection();
+
+  if (currentGuidance.includes(AGENT_BOOTSTRAP_SECTION_START)) {
+    const nextGuidance = upsertAgentBootstrapGuidanceSection(currentGuidance, guidanceSection);
+
+    changes.push({
+      type: nextGuidance.changed ? "update" : "skip",
+      path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
+      reason: nextGuidance.changed
+        ? "Calavera guidance section will be updated."
+        : "Calavera guidance section already up to date.",
+    });
+
+    if (!dryRun && nextGuidance.changed) {
+      await writeFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, nextGuidance.contents);
+    }
+    return;
+  }
+
+  if (currentGuidance.includes(AGENT_BOOTSTRAP_MARKER)) {
+    changes.push({
+      type: "skip",
+      path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
+      reason: "Calavera guidance already present.",
+    });
+    return;
+  }
+
+  const mode = await resolveAgentBootstrapGuidanceMode(options);
+
+  if (mode === "append") {
+    const nextGuidance = upsertAgentBootstrapGuidanceSection(currentGuidance, guidanceSection);
+
+    changes.push({
+      type: "update",
+      path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
+      reason: "Append marked Calavera guidance section.",
+    });
+
+    if (!dryRun) {
+      await writeFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, nextGuidance.contents);
+    }
+    return;
+  }
+
+  changes.push({
+    type: "skip",
+    path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
+    reason: `Existing AGENTS.md left unchanged; Calavera guidance ${dryRun ? "would be" : "was"} written separately.`,
+  });
+
+  await writeBootstrapTextFile(
+    AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+    guidance,
+    dryRun,
+    changes,
+    "Existing fallback Calavera guidance differs and was left unchanged.",
+  );
+}
+
+/**
+ * @param {CliOptions} options
+ * @param {Change[]} changes
+ */
+async function writeAgentBootstrapGuidance(options, changes) {
   const guidance = createAgentBootstrapGuidance();
 
   if (!(await fileExists(AGENT_BOOTSTRAP_GUIDANCE_FILE))) {
     await writeBootstrapTextFile(
       AGENT_BOOTSTRAP_GUIDANCE_FILE,
       guidance,
-      dryRun,
+      options.dryRun,
       changes,
       "Existing agent guidance differs and was left unchanged.",
     );
@@ -1377,19 +1523,7 @@ async function writeAgentBootstrapGuidance(dryRun, changes) {
     return;
   }
 
-  changes.push({
-    type: "skip",
-    path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
-    reason: "Existing AGENTS.md left unchanged; Calavera guidance was written separately.",
-  });
-
-  await writeBootstrapTextFile(
-    AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
-    guidance,
-    dryRun,
-    changes,
-    "Existing fallback Calavera guidance differs and was left unchanged.",
-  );
+  await handleExistingAgentBootstrapGuidance(currentGuidance, options.dryRun, changes, options);
 }
 
 /**
@@ -1397,8 +1531,17 @@ async function writeAgentBootstrapGuidance(dryRun, changes) {
  * @returns {Promise<AgentInitResult>}
  */
 export async function agentBootstrap(options = {}) {
+  /** @type {CliOptions} */
   const bootstrapOptions = {
+    command: "agent-init",
+    config: CONFIG_FILE,
     dryRun: false,
+    json: false,
+    noInstall: false,
+    assumeYes: false,
+    apply: false,
+    integrations: [],
+    aiArtifacts: [],
     ...options,
   };
   const detectedPackageJSON = await readPackageJSONIfPresent();
@@ -1417,7 +1560,7 @@ export async function agentBootstrap(options = {}) {
   /** @type {Change[]} */
   const changes = [...aiResult.changes];
 
-  await writeAgentBootstrapGuidance(bootstrapOptions.dryRun, changes);
+  await writeAgentBootstrapGuidance(bootstrapOptions, changes);
   await writeBootstrapTextFile(
     AGENT_BOOTSTRAP_MCP_FILE,
     createAgentBootstrapMcpInstructions(packageManager),
@@ -1425,6 +1568,13 @@ export async function agentBootstrap(options = {}) {
     changes,
     "Existing Calavera MCP setup notes differ and were left unchanged.",
   );
+
+  const wroteFallbackGuidance = changes.some(
+    (change) => change.path === AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+  );
+  const agentGuidancePointer = wroteFallbackGuidance
+    ? `Agent guidance: ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} for manual merge with ${AGENT_BOOTSTRAP_GUIDANCE_FILE}`
+    : `Agent guidance: ${AGENT_BOOTSTRAP_GUIDANCE_FILE}`;
 
   if (!bootstrapOptions.dryRun) {
     await mkdir(".calavera", { recursive: true });
@@ -1441,7 +1591,7 @@ export async function agentBootstrap(options = {}) {
     changes,
     pointers: [
       ...aiResult.pointers,
-      `Agent guidance: ${AGENT_BOOTSTRAP_GUIDANCE_FILE} or ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE}`,
+      agentGuidancePointer,
       `MCP setup notes: ${AGENT_BOOTSTRAP_MCP_FILE}`,
     ],
     nextPrompt: AGENT_BOOTSTRAP_NEXT_PROMPT,
@@ -2027,6 +2177,14 @@ function printResult(result, asJSON = false) {
           result.dryRun
             ? `Would skip ${change.path}: ${change.reason}`
             : `Skipped ${change.path}: ${change.reason}`,
+        );
+      }
+
+      if (change.type === "update") {
+        logger.info(
+          result.dryRun
+            ? `Would update ${change.path}: ${change.reason}`
+            : `Updated ${change.path}: ${change.reason}`,
         );
       }
     }

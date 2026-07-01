@@ -1,6 +1,6 @@
 {
   "name": "create-project-calavera",
-  "version": "2.0.1",
+  "version": "2.0.2",
   "description": "Compose and apply modern tooling recipes for JavaScript and TypeScript projects.",
   "keywords": [
     "cli",
@@ -53,7 +53,7 @@
     "web:dev": "vite --host 127.0.0.1",
     "web:build": "vite build",
     "web:preview": "vite preview --host 127.0.0.1",
-    "quality": "pnpm lint && pnpm format:all:check && pnpm typecheck && pnpm schema:check",
+    "quality": "pnpm lint && pnpm format:all:check && pnpm typecheck && pnpm test",
     "lint": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxlint . && node .calavera/run-if-files.mjs \"CSS\" \"css,scss\" -- stylelint \"**/*.{css,scss}\"",
     "lint:fix": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxlint --fix . && node .calavera/run-if-files.mjs \"CSS\" \"css,scss\" -- stylelint \"**/*.{css,scss}\" --fix",
     "format": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxfmt --write .",
@@ -61,6 +61,7 @@
     "format:all:check": "oxfmt --check .",
     "format:check": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- oxfmt --check .",
     "schema:check": "node --test scripts/check-config-schema.test.mjs",
+    "test": "node --test scripts/*.test.mjs",
     "typecheck": "node .calavera/run-if-files.mjs \"JavaScript/TypeScript\" \"js,jsx,ts,tsx,mjs,cjs\" -- tsc --noEmit",
     "publish:check": "publint",
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
