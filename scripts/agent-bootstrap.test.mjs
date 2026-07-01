@@ -61,6 +61,7 @@ test("agent bootstrap can append guidance to existing AGENTS.md", async () => {
     );
     assert.match(agentsMd, /calavera-agent-bootstrap:start/);
     assert.match(agentsMd, /# Calavera Agent Guidance/);
+    assert.doesNotMatch(agentsMd, /<!-- calavera-agent-bootstrap -->/);
     assert.doesNotMatch(agentsMd, /AGENTS\.calavera\.md/);
     assert.ok(result.pointers.includes("Agent guidance: AGENTS.md"));
     await assert.rejects(readFile("AGENTS.calavera.md", "utf8"), { code: "ENOENT" });
