@@ -189,7 +189,23 @@ Vite, another scaffold tool, or a manually maintained repository:
 2. Run `npm create project-calavera -- --init`.
 3. Register the MCP server using the generated `.agents/calavera/mcp.md` notes.
 4. Start the agent from the project root.
-5. Ask it: `Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.`
+5. Agent prompt: `Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.`
+
+Find the equivalent commands for your package manager in the
+[agent-first command table](#agent-first-command-table).
+
+### Agent-First Command Table
+
+| Package manager | Bootstrap agent guidance                  | Preview apply                                      | Apply recipe                             |
+| --------------- | ----------------------------------------- | -------------------------------------------------- | ---------------------------------------- |
+| npm             | `npm create project-calavera -- --init`   | `npm create project-calavera apply -- --dry-run`   | `npm create project-calavera apply`      |
+| pnpm            | `pnpm dlx create-project-calavera --init` | `pnpm dlx create-project-calavera apply --dry-run` | `pnpm dlx create-project-calavera apply` |
+| Yarn            | `yarn dlx create-project-calavera --init` | `yarn dlx create-project-calavera apply --dry-run` | `yarn dlx create-project-calavera apply` |
+| Bun             | `bunx create-project-calavera --init`     | `bunx create-project-calavera apply --dry-run`     | `bunx create-project-calavera apply`     |
+
+`npm create` needs the `--` separator before Calavera flags such as `--init`
+and `--dry-run`. Yarn requires Yarn 2+ for `dlx`; Yarn 1.x users can use
+`npx --package create-project-calavera create-project-calavera --init`.
 
 Agents should treat `dry_run_apply` as the approval boundary. They should show
 the package manager, integrations, dependency packages, file changes, and AI
