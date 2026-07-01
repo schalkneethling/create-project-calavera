@@ -90,8 +90,8 @@ other agent tools.
 
 ## Deprecation Timing
 
-Do not deprecate `claude-toolkit` until a Calavera release exists that can
-install the bundled AI artifacts. After that release:
+Do not deprecate `claude-toolkit` until Calavera 2.0.0 is published with
+bundled AI artifact installation support. After that release:
 
 1. Update the Toolkit README to point here.
 2. Publish any final Toolkit metadata-only release if needed.

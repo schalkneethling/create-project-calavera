@@ -389,12 +389,17 @@ Before the first trusted publish:
 To validate the package locally:
 
 ```bash
+pnpm check
+pnpm web:build
 pnpm publish:check
 pnpm pack --dry-run
 pnpm workflow:check
 ```
 
-Create a release by tagging the version and publishing a GitHub release for that
-tag. The publish workflow checks the project, builds the web composer, packs the
-package, audits the workflow with [zizmor](https://zizmor.sh), then publishes the packed tarball with
-npm provenance.
+For the 2.0.0 release, create tag `v2.0.0` from `main`, draft a GitHub release
+for that tag, and use [`CHANGELOG.md`](CHANGELOG.md) as the starting release
+notes. Publishing the GitHub release triggers the trusted-publishing workflow.
+
+The publish workflow checks the project, builds the web composer, packs the
+package, audits the workflow with [zizmor](https://zizmor.sh), then publishes
+the packed tarball with npm provenance.
