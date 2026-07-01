@@ -122,13 +122,20 @@
           <td>3</td>
           <td>4</td>
           <td>5</td>
-          <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/226">#226 Improve MCP startup observability and failure logging</a></td>
+          <td>
+            <a href="https://github.com/schalkneethling/create-project-calavera/issues/226"
+              >#226 Improve MCP startup observability and failure logging</a
+            >
+          </td>
         </tr>
       </tbody>
     </table>
 
     <details open>
-      <summary>schalkneethling/create-project-calavera - 12 open issues - next: #226 Improve MCP startup observability and failure logging</summary>
+      <summary>
+        schalkneethling/create-project-calavera - 12 open issues - next: #226 Improve MCP startup
+        observability and failure logging
+      </summary>
 
       <h2>Project Goal Summary</h2>
       <p>
@@ -142,17 +149,21 @@
       <p>
         Priority labels <code>p0</code>, <code>p1</code>, <code>p2</code>, and <code>p3</code>
         already existed. This pass applied exactly one priority label to every open issue. Issue
-        <a href="https://github.com/schalkneethling/create-project-calavera/issues/166">#166</a> was moved from <code>p3</code> to <code>p2</code>.
-        Issue <a href="https://github.com/schalkneethling/create-project-calavera/issues/177">#177</a> was also marked <code>good first issue</code>
+        <a href="https://github.com/schalkneethling/create-project-calavera/issues/166">#166</a> was
+        moved from <code>p3</code> to <code>p2</code>. Issue
+        <a href="https://github.com/schalkneethling/create-project-calavera/issues/177">#177</a> was
+        also marked <code>good first issue</code>
         and rewritten with contributor-facing guidance.
       </p>
 
       <h2>Next-Issue Nomination</h2>
       <p>
-        <a href="https://github.com/schalkneethling/create-project-calavera/issues/226">#226 Improve MCP startup observability and failure logging</a>
-        is the nominated next issue. It is a concrete <code>p1</code> bug that directly affects
-        MCP usability, troubleshooting, and agent workflows, and it has enough acceptance criteria
-        for a focused implementation.
+        <a href="https://github.com/schalkneethling/create-project-calavera/issues/226"
+          >#226 Improve MCP startup observability and failure logging</a
+        >
+        is the nominated next issue. It is a concrete <code>p1</code> bug that directly affects MCP
+        usability, troubleshooting, and agent workflows, and it has enough acceptance criteria for a
+        focused implementation.
       </p>
 
       <h2>Issues</h2>
@@ -170,99 +181,216 @@
         <tbody>
           <tr>
             <td><span class="label p1">p1</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/226">#226 Improve MCP startup observability and failure logging</a></td>
-            <td>Supports the GOAL.md emphasis on safe automation and useful MCP behavior by making startup failures actionable instead of silent.</td>
-            <td>High: failed MCP startup can block agents and users from using Calavera through automation workflows.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/226"
+                >#226 Improve MCP startup observability and failure logging</a
+              >
+            </td>
+            <td>
+              Supports the GOAL.md emphasis on safe automation and useful MCP behavior by making
+              startup failures actionable instead of silent.
+            </td>
+            <td>
+              High: failed MCP startup can block agents and users from using Calavera through
+              automation workflows.
+            </td>
             <td><span class="label">bug</span><span class="label p1">p1</span></td>
-            <td>Concrete bug with a contributor comment already present; good candidate for immediate maintainer guidance.</td>
+            <td>
+              Concrete bug with a contributor comment already present; good candidate for immediate
+              maintainer guidance.
+            </td>
           </tr>
           <tr>
             <td><span class="label p1">p1</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/225">#225 Use project package manager in MCP setup guidance</a></td>
-            <td>Directly advances first-class package-manager support and prevents generated MCP guidance from breaking in projects managed by npm, pnpm, yarn, or bun.</td>
-            <td>High: incorrect launch guidance can make the MCP server look broken before Calavera starts.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/225"
+                >#225 Use project package manager in MCP setup guidance</a
+              >
+            </td>
+            <td>
+              Directly advances first-class package-manager support and prevents generated MCP
+              guidance from breaking in projects managed by npm, pnpm, yarn, or bun.
+            </td>
+            <td>
+              High: incorrect launch guidance can make the MCP server look broken before Calavera
+              starts.
+            </td>
             <td><span class="label">enhancement</span><span class="label p1">p1</span></td>
             <td>Strongly aligned with current package-manager reliability work.</td>
           </tr>
           <tr>
             <td><span class="label p1">p1</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/227">#227 Add project inspection and conflict hints to recipe composition</a></td>
-            <td>Maps closely to the project goal of safe inspection before applying repeatable tooling recipes.</td>
-            <td>High: reduces accidental conflicts with existing project tooling and helps agents make better recipe choices.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/227"
+                >#227 Add project inspection and conflict hints to recipe composition</a
+              >
+            </td>
+            <td>
+              Maps closely to the project goal of safe inspection before applying repeatable tooling
+              recipes.
+            </td>
+            <td>
+              High: reduces accidental conflicts with existing project tooling and helps agents make
+              better recipe choices.
+            </td>
             <td><span class="label">enhancement</span><span class="label p1">p1</span></td>
             <td>Larger scope than #226 and #225, but high strategic value.</td>
           </tr>
           <tr>
             <td><span class="label p2">p2</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/229">#229 Explain omitted script flags in dry-run output</a></td>
-            <td>Improves dry-run clarity, which GOAL.md calls out as important for humans, CI, and agents.</td>
-            <td>Medium: prevents confusing silent omissions without changing generated successful scripts.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/229"
+                >#229 Explain omitted script flags in dry-run output</a
+              >
+            </td>
+            <td>
+              Improves dry-run clarity, which GOAL.md calls out as important for humans, CI, and
+              agents.
+            </td>
+            <td>
+              Medium: prevents confusing silent omissions without changing generated successful
+              scripts.
+            </td>
             <td><span class="label">enhancement</span><span class="label p2">p2</span></td>
             <td>Useful, focused enhancement; not an urgent blocker.</td>
           </tr>
           <tr>
             <td><span class="label p2">p2</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/228">#228 Add useful one-line summaries to list_integrations</a></td>
-            <td>Supports catalog-first integration discovery and reduces unnecessary describe calls for agents and users.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/228"
+                >#228 Add useful one-line summaries to list_integrations</a
+              >
+            </td>
+            <td>
+              Supports catalog-first integration discovery and reduces unnecessary describe calls
+              for agents and users.
+            </td>
             <td>Medium: improves selection ergonomics and automation efficiency.</td>
             <td><span class="label">enhancement</span><span class="label p2">p2</span></td>
             <td>Requires careful catalog copy but limited behavioral risk.</td>
           </tr>
           <tr>
             <td><span class="label p2">p2</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/190">#190 Clarify file ownership in apply dry-run output</a></td>
-            <td>Strengthens safe inspection by making managed files, scaffolds, and merges clearer before writes happen.</td>
-            <td>Medium: improves user confidence in dry runs and helps avoid misunderstandings about state ownership.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/190"
+                >#190 Clarify file ownership in apply dry-run output</a
+              >
+            </td>
+            <td>
+              Strengthens safe inspection by making managed files, scaffolds, and merges clearer
+              before writes happen.
+            </td>
+            <td>
+              Medium: improves user confidence in dry runs and helps avoid misunderstandings about
+              state ownership.
+            </td>
             <td><span class="label">enhancement</span><span class="label p2">p2</span></td>
             <td>Could become higher priority if contributors frequently misread dry-run output.</td>
           </tr>
           <tr>
             <td><span class="label p2">p2</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/166">#166 Consider Ajv for Calavera recipe schema validation</a></td>
-            <td>The published draft 2020-12 schema is part of Calavera's recipe contract; validating against it improves automation reliability.</td>
-            <td>Medium: useful contract confidence, especially for arbitrary recipes and CI checks.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/166"
+                >#166 Consider Ajv for Calavera recipe schema validation</a
+              >
+            </td>
+            <td>
+              The published draft 2020-12 schema is part of Calavera's recipe contract; validating
+              against it improves automation reliability.
+            </td>
+            <td>
+              Medium: useful contract confidence, especially for arbitrary recipes and CI checks.
+            </td>
             <td><span class="label">enhancement</span><span class="label p2">p2</span></td>
-            <td>Moved from p3 to p2 because schema validation is more than speculative polish for this project.</td>
+            <td>
+              Moved from p3 to p2 because schema validation is more than speculative polish for this
+              project.
+            </td>
           </tr>
           <tr>
             <td><span class="label p3">p3</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/230">#230 Avoid redundant quality script aliases when only one check exists</a></td>
-            <td>Keeps generated package scripts tidy, but the current behavior is harmless and does not block repeatable recipes.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/230"
+                >#230 Avoid redundant quality script aliases when only one check exists</a
+              >
+            </td>
+            <td>
+              Keeps generated package scripts tidy, but the current behavior is harmless and does
+              not block repeatable recipes.
+            </td>
             <td>Low: reduces script surface area without changing core capability.</td>
             <td><span class="label">enhancement</span><span class="label p3">p3</span></td>
             <td>Good cleanup after higher-priority dry-run and MCP reliability items.</td>
           </tr>
           <tr>
             <td><span class="label p3">p3</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/177">#177 Introduce spacing tokens for composer CSS</a></td>
-            <td>Improves composer maintainability, but does not materially affect recipe correctness or CLI automation.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/177"
+                >#177 Introduce spacing tokens for composer CSS</a
+              >
+            </td>
+            <td>
+              Improves composer maintainability, but does not materially affect recipe correctness
+              or CLI automation.
+            </td>
             <td>Low: CSS architecture polish with a contained implementation surface.</td>
-            <td><span class="label">enhancement</span><span class="label">good first issue</span><span class="label p3">p3</span></td>
-            <td>Updated during this pass with contributor-friendly context and marked good first issue.</td>
+            <td>
+              <span class="label">enhancement</span><span class="label">good first issue</span
+              ><span class="label p3">p3</span>
+            </td>
+            <td>
+              Updated during this pass with contributor-friendly context and marked good first
+              issue.
+            </td>
           </tr>
           <tr>
             <td><span class="label p3">p3</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/176">#176 Introduce color tokens for composer component states</a></td>
-            <td>Improves web composer styling consistency, but is secondary to CLI/catalog and automation behavior.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/176"
+                >#176 Introduce color tokens for composer component states</a
+              >
+            </td>
+            <td>
+              Improves web composer styling consistency, but is secondary to CLI/catalog and
+              automation behavior.
+            </td>
             <td>Low: maintainability polish for visual state styling.</td>
             <td><span class="label">enhancement</span><span class="label p3">p3</span></td>
             <td>Pairs naturally with #177 and #175 but can be done independently.</td>
           </tr>
           <tr>
             <td><span class="label p3">p3</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/175">#175 Introduce a typographic scale for composer CSS</a></td>
-            <td>Improves composer CSS structure while leaving the core recipe workflow unchanged.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/175"
+                >#175 Introduce a typographic scale for composer CSS</a
+              >
+            </td>
+            <td>
+              Improves composer CSS structure while leaving the core recipe workflow unchanged.
+            </td>
             <td>Low: visual system maintainability improvement.</td>
             <td><span class="label">enhancement</span><span class="label p3">p3</span></td>
-            <td>Keep separate from spacing and color token work to preserve small contribution scope.</td>
+            <td>
+              Keep separate from spacing and color token work to preserve small contribution scope.
+            </td>
           </tr>
           <tr>
             <td><span class="label p3">p3</span></td>
-            <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/160">#160 Make bundled AI artifacts vendor-neutral over time</a></td>
-            <td>Supports portability over time, but current vendor-specific language was intentionally preserved for migration safety.</td>
+            <td>
+              <a href="https://github.com/schalkneethling/create-project-calavera/issues/160"
+                >#160 Make bundled AI artifacts vendor-neutral over time</a
+              >
+            </td>
+            <td>
+              Supports portability over time, but current vendor-specific language was intentionally
+              preserved for migration safety.
+            </td>
             <td>Low: gradual documentation and artifact wording cleanup.</td>
             <td><span class="label">documentation</span><span class="label p3">p3</span></td>
-            <td>Evidence is intentionally exploratory; keep low until concrete rename/rewrite candidates are identified.</td>
+            <td>
+              Evidence is intentionally exploratory; keep low until concrete rename/rewrite
+              candidates are identified.
+            </td>
           </tr>
         </tbody>
       </table>

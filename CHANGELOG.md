@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.0.6
+
+### Fixed
+
+- Format the generated issue triage report so release checks pass.
+
 ## 2.0.5
 
 ### Fixed
