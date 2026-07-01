@@ -709,7 +709,13 @@ MCP setup notes live in \`${AGENT_BOOTSTRAP_MCP_FILE}\`.
 `;
 }
 
-function createAgentBootstrapMcpInstructions() {
+/**
+ * @param {PackageManager} packageManager
+ * @returns {string}
+ */
+function createAgentBootstrapMcpInstructions(packageManager) {
+  const commands = projectLocalCommandCatalog[packageManager];
+
   return `# Calavera MCP Setup
 
 Register the Calavera MCP server from the project root:
@@ -748,7 +754,7 @@ If the MCP server cannot be registered, use the hosted Web UI to compose and dow
 
 https://calavera.schalkneethling.com
 
-Then run \`${projectLocalCommandCatalog.npm.applyDryRun}\` and ask for approval before running \`${projectLocalCommandCatalog.npm.applyRecipe}\`.
+Then run \`${commands.applyDryRun}\` and ask for approval before running \`${commands.applyRecipe}\`.
 
 Suggested first prompt:
 
@@ -1394,6 +1400,10 @@ export async function agentBootstrap(options = {}) {
     dryRun: false,
     ...options,
   };
+  const detectedPackageJSON = await readPackageJSONIfPresent();
+  const packageManager = assertSupportedPackageManager(
+    bootstrapOptions.packageManager ?? detectPackageManager(detectedPackageJSON),
+  );
 
   await assertBootstrapDirectoryAvailable(".calavera");
 
@@ -1409,7 +1419,7 @@ export async function agentBootstrap(options = {}) {
   await writeAgentBootstrapGuidance(bootstrapOptions.dryRun, changes);
   await writeBootstrapTextFile(
     AGENT_BOOTSTRAP_MCP_FILE,
-    createAgentBootstrapMcpInstructions(),
+    createAgentBootstrapMcpInstructions(packageManager),
     bootstrapOptions.dryRun,
     changes,
     "Existing Calavera MCP setup notes differ and were left unchanged.",

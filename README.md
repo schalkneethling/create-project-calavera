@@ -127,6 +127,9 @@ npm create project-calavera -- --init
 managers, use `pnpm dlx create-project-calavera --init`,
 `yarn dlx create-project-calavera --init`, or
 `bunx create-project-calavera --init`.
+The Yarn command requires Yarn 2+ because Yarn 1.x does not support `dlx`; Yarn
+1.x users can use `npx --package create-project-calavera create-project-calavera --init`
+or install `create-project-calavera` globally.
 
 The `--init` bootstrap installs the base Calavera skill, adds concise project
 guidance, writes MCP setup notes, and prints a recommended first prompt for the
@@ -197,7 +200,7 @@ is a hard stop or a migration decision the user can still approve. A dry run is
 the best next step when adoption is still possible and the user wants to see the
 impact.
 
-Use the interactive CLI instead when you want to compose the recipe yourself:
+Compose the recipe yourself with the interactive CLI:
 
 ```bash
 npm create project-calavera init
