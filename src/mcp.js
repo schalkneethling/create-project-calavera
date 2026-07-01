@@ -2,8 +2,9 @@
 // @ts-check
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { realpathSync } from "node:fs";
 import { isAbsolute, relative, resolve, sep } from "node:path";
-import { pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import * as z from "zod";
 
@@ -344,7 +345,17 @@ export async function startMcpServer(transport = new StdioServerTransport()) {
   await server.connect(transport);
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+function isDirectEntryPoint() {
+  if (!process.argv[1]) {
+    return false;
+  }
+
+  // Package-manager bins are symlinks. Compare realpaths so npx/npm exec/global
+  // installs still start the MCP server instead of silently exiting.
+  return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+}
+
+if (isDirectEntryPoint()) {
   startMcpServer().catch((error) => {
     console.info(error);
     process.exitCode = 1;
