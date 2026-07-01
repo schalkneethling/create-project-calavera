@@ -701,9 +701,8 @@ trim_trailing_whitespace = true
 `;
 }
 
-function createAgentBootstrapGuidance() {
-  return `${AGENT_BOOTSTRAP_MARKER}
-# Calavera Agent Guidance
+function createAgentBootstrapGuidanceBody() {
+  return `# Calavera Agent Guidance
 
 - Use Calavera when the user wants to inspect, compose, preview, apply, or update project tooling.
 - Prefer the Calavera MCP server over hand-authoring \`calavera.config.json\`.
@@ -720,9 +719,14 @@ MCP setup notes live in \`${AGENT_BOOTSTRAP_MCP_FILE}\`.
 `;
 }
 
+function createAgentBootstrapGuidance() {
+  return `${AGENT_BOOTSTRAP_MARKER}
+${createAgentBootstrapGuidanceBody()}`;
+}
+
 function createAgentBootstrapGuidanceSection() {
   return `${AGENT_BOOTSTRAP_SECTION_START}
-${createAgentBootstrapGuidance().trimEnd()}
+${createAgentBootstrapGuidanceBody().trimEnd()}
 ${AGENT_BOOTSTRAP_SECTION_END}
 `;
 }

@@ -1,5 +1,12 @@
 # Changelog
 
+## 2.0.3
+
+### Fixed
+
+- Remove the standalone Calavera marker from appended `AGENTS.md` guidance
+  sections.
+
 ## 2.0.2
 
 ### Added
