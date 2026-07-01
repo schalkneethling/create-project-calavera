@@ -143,7 +143,7 @@ keep the fallback-only behavior unless `--agents-md=append` is passed.
 Calavera also ships a standard MCP server for agent-native recipe composition:
 
 ```bash
-npx --package create-project-calavera create-project-calavera-mcp
+npx --package create-project-calavera@<version> create-project-calavera-mcp
 ```
 
 Most users will register the equivalent command with their AI agent harness of
@@ -152,19 +152,20 @@ root. Use the package manager declared by the target project's `package.json`.
 When configuring the MCP server manually, choose the matching command and put
 the first word in the MCP `command` field and the remaining words in `args`:
 
-- npm: `npx --package create-project-calavera create-project-calavera-mcp`
-- pnpm: `pnpm dlx --package create-project-calavera create-project-calavera-mcp`
-- Yarn: `yarn dlx --package create-project-calavera create-project-calavera-mcp`
+- npm: `npx --package create-project-calavera@<version> create-project-calavera-mcp`
+- pnpm: `pnpm dlx --package create-project-calavera@<version> create-project-calavera-mcp`
+- Yarn: `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`
 - Bun: `bunx --package create-project-calavera@<version> create-project-calavera-mcp`
 
-For npm-managed projects:
+For npm-managed projects, pin the package version that is current when you
+register the MCP server:
 
 ```json
 {
   "mcpServers": {
     "calavera": {
       "command": "npx",
-      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
     }
   }
 }
@@ -291,11 +292,11 @@ bunx create-project-calavera apply
 
 The same rule applies to manual MCP server registration. Use
 `bunx --package create-project-calavera@<version> create-project-calavera-mcp`
-instead of `npx --package create-project-calavera create-project-calavera-mcp`
+instead of `npx --package create-project-calavera@<version> create-project-calavera-mcp`
 when the agent harness launches Calavera from a Bun-managed project root. The
 explicit version avoids Bun dropping the non-default `create-project-calavera-mcp`
-bin during ad-hoc `--package` resolution without making the persistent MCP
-registration float to a later package release.
+bin during ad-hoc `--package` resolution and keeps every persistent MCP
+registration from floating to a later package release.
 
 If you intentionally want to launch through npm anyway, npm requires `--force`
 to bypass its own `devEngines` preflight:

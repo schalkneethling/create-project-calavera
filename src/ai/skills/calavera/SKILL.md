@@ -33,13 +33,13 @@ If the Calavera MCP tools are not available, help the user register this server 
   "mcpServers": {
     "calavera": {
       "command": "npx",
-      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
     }
   }
 }
 ```
 
-For manual MCP setup, use `npx --package create-project-calavera create-project-calavera-mcp` for npm-managed projects, `pnpm dlx --package create-project-calavera create-project-calavera-mcp` for pnpm, `yarn dlx --package create-project-calavera create-project-calavera-mcp` for Yarn, and `bunx --package create-project-calavera@<version> create-project-calavera-mcp` for Bun. In JSON-based MCP configs, put the first word in `command` and the remaining words in `args`. Matching the project package manager prevents package-manager preflight failures before Calavera can start, such as npm rejecting a Bun-managed project. Keep an explicit version for Bun so `bunx --package` resolves the `create-project-calavera-mcp` bin reliably without making the persistent MCP registration float to a later package release.
+For manual MCP setup, use `npx --package create-project-calavera@<version> create-project-calavera-mcp` for npm-managed projects, `pnpm dlx --package create-project-calavera@<version> create-project-calavera-mcp` for pnpm, `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp` for Yarn, and `bunx --package create-project-calavera@<version> create-project-calavera-mcp` for Bun. In JSON-based MCP configs, put the first word in `command` and the remaining words in `args`. Matching the project package manager prevents package-manager preflight failures before Calavera can start, such as npm rejecting a Bun-managed project. Keep an explicit version so package-manager launchers resolve the `create-project-calavera-mcp` bin reliably without making the persistent MCP registration float to a later package release.
 
 If this project was bootstrapped with `create-project-calavera --init`, also check `.agents/calavera/mcp.md` for local setup notes.
 

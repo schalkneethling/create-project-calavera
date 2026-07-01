@@ -683,7 +683,9 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(mcpGuidance, /"command": "pnpm"/);
     assert.match(
       mcpGuidance,
-      /"args": \[\s+"dlx",\s+"--package",\s+"create-project-calavera",\s+"create-project-calavera-mcp"\s+\]/,
+      new RegExp(
+        `"args": \\[\\s+"dlx",\\s+"--package",\\s+"create-project-calavera@${packageJson.version}",\\s+"create-project-calavera-mcp"\\s+\\]`,
+      ),
     );
     assert.doesNotMatch(mcpGuidance, /"command": "npx"/);
     assert.match(mcpGuidance, /using this project's package manager \(pnpm\)/);
@@ -692,15 +694,21 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(mcpGuidance, /first word in the MCP `command` field/);
     assert.match(
       mcpGuidance,
-      /- npm: `npx --package create-project-calavera create-project-calavera-mcp`/,
+      new RegExp(
+        `- npm: \`npx --package create-project-calavera@${packageJson.version} create-project-calavera-mcp\``,
+      ),
     );
     assert.match(
       mcpGuidance,
-      /- pnpm: `pnpm dlx --package create-project-calavera create-project-calavera-mcp`/,
+      new RegExp(
+        `- pnpm: \`pnpm dlx --package create-project-calavera@${packageJson.version} create-project-calavera-mcp\``,
+      ),
     );
     assert.match(
       mcpGuidance,
-      /- Yarn: `yarn dlx --package create-project-calavera create-project-calavera-mcp`/,
+      new RegExp(
+        `- Yarn: \`yarn dlx --package create-project-calavera@${packageJson.version} create-project-calavera-mcp\``,
+      ),
     );
     assert.match(
       mcpGuidance,
@@ -725,6 +733,10 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(skill, /name: calavera/);
     assert.match(skill, /MCP Setup/);
     assert.match(skill, /devEngines\.packageManager/);
+    assert.match(
+      skill,
+      /npx --package create-project-calavera@<version> create-project-calavera-mcp/,
+    );
     assert.match(
       skill,
       /bunx --package create-project-calavera@<version> create-project-calavera-mcp/,

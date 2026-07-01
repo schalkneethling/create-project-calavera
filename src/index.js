@@ -739,30 +739,28 @@ ${AGENT_BOOTSTRAP_SECTION_END}
  * @returns {{ command: string, args: string[] }}
  */
 function createMcpLaunchCommand(packageManager) {
+  const packageSpecifier = `create-project-calavera@${packageJson.version}`;
+
   switch (packageManager) {
     case "pnpm":
       return {
         command: "pnpm",
-        args: ["dlx", "--package", "create-project-calavera", "create-project-calavera-mcp"],
+        args: ["dlx", "--package", packageSpecifier, "create-project-calavera-mcp"],
       };
     case "yarn":
       return {
         command: "yarn",
-        args: ["dlx", "--package", "create-project-calavera", "create-project-calavera-mcp"],
+        args: ["dlx", "--package", packageSpecifier, "create-project-calavera-mcp"],
       };
     case "bun":
       return {
         command: "bunx",
-        args: [
-          "--package",
-          `create-project-calavera@${packageJson.version}`,
-          "create-project-calavera-mcp",
-        ],
+        args: ["--package", packageSpecifier, "create-project-calavera-mcp"],
       };
     default:
       return {
         command: "npx",
-        args: ["--package", "create-project-calavera", "create-project-calavera-mcp"],
+        args: ["--package", packageSpecifier, "create-project-calavera-mcp"],
       };
   }
 }

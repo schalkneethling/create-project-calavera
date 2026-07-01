@@ -39,7 +39,7 @@ Register the MCP server from the generated `.agents/calavera/mcp.md` notes:
   "mcpServers": {
     "calavera": {
       "command": "npx",
-      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
     }
   }
 }
@@ -55,14 +55,14 @@ start.
 For manual MCP setup, choose the matching command and split it into the harness
 configuration fields:
 
-- npm: `npx --package create-project-calavera create-project-calavera-mcp`
-- pnpm: `pnpm dlx --package create-project-calavera create-project-calavera-mcp`
-- Yarn: `yarn dlx --package create-project-calavera create-project-calavera-mcp`
+- npm: `npx --package create-project-calavera@<version> create-project-calavera-mcp`
+- pnpm: `pnpm dlx --package create-project-calavera@<version> create-project-calavera-mcp`
+- Yarn: `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`
 - Bun: `bunx --package create-project-calavera@<version> create-project-calavera-mcp`
 
 In JSON-based MCP configs, the first word becomes `command` and the remaining
 words become `args`.
-For Bun, keep an explicit package version specifier so `bunx --package` resolves
+Keep an explicit package version specifier so package-manager launchers resolve
 the `create-project-calavera-mcp` bin reliably without making the persistent MCP
 registration float to a later package release.
 
