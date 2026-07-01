@@ -19,6 +19,7 @@ import {
   text,
 } from "@clack/prompts";
 import { execa } from "execa";
+import packageJson from "../package.json" with { type: "json" };
 
 import {
   assertAiSourceExists,
@@ -713,6 +714,8 @@ function createAgentBootstrapGuidanceBody() {
 - Compose recipes with \`compose_recipe\`, validate them with \`validate_recipe\`, and explain the selected integrations with \`explain_recipe\`.
 - Always present \`dry_run_apply\` output to the user before changing files.
 - Call \`apply_recipe\` only after the user explicitly approves the dry-run result.
+- If the MCP transport closes or reports \`-32000\` during or immediately after \`apply_recipe\`, treat the outcome as unknown instead of failed. Inspect \`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package metadata before retrying the apply.
+- Treat files listed by \`dry_run_apply\`, including \`.calavera/run-if-files.mjs\`, as Calavera-managed outputs. Do not hand-write or edit them; let \`apply_recipe\` or \`create-project-calavera apply\` create them after approval.
 - Use AskUserTool or the agent client's equivalent when available for profile choices, conflict decisions, and apply approval.
 
 MCP setup notes live in \`${AGENT_BOOTSTRAP_MCP_FILE}\`.
@@ -733,25 +736,99 @@ ${AGENT_BOOTSTRAP_SECTION_END}
 
 /**
  * @param {PackageManager} packageManager
+ * @returns {{ command: string, args: string[] }}
+ */
+function createMcpLaunchCommand(packageManager) {
+  switch (packageManager) {
+    case "pnpm":
+      return {
+        command: "pnpm",
+        args: ["dlx", "--package", "create-project-calavera", "create-project-calavera-mcp"],
+      };
+    case "yarn":
+      return {
+        command: "yarn",
+        args: ["dlx", "--package", "create-project-calavera", "create-project-calavera-mcp"],
+      };
+    case "bun":
+      return {
+        command: "bunx",
+        args: [
+          "--package",
+          `create-project-calavera@${packageJson.version}`,
+          "create-project-calavera-mcp",
+        ],
+      };
+    default:
+      return {
+        command: "npx",
+        args: ["--package", "create-project-calavera", "create-project-calavera-mcp"],
+      };
+  }
+}
+
+/**
+ * @param {{ command: string, args: string[] }} launchCommand
+ * @returns {string}
+ */
+function formatShellCommand(launchCommand) {
+  return [launchCommand.command, ...launchCommand.args].join(" ");
+}
+
+function createMcpManualCommandReference() {
+  return supportedPackageManagers
+    .map((packageManager) => {
+      const commands = projectLocalCommandCatalog[packageManager];
+      return `- ${commands.label}: \`${formatShellCommand(createMcpLaunchCommand(packageManager))}\``;
+    })
+    .join("\n");
+}
+
+/**
+ * @param {{ command: string, args: string[] }} launchCommand
+ * @returns {string}
+ */
+function createMcpServerConfigSnippet(launchCommand) {
+  return JSON.stringify(
+    {
+      mcpServers: {
+        calavera: launchCommand,
+      },
+    },
+    null,
+    2,
+  );
+}
+
+/**
+ * @param {PackageManager} packageManager
  * @returns {string}
  */
 function createAgentBootstrapMcpInstructions(packageManager) {
   const commands = projectLocalCommandCatalog[packageManager];
+  const launchCommand = createMcpLaunchCommand(packageManager);
+  const mcpConfig = createMcpServerConfigSnippet(launchCommand);
+  const shellCommand = formatShellCommand(launchCommand);
+  const manualCommandReference = createMcpManualCommandReference();
 
   return `# Calavera MCP Setup
 
-Register the Calavera MCP server from the project root:
+Register the Calavera MCP server from the project root using this project's package manager (${commands.label}):
 
 \`\`\`json
-{
-  "mcpServers": {
-    "calavera": {
-      "command": "npx",
-      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
-    }
-  }
-}
+${mcpConfig}
 \`\`\`
+
+Project-scoped MCP servers run with the project root as their working directory.
+Using the package manager declared by the project avoids package-manager
+preflight failures before Calavera can start, such as npm rejecting a Bun-managed
+project through \`devEngines.packageManager\`.
+
+When configuring an MCP server manually, choose the command that matches the
+project's package manager. Put the first word in the MCP \`command\` field and
+the remaining words in \`args\`:
+
+${manualCommandReference}
 
 If your agent exposes an MCP setup UI or config writer, use the snippet above.
 If the agent needs approval before editing its own config, ask first.
@@ -759,27 +836,16 @@ If the agent needs approval before editing its own config, ask first.
 ## Claude Code
 
 For Claude Code, prefer a project-scoped \`.mcp.json\` in the project root when
-the team should share the Calavera server registration:
-
-\`\`\`json
-{
-  "mcpServers": {
-    "calavera": {
-      "command": "npx",
-      "args": ["--package", "create-project-calavera", "create-project-calavera-mcp"]
-    }
-  }
-}
-\`\`\`
+the team should share the Calavera server registration. Use the same package
+manager-specific snippet above.
 
 Do not put this server registration in \`.claude/settings.json\`; Claude Code
 does not load MCP servers from that file. You can also register the same command
 with \`claude mcp add\` if you want Claude Code to manage the entry.
 
 Registering this MCP server is a persistent code-execution change because it
-runs \`npx --package create-project-calavera create-project-calavera-mcp\`.
-Ask for explicit user approval before creating \`.mcp.json\`, running
-\`claude mcp add\`, or approving the first server launch.
+runs \`${shellCommand}\`. Ask for explicit user approval before creating
+\`.mcp.json\`, running \`claude mcp add\`, or approving the first server launch.
 
 Use the tools in this order:
 
@@ -794,6 +860,16 @@ Use the tools in this order:
 9. \`apply_recipe\`
 
 \`dry_run_apply\` is the review boundary. Show its result to the user and wait for explicit approval before calling \`apply_recipe\`.
+
+If the MCP transport closes or reports \`-32000\` during or immediately after
+\`apply_recipe\`, treat the apply outcome as unknown instead of failed. Inspect
+\`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package
+metadata before retrying the apply.
+
+If \`dry_run_apply\` lists \`.calavera/run-if-files.mjs\`, treat it as a
+Calavera-managed helper for generated package scripts. Do not hand-write or edit
+that file; let \`apply_recipe\` or \`create-project-calavera apply\` create it
+after approval.
 
 Before composing a recipe, inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
 
@@ -1298,10 +1374,10 @@ export async function applyRecipeObject(recipe, options = {}) {
   if (dependencyList.length > 0 && !applyOptions.noInstall && !applyOptions.dryRun) {
     const [command, commandArgs] =
       packageManagerCommands[packageManager].installDev(dependencyList);
-    const spin = spinner();
-    spin.start("Installing development dependencies...");
+    const spin = applyOptions.json ? null : spinner();
+    spin?.start("Installing development dependencies...");
     await execa(command, commandArgs, { stderr: "inherit" });
-    spin.stop("Dependencies installed");
+    spin?.stop("Dependencies installed");
   }
 
   return {

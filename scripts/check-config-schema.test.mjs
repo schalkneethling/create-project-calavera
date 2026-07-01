@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import Ajv2020 from "ajv/dist/2020.js";
+import packageJson from "../package.json" with { type: "json" };
 
 import { buildAiApplyResult, createCodexAgentToml } from "../src/ai/artifacts.js";
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
@@ -672,7 +673,41 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
 
     assert.equal(existingGuidance, "Existing project guidance.\n");
     assert.match(fallbackGuidance, /Calavera Agent Guidance/);
+    assert.match(fallbackGuidance, /Treat files listed by `dry_run_apply`/);
+    assert.match(fallbackGuidance, /\.calavera\/run-if-files\.mjs/);
+    assert.match(fallbackGuidance, /Do not hand-write or edit them/);
+    assert.match(fallbackGuidance, /reports `-32000`/);
+    assert.match(fallbackGuidance, /treat the outcome as unknown instead of failed/);
+    assert.match(fallbackGuidance, /\.calavera\/state\.json/);
     assert.match(mcpGuidance, /create-project-calavera-mcp/);
+    assert.match(mcpGuidance, /"command": "pnpm"/);
+    assert.match(
+      mcpGuidance,
+      /"args": \[\s+"dlx",\s+"--package",\s+"create-project-calavera",\s+"create-project-calavera-mcp"\s+\]/,
+    );
+    assert.doesNotMatch(mcpGuidance, /"command": "npx"/);
+    assert.match(mcpGuidance, /using this project's package manager \(pnpm\)/);
+    assert.match(mcpGuidance, /devEngines\.packageManager/);
+    assert.match(mcpGuidance, /When configuring an MCP server manually/);
+    assert.match(mcpGuidance, /first word in the MCP `command` field/);
+    assert.match(
+      mcpGuidance,
+      /- npm: `npx --package create-project-calavera create-project-calavera-mcp`/,
+    );
+    assert.match(
+      mcpGuidance,
+      /- pnpm: `pnpm dlx --package create-project-calavera create-project-calavera-mcp`/,
+    );
+    assert.match(
+      mcpGuidance,
+      /- Yarn: `yarn dlx --package create-project-calavera create-project-calavera-mcp`/,
+    );
+    assert.match(
+      mcpGuidance,
+      new RegExp(
+        `- Bun: \`bunx --package create-project-calavera@${packageJson.version} create-project-calavera-mcp\``,
+      ),
+    );
     assert.match(mcpGuidance, /Claude Code/);
     assert.match(mcpGuidance, /\.mcp\.json/);
     assert.match(mcpGuidance, /claude mcp add/);
@@ -680,11 +715,25 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(mcpGuidance, /persistent code-execution change/);
     assert.match(mcpGuidance, /explicit user approval/);
     assert.match(mcpGuidance, /AskUserTool|approval/);
+    assert.match(mcpGuidance, /Calavera-managed helper for generated package scripts/);
+    assert.match(mcpGuidance, /Do not hand-write or edit/);
+    assert.match(mcpGuidance, /reports `-32000`/);
+    assert.match(mcpGuidance, /before retrying the apply/);
     assert.match(mcpGuidance, /existing tooling files/);
     assert.match(mcpGuidance, /calavera\.schalkneethling\.com/);
     assert.match(mcpGuidance, /pnpm dlx create-project-calavera apply --dry-run/);
     assert.match(skill, /name: calavera/);
     assert.match(skill, /MCP Setup/);
+    assert.match(skill, /devEngines\.packageManager/);
+    assert.match(
+      skill,
+      /bunx --package create-project-calavera@<version> create-project-calavera-mcp/,
+    );
+    assert.match(skill, /first word in `command` and the remaining words in `args`/);
+    assert.match(skill, /Treat files listed by `dry_run_apply`/);
+    assert.match(skill, /\.calavera\/run-if-files\.mjs/);
+    assert.match(skill, /reports `-32000`/);
+    assert.match(skill, /outcome as unknown instead of failed/);
     assert.match(skill, /Fallbacks/);
     assert.equal(
       result.changes.some(
@@ -700,6 +749,46 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
       ),
       true,
     );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("agent bootstrap uses devEngines package manager for MCP guidance", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-bun-mcp-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({
+        devEngines: {
+          packageManager: {
+            name: "bun",
+            version: "1.3.14",
+            onFail: "download",
+          },
+        },
+      }),
+    );
+
+    await agentBootstrap({ json: true });
+    const mcpGuidance = await readFile(".agents/calavera/mcp.md", "utf8");
+
+    assert.match(mcpGuidance, /"command": "bunx"/);
+    assert.match(
+      mcpGuidance,
+      new RegExp(
+        `"args": \\[\\s+"--package",\\s+"create-project-calavera@${packageJson.version}",\\s+"create-project-calavera-mcp"\\s+\\]`,
+      ),
+    );
+    assert.match(mcpGuidance, /using this project's package manager \(Bun\)/);
+    assert.match(
+      mcpGuidance,
+      /npm rejecting a Bun-managed\s+project through `devEngines\.packageManager`/,
+    );
+    assert.doesNotMatch(mcpGuidance, /"command": "npx"/);
   } finally {
     process.chdir(originalDirectory);
   }
@@ -764,6 +853,47 @@ test("MCP apply_recipe rejects config paths outside the current workspace", asyn
       /config path must stay inside the current project workspace/,
     );
   } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("JSON apply installs dependencies without writing spinner UI to stdout", async () => {
+  const originalDirectory = process.cwd();
+  const originalPath = process.env.PATH;
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-json-apply-install-"));
+  const binDirectory = join(projectDirectory, "bin");
+  const npmPath = join(binDirectory, "npm");
+  const stdoutWrites = [];
+  const originalStdoutWrite = process.stdout.write;
+
+  try {
+    process.chdir(projectDirectory);
+    await mkdir(binDirectory);
+    await writeFile(
+      npmPath,
+      "#!/usr/bin/env node\nimport { writeFileSync } from 'node:fs';\nwriteFileSync('install-called.txt', process.argv.slice(2).join(' '));\n",
+    );
+    await chmod(npmPath, 0o755);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    process.env.PATH = [binDirectory, originalPath].filter(Boolean).join(delimiter);
+    process.stdout.write = function captureStdoutWrite(chunk, ...args) {
+      stdoutWrites.push(String(chunk));
+      return originalStdoutWrite.call(this, chunk, ...args);
+    };
+
+    const result = await applyRecipeObject(buildRecipe("modern", ["oxlint"], "npm"), {
+      json: true,
+      assumeYes: true,
+    });
+
+    assert.equal(result.dryRun, false);
+    assert.deepEqual(result.dependencies, ["oxlint"]);
+    assert.match(await readFile("install-called.txt", "utf8"), /install --save-dev oxlint/);
+    assert.doesNotMatch(stdoutWrites.join(""), /Installing development dependencies/);
+    assert.doesNotMatch(stdoutWrites.join(""), /Dependencies installed/);
+  } finally {
+    process.stdout.write = originalStdoutWrite;
+    process.env.PATH = originalPath;
     process.chdir(originalDirectory);
   }
 });
