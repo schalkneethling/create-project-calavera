@@ -10,6 +10,8 @@ import {
   listProfilesResponse,
   normalizeAiTarget,
   packageManagerIdsForRecipe,
+  projectLocalCommandNotes,
+  projectLocalCommandSteps,
   profileDefaults,
   profileIdsForRecipe,
   recipeToolDescriptions,
@@ -23,6 +25,8 @@ const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
 const aiArtifacts = document.querySelector("#ai-artifacts");
 const output = document.querySelector("#output");
+const nextCommands = document.querySelector("#next-commands");
+const nextCommandsNote = document.querySelector("#next-commands-note");
 const webMcpBanner = document.querySelector("#webmcp-banner");
 const profiles = profileIdsForRecipe();
 const packageManagers = packageManagerIdsForRecipe();
@@ -151,8 +155,33 @@ function recipe() {
   );
 }
 
+function selectedPackageManager() {
+  const packageManager = new FormData(form).get("packageManager");
+  return packageManager ? String(packageManager) : "npm";
+}
+
+function renderNextCommands() {
+  nextCommands.replaceChildren();
+  nextCommandsNote.textContent = projectLocalCommandNotes.projectDirectory;
+
+  for (const step of projectLocalCommandSteps(selectedPackageManager())) {
+    const item = document.createElement("li");
+    const label = document.createElement("strong");
+    const description = document.createElement("span");
+    const command = document.createElement("code");
+
+    label.textContent = step.label;
+    description.textContent = step.description;
+    command.textContent = step.command;
+
+    item.append(label, description, command);
+    nextCommands.append(item);
+  }
+}
+
 function render() {
   output.textContent = JSON.stringify(recipe(), null, 2);
+  renderNextCommands();
 }
 
 function setDefaults() {

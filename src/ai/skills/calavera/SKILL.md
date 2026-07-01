@@ -11,6 +11,7 @@ Use Calavera to compose and apply project tooling through its MCP tools whenever
 
 1. Confirm whether Calavera MCP tools are available. Look for tools named `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `dry_run_apply`, and `apply_recipe`.
 2. Inspect the project for existing tooling and likely conflicts before composing a recipe. Check files such as `package.json`, `calavera.config.json`, `.editorconfig`, `eslint.config.js`, `oxlint.json`, `.prettierrc.json`, `.stylelintrc.json`, and `tsconfig.json`.
+   If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use `dry_run_apply` to show concrete impact when adoption still looks possible.
 3. Use AskUserTool or the agent client's equivalent when available to clarify profile preferences, framework needs, conflict decisions, and apply approval. If no such tool exists, ask the user directly.
 4. List choices with `list_profiles`, `list_integrations`, and `list_ai_artifacts`. Use `describe_integration` when the user asks for more information or when you need to compare options.
 5. Once the profile and requirements are clear, compose the recipe with `compose_recipe`.

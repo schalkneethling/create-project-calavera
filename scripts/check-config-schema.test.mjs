@@ -37,6 +37,8 @@ import {
   listProfilesResponse,
   normalizeAiArtifactInputs,
   normalizeIntegrationInputs,
+  projectLocalCommandCatalog,
+  projectLocalCommandSteps,
   profileDefaults,
   recipeWorkflow,
   recipeToolDescriptions,
@@ -218,6 +220,31 @@ test("shared composition normalizes explicit tool labels and package managers", 
 test("shared composition resolves duplicate tool labels within the active profile", () => {
   assert.deepEqual(normalizeIntegrationInputs(["Accessibility"], "modern"), ["oxlint-jsx-a11y"]);
   assert.deepEqual(normalizeIntegrationInputs(["Accessibility"], "classic"), ["eslint-jsx-a11y"]);
+});
+
+test("project-local command guidance covers every package manager", () => {
+  assert.deepEqual(Object.keys(projectLocalCommandCatalog), packageManagers);
+  assert.equal(
+    projectLocalCommandCatalog.npm.agentBootstrap,
+    "npm create project-calavera -- --init",
+  );
+  assert.equal(
+    projectLocalCommandCatalog.npm.applyDryRun,
+    "npm create project-calavera apply -- --dry-run",
+  );
+
+  for (const packageManager of packageManagers) {
+    const steps = projectLocalCommandSteps(packageManager);
+
+    assert.deepEqual(
+      steps.map(({ id }) => id),
+      ["agentBootstrap", "applyDryRun", "applyRecipe"],
+    );
+    assert.equal(
+      steps.every(({ command }) => command.includes("project-calavera")),
+      true,
+    );
+  }
 });
 
 test("shared composition copies profile defaults before returning recipes", () => {

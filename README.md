@@ -78,7 +78,7 @@ Run `init` without selection flags for guided prompts that present the available
 options. Use selection flags only for scripted or CI flows:
 
 ```bash
-npm create project-calavera init -- --profile modern --package-manager pnpm --tool Oxlint --tool Stylelint
+npm create project-calavera init -- --profile modern --package-manager pnpm --tool oxlint --tool stylelint
 ```
 
 Wrap labels that contain spaces in quotes, for example
@@ -113,7 +113,7 @@ Inspect machine-readable output for agent workflows:
 
 ```bash
 npm create project-calavera doctor --json
-npm create project-calavera apply --dry-run --json
+npm create project-calavera apply -- --dry-run --json
 ```
 
 Bootstrap an existing project for agent-first Calavera usage without
@@ -122,6 +122,11 @@ scaffolding app code:
 ```bash
 npm create project-calavera -- --init
 ```
+
+`npm create` needs the `--` separator before Calavera flags. With other package
+managers, use `pnpm dlx create-project-calavera --init`,
+`yarn dlx create-project-calavera --init`, or
+`bunx create-project-calavera --init`.
 
 The `--init` bootstrap installs the base Calavera skill, adds concise project
 guidance, writes MCP setup notes, and prints a recommended first prompt for the
@@ -183,6 +188,34 @@ Vite, another scaffold tool, or a manually maintained repository:
 4. Start the agent from the project root.
 5. Ask it: `Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.`
 
+Agents should treat `dry_run_apply` as the approval boundary. They should show
+the package manager, integrations, dependency packages, file changes, and AI
+artifact changes before calling `apply_recipe`.
+
+If the agent finds likely conflicts, it should pause and list whether each one
+is a hard stop or a migration decision the user can still approve. A dry run is
+the best next step when adoption is still possible and the user wants to see the
+impact.
+
+Use the interactive CLI instead when you want to compose the recipe yourself:
+
+```bash
+npm create project-calavera init
+npm create project-calavera apply -- --dry-run
+npm create project-calavera apply
+```
+
+`init` composes `calavera.config.json`; `-- --init` bootstraps agent guidance.
+
+Use the web UI when you prefer browser composition. Save or download
+`calavera.config.json`, then run the displayed package-manager command from the
+project folder that contains the saved file.
+
+See
+[`docs/agent-first-calavera-workflow.md`](docs/agent-first-calavera-workflow.md)
+for agent, CLI, web UI, MCP/WebMCP, Vite+, other scaffold, and existing-project
+examples.
+
 ### Bun-managed projects and npm `devEngines`
 
 Some starters declare Bun in `devEngines.packageManager`. npm 11 fails before
@@ -238,9 +271,9 @@ Calavera recipe composition, Calavera apply, and project startup into a single
 creation path. It should remain separate from Calavera's tooling-composition
 responsibilities.
 
-Calavera should also expose agent-native recipe composition through WebMCP and,
-if needed, a standard MCP server so coding agents can compose recipes directly
-instead of driving the human web UI.
+Calavera exposes agent-native recipe composition through the standard MCP server
+and browser-safe recipe composition through WebMCP, so coding agents can compose
+recipes directly instead of driving the human web UI.
 
 See
 [`docs/create-template-and-agent-composition.md`](docs/create-template-and-agent-composition.md)
@@ -307,7 +340,10 @@ Open the printed local URL, choose your packs, then either:
 - download `calavera.config.json`.
 
 Both options are shown by default so users can choose the flow they are most
-comfortable with.
+comfortable with. After saving the file, run the displayed next commands from
+the project folder that contains `calavera.config.json`. The optional bootstrap
+command prepares agent guidance; the dry-run command previews local changes; the
+apply command writes approved changes.
 
 When the browser exposes WebMCP, the composer registers a browser parity surface
 for the MCP recipe composition workflow:
