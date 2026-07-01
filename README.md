@@ -161,6 +161,14 @@ For example:
 }
 ```
 
+For Claude Code, use a project-scoped `.mcp.json` in the project root when the
+registration should be shared with teammates, or use `claude mcp add` to let
+Claude Code manage the same command. Do not put MCP server registrations in
+`.claude/settings.json`; Claude Code does not load MCP servers from that file.
+Because this registration runs an external `npx` package persistently, expect
+Claude Code to ask for explicit approval before creating the config or launching
+the server for the first time.
+
 Agent guidance should tell the harness to use Calavera when a user wants to
 inspect available project tooling, compose `calavera.config.json`, preview a
 Calavera apply run, or apply an approved recipe. An MCP client can use the tools
