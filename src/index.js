@@ -35,6 +35,11 @@ import {
   optionalStringArray,
 } from "./state.js";
 import {
+  integrationConfigFiles,
+  packageManagerLockfiles,
+  projectInspectionFiles,
+} from "./project-inspection.js";
+import {
   composeRecipe,
   explainRecipeResponse,
   listAiArtifactOptions,
@@ -424,19 +429,19 @@ function detectPackageManager(packageJSON = {}) {
     return /** @type {PackageManager} */ (devPackageManager);
   }
 
-  if (existsSync("pnpm-lock.yaml") || existsSync("shrinkwrap.yaml")) {
+  if (packageManagerLockfiles.pnpm.some((path) => existsSync(path))) {
     return "pnpm";
   }
 
-  if (existsSync("yarn.lock")) {
+  if (packageManagerLockfiles.yarn.some((path) => existsSync(path))) {
     return "yarn";
   }
 
-  if (existsSync("bun.lock") || existsSync("bun.lockb")) {
+  if (packageManagerLockfiles.bun.some((path) => existsSync(path))) {
     return "bun";
   }
 
-  if (existsSync("package-lock.json")) {
+  if (packageManagerLockfiles.npm.some((path) => existsSync(path))) {
     return "npm";
   }
 
@@ -944,7 +949,12 @@ Calavera-managed helper for generated package scripts. Do not hand-write or edit
 that file; let \`apply_recipe\` or \`create-project-calavera apply\` create it
 after approval.
 
-Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible. Do not combine Oxfmt and Prettier in one recipe.
+## Formatter choice
+
+Choose one formatter per project. Do not combine Oxfmt and Prettier in one
+recipe; they would compete for the same formatting scripts and config ownership.
+
+Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
 
 If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
 
@@ -1256,49 +1266,6 @@ function plannedManagedFiles(integrations) {
 
   return plans;
 }
-
-const projectInspectionFiles = [
-  "package.json",
-  "package-lock.json",
-  "npm-shrinkwrap.json",
-  "pnpm-lock.yaml",
-  "yarn.lock",
-  "bun.lock",
-  "bun.lockb",
-  "calavera.config.json",
-  ".editorconfig",
-  "eslint.config.js",
-  "oxlint.json",
-  ".prettierrc.json",
-  ".prettierignore",
-  ".stylelintrc.json",
-  "react-doctor.config.json",
-  "tsconfig.json",
-  "vite.config.js",
-  "vite.config.ts",
-  "next.config.js",
-  "next.config.mjs",
-  "astro.config.mjs",
-  "svelte.config.js",
-];
-
-const packageManagerLockfiles = {
-  npm: ["package-lock.json", "npm-shrinkwrap.json"],
-  pnpm: ["pnpm-lock.yaml"],
-  yarn: ["yarn.lock"],
-  bun: ["bun.lock", "bun.lockb"],
-};
-
-const integrationConfigFiles = {
-  editorconfig: [".editorconfig"],
-  eslint: ["eslint.config.js"],
-  oxlint: ["oxlint.json"],
-  oxfmt: [],
-  prettier: [".prettierrc.json", ".prettierignore"],
-  "react-doctor": ["react-doctor.config.json"],
-  stylelint: [".stylelintrc.json"],
-  typescript: ["tsconfig.json"],
-};
 
 /**
  * @param {string} path
