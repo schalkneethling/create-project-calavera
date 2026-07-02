@@ -390,7 +390,7 @@ async function readStateIfPresent() {
 
 /**
  * @param {PackageJSON} [packageJSON]
- * @returns {PackageManager}
+ * @returns {PackageManager | undefined}
  */
 function detectPackageManager(packageJSON = {}) {
   if (packageJSON.packageManager?.startsWith("pnpm")) {
@@ -432,6 +432,23 @@ function detectPackageManager(packageJSON = {}) {
 
   if (existsSync("package-lock.json")) {
     return "npm";
+  }
+
+  return undefined;
+}
+
+/**
+ * @param {Recipe} recipe
+ * @param {Partial<CliOptions>} applyOptions
+ * @param {PackageJSON} packageJSON
+ * @returns {PackageManager}
+ */
+function resolveApplyPackageManager(recipe, applyOptions, packageJSON) {
+  const packageManager =
+    applyOptions.packageManager ?? detectPackageManager(packageJSON) ?? recipe.packageManager;
+
+  if (packageManager) {
+    return assertSupportedPackageManager(packageManager);
   }
 
   return "npm";
@@ -1211,11 +1228,7 @@ export async function applyRecipeObject(recipe, options = {}) {
     integrations.flatMap((integration) => integration.dependencies ?? []),
   );
   const detectedPackageJSON = await readPackageJSONIfPresent();
-  const packageManager = assertSupportedPackageManager(
-    applyOptions.packageManager ??
-      recipe.packageManager ??
-      detectPackageManager(detectedPackageJSON),
-  );
+  const packageManager = resolveApplyPackageManager(recipe, applyOptions, detectedPackageJSON);
   const packageJSON = await ensurePackageJSON(
     packageManager,
     applyOptions.dryRun,
@@ -1649,7 +1662,7 @@ export async function agentBootstrap(options = {}) {
   };
   const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = assertSupportedPackageManager(
-    bootstrapOptions.packageManager ?? detectPackageManager(detectedPackageJSON),
+    bootstrapOptions.packageManager ?? detectPackageManager(detectedPackageJSON) ?? "npm",
   );
 
   await assertBootstrapDirectoryAvailable(".calavera");
@@ -1885,7 +1898,7 @@ export async function initRecipe(options) {
 
   const detectedPackageJSON = await readPackageJSONIfPresent();
   const detectedPackageManager = assertSupportedPackageManager(
-    detectPackageManager(detectedPackageJSON),
+    detectPackageManager(detectedPackageJSON) ?? "npm",
   );
   const profile = await promptForProfile(options);
   const packageManager = await promptForPackageManager(options, detectedPackageManager);

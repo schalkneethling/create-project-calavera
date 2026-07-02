@@ -607,7 +607,7 @@ export function catalogResponse(currentConfiguration) {
     toolInput: {
       accepts:
         "Use either an integration id or its label in the compose_recipe tools array. Matching is case-insensitive.",
-      examples: ["typescript", "Stylelint", "Oxc JSX accessibility rules"],
+      examples: ["typescript", "Stylelint", "JSX-A11y"],
     },
     defaults: profileDefaults,
     currentConfiguration,
