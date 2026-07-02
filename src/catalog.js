@@ -87,8 +87,8 @@ export const integrationCatalog = [
   },
   {
     id: "oxlint-jsx-a11y",
-    label: "Accessibility",
-    group: "Accessibility",
+    label: "JSX-A11y",
+    group: "React best practices",
     platform: "oxlint-plugin",
     plugin: "jsx-a11y",
     status: "optional",
@@ -202,8 +202,8 @@ export const integrationCatalog = [
   },
   {
     id: "eslint-jsx-a11y",
-    label: "Accessibility",
-    group: "Accessibility",
+    label: "JSX-A11y",
+    group: "React best practices",
     platform: "eslint-plugin",
     status: "optional",
     dependencies: ["eslint-plugin-jsx-a11y"],

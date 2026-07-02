@@ -247,8 +247,20 @@ test("shared composition normalizes explicit tool labels and package managers", 
 });
 
 test("shared composition resolves duplicate tool labels within the active profile", () => {
-  assert.deepEqual(normalizeIntegrationInputs(["Accessibility"], "modern"), ["oxlint-jsx-a11y"]);
-  assert.deepEqual(normalizeIntegrationInputs(["Accessibility"], "classic"), ["eslint-jsx-a11y"]);
+  assert.deepEqual(normalizeIntegrationInputs(["JSX-A11y"], "modern"), ["oxlint-jsx-a11y"]);
+  assert.deepEqual(normalizeIntegrationInputs(["JSX-A11y"], "classic"), ["eslint-jsx-a11y"]);
+});
+
+test("JSX accessibility integrations are grouped with React options", () => {
+  const modernJsxA11y = listIntegrationOptions("modern").find(({ id }) => id === "oxlint-jsx-a11y");
+  const classicJsxA11y = listIntegrationOptions("classic").find(
+    ({ id }) => id === "eslint-jsx-a11y",
+  );
+
+  assert.equal(modernJsxA11y?.label, "JSX-A11y");
+  assert.equal(modernJsxA11y?.group, "React best practices");
+  assert.equal(classicJsxA11y?.label, "JSX-A11y");
+  assert.equal(classicJsxA11y?.group, "React best practices");
 });
 
 test("project-local command guidance covers every package manager", () => {
@@ -870,6 +882,103 @@ test("apply dry runs surface managed file overwrite conflicts", async () => {
         }),
       /Refusing to overwrite existing managed file: \.editorconfig/,
     );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("apply uses project devEngines package manager over an implicit npm recipe default", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-apply-bun-devengines-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile(
+      "package.json",
+      `${JSON.stringify(
+        {
+          scripts: {},
+          devEngines: {
+            packageManager: {
+              name: "bun",
+              version: "1.3.14",
+              onFail: "download",
+            },
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const result = await applyRecipeObject(buildRecipe("modern", ["oxlint"], "npm"), {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    assert.equal(result.packageManager, "bun");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("apply package manager override wins over project devEngines detection", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-apply-pm-override-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({
+        devEngines: {
+          packageManager: {
+            name: "bun",
+            version: "1.3.14",
+          },
+        },
+      }),
+    );
+
+    const result = await applyRecipeObject(buildRecipe("minimal", ["editorconfig"], "npm"), {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+      packageManager: "pnpm",
+    });
+
+    assert.equal(result.packageManager, "pnpm");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("MCP dry_run_apply uses project devEngines package manager", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-dry-run-bun-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({
+        devEngines: {
+          packageManager: {
+            name: "bun",
+            version: "1.3.14",
+          },
+        },
+      }),
+    );
+
+    const response = await callMcpTool("dry_run_apply", {
+      recipe: composeRecipe({ profile: "minimal" }),
+    });
+
+    assert.equal(response.result.packageManager, "bun");
   } finally {
     process.chdir(originalDirectory);
   }

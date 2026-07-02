@@ -38,7 +38,6 @@ into checking with `// @ts-check` and JSDoc annotations.
 Calavera includes curated integration packs grouped by outcome:
 
 - React best practices
-- Accessibility
 - Imports and modules
 - Promise safety
 - Node package rules
@@ -49,7 +48,8 @@ Calavera includes curated integration packs grouped by outcome:
 
 React best-practice checks can include React Doctor, a deterministic scanner for
 React codebases that complements linting with security, performance,
-correctness, accessibility, bundle-size, and architecture diagnostics.
+correctness, accessibility, bundle-size, and architecture diagnostics. JSX-A11y
+linting also appears with the React checks because it targets JSX markup.
 
 The CSS catalog includes
 `@schalkneethling/stylelint-plugin-css-property-type-validator` as a curated
