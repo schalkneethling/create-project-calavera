@@ -14,11 +14,12 @@ Use Calavera to compose and apply project tooling through its MCP tools whenever
    If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use `dry_run_apply` to show concrete impact when adoption still looks possible.
 3. Use AskUserTool or the agent client's equivalent when available to clarify profile preferences, framework needs, conflict decisions, and apply approval. If no such tool exists, ask the user directly.
 4. List choices with `list_profiles`, `list_integrations`, and `list_ai_artifacts`. Use `describe_integration` when the user asks for more information or when you need to compare options.
-5. Once the profile and requirements are clear, compose the recipe with `compose_recipe`.
-6. Validate and explain it with `validate_recipe` and `explain_recipe`.
-7. Present `dry_run_apply` output to the user before changing files, including inspection findings, omitted script explanations, ownership notes, and planned file changes.
-8. Call `apply_recipe` only after the user explicitly approves the dry run.
-9. If the MCP transport closes or reports `-32000` during or immediately after `apply_recipe`, treat the outcome as unknown instead of failed. Inspect `calavera.config.json`, `.calavera/state.json`, generated files, and package metadata before retrying the apply.
+5. Choose either Oxfmt or Prettier for formatting, never both.
+6. Once the profile and requirements are clear, compose the recipe with `compose_recipe`.
+7. Validate and explain it with `validate_recipe` and `explain_recipe`.
+8. Present `dry_run_apply` output to the user before changing files, including inspection findings, omitted script explanations, ownership notes, and planned file changes.
+9. Call `apply_recipe` only after the user explicitly approves the dry run.
+10. If the MCP transport closes or reports `-32000` during or immediately after `apply_recipe`, treat the outcome as unknown instead of failed. Inspect `calavera.config.json`, `.calavera/state.json`, generated files, and package metadata before retrying the apply.
 
 Do not hand-author `calavera.config.json` when the Calavera MCP server is available. Let Calavera compose, validate, dry-run, and apply the recipe so generated files, package scripts, dependencies, AI artifacts, and managed state stay consistent.
 

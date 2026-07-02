@@ -42,6 +42,10 @@ the package manager, integrations, dependency packages, inspection findings,
 omitted script explanations, ownership notes, file changes, and AI artifact
 changes before calling `apply_recipe`.
 
+Choose one formatter for the project. Calavera rejects recipes that include both
+Oxfmt and Prettier because they would compete for the same formatting scripts
+and config ownership.
+
 If the agent finds likely conflicts, it should pause and list whether each one
 is a hard stop or a migration decision the user can still approve. A dry run is
 the best next step when adoption is still possible and the user wants to see the

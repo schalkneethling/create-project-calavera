@@ -347,6 +347,20 @@ test("shared composition output validates against the published schema", () => {
   assert.equal(validateRecipe(recipe), recipe);
 });
 
+test("shared recipe validation rejects mixed formatter integrations", () => {
+  const mixedFormatterRecipe = buildRecipe("modern", ["oxfmt", "prettier"], "npm");
+
+  assert.throws(
+    () => validateRecipe(mixedFormatterRecipe),
+    /Choose either Oxfmt or Prettier, not both/,
+  );
+  assert.equal(validateRecipeResponse(mixedFormatterRecipe).ok, false);
+  assert.match(
+    validateRecipeResponse(mixedFormatterRecipe).errors?.[0] ?? "",
+    /Choose either Oxfmt or Prettier, not both/,
+  );
+});
+
 test("shared catalog helpers expose WebMCP-ready profile scoped options", () => {
   const modernToolIds = listIntegrationOptions("modern").map(({ id }) => id);
   const classicToolIds = listIntegrationOptions("classic").map(({ id }) => id);
@@ -805,6 +819,7 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(fallbackGuidance, /reports `-32000`/);
     assert.match(fallbackGuidance, /treat the outcome as unknown instead of failed/);
     assert.match(fallbackGuidance, /\.calavera\/state\.json/);
+    assert.match(fallbackGuidance, /Choose either Oxfmt or Prettier/);
     assert.match(mcpGuidance, /create-project-calavera-mcp/);
     assert.match(mcpGuidance, /"command": "pnpm"/);
     assert.match(
@@ -852,6 +867,7 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(mcpGuidance, /inspect_project/);
     assert.match(mcpGuidance, /omitted\s+script explanations/);
     assert.match(mcpGuidance, /ownership notes/);
+    assert.match(mcpGuidance, /Do not combine Oxfmt and Prettier/);
     assert.match(mcpGuidance, /bun is unable to write files to tempdir: PermissionDenied/);
     assert.match(mcpGuidance, /TMPDIR/);
     assert.match(mcpGuidance, /BUN_INSTALL_CACHE_DIR/);
@@ -868,6 +884,7 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(skill, /devEngines\.packageManager/);
     assert.match(skill, /inspect_project/);
     assert.match(skill, /omitted script explanations/);
+    assert.match(skill, /Choose either Oxfmt or Prettier/);
     assert.match(
       skill,
       /npx --package create-project-calavera@<version> create-project-calavera-mcp/,
@@ -1040,6 +1057,29 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
     );
     assert.equal(editorConfigChange?.ownership, "calavera");
     assert.equal(editorConfigChange?.action, "write");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("apply dry runs reject mixed formatter integrations", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-dry-run-formatter-conflict-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+
+    await assert.rejects(
+      () =>
+        applyRecipeObject(buildRecipe("modern", ["oxfmt", "prettier"], "npm"), {
+          dryRun: true,
+          json: true,
+          noInstall: true,
+          assumeYes: true,
+        }),
+      /Choose either Oxfmt or Prettier, not both/,
+    );
   } finally {
     process.chdir(originalDirectory);
   }

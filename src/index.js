@@ -44,6 +44,7 @@ import {
   profileIdsForRecipe,
   profileDefaults,
   resolveRecipeIntegrations,
+  validateRecipe,
   validateRecipeResponse,
 } from "./recipe.js";
 import { assertKnownValue } from "./utils/assertions.js";
@@ -767,6 +768,7 @@ function createAgentBootstrapGuidanceBody() {
 - Inspect existing project tooling before composing a recipe and raise likely config conflicts early.
 - If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use \`dry_run_apply\` to show concrete impact when adoption still looks possible.
 - Start with \`inspect_project\`, \`list_profiles\`, \`list_integrations\`, and \`list_ai_artifacts\`; use \`describe_integration\` when the user asks for more information or an option needs explanation.
+- Choose either Oxfmt or Prettier for formatting; do not select both in the same recipe.
 - Compose recipes with \`compose_recipe\`, validate them with \`validate_recipe\`, and explain the selected integrations with \`explain_recipe\`.
 - Always present \`dry_run_apply\` output to the user before changing files.
 - Call \`apply_recipe\` only after the user explicitly approves the dry-run result.
@@ -942,7 +944,7 @@ Calavera-managed helper for generated package scripts. Do not hand-write or edit
 that file; let \`apply_recipe\` or \`create-project-calavera apply\` create it
 after approval.
 
-Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
+Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible. Do not combine Oxfmt and Prettier in one recipe.
 
 If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
 
@@ -1475,6 +1477,8 @@ export async function applyRecipe(options) {
  * @returns {Promise<ApplyResult>}
  */
 export async function applyRecipeObject(recipe, options = {}) {
+  validateRecipe(recipe);
+
   const applyOptions = {
     dryRun: false,
     json: false,
