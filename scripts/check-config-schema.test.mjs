@@ -81,6 +81,7 @@ async function readProjectJson(path) {
 
 const schema = await readProjectJson("web/public/calavera.config.schema.json");
 const config = await readProjectJson("calavera.config.json");
+const skillsShConfig = await readProjectJson("skills.sh.json");
 const integrationIds = integrationCatalog.map(({ id }) => id);
 const schemaProperties = schema.properties ?? {};
 const scriptProperties = schemaProperties.scripts?.properties ?? {};
@@ -160,6 +161,28 @@ test("AI artifact catalog exposes unique complete recipe items", async () => {
     }
 
     ids.add(artifact.id);
+  }
+});
+
+test("skills.sh grouping includes every bundled skill exactly once", () => {
+  const bundledSkillSlugs = aiArtifactCatalog
+    .filter((artifact) => artifact.type === "skill")
+    .map((artifact) => artifact.src.replace(/^skills\//, ""))
+    .sort();
+  const groupedSkillSlugs = skillsShConfig.groupings
+    .flatMap((grouping) => grouping.skills)
+    .toSorted();
+
+  assert.equal(skillsShConfig.$schema, "https://skills.sh/schemas/skills.sh.schema.json");
+  assert.equal(skillsShConfig.notGrouped, "bottom");
+  assert.deepEqual(groupedSkillSlugs, bundledSkillSlugs);
+  assert.equal(new Set(groupedSkillSlugs).size, groupedSkillSlugs.length);
+
+  for (const grouping of skillsShConfig.groupings) {
+    assert.equal(typeof grouping.title, "string");
+    assert.ok(grouping.title.length > 0);
+    assert.ok(Array.isArray(grouping.skills));
+    assert.ok(grouping.skills.length > 0);
   }
 });
 

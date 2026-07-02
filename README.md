@@ -1,5 +1,7 @@
 # create-project-calavera
 
+[![skills.sh](https://skills.sh/b/schalkneethling/create-project-calavera)](https://skills.sh/schalkneethling/create-project-calavera)
+
 [Project Calavera](https://github.com/schalkneethling/create-project-calavera/)
 is an open-source CLI tool that scaffolds linters, formatters, TypeScript
 configs, AI tooling such as agent skills, hooks, and subagents, and other common
@@ -391,6 +393,25 @@ artifacts and Codex-adapted `.codex/agents/` files. Other vendor tools may need
 their own settings, symlinks, or import step before they consume those files. See
 [`docs/ai-adapter-guidance.md`](docs/ai-adapter-guidance.md) for Claude Code,
 Codex, and other agent-tool guidance.
+
+### skills.sh Discovery
+
+Calavera's bundled skills are grouped for discovery on
+[`skills.sh`](https://skills.sh/schalkneethling/create-project-calavera). Use
+the directory page, badge, or `skills` CLI listing flow to inspect available
+skills before choosing what belongs in a project.
+
+For Calavera-managed projects, prefer selecting bundled skills through
+`calavera.config.json`, the interactive AI artifact prompt, or scripted
+`--ai-artifact` flags. That keeps installed skills tracked in
+`.calavera/state.json`, covered by dry runs, and protected by Calavera's
+overwrite checks.
+
+Direct installs with `npx skills add schalkneethling/create-project-calavera`
+can be useful for one-off discovery or non-Calavera workflows, but those files
+are managed by the `skills` CLI rather than Calavera. Do not mix direct installs
+and Calavera-managed installs for the same destination unless you intentionally
+want Calavera to treat the existing files as local, unmanaged content.
 
 ## Web Composer
 
