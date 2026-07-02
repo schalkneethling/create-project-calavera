@@ -15,7 +15,13 @@ import packageJson from "../package.json" with { type: "json" };
 import { buildAiApplyResult, createCodexAgentToml } from "../src/ai/artifacts.js";
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
 import { integrationCatalog } from "../src/catalog.js";
-import { agentBootstrap, applyRecipeObject, initRecipe, parseArgs } from "../src/index.js";
+import {
+  agentBootstrap,
+  applyRecipeObject,
+  initRecipe,
+  inspectProject,
+  parseArgs,
+} from "../src/index.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { createEmptyState } from "../src/state.js";
 import {
@@ -341,6 +347,20 @@ test("shared composition output validates against the published schema", () => {
   assert.equal(validateRecipe(recipe), recipe);
 });
 
+test("shared recipe validation rejects mixed formatter integrations", () => {
+  const mixedFormatterRecipe = buildRecipe("modern", ["oxfmt", "prettier"], "npm");
+
+  assert.throws(
+    () => validateRecipe(mixedFormatterRecipe),
+    /Choose either Oxfmt or Prettier, not both/,
+  );
+  assert.equal(validateRecipeResponse(mixedFormatterRecipe).ok, false);
+  assert.match(
+    validateRecipeResponse(mixedFormatterRecipe).errors?.[0] ?? "",
+    /Choose either Oxfmt or Prettier, not both/,
+  );
+});
+
 test("shared catalog helpers expose WebMCP-ready profile scoped options", () => {
   const modernToolIds = listIntegrationOptions("modern").map(({ id }) => id);
   const classicToolIds = listIntegrationOptions("classic").map(({ id }) => id);
@@ -600,6 +620,10 @@ test("standard MCP server exposes Calavera recipe composition tools", async () =
 
     assert.deepEqual(toolNames, [...standardMcpToolNames].sort());
     assert.equal(
+      tools.find(({ name }) => name === "inspect_project")?.description,
+      recipeToolDescriptions.inspect_project,
+    );
+    assert.equal(
       tools.find(({ name }) => name === "compose_recipe")?.description,
       recipeToolDescriptions.compose_recipe,
     );
@@ -660,6 +684,87 @@ test("standard MCP validation and dry-run tools return agent-readable JSON", asy
   );
 });
 
+test("project inspection reports package manager, files, and conflict hints", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-project-inspection-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile(
+      "package.json",
+      `${JSON.stringify(
+        {
+          packageManager: "pnpm@11.3.0",
+          scripts: {
+            lint: "eslint .",
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    await writeFile("pnpm-lock.yaml", "");
+    await writeFile("eslint.config.js", "export default [];\n");
+    await writeFile(".editorconfig", "local edits\n");
+
+    const recipe = buildRecipe("modern", ["editorconfig", "oxlint"], "npm");
+    const inspection = await inspectProject(recipe);
+
+    assert.equal(inspection.packageManager, "pnpm");
+    assert.equal(inspection.files.includes("package.json"), true);
+    assert.equal(inspection.files.includes("eslint.config.js"), true);
+    assert.equal(
+      inspection.findings.some(
+        ({ kind, message }) => kind === "package-manager" && message.includes("pnpm"),
+      ),
+      true,
+    );
+    assert.equal(
+      inspection.findings.some(({ kind }) => kind === "package-manager-mismatch"),
+      true,
+    );
+    assert.equal(
+      inspection.findings.some(
+        ({ kind, path, severity }) =>
+          kind === "managed-file-conflict" && path === ".editorconfig" && severity === "error",
+      ),
+      true,
+    );
+    assert.equal(
+      inspection.findings.some(
+        ({ kind, path }) => kind === "equivalent-tooling" && path === "eslint.config.js",
+      ),
+      true,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("MCP inspect_project exposes current project conflict hints", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-inspect-project-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", JSON.stringify({ packageManager: "bun@1.3.14" }));
+    await writeFile("bun.lock", "");
+
+    const response = await callMcpTool("inspect_project", {
+      recipe: composeRecipe({ profile: "minimal", packageManager: "npm" }),
+    });
+
+    assert.equal(response.packageManager, "bun");
+    assert.equal(response.files.includes("bun.lock"), true);
+    assert.equal(
+      response.findings.some(({ kind }) => kind === "package-manager-mismatch"),
+      true,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
 test("agent bootstrap dry-run previews guidance without writing files", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-dry-run-"));
@@ -714,6 +819,7 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(fallbackGuidance, /reports `-32000`/);
     assert.match(fallbackGuidance, /treat the outcome as unknown instead of failed/);
     assert.match(fallbackGuidance, /\.calavera\/state\.json/);
+    assert.match(fallbackGuidance, /Choose either Oxfmt or Prettier/);
     assert.match(mcpGuidance, /create-project-calavera-mcp/);
     assert.match(mcpGuidance, /"command": "pnpm"/);
     assert.match(
@@ -758,6 +864,10 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(mcpGuidance, /persistent code-execution change/);
     assert.match(mcpGuidance, /explicit user approval/);
     assert.match(mcpGuidance, /AskUserTool|approval/);
+    assert.match(mcpGuidance, /inspect_project/);
+    assert.match(mcpGuidance, /omitted\s+script explanations/);
+    assert.match(mcpGuidance, /ownership notes/);
+    assert.match(mcpGuidance, /Do not combine Oxfmt and Prettier/);
     assert.match(mcpGuidance, /bun is unable to write files to tempdir: PermissionDenied/);
     assert.match(mcpGuidance, /TMPDIR/);
     assert.match(mcpGuidance, /BUN_INSTALL_CACHE_DIR/);
@@ -772,6 +882,9 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(skill, /name: calavera/);
     assert.match(skill, /MCP Setup/);
     assert.match(skill, /devEngines\.packageManager/);
+    assert.match(skill, /inspect_project/);
+    assert.match(skill, /omitted script explanations/);
+    assert.match(skill, /Choose either Oxfmt or Prettier/);
     assert.match(
       skill,
       /npx --package create-project-calavera@<version> create-project-calavera-mcp/,
@@ -891,6 +1004,122 @@ test("apply dry runs surface managed file overwrite conflicts", async () => {
           assumeYes: true,
         }),
       /Refusing to overwrite existing managed file: \.editorconfig/,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("apply dry runs explain omitted scripts and managed ownership", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-dry-run-omitted-scripts-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+
+    const result = await applyRecipeObject(
+      {
+        ...buildRecipe("minimal", ["editorconfig"], "npm"),
+        scripts: {
+          lint: true,
+          format: true,
+          typecheck: true,
+          quality: true,
+        },
+      },
+      {
+        dryRun: true,
+        json: true,
+        noInstall: true,
+        assumeYes: true,
+      },
+    );
+    const packageChange = result.changes.find(
+      ({ type, path }) => type === "update" && path === "package.json",
+    );
+    const editorConfigChange = result.changes.find(
+      ({ type, path }) => type === "write" && path === ".editorconfig",
+    );
+
+    assert.deepEqual(packageChange?.scripts, []);
+    assert.equal(
+      packageChange?.omittedScripts?.some(
+        ({ script, reason }) =>
+          script === "format" &&
+          reason === "format was requested but no formatter integration is selected.",
+      ),
+      true,
+    );
+    assert.equal(
+      packageChange?.omittedScripts?.some(({ script }) => script === "typecheck"),
+      true,
+    );
+    assert.equal(editorConfigChange?.ownership, "calavera");
+    assert.equal(editorConfigChange?.action, "write");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("apply dry runs reject mixed formatter integrations", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-dry-run-formatter-conflict-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+
+    await assert.rejects(
+      () =>
+        applyRecipeObject(buildRecipe("modern", ["oxfmt", "prettier"], "npm"), {
+          dryRun: true,
+          json: true,
+          noInstall: true,
+          assumeYes: true,
+        }),
+      /Choose either Oxfmt or Prettier, not both/,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("apply dry-run human output distinguishes owned writes and omitted scripts", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-cli-dry-run-output-"));
+  const binPath = join(projectDirectory, "create-project-calavera");
+
+  try {
+    process.chdir(projectDirectory);
+    await symlink(fileURLToPath(new URL("../src/index.js", import.meta.url)), binPath);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(
+        {
+          ...buildRecipe("minimal", ["editorconfig"], "npm"),
+          scripts: {
+            lint: true,
+            format: true,
+            typecheck: true,
+            quality: true,
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { stdout } = await execFileAsync(process.execPath, [binPath, "apply", "--dry-run"], {
+      env: { ...process.env, NO_COLOR: "1" },
+    });
+
+    assert.match(stdout, /Would update package\.json/);
+    assert.match(stdout, /Would write and own \.editorconfig/);
+    assert.match(
+      stdout,
+      /Would omit script format: format was requested but no formatter integration is selected\./,
     );
   } finally {
     process.chdir(originalDirectory);

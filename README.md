@@ -10,6 +10,103 @@ JavaScript, TypeScript, and library projects, and it works as a complement to
 framework scaffolding tools like Vite+ and `vp create`, giving any project a
 consistent, repeatable setup through a single recipe file.
 
+## Agent-First Flow
+
+Use Calavera after a project already exists, whether it came from `vp create`,
+Vite, another scaffold tool, or a manually maintained repository:
+
+1. Open the project directory.
+2. Run `npm create project-calavera -- --init`.
+3. Register the MCP server using the generated `.agents/calavera/mcp.md` notes.
+4. Start the agent from the project root.
+5. Agent prompt: `Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.`
+
+Find the equivalent commands for your package manager in the
+[agent-first command table](#agent-first-command-table).
+
+### Agent-First Command Table
+
+| Package manager | Bootstrap agent guidance                  | Preview apply                                      | Apply recipe                             |
+| --------------- | ----------------------------------------- | -------------------------------------------------- | ---------------------------------------- |
+| npm             | `npm create project-calavera -- --init`   | `npm create project-calavera apply -- --dry-run`   | `npm create project-calavera apply`      |
+| pnpm            | `pnpm dlx create-project-calavera --init` | `pnpm dlx create-project-calavera apply --dry-run` | `pnpm dlx create-project-calavera apply` |
+| Yarn            | `yarn dlx create-project-calavera --init` | `yarn dlx create-project-calavera apply --dry-run` | `yarn dlx create-project-calavera apply` |
+| Bun             | `bunx create-project-calavera --init`     | `bunx create-project-calavera apply --dry-run`     | `bunx create-project-calavera apply`     |
+
+`npm create` needs the `--` separator before Calavera flags such as `--init`
+and `--dry-run`. Yarn requires Yarn 2+ for `dlx`; Yarn 1.x users can use
+`npx --package create-project-calavera create-project-calavera --init`.
+
+Agents should treat `dry_run_apply` as the approval boundary. They should show
+the package manager, integrations, dependency packages, inspection findings,
+omitted script explanations, ownership notes, file changes, and AI artifact
+changes before calling `apply_recipe`.
+
+Choose one formatter for the project. Calavera rejects recipes that include both
+Oxfmt and Prettier because they would compete for the same formatting scripts
+and config ownership.
+
+If the agent finds likely conflicts, it should pause and list whether each one
+is a hard stop or a migration decision the user can still approve. A dry run is
+the best next step when adoption is still possible and the user wants to see the
+impact.
+
+Compose the recipe yourself with the interactive CLI:
+
+```bash
+npm create project-calavera init
+npm create project-calavera apply -- --dry-run
+npm create project-calavera apply
+```
+
+`init` composes `calavera.config.json`; `-- --init` bootstraps agent guidance.
+
+Use the web UI when you prefer browser composition. Save or download
+`calavera.config.json`, then run the displayed package-manager command from the
+project folder that contains the saved file.
+
+See
+[`docs/agent-first-calavera-workflow.md`](docs/agent-first-calavera-workflow.md)
+for agent, CLI, web UI, MCP/WebMCP, Vite+, other scaffold, and existing-project
+examples.
+
+### Bun-managed projects and npm `devEngines`
+
+Some starters declare Bun in `devEngines.packageManager`. npm 11 fails before
+Calavera can run when `npm create` is used from one of those projects:
+
+```text
+Invalid devEngines.packageManager
+Invalid name "bun" does not match "npm" for "packageManager"
+```
+
+Use the package manager declared by the project instead:
+
+```bash
+bunx create-project-calavera apply
+```
+
+The same rule applies to manual MCP server registration. Use
+`bunx --package create-project-calavera@<version> create-project-calavera-mcp`
+instead of `npx --package create-project-calavera@<version> create-project-calavera-mcp`
+when the agent harness launches Calavera from a Bun-managed project root. The
+explicit version avoids Bun dropping the non-default `create-project-calavera-mcp`
+bin during ad-hoc `--package` resolution and keeps every persistent MCP
+registration from floating to a later package release.
+
+If `bunx` reports `error: bun is unable to write files to tempdir:
+PermissionDenied` in a restricted agent or MCP sandbox, configure the MCP host to
+set `TMPDIR` to an absolute writable directory. If Bun's package cache is also
+blocked, set `BUN_INSTALL_CACHE_DIR` to an absolute writable cache directory for
+that server registration.
+
+If you intentionally want to launch through npm anyway, npm requires `--force`
+to bypass its own `devEngines` preflight:
+
+```bash
+npm --force create project-calavera apply
+```
+
 ## What Calavera Manages
 
 - Linting and formatting tools
@@ -215,113 +312,23 @@ inspect available project tooling, compose `calavera.config.json`, preview a
 Calavera apply run, or apply an approved recipe. An MCP client can use the tools
 in this order:
 
-1. `list_profiles`
-2. `list_integrations`
-3. `describe_integration`
-4. `list_ai_artifacts`
-5. `compose_recipe`
-6. `validate_recipe`
-7. `explain_recipe`
-8. `dry_run_apply`
-9. `apply_recipe`
+1. `inspect_project`
+2. `list_profiles`
+3. `list_integrations`
+4. `describe_integration`
+5. `list_ai_artifacts`
+6. `compose_recipe`
+7. `validate_recipe`
+8. `explain_recipe`
+9. `dry_run_apply`
+10. `apply_recipe`
 
 `dry_run_apply` returns structured JSON with the package manager, integrations,
-dependency packages, file changes, and AI artifact changes that would be made.
-Agents should present that dry-run summary to the user first. `apply_recipe`
-is intentionally the approval boundary: call it only after the user explicitly
+dependency packages, project inspection findings, omitted script explanations,
+file ownership/action notes, and AI artifact changes that would be made. Agents
+should present that dry-run summary to the user first. `apply_recipe` is
+intentionally the approval boundary: call it only after the user explicitly
 approves the proposed recipe and dry-run result.
-
-## Agent-First Flow
-
-Use Calavera after a project already exists, whether it came from `vp create`,
-Vite, another scaffold tool, or a manually maintained repository:
-
-1. Open the project directory.
-2. Run `npm create project-calavera -- --init`.
-3. Register the MCP server using the generated `.agents/calavera/mcp.md` notes.
-4. Start the agent from the project root.
-5. Agent prompt: `Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.`
-
-Find the equivalent commands for your package manager in the
-[agent-first command table](#agent-first-command-table).
-
-### Agent-First Command Table
-
-| Package manager | Bootstrap agent guidance                  | Preview apply                                      | Apply recipe                             |
-| --------------- | ----------------------------------------- | -------------------------------------------------- | ---------------------------------------- |
-| npm             | `npm create project-calavera -- --init`   | `npm create project-calavera apply -- --dry-run`   | `npm create project-calavera apply`      |
-| pnpm            | `pnpm dlx create-project-calavera --init` | `pnpm dlx create-project-calavera apply --dry-run` | `pnpm dlx create-project-calavera apply` |
-| Yarn            | `yarn dlx create-project-calavera --init` | `yarn dlx create-project-calavera apply --dry-run` | `yarn dlx create-project-calavera apply` |
-| Bun             | `bunx create-project-calavera --init`     | `bunx create-project-calavera apply --dry-run`     | `bunx create-project-calavera apply`     |
-
-`npm create` needs the `--` separator before Calavera flags such as `--init`
-and `--dry-run`. Yarn requires Yarn 2+ for `dlx`; Yarn 1.x users can use
-`npx --package create-project-calavera create-project-calavera --init`.
-
-Agents should treat `dry_run_apply` as the approval boundary. They should show
-the package manager, integrations, dependency packages, file changes, and AI
-artifact changes before calling `apply_recipe`.
-
-If the agent finds likely conflicts, it should pause and list whether each one
-is a hard stop or a migration decision the user can still approve. A dry run is
-the best next step when adoption is still possible and the user wants to see the
-impact.
-
-Compose the recipe yourself with the interactive CLI:
-
-```bash
-npm create project-calavera init
-npm create project-calavera apply -- --dry-run
-npm create project-calavera apply
-```
-
-`init` composes `calavera.config.json`; `-- --init` bootstraps agent guidance.
-
-Use the web UI when you prefer browser composition. Save or download
-`calavera.config.json`, then run the displayed package-manager command from the
-project folder that contains the saved file.
-
-See
-[`docs/agent-first-calavera-workflow.md`](docs/agent-first-calavera-workflow.md)
-for agent, CLI, web UI, MCP/WebMCP, Vite+, other scaffold, and existing-project
-examples.
-
-### Bun-managed projects and npm `devEngines`
-
-Some starters declare Bun in `devEngines.packageManager`. npm 11 fails before
-Calavera can run when `npm create` is used from one of those projects:
-
-```text
-Invalid devEngines.packageManager
-Invalid name "bun" does not match "npm" for "packageManager"
-```
-
-Use the package manager declared by the project instead:
-
-```bash
-bunx create-project-calavera apply
-```
-
-The same rule applies to manual MCP server registration. Use
-`bunx --package create-project-calavera@<version> create-project-calavera-mcp`
-instead of `npx --package create-project-calavera@<version> create-project-calavera-mcp`
-when the agent harness launches Calavera from a Bun-managed project root. The
-explicit version avoids Bun dropping the non-default `create-project-calavera-mcp`
-bin during ad-hoc `--package` resolution and keeps every persistent MCP
-registration from floating to a later package release.
-
-If `bunx` reports `error: bun is unable to write files to tempdir:
-PermissionDenied` in a restricted agent or MCP sandbox, configure the MCP host to
-set `TMPDIR` to an absolute writable directory. If Bun's package cache is also
-blocked, set `BUN_INSTALL_CACHE_DIR` to an absolute writable cache directory for
-that server registration.
-
-If you intentionally want to launch through npm anyway, npm requires `--force`
-to bypass its own `devEngines` preflight:
-
-```bash
-npm --force create project-calavera apply
-```
 
 ## Common Flags
 

@@ -103,6 +103,7 @@ export const recipeCompositionToolNames = Object.freeze([
 ]);
 
 export const standardMcpToolNames = Object.freeze([
+  "inspect_project",
   ...recipeCompositionToolNames,
   "dry_run_apply",
   "apply_recipe",
@@ -111,6 +112,8 @@ export const standardMcpToolNames = Object.freeze([
 export const webMcpToolNames = Object.freeze([...recipeCompositionToolNames, "download_recipe"]);
 
 export const recipeToolDescriptions = Object.freeze({
+  inspect_project:
+    "Inspect the current project for package-manager signals, existing tooling files, and likely Calavera adoption conflicts before composing or applying a recipe.",
   list_profiles:
     "List Calavera profiles, package managers, and default integrations. Use this first when composing a recipe.",
   list_integrations:
@@ -234,6 +237,18 @@ function normalizedToken(value) {
 
 function integrationProfiles(id) {
   return profileSpecificIntegrations[id] ?? profileIds;
+}
+
+function assertNoFormatterConflict(integrationIds) {
+  const resolvedIntegrationIds = new Set(
+    resolveRecipeIntegrations({ integrations: integrationIds }).map(({ id }) => id),
+  );
+
+  if (resolvedIntegrationIds.has("oxfmt") && resolvedIntegrationIds.has("prettier")) {
+    throw new Error(
+      "Choose either Oxfmt or Prettier, not both. Calavera should not install two formatters for the same project.",
+    );
+  }
 }
 
 function integrationIdForInput(value, integrationOptions = integrationCatalog) {
@@ -416,6 +431,8 @@ export function validateRecipeCompositionInput({
     );
   }
 
+  assertNoFormatterConflict(integrationIds);
+
   return {
     profile,
     packageManager,
@@ -506,6 +523,8 @@ export function validateRecipe(recipe) {
   if (unknownIntegrationIds.length > 0) {
     throw new Error(`Unknown integrations: ${unknownIntegrationIds.join(", ")}.`);
   }
+
+  assertNoFormatterConflict(recipe.integrations);
 
   if (Object.hasOwn(recipe, "ai")) {
     assertObjectArray("ai", recipe.ai);
