@@ -5,6 +5,8 @@
 ### Fixed
 
 - Format the generated issue triage report so release checks pass.
+- Add project inspection findings, omitted script explanations, and ownership
+  wording to MCP/apply dry-run output.
 - Document writable `TMPDIR` and `BUN_INSTALL_CACHE_DIR` recovery settings for
   Bun-based MCP launches in restricted hosts.
 

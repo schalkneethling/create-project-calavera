@@ -215,20 +215,22 @@ inspect available project tooling, compose `calavera.config.json`, preview a
 Calavera apply run, or apply an approved recipe. An MCP client can use the tools
 in this order:
 
-1. `list_profiles`
-2. `list_integrations`
-3. `describe_integration`
-4. `list_ai_artifacts`
-5. `compose_recipe`
-6. `validate_recipe`
-7. `explain_recipe`
-8. `dry_run_apply`
-9. `apply_recipe`
+1. `inspect_project`
+2. `list_profiles`
+3. `list_integrations`
+4. `describe_integration`
+5. `list_ai_artifacts`
+6. `compose_recipe`
+7. `validate_recipe`
+8. `explain_recipe`
+9. `dry_run_apply`
+10. `apply_recipe`
 
 `dry_run_apply` returns structured JSON with the package manager, integrations,
-dependency packages, file changes, and AI artifact changes that would be made.
-Agents should present that dry-run summary to the user first. `apply_recipe`
-is intentionally the approval boundary: call it only after the user explicitly
+dependency packages, project inspection findings, omitted script explanations,
+file ownership/action notes, and AI artifact changes that would be made. Agents
+should present that dry-run summary to the user first. `apply_recipe` is
+intentionally the approval boundary: call it only after the user explicitly
 approves the proposed recipe and dry-run result.
 
 ## Agent-First Flow
@@ -259,8 +261,9 @@ and `--dry-run`. Yarn requires Yarn 2+ for `dlx`; Yarn 1.x users can use
 `npx --package create-project-calavera create-project-calavera --init`.
 
 Agents should treat `dry_run_apply` as the approval boundary. They should show
-the package manager, integrations, dependency packages, file changes, and AI
-artifact changes before calling `apply_recipe`.
+the package manager, integrations, dependency packages, inspection findings,
+omitted script explanations, ownership notes, file changes, and AI artifact
+changes before calling `apply_recipe`.
 
 If the agent finds likely conflicts, it should pause and list whether each one
 is a hard stop or a migration decision the user can still approve. A dry run is

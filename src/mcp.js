@@ -8,7 +8,7 @@ import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import * as z from "zod";
 
-import { applyRecipeObject } from "./index.js";
+import { applyRecipeObject, inspectProject } from "./index.js";
 import {
   composeRecipeResponse,
   describeIntegrationResponse,
@@ -34,7 +34,7 @@ import { writeJSON } from "./utils/fs.js";
 const SERVER_NAME = "create-project-calavera";
 const SERVER_VERSION = packageJson.version;
 const SERVER_INSTRUCTIONS =
-  "Compose Calavera recipes for the current project. Start with list_profiles, list_integrations, describe_integration when details are needed, and list_ai_artifacts to discover valid IDs, then call compose_recipe, validate_recipe, explain_recipe, and dry_run_apply. Present the dry-run summary to the user and call apply_recipe only after explicit approval.";
+  "Compose Calavera recipes for the current project. Start with inspect_project, list_profiles, list_integrations, describe_integration when details are needed, and list_ai_artifacts to discover valid IDs, then call compose_recipe, validate_recipe, explain_recipe, and dry_run_apply. Present the dry-run summary to the user and call apply_recipe only after explicit approval.";
 
 const profileIds = profileIdsForRecipe();
 const packageManagerIds = packageManagerIdsForRecipe();
@@ -63,6 +63,13 @@ const toolConfigs = {
   list_profiles: {
     description: recipeToolDescriptions.list_profiles,
     inputSchema: {},
+    annotations: toolAnnotations.read,
+  },
+  inspect_project: {
+    description: recipeToolDescriptions.inspect_project,
+    inputSchema: {
+      recipe: recipeSchema.optional().describe(recipeToolInputDescriptions.recipe),
+    },
     annotations: toolAnnotations.read,
   },
   list_integrations: {
@@ -193,6 +200,14 @@ function listProfilesTool() {
 /**
  * @param {Record<string, unknown>} args
  */
+async function inspectProjectTool(args) {
+  const recipe = args.recipe === undefined ? undefined : assertRecipeInput(args.recipe);
+  return inspectProject(recipe);
+}
+
+/**
+ * @param {Record<string, unknown>} args
+ */
 function listIntegrationsTool(args) {
   return listIntegrationsResponse({ profile: /** @type {string | undefined} */ (args.profile) });
 }
@@ -301,6 +316,8 @@ export async function callMcpTool(name, input = {}) {
   switch (name) {
     case "list_profiles":
       return listProfilesTool();
+    case "inspect_project":
+      return inspectProjectTool(args);
     case "list_integrations":
       return listIntegrationsTool(args);
     case "describe_integration":

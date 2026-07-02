@@ -105,7 +105,11 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {Record<string, boolean>} [scripts]
  * @property {unknown} [ai]
  *
- * @typedef {{ type: string, path: string, category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], removedDefaultTestScript?: boolean }} Change
+ * @typedef {{ script: string, reason: string }} ScriptOmission
+ * @typedef {{ severity: "info" | "warning" | "error", kind: string, message: string, path?: string }} ProjectInspectionFinding
+ * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[] }} ProjectInspection
+ * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[] }} ScriptPlan
+ * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean }} Change
  *
  * @typedef {object} ApplyResult
  * @property {"apply"} command
@@ -113,6 +117,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {PackageManager} packageManager
  * @property {string[]} dependencies
  * @property {string[]} integrations
+ * @property {ProjectInspection} projectInspection
  * @property {Change[]} changes
  * @property {string[]} pointers
  *
@@ -426,7 +431,7 @@ function detectPackageManager(packageJSON = {}) {
     return "yarn";
   }
 
-  if (existsSync("bun.lockb")) {
+  if (existsSync("bun.lock") || existsSync("bun.lockb")) {
     return "bun";
   }
 
@@ -521,7 +526,7 @@ function runIfFiles(label, extensions, command) {
  * @param {Recipe} recipe
  * @param {Integration[]} integrations
  * @param {PackageManager} packageManager
- * @returns {Record<string, string>}
+ * @returns {ScriptPlan}
  */
 function buildScripts(recipe, integrations, packageManager) {
   const supportedPackageManager = assertSupportedPackageManager(packageManager);
@@ -555,13 +560,25 @@ function buildScripts(recipe, integrations, packageManager) {
 
   /** @type {Record<string, string>} */
   const scripts = {};
+  /** @type {ScriptOmission[]} */
+  const omittedScripts = [];
 
   if (recipe.scripts?.lint && lintParts.length > 0) {
     scripts.lint = lintParts.join(" && ");
+  } else if (recipe.scripts?.lint) {
+    omittedScripts.push({
+      script: "lint",
+      reason: "lint was requested but no linting integration is selected.",
+    });
   }
 
   if (recipe.scripts?.["lint:fix"] && lintFixParts.length > 0) {
     scripts["lint:fix"] = lintFixParts.join(" && ");
+  } else if (recipe.scripts?.["lint:fix"]) {
+    omittedScripts.push({
+      script: "lint:fix",
+      reason: "lint:fix was requested but no fix-capable linting integration is selected.",
+    });
   }
 
   if (recipe.scripts?.format) {
@@ -573,6 +590,11 @@ function buildScripts(recipe, integrations, packageManager) {
       );
     } else if (usesPrettier) {
       scripts.format = "prettier --write .";
+    } else {
+      omittedScripts.push({
+        script: "format",
+        reason: "format was requested but no formatter integration is selected.",
+      });
     }
   }
 
@@ -585,6 +607,11 @@ function buildScripts(recipe, integrations, packageManager) {
       );
     } else if (usesPrettier) {
       scripts["format:check"] = "prettier --check .";
+    } else {
+      omittedScripts.push({
+        script: "format:check",
+        reason: "format:check was requested but no formatter integration is selected.",
+      });
     }
   }
 
@@ -594,6 +621,11 @@ function buildScripts(recipe, integrations, packageManager) {
       SCRIPT_SOURCE_EXTENSIONS,
       "tsc --noEmit",
     );
+  } else if (recipe.scripts?.typecheck) {
+    omittedScripts.push({
+      script: "typecheck",
+      reason: "typecheck was requested but the TypeScript integration is not selected.",
+    });
   }
 
   if (usesReactDoctor) {
@@ -615,12 +647,19 @@ function buildScripts(recipe, integrations, packageManager) {
       .filter(isNotEmptyString)
       .filter((script) => Boolean(scripts[script]));
 
-    scripts.quality = qualityScripts
-      .map((script) => packageManagerCommands[supportedPackageManager].run(script))
-      .join(" && ");
+    if (qualityScripts.length > 0) {
+      scripts.quality = qualityScripts
+        .map((script) => packageManagerCommands[supportedPackageManager].run(script))
+        .join(" && ");
+    } else {
+      omittedScripts.push({
+        script: "quality",
+        reason: "quality was requested but no generated scripts are available to aggregate.",
+      });
+    }
   }
 
-  return scripts;
+  return { scripts, omittedScripts };
 }
 
 function createRunIfFilesHelper() {
@@ -727,7 +766,7 @@ function createAgentBootstrapGuidanceBody() {
 - If the Calavera MCP tools are not available, help the user register the MCP server from \`${AGENT_BOOTSTRAP_MCP_FILE}\` or fall back to the Calavera Web UI.
 - Inspect existing project tooling before composing a recipe and raise likely config conflicts early.
 - If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use \`dry_run_apply\` to show concrete impact when adoption still looks possible.
-- Start with \`list_profiles\`, \`list_integrations\`, and \`list_ai_artifacts\`; use \`describe_integration\` when the user asks for more information or an option needs explanation.
+- Start with \`inspect_project\`, \`list_profiles\`, \`list_integrations\`, and \`list_ai_artifacts\`; use \`describe_integration\` when the user asks for more information or an option needs explanation.
 - Compose recipes with \`compose_recipe\`, validate them with \`validate_recipe\`, and explain the selected integrations with \`explain_recipe\`.
 - Always present \`dry_run_apply\` output to the user before changing files.
 - Call \`apply_recipe\` only after the user explicitly approves the dry-run result.
@@ -878,17 +917,20 @@ runs \`${shellCommand}\`. Ask for explicit user approval before creating
 
 Use the tools in this order:
 
-1. \`list_profiles\`
-2. \`list_integrations\`
-3. \`describe_integration\`
-4. \`list_ai_artifacts\`
-5. \`compose_recipe\`
-6. \`validate_recipe\`
-7. \`explain_recipe\`
-8. \`dry_run_apply\`
-9. \`apply_recipe\`
+1. \`inspect_project\`
+2. \`list_profiles\`
+3. \`list_integrations\`
+4. \`describe_integration\`
+5. \`list_ai_artifacts\`
+6. \`compose_recipe\`
+7. \`validate_recipe\`
+8. \`explain_recipe\`
+9. \`dry_run_apply\`
+10. \`apply_recipe\`
 
-\`dry_run_apply\` is the review boundary. Show its result to the user and wait for explicit approval before calling \`apply_recipe\`.
+\`dry_run_apply\` is the review boundary. Show its inspection findings, omitted
+script explanations, ownership notes, and planned file changes to the user, then
+wait for explicit approval before calling \`apply_recipe\`.
 
 If the MCP transport closes or reports \`-32000\` during or immediately after
 \`apply_recipe\`, treat the apply outcome as unknown instead of failed. Inspect
@@ -900,7 +942,7 @@ Calavera-managed helper for generated package scripts. Do not hand-write or edit
 that file; let \`apply_recipe\` or \`create-project-calavera apply\` create it
 after approval.
 
-Before composing a recipe, inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
+Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
 
 If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
 
@@ -1114,7 +1156,7 @@ async function assertSafeManagedFileWrites(filePlans, previousState) {
  * @returns {Promise<ManagedFileState>}
  */
 async function writeManagedFile(path, contents, dryRun, changes, previousState) {
-  changes.push({ type: "write", path });
+  changes.push({ type: "write", path, action: "write", ownership: "calavera" });
 
   const managedFile = {
     path,
@@ -1213,6 +1255,210 @@ function plannedManagedFiles(integrations) {
   return plans;
 }
 
+const projectInspectionFiles = [
+  "package.json",
+  "package-lock.json",
+  "npm-shrinkwrap.json",
+  "pnpm-lock.yaml",
+  "yarn.lock",
+  "bun.lock",
+  "bun.lockb",
+  "calavera.config.json",
+  ".editorconfig",
+  "eslint.config.js",
+  "oxlint.json",
+  ".prettierrc.json",
+  ".prettierignore",
+  ".stylelintrc.json",
+  "react-doctor.config.json",
+  "tsconfig.json",
+  "vite.config.js",
+  "vite.config.ts",
+  "next.config.js",
+  "next.config.mjs",
+  "astro.config.mjs",
+  "svelte.config.js",
+];
+
+const packageManagerLockfiles = {
+  npm: ["package-lock.json", "npm-shrinkwrap.json"],
+  pnpm: ["pnpm-lock.yaml"],
+  yarn: ["yarn.lock"],
+  bun: ["bun.lock", "bun.lockb"],
+};
+
+const integrationConfigFiles = {
+  editorconfig: [".editorconfig"],
+  eslint: ["eslint.config.js"],
+  oxlint: ["oxlint.json"],
+  oxfmt: [],
+  prettier: [".prettierrc.json", ".prettierignore"],
+  "react-doctor": ["react-doctor.config.json"],
+  stylelint: [".stylelintrc.json"],
+  typescript: ["tsconfig.json"],
+};
+
+/**
+ * @param {string} path
+ * @returns {Promise<boolean>}
+ */
+async function projectFileExists(path) {
+  return fileExists(resolve(path));
+}
+
+/**
+ * @param {{ path: string, contents: string }} filePlan
+ * @param {CalaveraState} previousState
+ * @returns {Promise<ProjectInspectionFinding | undefined>}
+ */
+async function inspectManagedFilePlan(filePlan, previousState) {
+  if (!(await projectFileExists(filePlan.path))) {
+    return undefined;
+  }
+
+  const targetHash = textHash(filePlan.contents);
+  const installedHash = textHash(await readFile(filePlan.path, "utf8"));
+
+  if (installedHash === targetHash) {
+    return undefined;
+  }
+
+  const stateFile = managedFileStateForPath(previousState, filePlan.path);
+
+  if (stateFile?.hash === installedHash) {
+    return undefined;
+  }
+
+  return {
+    severity: "error",
+    kind: "managed-file-conflict",
+    path: filePlan.path,
+    message: `${filePlan.path} already exists and is not a matching Calavera-managed file; review, remove, or migrate it before applying this recipe.`,
+  };
+}
+
+/**
+ * @param {Recipe} [recipe]
+ * @returns {Promise<ProjectInspection>}
+ */
+export async function inspectProject(recipe) {
+  const packageJSON = await readPackageJSONIfPresent();
+  const previousState = await readStateIfPresent();
+  const packageManager = detectPackageManager(packageJSON);
+  const integrations = recipe ? resolveRecipeIntegrations(recipe) : [];
+  const integrationIds = new Set(integrations.map((integration) => integration.id));
+  /** @type {string[]} */
+  const files = [];
+  /** @type {ProjectInspectionFinding[]} */
+  const findings = [];
+
+  for (const path of projectInspectionFiles) {
+    if (await projectFileExists(path)) {
+      files.push(path);
+    }
+  }
+
+  if (packageManager) {
+    findings.push({
+      severity: "info",
+      kind: "package-manager",
+      message: `Detected ${packageManager} as the project package manager.`,
+    });
+  }
+
+  const presentLockfiles = Object.values(packageManagerLockfiles)
+    .flat()
+    .filter((path) => files.includes(path));
+
+  if (presentLockfiles.length > 1) {
+    findings.push({
+      severity: "warning",
+      kind: "multiple-lockfiles",
+      message: `Multiple package-manager lockfiles are present: ${presentLockfiles.join(", ")}. Confirm which package manager owns installs before applying.`,
+    });
+  }
+
+  if (recipe?.packageManager && packageManager && recipe.packageManager !== packageManager) {
+    findings.push({
+      severity: "warning",
+      kind: "package-manager-mismatch",
+      path: "package.json",
+      message: `The recipe uses ${recipe.packageManager}, but project inspection detected ${packageManager}; this is a migration decision that should be approved before applying.`,
+    });
+  }
+
+  const packageScripts = packageJSON.scripts ?? {};
+  for (const scriptName of ["lint", "lint:fix", "format", "format:check", "typecheck"]) {
+    if (recipe?.scripts?.[scriptName] && typeof packageScripts[scriptName] === "string") {
+      findings.push({
+        severity: "warning",
+        kind: "existing-package-script",
+        path: "package.json",
+        message: `package.json already defines "${scriptName}"; Calavera will replace that script if this recipe is applied.`,
+      });
+    }
+  }
+
+  for (const filePlan of plannedManagedFiles(integrations)) {
+    const finding = await inspectManagedFilePlan(filePlan, previousState);
+
+    if (finding) {
+      findings.push(finding);
+    }
+  }
+
+  for (const [integrationId, paths] of Object.entries(integrationConfigFiles)) {
+    if (!integrationIds.has(integrationId)) {
+      continue;
+    }
+
+    for (const path of paths) {
+      if (files.includes(path)) {
+        findings.push({
+          severity: "warning",
+          kind: "existing-config",
+          path,
+          message: `${path} already exists; adopting the ${integrationId} integration may be a migration decision rather than a clean scaffold.`,
+        });
+      }
+    }
+  }
+
+  if (
+    integrationIds.has("oxlint") &&
+    files.includes("eslint.config.js") &&
+    !integrationIds.has("eslint")
+  ) {
+    findings.push({
+      severity: "warning",
+      kind: "equivalent-tooling",
+      path: "eslint.config.js",
+      message:
+        "eslint.config.js exists while Oxlint is selected; decide whether this project should migrate linting or keep the existing ESLint setup.",
+    });
+  }
+
+  if (
+    integrationIds.has("eslint") &&
+    files.includes("oxlint.json") &&
+    !integrationIds.has("oxlint")
+  ) {
+    findings.push({
+      severity: "warning",
+      kind: "equivalent-tooling",
+      path: "oxlint.json",
+      message:
+        "oxlint.json exists while ESLint is selected; decide whether this project should migrate linting or keep the existing Oxlint setup.",
+    });
+  }
+
+  return {
+    packageManager,
+    files,
+    findings,
+  };
+}
+
 /**
  * @param {CliOptions} options
  * @returns {Promise<ApplyResult>}
@@ -1249,7 +1495,10 @@ export async function applyRecipeObject(recipe, options = {}) {
     applyOptions.assumeYes,
     applyOptions.json,
   );
-  const scripts = buildScripts(recipe, integrations, packageManager);
+  const projectInspection = await inspectProject(recipe);
+  const scriptPlan = buildScripts(recipe, integrations, packageManager);
+  const { scripts, omittedScripts } = scriptPlan;
+  /** @type {Change[]} */
   const changes = [];
   /** @type {ManagedFileState[]} */
   const managedFiles = [];
@@ -1267,7 +1516,10 @@ export async function applyRecipeObject(recipe, options = {}) {
   changes.push({
     type: "update",
     path: "package.json",
+    action: "update",
+    ownership: "project",
     scripts: Object.keys(scripts),
+    omittedScripts,
     removedDefaultTestScript,
   });
 
@@ -1411,6 +1663,7 @@ export async function applyRecipeObject(recipe, options = {}) {
     packageManager,
     dependencies: dependencyList,
     integrations: integrations.map((integration) => integration.id),
+    projectInspection,
     changes: [...changes, ...aiResult.changes],
     pointers: aiResult.pointers,
   };
@@ -2371,13 +2624,23 @@ function printResult(result, asJSON = false) {
       logger.info("Dev dependencies: none");
     }
 
+    for (const finding of result.projectInspection.findings) {
+      logger.info(`Inspection ${finding.severity}: ${finding.message}`);
+    }
+
     for (const change of result.changes) {
       if (change.type === "write") {
-        logger.info(
-          change.category === "ai"
-            ? `Would write AI ${change.aiType} ${change.name} to ${change.path}`
-            : `Would write ${change.path}`,
-        );
+        if (change.category === "ai") {
+          logger.info(`Would write AI ${change.aiType} ${change.name} to ${change.path}`);
+        } else if (change.ownership === "calavera") {
+          logger.info(`Would write and own ${change.path}`);
+        } else if (change.action === "scaffold") {
+          logger.info(`Would scaffold ${change.path}`);
+        } else if (change.action === "merge") {
+          logger.info(`Would merge ${change.path}`);
+        } else {
+          logger.info(`Would write ${change.path}`);
+        }
       }
 
       if (change.type === "update") {
@@ -2389,6 +2652,10 @@ function printResult(result, asJSON = false) {
 
         if (change.removedDefaultTestScript) {
           logger.info("Would remove the default npm test placeholder script");
+        }
+
+        for (const omittedScript of change.omittedScripts ?? []) {
+          logger.info(`Would omit script ${omittedScript.script}: ${omittedScript.reason}`);
         }
       }
     }

@@ -103,6 +103,7 @@ export const recipeCompositionToolNames = Object.freeze([
 ]);
 
 export const standardMcpToolNames = Object.freeze([
+  "inspect_project",
   ...recipeCompositionToolNames,
   "dry_run_apply",
   "apply_recipe",
@@ -111,6 +112,8 @@ export const standardMcpToolNames = Object.freeze([
 export const webMcpToolNames = Object.freeze([...recipeCompositionToolNames, "download_recipe"]);
 
 export const recipeToolDescriptions = Object.freeze({
+  inspect_project:
+    "Inspect the current project for package-manager signals, existing tooling files, and likely Calavera adoption conflicts before composing or applying a recipe.",
   list_profiles:
     "List Calavera profiles, package managers, and default integrations. Use this first when composing a recipe.",
   list_integrations:

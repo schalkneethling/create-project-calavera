@@ -9,14 +9,14 @@ Use Calavera to compose and apply project tooling through its MCP tools whenever
 
 ## Start Here
 
-1. Confirm whether Calavera MCP tools are available. Look for tools named `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `dry_run_apply`, and `apply_recipe`.
-2. Inspect the project for existing tooling and likely conflicts before composing a recipe. Check files such as `package.json`, `calavera.config.json`, `.editorconfig`, `eslint.config.js`, `oxlint.json`, `.prettierrc.json`, `.stylelintrc.json`, and `tsconfig.json`.
+1. Confirm whether Calavera MCP tools are available. Look for tools named `inspect_project`, `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `dry_run_apply`, and `apply_recipe`.
+2. Call `inspect_project` when available, or inspect the project manually for existing tooling and likely conflicts before composing a recipe. Check files such as `package.json`, `calavera.config.json`, `.editorconfig`, `eslint.config.js`, `oxlint.json`, `.prettierrc.json`, `.stylelintrc.json`, and `tsconfig.json`.
    If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use `dry_run_apply` to show concrete impact when adoption still looks possible.
 3. Use AskUserTool or the agent client's equivalent when available to clarify profile preferences, framework needs, conflict decisions, and apply approval. If no such tool exists, ask the user directly.
 4. List choices with `list_profiles`, `list_integrations`, and `list_ai_artifacts`. Use `describe_integration` when the user asks for more information or when you need to compare options.
 5. Once the profile and requirements are clear, compose the recipe with `compose_recipe`.
 6. Validate and explain it with `validate_recipe` and `explain_recipe`.
-7. Present `dry_run_apply` output to the user before changing files.
+7. Present `dry_run_apply` output to the user before changing files, including inspection findings, omitted script explanations, ownership notes, and planned file changes.
 8. Call `apply_recipe` only after the user explicitly approves the dry run.
 9. If the MCP transport closes or reports `-32000` during or immediately after `apply_recipe`, treat the outcome as unknown instead of failed. Inspect `calavera.config.json`, `.calavera/state.json`, generated files, and package metadata before retrying the apply.
 
