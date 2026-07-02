@@ -7,6 +7,8 @@
 - Format the generated issue triage report so release checks pass.
 - Add project inspection findings, omitted script explanations, and ownership
   wording to MCP/apply dry-run output.
+- Generate direct package scripts instead of wrapping lint, format, typecheck,
+  and React Doctor commands with `.calavera/run-if-files.mjs`.
 - Reject recipes that try to install both Oxfmt and Prettier in one project.
 - Document writable `TMPDIR` and `BUN_INSTALL_CACHE_DIR` recovery settings for
   Bun-based MCP launches in restricted hosts.
