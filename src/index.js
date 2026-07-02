@@ -519,16 +519,6 @@ async function ensurePackageJSON(packageManager, dryRun, assumeYes, json) {
 }
 
 /**
- * @param {string} label
- * @param {string[]} extensions
- * @param {string} command
- * @returns {string}
- */
-function runIfFiles(label, extensions, command) {
-  return `node .calavera/run-if-files.mjs "${label}" "${extensions.join(",")}" -- ${command}`;
-}
-
-/**
  * @param {Recipe} recipe
  * @param {Integration[]} integrations
  * @param {PackageManager} packageManager
@@ -545,23 +535,17 @@ function buildScripts(recipe, integrations, packageManager) {
   const usesPrettier = has("prettier");
   const usesReactDoctor = has("react-doctor");
   const usesTypeScript = has("typescript");
-  const cssExtensions = ["css", "scss"];
-  const reactExtensions = ["js", "jsx", "ts", "tsx"];
 
   const lintParts = [
-    usesOxlint ? runIfFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "oxlint .") : null,
-    usesESLint ? runIfFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "eslint .") : null,
-    usesStylelint ? runIfFiles("CSS", cssExtensions, 'stylelint "**/*.{css,scss}"') : null,
+    usesOxlint ? "oxlint ." : null,
+    usesESLint ? "eslint ." : null,
+    usesStylelint ? 'stylelint "**/*.{css,scss}"' : null,
   ].filter(Boolean);
 
   const lintFixParts = [
-    usesOxlint
-      ? runIfFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "oxlint --fix .")
-      : null,
-    usesESLint
-      ? runIfFiles("JavaScript/TypeScript", SCRIPT_SOURCE_EXTENSIONS, "eslint --fix .")
-      : null,
-    usesStylelint ? runIfFiles("CSS", cssExtensions, 'stylelint "**/*.{css,scss}" --fix') : null,
+    usesOxlint ? "oxlint --fix ." : null,
+    usesESLint ? "eslint --fix ." : null,
+    usesStylelint ? 'stylelint "**/*.{css,scss}" --fix' : null,
   ].filter(Boolean);
 
   /** @type {Record<string, string>} */
@@ -589,11 +573,7 @@ function buildScripts(recipe, integrations, packageManager) {
 
   if (recipe.scripts?.format) {
     if (usesOxfmt) {
-      scripts.format = runIfFiles(
-        "JavaScript/TypeScript",
-        SCRIPT_SOURCE_EXTENSIONS,
-        "oxfmt --write .",
-      );
+      scripts.format = "oxfmt --write .";
     } else if (usesPrettier) {
       scripts.format = "prettier --write .";
     } else {
@@ -606,11 +586,7 @@ function buildScripts(recipe, integrations, packageManager) {
 
   if (recipe.scripts?.["format:check"]) {
     if (usesOxfmt) {
-      scripts["format:check"] = runIfFiles(
-        "JavaScript/TypeScript",
-        SCRIPT_SOURCE_EXTENSIONS,
-        "oxfmt --check .",
-      );
+      scripts["format:check"] = "oxfmt --check .";
     } else if (usesPrettier) {
       scripts["format:check"] = "prettier --check .";
     } else {
@@ -622,11 +598,7 @@ function buildScripts(recipe, integrations, packageManager) {
   }
 
   if (recipe.scripts?.typecheck && usesTypeScript) {
-    scripts.typecheck = runIfFiles(
-      "JavaScript/TypeScript",
-      SCRIPT_SOURCE_EXTENSIONS,
-      "tsc --noEmit",
-    );
+    scripts.typecheck = "tsc --noEmit";
   } else if (recipe.scripts?.typecheck) {
     omittedScripts.push({
       script: "typecheck",
@@ -635,12 +607,8 @@ function buildScripts(recipe, integrations, packageManager) {
   }
 
   if (usesReactDoctor) {
-    scripts["react:doctor"] = runIfFiles("React", reactExtensions, "react-doctor --offline");
-    scripts["react:doctor:diff"] = runIfFiles(
-      "React",
-      reactExtensions,
-      "react-doctor --offline --diff",
-    );
+    scripts["react:doctor"] = "react-doctor --offline";
+    scripts["react:doctor:diff"] = "react-doctor --offline --diff";
   }
 
   if (recipe.scripts?.quality) {
@@ -666,89 +634,6 @@ function buildScripts(recipe, integrations, packageManager) {
   }
 
   return { scripts, omittedScripts };
-}
-
-function createRunIfFilesHelper() {
-  return `#!/usr/bin/env node
-import { readdir } from "node:fs/promises";
-import { delimiter, extname, join } from "node:path";
-import { spawn } from "node:child_process";
-
-const ignoredDirectories = new Set([
-  ".calavera",
-  ".git",
-  "coverage",
-  "dist",
-  "dist-web",
-  "node_modules",
-]);
-
-const [label, extensionList, separator, ...command] = process.argv.slice(2);
-
-if (separator !== "--" || command.length === 0) {
-  console.info("Usage: run-if-files <label> <extensions> -- <command>");
-  process.exit(1);
-}
-
-const extensions = new Set(
-  extensionList.split(",").map((extension) => \`.\${extension.trim()}\`),
-);
-
-async function hasMatchingFile(directory) {
-  let entries;
-
-  try {
-    entries = await readdir(directory, { withFileTypes: true });
-  } catch {
-    return false;
-  }
-
-  for (const entry of entries) {
-    if (entry.isDirectory()) {
-      if (ignoredDirectories.has(entry.name)) {
-        continue;
-      }
-
-      if (await hasMatchingFile(join(directory, entry.name))) {
-        return true;
-      }
-    } else if (extensions.has(extname(entry.name))) {
-      return true;
-    }
-  }
-
-  return false;
-}
-
-if (!(await hasMatchingFile(process.cwd()))) {
-  console.info(\`No \${label} files found. Skipping.\`);
-  process.exit(0);
-}
-
-const child = spawn(command[0], command.slice(1), {
-  env: {
-    ...process.env,
-    PATH: [join(process.cwd(), "node_modules", ".bin"), process.env.PATH]
-      .filter(Boolean)
-      .join(delimiter),
-  },
-  stdio: "inherit",
-});
-
-child.on("error", (error) => {
-  console.info(\`Failed to start "\${command[0]}": \${error.message}\`);
-  process.exit(1);
-});
-
-child.on("exit", (code, signal) => {
-  if (signal) {
-    console.info(\`Command stopped by signal \${signal}.\`);
-    process.exit(1);
-  }
-
-  process.exit(code ?? 1);
-});
-`;
 }
 
 function createEditorConfig() {
@@ -778,7 +663,7 @@ function createAgentBootstrapGuidanceBody() {
 - Always present \`dry_run_apply\` output to the user before changing files.
 - Call \`apply_recipe\` only after the user explicitly approves the dry-run result.
 - If the MCP transport closes or reports \`-32000\` during or immediately after \`apply_recipe\`, treat the outcome as unknown instead of failed. Inspect \`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package metadata before retrying the apply.
-- Treat files listed by \`dry_run_apply\`, including \`.calavera/run-if-files.mjs\`, as Calavera-managed outputs. Do not hand-write or edit them; let \`apply_recipe\` or \`create-project-calavera apply\` create them after approval.
+- Treat files listed by \`dry_run_apply\` as Calavera-managed outputs. Do not hand-write or edit them; let \`apply_recipe\` or \`create-project-calavera apply\` create them after approval.
 - Use AskUserTool or the agent client's equivalent when available for profile choices, conflict decisions, and apply approval.
 
 MCP setup notes live in \`${AGENT_BOOTSTRAP_MCP_FILE}\`.
@@ -944,11 +829,6 @@ If the MCP transport closes or reports \`-32000\` during or immediately after
 \`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package
 metadata before retrying the apply.
 
-If \`dry_run_apply\` lists \`.calavera/run-if-files.mjs\`, treat it as a
-Calavera-managed helper for generated package scripts. Do not hand-write or edit
-that file; let \`apply_recipe\` or \`create-project-calavera apply\` create it
-after approval.
-
 ## Formatter choice
 
 Choose one formatter per project. Do not combine Oxfmt and Prettier in one
@@ -1108,18 +988,6 @@ function createReactDoctorConfig() {
 }
 
 /**
- * @param {Integration[]} integrations
- * @returns {boolean}
- */
-function usesRunIfFilesHelper(integrations) {
-  return integrations.some((integration) =>
-    ["eslint", "oxfmt", "oxlint", "react-doctor", "stylelint", "typescript"].includes(
-      integration.id,
-    ),
-  );
-}
-
-/**
  * @param {string} path
  * @param {string} contents
  * @param {CalaveraState} previousState
@@ -1218,10 +1086,6 @@ function plannedManagedFiles(integrations) {
 
   if (integrations.some((integration) => integration.id === "editorconfig")) {
     plans.push({ path: ".editorconfig", contents: createEditorConfig() });
-  }
-
-  if (usesRunIfFilesHelper(integrations)) {
-    plans.push({ path: ".calavera/run-if-files.mjs", contents: createRunIfFilesHelper() });
   }
 
   if (integrations.some((integration) => integration.id === "oxlint")) {
@@ -1499,18 +1363,6 @@ export async function applyRecipeObject(recipe, options = {}) {
       await writeManagedFile(
         ".editorconfig",
         createEditorConfig(),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-      ),
-    );
-  }
-
-  if (usesRunIfFilesHelper(integrations)) {
-    managedFiles.push(
-      await writeManagedFile(
-        ".calavera/run-if-files.mjs",
-        createRunIfFilesHelper(),
         applyOptions.dryRun,
         changes,
         previousState,
@@ -2256,7 +2108,6 @@ async function doctor(options) {
         ? "react-doctor.config.json"
         : null,
       integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
-      usesRunIfFilesHelper(integrations) ? ".calavera/run-if-files.mjs" : null,
     ].filter(isNotEmptyString);
 
     for (const file of expectedFiles) {
@@ -2303,7 +2154,6 @@ function expectedManagedFiles(integrations) {
       ? "react-doctor.config.json"
       : null,
     integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
-    usesRunIfFilesHelper(integrations) ? ".calavera/run-if-files.mjs" : null,
   ].filter(isNotEmptyString);
 }
 

@@ -214,14 +214,10 @@ generates and owns, but not `.env.schema` or `.gitignore`:
   "version": 1,
   "profile": "modern",
   "integrations": ["editorconfig", "typescript", "oxlint", "varlock"],
-  "files": [".editorconfig", ".calavera/run-if-files.mjs", "oxlint.json", "tsconfig.json"],
+  "files": [".editorconfig", "oxlint.json", "tsconfig.json"],
   "managedFiles": [
     {
       "path": ".editorconfig",
-      "hash": "..."
-    },
-    {
-      "path": ".calavera/run-if-files.mjs",
       "hash": "..."
     },
     {
@@ -285,10 +281,6 @@ A useful dry-run result for a fresh project would therefore include changes like
     },
     {
       "type": "write",
-      "path": ".calavera/run-if-files.mjs"
-    },
-    {
-      "type": "write",
       "path": "oxlint.json"
     },
     {
@@ -314,7 +306,6 @@ The corresponding human output should follow the current dry-run printer:
 Would update package.json
 Would add scripts: lint, format:check, typecheck, env:load, quality
 Would write .editorconfig
-Would write .calavera/run-if-files.mjs
 Would write oxlint.json
 Would write tsconfig.json
 Would write .env.schema

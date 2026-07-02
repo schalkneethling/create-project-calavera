@@ -87,9 +87,9 @@ If the MCP transport closes or reports `-32000` during or immediately after
 `apply_recipe`, agents should treat the apply outcome as unknown instead of
 failed. Inspect `calavera.config.json`, `.calavera/state.json`, generated files,
 and package metadata before retrying the apply.
-Files listed by `dry_run_apply`, including `.calavera/run-if-files.mjs`, are
-Calavera-managed outputs. Agents should not hand-write or edit them;
-`apply_recipe` or `create-project-calavera apply` creates them after approval.
+Files listed by `dry_run_apply` are Calavera-managed outputs. Agents should not
+hand-write or edit them; `apply_recipe` or `create-project-calavera apply`
+creates them after approval.
 
 If inspection finds likely conflicts, the agent should pause before applying
 changes and list each conflict as either a hard stop or a migration decision the

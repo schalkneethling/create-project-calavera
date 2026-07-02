@@ -31,6 +31,7 @@ import {
   assertString,
   assertStringArray,
 } from "../src/utils/assertions.js";
+import { textHash } from "../src/utils/hash.js";
 import {
   aiArtifactRecipeItems,
   buildRecipe,
@@ -814,7 +815,7 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.equal(existingGuidance, "Existing project guidance.\n");
     assert.match(fallbackGuidance, /Calavera Agent Guidance/);
     assert.match(fallbackGuidance, /Treat files listed by `dry_run_apply`/);
-    assert.match(fallbackGuidance, /\.calavera\/run-if-files\.mjs/);
+    assert.doesNotMatch(fallbackGuidance, /\.calavera\/run-if-files\.mjs/);
     assert.match(fallbackGuidance, /Do not hand-write or edit them/);
     assert.match(fallbackGuidance, /reports `-32000`/);
     assert.match(fallbackGuidance, /treat the outcome as unknown instead of failed/);
@@ -872,8 +873,7 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(mcpGuidance, /TMPDIR/);
     assert.match(mcpGuidance, /BUN_INSTALL_CACHE_DIR/);
     assert.match(mcpGuidance, /restricted hosts/);
-    assert.match(mcpGuidance, /Calavera-managed helper for generated package scripts/);
-    assert.match(mcpGuidance, /Do not hand-write or edit/);
+    assert.doesNotMatch(mcpGuidance, /Calavera-managed helper for generated package scripts/);
     assert.match(mcpGuidance, /reports `-32000`/);
     assert.match(mcpGuidance, /before retrying the apply/);
     assert.match(mcpGuidance, /existing tooling files/);
@@ -898,7 +898,7 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(skill, /TMPDIR/);
     assert.match(skill, /BUN_INSTALL_CACHE_DIR/);
     assert.match(skill, /Treat files listed by `dry_run_apply`/);
-    assert.match(skill, /\.calavera\/run-if-files\.mjs/);
+    assert.doesNotMatch(skill, /\.calavera\/run-if-files\.mjs/);
     assert.match(skill, /reports `-32000`/);
     assert.match(skill, /outcome as unknown instead of failed/);
     assert.match(skill, /Fallbacks/);
@@ -1080,6 +1080,124 @@ test("apply dry runs reject mixed formatter integrations", async () => {
         }),
       /Choose either Oxfmt or Prettier, not both/,
     );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("apply uses direct tool scripts without the run-if-files helper", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-direct-scripts-"));
+  const recipe = buildRecipe("modern", ["typescript", "oxlint", "oxfmt", "stylelint"], "npm");
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+
+    const dryRun = await applyRecipeObject(recipe, {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    assert.equal(
+      dryRun.changes.some(({ path }) => path === ".calavera/run-if-files.mjs"),
+      false,
+    );
+
+    await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    const packageFile = JSON.parse(await readFile("package.json", "utf8"));
+    assert.equal(packageFile.scripts.lint, 'oxlint . && stylelint "**/*.{css,scss}"');
+    assert.equal(
+      packageFile.scripts["lint:fix"],
+      'oxlint --fix . && stylelint "**/*.{css,scss}" --fix',
+    );
+    assert.equal(packageFile.scripts.format, "oxfmt --write .");
+    assert.equal(packageFile.scripts["format:check"], "oxfmt --check .");
+    assert.equal(packageFile.scripts.typecheck, "tsc --noEmit");
+    assert.doesNotMatch(JSON.stringify(packageFile.scripts), /run-if-files/);
+    await assertPathMissing(".calavera/run-if-files.mjs");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("doctor does not expect the removed run-if-files helper", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-doctor-no-helper-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("modern", ["typescript", "oxlint"], "npm"), null, 2)}\n`,
+    );
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
+      { env: { ...process.env, NO_COLOR: "1" } },
+    );
+    const result = JSON.parse(stdout);
+
+    assert.equal(
+      result.issues.some(({ message }) => message.includes(".calavera/run-if-files.mjs")),
+      false,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("clean treats a matching managed run-if-files helper as stale", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-clean-helper-"));
+  const helperPath = ".calavera/run-if-files.mjs";
+  const helperContents = "managed helper from an older Calavera release\n";
+
+  try {
+    process.chdir(projectDirectory);
+    await mkdir(".calavera");
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("modern", ["oxlint"], "npm"), null, 2)}\n`,
+    );
+    await writeFile(helperPath, helperContents);
+    await writeFile(
+      ".calavera/state.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          profile: "modern",
+          integrations: ["oxlint"],
+          files: [helperPath],
+          managedFiles: [{ path: helperPath, hash: textHash(helperContents) }],
+          aiArtifacts: [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--dry-run", "--json"],
+      { env: { ...process.env, NO_COLOR: "1" } },
+    );
+    const result = JSON.parse(stdout);
+
+    assert.equal(
+      result.changes.some(({ type, path }) => type === "delete" && path === helperPath),
+      true,
+    );
+    assert.equal(result.message, "Dry run complete. No files were removed.");
   } finally {
     process.chdir(originalDirectory);
   }

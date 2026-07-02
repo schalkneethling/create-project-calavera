@@ -23,7 +23,7 @@ Use Calavera to compose and apply project tooling through its MCP tools whenever
 
 Do not hand-author `calavera.config.json` when the Calavera MCP server is available. Let Calavera compose, validate, dry-run, and apply the recipe so generated files, package scripts, dependencies, AI artifacts, and managed state stay consistent.
 
-Treat files listed by `dry_run_apply`, including `.calavera/run-if-files.mjs`, as Calavera-managed outputs. Do not hand-write or edit them; let `apply_recipe` or `create-project-calavera apply` create them after approval.
+Treat files listed by `dry_run_apply` as Calavera-managed outputs. Do not hand-write or edit them; let `apply_recipe` or `create-project-calavera apply` create them after approval.
 
 ## MCP Setup
 

@@ -17,11 +17,5 @@
     "stylelint-baseline",
     "css-property-type-validator"
   ],
-  "files": [
-    ".editorconfig",
-    ".calavera/run-if-files.mjs",
-    "oxlint.json",
-    ".stylelintrc.json",
-    "tsconfig.json"
-  ]
+  "files": [".editorconfig", "oxlint.json", ".stylelintrc.json", "tsconfig.json"]
 }
