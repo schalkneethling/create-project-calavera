@@ -192,6 +192,16 @@ package manager prevents package-manager preflight failures before Calavera can
 start, such as npm 11 rejecting a Bun-managed project through
 `devEngines.packageManager`.
 
+When a restricted MCP host launches the Bun command, Bun may fail before
+Calavera starts with `error: bun is unable to write files to tempdir:
+PermissionDenied`. Configure that MCP server environment with `TMPDIR` set to an
+absolute writable directory, such as an absolute path to a project-local
+`.calavera/tmp` directory.
+If the package cache is also restricted, set `BUN_INSTALL_CACHE_DIR` to an
+absolute writable directory such as an absolute path to
+`.calavera/bun-install-cache`. Keep these as Bun-only recovery settings rather
+than default MCP config.
+
 For Claude Code, use a project-scoped `.mcp.json` in the project root when the
 registration should be shared with teammates, or use `claude mcp add` to let
 Claude Code manage the same command. Do not put MCP server registrations in
@@ -299,6 +309,12 @@ when the agent harness launches Calavera from a Bun-managed project root. The
 explicit version avoids Bun dropping the non-default `create-project-calavera-mcp`
 bin during ad-hoc `--package` resolution and keeps every persistent MCP
 registration from floating to a later package release.
+
+If `bunx` reports `error: bun is unable to write files to tempdir:
+PermissionDenied` in a restricted agent or MCP sandbox, configure the MCP host to
+set `TMPDIR` to an absolute writable directory. If Bun's package cache is also
+blocked, set `BUN_INSTALL_CACHE_DIR` to an absolute writable cache directory for
+that server registration.
 
 If you intentionally want to launch through npm anyway, npm requires `--force`
 to bypass its own `devEngines` preflight:

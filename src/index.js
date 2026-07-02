@@ -848,6 +848,20 @@ ${manualCommandReference}
 If your agent exposes an MCP setup UI or config writer, use the snippet above.
 If the agent needs approval before editing its own config, ask first.
 
+## Bun temp and cache directories
+
+If a Bun-based MCP launch fails before Calavera starts with
+\`error: bun is unable to write files to tempdir: PermissionDenied\`, configure
+the MCP host to give that server a writable temp directory. Set \`TMPDIR\` to an
+absolute path that exists and is writable by the MCP host process, such as an
+absolute path to a project-local \`.calavera/tmp\` directory.
+
+If Bun can write temp files but cannot populate its package cache, also set
+\`BUN_INSTALL_CACHE_DIR\` to an absolute writable directory, such as an absolute
+path to \`.calavera/bun-install-cache\`. Keep these environment overrides on Bun
+MCP registrations only; they are recovery settings for restricted hosts, not
+part of the default Calavera MCP config.
+
 ## Claude Code
 
 For Claude Code, prefer a project-scoped \`.mcp.json\` in the project root when
