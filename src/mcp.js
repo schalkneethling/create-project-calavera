@@ -345,6 +345,48 @@ export async function startMcpServer(transport = new StdioServerTransport()) {
   await server.connect(transport);
 }
 
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function formatStartupError(error) {
+  if (error instanceof Error) {
+    return error.stack ?? error.message;
+  }
+
+  return String(error);
+}
+
+/**
+ * @param {{
+ *   cwd?: string,
+ *   startServer?: () => Promise<void>,
+ *   stderr?: Pick<NodeJS.WriteStream, "write">,
+ *   setExitCode?: (code: number) => void,
+ * }} [options]
+ */
+export async function runMcpEntrypoint(options = {}) {
+  const cwd = options.cwd ?? process.cwd();
+  const startServer = options.startServer ?? (() => startMcpServer());
+  const stderr = options.stderr ?? process.stderr;
+  const setExitCode =
+    options.setExitCode ??
+    ((code) => {
+      process.exitCode = code;
+    });
+
+  stderr.write(
+    `[${SERVER_NAME}] starting MCP server v${SERVER_VERSION} (mode=stdio, cwd=${cwd})\n`,
+  );
+
+  try {
+    await startServer();
+  } catch (error) {
+    stderr.write(`[${SERVER_NAME}] failed to start MCP server\n${formatStartupError(error)}\n`);
+    setExitCode(1);
+  }
+}
+
 function isDirectEntryPoint() {
   if (!process.argv[1]) {
     return false;
@@ -356,8 +398,5 @@ function isDirectEntryPoint() {
 }
 
 if (isDirectEntryPoint()) {
-  startMcpServer().catch((error) => {
-    console.info(error);
-    process.exitCode = 1;
-  });
+  await runMcpEntrypoint();
 }
