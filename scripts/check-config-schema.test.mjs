@@ -758,6 +758,10 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(mcpGuidance, /persistent code-execution change/);
     assert.match(mcpGuidance, /explicit user approval/);
     assert.match(mcpGuidance, /AskUserTool|approval/);
+    assert.match(mcpGuidance, /bun is unable to write files to tempdir: PermissionDenied/);
+    assert.match(mcpGuidance, /TMPDIR/);
+    assert.match(mcpGuidance, /BUN_INSTALL_CACHE_DIR/);
+    assert.match(mcpGuidance, /restricted hosts/);
     assert.match(mcpGuidance, /Calavera-managed helper for generated package scripts/);
     assert.match(mcpGuidance, /Do not hand-write or edit/);
     assert.match(mcpGuidance, /reports `-32000`/);
@@ -777,6 +781,9 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
       /bunx --package create-project-calavera@<version> create-project-calavera-mcp/,
     );
     assert.match(skill, /first word in `command` and the remaining words in `args`/);
+    assert.match(skill, /bun is unable to write files to tempdir: PermissionDenied/);
+    assert.match(skill, /TMPDIR/);
+    assert.match(skill, /BUN_INSTALL_CACHE_DIR/);
     assert.match(skill, /Treat files listed by `dry_run_apply`/);
     assert.match(skill, /\.calavera\/run-if-files\.mjs/);
     assert.match(skill, /reports `-32000`/);
@@ -839,6 +846,9 @@ test("agent bootstrap uses devEngines package manager for MCP guidance", async (
       mcpGuidance,
       /npm rejecting a Bun-managed\s+project through `devEngines\.packageManager`/,
     );
+    assert.match(mcpGuidance, /bun is unable to write files to tempdir: PermissionDenied/);
+    assert.match(mcpGuidance, /TMPDIR/);
+    assert.match(mcpGuidance, /BUN_INSTALL_CACHE_DIR/);
     assert.doesNotMatch(mcpGuidance, /"command": "npx"/);
   } finally {
     process.chdir(originalDirectory);

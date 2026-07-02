@@ -5,6 +5,8 @@
 ### Fixed
 
 - Format the generated issue triage report so release checks pass.
+- Document writable `TMPDIR` and `BUN_INSTALL_CACHE_DIR` recovery settings for
+  Bun-based MCP launches in restricted hosts.
 
 ## 2.0.5
 
