@@ -1,5 +1,13 @@
 # Changelog
 
+## 2.1.1
+
+### Fixed
+
+- Improve agent-facing MCP setup, help output, and package-runner guidance so agents configure Calavera before composing recipes.
+- Allow formatting-only drift in managed JSON files while still protecting against real local edits.
+- Preserve existing managed tooling state when applying AI-artifact-only recipes.
+
 ## 2.1.0
 
 ### Fixed
