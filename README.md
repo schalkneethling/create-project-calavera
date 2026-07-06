@@ -19,9 +19,9 @@ Vite, another scaffold tool, or a manually maintained repository:
 2. Run `npm create project-calavera -- --init`.
 3. Register the MCP server using the generated `.agents/calavera/mcp.md` notes.
 4. Restart or reload the agent session if your MCP host does not discover new tools dynamically.
-5. Confirm the Calavera MCP tools are exposed: `inspect_project`, `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `dry_run_apply`, and `apply_recipe`.
+5. Confirm the Calavera MCP tools are exposed: `inspect_project`, `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
 6. Start the agent from the project root.
-7. Agent prompt: `Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.`
+7. Agent prompt: `Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, validate and explain it, show me the dry-run result, and apply it only after I approve.`
 
 Find the equivalent commands for your package manager in the
 [agent-first command table](#agent-first-command-table).

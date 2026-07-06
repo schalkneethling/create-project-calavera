@@ -26,6 +26,8 @@ Do not hand-author `calavera.config.json` when the Calavera MCP server is availa
 
 Treat files listed by `dry_run_apply` as Calavera-managed outputs. Do not hand-write or edit them; let `apply_recipe` or `create-project-calavera apply` create them after approval.
 
+`apply_recipe.writeConfig: false` only skips writing `calavera.config.json`. Do not use it to bypass managed-file conflicts, stale state hashes, or an unapproved dry-run result.
+
 ## MCP Setup
 
 If the Calavera MCP tools are not available, help the user register this server from the project root. Check the target project's `package.json` first and use the package manager declared by `packageManager` or `devEngines.packageManager`.

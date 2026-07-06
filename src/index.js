@@ -851,6 +851,10 @@ Use the tools in this order:
 script explanations, ownership notes, and planned file changes to the user, then
 wait for explicit approval before calling \`apply_recipe\`.
 
+\`apply_recipe.writeConfig: false\` only skips writing \`calavera.config.json\`.
+Do not use it to bypass managed-file conflicts, stale state hashes, or an
+unapproved dry-run result.
+
 If the MCP transport closes or reports \`-32000\` during or immediately after
 \`apply_recipe\`, treat the apply outcome as unknown instead of failed. Inspect
 \`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package
@@ -1024,8 +1028,9 @@ async function assertSafeManagedFileWrite(path, contents, previousState) {
     return;
   }
 
+  const installedContents = await readFile(path, "utf8");
   const targetHash = textHash(contents);
-  const installedHash = textHash(await readFile(path, "utf8"));
+  const installedHash = textHash(installedContents);
 
   if (installedHash === targetHash) {
     return;
@@ -1034,6 +1039,10 @@ async function assertSafeManagedFileWrite(path, contents, previousState) {
   const stateFile = managedFileStateForPath(previousState, path);
 
   if (stateFile?.hash === installedHash) {
+    return;
+  }
+
+  if (jsonContentsMatch(path, installedContents, contents)) {
     return;
   }
 
@@ -1051,6 +1060,47 @@ async function assertSafeManagedFileWrite(path, contents, previousState) {
 async function assertSafeManagedFileWrites(filePlans, previousState) {
   for (const filePlan of filePlans) {
     await assertSafeManagedFileWrite(filePlan.path, filePlan.contents, previousState);
+  }
+}
+
+/**
+ * @param {unknown} value
+ * @returns {unknown}
+ */
+function sortJsonValue(value) {
+  if (Array.isArray(value)) {
+    return value.map(sortJsonValue);
+  }
+
+  if (isPlainObject(value)) {
+    return Object.fromEntries(
+      Object.entries(value)
+        .sort(([left], [right]) => left.localeCompare(right))
+        .map(([key, item]) => [key, sortJsonValue(item)]),
+    );
+  }
+
+  return value;
+}
+
+/**
+ * @param {string} path
+ * @param {string} installedContents
+ * @param {string} targetContents
+ * @returns {boolean}
+ */
+function jsonContentsMatch(path, installedContents, targetContents) {
+  if (!path.endsWith(".json")) {
+    return false;
+  }
+
+  try {
+    return (
+      JSON.stringify(sortJsonValue(JSON.parse(installedContents))) ===
+      JSON.stringify(sortJsonValue(JSON.parse(targetContents)))
+    );
+  } catch {
+    return false;
   }
 }
 
@@ -1177,7 +1227,8 @@ async function inspectManagedFilePlan(filePlan, previousState) {
   }
 
   const targetHash = textHash(filePlan.contents);
-  const installedHash = textHash(await readFile(filePlan.path, "utf8"));
+  const installedContents = await readFile(filePlan.path, "utf8");
+  const installedHash = textHash(installedContents);
 
   if (installedHash === targetHash) {
     return undefined;
@@ -1186,6 +1237,10 @@ async function inspectManagedFilePlan(filePlan, previousState) {
   const stateFile = managedFileStateForPath(previousState, filePlan.path);
 
   if (stateFile?.hash === installedHash) {
+    return undefined;
+  }
+
+  if (jsonContentsMatch(filePlan.path, installedContents, filePlan.contents)) {
     return undefined;
   }
 
@@ -1486,14 +1541,13 @@ export async function applyRecipeObject(recipe, options = {}) {
     await mkdir(".calavera", { recursive: true });
     await writeJSON(
       STATE_FILE,
-      {
-        version: 1,
-        profile: recipe.profile,
-        integrations: integrations.map((integration) => integration.id),
-        files: managedFiles.map((file) => file.path),
+      mergeRecipeIntoState(
+        previousState,
+        recipe.profile,
+        integrations.map((integration) => integration.id),
         managedFiles,
-        aiArtifacts: aiResult.artifacts,
-      },
+        aiResult.artifacts,
+      ),
       false,
     );
   }
@@ -1516,6 +1570,36 @@ export async function applyRecipeObject(recipe, options = {}) {
     projectInspection,
     changes: [...changes, ...aiResult.changes],
     pointers: aiResult.pointers,
+  };
+}
+
+/**
+ * @param {CalaveraState} previousState
+ * @param {string | undefined} profile
+ * @param {string[]} integrations
+ * @param {ManagedFileState[]} managedFiles
+ * @param {AiArtifactState[]} aiArtifacts
+ * @returns {CalaveraState}
+ */
+function mergeRecipeIntoState(previousState, profile, integrations, managedFiles, aiArtifacts) {
+  const managedFilesByPath = new Map(
+    managedFilesFromState(previousState).map((file) => [file.path, file]),
+  );
+
+  for (const managedFile of managedFiles) {
+    managedFilesByPath.set(managedFile.path, managedFile);
+  }
+
+  const nextManagedFiles = [...managedFilesByPath.values()];
+
+  return {
+    ...previousState,
+    version: 1,
+    profile,
+    integrations,
+    files: nextManagedFiles.map((file) => file.path),
+    managedFiles: nextManagedFiles,
+    aiArtifacts,
   };
 }
 
@@ -2372,8 +2456,11 @@ Usage:
 
 Commands:
   init                 Compose calavera.config.json interactively or from flags
+  agent-init           Bootstrap agent guidance, MCP notes, and the Calavera skill
+  bootstrap            Alias for agent-init
   apply                Apply the recipe in calavera.config.json
   doctor               Check whether Calavera-managed files are present
+  update               Re-apply the recipe in calavera.config.json
   clean                Remove stale Calavera-managed files when safe
   help                 Show this help
 
@@ -2412,8 +2499,8 @@ Package-runner syntax:
     npm create project-calavera apply -- --dry-run
 
   Direct binary launchers do not need an extra -- before Calavera flags:
-    npx --package create-project-calavera create-project-calavera --help
-    npx --package create-project-calavera create-project-calavera --init
+    npx --package create-project-calavera@${packageJson.version} create-project-calavera --help
+    npx --package create-project-calavera@${packageJson.version} create-project-calavera --init
 
   MCP launch commands run create-project-calavera-mcp directly; do not add --help
   or inspect npm cache internals as a substitute for MCP setup.`;

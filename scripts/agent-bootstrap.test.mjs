@@ -67,6 +67,7 @@ test("agent bootstrap writes MCP-first guardrails", async () => {
     assert.match(agentsMd, /Do not inspect npm cache internals/);
     assert.match(mcpNotes, /Confirm the Calavera tools are visible before/);
     assert.match(mcpNotes, /Do not work around missing MCP tools by reading npm cache internals/);
+    assert.match(mcpNotes, /Do not use it to bypass managed-file conflicts/);
     assert.match(mcpNotes, /npx --package create-project-calavera@/);
     assert.match(mcpNotes, /create-project-calavera --help/);
   });
