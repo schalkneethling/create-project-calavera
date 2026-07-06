@@ -1010,6 +1010,53 @@ test("apply dry runs surface managed file overwrite conflicts", async () => {
   }
 });
 
+test("apply dry runs allow formatting-only drift in managed JSON files", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-dry-run-json-format-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+
+    const recipe = buildRecipe("modern", ["oxlint"], "npm");
+    await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    const formattedOxlintConfig = `${JSON.stringify(
+      JSON.parse(await readFile("oxlint.json", "utf8")),
+      null,
+      4,
+    )}\n`;
+    await writeFile("oxlint.json", formattedOxlintConfig);
+
+    const inspection = await inspectProject(recipe);
+    assert.equal(
+      inspection.findings.some(
+        (finding) => finding.kind === "managed-file-conflict" && finding.path === "oxlint.json",
+      ),
+      false,
+    );
+
+    const result = await applyRecipeObject(recipe, {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    assert.equal(result.dryRun, true);
+    assert.equal(
+      result.changes.some((change) => change.type === "write" && change.path === "oxlint.json"),
+      true,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
 test("apply dry runs explain omitted scripts and managed ownership", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-dry-run-omitted-scripts-"));
@@ -1356,6 +1403,54 @@ test("MCP apply_recipe rejects config paths outside the current workspace", asyn
           noInstall: true,
         }),
       /config path must stay inside the current project workspace/,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("MCP AI-only apply preserves existing managed tooling state", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-ai-only-apply-"));
+  const oxlintConfig = `${JSON.stringify({ plugins: ["typescript"] }, null, 2)}\n`;
+
+  try {
+    process.chdir(projectDirectory);
+    await mkdir(".calavera");
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile("oxlint.json", oxlintConfig);
+    await writeFile(
+      ".calavera/state.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          profile: "modern",
+          integrations: ["oxlint"],
+          files: ["oxlint.json"],
+          managedFiles: [{ path: "oxlint.json", hash: textHash(oxlintConfig) }],
+          aiArtifacts: [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    await callMcpTool("apply_recipe", {
+      recipe: buildRecipe("minimal", [], "npm", [{ type: "skill", src: "skills/semantic-html" }]),
+      writeConfig: false,
+      noInstall: true,
+    });
+
+    await assert.rejects(readFile("calavera.config.json", "utf8"), { code: "ENOENT" });
+
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.equal(state.profile, "modern");
+    assert.deepEqual(state.integrations, ["oxlint"]);
+    assert.deepEqual(state.files, ["oxlint.json"]);
+    assert.deepEqual(state.managedFiles, [{ path: "oxlint.json", hash: textHash(oxlintConfig) }]);
+    assert.equal(
+      state.aiArtifacts.some((artifact) => artifact.path === ".agents/skills/semantic-html"),
+      true,
     );
   } finally {
     process.chdir(originalDirectory);

@@ -10,7 +10,7 @@ JavaScript, TypeScript, and library projects, and it works as a complement to
 framework scaffolding tools like Vite+ and `vp create`, giving any project a
 consistent, repeatable setup through a single recipe file.
 
-## Agent-First Flow
+## MCP-First Agent Flow
 
 Use Calavera after a project already exists, whether it came from `vp create`,
 Vite, another scaffold tool, or a manually maintained repository:
@@ -18,8 +18,10 @@ Vite, another scaffold tool, or a manually maintained repository:
 1. Open the project directory.
 2. Run `npm create project-calavera -- --init`.
 3. Register the MCP server using the generated `.agents/calavera/mcp.md` notes.
-4. Start the agent from the project root.
-5. Agent prompt: `Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.`
+4. Restart or reload the agent session if your MCP host does not discover new tools dynamically.
+5. Confirm the Calavera MCP tools are exposed: `inspect_project`, `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
+6. Start the agent from the project root.
+7. Agent prompt: `Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, validate and explain it, show me the dry-run result, and apply it only after I approve.`
 
 Find the equivalent commands for your package manager in the
 [agent-first command table](#agent-first-command-table).
@@ -36,11 +38,20 @@ Find the equivalent commands for your package manager in the
 `npm create` needs the `--` separator before Calavera flags such as `--init`
 and `--dry-run`. Yarn requires Yarn 2+ for `dlx`; Yarn 1.x users can use
 `npx --package create-project-calavera create-project-calavera --init`.
+Direct binary launchers such as `npx --package` do not need an extra `--` before
+Calavera flags: use
+`npx --package create-project-calavera create-project-calavera --help`, not
+`npx --package create-project-calavera create-project-calavera -- --help`.
+MCP server registrations launch `create-project-calavera-mcp` directly and
+should not add `--help`.
 
 Agents should treat `dry_run_apply` as the approval boundary. They should show
 the package manager, integrations, dependency packages, inspection findings,
 omitted script explanations, ownership notes, file changes, and AI artifact
 changes before calling `apply_recipe`.
+If MCP tools are not exposed, agents should configure or repair MCP setup first;
+they should not inspect npm cache internals or import Calavera source files from
+package cache paths as a substitute for MCP setup.
 
 Choose one formatter for the project. Calavera rejects recipes that include both
 Oxfmt and Prettier because they would compete for the same formatting scripts

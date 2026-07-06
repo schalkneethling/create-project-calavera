@@ -10,7 +10,7 @@ managed state, `doctor`, `update`, `clean`, and apply dry-run output. Vite+ and
 other starters own routes, components, framework files, starter dependencies,
 and project-specific app commands.
 
-## Recommended Agent Flow
+## Recommended MCP-First Agent Flow
 
 From the project root:
 
@@ -74,10 +74,43 @@ manage the entry. Because the server command runs an external package, Claude
 Code may require explicit approval before creating the persistent registration
 or launching the server for the first time.
 
+After registration, restart or reload the agent session if the MCP host does not
+discover new tools dynamically. Before composing a recipe, confirm these
+Calavera MCP tools are exposed: `inspect_project`, `list_profiles`,
+`list_integrations`, `list_ai_artifacts`, `compose_recipe`, `dry_run_apply`, and
+`apply_recipe`.
+
+Agents should not work around missing MCP tools by reading npm cache internals
+or importing Calavera source files from package cache paths. Configure or repair
+the MCP registration first. If MCP cannot be registered, use the Web UI fallback
+below to compose a recipe, then run the local dry-run command before applying.
+
+### Package-Runner Syntax
+
+`npm create` needs `--` before Calavera flags:
+
+```bash
+npm create project-calavera -- --init
+npm create project-calavera apply -- --dry-run
+```
+
+Direct binary launchers such as `npx --package` do not need an extra `--` before
+Calavera flags:
+
+```bash
+npx --package create-project-calavera create-project-calavera --help
+npx --package create-project-calavera create-project-calavera --init
+```
+
+Avoid `npx --package create-project-calavera create-project-calavera -- --help`;
+that command shape is a package-runner probing mistake, not the recommended
+Calavera workflow. MCP registrations launch `create-project-calavera-mcp`
+directly and should not add `--help`.
+
 Then ask the agent to inspect the project before composing a recipe:
 
 ```text
-Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.
+Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.
 ```
 
 The approval boundary is the dry run. Agents should call `dry_run_apply`, show
