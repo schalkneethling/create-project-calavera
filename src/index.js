@@ -1591,12 +1591,13 @@ function mergeRecipeIntoState(previousState, profile, integrations, managedFiles
   }
 
   const nextManagedFiles = [...managedFilesByPath.values()];
+  const preservesToolingRecipe = managedFiles.length === 0 && aiArtifacts.length > 0;
 
   return {
     ...previousState,
     version: 1,
-    profile,
-    integrations,
+    profile: preservesToolingRecipe ? previousState.profile : profile,
+    integrations: preservesToolingRecipe ? previousState.integrations : integrations,
     files: nextManagedFiles.map((file) => file.path),
     managedFiles: nextManagedFiles,
     aiArtifacts,

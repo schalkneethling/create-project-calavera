@@ -1444,6 +1444,8 @@ test("MCP AI-only apply preserves existing managed tooling state", async () => {
     await assert.rejects(readFile("calavera.config.json", "utf8"), { code: "ENOENT" });
 
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.equal(state.profile, "modern");
+    assert.deepEqual(state.integrations, ["oxlint"]);
     assert.deepEqual(state.files, ["oxlint.json"]);
     assert.deepEqual(state.managedFiles, [{ path: "oxlint.json", hash: textHash(oxlintConfig) }]);
     assert.equal(
