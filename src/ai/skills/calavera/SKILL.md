@@ -10,16 +10,17 @@ Use Calavera to compose and apply project tooling through its MCP tools whenever
 ## Start Here
 
 1. Confirm whether Calavera MCP tools are available. Look for tools named `inspect_project`, `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `dry_run_apply`, and `apply_recipe`.
-2. Call `inspect_project` when available, or inspect the project manually for existing tooling and likely conflicts before composing a recipe. Check files such as `package.json`, `calavera.config.json`, `.editorconfig`, `eslint.config.js`, `oxlint.json`, `.prettierrc.json`, `.stylelintrc.json`, and `tsconfig.json`.
+2. If the Calavera MCP tools are not available, stop and help the user register or repair the MCP server before composing or applying anything. Do not inspect npm cache internals or import Calavera source files from package cache paths as a substitute for MCP setup.
+3. Call `inspect_project` when available, or inspect the project manually only when the MCP server cannot be registered and the user chooses a fallback flow. Check files such as `package.json`, `calavera.config.json`, `.editorconfig`, `eslint.config.js`, `oxlint.json`, `.prettierrc.json`, `.stylelintrc.json`, and `tsconfig.json`.
    If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use `dry_run_apply` to show concrete impact when adoption still looks possible.
-3. Use AskUserTool or the agent client's equivalent when available to clarify profile preferences, framework needs, conflict decisions, and apply approval. If no such tool exists, ask the user directly.
-4. List choices with `list_profiles`, `list_integrations`, and `list_ai_artifacts`. Use `describe_integration` when the user asks for more information or when you need to compare options.
-5. Choose either Oxfmt or Prettier for formatting, never both.
-6. Once the profile and requirements are clear, compose the recipe with `compose_recipe`.
-7. Validate and explain it with `validate_recipe` and `explain_recipe`.
-8. Present `dry_run_apply` output to the user before changing files, including inspection findings, omitted script explanations, ownership notes, and planned file changes.
-9. Call `apply_recipe` only after the user explicitly approves the dry run.
-10. If the MCP transport closes or reports `-32000` during or immediately after `apply_recipe`, treat the outcome as unknown instead of failed. Inspect `calavera.config.json`, `.calavera/state.json`, generated files, and package metadata before retrying the apply.
+4. Use AskUserTool or the agent client's equivalent when available to clarify profile preferences, framework needs, conflict decisions, and apply approval. If no such tool exists, ask the user directly.
+5. List choices with `list_profiles`, `list_integrations`, and `list_ai_artifacts`. Use `describe_integration` when the user asks for more information or when you need to compare options.
+6. Choose either Oxfmt or Prettier for formatting, never both.
+7. Once the profile and requirements are clear, compose the recipe with `compose_recipe`.
+8. Validate and explain it with `validate_recipe` and `explain_recipe`.
+9. Present `dry_run_apply` output to the user before changing files, including inspection findings, omitted script explanations, ownership notes, and planned file changes.
+10. Call `apply_recipe` only after the user explicitly approves the dry run.
+11. If the MCP transport closes or reports `-32000` during or immediately after `apply_recipe`, treat the outcome as unknown instead of failed. Inspect `calavera.config.json`, `.calavera/state.json`, generated files, and package metadata before retrying the apply.
 
 Do not hand-author `calavera.config.json` when the Calavera MCP server is available. Let Calavera compose, validate, dry-run, and apply the recipe so generated files, package scripts, dependencies, AI artifacts, and managed state stay consistent.
 
@@ -42,6 +43,10 @@ If the Calavera MCP tools are not available, help the user register this server 
 
 For manual MCP setup, use `npx --package create-project-calavera@<version> create-project-calavera-mcp` for npm-managed projects, `pnpm dlx --package create-project-calavera@<version> create-project-calavera-mcp` for pnpm, `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp` for Yarn, and `bunx --package create-project-calavera@<version> create-project-calavera-mcp` for Bun. In JSON-based MCP configs, put the first word in `command` and the remaining words in `args`. Matching the project package manager prevents package-manager preflight failures before Calavera can start, such as npm rejecting a Bun-managed project. Keep an explicit version so package-manager launchers resolve the `create-project-calavera-mcp` bin reliably without making the persistent MCP registration float to a later package release.
 
+After registering the MCP server, reload or restart the agent session if the MCP host does not discover new tools dynamically. Confirm the Calavera tools are visible before composing a recipe.
+
+`npm create` needs `--` before Calavera flags, for example `npm create project-calavera -- --init`. Direct binary launchers such as `npx --package create-project-calavera create-project-calavera --help` do not need an extra `--` before Calavera flags. Avoid `npx --package create-project-calavera create-project-calavera -- --help`; MCP registrations launch `create-project-calavera-mcp` directly and should not add `--help`.
+
 If a Bun-based MCP launch fails before Calavera starts with `error: bun is unable to write files to tempdir: PermissionDenied`, configure the MCP host to set `TMPDIR` to an absolute writable directory for that server. If Bun's package cache is also restricted, set `BUN_INSTALL_CACHE_DIR` to an absolute writable cache directory. Keep these overrides on Bun registrations only; they are recovery settings for restricted hosts, not default Calavera MCP config.
 
 If this project was bootstrapped with `create-project-calavera --init`, also check `.agents/calavera/mcp.md` for local setup notes.
@@ -63,5 +68,5 @@ After a recipe exists, preview local changes with the package-manager-specific a
 When the user wants to start from a scaffolded or existing project, suggest:
 
 ```text
-Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.
+Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.
 ```

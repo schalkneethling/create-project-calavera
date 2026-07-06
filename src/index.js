@@ -170,7 +170,7 @@ const AGENT_BOOTSTRAP_SKILL_RECIPE = {
   ai: [{ type: "skill", src: "skills/calavera" }],
 };
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
-  "Use Calavera for this project. Inspect the current project for existing tooling and possible config conflicts, then list the available profiles, integrations, and AI artifacts. Once the profile and requirements are clear, compose a recipe, show me the dry-run result, and apply it only after I approve.";
+  "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const SCRIPT_SOURCE_EXTENSIONS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
 const TSC_INCLUDE_PATTERNS = SCRIPT_SOURCE_EXTENSIONS.map((extension) => `src/**/*.${extension}`);
 
@@ -210,6 +210,7 @@ const cliParseOptions = {
   config: { type: "string", default: CONFIG_FILE },
   apply: { type: "boolean" },
   "dry-run": { type: "boolean" },
+  help: { type: "boolean", short: "h" },
   init: { type: "boolean" },
   json: { type: "boolean" },
   "agents-md": { type: "string" },
@@ -308,7 +309,7 @@ export function parseArgs(rawArgs) {
   const agentsMd = optionalStringValue(values["agents-md"]);
   /** @type {CliOptions} */
   const parsed = {
-    command: values.init ? "agent-init" : (positionals[0] ?? "init"),
+    command: values.help ? "help" : values.init ? "agent-init" : (positionals[0] ?? "init"),
     config: optionalStringValue(values.config) ?? CONFIG_FILE,
     dryRun: values["dry-run"] === true,
     json: values.json === true,
@@ -653,8 +654,10 @@ function createAgentBootstrapGuidanceBody() {
   return `# Calavera Agent Guidance
 
 - Use Calavera when the user wants to inspect, compose, preview, apply, or update project tooling.
+- Verify the Calavera MCP tools are available before composing a recipe.
 - Prefer the Calavera MCP server over hand-authoring \`calavera.config.json\`.
-- If the Calavera MCP tools are not available, help the user register the MCP server from \`${AGENT_BOOTSTRAP_MCP_FILE}\` or fall back to the Calavera Web UI.
+- If the Calavera MCP tools are not available, stop and help the user register the MCP server from \`${AGENT_BOOTSTRAP_MCP_FILE}\`, then reload the agent session if the MCP host requires it.
+- Do not inspect npm cache internals or import Calavera source files from a package cache as a substitute for MCP setup.
 - Inspect existing project tooling before composing a recipe and raise likely config conflicts early.
 - If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use \`dry_run_apply\` to show concrete impact when adoption still looks possible.
 - Start with \`inspect_project\`, \`list_profiles\`, \`list_integrations\`, and \`list_ai_artifacts\`; use \`describe_integration\` when the user asks for more information or an option needs explanation.
@@ -778,6 +781,30 @@ ${manualCommandReference}
 
 If your agent exposes an MCP setup UI or config writer, use the snippet above.
 If the agent needs approval before editing its own config, ask first.
+After registration, reload or restart the agent session if your MCP host does
+not discover new tools dynamically. Confirm the Calavera tools are visible before
+composing a recipe.
+
+Do not work around missing MCP tools by reading npm cache internals or importing
+Calavera source files from package cache paths. That bypasses the supported MCP
+setup and can use the wrong cached package version.
+
+## Command syntax for agents
+
+\`npm create\` uses \`--\` to forward flags to Calavera:
+
+\`\`\`bash
+npm create project-calavera -- --init
+npm create project-calavera apply -- --dry-run
+\`\`\`
+
+Direct binary launchers such as \`npx --package\` and MCP server registrations
+do not need an extra \`--\` before Calavera flags:
+
+\`\`\`bash
+npx --package create-project-calavera@${packageJson.version} create-project-calavera --help
+${shellCommand}
+\`\`\`
 
 ## Bun temp and cache directories
 
@@ -2337,6 +2364,65 @@ async function clean(options) {
   };
 }
 
+function formatHelp() {
+  return `create-project-calavera ${packageJson.version}
+
+Usage:
+  create-project-calavera [command] [options]
+
+Commands:
+  init                 Compose calavera.config.json interactively or from flags
+  apply                Apply the recipe in calavera.config.json
+  doctor               Check whether Calavera-managed files are present
+  clean                Remove stale Calavera-managed files when safe
+  help                 Show this help
+
+Options:
+  --init               Bootstrap agent guidance, MCP notes, and the Calavera skill
+  --dry-run            Preview writes without changing files
+  --apply              Preview and optionally apply after composing a recipe
+  --config <path>      Recipe path, defaults to calavera.config.json
+  --package-manager    npm, pnpm, yarn, or bun
+  --profile            modern, classic, or minimal
+  --tool <id>          Add an integration by id or label; repeatable
+  --ai-artifact <id>   Add a bundled AI artifact; repeatable
+  --agents-md <mode>   append or fallback when AGENTS.md already exists
+  --json               Print JSON output
+  --yes                Use defaults and skip prompts
+  --no-install         Write files without installing dependencies during apply
+  -h, --help           Show this help
+
+Agent-first setup:
+  npm create project-calavera -- --init
+  pnpm dlx create-project-calavera --init
+  yarn dlx create-project-calavera --init
+  bunx create-project-calavera --init
+
+MCP-first workflow:
+  1. Run the agent bootstrap command above from the project root.
+  2. Register the MCP server from .agents/calavera/mcp.md.
+  3. Reload or restart the agent session if required by your MCP host.
+  4. Confirm these tools are visible before composing a recipe:
+     inspect_project, list_profiles, list_integrations, list_ai_artifacts,
+     compose_recipe, validate_recipe, explain_recipe, dry_run_apply, apply_recipe.
+
+Package-runner syntax:
+  npm create needs -- before Calavera flags, for example:
+    npm create project-calavera -- --init
+    npm create project-calavera apply -- --dry-run
+
+  Direct binary launchers do not need an extra -- before Calavera flags:
+    npx --package create-project-calavera create-project-calavera --help
+    npx --package create-project-calavera create-project-calavera --init
+
+  MCP launch commands run create-project-calavera-mcp directly; do not add --help
+  or inspect npm cache internals as a substitute for MCP setup.`;
+}
+
+function printHelp() {
+  console.info(formatHelp());
+}
+
 /**
  * @param {CommandResult} result
  * @param {boolean} [asJSON]
@@ -2499,6 +2585,11 @@ function printResult(result, asJSON = false) {
 
 async function main() {
   const options = parseArgs(args);
+
+  if (options.command === "help") {
+    printHelp();
+    return;
+  }
 
   if (options.command === "init") {
     printResult(await initRecipe(options), options.json);

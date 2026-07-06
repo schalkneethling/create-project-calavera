@@ -26,6 +26,13 @@ test("parseArgs accepts an explicit AGENTS.md handling mode", () => {
   assert.throws(() => parseArgs(["--init", "--agents-md=overwrite"]), /Invalid agents-md/);
 });
 
+test("parseArgs accepts conventional help commands", () => {
+  assert.equal(parseArgs(["--help"]).command, "help");
+  assert.equal(parseArgs(["-h"]).command, "help");
+  assert.equal(parseArgs(["help"]).command, "help");
+  assert.equal(parseArgs(["--", "--help"]).command, "help");
+});
+
 test("agent bootstrap keeps scripted existing AGENTS.md handling non-destructive", async () => {
   await withTempProject(async () => {
     await writeFile("AGENTS.md", "# Existing project guidance\n");
@@ -46,6 +53,22 @@ test("agent bootstrap keeps scripted existing AGENTS.md handling non-destructive
         (change) => change.type === "write" && change.path === "AGENTS.calavera.md",
       ),
     );
+  });
+});
+
+test("agent bootstrap writes MCP-first guardrails", async () => {
+  await withTempProject(async () => {
+    const result = await agentBootstrap();
+    const agentsMd = await readFile("AGENTS.md", "utf8");
+    const mcpNotes = await readFile(".agents/calavera/mcp.md", "utf8");
+
+    assert.match(result.nextPrompt, /First verify that the Calavera MCP tools are available/);
+    assert.match(agentsMd, /Verify the Calavera MCP tools are available/);
+    assert.match(agentsMd, /Do not inspect npm cache internals/);
+    assert.match(mcpNotes, /Confirm the Calavera tools are visible before/);
+    assert.match(mcpNotes, /Do not work around missing MCP tools by reading npm cache internals/);
+    assert.match(mcpNotes, /npx --package create-project-calavera@/);
+    assert.match(mcpNotes, /create-project-calavera --help/);
   });
 });
 
