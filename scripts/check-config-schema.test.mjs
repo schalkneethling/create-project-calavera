@@ -902,10 +902,11 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(skill, /reports `-32000`/);
     assert.match(skill, /outcome as unknown instead of failed/);
     assert.match(skill, /Fallbacks/);
-    assert.match(skill, /npm create project-calavera apply -- --dry-run/);
-    assert.match(skill, /pnpm dlx create-project-calavera apply --dry-run/);
-    assert.match(skill, /bunx create-project-calavera apply --dry-run/);
-    assert.doesNotMatch(skill, /npm create project-calavera apply --dry-run/);
+    assert.match(skill, /npm create project-calavera@<version> apply -- --dry-run/);
+    assert.match(skill, /pnpm dlx create-project-calavera@<version> apply --dry-run/);
+    assert.match(skill, /yarn dlx create-project-calavera@<version> apply --dry-run/);
+    assert.match(skill, /bunx create-project-calavera@<version> apply --dry-run/);
+    assert.doesNotMatch(skill, /npm create project-calavera apply -- --dry-run/);
     assert.equal(
       result.changes.some(
         ({ type, path, reason }) =>
