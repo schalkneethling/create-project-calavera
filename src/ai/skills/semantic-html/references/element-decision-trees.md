@@ -4,7 +4,7 @@ Quick decision frameworks for selecting the right HTML element.
 
 ## Is It a List?
 
-```
+```text
 Does knowing the count help the user?
 ├─ Yes → Are items sequential/ranked?
 │        ├─ Yes → <ol>
@@ -18,7 +18,7 @@ Does knowing the count help the user?
 
 ## Is It a Table?
 
-```
+```text
 Does data have meaningful rows AND columns?
 ├─ No → Not a table
 │       ├─ One dimension only → List or plain elements
@@ -31,7 +31,7 @@ Does data have meaningful rows AND columns?
 
 ## Button or Link?
 
-```
+```text
 Does this navigate to a new URL?
 ├─ Yes → <a href="...">
 └─ No → Does an action occur?
@@ -43,7 +43,7 @@ Does this navigate to a new URL?
 
 ## Section or Div?
 
-```
+```text
 Does this content form a thematic grouping?
 ├─ No → <div>
 └─ Yes → Can you provide a meaningful accessible name?
@@ -53,7 +53,7 @@ Does this content form a thematic grouping?
 
 ## Article Candidate?
 
-```
+```text
 Would this content make sense standalone?
 ├─ Yes → Could it be syndicated or extracted?
 │        ├─ Yes → <article>
@@ -63,7 +63,7 @@ Would this content make sense standalone?
 
 ## Which Landmark?
 
-```
+```text
 What is this section's purpose?
 ├─ Site/section header → <header>
 ├─ Site/section footer → <footer>
@@ -78,7 +78,7 @@ What is this section's purpose?
 
 ## Form Field Grouping
 
-```
+```text
 Do these fields form a logical/thematic group?
 ├─ Yes → Are they form controls (inputs, selects, checkboxes)?
 │        ├─ Yes → <fieldset> with <legend>
@@ -90,7 +90,7 @@ Do these fields form a logical/thematic group?
 
 ## Interactive Disclosure
 
-```
+```text
 Should content be expandable/collapsible?
 ├─ Yes → Does the disclosed content need ARIA roles (menu, dialog, etc.)?
 │        ├─ Yes → <button> controlling visibility + appropriate ARIA
@@ -103,7 +103,7 @@ Should content be expandable/collapsible?
 
 ## Skip Navigation
 
-```
+```text
 Does the page have a <nav> or repeated content before <main>?
 └─ Yes → Add <a href="#main-content"> as the first element in <body>
          Does the page have a prominent search bar or long sidebar?
