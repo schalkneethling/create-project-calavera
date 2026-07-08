@@ -2,7 +2,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { fileExists, readJSON, writeJSON } from "./fs.js";
+import { fileExists, writeJSON } from "./fs.js";
 import { isPlainObject } from "./guards.js";
 
 /**
@@ -41,15 +41,32 @@ function normalizeConfigPath(path) {
 
 /**
  * @param {string} path
+ * @returns {Promise<{ currentConfig: Record<string, unknown>, currentContents?: string }>}
+ */
+async function readProjectJsonConfigIfPresent(path) {
+  if (!(await fileExists(path))) {
+    return { currentConfig: {} };
+  }
+
+  const currentContents = await readFile(path, "utf8");
+  return {
+    currentConfig: assertJsonObjectConfig(JSON.parse(currentContents), path),
+    currentContents,
+  };
+}
+
+/**
+ * @param {string} path
  * @param {Record<string, unknown>} nextConfig
  * @param {boolean} dryRun
  * @param {McpConfigChange[]} changes
+ * @param {string} [currentContents]
  * @returns {Promise<McpConfigAction>}
  */
-async function writeProjectJsonConfig(path, nextConfig, dryRun, changes) {
+async function writeProjectJsonConfig(path, nextConfig, dryRun, changes, currentContents) {
   const targetPath = normalizeConfigPath(path);
 
-  if (!(await fileExists(targetPath))) {
+  if (currentContents === undefined) {
     changes.push({ type: "write", path: targetPath });
 
     if (!dryRun) {
@@ -63,9 +80,7 @@ async function writeProjectJsonConfig(path, nextConfig, dryRun, changes) {
     return "write";
   }
 
-  assertJsonObjectConfig(await readJSON(targetPath), targetPath);
   const nextContents = `${JSON.stringify(nextConfig, null, 2)}\n`;
-  const currentContents = await readFile(targetPath, "utf8");
 
   if (currentContents === nextContents) {
     changes.push({ type: "skip", path: targetPath, reason: "Already up to date." });
@@ -102,10 +117,7 @@ export function createMcpServersJsonConfig(launchCommand) {
  */
 export async function writeMcpServersJsonConfig(path, launchCommand, dryRun, changes) {
   const targetPath = normalizeConfigPath(path);
-  /** @type {Record<string, unknown>} */
-  const currentConfig = (await fileExists(targetPath))
-    ? assertJsonObjectConfig(await readJSON(targetPath), targetPath)
-    : {};
+  const { currentConfig, currentContents } = await readProjectJsonConfigIfPresent(targetPath);
   const mcpServers = currentConfig.mcpServers;
 
   if (mcpServers !== undefined && !isPlainObject(mcpServers)) {
@@ -123,6 +135,7 @@ export async function writeMcpServersJsonConfig(path, launchCommand, dryRun, cha
     },
     dryRun,
     changes,
+    currentContents,
   );
 }
 
@@ -253,10 +266,7 @@ export function createOpenCodeMcpJsonConfig(launchCommand) {
  */
 export async function writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes) {
   const targetPath = normalizeConfigPath(path);
-  /** @type {Record<string, unknown>} */
-  const currentConfig = (await fileExists(targetPath))
-    ? assertJsonObjectConfig(await readJSON(targetPath), targetPath)
-    : {};
+  const { currentConfig, currentContents } = await readProjectJsonConfigIfPresent(targetPath);
   const mcp = currentConfig.mcp;
 
   if (mcp !== undefined && !isPlainObject(mcp)) {
@@ -282,6 +292,7 @@ export async function writeOpenCodeMcpConfig(path, launchCommand, dryRun, change
     },
     dryRun,
     changes,
+    currentContents,
   );
 }
 
