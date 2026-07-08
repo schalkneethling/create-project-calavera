@@ -26,6 +26,11 @@ test("parseArgs accepts an explicit AGENTS.md handling mode", () => {
   assert.throws(() => parseArgs(["--init", "--agents-md=overwrite"]), /Invalid agents-md/);
 });
 
+test("parseArgs accepts npm-create forwarded agent bootstrap flags", () => {
+  assert.equal(parseArgs(["--", "--init"]).command, "agent-init");
+  assert.equal(parseArgs(["--", "--init", "--dry-run", "--json"]).command, "agent-init");
+});
+
 test("parseArgs accepts conventional help commands", () => {
   assert.equal(parseArgs(["--help"]).command, "help");
   assert.equal(parseArgs(["-h"]).command, "help");

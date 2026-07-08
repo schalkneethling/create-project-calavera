@@ -798,6 +798,9 @@ npm create project-calavera -- --init
 npm create project-calavera apply -- --dry-run
 \`\`\`
 
+Do not use \`npm create project-calavera --init\`; npm treats \`--init\` as its own
+option and Calavera falls back to the recipe CLI.
+
 Direct binary launchers such as \`npx --package\` and MCP server registrations
 do not need an extra \`--\` before Calavera flags:
 

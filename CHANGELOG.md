@@ -1,5 +1,11 @@
 # Changelog
 
+## 2.1.2
+
+### Fixed
+
+- Clarify that `npm create` needs `-- --init` for agent bootstrap and add regression coverage for the forwarded npm flag shape.
+
 ## 2.1.1
 
 ### Fixed

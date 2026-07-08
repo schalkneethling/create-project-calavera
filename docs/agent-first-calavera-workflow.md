@@ -19,6 +19,8 @@ npm create project-calavera -- --init
 ```
 
 `npm create` needs the `--` separator before Calavera flags such as `--init`.
+Do not use `npm create project-calavera --init`; npm treats `--init` as its own
+option and Calavera falls back to the recipe CLI.
 The other package-manager launchers run the Calavera binary directly, so their
 bootstrap commands are `pnpm dlx create-project-calavera --init`,
 `yarn dlx create-project-calavera --init`, and

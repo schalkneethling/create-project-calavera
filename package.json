@@ -1,6 +1,6 @@
 {
   "name": "create-project-calavera",
-  "version": "2.1.1",
+  "version": "2.1.2",
   "description": "Compose and apply modern tooling recipes for JavaScript and TypeScript projects.",
   "keywords": [
     "cli",
