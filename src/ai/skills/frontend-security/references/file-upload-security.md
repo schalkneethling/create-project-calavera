@@ -111,22 +111,22 @@ client controlled. Validate stored content with a maintained file-type detector
 or a parser for the expected domain before trusting the file.
 
 ```javascript
-const ALLOWED_MIME_TYPES = {
-  ".jpg": ["image/jpeg"],
-  ".jpeg": ["image/jpeg"],
-  ".png": ["image/png"],
-  ".gif": ["image/gif"],
-  ".webp": ["image/webp"],
-  ".pdf": ["application/pdf"],
-  ".docx": ["application/vnd.openxmlformats-officedocument.wordprocessingml.document"],
-};
+const ALLOWED_UPLOAD_TYPES = new Map([
+  ["image/jpeg", ".jpg"],
+  ["image/png", ".png"],
+  ["image/gif", ".gif"],
+  ["image/webp", ".webp"],
+  ["application/pdf", ".pdf"],
+  ["application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".docx"],
+]);
 
-function validateMimeType(file) {
-  const ext = path.extname(file.originalname).toLowerCase();
-  const allowedMimes = ALLOWED_MIME_TYPES[ext];
+function validateMimeType(detectedType) {
+  if (!detectedType) return null;
 
-  if (!allowedMimes) return false;
-  return allowedMimes.includes(file.mimetype);
+  const extension = ALLOWED_UPLOAD_TYPES.get(detectedType.mime);
+  if (!extension) return null;
+
+  return { mimeType: detectedType.mime, extension };
 }
 ```
 
@@ -151,49 +151,47 @@ domain-specific payloads may need deeper parsing, re-encoding, or manual review.
 
 ```javascript
 const multer = require("multer");
+const fs = require("fs");
 const path = require("path");
 const crypto = require("crypto");
 
 // Store OUTSIDE webroot
 const UPLOAD_DIR = "/var/app/uploads"; // Not in /public/
 
-const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    // Organize by date
-    const date = new Date().toISOString().split("T")[0];
-    const dir = path.join(UPLOAD_DIR, date);
-    fs.mkdirSync(dir, { recursive: true });
-    cb(null, dir);
-  },
-  filename: (req, file, cb) => {
-    // Generate random filename
-    const ext = path.extname(file.originalname).toLowerCase();
-    const name = crypto.randomBytes(16).toString("hex");
-    cb(null, `${name}${ext}`);
-  },
-});
-
 const upload = multer({
-  storage,
+  storage: multer.memoryStorage(),
   limits: {
     fileSize: 5 * 1024 * 1024, // 5MB
     files: 1,
   },
-  fileFilter: (req, file, cb) => {
-    // Early rejection only. Validate actual content after receiving the file.
-    if (!validateMimeType(file)) {
-      cb(new Error("Invalid file type"));
-      return;
-    }
-    cb(null, true);
-  },
 });
+
+async function saveValidatedUpload(file) {
+  const detected = await detectAllowedType(file.buffer, [...ALLOWED_UPLOAD_TYPES.keys()]);
+  const validatedType = validateMimeType(detected);
+  if (!validatedType) {
+    throw new Error("Invalid file type");
+  }
+
+  // Organize by date
+  const date = new Date().toISOString().split("T")[0];
+  const dir = path.join(UPLOAD_DIR, date);
+  fs.mkdirSync(dir, { recursive: true });
+
+  // Generate random filename with a suffix derived from trusted content detection
+  const name = `${crypto.randomBytes(16).toString("hex")}${validatedType.extension}`;
+  const storedPath = path.join(dir, name);
+  await fs.promises.writeFile(storedPath, file.buffer, { flag: "wx" });
+
+  return { path: storedPath, mimeType: validatedType.mimeType, storageName: name };
+}
 ```
 
 ## Secure File Serving
 
 ```javascript
 const contentDisposition = require("content-disposition");
+const { pipeline } = require("stream/promises");
 
 // Serve files through application, not directly
 app.get("/files/:id", async (req, res) => {
@@ -215,9 +213,16 @@ app.get("/files/:id", async (req, res) => {
   );
   res.setHeader("X-Content-Type-Options", "nosniff");
 
-  // Stream file
-  const stream = fs.createReadStream(fileRecord.path);
-  stream.pipe(res);
+  // Stream file with error handling for missing files and permission failures
+  try {
+    await pipeline(fs.createReadStream(fileRecord.path), res);
+  } catch (error) {
+    if (!res.headersSent) {
+      res.status(404).send("Not found");
+      return;
+    }
+    req.destroy(error);
+  }
 });
 ```
 

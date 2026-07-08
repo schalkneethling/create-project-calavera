@@ -2,7 +2,7 @@
 // @ts-check
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs as parseNodeArgs } from "node:util";
 
@@ -1021,7 +1021,14 @@ function createStylelintConfig(integrations) {
   /** @type {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }} */
   const config = {
     extends: [],
-    ignoreFiles: ["coverage/**", "dist/**", "dist-web/**", "node_modules/**"],
+    ignoreFiles: [
+      "coverage/**",
+      "dist/**",
+      "**/dist/**",
+      "**/dist-types/**",
+      "dist-web/**",
+      "node_modules/**",
+    ],
     plugins: [],
     rules: {},
   };
@@ -1076,6 +1083,37 @@ function createReactDoctorConfig() {
 
 /**
  * @param {string} path
+ * @returns {string}
+ */
+function realpathIfPresent(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * @param {string} path
+ * @returns {string}
+ */
+function normalizeManagedFilePath(path) {
+  const pathWithPlatformSeparators = path.replace(/\\/g, "/");
+  const projectRoot = realpathIfPresent(resolve("."));
+  const absolutePath = realpathIfPresent(resolve(pathWithPlatformSeparators));
+  return relative(projectRoot, absolutePath).replace(/\\/g, "/");
+}
+
+/**
+ * @param {string[]} paths
+ * @returns {Set<string>}
+ */
+function normalizeManagedFilePathSet(paths) {
+  return new Set(paths.map(normalizeManagedFilePath));
+}
+
+/**
+ * @param {string} path
  * @param {string} contents
  * @param {CalaveraState} previousState
  * @param {Set<string>} reownManagedFiles
@@ -1103,7 +1141,7 @@ async function assertSafeManagedFileWrite(path, contents, previousState, reownMa
     return;
   }
 
-  if (stateFile && reownManagedFiles.has(path)) {
+  if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(path))) {
     return;
   }
 
@@ -1322,7 +1360,7 @@ async function inspectManagedFilePlan(filePlan, previousState, reownManagedFiles
     return undefined;
   }
 
-  if (stateFile && reownManagedFiles.has(filePlan.path)) {
+  if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(filePlan.path))) {
     return {
       severity: "warning",
       kind: "managed-file-reown",
@@ -1347,7 +1385,7 @@ async function inspectManagedFilePlan(filePlan, previousState, reownManagedFiles
 export async function inspectProject(recipe, options = {}) {
   const packageJSON = await readPackageJSONIfPresent();
   const previousState = await readStateIfPresent();
-  const reownManagedFiles = new Set(options.reownManagedFiles ?? []);
+  const reownManagedFiles = normalizeManagedFilePathSet(options.reownManagedFiles ?? []);
   const packageManager = detectPackageManager(packageJSON);
   const integrations = recipe ? resolveRecipeIntegrations(recipe) : [];
   const integrationIds = new Set(integrations.map((integration) => integration.id));
@@ -1490,7 +1528,7 @@ export async function applyRecipeObject(recipe, options = {}) {
     ...options,
   };
   const previousState = await readStateIfPresent();
-  const reownManagedFiles = new Set(applyOptions.reownManagedFiles ?? []);
+  const reownManagedFiles = normalizeManagedFilePathSet(applyOptions.reownManagedFiles ?? []);
   const integrations = resolveRecipeIntegrations(recipe);
   const dependencyList = unique(
     integrations.flatMap((integration) => integration.dependencies ?? []),

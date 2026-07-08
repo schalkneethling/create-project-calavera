@@ -1454,7 +1454,7 @@ test("apply can re-own approved managed file drift before writing recipe updates
     );
 
     const inspection = await inspectProject(nextRecipe, {
-      reownManagedFiles: ["oxlint.json"],
+      reownManagedFiles: [".\\oxlint.json"],
     });
     assert.equal(
       inspection.findings.some(
@@ -1474,7 +1474,7 @@ test("apply can re-own approved managed file drift before writing recipe updates
       json: true,
       noInstall: true,
       assumeYes: true,
-      reownManagedFiles: ["oxlint.json"],
+      reownManagedFiles: ["./oxlint.json"],
     });
     assert.equal(dryRun.dryRun, true);
     assert.equal(
@@ -1488,7 +1488,7 @@ test("apply can re-own approved managed file drift before writing recipe updates
       json: true,
       noInstall: true,
       assumeYes: true,
-      reownManagedFiles: ["oxlint.json"],
+      reownManagedFiles: [join(projectDirectory, "oxlint.json")],
     });
 
     const oxlintConfig = JSON.parse(await readFile("oxlint.json", "utf8"));
@@ -1622,6 +1622,10 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     assert.equal(packageFile.scripts["format:check"], "oxfmt --check .");
     assert.equal(packageFile.scripts.typecheck, "tsc --noEmit");
     assert.doesNotMatch(JSON.stringify(packageFile.scripts), /run-if-files/);
+    const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
+    assert.equal(stylelintConfig.ignoreFiles.includes("**/dist/**"), true);
+    assert.equal(stylelintConfig.ignoreFiles.includes("**/dist-types/**"), true);
+    assert.equal(stylelintConfig.ignoreFiles.includes("node_modules/**"), true);
     await assertPathMissing(".calavera/run-if-files.mjs");
   } finally {
     process.chdir(originalDirectory);

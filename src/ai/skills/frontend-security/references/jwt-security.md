@@ -289,18 +289,9 @@ function authenticateToken(req, res, next) {
   }
 
   try {
-    // Verify with explicit algorithm
-    const decoded = jwt.verify(token, secret, {
-      algorithms: ["HS256"],
-      issuer: "myapp",
-      audience: "myapp-users",
-    });
-
-    // Validate fingerprint if using sidejacking protection
+    // Validate token and fingerprint when using sidejacking protection
     const fingerprint = req.cookies["__Secure-Fgp"];
-    if (!validateFingerprint(decoded, fingerprint)) {
-      throw new Error("Invalid fingerprint");
-    }
+    const decoded = validateToken(token, fingerprint);
 
     // Check revocation
     if (isTokenRevoked(decoded)) {

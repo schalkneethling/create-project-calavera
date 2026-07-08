@@ -72,13 +72,14 @@ new Function(userInput);
 vm.runInThisContext(userInput);
 require(userInput);
 
-// DANGEROUS - setTimeout/setInterval with strings
-setTimeout(userInput, 1000); // Executes as code
+// DANGEROUS - dynamic module loading with user-controlled specifiers
+await import(userInput);
 
-// SAFE - pass functions instead
-setTimeout(() => {
-  /* code */
-}, 1000);
+// SAFER - map user choices to fixed module specifiers
+const allowedModules = new Map([["csv", "./parsers/csv.js"]]);
+const modulePath = allowedModules.get(userInput);
+if (!modulePath) throw new Error("Invalid module");
+await import(modulePath);
 ```
 
 ### Child Process Injection

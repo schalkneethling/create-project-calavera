@@ -135,7 +135,9 @@ export async function POST({ request }) {
   }
 
   // Process request
-  return new Response(JSON.stringify(result), {
+  const responsePayload = { ok: true };
+
+  return new Response(JSON.stringify(responsePayload), {
     headers: { "Content-Type": "application/json" },
   });
 }
@@ -272,10 +274,11 @@ window.addEventListener("message", (event) => {
   if (!allowedOrigins.includes(event.origin)) return;
 
   // Validate data structure
-  if (typeof event.data !== "object") return;
-  if (!["action1", "action2"].includes(event.data.type)) return;
+  const data = event.data;
+  if (data === null || typeof data !== "object" || Array.isArray(data)) return;
+  if (!["action1", "action2"].includes(data.type)) return;
 
-  handleMessage(event.data);
+  handleMessage(data);
 });
 
 // Always specify target origin when sending
