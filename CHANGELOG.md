@@ -1,5 +1,18 @@
 # Changelog
 
+## 2.2.0
+
+### Added
+
+- Configure one project-local Calavera MCP target during agent bootstrap for
+  Claude Code, Codex, Cursor, or OpenCode, with skip/manual fallback.
+
+### Changed
+
+- Keep MCP setup notes as manual fallback output instead of writing them after a
+  successful project-local MCP config.
+- Document the project-local MCP setup flow and supported host config files.
+
 ## 2.1.2
 
 ### Fixed
