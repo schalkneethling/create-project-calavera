@@ -23,7 +23,7 @@ import {
   validateRecipe,
   validateRecipeResponse,
 } from "./recipe.js";
-import { assertPlainObject } from "./utils/assertions.js";
+import { assertPlainObject, assertStringArray } from "./utils/assertions.js";
 import { writeJSON } from "./utils/fs.js";
 
 /**
@@ -39,6 +39,10 @@ const SERVER_INSTRUCTIONS =
 const profileIds = profileIdsForRecipe();
 const packageManagerIds = packageManagerIdsForRecipe();
 const recipeSchema = z.record(z.string(), z.unknown()).describe("A Calavera recipe object.");
+const reownManagedFilesSchema = z
+  .array(z.string())
+  .optional()
+  .describe(recipeToolInputDescriptions.reownManagedFiles);
 const aiArtifactInputSchema = z.object({
   id: z.string().describe(recipeToolInputDescriptions.aiArtifactId),
   target: z.string().optional().describe(recipeToolInputDescriptions.aiArtifactTarget),
@@ -69,6 +73,7 @@ const toolConfigs = {
     description: recipeToolDescriptions.inspect_project,
     inputSchema: {
       recipe: recipeSchema.optional().describe(recipeToolInputDescriptions.recipe),
+      reownManagedFiles: reownManagedFilesSchema,
     },
     annotations: toolAnnotations.read,
   },
@@ -129,6 +134,7 @@ const toolConfigs = {
         .enum(packageManagerIds)
         .optional()
         .describe(recipeToolInputDescriptions.packageManagerOverride),
+      reownManagedFiles: reownManagedFilesSchema,
     },
     annotations: toolAnnotations.read,
   },
@@ -146,6 +152,7 @@ const toolConfigs = {
         .describe(recipeToolInputDescriptions.config),
       writeConfig: z.boolean().default(true).describe(recipeToolInputDescriptions.writeConfig),
       noInstall: z.boolean().default(false).describe(recipeToolInputDescriptions.noInstall),
+      reownManagedFiles: reownManagedFilesSchema,
     },
     annotations: toolAnnotations.apply,
   },
@@ -168,6 +175,19 @@ function assertToolInput(input, toolName) {
 function assertRecipeInput(value) {
   validateRecipe(value);
   return /** @type {Recipe} */ (value);
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+function optionalReownManagedFiles(value) {
+  if (value === undefined) {
+    return [];
+  }
+
+  assertStringArray("reownManagedFiles", value);
+  return value;
 }
 
 /**
@@ -202,7 +222,9 @@ function listProfilesTool() {
  */
 async function inspectProjectTool(args) {
   const recipe = args.recipe === undefined ? undefined : assertRecipeInput(args.recipe);
-  return inspectProject(recipe);
+  return inspectProject(recipe, {
+    reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
+  });
 }
 
 /**
@@ -259,6 +281,7 @@ async function dryRunApplyTool(args) {
       noInstall: true,
       assumeYes: true,
       packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
+      reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
     }),
   };
 }
@@ -286,6 +309,7 @@ async function applyRecipeTool(args) {
       noInstall: Boolean(args.noInstall),
       assumeYes: true,
       packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
+      reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
     }),
   };
 }

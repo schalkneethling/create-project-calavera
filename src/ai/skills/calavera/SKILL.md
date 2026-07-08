@@ -28,6 +28,8 @@ Treat files listed by `dry_run_apply` as Calavera-managed outputs. Do not hand-w
 
 `apply_recipe.writeConfig: false` only skips writing `calavera.config.json`. Do not use it to bypass managed-file conflicts, stale state hashes, or an unapproved dry-run result.
 
+Use `reownManagedFiles` only after the user explicitly approves treating listed Calavera-tracked files' current contents as intentional local state before dry-run/apply.
+
 ## MCP Setup
 
 If the Calavera MCP tools are not available, help the user register this server from the project root. Check the target project's `package.json` first and use the package manager declared by `packageManager` or `devEngines.packageManager`.
