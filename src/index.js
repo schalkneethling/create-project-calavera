@@ -63,6 +63,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
 
 /**
  * @typedef {"npm" | "pnpm" | "yarn" | "bun"} PackageManager
+ * @typedef {"claude-code" | "codex" | "cursor" | "opencode" | "skip"} McpHarness
  * @typedef {import("./ai/artifacts.js").AiArtifactState} AiArtifactState
  * @typedef {import("./state.js").CalaveraState} CalaveraState
  * @typedef {import("./state.js").ManagedFileState} ManagedFileState
@@ -77,6 +78,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {boolean} apply
  * @property {PackageManager} [packageManager]
  * @property {"append" | "fallback"} [agentsMd]
+ * @property {McpHarness} [mcpHarness]
  * @property {string} [profile]
  * @property {string[]} integrations
  * @property {{ id: string, target?: string }[]} aiArtifacts
@@ -154,6 +156,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {Change[]} changes
  * @property {string[]} pointers
  * @property {string} nextPrompt
+ * @property {{ harness: McpHarness, action: "manual" | "write" | "update" | "skip", path?: string, reason?: string }} mcp
  *
  * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult} CommandResult
  */
@@ -202,6 +205,8 @@ const packageManagerCommands = {
 const supportedPackageManagers = /** @type {PackageManager[]} */ (
   Object.keys(packageManagerCommands)
 );
+/** @type {McpHarness[]} */
+const supportedMcpHarnesses = ["claude-code", "codex", "cursor", "opencode", "skip"];
 const supportedProfiles = profileIdsForRecipe();
 const recipePackageManagers = packageManagerIdsForRecipe();
 const args = process.argv.slice(2);
@@ -214,6 +219,8 @@ const cliParseOptions = {
   init: { type: "boolean" },
   json: { type: "boolean" },
   "agents-md": { type: "string" },
+  "mcp-harness": { type: "string" },
+  "mcp-host": { type: "string" },
   "no-install": { type: "boolean" },
   yes: { type: "boolean" },
   "package-manager": { type: "string" },
@@ -294,6 +301,20 @@ function assertSupportedPackageManager(packageManager) {
 }
 
 /**
+ * @param {string | undefined} harness
+ * @returns {McpHarness}
+ */
+function assertSupportedMcpHarness(harness) {
+  if (!harness || !supportedMcpHarnesses.includes(/** @type {McpHarness} */ (harness))) {
+    throw new Error(
+      `Invalid MCP harness: ${harness ?? "<missing>"}. Allowed values: ${supportedMcpHarnesses.join(", ")}.`,
+    );
+  }
+
+  return /** @type {McpHarness} */ (harness);
+}
+
+/**
  * @param {string[]} rawArgs
  * @returns {CliOptions}
  */
@@ -307,6 +328,7 @@ export function parseArgs(rawArgs) {
   const profile = optionalStringValue(values.profile);
   const packageManager = optionalStringValue(values["package-manager"]);
   const agentsMd = optionalStringValue(values["agents-md"]);
+  const mcpHarness = optionalStringValue(values["mcp-harness"] ?? values["mcp-host"]);
   /** @type {CliOptions} */
   const parsed = {
     command: values.help ? "help" : values.init ? "agent-init" : (positionals[0] ?? "init"),
@@ -339,6 +361,10 @@ export function parseArgs(rawArgs) {
   if (agentsMd !== undefined) {
     assertKnownValue("agents-md", agentsMd, ["append", "fallback"]);
     parsed.agentsMd = /** @type {"append" | "fallback"} */ (agentsMd);
+  }
+
+  if (mcpHarness !== undefined) {
+    parsed.mcpHarness = assertSupportedMcpHarness(mcpHarness);
   }
 
   return parsed;
@@ -750,6 +776,244 @@ function createMcpServerConfigSnippet(launchCommand) {
 }
 
 /**
+ * @param {unknown} value
+ * @param {string} path
+ * @returns {Record<string, unknown>}
+ */
+function assertJsonObjectConfig(value, path) {
+  if (!isPlainObject(value)) {
+    throw new Error(`${path} must contain a JSON object.`);
+  }
+
+  return /** @type {Record<string, unknown>} */ (value);
+}
+
+/**
+ * @param {string} path
+ * @param {Record<string, unknown>} nextConfig
+ * @param {boolean} dryRun
+ * @param {Change[]} changes
+ * @returns {Promise<"write" | "update" | "skip">}
+ */
+async function writeProjectJsonConfig(path, nextConfig, dryRun, changes) {
+  if (!(await fileExists(path))) {
+    changes.push({ type: "write", path });
+
+    if (!dryRun) {
+      const directory = dirname(path);
+      if (directory !== ".") {
+        await mkdir(directory, { recursive: true });
+      }
+      await writeJSON(path, nextConfig, false);
+    }
+
+    return "write";
+  }
+
+  assertJsonObjectConfig(await readJSON(path), path);
+  const nextContents = `${JSON.stringify(nextConfig, null, 2)}\n`;
+  const currentContents = await readFile(path, "utf8");
+
+  if (currentContents === nextContents) {
+    changes.push({ type: "skip", path, reason: "Already up to date." });
+    return "skip";
+  }
+
+  changes.push({ type: "update", path, reason: "Add or update Calavera MCP server." });
+
+  if (!dryRun) {
+    await writeFile(path, nextContents);
+  }
+
+  return "update";
+}
+
+/**
+ * @param {string} path
+ * @param {{ command: string, args: string[] }} launchCommand
+ * @param {boolean} dryRun
+ * @param {Change[]} changes
+ * @returns {Promise<"write" | "update" | "skip">}
+ */
+async function writeMcpServersJsonConfig(path, launchCommand, dryRun, changes) {
+  /** @type {Record<string, unknown>} */
+  const currentConfig = (await fileExists(path))
+    ? assertJsonObjectConfig(await readJSON(path), path)
+    : {};
+  const mcpServers = currentConfig.mcpServers;
+
+  if (mcpServers !== undefined && !isPlainObject(mcpServers)) {
+    throw new Error(`${path} mcpServers must be an object.`);
+  }
+
+  return writeProjectJsonConfig(
+    path,
+    {
+      ...currentConfig,
+      mcpServers: {
+        ...(isPlainObject(mcpServers) ? mcpServers : {}),
+        calavera: launchCommand,
+      },
+    },
+    dryRun,
+    changes,
+  );
+}
+
+/**
+ * @param {string} value
+ * @returns {string}
+ */
+function tomlString(value) {
+  return JSON.stringify(value);
+}
+
+/**
+ * @param {string[]} values
+ * @returns {string}
+ */
+function tomlStringArray(values) {
+  return `[${values.map(tomlString).join(", ")}]`;
+}
+
+/**
+ * @param {{ command: string, args: string[] }} launchCommand
+ * @returns {string}
+ */
+function createCodexMcpTomlBlock(launchCommand) {
+  return [
+    "[mcp_servers.calavera]",
+    `command = ${tomlString(launchCommand.command)}`,
+    `args = ${tomlStringArray(launchCommand.args)}`,
+    "",
+  ].join("\n");
+}
+
+/**
+ * @param {string} contents
+ * @param {string} header
+ * @returns {{ start: number, end: number } | undefined}
+ */
+function findTomlTableRange(contents, header) {
+  const lines = contents.split("\n");
+  const start = lines.findIndex((line) => line.trim() === header);
+
+  if (start === -1) {
+    return undefined;
+  }
+
+  const nextHeaderOffset = lines
+    .slice(start + 1)
+    .findIndex((line) => line.trim().startsWith("[") && line.trim().endsWith("]"));
+
+  return {
+    start,
+    end: nextHeaderOffset === -1 ? lines.length : start + 1 + nextHeaderOffset,
+  };
+}
+
+/**
+ * @param {string} path
+ * @param {{ command: string, args: string[] }} launchCommand
+ * @param {boolean} dryRun
+ * @param {Change[]} changes
+ * @returns {Promise<"write" | "update" | "skip">}
+ */
+async function writeCodexMcpConfig(path, launchCommand, dryRun, changes) {
+  const block = createCodexMcpTomlBlock(launchCommand);
+
+  if (!(await fileExists(path))) {
+    changes.push({ type: "write", path });
+
+    if (!dryRun) {
+      await mkdir(dirname(path), { recursive: true });
+      await writeFile(path, block);
+    }
+
+    return "write";
+  }
+
+  const contents = await readFile(path, "utf8");
+  const range = findTomlTableRange(contents, "[mcp_servers.calavera]");
+  const nextContents = range
+    ? [
+        ...contents.split("\n").slice(0, range.start),
+        block.trimEnd(),
+        ...contents.split("\n").slice(range.end),
+      ].join("\n")
+    : `${contents.trimEnd()}\n\n${block}`;
+
+  if (nextContents === contents) {
+    changes.push({ type: "skip", path, reason: "Already up to date." });
+    return "skip";
+  }
+
+  changes.push({ type: "update", path, reason: "Add or update Calavera MCP server." });
+
+  if (!dryRun) {
+    await writeFile(path, nextContents.endsWith("\n") ? nextContents : `${nextContents}\n`);
+  }
+
+  return "update";
+}
+
+/**
+ * @param {string} path
+ * @param {{ command: string, args: string[] }} launchCommand
+ * @param {boolean} dryRun
+ * @param {Change[]} changes
+ * @returns {Promise<"write" | "update" | "skip">}
+ */
+async function writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes) {
+  /** @type {Record<string, unknown>} */
+  const currentConfig = (await fileExists(path))
+    ? assertJsonObjectConfig(await readJSON(path), path)
+    : {};
+  const mcp = currentConfig.mcp;
+
+  if (mcp !== undefined && !isPlainObject(mcp)) {
+    throw new Error(`${path} mcp must be an object.`);
+  }
+
+  return writeProjectJsonConfig(
+    path,
+    {
+      $schema: typeof currentConfig.$schema === "string" ? currentConfig.$schema : "https://opencode.ai/config.json",
+      ...currentConfig,
+      mcp: {
+        ...(isPlainObject(mcp) ? mcp : {}),
+        calavera: {
+          type: "local",
+          command: [launchCommand.command, ...launchCommand.args],
+          enabled: true,
+        },
+      },
+    },
+    dryRun,
+    changes,
+  );
+}
+
+/**
+ * @param {McpHarness} harness
+ * @returns {string | undefined}
+ */
+function projectMcpConfigPath(harness) {
+  switch (harness) {
+    case "claude-code":
+      return ".mcp.json";
+    case "codex":
+      return ".codex/config.toml";
+    case "cursor":
+      return ".cursor/mcp.json";
+    case "opencode":
+      return "opencode.json";
+    default:
+      return undefined;
+  }
+}
+
+/**
  * @param {PackageManager} packageManager
  * @returns {string}
  */
@@ -757,32 +1021,76 @@ function createAgentBootstrapMcpInstructions(packageManager) {
   const commands = projectLocalCommandCatalog[packageManager];
   const launchCommand = createMcpLaunchCommand(packageManager);
   const mcpConfig = createMcpServerConfigSnippet(launchCommand);
+  const codexConfig = createCodexMcpTomlBlock(launchCommand).trimEnd();
+  const opencodeConfig = JSON.stringify(
+    {
+      $schema: "https://opencode.ai/config.json",
+      mcp: {
+        calavera: {
+          type: "local",
+          command: [launchCommand.command, ...launchCommand.args],
+          enabled: true,
+        },
+      },
+    },
+    null,
+    2,
+  );
   const shellCommand = formatShellCommand(launchCommand);
   const manualCommandReference = createMcpManualCommandReference();
 
   return `# Calavera MCP Setup
 
-Register the Calavera MCP server from the project root using this project's package manager (${commands.label}):
+Calavera can configure MCP automatically during \`--init\` for one project-local
+agent harness. It never writes global/user MCP config. If you skipped
+auto-config or need to repair a setup manually, use the project-local target for
+your harness.
+
+This project's detected package manager is ${commands.label}; the launch command
+is:
+
+\`\`\`bash
+${shellCommand}
+\`\`\`
+
+## Project-local targets
+
+### Claude Code: \`.mcp.json\`
 
 \`\`\`json
 ${mcpConfig}
 \`\`\`
 
-Project-scoped MCP servers run with the project root as their working directory.
-Using the package manager declared by the project avoids package-manager
-preflight failures before Calavera can start, such as npm rejecting a Bun-managed
-project through \`devEngines.packageManager\`.
+### Cursor: \`.cursor/mcp.json\`
+
+\`\`\`json
+${mcpConfig}
+\`\`\`
+
+### Codex: \`.codex/config.toml\`
+
+\`\`\`toml
+${codexConfig}
+\`\`\`
+
+### OpenCode: \`opencode.json\`
+
+\`\`\`json
+${opencodeConfig}
+\`\`\`
+
+Project-local MCP servers should be registered from the project root. Using the
+package manager declared by the project avoids package-manager preflight
+failures before Calavera can start, such as npm rejecting a Bun-managed project
+through \`devEngines.packageManager\`.
 
 When configuring an MCP server manually, choose the command that matches the
-project's package manager. Put the first word in the MCP \`command\` field and
-the remaining words in \`args\`:
+project's package manager:
 
 ${manualCommandReference}
 
-If your agent exposes an MCP setup UI or config writer, use the snippet above.
-If the agent needs approval before editing its own config, ask first.
-After registration, reload or restart the agent session if your MCP host does
-not discover new tools dynamically. Confirm the Calavera tools are visible before
+After registration, reload or restart the agent session if your MCP host does not
+discover new tools dynamically. Confirm the Calavera tools are visible before
 composing a recipe.
 
 Do not work around missing MCP tools by reading npm cache internals or importing
@@ -823,21 +1131,9 @@ path to \`.calavera/bun-install-cache\`. Keep these environment overrides on Bun
 MCP registrations only; they are recovery settings for restricted hosts, not
 part of the default Calavera MCP config.
 
-## Claude Code
+## Calavera MCP workflow
 
-For Claude Code, prefer a project-scoped \`.mcp.json\` in the project root when
-the team should share the Calavera server registration. Use the same package
-manager-specific snippet above.
-
-Do not put this server registration in \`.claude/settings.json\`; Claude Code
-does not load MCP servers from that file. You can also register the same command
-with \`claude mcp add\` if you want Claude Code to manage the entry.
-
-Registering this MCP server is a persistent code-execution change because it
-runs \`${shellCommand}\`. Ask for explicit user approval before creating
-\`.mcp.json\`, running \`claude mcp add\`, or approving the first server launch.
-
-Use the tools in this order:
+Use the tools in this order when they are available:
 
 1. \`inspect_project\`
 2. \`list_profiles\`
@@ -1721,6 +2017,94 @@ async function resolveAgentBootstrapGuidanceMode(options) {
 }
 
 /**
+ * @param {CliOptions} options
+ * @returns {Promise<McpHarness>}
+ */
+async function resolveAgentBootstrapMcpHarness(options) {
+  if (options.mcpHarness) {
+    return options.mcpHarness;
+  }
+
+  if (options.json || options.assumeYes || !process.stdin.isTTY) {
+    return "skip";
+  }
+
+  const selected = await select({
+    message: "Configure the Calavera MCP server for which agent harness?",
+    options: [
+      {
+        value: "claude-code",
+        label: "Claude Code",
+        hint: "Write project .mcp.json",
+      },
+      {
+        value: "codex",
+        label: "Codex",
+        hint: "Write project .codex/config.toml",
+      },
+      {
+        value: "cursor",
+        label: "Cursor",
+        hint: "Write project .cursor/mcp.json",
+      },
+      {
+        value: "opencode",
+        label: "OpenCode",
+        hint: "Write project opencode.json",
+      },
+      {
+        value: "skip",
+        label: "Skip auto-config",
+        hint: `Use ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup`,
+      },
+    ],
+  });
+
+  exitIfCancel(selected);
+
+  return assertSupportedMcpHarness(typeof selected === "string" ? selected : "skip");
+}
+
+/**
+ * @param {McpHarness} harness
+ * @param {{ command: string, args: string[] }} launchCommand
+ * @param {boolean} dryRun
+ * @param {Change[]} changes
+ * @returns {Promise<{ harness: McpHarness, action: "manual" | "write" | "update" | "skip", path?: string, reason?: string }>}
+ */
+async function writeAgentBootstrapMcpConfig(harness, launchCommand, dryRun, changes) {
+  const path = projectMcpConfigPath(harness);
+
+  if (!path) {
+    return {
+      harness,
+      action: "manual",
+      reason: `Skipped project MCP auto-config. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+    };
+  }
+
+  /** @type {"write" | "update" | "skip"} */
+  let action;
+
+  switch (harness) {
+    case "claude-code":
+    case "cursor":
+      action = await writeMcpServersJsonConfig(path, launchCommand, dryRun, changes);
+      break;
+    case "codex":
+      action = await writeCodexMcpConfig(path, launchCommand, dryRun, changes);
+      break;
+    case "opencode":
+      action = await writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes);
+      break;
+    default:
+      action = "skip";
+  }
+
+  return { harness, action, path };
+}
+
+/**
  * @param {string} contents
  * @param {string} section
  * @returns {{ contents: string, changed: boolean }}
@@ -1869,6 +2253,7 @@ export async function agentBootstrap(options = {}) {
   const packageManager = assertSupportedPackageManager(
     bootstrapOptions.packageManager ?? detectPackageManager(detectedPackageJSON) ?? "npm",
   );
+  const launchCommand = createMcpLaunchCommand(packageManager);
 
   await assertBootstrapDirectoryAvailable(".calavera");
 
@@ -1889,6 +2274,13 @@ export async function agentBootstrap(options = {}) {
     changes,
     "Existing Calavera MCP setup notes differ and were left unchanged.",
   );
+  const mcpHarness = await resolveAgentBootstrapMcpHarness(bootstrapOptions);
+  const mcp = await writeAgentBootstrapMcpConfig(
+    mcpHarness,
+    launchCommand,
+    bootstrapOptions.dryRun,
+    changes,
+  );
 
   const wroteFallbackGuidance = changes.some(
     (change) => change.path === AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
@@ -1896,6 +2288,10 @@ export async function agentBootstrap(options = {}) {
   const agentGuidancePointer = wroteFallbackGuidance
     ? `Agent guidance: ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} for manual merge with ${AGENT_BOOTSTRAP_GUIDANCE_FILE}`
     : `Agent guidance: ${AGENT_BOOTSTRAP_GUIDANCE_FILE}`;
+  const mcpPointer =
+    mcp.action === "manual"
+      ? `MCP setup: manual (${AGENT_BOOTSTRAP_MCP_FILE})`
+      : `MCP setup: ${mcp.path}`;
 
   if (!bootstrapOptions.dryRun) {
     await mkdir(".calavera", { recursive: true });
@@ -1913,9 +2309,11 @@ export async function agentBootstrap(options = {}) {
     pointers: [
       ...aiResult.pointers,
       agentGuidancePointer,
+      mcpPointer,
       `MCP setup notes: ${AGENT_BOOTSTRAP_MCP_FILE}`,
     ],
     nextPrompt: AGENT_BOOTSTRAP_NEXT_PROMPT,
+    mcp,
   };
 }
 
@@ -2478,6 +2876,8 @@ Options:
   --tool <id>          Add an integration by id or label; repeatable
   --ai-artifact <id>   Add a bundled AI artifact; repeatable
   --agents-md <mode>   append or fallback when AGENTS.md already exists
+  --mcp-harness <host> claude-code, codex, cursor, opencode, or skip
+  --mcp-host <host>    Alias for --mcp-harness
   --json               Print JSON output
   --yes                Use defaults and skip prompts
   --no-install         Write files without installing dependencies during apply
@@ -2491,7 +2891,7 @@ Agent-first setup:
 
 MCP-first workflow:
   1. Run the agent bootstrap command above from the project root.
-  2. Register the MCP server from .agents/calavera/mcp.md.
+  2. Choose exactly one project-local MCP host when prompted, or skip for manual setup.
   3. Reload or restart the agent session if required by your MCP host.
   4. Confirm these tools are visible before composing a recipe:
      inspect_project, list_profiles, list_integrations, list_ai_artifacts,
@@ -2507,7 +2907,9 @@ Package-runner syntax:
     npx --package create-project-calavera@${packageJson.version} create-project-calavera --init
 
   MCP launch commands run create-project-calavera-mcp directly; do not add --help
-  or inspect npm cache internals as a substitute for MCP setup.`;
+  or inspect npm cache internals as a substitute for MCP setup.
+
+  Calavera only writes project-local MCP config. Global host config is manual.`;
 }
 
 function printHelp() {
@@ -2574,6 +2976,11 @@ function printResult(result, asJSON = false) {
       logger.info(pointer);
     }
 
+    logger.info(
+      result.mcp.action === "manual"
+        ? `MCP auto-config skipped: ${result.mcp.reason}`
+        : `MCP auto-config ${result.mcp.action}: ${result.mcp.path}`,
+    );
     logger.info("Review the files above to confirm what Calavera changed or skipped.");
     logger.info(`Next prompt: ${result.nextPrompt}`);
     return;
