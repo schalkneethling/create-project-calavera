@@ -266,8 +266,11 @@ export async function writeOpenCodeMcpConfig(path, launchCommand, dryRun, change
   return writeProjectJsonConfig(
     targetPath,
     {
-      ...createOpenCodeMcpJsonConfig(launchCommand),
       ...currentConfig,
+      $schema:
+        typeof currentConfig.$schema === "string"
+          ? currentConfig.$schema
+          : "https://opencode.ai/config.json",
       mcp: {
         ...(isPlainObject(mcp) ? mcp : {}),
         calavera: {

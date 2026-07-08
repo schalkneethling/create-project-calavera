@@ -114,8 +114,8 @@ registration float to a later package release.
 After registration, restart or reload the agent session if the MCP host does not
 discover new tools dynamically. Before composing a recipe, confirm these
 Calavera MCP tools are exposed: `inspect_project`, `list_profiles`,
-`list_integrations`, `list_ai_artifacts`, `compose_recipe`, `dry_run_apply`, and
-`apply_recipe`.
+`list_integrations`, `list_ai_artifacts`, `compose_recipe`, `validate_recipe`,
+`explain_recipe`, `dry_run_apply`, and `apply_recipe`.
 
 Agents should not work around missing MCP tools by reading npm cache internals
 or importing Calavera source files from package cache paths. Configure or repair

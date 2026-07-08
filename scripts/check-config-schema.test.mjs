@@ -63,6 +63,10 @@ import {
 
 const execFileAsync = promisify(execFile);
 
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 const schemaUrl = CONFIG_SCHEMA_URL;
 const rootProperties = [
   "$schema",
@@ -801,6 +805,30 @@ test("agent bootstrap dry-run previews guidance without writing files", async ()
   }
 });
 
+test("agent bootstrap assume-yes skips MCP auto-config without explicit harness", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-assume-yes-"));
+
+  try {
+    process.chdir(projectDirectory);
+
+    const result = await agentBootstrap({ assumeYes: true, json: true });
+
+    assert.equal(result.mcp.harness, "skip");
+    assert.equal(result.mcp.action, "manual");
+    assert.equal(
+      result.changes.some(({ path }) => path === ".agents/calavera/mcp.md"),
+      true,
+    );
+    await assert.rejects(() => stat(".mcp.json"), /ENOENT/);
+    await assert.rejects(() => stat(".codex/config.toml"), /ENOENT/);
+    await assert.rejects(() => stat(".cursor/mcp.json"), /ENOENT/);
+    await assert.rejects(() => stat("opencode.json"), /ENOENT/);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
 test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-"));
@@ -1026,10 +1054,58 @@ test("agent bootstrap writes Codex project MCP config", async () => {
     assert.match(
       config,
       new RegExp(
-        `args = \\["dlx", "--package", "create-project-calavera@${packageJson.version}", "create-project-calavera-mcp"\\]`,
+        `args = \\["dlx", "--package", "create-project-calavera@${escapeRegExp(packageJson.version)}", "create-project-calavera-mcp"\\]`,
       ),
     );
     await assert.rejects(() => stat(".agents/calavera/mcp.md"), /ENOENT/);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("agent bootstrap updates existing Codex MCP config idempotently", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-codex-idempotent-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await mkdir(".codex", { recursive: true });
+    await writeFile(
+      ".codex/config.toml",
+      [
+        "[approval]",
+        'mode = "manual"',
+        "",
+        "[mcp_servers.calavera]",
+        'command = "old-command"',
+        'args = ["old-arg"]',
+        "",
+        "[mcp_servers.other]",
+        'command = "node"',
+        "",
+      ].join("\n"),
+    );
+
+    const result = await agentBootstrap({
+      json: true,
+      mcpHarness: "codex",
+      packageManager: "npm",
+    });
+    const config = await readFile(".codex/config.toml", "utf8");
+
+    assert.equal(result.mcp.harness, "codex");
+    assert.equal(result.mcp.action, "update");
+    assert.equal(config.match(/\[mcp_servers\.calavera\]/g)?.length, 1);
+    assert.match(config, /\[approval\]\nmode = "manual"/);
+    assert.match(config, /\[mcp_servers\.other\]\ncommand = "node"/);
+    assert.match(config, /\[mcp_servers\.calavera\]\ncommand = "npx"/);
+    assert.doesNotMatch(config, /old-command|old-arg/);
+    assert.match(
+      config,
+      new RegExp(
+        `args = \\["--package", "create-project-calavera@${escapeRegExp(packageJson.version)}", "create-project-calavera-mcp"\\]`,
+      ),
+    );
   } finally {
     process.chdir(originalDirectory);
   }
@@ -1045,6 +1121,7 @@ test("agent bootstrap writes and merges OpenCode project MCP config", async () =
       "opencode.json",
       `${JSON.stringify(
         {
+          $schema: 42,
           theme: "system",
           mcp: {
             existing: {
