@@ -28,10 +28,11 @@ bootstrap commands are `pnpm dlx create-project-calavera --init`,
 See [Package-Manager Commands](#package-manager-commands) below for the full
 command table.
 
-The bootstrap writes Calavera guidance for agents, MCP setup notes, the base
-Calavera skill, and optionally one project-local MCP config. It does not
-scaffold app code. When `AGENTS.md` already exists, interactive runs ask whether
-to append marked Calavera guidance directly to that file or write
+The bootstrap writes Calavera guidance for agents, the base Calavera skill, and
+optionally one project-local MCP config. It writes MCP setup notes only when the
+user chooses skip/manual or project-local MCP config cannot be written. It does
+not scaffold app code. When `AGENTS.md` already exists, interactive runs ask
+whether to append marked Calavera guidance directly to that file or write
 `AGENTS.calavera.md` for manual merging. Scripted runs keep `AGENTS.md`
 unchanged unless `--agents-md=append` is passed.
 
@@ -46,8 +47,9 @@ Project-local config targets:
 - Cursor: `.cursor/mcp.json`
 - OpenCode: `opencode.json`
 
-If you choose skip/manual, use the generated `.agents/calavera/mcp.md` notes.
-JSON-based MCP hosts use this shape:
+If you choose skip/manual, or Calavera cannot write the selected local config,
+use the generated `.agents/calavera/mcp.md` notes. JSON-based MCP hosts use this
+shape:
 
 ```json
 {

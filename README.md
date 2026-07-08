@@ -247,11 +247,13 @@ The Yarn command requires Yarn 2+ because Yarn 1.x does not support `dlx`; Yarn
 or install `create-project-calavera` globally.
 
 The `--init` bootstrap installs the base Calavera skill, adds concise project
-guidance, writes MCP setup notes, and prints a recommended first prompt for the
-user to give their agent. When `AGENTS.md` already exists, interactive runs ask
-whether to append marked Calavera guidance directly to that file or leave it
-unchanged and write fallback guidance to `AGENTS.calavera.md`. Scripted runs
-keep the fallback-only behavior unless `--agents-md=append` is passed.
+guidance, optionally writes one project-local MCP config, and prints a
+recommended first prompt for the user to give their agent. It writes MCP setup
+notes only when the user chooses skip/manual or project-local MCP config cannot
+be written. When `AGENTS.md` already exists, interactive runs ask whether to
+append marked Calavera guidance directly to that file or leave it unchanged and
+write fallback guidance to `AGENTS.calavera.md`. Scripted runs keep the
+fallback-only behavior unless `--agents-md=append` is passed.
 
 ## MCP Server
 
@@ -262,8 +264,9 @@ npx --package create-project-calavera@<version> create-project-calavera-mcp
 ```
 
 During `--init`, Calavera can write one project-local MCP config for Claude
-Code, Codex, Cursor, or OpenCode. It never writes global/user MCP config. Choose
-`skip` if you want to configure MCP manually from `.agents/calavera/mcp.md`.
+Code, Codex, Cursor, or OpenCode. It never writes global/user MCP config. It
+writes `.agents/calavera/mcp.md` only when you choose `skip` or the selected
+local config cannot be written.
 
 Project-local config targets:
 
