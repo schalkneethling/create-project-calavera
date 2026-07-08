@@ -9,7 +9,7 @@ Use Calavera to compose and apply project tooling through its MCP tools whenever
 
 ## Start Here
 
-1. Confirm whether Calavera MCP tools are available. Look for tools named `inspect_project`, `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `dry_run_apply`, and `apply_recipe`.
+1. Confirm whether Calavera MCP tools are available. Look for tools named `inspect_project`, `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
 2. If the Calavera MCP tools are not available, stop and help the user register or repair the MCP server before composing or applying anything. Do not inspect npm cache internals or import Calavera source files from package cache paths as a substitute for MCP setup.
 3. Call `inspect_project` when available, or inspect the project manually only when the MCP server cannot be registered and the user chooses a fallback flow. Check files such as `package.json`, `calavera.config.json`, `.editorconfig`, `eslint.config.js`, `oxlint.json`, `.prettierrc.json`, `.stylelintrc.json`, and `tsconfig.json`.
    If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use `dry_run_apply` to show concrete impact when adoption still looks possible.
@@ -27,6 +27,8 @@ Do not hand-author `calavera.config.json` when the Calavera MCP server is availa
 Treat files listed by `dry_run_apply` as Calavera-managed outputs. Do not hand-write or edit them; let `apply_recipe` or `create-project-calavera apply` create them after approval.
 
 `apply_recipe.writeConfig: false` only skips writing `calavera.config.json`. Do not use it to bypass managed-file conflicts, stale state hashes, or an unapproved dry-run result.
+
+Use `reownManagedFiles` only after the user explicitly approves treating listed Calavera-tracked files' current contents as intentional local state before dry-run/apply.
 
 ## MCP Setup
 

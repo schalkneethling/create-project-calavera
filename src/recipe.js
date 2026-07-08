@@ -150,6 +150,8 @@ export const recipeToolInputDescriptions = Object.freeze({
   config: "Recipe file path to write before applying.",
   writeConfig: "Write the approved recipe to the config path before applying.",
   noInstall: "Skip package manager dependency installation.",
+  reownManagedFiles:
+    "Tracked Calavera-managed file paths whose current contents the user has approved as the baseline for this dry-run/apply.",
   optionalDownloadRecipe:
     "Optional Calavera recipe object. When omitted, the current visible composer recipe is downloaded.",
 });

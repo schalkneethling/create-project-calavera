@@ -2,7 +2,7 @@
 // @ts-check
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, resolve } from "node:path";
+import { dirname, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs as parseNodeArgs } from "node:util";
 
@@ -91,6 +91,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string} [profile]
  * @property {string[]} integrations
  * @property {{ id: string, target?: string }[]} aiArtifacts
+ * @property {string[]} reownManagedFiles
  *
  * @typedef {object} PackageManagerCommands
  * @property {[string, string[]]} init
@@ -125,6 +126,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ script: string, reason: string }} ScriptOmission
  * @typedef {{ severity: "info" | "warning" | "error", kind: string, message: string, path?: string }} ProjectInspectionFinding
  * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[] }} ProjectInspection
+ * @typedef {{ reownManagedFiles?: string[] }} ProjectInspectionOptions
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[] }} ScriptPlan
  * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean }} Change
  *
@@ -239,6 +241,8 @@ const cliParseOptions = {
   tools: { type: "string", multiple: true, default: [] },
   "ai-artifact": { type: "string", multiple: true, default: [] },
   "ai-artifacts": { type: "string", multiple: true, default: [] },
+  "reown-managed-file": { type: "string", multiple: true, default: [] },
+  "reown-managed-files": { type: "string", multiple: true, default: [] },
 };
 
 /**
@@ -354,6 +358,10 @@ export function parseArgs(rawArgs) {
     ),
     aiArtifacts: collectListValues(values["ai-artifact"], values["ai-artifacts"]).map(
       parseAiArtifactFlag,
+    ),
+    reownManagedFiles: collectListValues(
+      values["reown-managed-file"],
+      values["reown-managed-files"],
     ),
   };
 
@@ -1013,7 +1021,14 @@ function createStylelintConfig(integrations) {
   /** @type {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }} */
   const config = {
     extends: [],
-    ignoreFiles: ["coverage/**", "dist/**", "dist-web/**", "node_modules/**"],
+    ignoreFiles: [
+      "coverage/**",
+      "dist/**",
+      "**/dist/**",
+      "**/dist-types/**",
+      "dist-web/**",
+      "node_modules/**",
+    ],
     plugins: [],
     rules: {},
   };
@@ -1068,10 +1083,42 @@ function createReactDoctorConfig() {
 
 /**
  * @param {string} path
+ * @returns {string}
+ */
+function realpathIfPresent(path) {
+  try {
+    return realpathSync(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
+ * @param {string} path
+ * @returns {string}
+ */
+function normalizeManagedFilePath(path) {
+  const pathWithPlatformSeparators = path.replace(/\\/g, "/");
+  const projectRoot = realpathIfPresent(resolve("."));
+  const absolutePath = realpathIfPresent(resolve(pathWithPlatformSeparators));
+  return relative(projectRoot, absolutePath).replace(/\\/g, "/");
+}
+
+/**
+ * @param {string[]} paths
+ * @returns {Set<string>}
+ */
+function normalizeManagedFilePathSet(paths) {
+  return new Set(paths.map(normalizeManagedFilePath));
+}
+
+/**
+ * @param {string} path
  * @param {string} contents
  * @param {CalaveraState} previousState
+ * @param {Set<string>} reownManagedFiles
  */
-async function assertSafeManagedFileWrite(path, contents, previousState) {
+async function assertSafeManagedFileWrite(path, contents, previousState, reownManagedFiles) {
   if (!(await fileExists(path))) {
     return;
   }
@@ -1094,6 +1141,10 @@ async function assertSafeManagedFileWrite(path, contents, previousState) {
     return;
   }
 
+  if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(path))) {
+    return;
+  }
+
   const reason = stateFile
     ? `It appears to have local edits (installed=${installedHash}, state=${stateFile.hash}).`
     : "It is not recorded as Calavera-managed.";
@@ -1104,10 +1155,16 @@ async function assertSafeManagedFileWrite(path, contents, previousState) {
 /**
  * @param {{ path: string, contents: string }[]} filePlans
  * @param {CalaveraState} previousState
+ * @param {Set<string>} reownManagedFiles
  */
-async function assertSafeManagedFileWrites(filePlans, previousState) {
+async function assertSafeManagedFileWrites(filePlans, previousState, reownManagedFiles) {
   for (const filePlan of filePlans) {
-    await assertSafeManagedFileWrite(filePlan.path, filePlan.contents, previousState);
+    await assertSafeManagedFileWrite(
+      filePlan.path,
+      filePlan.contents,
+      previousState,
+      reownManagedFiles,
+    );
   }
 }
 
@@ -1158,9 +1215,10 @@ function jsonContentsMatch(path, installedContents, targetContents) {
  * @param {boolean} dryRun
  * @param {Change[]} changes
  * @param {CalaveraState} previousState
+ * @param {Set<string>} reownManagedFiles
  * @returns {Promise<ManagedFileState>}
  */
-async function writeManagedFile(path, contents, dryRun, changes, previousState) {
+async function writeManagedFile(path, contents, dryRun, changes, previousState, reownManagedFiles) {
   changes.push({ type: "write", path, action: "write", ownership: "calavera" });
 
   const managedFile = {
@@ -1172,7 +1230,7 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState) 
     return managedFile;
   }
 
-  await assertSafeManagedFileWrite(path, contents, previousState);
+  await assertSafeManagedFileWrite(path, contents, previousState, reownManagedFiles);
 
   const directory = dirname(path);
   if (directory !== ".") {
@@ -1190,15 +1248,24 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState) 
  * @param {boolean} dryRun
  * @param {Change[]} changes
  * @param {CalaveraState} previousState
+ * @param {Set<string>} reownManagedFiles
  * @returns {Promise<ManagedFileState>}
  */
-async function writeManagedJSONFile(path, value, dryRun, changes, previousState) {
+async function writeManagedJSONFile(
+  path,
+  value,
+  dryRun,
+  changes,
+  previousState,
+  reownManagedFiles,
+) {
   return writeManagedFile(
     path,
     `${JSON.stringify(value, null, 2)}\n`,
     dryRun,
     changes,
     previousState,
+    reownManagedFiles,
   );
 }
 
@@ -1267,9 +1334,10 @@ async function projectFileExists(path) {
 /**
  * @param {{ path: string, contents: string }} filePlan
  * @param {CalaveraState} previousState
+ * @param {Set<string>} reownManagedFiles
  * @returns {Promise<ProjectInspectionFinding | undefined>}
  */
-async function inspectManagedFilePlan(filePlan, previousState) {
+async function inspectManagedFilePlan(filePlan, previousState, reownManagedFiles) {
   if (!(await projectFileExists(filePlan.path))) {
     return undefined;
   }
@@ -1292,6 +1360,15 @@ async function inspectManagedFilePlan(filePlan, previousState) {
     return undefined;
   }
 
+  if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(filePlan.path))) {
+    return {
+      severity: "warning",
+      kind: "managed-file-reown",
+      path: filePlan.path,
+      message: `${filePlan.path} has local edits relative to Calavera state; this run will treat the current contents as an approved managed-file baseline before applying the recipe.`,
+    };
+  }
+
   return {
     severity: "error",
     kind: "managed-file-conflict",
@@ -1302,11 +1379,13 @@ async function inspectManagedFilePlan(filePlan, previousState) {
 
 /**
  * @param {Recipe} [recipe]
+ * @param {ProjectInspectionOptions} [options]
  * @returns {Promise<ProjectInspection>}
  */
-export async function inspectProject(recipe) {
+export async function inspectProject(recipe, options = {}) {
   const packageJSON = await readPackageJSONIfPresent();
   const previousState = await readStateIfPresent();
+  const reownManagedFiles = normalizeManagedFilePathSet(options.reownManagedFiles ?? []);
   const packageManager = detectPackageManager(packageJSON);
   const integrations = recipe ? resolveRecipeIntegrations(recipe) : [];
   const integrationIds = new Set(integrations.map((integration) => integration.id));
@@ -1363,7 +1442,7 @@ export async function inspectProject(recipe) {
   }
 
   for (const filePlan of plannedManagedFiles(integrations)) {
-    const finding = await inspectManagedFilePlan(filePlan, previousState);
+    const finding = await inspectManagedFilePlan(filePlan, previousState, reownManagedFiles);
 
     if (finding) {
       findings.push(finding);
@@ -1445,9 +1524,11 @@ export async function applyRecipeObject(recipe, options = {}) {
     json: false,
     noInstall: false,
     assumeYes: false,
+    reownManagedFiles: [],
     ...options,
   };
   const previousState = await readStateIfPresent();
+  const reownManagedFiles = normalizeManagedFilePathSet(applyOptions.reownManagedFiles ?? []);
   const integrations = resolveRecipeIntegrations(recipe);
   const dependencyList = unique(
     integrations.flatMap((integration) => integration.dependencies ?? []),
@@ -1460,7 +1541,9 @@ export async function applyRecipeObject(recipe, options = {}) {
     applyOptions.assumeYes,
     applyOptions.json,
   );
-  const projectInspection = await inspectProject(recipe);
+  const projectInspection = await inspectProject(recipe, {
+    reownManagedFiles: applyOptions.reownManagedFiles,
+  });
   const scriptPlan = buildScripts(recipe, integrations, packageManager);
   const { scripts, omittedScripts } = scriptPlan;
   /** @type {Change[]} */
@@ -1470,7 +1553,7 @@ export async function applyRecipeObject(recipe, options = {}) {
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
   const managedFilePlans = plannedManagedFiles(integrations);
 
-  await assertSafeManagedFileWrites(managedFilePlans, previousState);
+  await assertSafeManagedFileWrites(managedFilePlans, previousState, reownManagedFiles);
 
   const aiResult = await buildAiApplyResult(recipe, applyOptions, previousState);
 
@@ -1496,6 +1579,7 @@ export async function applyRecipeObject(recipe, options = {}) {
         applyOptions.dryRun,
         changes,
         previousState,
+        reownManagedFiles,
       ),
     );
   }
@@ -1508,6 +1592,7 @@ export async function applyRecipeObject(recipe, options = {}) {
         applyOptions.dryRun,
         changes,
         previousState,
+        reownManagedFiles,
       ),
     );
   }
@@ -1520,6 +1605,7 @@ export async function applyRecipeObject(recipe, options = {}) {
         applyOptions.dryRun,
         changes,
         previousState,
+        reownManagedFiles,
       ),
     );
   }
@@ -1532,6 +1618,7 @@ export async function applyRecipeObject(recipe, options = {}) {
         applyOptions.dryRun,
         changes,
         previousState,
+        reownManagedFiles,
       ),
     );
     managedFiles.push(
@@ -1541,6 +1628,7 @@ export async function applyRecipeObject(recipe, options = {}) {
         applyOptions.dryRun,
         changes,
         previousState,
+        reownManagedFiles,
       ),
     );
   }
@@ -1553,6 +1641,7 @@ export async function applyRecipeObject(recipe, options = {}) {
         applyOptions.dryRun,
         changes,
         previousState,
+        reownManagedFiles,
       ),
     );
   }
@@ -1565,6 +1654,7 @@ export async function applyRecipeObject(recipe, options = {}) {
         applyOptions.dryRun,
         changes,
         previousState,
+        reownManagedFiles,
       ),
     );
   }
@@ -1577,6 +1667,7 @@ export async function applyRecipeObject(recipe, options = {}) {
         applyOptions.dryRun,
         changes,
         previousState,
+        reownManagedFiles,
       ),
     );
   }
@@ -2009,6 +2100,7 @@ export async function agentBootstrap(options = {}) {
     integrations: [],
     aiArtifacts: [],
     ...options,
+    reownManagedFiles: options.reownManagedFiles ?? [],
   };
   const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = assertSupportedPackageManager(
@@ -2644,6 +2736,8 @@ Options:
   --json               Print JSON output
   --yes                Use defaults and skip prompts
   --no-install         Write files without installing dependencies during apply
+  --reown-managed-file <path>
+                      Treat a tracked managed file's current contents as approved
   -h, --help           Show this help
 
 Agent-first setup:

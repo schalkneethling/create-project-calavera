@@ -119,5 +119,5 @@ without repeating every field verbatim.
 
 ## Reference
 
-See `references/ecosystems.md` for the full list of Dependabot-supported
+See `references/ecosystem.md` for the full list of Dependabot-supported
 `package-ecosystem` identifiers and their directory conventions.
