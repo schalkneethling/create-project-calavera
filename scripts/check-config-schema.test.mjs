@@ -1034,7 +1034,7 @@ test("agent bootstrap writes Codex project MCP config", async () => {
     await mkdir(".codex", { recursive: true });
     await writeFile(
       ".codex/config.toml",
-      "[approval]\nmode = \"manual\"\n\n[mcp_servers.other]\ncommand = \"node\"\n",
+      '[approval]\nmode = "manual"\n\n[mcp_servers.other]\ncommand = "node"\n',
     );
 
     const result = await agentBootstrap({
