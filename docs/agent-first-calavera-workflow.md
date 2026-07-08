@@ -28,13 +28,28 @@ bootstrap commands are `pnpm dlx create-project-calavera --init`,
 See [Package-Manager Commands](#package-manager-commands) below for the full
 command table.
 
-The bootstrap writes Calavera guidance for agents, MCP setup notes, and the base
-Calavera skill. It does not scaffold app code. When `AGENTS.md` already exists,
-interactive runs ask whether to append marked Calavera guidance directly to that
-file or write `AGENTS.calavera.md` for manual merging. Scripted runs keep
-`AGENTS.md` unchanged unless `--agents-md=append` is passed.
+The bootstrap writes Calavera guidance for agents, the base Calavera skill, and
+optionally one project-local MCP config. It writes MCP setup notes only when the
+user chooses skip/manual or project-local MCP config cannot be written. It does
+not scaffold app code. When `AGENTS.md` already exists, interactive runs ask
+whether to append marked Calavera guidance directly to that file or write
+`AGENTS.calavera.md` for manual merging. Scripted runs keep `AGENTS.md`
+unchanged unless `--agents-md=append` is passed.
 
-Register the MCP server from the generated `.agents/calavera/mcp.md` notes:
+After any `AGENTS.md` question, interactive runs ask which project-local MCP
+host to configure. Choose exactly one of Claude Code, Codex, Cursor, OpenCode,
+or skip/manual. Calavera never writes global/user MCP config.
+
+Project-local config targets:
+
+- Claude Code: `.mcp.json`
+- Codex: `.codex/config.toml`
+- Cursor: `.cursor/mcp.json`
+- OpenCode: `opencode.json`
+
+If you choose skip/manual, or Calavera cannot write the selected local config,
+use the generated `.agents/calavera/mcp.md` notes. JSON-based MCP hosts use this
+shape:
 
 ```json
 {
@@ -47,11 +62,39 @@ Register the MCP server from the generated `.agents/calavera/mcp.md` notes:
 }
 ```
 
+Codex uses TOML:
+
+```toml
+[mcp_servers.calavera]
+command = "npx"
+args = ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
+```
+
+OpenCode stores local MCP servers under `mcp`:
+
+```json
+{
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
+    "calavera": {
+      "type": "local",
+      "command": [
+        "npx",
+        "--package",
+        "create-project-calavera@<version>",
+        "create-project-calavera-mcp"
+      ],
+      "enabled": true
+    }
+  }
+}
+```
+
 Use the package manager declared by the target project's `package.json` when
 creating the MCP registration. The generated notes choose the matching command,
 such as `npx` for npm-managed projects, `pnpm dlx` for pnpm, `yarn dlx` for
-Yarn, or `bunx` for Bun. Project-scoped MCP servers run from the project root,
-so matching the package manager avoids preflight failures before Calavera can
+Yarn, or `bunx` for Bun. Project-local MCP servers run from the project root, so
+matching the package manager avoids preflight failures before Calavera can
 start.
 
 For manual MCP setup, choose the matching command and split it into the harness
@@ -68,19 +111,11 @@ Keep an explicit package version specifier so package-manager launchers resolve
 the `create-project-calavera-mcp` bin reliably without making the persistent MCP
 registration float to a later package release.
 
-For Claude Code, prefer a project-scoped `.mcp.json` in the project root when
-the team should share the registration. Do not put MCP server registrations in
-`.claude/settings.json`; Claude Code does not load MCP servers from that file.
-`claude mcp add` can also register the same command if you want Claude Code to
-manage the entry. Because the server command runs an external package, Claude
-Code may require explicit approval before creating the persistent registration
-or launching the server for the first time.
-
 After registration, restart or reload the agent session if the MCP host does not
 discover new tools dynamically. Before composing a recipe, confirm these
 Calavera MCP tools are exposed: `inspect_project`, `list_profiles`,
-`list_integrations`, `list_ai_artifacts`, `compose_recipe`, `dry_run_apply`, and
-`apply_recipe`.
+`list_integrations`, `list_ai_artifacts`, `compose_recipe`, `validate_recipe`,
+`explain_recipe`, `dry_run_apply`, and `apply_recipe`.
 
 Agents should not work around missing MCP tools by reading npm cache internals
 or importing Calavera source files from package cache paths. Configure or repair

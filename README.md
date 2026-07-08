@@ -17,7 +17,8 @@ Vite, another scaffold tool, or a manually maintained repository:
 
 1. Open the project directory.
 2. Run `npm create project-calavera -- --init`.
-3. Register the MCP server using the generated `.agents/calavera/mcp.md` notes.
+3. Choose exactly one project-local MCP host when prompted: Claude Code, Codex,
+   Cursor, OpenCode, or skip/manual.
 4. Restart or reload the agent session if your MCP host does not discover new tools dynamically.
 5. Confirm the Calavera MCP tools are exposed: `inspect_project`, `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
 6. Start the agent from the project root.
@@ -246,11 +247,13 @@ The Yarn command requires Yarn 2+ because Yarn 1.x does not support `dlx`; Yarn
 or install `create-project-calavera` globally.
 
 The `--init` bootstrap installs the base Calavera skill, adds concise project
-guidance, writes MCP setup notes, and prints a recommended first prompt for the
-user to give their agent. When `AGENTS.md` already exists, interactive runs ask
-whether to append marked Calavera guidance directly to that file or leave it
-unchanged and write fallback guidance to `AGENTS.calavera.md`. Scripted runs
-keep the fallback-only behavior unless `--agents-md=append` is passed.
+guidance, optionally writes one project-local MCP config, and prints a
+recommended first prompt for the user to give their agent. It writes MCP setup
+notes only when the user chooses skip/manual or project-local MCP config cannot
+be written. When `AGENTS.md` already exists, interactive runs ask whether to
+append marked Calavera guidance directly to that file or leave it unchanged and
+write fallback guidance to `AGENTS.calavera.md`. Scripted runs keep the
+fallback-only behavior unless `--agents-md=append` is passed.
 
 ## MCP Server
 
@@ -260,19 +263,28 @@ Calavera also ships a standard MCP server for agent-native recipe composition:
 npx --package create-project-calavera@<version> create-project-calavera-mcp
 ```
 
-Most users will register the equivalent command with their AI agent harness of
-choice, usually with the harness configured to run the command from the project
-root. Use the package manager declared by the target project's `package.json`.
-When configuring the MCP server manually, choose the matching command and put
-the first word in the MCP `command` field and the remaining words in `args`:
+During `--init`, Calavera can write one project-local MCP config for Claude
+Code, Codex, Cursor, or OpenCode. It never writes global/user MCP config. It
+writes `.agents/calavera/mcp.md` only when you choose `skip` or the selected
+local config cannot be written.
+
+Project-local config targets:
+
+- Claude Code: `.mcp.json`
+- Codex: `.codex/config.toml`
+- Cursor: `.cursor/mcp.json`
+- OpenCode: `opencode.json`
+
+Use the package manager declared by the target project's `package.json`.
+When configuring MCP manually, choose the matching command and put the first
+word in the MCP `command` field and the remaining words in `args`:
 
 - npm: `npx --package create-project-calavera@<version> create-project-calavera-mcp`
 - pnpm: `pnpm dlx --package create-project-calavera@<version> create-project-calavera-mcp`
 - Yarn: `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`
 - Bun: `bunx --package create-project-calavera@<version> create-project-calavera-mcp`
 
-For npm-managed projects, pin the package version that is current when you
-register the MCP server:
+JSON-based MCP hosts use this shape:
 
 ```json
 {
@@ -285,21 +297,35 @@ register the MCP server:
 }
 ```
 
-For Bun-managed projects, pin the package version that is current when you
-register the MCP server:
+Codex uses TOML:
+
+```toml
+[mcp_servers.calavera]
+command = "npx"
+args = ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
+```
+
+OpenCode stores local MCP servers under `mcp`:
 
 ```json
 {
-  "mcpServers": {
+  "$schema": "https://opencode.ai/config.json",
+  "mcp": {
     "calavera": {
-      "command": "bunx",
-      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
+      "type": "local",
+      "command": [
+        "npx",
+        "--package",
+        "create-project-calavera@<version>",
+        "create-project-calavera-mcp"
+      ],
+      "enabled": true
     }
   }
 }
 ```
 
-Project-scoped MCP servers run from the project root. Matching the project
+Project-local MCP servers run from the project root. Matching the project
 package manager prevents package-manager preflight failures before Calavera can
 start, such as npm 11 rejecting a Bun-managed project through
 `devEngines.packageManager`.
@@ -313,14 +339,6 @@ If the package cache is also restricted, set `BUN_INSTALL_CACHE_DIR` to an
 absolute writable directory such as an absolute path to
 `.calavera/bun-install-cache`. Keep these as Bun-only recovery settings rather
 than default MCP config.
-
-For Claude Code, use a project-scoped `.mcp.json` in the project root when the
-registration should be shared with teammates, or use `claude mcp add` to let
-Claude Code manage the same command. Do not put MCP server registrations in
-`.claude/settings.json`; Claude Code does not load MCP servers from that file.
-Because this registration runs an external package persistently, expect Claude
-Code to ask for explicit approval before creating the config or launching the
-server for the first time.
 
 Agent guidance should tell the harness to use Calavera when a user wants to
 inspect available project tooling, compose `calavera.config.json`, preview a
@@ -356,6 +374,8 @@ approves the proposed recipe and dry-run result.
   and agent targets, or omit this flag to select from the interactive option list
 - `--agents-md append|fallback` with `--init` to script how existing `AGENTS.md`
   files are handled
+- `--mcp-harness claude-code|codex|cursor|opencode|skip` with `--init` to
+  script project-local MCP auto-config
 - `--apply` with `init` to preview and then confirm applying the composed recipe
 - `--dry-run`
 - `--no-install`
