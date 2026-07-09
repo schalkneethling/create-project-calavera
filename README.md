@@ -162,7 +162,8 @@ React codebases that complements linting with security, performance,
 correctness, accessibility, bundle-size, and architecture diagnostics. JSX-A11y
 linting also appears with the React checks because it targets JSX markup.
 
-The CSS catalog includes
+The CSS catalog includes `stylelint-plugin-logical-css` for logical CSS
+property, value, and unit checks, plus
 `@schalkneethling/stylelint-plugin-css-property-type-validator` as a curated
 experimental integration.
 

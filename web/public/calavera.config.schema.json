@@ -118,6 +118,7 @@
         "stylelint-baseline",
         "stylelint-scss",
         "stylelint-stylistic",
+        "stylelint-logical-css",
         "css-property-type-validator",
         "prettier",
         "prettier-tailwind",
