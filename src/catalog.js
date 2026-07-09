@@ -348,6 +348,19 @@ export const integrationCatalog = [
     },
   },
   {
+    id: "stylelint-logical-css",
+    label: "Logical CSS",
+    group: "CSS logical properties",
+    platform: "stylelint-plugin",
+    status: "optional",
+    dependencies: ["stylelint-plugin-logical-css"],
+    includes: ["stylelint"],
+    stylelint: {
+      extends: ["stylelint-plugin-logical-css/configs/recommended"],
+      plugins: ["stylelint-plugin-logical-css"],
+    },
+  },
+  {
     id: "css-property-type-validator",
     label: "CSS property type validation",
     group: "CSS property type validation",

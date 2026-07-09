@@ -1632,6 +1632,35 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
   }
 });
 
+test("apply composes logical CSS Stylelint plugin metadata", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-stylelint-logical-css-"));
+  const recipe = buildRecipe("modern", ["stylelint-logical-css"], "npm");
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+
+    const result = await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    assert.deepEqual(result.dependencies, ["stylelint", "stylelint-plugin-logical-css"]);
+
+    const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
+
+    assert.equal(
+      stylelintConfig.extends.includes("stylelint-plugin-logical-css/configs/recommended"),
+      true,
+    );
+    assert.equal(stylelintConfig.plugins.includes("stylelint-plugin-logical-css"), true);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
 test("doctor does not expect the removed run-if-files helper", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-doctor-no-helper-"));
