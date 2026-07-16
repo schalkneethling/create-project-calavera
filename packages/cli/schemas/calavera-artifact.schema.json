@@ -6,6 +6,11 @@
   "additionalProperties": false,
   "required": ["schemaVersion", "id", "type", "displayName", "payload", "compatibility"],
   "properties": {
+    "$schema": {
+      "type": "string",
+      "format": "uri",
+      "const": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json"
+    },
     "schemaVersion": {
       "const": 1
     },

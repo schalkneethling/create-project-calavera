@@ -1,0 +1,21 @@
+{
+  "name": "@schalkneethling/calavera-skill-refined-plan-mode",
+  "version": "0.1.0",
+  "description": "Refined plan mode artifact for Calavera.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/schalkneethling/create-project-calavera.git",
+    "directory": "packages/artifacts/skill-refined-plan-mode"
+  },
+  "files": [
+    "calavera-artifact.json",
+    "payload"
+  ],
+  "type": "module",
+  "exports": "./calavera-artifact.json",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

@@ -7,12 +7,7 @@
   "access": "public",
   "baseBranch": "main",
   "updateInternalDependencies": "patch",
-  "ignore": [
-    "@calavera/artifact-core",
-    "@calavera/baseline-explorer",
-    "@calavera/composer",
-    "@calavera/menu-bar"
-  ],
+  "ignore": ["@calavera/baseline-explorer", "@calavera/composer", "@calavera/menu-bar"],
   "privatePackages": {
     "version": false,
     "tag": false

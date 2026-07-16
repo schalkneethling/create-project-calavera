@@ -22,7 +22,7 @@
     "schema:check": "pnpm --filter create-project-calavera schema:check",
     "test": "pnpm --recursive --if-present test",
     "typecheck": "tsc --noEmit",
-    "publish:check": "pnpm --filter create-project-calavera publish:check",
+    "publish:check": "pnpm --filter create-project-calavera publish:check && pnpm --filter @schalkneethling/calavera-baseline-core exec publint && pnpm --filter @schalkneethling/calavera-artifact-core exec publint && pnpm --filter './packages/artifacts/*' --recursive exec publint",
     "release:status": "changeset status",
     "release:version": "changeset version",
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"

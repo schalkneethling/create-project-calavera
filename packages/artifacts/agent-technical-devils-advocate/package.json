@@ -1,0 +1,21 @@
+{
+  "name": "@schalkneethling/calavera-agent-technical-devils-advocate",
+  "version": "0.1.0",
+  "description": "Technical devil's advocate artifact for Calavera.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/schalkneethling/create-project-calavera.git",
+    "directory": "packages/artifacts/agent-technical-devils-advocate"
+  },
+  "files": [
+    "calavera-artifact.json",
+    "payload"
+  ],
+  "type": "module",
+  "exports": "./calavera-artifact.json",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-npm-trusted-publishing-github-workflow",
+  "type": "skill",
+  "displayName": "npm trusted publishing GitHub workflow",
+  "payload": "payload/npm-trusted-publishing-github-workflow",
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}

@@ -195,7 +195,7 @@
           "enum": ["skill", "hook", "agent"]
         },
         "src": {
-          "description": "Path to a bundled artifact under src/ai/.",
+          "description": "Legacy artifact path resolved through the first-party package catalog.",
           "type": "string",
           "minLength": 1
         },

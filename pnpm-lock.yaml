@@ -82,7 +82,83 @@ importers:
 
   apps/menu-bar: {}
 
-  packages/artifact-core: {}
+  packages/artifact-core:
+    dependencies:
+      '@schalkneethling/calavera-agent-technical-devils-advocate':
+        specifier: workspace:^
+        version: link:../artifacts/agent-technical-devils-advocate
+      '@schalkneethling/calavera-hook-auto-approve-safe-commands':
+        specifier: workspace:^
+        version: link:../artifacts/hook-auto-approve-safe-commands
+      '@schalkneethling/calavera-hook-block-dangerous-commands':
+        specifier: workspace:^
+        version: link:../artifacts/hook-block-dangerous-commands
+      '@schalkneethling/calavera-skill-calavera':
+        specifier: workspace:^
+        version: link:../artifacts/skill-calavera
+      '@schalkneethling/calavera-skill-code-review':
+        specifier: workspace:^
+        version: link:../artifacts/skill-code-review
+      '@schalkneethling/calavera-skill-css-tokens':
+        specifier: workspace:^
+        version: link:../artifacts/skill-css-tokens
+      '@schalkneethling/calavera-skill-frontend-engineering':
+        specifier: workspace:^
+        version: link:../artifacts/skill-frontend-engineering
+      '@schalkneethling/calavera-skill-frontend-security':
+        specifier: workspace:^
+        version: link:../artifacts/skill-frontend-security
+      '@schalkneethling/calavera-skill-frontend-testing':
+        specifier: workspace:^
+        version: link:../artifacts/skill-frontend-testing
+      '@schalkneethling/calavera-skill-github-goal-issue-triage':
+        specifier: workspace:^
+        version: link:../artifacts/skill-github-goal-issue-triage
+      '@schalkneethling/calavera-skill-more-secure-dependabot-config':
+        specifier: workspace:^
+        version: link:../artifacts/skill-more-secure-dependabot-config
+      '@schalkneethling/calavera-skill-npm-publishing-best-practices':
+        specifier: workspace:^
+        version: link:../artifacts/skill-npm-publishing-best-practices
+      '@schalkneethling/calavera-skill-npm-trusted-publishing-github-workflow':
+        specifier: workspace:^
+        version: link:../artifacts/skill-npm-trusted-publishing-github-workflow
+      '@schalkneethling/calavera-skill-project-goal':
+        specifier: workspace:^
+        version: link:../artifacts/skill-project-goal
+      '@schalkneethling/calavera-skill-refined-plan-mode':
+        specifier: workspace:^
+        version: link:../artifacts/skill-refined-plan-mode
+
+  packages/artifacts/agent-technical-devils-advocate: {}
+
+  packages/artifacts/hook-auto-approve-safe-commands: {}
+
+  packages/artifacts/hook-block-dangerous-commands: {}
+
+  packages/artifacts/skill-calavera: {}
+
+  packages/artifacts/skill-code-review: {}
+
+  packages/artifacts/skill-css-tokens: {}
+
+  packages/artifacts/skill-frontend-engineering: {}
+
+  packages/artifacts/skill-frontend-security: {}
+
+  packages/artifacts/skill-frontend-testing: {}
+
+  packages/artifacts/skill-github-goal-issue-triage: {}
+
+  packages/artifacts/skill-more-secure-dependabot-config: {}
+
+  packages/artifacts/skill-npm-publishing-best-practices: {}
+
+  packages/artifacts/skill-npm-trusted-publishing-github-workflow: {}
+
+  packages/artifacts/skill-project-goal: {}
+
+  packages/artifacts/skill-refined-plan-mode: {}
 
   packages/baseline-core:
     dependencies:
@@ -101,6 +177,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
+      '@schalkneethling/calavera-artifact-core':
+        specifier: workspace:^
+        version: link:../artifact-core
       '@schalkneethling/calavera-baseline-core':
         specifier: workspace:^
         version: link:../baseline-core
