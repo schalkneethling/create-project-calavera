@@ -33,6 +33,7 @@
   "files": [
     "src",
     "docs",
+    "schemas",
     "CHANGELOG.md",
     "MIGRATION.md",
     "LICENSE",
