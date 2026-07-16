@@ -1,0 +1,86 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "title": "Calavera artifact manifest",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "id", "type", "displayName", "payload", "compatibility"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "id": {
+      "type": "string",
+      "pattern": "^(?:skill|hook|agent)-[a-z0-9]+(?:-[a-z0-9]+)*$"
+    },
+    "type": {
+      "enum": ["skill", "hook", "agent"]
+    },
+    "displayName": {
+      "type": "string",
+      "minLength": 1
+    },
+    "payload": {
+      "$ref": "#/$defs/relativePath"
+    },
+    "targets": {
+      "type": "array",
+      "uniqueItems": true,
+      "minItems": 1,
+      "items": {
+        "type": "string",
+        "pattern": "^(?!(?:\\.|\\.\\.)$)[a-z0-9]+(?:-[a-z0-9]+)*$"
+      }
+    },
+    "compatibility": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["calavera"],
+      "properties": {
+        "calavera": {
+          "type": "string",
+          "minLength": 1
+        }
+      }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": { "type": { "const": "skill" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": { "id": { "type": "string", "pattern": "^skill-" } },
+        "not": { "required": ["targets"] }
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "hook" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": { "id": { "type": "string", "pattern": "^hook-" } },
+        "required": ["targets"]
+      }
+    },
+    {
+      "if": {
+        "properties": { "type": { "const": "agent" } },
+        "required": ["type"]
+      },
+      "then": {
+        "properties": { "id": { "type": "string", "pattern": "^agent-" } },
+        "required": ["targets"]
+      }
+    }
+  ],
+  "$defs": {
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    }
+  }
+}

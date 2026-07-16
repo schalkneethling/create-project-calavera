@@ -1,0 +1,134 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://calavera.schalkneethling.com/schemas/artifacts-lock.schema.json",
+  "title": "Calavera artifact lockfile",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schemaVersion", "artifacts"],
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "artifacts": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/artifact"
+      }
+    }
+  },
+  "$defs": {
+    "artifact": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "type",
+        "package",
+        "version",
+        "resolved",
+        "integrity",
+        "tag",
+        "manifestVersion",
+        "destination",
+        "payloadHash"
+      ],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(?:skill|hook|agent)-[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "type": {
+          "enum": ["skill", "hook", "agent"]
+        },
+        "package": {
+          "type": "string",
+          "pattern": "^@schalkneethling/calavera-(?:skill|hook|agent)-[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "version": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)\\.(?:0|[1-9][0-9]*)(?:-[0-9A-Za-z.-]+)?$"
+        },
+        "resolved": {
+          "type": "string",
+          "pattern": "^https://"
+        },
+        "integrity": {
+          "type": "string",
+          "pattern": "^sha512-[A-Za-z0-9+/]+={0,2}$"
+        },
+        "tag": {
+          "enum": ["latest", "next"]
+        },
+        "manifestVersion": {
+          "const": 1
+        },
+        "target": {
+          "type": "string",
+          "pattern": "^(?!(?:\\.|\\.\\.)$)[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "destination": {
+          "$ref": "#/$defs/relativePath"
+        },
+        "payloadHash": {
+          "type": "string",
+          "pattern": "^[a-f0-9]{64}$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "skill" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": {
+              "id": { "type": "string", "pattern": "^skill-" },
+              "package": {
+                "type": "string",
+                "pattern": "^@schalkneethling/calavera-skill-"
+              }
+            },
+            "not": { "required": ["target"] }
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "hook" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": {
+              "id": { "type": "string", "pattern": "^hook-" },
+              "package": {
+                "type": "string",
+                "pattern": "^@schalkneethling/calavera-hook-"
+              }
+            },
+            "required": ["target"]
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "agent" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": {
+              "id": { "type": "string", "pattern": "^agent-" },
+              "package": {
+                "type": "string",
+                "pattern": "^@schalkneethling/calavera-agent-"
+              }
+            },
+            "required": ["target"]
+          }
+        }
+      ]
+    },
+    "relativePath": {
+      "type": "string",
+      "minLength": 1,
+      "pattern": "^(?!/)(?!.*(?:^|/)\\.\\.(?:/|$))(?!.*\\\\).+$"
+    }
+  }
+}
