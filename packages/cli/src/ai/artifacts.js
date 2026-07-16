@@ -15,6 +15,13 @@ import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./catalog.js";
  * @typedef {"skill" | "hook" | "agent"} AiArtifactType
  *
  * @typedef {object} AiItemConfig
+ * @property {string} [id]
+ * @property {string} [type]
+ * @property {string} [src]
+ * @property {string} [target]
+ *
+ * @typedef {object} NormalizedAiItem
+ * @property {string} [id]
  * @property {string} type
  * @property {string} src
  * @property {string} [target]
@@ -161,8 +168,8 @@ function normalizeAiItemType(type, index) {
 function isAiItemConfig(value) {
   return (
     isPlainObject(value) &&
-    isNotEmptyString(value.type) &&
-    isNotEmptyString(value.src) &&
+    ((isNotEmptyString(value.id) && value.type === undefined && value.src === undefined) ||
+      (isNotEmptyString(value.type) && isNotEmptyString(value.src) && value.id === undefined)) &&
     (value.target === undefined || isNotEmptyString(value.target))
   );
 }
@@ -195,7 +202,7 @@ function normalizeAiTarget(type, item, index) {
 
 /**
  * @param {unknown} aiConfig
- * @returns {AiItemConfig[]}
+ * @returns {NormalizedAiItem[]}
  */
 function normalizeAiItems(aiConfig) {
   if (aiConfig === undefined) {
@@ -208,14 +215,26 @@ function normalizeAiItems(aiConfig) {
 
   return aiConfig.map((entry, index) => {
     if (!isAiItemConfig(entry)) {
-      throw new Error(
-        `AI item at index ${index} must be an object with non-empty type and src fields.`,
-      );
+      throw new Error(`AI item at index ${index} must contain id, or legacy type and src fields.`);
+    }
+
+    if (entry.id) {
+      const artifact = aiArtifactCatalog.find(({ id }) => id === entry.id);
+      if (!artifact) throw new Error(`AI item at index ${index} has unknown id "${entry.id}".`);
+      if (entry.target && artifact.targets && !artifact.targets.includes(entry.target)) {
+        throw new Error(`AI item at index ${index} target is not supported by ${entry.id}.`);
+      }
+      return {
+        id: artifact.id,
+        type: artifact.type,
+        src: artifact.src,
+        target: entry.target?.trim(),
+      };
     }
 
     return {
-      type: entry.type.trim(),
-      src: entry.src.trim(),
+      type: /** @type {string} */ (entry.type).trim(),
+      src: /** @type {string} */ (entry.src).trim(),
       target: entry.target?.trim(),
     };
   });
@@ -394,14 +413,15 @@ export async function hashAiInstall(type, installPath, target) {
  * @param {{ ai?: unknown }} recipe
  * @returns {ResolvedAiArtifact[]}
  */
-export function resolveAiArtifacts(recipe) {
+export function resolveAiArtifacts(recipe, sourcePaths = new Map()) {
   /** @type {Map<string, ResolvedAiArtifact>} */
   const deduped = new Map();
 
   for (const [index, item] of normalizeAiItems(recipe.ai).entries()) {
     const type = normalizeAiItemType(item.type, index);
     const target = normalizeAiTarget(type, item, index);
-    const sourcePath = resolveAiSourcePath(item.src, index, type);
+    const sourcePath =
+      sourcePaths.get(item.id ?? item.src) ?? resolveAiSourcePath(item.src, index, type);
     const name = inferAiSourceName(type, sourcePath, index);
     const key = [type, target, name].filter(Boolean).join(":");
 
@@ -409,7 +429,7 @@ export function resolveAiArtifacts(recipe) {
       deduped.set(key, {
         index,
         sourcePath,
-        source: item.src,
+        source: item.id ?? item.src,
         name,
         target,
         type,
@@ -498,8 +518,8 @@ async function assertSafeAiWrite(artifact, sourceHash, previousState) {
  * @param {CalaveraState} previousState
  * @returns {Promise<{ artifacts: AiArtifactState[], changes: AiChange[], pointers: string[] }>}
  */
-export async function buildAiApplyResult(recipe, options, previousState) {
-  const artifacts = resolveAiArtifacts(recipe);
+export async function buildAiApplyResult(recipe, options, previousState, sourcePaths = new Map()) {
+  const artifacts = resolveAiArtifacts(recipe, sourcePaths);
   /** @type {AiChange[]} */
   const changes = [];
   /** @type {AiArtifactState[]} */

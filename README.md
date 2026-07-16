@@ -545,6 +545,32 @@ Build the Explorer independently with:
 pnpm --filter @calavera/baseline-explorer build
 ```
 
+## Versioned artifacts
+
+New recipes select package-backed skills, hooks, and agents by stable ID:
+
+```json
+{
+  "ai": [
+    { "id": "skill-project-goal" },
+    { "id": "agent-technical-devils-advocate", "target": "codex" }
+  ]
+}
+```
+
+Legacy `{ "type", "src", "target" }` entries remain readable during the compatibility window. Migrate and manage exact versions with:
+
+```bash
+create-project-calavera artifacts migrate
+create-project-calavera artifacts install
+create-project-calavera artifacts status
+create-project-calavera artifacts status --check-updates
+create-project-calavera artifacts update skill-project-goal
+create-project-calavera artifacts update --all --tag next
+```
+
+Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; ordinary `apply` requires and reuses those exact locked versions. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit, and the existing managed-state hashes continue to block overwriting local edits.
+
 ## Publishing
 
 Calavera publishes to npm from GitHub releases with npm trusted publishing. The

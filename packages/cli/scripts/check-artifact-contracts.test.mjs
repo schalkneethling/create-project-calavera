@@ -64,7 +64,7 @@ test("every first-party artifact package has a valid manifest and payload", asyn
   const packageNames = new Set();
 
   for (const artifact of artifactCatalog) {
-    const { packageName, legacyPath, group, defaultTarget, ...manifest } = artifact;
+    const { packageName, version, legacyPath, group, defaultTarget, ...manifest } = artifact;
     assertValid(validate, manifest);
     assert.equal(ids.has(artifact.id), false, `Duplicate artifact ID: ${artifact.id}`);
     assert.equal(
@@ -79,6 +79,7 @@ test("every first-party artifact package has a valid manifest and payload", asyn
     );
     ids.add(artifact.id);
     assert.equal(typeof legacyPath, "string");
+    assert.match(version, /^\d+\.\d+\.\d+/);
     assert.equal(typeof group, "string");
     assert.equal(defaultTarget, artifact.type === "skill" ? undefined : "claude-code");
     packageNames.add(packageName);

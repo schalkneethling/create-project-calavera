@@ -185,6 +185,50 @@
       ]
     },
     "aiItem": {
+      "oneOf": [
+        {
+          "$ref": "#/$defs/artifactSelection"
+        },
+        {
+          "$ref": "#/$defs/legacyAiItem"
+        }
+      ]
+    },
+    "artifactSelection": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "pattern": "^(?:skill|hook|agent)-[a-z0-9]+(?:-[a-z0-9]+)*$"
+        },
+        "target": {
+          "type": "string",
+          "minLength": 1,
+          "pattern": "^(?!(?:\\.|\\.\\.)$)[^/\\\\]+$"
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "id": {
+                "type": "string",
+                "pattern": "^skill-"
+              }
+            },
+            "required": ["id"]
+          },
+          "then": {
+            "not": {
+              "required": ["target"]
+            }
+          }
+        }
+      ]
+    },
+    "legacyAiItem": {
       "type": "object",
       "additionalProperties": false,
       "required": ["type", "src"],
