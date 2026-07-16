@@ -20,6 +20,13 @@ import {
   validateRecipeResponse,
 } from "../../packages/cli/src/recipe.js";
 import { DEFAULT_AI_TARGET } from "../../packages/cli/src/ai/catalog.js";
+import {
+  baselineMetadata,
+  describeBaselineTarget,
+  listBaselineTargets,
+  recommendBaselineTarget,
+  searchBaselineFeatures,
+} from "../../packages/baseline-core/src/index.js";
 
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
@@ -28,9 +35,22 @@ const output = document.querySelector("#output");
 const nextCommands = document.querySelector("#next-commands");
 const nextCommandsNote = document.querySelector("#next-commands-note");
 const webMcpBanner = document.querySelector("#webmcp-banner");
+const baselineOptions = document.querySelector("#baseline-options");
+const baselineAvailable = document.querySelector("#baseline-available");
 const profiles = profileIdsForRecipe();
 const packageManagers = packageManagerIdsForRecipe();
 const aiArtifactOptions = listAiArtifactOptions();
+
+for (
+  let year = baselineMetadata.currentYear;
+  year >= baselineMetadata.firstBaselineYear;
+  year -= 1
+) {
+  const option = document.createElement("option");
+  option.value = String(year);
+  option.textContent = `Baseline ${year}`;
+  baselineAvailable.append(option);
+}
 
 function selectedProfile() {
   return new FormData(form).get("profile");
@@ -125,6 +145,13 @@ function syncAiTargetStates() {
   }
 }
 
+function syncIntegrationOptions() {
+  const enabled = Boolean(
+    form.querySelector('[name="integration"][value="stylelint-baseline"]:checked'),
+  );
+  baselineOptions.hidden = !enabled;
+}
+
 function selectedAiItems() {
   return [...form.querySelectorAll('[name="aiArtifact"]:checked')].map((checkbox, index) => {
     const artifact = aiArtifactOptions.find(({ id }) => id === checkbox.value);
@@ -147,11 +174,24 @@ function recipe() {
   const data = new FormData(form);
   const packageManager = data.get("packageManager");
 
+  const hasBaseline = data.getAll("integration").includes("stylelint-baseline");
+  const integrationOptions = hasBaseline
+    ? {
+        "stylelint-baseline": {
+          available: /^\d{4}$/.test(String(data.get("baselineAvailable")))
+            ? Number(data.get("baselineAvailable"))
+            : data.get("baselineAvailable"),
+          severity: data.get("baselineSeverity"),
+        },
+      }
+    : undefined;
+
   return buildRecipe(
     String(data.get("profile") ?? ""),
     data.getAll("integration").map(String),
     packageManager ? String(packageManager) : undefined,
     selectedAiItems(),
+    integrationOptions,
   );
 }
 
@@ -190,6 +230,7 @@ function setDefaults() {
   renderIntegrations();
   selectIntegrations(profileDefaults[profile]);
   syncAiTargetStates();
+  syncIntegrationOptions();
   render();
 }
 
@@ -329,6 +370,76 @@ function registerWebMcpTools() {
     });
 
     navigator.modelContext.registerTool({
+      name: "list_baseline_targets",
+      description: recipeToolDescriptions.list_baseline_targets,
+      inputSchema: { type: "object", properties: {}, additionalProperties: false },
+      annotations: { readOnlyHint: true, untrustedContentHint: false },
+      execute: async () => ({ metadata: baselineMetadata, targets: listBaselineTargets() }),
+    });
+
+    navigator.modelContext.registerTool({
+      name: "describe_baseline_target",
+      description: recipeToolDescriptions.describe_baseline_target,
+      inputSchema: {
+        type: "object",
+        properties: {
+          target: {
+            oneOf: [{ type: "string", enum: ["widely", "newly"] }, { type: "integer" }],
+            description: recipeToolInputDescriptions.baselineTarget,
+          },
+        },
+        required: ["target"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, untrustedContentHint: false },
+      execute: async ({ target }) => describeBaselineTarget(target),
+    });
+
+    navigator.modelContext.registerTool({
+      name: "search_baseline_features",
+      description: recipeToolDescriptions.search_baseline_features,
+      inputSchema: {
+        type: "object",
+        properties: {
+          query: { type: "string", description: recipeToolInputDescriptions.baselineQuery },
+          limit: {
+            type: "integer",
+            minimum: 1,
+            maximum: 100,
+            description: recipeToolInputDescriptions.baselineLimit,
+          },
+        },
+        required: ["query"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, untrustedContentHint: false },
+      execute: async ({ query, limit }) => ({
+        metadata: baselineMetadata,
+        features: searchBaselineFeatures(query, { limit }),
+      }),
+    });
+
+    navigator.modelContext.registerTool({
+      name: "recommend_baseline_target",
+      description: recipeToolDescriptions.recommend_baseline_target,
+      inputSchema: {
+        type: "object",
+        properties: {
+          features: {
+            type: "array",
+            minItems: 1,
+            items: { type: "string" },
+            description: recipeToolInputDescriptions.baselineFeatures,
+          },
+        },
+        required: ["features"],
+        additionalProperties: false,
+      },
+      annotations: { readOnlyHint: true, untrustedContentHint: false },
+      execute: async ({ features }) => recommendBaselineTarget(features),
+    });
+
+    navigator.modelContext.registerTool({
       name: "compose_recipe",
       description: recipeToolDescriptions.compose_recipe,
       inputSchema: {
@@ -370,6 +481,24 @@ function registerWebMcpTools() {
               additionalProperties: false,
             },
             description: recipeToolInputDescriptions.aiArtifacts,
+          },
+          integrationOptions: {
+            type: "object",
+            description: recipeToolInputDescriptions.integrationOptions,
+            additionalProperties: false,
+            properties: {
+              "stylelint-baseline": {
+                type: "object",
+                additionalProperties: false,
+                required: ["available", "severity"],
+                properties: {
+                  available: {
+                    oneOf: [{ type: "string", enum: ["widely", "newly"] }, { type: "integer" }],
+                  },
+                  severity: { type: "string", enum: ["warning", "error"] },
+                },
+              },
+            },
           },
         },
         required: ["profile"],
@@ -455,6 +584,7 @@ form.addEventListener("change", (event) => {
     setDefaults();
   } else {
     syncAiTargetStates();
+    syncIntegrationOptions();
     render();
   }
 });

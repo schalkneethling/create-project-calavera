@@ -87,6 +87,30 @@
           <fieldset>
             <legend>Integration packs</legend>
             <div id="integrations" class="integrations"></div>
+            <section id="baseline-options" class="integration-options" hidden>
+              <h2>Stylelint Baseline target</h2>
+              <div class="option-grid">
+                <label for="baseline-available">
+                  Availability
+                  <select id="baseline-available" name="baselineAvailable">
+                    <option value="widely">Widely available</option>
+                    <option value="newly">Newly available</option>
+                  </select>
+                </label>
+                <label for="baseline-severity">
+                  Severity
+                  <select id="baseline-severity" name="baselineSeverity">
+                    <option value="warning">Warning</option>
+                    <option value="error">Error</option>
+                  </select>
+                </label>
+              </div>
+              <p>
+                Need help choosing? Use the
+                <a href="https://baseline.calavera.schalkneethling.com/">Baseline Target Explorer</a
+                >.
+              </p>
+            </section>
           </fieldset>
 
           <fieldset>

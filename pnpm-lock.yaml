@@ -60,7 +60,15 @@ importers:
         specifier: ^8.0.14
         version: 8.1.4(@types/node@26.1.1)
 
-  apps/baseline-explorer: {}
+  apps/baseline-explorer:
+    dependencies:
+      '@schalkneethling/calavera-baseline-core':
+        specifier: workspace:^
+        version: link:../../packages/baseline-core
+    devDependencies:
+      vite:
+        specifier: ^8.0.14
+        version: 8.1.4(@types/node@26.1.1)
 
   apps/composer:
     dependencies:
@@ -76,7 +84,14 @@ importers:
 
   packages/artifact-core: {}
 
-  packages/baseline-core: {}
+  packages/baseline-core:
+    dependencies:
+      baseline-browser-mapping:
+        specifier: 2.10.43
+        version: 2.10.43
+      web-features:
+        specifier: 3.34.0
+        version: 3.34.0
 
   packages/cli:
     dependencies:
@@ -86,6 +101,9 @@ importers:
       '@modelcontextprotocol/sdk':
         specifier: ^1.29.0
         version: 1.29.0(zod@4.4.3)
+      '@schalkneethling/calavera-baseline-core':
+        specifier: workspace:^
+        version: link:../baseline-core
       execa:
         specifier: ^9.6.0
         version: 9.6.1
@@ -792,6 +810,11 @@ packages:
   balanced-match@4.0.4:
     resolution: {integrity: sha512-BLrgEcRTwX2o6gGxGOCNyMvGSp35YofuYzw9h1IMTRmKqttAZZVU67bdb9Pr2vUHA8+j3i2tJfjO6C6+4myGTA==}
     engines: {node: 18 || 20 || >=22}
+
+  baseline-browser-mapping@2.10.43:
+    resolution: {integrity: sha512-AjYpR78kDWAY3Efj+cDTFH9t9SCoL7OoTp1BOb0mQV7S+6CiLwnWM3FyxhJtdPufDFKzmCSFoUncKjWgJEZTCQ==}
+    engines: {node: '>=6.0.0'}
+    hasBin: true
 
   better-path-resolve@1.0.0:
     resolution: {integrity: sha512-pbnl5XzGBdrFU/wT4jqmJVPn2B6UHPBOhzMQkY/SPUPB6QtUXtmBHBIwCbXJol93mOpGMnQyP/+BB19q04xj7g==}
@@ -2052,6 +2075,9 @@ packages:
       yaml:
         optional: true
 
+  web-features@3.34.0:
+    resolution: {integrity: sha512-hvIf75+7/1tlf1AAJHg64kMsvXDnx6gVRGWD6Q1uMjTNAQc0H1kPTra1VW0fGnm28gfudk89KY+14KiWC20EYQ==}
+
   which@1.3.1:
     resolution: {integrity: sha512-HxJdYWq1MTIQbJ3nw0cqssHoTNU267KlrDuGZ1WYlxDStUtKUhOaJmh112/TZmHxxUfuJqPXSOm7tDyas0OSIQ==}
     hasBin: true
@@ -2686,6 +2712,8 @@ snapshots:
   astral-regex@2.0.0: {}
 
   balanced-match@4.0.4: {}
+
+  baseline-browser-mapping@2.10.43: {}
 
   better-path-resolve@1.0.0:
     dependencies:
@@ -3905,6 +3933,8 @@ snapshots:
     optionalDependencies:
       '@types/node': 26.1.1
       fsevents: 2.3.3
+
+  web-features@3.34.0: {}
 
   which@1.3.1:
     dependencies:

@@ -1,8 +1,10 @@
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./ai/catalog.js";
 import { integrationCatalog } from "./catalog.js";
+import { normalizeBaselineTarget } from "@schalkneethling/calavera-baseline-core";
 import {
   assertKnownValue,
   assertObjectArray,
+  assertPlainObject,
   assertString,
   assertStringArray,
 } from "./utils/assertions.js";
@@ -97,6 +99,10 @@ export const recipeCompositionToolNames = Object.freeze([
   "list_integrations",
   "describe_integration",
   "list_ai_artifacts",
+  "list_baseline_targets",
+  "describe_baseline_target",
+  "search_baseline_features",
+  "recommend_baseline_target",
   "compose_recipe",
   "validate_recipe",
   "explain_recipe",
@@ -122,6 +128,14 @@ export const recipeToolDescriptions = Object.freeze({
     "Describe one Calavera integration, including its profile availability, dependency packages, and included parent integrations.",
   list_ai_artifacts:
     "List bundled AI skills, hooks, and agents that can be included in a Calavera recipe.",
+  list_baseline_targets:
+    "List supported moving and fixed Baseline targets with their browser-version matrices.",
+  describe_baseline_target:
+    "Describe a Widely, Newly, or fixed-year Baseline target and its compatible browser versions.",
+  search_baseline_features:
+    "Search the CSS-focused WebDX Baseline catalog by feature ID, name, description, or group.",
+  recommend_baseline_target:
+    "Recommend the earliest fixed Baseline target compatible with selected CSS feature IDs.",
   compose_recipe:
     "Compose a schema-valid Calavera recipe from a profile, package manager, integration IDs or labels, and optional AI artifacts.",
   validate_recipe:
@@ -145,6 +159,12 @@ export const recipeToolInputDescriptions = Object.freeze({
   aiArtifactId: "AI artifact ID, source, or label from list_ai_artifacts.",
   aiArtifactTarget: "Optional target directory for hook and agent artifacts.",
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
+  integrationOptions:
+    "Options keyed by selected integration ID. Stylelint Baseline accepts available and severity.",
+  baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
+  baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
+  baselineLimit: "Maximum number of Baseline feature search results.",
+  baselineFeatures: "One or more Baseline feature IDs used to calculate a recommendation.",
   recipe: "A Calavera recipe object.",
   packageManagerOverride: "Optional package manager override.",
   config: "Recipe file path to write before applying.",
@@ -417,6 +437,7 @@ export function validateRecipeCompositionInput({
   packageManager = "npm",
   tools,
   aiArtifacts,
+  integrationOptions,
 } = {}) {
   assertKnownValue("profile", profile, profileIds);
   assertKnownValue("packageManager", packageManager, packageManagerIds);
@@ -435,16 +456,19 @@ export function validateRecipeCompositionInput({
 
   assertNoFormatterConflict(integrationIds);
 
+  const normalizedOptions = normalizeIntegrationOptions(integrationOptions, integrationIds);
+
   return {
     profile,
     packageManager,
     tools: integrationIds,
     aiArtifacts: aiArtifacts ? normalizeAiArtifactInputs(aiArtifacts) : undefined,
+    integrationOptions: normalizedOptions,
   };
 }
 
 export function composeRecipe(configurationInput = {}) {
-  const { profile, packageManager, tools, aiArtifacts } =
+  const { profile, packageManager, tools, aiArtifacts, integrationOptions } =
     validateRecipeCompositionInput(configurationInput);
 
   return buildRecipe(
@@ -452,6 +476,7 @@ export function composeRecipe(configurationInput = {}) {
     tools,
     packageManager,
     aiArtifacts ? aiArtifactRecipeItems(aiArtifacts) : [],
+    integrationOptions,
   );
 }
 
@@ -471,6 +496,56 @@ export function resolveRecipeIntegrations(recipe) {
   }
 
   return integrationCatalog.filter((integration) => selected.has(integration.id));
+}
+
+export function normalizeIntegrationOptions(integrationOptions, integrationIds) {
+  if (integrationOptions === undefined) {
+    return undefined;
+  }
+
+  assertPlainObject("integrationOptions", integrationOptions);
+  const supportedIds = ["stylelint-baseline"];
+  const unknownIds = Object.keys(integrationOptions).filter((id) => !supportedIds.includes(id));
+
+  if (unknownIds.length > 0) {
+    throw new Error(`Unknown integrationOptions: ${unknownIds.join(", ")}.`);
+  }
+
+  const resolvedIds = new Set(
+    resolveRecipeIntegrations({ integrations: integrationIds }).map(({ id }) => id),
+  );
+  const normalized = {};
+
+  if (Object.hasOwn(integrationOptions, "stylelint-baseline")) {
+    if (!resolvedIds.has("stylelint-baseline")) {
+      throw new Error(
+        "integrationOptions.stylelint-baseline requires the stylelint-baseline integration.",
+      );
+    }
+
+    const options = integrationOptions["stylelint-baseline"];
+    assertPlainObject("integrationOptions.stylelint-baseline", options);
+    const unknownFields = Object.keys(options).filter(
+      (field) => field !== "available" && field !== "severity",
+    );
+
+    if (unknownFields.length > 0) {
+      throw new Error(
+        `Unknown integrationOptions.stylelint-baseline fields: ${unknownFields.join(", ")}.`,
+      );
+    }
+
+    const available = normalizeBaselineTarget(options.available);
+    const severity = options.severity ?? "warning";
+
+    if (severity !== "warning" && severity !== "error") {
+      throw new Error("Stylelint Baseline severity must be warning or error.");
+    }
+
+    normalized["stylelint-baseline"] = { available, severity };
+  }
+
+  return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
 export function explainRecipeIntegrations(recipe) {
@@ -527,6 +602,10 @@ export function validateRecipe(recipe) {
   }
 
   assertNoFormatterConflict(recipe.integrations);
+
+  if (Object.hasOwn(recipe, "integrationOptions")) {
+    normalizeIntegrationOptions(recipe.integrationOptions, recipe.integrations);
+  }
 
   if (Object.hasOwn(recipe, "ai")) {
     assertObjectArray("ai", recipe.ai);
@@ -605,6 +684,7 @@ export function explainRecipeResponse(recipeInput) {
 
   return {
     integrations: explainRecipeIntegrations(recipe),
+    integrationOptions: recipe.integrationOptions ?? {},
     dependencies: dependencyListForRecipe(recipe),
     aiArtifacts: listAiArtifactOptions().filter((artifact) =>
       Array.isArray(recipe.ai)
@@ -662,8 +742,15 @@ export function listAiArtifactsResponse(currentConfiguration = []) {
  * @param {string[]} integrations
  * @param {PackageManager} [packageManager]
  * @param {{ type: string, src: string, target?: string }[]} [ai]
+ * @param {Record<string, unknown>} [integrationOptions]
  */
-export function buildRecipe(profile, integrations, packageManager = "npm", ai = []) {
+export function buildRecipe(
+  profile,
+  integrations,
+  packageManager = "npm",
+  ai = [],
+  integrationOptions,
+) {
   const recipe = {
     $schema: CONFIG_SCHEMA_URL,
     version: 1,
@@ -675,6 +762,11 @@ export function buildRecipe(profile, integrations, packageManager = "npm", ai = 
 
   if (ai.length > 0) {
     recipe.ai = ai;
+  }
+
+  const normalizedOptions = normalizeIntegrationOptions(integrationOptions, integrations);
+  if (normalizedOptions) {
+    recipe.integrationOptions = normalizedOptions;
   }
 
   return recipe;
