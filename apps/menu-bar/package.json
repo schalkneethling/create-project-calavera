@@ -1,5 +1,20 @@
 {
   "name": "@calavera/menu-bar",
+  "version": "0.1.0",
   "private": true,
-  "type": "module"
+  "type": "module",
+  "scripts": {
+    "dev": "tauri dev",
+    "build": "tauri build --target universal-apple-darwin",
+    "build:web": "vite build",
+    "test": "node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "2.11.1",
+    "@tauri-apps/plugin-notification": "2.3.3"
+  },
+  "devDependencies": {
+    "@tauri-apps/cli": "2.11.4",
+    "vite": "^8.1.4"
+  }
 }

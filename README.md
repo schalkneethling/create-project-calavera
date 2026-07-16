@@ -571,6 +571,20 @@ create-project-calavera artifacts update --all --tag next
 
 Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; ordinary `apply` requires and reuses those exact locked versions. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit, and the existing managed-state hashes continue to block overwriting local edits.
 
+## macOS update companion
+
+The optional Calavera menu-bar app monitors only project directories that you explicitly register. It reads recipes, artifact locks, and state without changing them; checks npm and GitHub on launch and every six hours; and deduplicates notifications by component and target version.
+
+For project updates, the app copies the exact command and opens Terminal at the registered directory. It never executes the command. App updates open a stable GitHub release, and self-updating is intentionally outside v1.
+
+Local development requires Node.js, pnpm, Rust through rustup, and Xcode:
+
+```bash
+pnpm --filter @calavera/menu-bar dev
+```
+
+Tags matching `menu-bar-v*` run the independent macOS release workflow, which builds a universal signed, notarized, and stapled DMG through the protected `publish` environment.
+
 ## Publishing
 
 Calavera publishes to npm from GitHub releases with npm trusted publishing. The
