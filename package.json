@@ -12,7 +12,7 @@
     "web:dev": "pnpm --filter @calavera/composer dev",
     "web:build": "pnpm --filter @calavera/composer build",
     "web:preview": "pnpm --filter @calavera/composer preview",
-    "quality": "pnpm lint && pnpm format:all:check && pnpm typecheck && pnpm test",
+    "quality": "pnpm lint && pnpm format:all:check && pnpm typecheck && pnpm test && pnpm release:contracts",
     "lint": "oxlint . && stylelint \"**/*.{css,scss}\"",
     "lint:fix": "oxlint --fix . && stylelint \"**/*.{css,scss}\" --fix",
     "format": "oxfmt --write .",
@@ -25,6 +25,8 @@
     "publish:check": "pnpm --filter create-project-calavera publish:check && pnpm --filter @schalkneethling/calavera-baseline-core exec publint && pnpm --filter @schalkneethling/calavera-artifact-core exec publint && pnpm --filter './packages/artifacts/*' --recursive exec publint",
     "release:status": "changeset status",
     "release:version": "changeset version",
+    "release:contracts": "node scripts/check-release-contracts.mjs",
+    "release:rehearse": "pnpm quality && pnpm web:build && pnpm --filter @calavera/baseline-explorer build && pnpm --filter @calavera/menu-bar build:web && pnpm publish:check",
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
   },
   "devDependencies": {

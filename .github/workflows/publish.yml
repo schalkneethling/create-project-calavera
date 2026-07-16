@@ -103,5 +103,9 @@ jobs:
               echo "Skipping already published ${package_name}@${package_version}."
               continue
             fi
-            npm publish "$(realpath "$tarball")" --provenance --access public
+            dist_tag=latest
+            if [[ "$package_version" == *-* ]]; then
+              dist_tag=next
+            fi
+            npm publish "$(realpath "$tarball")" --provenance --access public --tag "$dist_tag"
           done
