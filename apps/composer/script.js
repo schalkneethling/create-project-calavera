@@ -18,8 +18,8 @@ import {
   recipeToolInputDescriptions,
   validateRecipe,
   validateRecipeResponse,
-} from "../src/recipe.js";
-import { DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
+} from "../../packages/cli/src/recipe.js";
+import { DEFAULT_AI_TARGET } from "../../packages/cli/src/ai/catalog.js";
 
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");

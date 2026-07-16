@@ -100,9 +100,9 @@ async function readProjectJson(path) {
   return JSON.parse(await readProjectFile(path));
 }
 
-const schema = await readProjectJson("web/public/calavera.config.schema.json");
-const config = await readProjectJson("calavera.config.json");
-const skillsShConfig = await readProjectJson("skills.sh.json");
+const schema = await readProjectJson("../../apps/composer/public/calavera.config.schema.json");
+const config = await readProjectJson("../../calavera.config.json");
+const skillsShConfig = await readProjectJson("../../skills.sh.json");
 const integrationIds = integrationCatalog.map(({ id }) => id);
 const schemaProperties = schema.properties ?? {};
 const scriptProperties = schemaProperties.scripts?.properties ?? {};
@@ -647,7 +647,7 @@ test("WebMCP workflow exposes browser download instead of filesystem apply tools
 });
 
 test("WebMCP registers browser parity tools from the shared contract", async () => {
-  const script = await readProjectFile("web/script.js");
+  const script = await readProjectFile("../../apps/composer/script.js");
   const registeredToolNames = [...script.matchAll(/registerTool\(\{\s*name: "([^"]+)"/g)].map(
     (match) => match[1],
   );

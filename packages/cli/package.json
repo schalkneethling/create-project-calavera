@@ -1,0 +1,58 @@
+{
+  "name": "create-project-calavera",
+  "version": "2.2.0",
+  "description": "Compose and apply modern tooling recipes for JavaScript and TypeScript projects.",
+  "keywords": [
+    "cli",
+    "css",
+    "html",
+    "javascript",
+    "linting",
+    "oxlint",
+    "prettier",
+    "project",
+    "scaffold",
+    "starter",
+    "stylelint",
+    "tooling"
+  ],
+  "homepage": "https://github.com/schalkneethling/create-project-calavera#readme",
+  "bugs": {
+    "url": "https://github.com/schalkneethling/create-project-calavera/issues"
+  },
+  "license": "MIT",
+  "author": "Schalk Neethling",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/schalkneethling/create-project-calavera.git",
+    "directory": "packages/cli"
+  },
+  "bin": {
+    "create-project-calavera": "src/index.js",
+    "create-project-calavera-mcp": "src/mcp.js"
+  },
+  "files": [
+    "src",
+    "schemas",
+    "README.md",
+    "LICENSE"
+  ],
+  "type": "module",
+  "exports": "./src/index.js",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "schema:check": "node --test scripts/check-config-schema.test.mjs scripts/check-artifact-contracts.test.mjs",
+    "test": "node --test scripts/*.test.mjs",
+    "publish:check": "publint"
+  },
+  "dependencies": {
+    "@clack/prompts": "^1.4.0",
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "execa": "^9.6.0",
+    "prettier": "^3.5.3",
+    "zod": "^4.4.3"
+  }
+}

@@ -1,1 +1,2 @@
-src/ai/hooks/**/*.mjs
+packages/cli/src/ai/hooks/**/*.mjs
+github-issue-triage-report.html

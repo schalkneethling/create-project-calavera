@@ -1,0 +1,21 @@
+{
+  "$schema": "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+  "changelog": "@changesets/cli/changelog",
+  "commit": false,
+  "fixed": [],
+  "linked": [],
+  "access": "public",
+  "baseBranch": "main",
+  "updateInternalDependencies": "patch",
+  "ignore": [
+    "@calavera/artifact-core",
+    "@calavera/baseline-core",
+    "@calavera/baseline-explorer",
+    "@calavera/composer",
+    "@calavera/menu-bar"
+  ],
+  "privatePackages": {
+    "version": false,
+    "tag": false
+  }
+}

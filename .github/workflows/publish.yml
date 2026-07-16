@@ -55,7 +55,7 @@ jobs:
       - name: Build web composer
         run: pnpm web:build
       - name: Pack package
-        run: pnpm pack --pack-destination package
+        run: pnpm --filter create-project-calavera pack --pack-destination ../../package
       - name: Upload package artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
