@@ -42,8 +42,7 @@ Review code to catch issues the original engineer may have missed and to improve
 
 Load related skills only when the diff makes that domain relevant:
 
-- Load `semantic-html` when reviewing markup-producing code: HTML templates, JSX/TSX, Astro/Vue/Svelte components, Lit templates, Twig/ERB/Handlebars/Nunjucks, MDX, or code that materially changes rendered HTML structure.
-- Load `css-coder` when reviewing style-producing code: CSS, Sass/Less, CSS modules, scoped component styles, CSS-in-JS, design tokens, or code that materially changes selectors, layout, cascade, responsive behavior, colors, motion, or focus states.
+- Load `frontend-engineering` when reviewing markup-producing or style-producing code: HTML templates, JSX/TSX, Astro/Vue/Svelte components, Lit templates, Twig/ERB/Handlebars/Nunjucks, MDX, CSS, Sass/Less, CSS modules, scoped component styles, CSS-in-JS, or code that materially changes rendered HTML structure, selectors, layout, cascade, responsive behavior, colors, motion, or focus states.
 
 For large or high-risk diffs, consider a focused specialist subagent for the relevant skill. Pass only the user request, relevant diff, surrounding component context, and known project conventions. Reconcile specialist feedback into one prioritized final review rather than forwarding it verbatim.
 

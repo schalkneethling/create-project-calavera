@@ -3,8 +3,14 @@ export const DEFAULT_AI_TARGET = "claude-code";
 export const aiArtifactCatalog = [
   aiArtifact("skill-calavera", "skill", "skills/calavera", "Calavera", "Skills"),
   aiArtifact("skill-code-review", "skill", "skills/code-review", "Code review", "Skills"),
-  aiArtifact("skill-css-coder", "skill", "skills/css-coder", "CSS coder", "Skills"),
   aiArtifact("skill-css-tokens", "skill", "skills/css-tokens", "CSS tokens", "Skills"),
+  aiArtifact(
+    "skill-frontend-engineering",
+    "skill",
+    "skills/frontend-engineering",
+    "Frontend engineering",
+    "Skills",
+  ),
   aiArtifact(
     "skill-frontend-security",
     "skill",
@@ -55,7 +61,6 @@ export const aiArtifactCatalog = [
     "Refined plan mode",
     "Skills",
   ),
-  aiArtifact("skill-semantic-html", "skill", "skills/semantic-html", "Semantic HTML", "Skills"),
   aiArtifact(
     "hook-auto-approve-safe-commands",
     "hook",

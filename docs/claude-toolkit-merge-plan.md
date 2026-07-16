@@ -130,8 +130,7 @@ Defer these until after the merge:
   "packageManager": "pnpm",
   "integrations": [],
   "ai": [
-    { "type": "skill", "src": "skills/semantic-html" },
-    { "type": "skill", "src": "skills/css-coder" },
+    { "type": "skill", "src": "skills/frontend-engineering" },
     {
       "type": "hook",
       "src": "hooks/block-dangerous-commands",
@@ -153,7 +152,7 @@ format.
 ```text
 .agents/
   skills/
-    semantic-html/
+    frontend-engineering/
   hooks/
     <target>/
       block-dangerous-commands.mjs

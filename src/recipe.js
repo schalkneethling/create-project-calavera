@@ -644,7 +644,7 @@ export function aiArtifactsResponse(currentConfiguration = []) {
       accepts:
         "Use artifact IDs, labels, or sources in compose_recipe aiArtifacts. Add target for hook and agent artifacts when the default target is not correct.",
       examples: [
-        { id: "skill-semantic-html" },
+        { id: "skill-frontend-engineering" },
         { id: "hooks/block-dangerous-commands", target: "claude-code" },
         { id: "Technical devil's advocate", target: "claude-code" },
       ],

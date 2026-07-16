@@ -18,8 +18,7 @@ Calavera's primary recipe shape is a direct list of AI artifact items:
 ```json
 {
   "ai": [
-    { "type": "skill", "src": "skills/semantic-html" },
-    { "type": "skill", "src": "skills/css-coder" },
+    { "type": "skill", "src": "skills/frontend-engineering" },
     {
       "type": "hook",
       "src": "hooks/block-dangerous-commands",
@@ -119,3 +118,11 @@ Implementation and documentation move together. Each AI module behavior change
 should update the relevant README, migration, contract, or schema documentation
 in the same PR whenever practical. Issue #145 remains the final documentation
 sweep, not the only documentation step.
+
+## Bundled Skill Interface Metadata
+
+Every bundled skill directory must include `agents/openai.yaml`. Keep its
+`interface.display_name`, `interface.short_description`, and
+`interface.default_prompt` synchronized with the skill; generate or regenerate
+the file with the skill-creation tooling when a skill is added or materially
+revised. Repository tests enforce this contract.

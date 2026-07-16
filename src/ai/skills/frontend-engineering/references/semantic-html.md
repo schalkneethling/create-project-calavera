@@ -1,8 +1,3 @@
----
-name: semantic-html
-description: Write well-considered semantic HTML that serves all users. Use when creating components, page structures, or reviewing markup. Emphasizes native HTML elements over ARIA. Treats proper document structure and accessibility as foundations rather than afterthoughts.
----
-
 # Semantic HTML
 
 Write HTML that conveys meaning, serves all users, and respects the web platform.
@@ -581,7 +576,7 @@ When reviewing markup, look for:
 
 ## References
 
-See the `references/` directory for detailed guidance on specific topics:
+Read these companion references when needed:
 
-- `element-decision-trees.md` — Quick decision frameworks for element selection
-- `heading-patterns.md` — Component heading patterns and configuration strategies
+- `semantic-html-element-decision-trees.md` — Quick decision frameworks for element selection
+- `semantic-html-heading-patterns.md` — Component heading patterns and configuration strategies

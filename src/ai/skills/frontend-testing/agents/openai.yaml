@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontend Testing"
+  short_description: "Test frontend behavior, visuals, and accessibility."
+  default_prompt: "Use $frontend-testing to add focused coverage for this frontend change."

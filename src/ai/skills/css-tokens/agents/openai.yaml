@@ -1,0 +1,4 @@
+interface:
+  display_name: "CSS Tokens"
+  short_description: "Create a foundational CSS token system."
+  default_prompt: "Use $css-tokens to add a CSS token foundation to this project."

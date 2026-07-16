@@ -1,8 +1,3 @@
----
-name: css-coder
-description: CSS authoring guidance emphasizing web standards, accessibility, and performance. Use when writing, reviewing, or refactoring CSS. Provides patterns, snippets, and conventions that prioritize native CSS over frameworks, semantic structure, and maintainable code. Refer to references/patterns.md for specific patterns and snippets.
----
-
 # CSS Coder
 
 Guidance for writing CSS that prioritizes web standards, accessibility, performance, and maintainability.
@@ -17,7 +12,7 @@ Guidance for writing CSS that prioritizes web standards, accessibility, performa
 
 ## Workflow
 
-1. **Check references first** — Before writing CSS, consult `references/patterns.md` for established patterns and snippets.
+1. **Check references first** — Before writing CSS, consult `css-patterns.md` for established patterns and snippets.
 2. **Validate against specs** — When uncertain, reference MDN Web Docs or CSS specifications.
 3. **Suggest alternatives** — Offer ideas beyond the skill's patterns when appropriate, but always aligned with the core principles above.
 
@@ -53,7 +48,7 @@ Guidance for writing CSS that prioritizes web standards, accessibility, performa
 - Use modern space-separated syntax for all color functions (`rgb()`, `hsl()`, `oklch()`).
 - Recommend `oklch()` for vibrant or wide-gamut colors.
 - Use relative color syntax to derive hover states or transparent variants from existing variables.
-- See `references/patterns.md` for syntax examples.
+- See `css-patterns.md` for syntax examples.
 
 ### Layout
 
@@ -66,7 +61,7 @@ Guidance for writing CSS that prioritizes web standards, accessibility, performa
 - Use modern range syntax: `@media (width < 48rem)`, `@media (width >= 48rem)`.
 - Prefer **Shared First** over mobile-first: define shared styles outside queries, scope viewport-specific styles with bounded queries.
 - Keep breakpoints to a minimum — add more only when there's a clear need.
-- See `references/patterns.md` for detailed examples.
+- See `css-patterns.md` for detailed examples.
 
 ### Accessibility
 
@@ -84,7 +79,7 @@ Guidance for writing CSS that prioritizes web standards, accessibility, performa
 
 ## References
 
-Consult `references/patterns.md` for:
+Consult `css-patterns.md` for:
 
 - Visually-hidden utility
 - User preference queries (motion, color scheme, contrast)
