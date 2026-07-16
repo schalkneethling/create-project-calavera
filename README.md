@@ -427,8 +427,7 @@ Define the exact artifact items to include:
 ```json
 {
   "ai": [
-    { "type": "skill", "src": "skills/semantic-html" },
-    { "type": "skill", "src": "skills/css-coder" },
+    { "type": "skill", "src": "skills/frontend-engineering" },
     {
       "type": "hook",
       "src": "hooks/block-dangerous-commands",

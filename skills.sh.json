@@ -9,14 +9,8 @@
     },
     {
       "title": "Frontend quality",
-      "description": "Skills for semantic HTML, CSS systems, frontend testing, and browser security.",
-      "skills": [
-        "semantic-html",
-        "css-coder",
-        "css-tokens",
-        "frontend-testing",
-        "frontend-security"
-      ]
+      "description": "Skills for frontend engineering, CSS systems, testing, and browser security.",
+      "skills": ["frontend-engineering", "css-tokens", "frontend-testing", "frontend-security"]
     },
     {
       "title": "Maintainer automation",

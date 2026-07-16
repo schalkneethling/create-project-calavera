@@ -1,6 +1,15 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -11,6 +20,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import Ajv2020 from "ajv/dist/2020.js";
 import packageJson from "../package.json" with { type: "json" };
+import * as prettier from "prettier";
 
 import { buildAiApplyResult, createCodexAgentToml } from "../src/ai/artifacts.js";
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
@@ -126,7 +136,7 @@ test("published config schema is valid JSON Schema and validates the example con
   assertValid(
     validate,
     buildRecipe("modern", ["editorconfig"], "pnpm", [
-      { type: "skill", src: "skills/semantic-html" },
+      { type: "skill", src: "skills/frontend-engineering" },
       { type: "hook", src: "hooks/block-dangerous-commands", target: DEFAULT_AI_TARGET },
       { type: "agent", src: "agents/technical-devils-advocate.md", target: "codex" },
     ]),
@@ -172,6 +182,44 @@ test("AI artifact catalog exposes unique complete recipe items", async () => {
     }
 
     ids.add(artifact.id);
+  }
+});
+
+test("bundled skills expose complete OpenAI interface metadata", async () => {
+  const skillRoot = new URL("../src/ai/skills/", import.meta.url);
+  const skillDirectories = (await readdir(skillRoot, { withFileTypes: true }))
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort();
+  const displayNames = new Set();
+
+  for (const skillName of skillDirectories) {
+    const skill = await readFile(new URL(`${skillName}/SKILL.md`, skillRoot), "utf8");
+    const metadata = await readFile(new URL(`${skillName}/agents/openai.yaml`, skillRoot), "utf8");
+    const declaredSkillName = skill.match(/^name: ([a-z0-9-]+)$/m)?.[1];
+    const displayName = metadata.match(/^  display_name: "([^"\n]+)"$/m)?.[1];
+    const shortDescription = metadata.match(/^  short_description: "([^"\n]+)"$/m)?.[1];
+    const defaultPrompt = metadata.match(/^  default_prompt: "([^"\n]+)"$/m)?.[1];
+
+    await prettier.format(metadata, { parser: "yaml" });
+    assert.ok(declaredSkillName, `${skillName} must declare a skill name`);
+    assert.match(metadata, /^interface:$/m);
+    assert.ok(displayName, `${skillName} must define interface.display_name`);
+    assert.ok(shortDescription, `${skillName} must define interface.short_description`);
+    assert.ok(defaultPrompt, `${skillName} must define interface.default_prompt`);
+    assert.ok(
+      shortDescription.length >= 25 && shortDescription.length <= 64,
+      `${skillName} short_description must be 25-64 characters`,
+    );
+    assert.match(defaultPrompt, new RegExp(`\\$${escapeRegExp(declaredSkillName)}\\b`));
+    assert.equal(displayNames.has(displayName), false, `Duplicate display name: ${displayName}`);
+    displayNames.add(displayName);
+
+    if (skillName === "code-review") {
+      assert.match(metadata, /^policy:\n  allow_implicit_invocation: false$/m);
+    } else {
+      assert.doesNotMatch(metadata, /^policy:/m);
+    }
   }
 });
 
@@ -309,18 +357,18 @@ test("shared composition copies profile defaults before returning recipes", () =
 
 test("shared composition normalizes AI artifact inputs into recipe items", () => {
   const input = normalizeAiArtifactInputs([
-    { id: "Semantic HTML" },
+    { id: "Frontend engineering" },
     { id: "hooks/block-dangerous-commands", target: "codex" },
     { id: "Technical devil's advocate" },
   ]);
 
   assert.deepEqual(input, [
-    { id: "skill-semantic-html", target: undefined },
+    { id: "skill-frontend-engineering", target: undefined },
     { id: "hook-block-dangerous-commands", target: "codex" },
     { id: "agent-technical-devils-advocate", target: DEFAULT_AI_TARGET },
   ]);
   assert.deepEqual(aiArtifactRecipeItems(input), [
-    { type: "skill", src: "skills/semantic-html" },
+    { type: "skill", src: "skills/frontend-engineering" },
     { type: "hook", src: "hooks/block-dangerous-commands", target: "codex" },
     {
       type: "agent",
@@ -345,7 +393,7 @@ test("shared composition output validates against the published schema", () => {
     profile: "modern",
     packageManager: "bun",
     tools: ["Oxlint", "Oxc React best practices", "Stylelint"],
-    aiArtifacts: [{ id: "skill-semantic-html" }],
+    aiArtifacts: [{ id: "skill-frontend-engineering" }],
   });
 
   assertValid(validate, recipe);
@@ -401,7 +449,7 @@ test("shared composition operation responses expose catalog, recipe, and explana
     profile: "modern",
     packageManager: "pnpm",
     tools: ["Oxlint", "Stylelint"],
-    aiArtifacts: [{ id: "Semantic HTML" }],
+    aiArtifacts: [{ id: "Frontend engineering" }],
   });
 
   assert.deepEqual(
@@ -418,14 +466,14 @@ test("shared composition operation responses expose catalog, recipe, and explana
   );
   assert.equal(describeIntegrationResponse("Oxlint").id, "oxlint");
   assert.equal(
-    listAiArtifactsResponse().artifacts.some(({ id }) => id === "skill-semantic-html"),
+    listAiArtifactsResponse().artifacts.some(({ id }) => id === "skill-frontend-engineering"),
     true,
   );
   assert.deepEqual(recipeResponse.recipe.integrations, ["oxlint", "stylelint"]);
   assert.equal(validateRecipeResponse(recipeResponse.recipe).ok, true);
   assert.equal(
     explainRecipeResponse(recipeResponse.recipe).aiArtifacts[0].id,
-    "skill-semantic-html",
+    "skill-frontend-engineering",
   );
 });
 
@@ -441,7 +489,7 @@ test("CLI parser accepts scripted rich composer options", () => {
     "--tool",
     "Oxc React best practices",
     "--ai-artifact",
-    "skill-semantic-html",
+    "skill-frontend-engineering",
     "--ai-artifact",
     "hook-block-dangerous-commands@codex",
     "--apply",
@@ -453,7 +501,7 @@ test("CLI parser accepts scripted rich composer options", () => {
   assert.equal(options.packageManager, "pnpm");
   assert.deepEqual(options.integrations, ["Oxlint", "Stylelint", "Oxc React best practices"]);
   assert.deepEqual(options.aiArtifacts, [
-    { id: "skill-semantic-html" },
+    { id: "skill-frontend-engineering" },
     { id: "hook-block-dangerous-commands", target: "codex" },
   ]);
   assert.equal(options.apply, true);
@@ -521,14 +569,14 @@ test("CLI rich composer writes a schema-valid config without applying by default
       profile: "modern",
       packageManager: "pnpm",
       integrations: ["Oxlint", "Stylelint"],
-      aiArtifacts: [{ id: "Semantic HTML" }],
+      aiArtifacts: [{ id: "Frontend engineering" }],
     });
     const writtenConfig = JSON.parse(await readFile("calavera.config.json", "utf8"));
 
     assert.equal(result.validation.ok, true);
     assert.deepEqual(writtenConfig, result.recipe);
     assert.deepEqual(writtenConfig.integrations, ["oxlint", "stylelint"]);
-    assert.deepEqual(writtenConfig.ai, [{ type: "skill", src: "skills/semantic-html" }]);
+    assert.deepEqual(writtenConfig.ai, [{ type: "skill", src: "skills/frontend-engineering" }]);
     assertValid(ajv.compile(schema), writtenConfig);
     await assertPathMissing("package.json", "config-only compose must not create package.json");
   } finally {
@@ -667,13 +715,13 @@ test("standard MCP compose_recipe returns structured schema-valid content", asyn
         profile: "modern",
         packageManager: "pnpm",
         tools: ["Oxlint", "Stylelint"],
-        aiArtifacts: [{ id: "Semantic HTML" }],
+        aiArtifacts: [{ id: "Frontend engineering" }],
       },
     });
     const recipe = result.structuredContent.recipe;
 
     assert.deepEqual(recipe.integrations, ["oxlint", "stylelint"]);
-    assert.deepEqual(recipe.ai, [{ type: "skill", src: "skills/semantic-html" }]);
+    assert.deepEqual(recipe.ai, [{ type: "skill", src: "skills/frontend-engineering" }]);
     assertValid(ajv.compile(schema), recipe);
   } finally {
     await client.close();
@@ -685,7 +733,7 @@ test("standard MCP validation and dry-run tools return agent-readable JSON", asy
   const recipe = composeRecipe({
     profile: "minimal",
     packageManager: "npm",
-    aiArtifacts: [{ id: "skill-semantic-html" }],
+    aiArtifacts: [{ id: "skill-frontend-engineering" }],
   });
   const validation = await callMcpTool("validate_recipe", { recipe });
   const dryRun = await callMcpTool("dry_run_apply", { recipe });
@@ -694,7 +742,7 @@ test("standard MCP validation and dry-run tools return agent-readable JSON", asy
   assert.match(dryRun.approvalBoundary, /before calling apply_recipe/);
   assert.equal(dryRun.result.dryRun, true);
   assert.equal(
-    dryRun.result.changes.some(({ path }) => path === ".agents/skills/semantic-html"),
+    dryRun.result.changes.some(({ path }) => path === ".agents/skills/frontend-engineering"),
     true,
   );
 });
@@ -1922,7 +1970,9 @@ test("MCP AI-only apply preserves existing managed tooling state", async () => {
     );
 
     await callMcpTool("apply_recipe", {
-      recipe: buildRecipe("minimal", [], "npm", [{ type: "skill", src: "skills/semantic-html" }]),
+      recipe: buildRecipe("minimal", [], "npm", [
+        { type: "skill", src: "skills/frontend-engineering" },
+      ]),
       writeConfig: false,
       noInstall: true,
     });
@@ -1935,7 +1985,7 @@ test("MCP AI-only apply preserves existing managed tooling state", async () => {
     assert.deepEqual(state.files, ["oxlint.json"]);
     assert.deepEqual(state.managedFiles, [{ path: "oxlint.json", hash: textHash(oxlintConfig) }]);
     assert.equal(
-      state.aiArtifacts.some((artifact) => artifact.path === ".agents/skills/semantic-html"),
+      state.aiArtifacts.some((artifact) => artifact.path === ".agents/skills/frontend-engineering"),
       true,
     );
   } finally {

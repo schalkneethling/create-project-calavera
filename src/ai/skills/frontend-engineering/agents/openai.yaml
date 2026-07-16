@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontend Engineering"
+  short_description: "Build accessible, secure frontend experiences."
+  default_prompt: "Use $frontend-engineering to implement this frontend change."

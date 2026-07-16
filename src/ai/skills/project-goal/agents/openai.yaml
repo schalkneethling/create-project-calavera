@@ -1,4 +1,4 @@
 interface:
   display_name: "Project Goal"
-  short_description: "Draft a project GOAL.md from discovery"
+  short_description: "Draft a project GOAL.md from discovery."
   default_prompt: "Use $project-goal to inspect this repository and write a clear GOAL.md."
