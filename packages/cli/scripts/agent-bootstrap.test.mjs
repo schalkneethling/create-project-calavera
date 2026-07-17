@@ -58,6 +58,8 @@ test("agent bootstrap keeps scripted existing AGENTS.md handling non-destructive
         (change) => change.type === "write" && change.path === "AGENTS.calavera.md",
       ),
     );
+    assert.equal(await readFile("AGENTS.md", "utf8"), "# Existing project guidance\n");
+    await assert.rejects(readFile("AGENTS.calavera.md", "utf8"), { code: "ENOENT" });
   });
 });
 

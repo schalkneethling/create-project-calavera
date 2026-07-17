@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -25,7 +25,7 @@ import {
   parseArgs,
 } from "../src/index.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
-import { createEmptyState } from "../src/state.js";
+import { createEmptyState, normalizeState } from "../src/state.js";
 import {
   assertKnownValue,
   assertObjectArray,
@@ -469,6 +469,12 @@ test("shared recipe validation rejects mixed formatter integrations", () => {
   );
 });
 
+test("shared recipe validation rejects malformed AI items and unknown properties", () => {
+  const recipe = buildRecipe("minimal", [], "npm");
+  assert.throws(() => validateRecipe({ ...recipe, ai: [{}] }), /non-empty type and src/);
+  assert.throws(() => validateRecipe({ ...recipe, unexpected: true }), /Unknown recipe properties/);
+});
+
 test("shared catalog helpers expose WebMCP-ready profile scoped options", () => {
   const modernToolIds = listIntegrationOptions("modern").map(({ id }) => id);
   const classicToolIds = listIntegrationOptions("classic").map(({ id }) => id);
@@ -796,6 +802,10 @@ test("standard MCP validation and dry-run tools return agent-readable JSON", asy
   assert.equal(validation.ok, true);
   assert.match(dryRun.approvalBoundary, /before calling apply_recipe/);
   assert.equal(dryRun.result.dryRun, true);
+  assert.equal(
+    dryRun.result.changes.some(({ path }) => path === "calavera.config.json"),
+    true,
+  );
   assert.equal(
     dryRun.result.changes.some(({ path }) => path === ".agents/skills/frontend-engineering"),
     true,
@@ -1807,6 +1817,25 @@ test("apply carries recipe Baseline options into the generated Stylelint rule", 
   }
 });
 
+test("apply writes selected Prettier plugins into configuration", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-prettier-plugins-"));
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", JSON.stringify({ scripts: {} }));
+    await applyRecipeObject(
+      buildRecipe("classic", ["prettier-tailwind", "prettier-astro"], "npm"),
+      { json: true, noInstall: true, assumeYes: true },
+    );
+    assert.deepEqual(JSON.parse(await readFile(".prettierrc.json", "utf8")), {
+      plugins: ["prettier-plugin-tailwindcss", "prettier-plugin-astro"],
+    });
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
 test("doctor does not expect the removed run-if-files helper", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-doctor-no-helper-"));
@@ -1960,6 +1989,24 @@ test("apply uses project devEngines package manager over an implicit npm recipe 
   }
 });
 
+test("apply recognizes a declared npm package manager", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-apply-npm-package-manager-"));
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", JSON.stringify({ scripts: {}, packageManager: "npm@11.6.0" }));
+    const result = await applyRecipeObject(buildRecipe("minimal", [], "pnpm"), {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.equal(result.packageManager, "npm");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
 test("apply package manager override wins over project devEngines detection", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-apply-pm-override-"));
@@ -2038,6 +2085,113 @@ test("MCP apply_recipe rejects config paths outside the current workspace", asyn
     );
   } finally {
     process.chdir(originalDirectory);
+  }
+});
+
+test("MCP apply_recipe rejects config paths escaping through a symlink", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-symlink-"));
+  const outsideDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-outside-"));
+  try {
+    process.chdir(projectDirectory);
+    await symlink(outsideDirectory, "linked");
+    await assert.rejects(
+      () =>
+        callMcpTool("apply_recipe", {
+          recipe: composeRecipe({ profile: "minimal", packageManager: "npm" }),
+          config: "linked/calavera.config.json",
+          noInstall: true,
+        }),
+      /config path must stay inside the current project workspace/,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+    await rm(outsideDirectory, { force: true, recursive: true });
+  }
+});
+
+test("hook apply plans both outputs and protects an unowned settings sidecar", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-hook-sidecar-"));
+  const recipe = buildRecipe("minimal", [], "npm", [
+    {
+      type: "hook",
+      src: "hooks/auto-approve-safe-commands",
+      target: "claude-code",
+    },
+  ]);
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", JSON.stringify({ scripts: {} }));
+    const dryRun = await applyRecipeObject(recipe, {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.deepEqual(
+      dryRun.changes.filter(({ category }) => category === "ai").map(({ path }) => path),
+      [
+        ".agents/hooks/claude-code/auto-approve-safe-commands.mjs",
+        ".agents/hooks/claude-code/auto-approve-safe-commands.settings-fragment.json",
+      ],
+    );
+    await mkdir(".agents/hooks/claude-code", { recursive: true });
+    await writeFile(
+      ".agents/hooks/claude-code/auto-approve-safe-commands.settings-fragment.json",
+      "unowned\n",
+    );
+    await assert.rejects(
+      () =>
+        applyRecipeObject(recipe, {
+          dryRun: true,
+          json: true,
+          noInstall: true,
+          assumeYes: true,
+        }),
+      /settings-fragment\.json.*not recorded as Calavera-managed/,
+    );
+
+    await rm(".agents/hooks/claude-code/auto-approve-safe-commands.settings-fragment.json");
+    await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.deepEqual(
+      state.aiArtifacts.map(({ path }) => path),
+      [
+        ".agents/hooks/claude-code/auto-approve-safe-commands.mjs",
+        ".agents/hooks/claude-code/auto-approve-safe-commands.settings-fragment.json",
+      ],
+    );
+
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
+    );
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
+      { env: { ...process.env, NO_COLOR: "1" } },
+    );
+    const cleanResult = JSON.parse(stdout);
+    assert.deepEqual(
+      cleanResult.changes.filter(({ category }) => category === "ai").map(({ path }) => path),
+      [
+        ".agents/hooks/claude-code/auto-approve-safe-commands.mjs",
+        ".agents/hooks/claude-code/auto-approve-safe-commands.settings-fragment.json",
+      ],
+    );
+    await assert.rejects(() => stat(".agents/hooks/claude-code/auto-approve-safe-commands.mjs"));
+    await assert.rejects(() =>
+      stat(".agents/hooks/claude-code/auto-approve-safe-commands.settings-fragment.json"),
+    );
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
@@ -2193,6 +2347,33 @@ test("shared assertion helpers reject unexpected value shapes", () => {
   assert.throws(() => assertPlainObject("object", []), /object must be an object/);
   assert.throws(() => assertKnownValue("profile", 1, profiles), /profile must be a string/);
   assert.throws(() => assertKnownValue("profile", "future", profiles), /Invalid profile: future/);
+});
+
+test("persisted state rejects absolute and parent-relative managed paths", () => {
+  assert.throws(
+    () =>
+      normalizeState({
+        managedFiles: [{ path: "../outside", hash: "hash" }],
+        aiArtifacts: [],
+      }),
+    /must stay inside the current project workspace/,
+  );
+  assert.throws(
+    () =>
+      normalizeState({
+        managedFiles: [],
+        aiArtifacts: [
+          {
+            type: "skill",
+            name: "unsafe",
+            source: "skills/unsafe",
+            path: "/tmp/outside",
+            hash: "hash",
+          },
+        ],
+      }),
+    /must stay inside the current project workspace/,
+  );
 });
 
 test("Codex agent adapter emits required TOML fields without Claude model metadata", async () => {

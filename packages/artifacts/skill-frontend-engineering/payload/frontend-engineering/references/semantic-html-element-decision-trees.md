@@ -5,15 +5,13 @@ Quick decision frameworks for selecting the right HTML element.
 ## Is It a List?
 
 ```text
-Does knowing the count help the user?
-├─ Yes → Are items sequential/ranked?
-│        ├─ Yes → <ol>
-│        └─ No → <ul>
-├─ No → Are these term-description pairs?
-│       ├─ Yes → <dl>
-│       └─ No → Consider plain elements with appropriate structure
-└─ Is it a toolbar of commands?
-   └─ Yes → <menu>
+Are the items related siblings?
+├─ No → Consider plain elements with appropriate structure
+└─ Yes → Are these term-description pairs?
+         ├─ Yes → <dl>
+         └─ No → Are items sequential/ranked?
+                  ├─ Yes → <ol>
+                  └─ No → <ul>
 ```
 
 ## Is It a Table?
@@ -67,7 +65,7 @@ Would this content make sense standalone?
 What is this section's purpose?
 ├─ Site/section header → <header>
 ├─ Site/section footer → <footer>
-├─ Navigation → <nav> (must be labelled)
+├─ Navigation → <nav> (one may be unnamed; give multiple landmarks distinct names, preferably from visible text via aria-labelledby, without the word “navigation”)
 ├─ Primary page content → <main>
 ├─ Search/filter functionality → <search> (wrap ALL related controls, not just the text input)
 ├─ User input → <form> (must be labelled to be a landmark)

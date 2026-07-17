@@ -81,7 +81,7 @@ I couldn't find an existing CSS directory in your project. Please specify:
 
 ### 3. Write the Tokens File
 
-Once confirmed, write the complete tokens file to the specified location. Use the exact content from `references/tokens.css` in this skill directory.
+Before writing, check whether the target file exists. If it does, show its current content or a diff and require an explicit decision to overwrite it or choose a new file. Once that decision is confirmed, write the complete tokens file using the exact content from `references/tokens.css` in this skill directory.
 
 ### 4. Inform User About Import
 

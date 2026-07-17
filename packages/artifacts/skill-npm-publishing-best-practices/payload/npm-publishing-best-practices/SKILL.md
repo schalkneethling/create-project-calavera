@@ -88,7 +88,7 @@ User or authenticated UI/API access required:
 > | npm                               | pnpm                                              | yarn                                              |
 > | --------------------------------- | ------------------------------------------------- | ------------------------------------------------- |
 > | `npm ci --ignore-scripts`         | `pnpm install --frozen-lockfile --ignore-scripts` | `yarn install --frozen-lockfile --ignore-scripts` |
-> | `npm i -g npm`                    | `pnpm add -g pnpm`                                | `yarn set version stable`                         |
+> | `npm i -g npm@12.0.1`             | `pnpm add -g pnpm@11.13.1`                        | `yarn set version 4.17.1`                         |
 > | `ignore-scripts=true` in `.npmrc` | `ignore-scripts=true` in `.npmrc`                 | `enableScripts: false` in `.yarnrc.yml`           |
 >
 > Detect the project's package manager by checking for a lockfile (`pnpm-lock.yaml`,
@@ -175,7 +175,7 @@ Node.js 22.14.0 or newer can use trusted publishing when the workflow installs n
 newer before publishing:
 
 ```yaml
-- run: npm i -g npm
+- run: npm i -g npm@12.0.1
 ```
 
 ---
@@ -186,7 +186,7 @@ Use the [e18e setup-publish template](https://github.com/e18e/setup-publish/blob
 as your base, or scaffold it with:
 
 ```bash
-npx @e18e/setup-publish
+npx @e18e/setup-publish@1.1.0
 ```
 
 ### 3.1 · Job structure
@@ -283,7 +283,7 @@ such as `@v6` or `@v7` are mutable and must not be committed to workflow files. 
 workflows and keep them current:
 
 ```bash
-npx actions-up
+npx actions-up@1.16.0
 ```
 
 Run this periodically, or let Dependabot/Renovate manage action updates once SHAs are in place.
@@ -305,7 +305,7 @@ Integrate this into CI or run it before merging workflow changes.
 `exports` fields, wrong `main`/`module` paths, and more.
 
 ```bash
-npx publint
+npx publint@0.3.21
 ```
 
 Review the [full list of publint rules](https://publint.dev/rules) to understand what it checks.
@@ -429,6 +429,6 @@ Use this when setting up a new package or auditing an existing one.
 
 ### Package quality
 
-- [ ] `npx publint` passes with no errors
+- [ ] `npx publint@0.3.21` passes with no errors
 - [ ] Dependabot or Renovate configured
 - [ ] `actions-up` run to migrate to SHA-pinned actions

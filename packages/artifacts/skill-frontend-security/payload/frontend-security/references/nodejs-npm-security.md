@@ -124,8 +124,9 @@ const filePath = `/uploads/${userInput}`;
 
 // SAFE - validate and resolve path
 function safeReadFile(userInput, baseDir) {
-  const basePath = path.resolve(baseDir);
-  const safePath = path.resolve(basePath, userInput);
+  const basePath = fs.realpathSync(baseDir);
+  const requestedPath = path.resolve(basePath, userInput);
+  const safePath = fs.realpathSync(requestedPath);
   const relativePath = path.relative(basePath, safePath);
 
   // Verify path is within allowed directory

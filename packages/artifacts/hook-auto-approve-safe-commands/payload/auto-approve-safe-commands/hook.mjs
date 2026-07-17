@@ -51,11 +51,9 @@ const SAFE_PATTERNS = [
     { pattern: /^vp\s+build\b/, label: "vp build" },
     { pattern: /^vp\s+dev\b/, label: "vp dev" },
     { pattern: /^vp\s+preview\b/, label: "vp preview" },
-    { pattern: /^vp\s+run\b/, label: "vp run" },
     { pattern: /^vp\s+outdated\b/, label: "vp outdated" },
     { pattern: /^vp\s+why\b/, label: "vp why" },
     { pattern: /^vp\s+info\b/, label: "vp info" },
-    { pattern: /^vpx\b/, label: "vpx" },
     // Dev server
     { pattern: /^npm\s+run\s+dev\b/, label: "npm run dev" },
     { pattern: /^pnpm\s+run\s+dev\b/, label: "pnpm run dev" },

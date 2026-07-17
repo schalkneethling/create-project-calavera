@@ -298,6 +298,16 @@ function hookSettingsInstallPath(hookPath) {
 }
 
 /**
+ * @param {ResolvedAiArtifact | AiArtifactState} artifact
+ * @returns {string[]}
+ */
+export function aiArtifactOutputPaths(artifact) {
+  return artifact.type === "hook"
+    ? [artifact.path, hookSettingsInstallPath(artifact.path)]
+    : [artifact.path];
+}
+
+/**
  * @param {string} directory
  * @returns {Promise<string>}
  */
@@ -380,7 +390,7 @@ export async function hashAiInstall(type, installPath, target) {
   }
 
   if (type === "hook") {
-    return hashHookInstall(installPath);
+    return hashFile(installPath);
   }
 
   if (target === CODEX_AGENT_TARGET) {
@@ -465,23 +475,32 @@ async function copyAiArtifact(artifact) {
 
 /**
  * @param {ResolvedAiArtifact} artifact
+ * @param {string} path
  * @param {string} sourceHash
  * @param {CalaveraState} previousState
  */
-async function assertSafeAiWrite(artifact, sourceHash, previousState) {
-  if (!(await fileExists(artifact.path))) {
+async function assertSafeAiWrite(artifact, path, sourceHash, previousState) {
+  if (!(await fileExists(path))) {
     return;
   }
 
-  const installedHash = await hashAiInstall(artifact.type, artifact.path, artifact.target);
+  const installedHash = await hashAiInstall(artifact.type, path, artifact.target);
 
   if (installedHash === sourceHash) {
     return;
   }
 
-  const stateArtifact = stateAiArtifactForPath(previousState, artifact.path);
+  const stateArtifact = stateAiArtifactForPath(previousState, path);
 
   if (stateArtifact?.hash === installedHash) {
+    return;
+  }
+
+  if (
+    artifact.type === "hook" &&
+    path === artifact.path &&
+    stateArtifact?.hash === (await hashHookInstall(artifact.path))
+  ) {
     return;
   }
 
@@ -489,7 +508,7 @@ async function assertSafeAiWrite(artifact, sourceHash, previousState) {
     ? `It appears to have local edits (installed=${installedHash}, state=${stateArtifact.hash}).`
     : "It is not recorded as Calavera-managed.";
 
-  throw new Error(`Refusing to overwrite existing AI artifact: ${artifact.path}. ${reason}`);
+  throw new Error(`Refusing to overwrite existing AI artifact: ${path}. ${reason}`);
 }
 
 /**
@@ -509,35 +528,47 @@ export async function buildAiApplyResult(recipe, options, previousState) {
 
   for (const artifact of artifacts) {
     await assertAiSourceExists(artifact.type, artifact.sourcePath, artifact.index);
-    const sourceHash = await hashAiSource(artifact.type, artifact.sourcePath, artifact.target);
-    const stateArtifact = {
-      type: artifact.type,
-      name: artifact.name,
-      source: artifact.source,
-      target: artifact.target,
-      path: artifact.path,
-      hash: sourceHash,
-    };
+    const outputPaths = aiArtifactOutputPaths(artifact);
+    const sourceHashes =
+      artifact.type === "hook"
+        ? await Promise.all([
+            hashFile(join(artifact.sourcePath, "hook.mjs")),
+            hashFile(join(artifact.sourcePath, "settings-fragment.json")),
+          ])
+        : [await hashAiSource(artifact.type, artifact.sourcePath, artifact.target)];
+    let needsWrite = false;
 
-    stateArtifacts.push(stateArtifact);
+    for (const [outputIndex, path] of outputPaths.entries()) {
+      const sourceHash = sourceHashes[outputIndex];
+      if (!sourceHash) {
+        throw new Error(`Missing source hash for AI artifact output: ${path}.`);
+      }
+      stateArtifacts.push({
+        type: artifact.type,
+        name: artifact.name,
+        source: artifact.source,
+        target: artifact.target,
+        path,
+        hash: sourceHash,
+      });
+      const upToDate =
+        (await fileExists(path)) &&
+        (await hashAiInstall(artifact.type, path, artifact.target)) === sourceHash;
+      if (upToDate) continue;
 
-    const upToDate =
-      (await fileExists(artifact.path)) &&
-      (await hashAiInstall(artifact.type, artifact.path, artifact.target)) === sourceHash;
-
-    if (!upToDate) {
-      await assertSafeAiWrite(artifact, sourceHash, previousState);
+      await assertSafeAiWrite(artifact, path, sourceHash, previousState);
+      needsWrite = true;
       changes.push({
         type: "write",
-        path: artifact.path,
+        path,
         category: "ai",
         aiType: artifact.type,
         name: artifact.name,
       });
+    }
 
-      if (!options.dryRun) {
-        await copyAiArtifact(artifact);
-      }
+    if (needsWrite && !options.dryRun) {
+      await copyAiArtifact(artifact);
     }
 
     if (artifact.type === "skill") {
