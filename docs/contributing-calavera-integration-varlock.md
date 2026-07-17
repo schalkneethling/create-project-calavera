@@ -43,7 +43,7 @@ That one entry establishes the contract Calavera needs:
 - `dependencies`: the development packages Calavera installs when the recipe
   selects the integration.
 
-Start in [`src/catalog.js`](../src/catalog.js). Then decide whether metadata is
+Start in [`packages/cli/src/catalog.js`](../packages/cli/src/catalog.js). Then decide whether metadata is
 enough or whether the integration needs a small behavior hook.
 
 Metadata is enough for integrations that only add packages or plugin settings to
@@ -60,7 +60,7 @@ clear dry-run output. React Doctor is another familiar example: it needs package
 scripts plus a generated `react-doctor.config.json`.
 
 When an integration needs custom behavior, keep it narrow and keyed from the
-resolved integration ID or platform in [`src/index.js`](../src/index.js). Add the
+resolved integration ID or platform in [`packages/cli/src/index.js`](../packages/cli/src/index.js). Add the
 script, file plan, diagnostic, pointer, or dry-run output in the same flow that
 already handles similar integrations, then protect that behavior with focused
 tests.
@@ -122,7 +122,7 @@ The Varlock contribution added an `env:load` script:
 It also wired that script into the aggregate command used by the recipe. When
 Theo opened PR #127, that aggregate script was named `check`. Calavera has since
 renamed it to `quality`, so a new integration should follow the current
-`quality` model in [`src/index.js`](../src/index.js) rather than copying the old
+`quality` model in [`packages/cli/src/index.js`](../packages/cli/src/index.js) rather than copying the old
 `check` name from the PR.
 
 Use the tool's real validation command as the script body. Varlock uses
@@ -256,7 +256,7 @@ developers are expected to edit.
 
 Dry-run output should also describe the intent accurately. The current
 `apply --dry-run --json` payload uses the shared `changes` shape from
-[`src/index.js`](../src/index.js): `type`, `path`, and optional fields such as
+[`packages/cli/src/index.js`](../packages/cli/src/index.js): `type`, `path`, and optional fields such as
 `scripts` and `removedDefaultTestScript`. It does not currently include
 ownership markers such as `managed` or `scaffold`.
 
@@ -358,8 +358,8 @@ restore the starter file.
 
 The web composer should not drift from the CLI catalog model. When a new
 integration should be available in the composer, add it to
-[`src/catalog.js`](../src/catalog.js) and make sure
-[`src/recipe.js`](../src/recipe.js) exposes it for the intended profile or
+[`packages/cli/src/catalog.js`](../packages/cli/src/catalog.js) and make sure
+[`packages/cli/src/recipe.js`](../packages/cli/src/recipe.js) exposes it for the intended profile or
 profiles through the shared recipe core.
 
 For Varlock, that meant adding it to the Environment variables group so a project
@@ -369,9 +369,9 @@ hand-editing the recipe.
 If the integration changes recipe shape, profile scoping, schema behavior, or
 the shared catalog response exposed to WebMCP, update the matching test or drift
 check. Calavera's public recipe schema lives at
-[`web/public/calavera.config.schema.json`](../web/public/calavera.config.schema.json),
+[`apps/composer/public/calavera.config.schema.json`](../apps/composer/public/calavera.config.schema.json),
 and repository drift checks live in
-[`scripts/check-config-schema.test.mjs`](../scripts/check-config-schema.test.mjs).
+[`packages/cli/scripts/check-config-schema.test.mjs`](../packages/cli/scripts/check-config-schema.test.mjs).
 
 ## Test the Contribution
 
@@ -495,21 +495,21 @@ Review .env.schema and add required project environment variables before enablin
 ```
 
 Start from the current pointer behavior in
-[`src/index.js`](../src/index.js) and the documented contract in
+[`packages/cli/src/index.js`](../packages/cli/src/index.js) and the documented contract in
 [`docs/ai-module-contract.md`](ai-module-contract.md#post-install-pointers).
 
 ## Contributor Starting Points
 
 When adding the next integration, begin with these files:
 
-- [`src/catalog.js`](../src/catalog.js): shared integration metadata.
-- [`src/index.js`](../src/index.js): script building, managed files, `apply`,
+- [`packages/cli/src/catalog.js`](../packages/cli/src/catalog.js): shared integration metadata.
+- [`packages/cli/src/index.js`](../packages/cli/src/index.js): script building, managed files, `apply`,
   `doctor`, result printing, and JSON output.
-- [`web/script.js`](../web/script.js): composer exposure for selectable
+- [`apps/composer/script.js`](../apps/composer/script.js): composer exposure for selectable
   integrations.
-- [`web/public/calavera.config.schema.json`](../web/public/calavera.config.schema.json):
+- [`apps/composer/public/calavera.config.schema.json`](../apps/composer/public/calavera.config.schema.json):
   public recipe schema.
-- [`scripts/check-config-schema.test.mjs`](../scripts/check-config-schema.test.mjs):
+- [`packages/cli/scripts/check-config-schema.test.mjs`](../packages/cli/scripts/check-config-schema.test.mjs):
   catalog/schema drift and contract checks.
 - [`README.md`](../README.md): public integration catalog summary.
 

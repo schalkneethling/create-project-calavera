@@ -169,7 +169,7 @@ experimental integration.
 
 Adding a new integration should be a catalog-first change. For example, a
 Stylelint plugin entry can declare its package dependency, parent `stylelint`
-integration, plugin name, and default rules in `src/catalog.js`; the CLI then
+integration, plugin name, and default rules in `packages/cli/src/catalog.js`; the CLI then
 uses that metadata when generating `.stylelintrc.json`.
 
 See
@@ -412,7 +412,7 @@ for the current boundary, research questions, and phase-two handoff plan.
 
 Generated recipes reference the public draft 2020-12 schema at
 [`https://calavera.schalkneethling.com/calavera.config.schema.json`](https://calavera.schalkneethling.com/calavera.config.schema.json).
-The maintained schema lives at `web/public/calavera.config.schema.json` so it is
+The maintained schema lives at `apps/composer/public/calavera.config.schema.json` so it is
 published with the web composer.
 
 ## AI Artifacts

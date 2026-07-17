@@ -1,59 +1,15 @@
 {
-  "name": "create-project-calavera",
-  "version": "2.2.0",
-  "description": "Compose and apply modern tooling recipes for JavaScript and TypeScript projects.",
-  "keywords": [
-    "cli",
-    "css",
-    "html",
-    "javascript",
-    "linting",
-    "oxlint",
-    "prettier",
-    "project",
-    "scaffold",
-    "starter",
-    "stylelint",
-    "tooling"
-  ],
-  "homepage": "https://github.com/schalkneethling/create-project-calavera#readme",
-  "bugs": {
-    "url": "https://github.com/schalkneethling/create-project-calavera/issues"
-  },
-  "license": "MIT",
-  "author": "Schalk Neethling",
-  "repository": {
-    "type": "git",
-    "url": "git+ssh://git@github.com/schalkneethling/create-project-calavera.git"
-  },
-  "bin": {
-    "create-project-calavera": "src/index.js",
-    "create-project-calavera-mcp": "src/mcp.js"
-  },
-  "files": [
-    "src",
-    "docs",
-    "schemas",
-    "CHANGELOG.md",
-    "MIGRATION.md",
-    "LICENSE",
-    "README.md"
-  ],
+  "name": "create-project-calavera-workspace",
+  "private": true,
   "type": "module",
-  "exports": "./src/index.js",
-  "publishConfig": {
-    "access": "public",
-    "provenance": true
-  },
   "scripts": {
     "check": "pnpm quality",
-    "prettier:lint": "prettier .",
-    "prettier:format": "prettier --write .",
+    "changeset": "changeset",
     "lint:js": "eslint .",
     "lint:css": "stylelint **/*.css",
-    "web:dev": "vite --host 127.0.0.1",
-    "web:build": "vite build",
-    "web:preview": "vite preview --host 127.0.0.1",
+    "web:dev": "pnpm --filter @calavera/composer dev",
+    "web:build": "pnpm --filter @calavera/composer build",
+    "web:preview": "pnpm --filter @calavera/composer preview",
     "quality": "pnpm lint && pnpm format:all:check && pnpm typecheck && pnpm test",
     "lint": "oxlint . && stylelint \"**/*.{css,scss}\"",
     "lint:fix": "oxlint --fix . && stylelint \"**/*.{css,scss}\" --fix",
@@ -61,28 +17,25 @@
     "format:all": "oxfmt --write .",
     "format:all:check": "oxfmt --check .",
     "format:check": "oxfmt --check .",
-    "schema:check": "node --test scripts/check-config-schema.test.mjs",
-    "test": "node --test scripts/*.test.mjs",
+    "schema:check": "pnpm --filter create-project-calavera schema:check",
+    "test": "pnpm --recursive --if-present test",
     "typecheck": "tsc --noEmit",
-    "publish:check": "publint",
+    "publish:check": "pnpm --filter create-project-calavera publish:check",
+    "release:status": "changeset status",
+    "release:version": "changeset version",
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
   },
-  "dependencies": {
-    "@clack/prompts": "^1.4.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
-    "execa": "^9.6.0",
-    "prettier": "^3.5.3",
-    "zod": "^4.4.3"
-  },
   "devDependencies": {
+    "@changesets/cli": "^2.31.1",
     "@eslint/js": "^10.0.1",
+    "@modelcontextprotocol/sdk": "^1.29.0",
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
-    "@types/node": "^26.0.1",
+    "@types/node": "^26.1.1",
     "ajv": "8.20.0",
     "eslint": "^10.4.0",
     "globals": "^17.6.0",
     "oxfmt": "^0.58.0",
-    "oxlint": "^1.67.0",
+    "oxlint": "^1.73.0",
     "publint": "^0.3.21",
     "stylelint": "^17.12.0",
     "stylelint-config-standard": "^40.0.0",

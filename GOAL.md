@@ -25,7 +25,7 @@ Calavera helps web developers compose, apply, inspect, and refresh repeatable pr
    - Track generated files in `.calavera/state.json` so stale managed files can be cleaned deliberately.
 
 3. Keep integrations catalog-first.
-   - Add or change integrations primarily through `src/catalog.js` metadata: dependencies, parent integrations, plugin names, status, and tool-specific config.
+   - Add or change integrations primarily through `packages/cli/src/catalog.js` metadata: dependencies, parent integrations, plugin names, status, and tool-specific config.
    - Let the CLI and web composer consume that catalog rather than duplicating behavior by hand.
    - Make experimental and framework-specific integrations visible as such.
 
@@ -79,7 +79,7 @@ Calavera helps web developers compose, apply, inspect, and refresh repeatable pr
 
 The current project centers on the recipe-driven CLI, the shared integration catalog, and the Vite-based Calavera Composer. Near-term work will establish a pnpm workspace boundary for the CLI, Composer, focused web tools, shared domain packages, versioned AI artifacts, and an optional macOS companion while preserving automation-friendly outputs and CLI compatibility.
 
-The public draft 2020-12 recipe schema is maintained in `web/public/calavera.config.schema.json` and published with the composer at `https://calavera.schalkneethling.com/calavera.config.schema.json`.
+The public draft 2020-12 recipe schema is maintained in `apps/composer/public/calavera.config.schema.json` and published with the composer at `https://calavera.schalkneethling.com/calavera.config.schema.json`.
 
 ## Open Questions
 
