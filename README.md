@@ -530,9 +530,12 @@ Before the first trusted publish:
 - configure npm trusted publishing for this repository, workflow, and
   environment.
 
-To validate the package locally:
+To validate the package locally, first install
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/). It provisions
+the locked Python environment used by SkillSpector and the workflow audit.
 
 ```bash
+uv sync --frozen
 pnpm check
 pnpm web:build
 pnpm publish:check
