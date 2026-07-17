@@ -1,6 +1,16 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, cp, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, dirname, join } from "node:path";
 import test from "node:test";
@@ -504,7 +514,10 @@ test("shared recipe validation rejects mixed formatter integrations", () => {
 
 test("shared recipe validation rejects malformed AI items and unknown properties", () => {
   const recipe = buildRecipe("minimal", [], "npm");
-  assert.throws(() => validateRecipe({ ...recipe, ai: [{}] }), /non-empty type and src/);
+  assert.throws(
+    () => validateRecipe({ ...recipe, ai: [{}] }),
+    /must contain id, or legacy type and src fields/,
+  );
   assert.throws(() => validateRecipe({ ...recipe, unexpected: true }), /Unknown recipe properties/);
 });
 
