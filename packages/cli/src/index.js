@@ -1602,7 +1602,7 @@ export async function applyRecipeObject(recipe, options = {}) {
 
   await assertSafeManagedFileWrites(managedFilePlans, previousState, reownManagedFiles);
 
-  const artifactSources = await lockedArtifactSources(recipe);
+  const artifactSources = await lockedArtifactSources(recipe, applyOptions.dryRun);
   const aiResult = await buildAiApplyResult(recipe, applyOptions, previousState, artifactSources);
 
   if (applyOptions.writeConfig) {

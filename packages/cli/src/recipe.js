@@ -387,7 +387,7 @@ export function listAiArtifactOptions() {
       packageName,
       version,
       compatibility,
-      description: `${label}. Type: ${type}. Package: ${packageName}@${version}. Legacy source: ${src}.`,
+      description: `${label}. Type: ${type}. Package: ${packageName}@${version}. Calavera compatibility: ${compatibility.calavera}. Legacy source: ${src}.`,
     }),
   );
 }

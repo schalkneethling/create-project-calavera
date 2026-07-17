@@ -56,7 +56,7 @@ const AI_HOOK_FILES = Object.freeze(["hook.mjs", "settings-fragment.json"]);
 const CODEX_AGENT_TARGET = "codex";
 
 /**
- * @param {ResolvedAiArtifact | AiArtifactState} artifact
+ * @param {ResolvedAiArtifact} artifact
  * @returns {boolean}
  */
 function isCodexAgentArtifact(artifact) {
@@ -221,14 +221,15 @@ function normalizeAiItems(aiConfig) {
     if (entry.id) {
       const artifact = aiArtifactCatalog.find(({ id }) => id === entry.id);
       if (!artifact) throw new Error(`AI item at index ${index} has unknown id "${entry.id}".`);
-      if (entry.target && artifact.targets && !artifact.targets.includes(entry.target)) {
+      const target = entry.target?.trim();
+      if (target && artifact.targets && !artifact.targets.includes(target)) {
         throw new Error(`AI item at index ${index} target is not supported by ${entry.id}.`);
       }
       return {
         id: artifact.id,
         type: artifact.type,
         src: artifact.src,
-        target: entry.target?.trim(),
+        target,
       };
     }
 
@@ -317,7 +318,7 @@ function hookSettingsInstallPath(hookPath) {
 }
 
 /**
- * @param {ResolvedAiArtifact | AiArtifactState} artifact
+ * @param {{ type: AiArtifactType, path: string }} artifact
  * @returns {string[]}
  */
 export function aiArtifactOutputPaths(artifact) {
@@ -432,7 +433,7 @@ export function resolveAiArtifacts(recipe, sourcePaths = new Map()) {
     const target = normalizeAiTarget(type, item, index);
     const sourcePath =
       sourcePaths.get(item.id ?? item.src) ?? resolveAiSourcePath(item.src, index, type);
-    const name = inferAiSourceName(type, sourcePath, index);
+    const name = inferAiSourceName(type, item.src, index);
     const key = [type, target, name].filter(Boolean).join(":");
 
     if (!deduped.has(key)) {
@@ -462,9 +463,10 @@ function stateAiArtifactForPath(state, path) {
 
 /**
  * @param {ResolvedAiArtifact} artifact
+ * @param {string} [outputRoot]
  */
-async function copyAiArtifact(artifact) {
-  const installPath = resolve(artifact.path);
+async function copyAiArtifact(artifact, outputRoot) {
+  const installPath = outputRoot ? resolve(outputRoot, artifact.path) : resolve(artifact.path);
 
   if (artifact.type === "skill") {
     await mkdir(dirname(installPath), { recursive: true });
@@ -533,7 +535,7 @@ async function assertSafeAiWrite(artifact, path, sourceHash, previousState) {
 
 /**
  * @param {{ ai?: unknown }} recipe
- * @param {{ dryRun: boolean }} options
+ * @param {{ dryRun: boolean, outputRoot?: string }} options
  * @param {CalaveraState} previousState
  * @returns {Promise<{ artifacts: AiArtifactState[], changes: AiChange[], pointers: string[] }>}
  */
@@ -588,7 +590,7 @@ export async function buildAiApplyResult(recipe, options, previousState, sourceP
     }
 
     if (needsWrite && !options.dryRun) {
-      await copyAiArtifact(artifact);
+      await copyAiArtifact(artifact, options.outputRoot);
     }
 
     if (artifact.type === "skill") {

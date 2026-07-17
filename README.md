@@ -565,11 +565,12 @@ create-project-calavera artifacts migrate
 create-project-calavera artifacts install
 create-project-calavera artifacts status
 create-project-calavera artifacts status --check-updates
+create-project-calavera artifacts doctor
 create-project-calavera artifacts update skill-project-goal
 create-project-calavera artifacts update --all --tag next
 ```
 
-Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; ordinary `apply` requires and reuses those exact locked versions. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit, and the existing managed-state hashes continue to block overwriting local edits.
+Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; ordinary `apply` requires and reuses those exact locked versions. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit. Run `artifacts doctor` to verify installed outputs, managed state, and local edits without checking the registry. The existing managed-state hashes continue to block overwriting local edits.
 
 ## Publishing
 
