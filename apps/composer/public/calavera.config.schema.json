@@ -195,7 +195,7 @@
           "enum": ["skill", "hook", "agent"]
         },
         "src": {
-          "description": "Path to a bundled artifact under src/ai/.",
+          "description": "Legacy artifact path resolved through the first-party package catalog.",
           "type": "string",
           "minLength": 1
         },
@@ -207,6 +207,33 @@
         }
       },
       "allOf": [
+        {
+          "if": {
+            "properties": { "type": { "const": "skill" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": { "src": { "type": "string", "pattern": "^skills/[^/\\\\]+$" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "hook" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": { "src": { "type": "string", "pattern": "^hooks/[^/\\\\]+$" } }
+          }
+        },
+        {
+          "if": {
+            "properties": { "type": { "const": "agent" } },
+            "required": ["type"]
+          },
+          "then": {
+            "properties": { "src": { "type": "string", "pattern": "^agents/[^/\\\\]+\\.md$" } }
+          }
+        },
         {
           "if": {
             "properties": {

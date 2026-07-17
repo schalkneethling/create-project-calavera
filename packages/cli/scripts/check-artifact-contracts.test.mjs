@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { readFile } from "node:fs/promises";
+import { readFile, stat } from "node:fs/promises";
 import test from "node:test";
 
 import Ajv2020 from "ajv/dist/2020.js";
+import { artifactCatalog } from "@schalkneethling/calavera-artifact-core";
+import { artifactPayloadPath } from "@schalkneethling/calavera-artifact-core/node";
 
 async function readProjectJson(path) {
   return JSON.parse(await readFile(new URL(`../${path}`, import.meta.url), "utf8"));
@@ -59,6 +61,33 @@ test("artifact manifest accepts representative skill, hook, and agent packages",
     targets: ["claude-code", "codex"],
     compatibility: { calavera: ">=2.2.0 <3" },
   });
+});
+
+test("every first-party artifact package has a valid manifest and payload", async () => {
+  const validate = ajv.compile(manifestSchema);
+  const ids = new Set();
+  const packageNames = new Set();
+
+  for (const artifact of artifactCatalog) {
+    const { packageName, legacyPath, group, defaultTarget, ...manifest } = artifact;
+    assertValid(validate, manifest);
+    assert.equal(ids.has(artifact.id), false, `Duplicate artifact ID: ${artifact.id}`);
+    assert.equal(
+      packageNames.has(packageName),
+      false,
+      `Duplicate artifact package: ${packageName}`,
+    );
+    assert.match(packageName, new RegExp(`^@schalkneethling/calavera-${artifact.type}-`));
+    assert.equal(
+      (await stat(artifactPayloadPath(artifact.id))).isDirectory(),
+      artifact.type !== "agent",
+    );
+    ids.add(artifact.id);
+    assert.equal(typeof legacyPath, "string");
+    assert.equal(typeof group, "string");
+    assert.equal(defaultTarget, artifact.type === "skill" ? undefined : "claude-code");
+    packageNames.add(packageName);
+  }
 });
 
 test("artifact manifest rejects mismatched types, unsafe payloads, and missing targets", () => {

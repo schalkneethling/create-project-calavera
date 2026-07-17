@@ -1,0 +1,11 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-frontend-testing",
+  "type": "skill",
+  "displayName": "Frontend testing",
+  "payload": "payload/frontend-testing",
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}

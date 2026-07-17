@@ -1,12 +1,13 @@
 // @ts-check
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
-import { fileURLToPath } from "node:url";
+import { basename, dirname, join, resolve } from "node:path";
+
+import { artifactPayloadPath } from "@schalkneethling/calavera-artifact-core/node";
 
 import { fileExists } from "../utils/fs.js";
 import { isNotEmptyString, isPlainObject } from "../utils/guards.js";
 import { hashDirectory, hashFile, textHash } from "../utils/hash.js";
-import { DEFAULT_AI_TARGET } from "./catalog.js";
+import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./catalog.js";
 
 /**
  * @typedef {import("../state.js").CalaveraState} CalaveraState
@@ -38,8 +39,6 @@ import { DEFAULT_AI_TARGET } from "./catalog.js";
  * @typedef {{ type: string, path: string, category?: "ai", aiType?: AiArtifactType, name?: string, reason?: string }} AiChange
  */
 
-const SOURCE_DIR = dirname(fileURLToPath(import.meta.url));
-const AI_SOURCE_ROOT = SOURCE_DIR;
 const AI_SOURCE_DIRECTORIES = Object.freeze({
   skill: "skills",
   hook: "hooks",
@@ -156,14 +155,6 @@ function normalizeAiItemType(type, index) {
 }
 
 /**
- * @param {AiArtifactType} type
- * @returns {string}
- */
-function sourceRootForAiType(type) {
-  return join(AI_SOURCE_ROOT, AI_SOURCE_DIRECTORIES[type]);
-}
-
-/**
  * @param {unknown} value
  * @returns {value is AiItemConfig}
  */
@@ -237,38 +228,19 @@ function normalizeAiItems(aiConfig) {
  * @returns {string}
  */
 function resolveAiSourcePath(src, index, type) {
-  const sourcePath = resolve(AI_SOURCE_ROOT, src);
-  const sourceRoot = sourceRootForAiType(type);
-  const relativeFromRoot = relative(AI_SOURCE_ROOT, sourcePath);
-  const relativeFromTypeRoot = relative(sourceRoot, sourcePath);
+  const artifact = aiArtifactCatalog.find((candidate) => candidate.src === src);
 
-  if (!relativeFromRoot || relativeFromRoot.startsWith("..") || isAbsolute(relativeFromRoot)) {
+  if (!artifact) {
     throw new Error(`AI item at index ${index} source must stay within src/ai/: ${src}.`);
   }
 
-  if (
-    !relativeFromTypeRoot ||
-    relativeFromTypeRoot.startsWith("..") ||
-    isAbsolute(relativeFromTypeRoot)
-  ) {
+  if (artifact.type !== type) {
     throw new Error(
-      `AI item at index ${index} ${type} source must be under ${relative(
-        AI_SOURCE_ROOT,
-        sourceRoot,
-      )}/: ${src}.`,
+      `AI item at index ${index} ${type} source must be under ${AI_SOURCE_DIRECTORIES[type]}/: ${src}.`,
     );
   }
 
-  if (relativeFromTypeRoot.includes(sep)) {
-    throw new Error(
-      `AI item at index ${index} ${type} source must point to a top-level entry under ${relative(
-        AI_SOURCE_ROOT,
-        sourceRoot,
-      )}/: ${relative(AI_SOURCE_ROOT, sourcePath)}.`,
-    );
-  }
-
-  return sourcePath;
+  return artifactPayloadPath(src);
 }
 
 /**
@@ -281,10 +253,7 @@ function inferAiSourceName(type, sourcePath, index) {
   if (type === "agent") {
     if (!sourcePath.endsWith(".md")) {
       throw new Error(
-        `AI item at index ${index} agent source must point to a Markdown file: ${relative(
-          AI_SOURCE_ROOT,
-          sourcePath,
-        )}.`,
+        `AI item at index ${index} agent source must point to a Markdown file: ${sourcePath}.`,
       );
     }
 
@@ -375,22 +344,14 @@ export async function assertAiSourceExists(type, sourcePath, index) {
   try {
     sourceStats = await stat(sourcePath);
   } catch {
-    throw new Error(
-      `AI item at index ${index} references missing ${type} source: ${relative(
-        AI_SOURCE_ROOT,
-        sourcePath,
-      )}.`,
-    );
+    throw new Error(`AI item at index ${index} references missing ${type} source: ${sourcePath}.`);
   }
 
   const isExpectedKind = type === "agent" ? sourceStats.isFile() : sourceStats.isDirectory();
 
   if (!isExpectedKind) {
     throw new Error(
-      `AI item at index ${index} expected ${type} source "${relative(
-        AI_SOURCE_ROOT,
-        sourcePath,
-      )}" to be a ${type === "agent" ? "file" : "directory"}.`,
+      `AI item at index ${index} expected ${type} source "${sourcePath}" to be a ${type === "agent" ? "file" : "directory"}.`,
     );
   }
 }

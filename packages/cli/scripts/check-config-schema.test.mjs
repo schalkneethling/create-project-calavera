@@ -1,16 +1,6 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import {
-  chmod,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  stat,
-  symlink,
-  writeFile,
-} from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -19,6 +9,7 @@ import { promisify } from "node:util";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import { artifactPayloadPath } from "@schalkneethling/calavera-artifact-core/node";
 import Ajv2020 from "ajv/dist/2020.js";
 import packageJson from "../package.json" with { type: "json" };
 import * as prettier from "prettier";
@@ -186,16 +177,31 @@ test("config schema rejects invalid or detached Stylelint Baseline options", () 
   );
 });
 
+test("config schema requires legacy AI paths to match their artifact type", () => {
+  const validate = ajv.compile(schema);
+  const recipe = buildRecipe("minimal", [], "npm");
+
+  for (const ai of [
+    [{ type: "skill", src: "hooks/example" }],
+    [{ type: "hook", src: "skills/example" }],
+    [{ type: "agent", src: "agents/example" }],
+    [{ type: "agent", src: "skills/example.md" }],
+  ]) {
+    assert.equal(validate({ ...recipe, ai }), false, JSON.stringify(ai));
+  }
+});
+
 test("AI artifact catalog exposes unique complete recipe items", async () => {
   const ids = new Set();
 
   for (const artifact of aiArtifactCatalog) {
-    const sourceStats = await stat(new URL(`../src/ai/${artifact.src}`, import.meta.url));
+    const sourceStats = await stat(artifactPayloadPath(artifact.id));
 
     assert.equal(typeof artifact.id, "string");
     assert.equal(typeof artifact.label, "string");
     assert.equal(typeof artifact.group, "string");
-    assert.equal(artifact.status, "bundled");
+    assert.equal(artifact.status, "packaged");
+    assert.match(artifact.packageName, /^@schalkneethling\/calavera-(?:skill|hook|agent)-/);
     assert.ok(["skill", "hook", "agent"].includes(artifact.type));
     assert.equal(ids.has(artifact.id), false, `Duplicate AI artifact id: ${artifact.id}`);
 
@@ -218,16 +224,14 @@ test("AI artifact catalog exposes unique complete recipe items", async () => {
 });
 
 test("bundled skills expose complete OpenAI interface metadata", async () => {
-  const skillRoot = new URL("../src/ai/skills/", import.meta.url);
-  const skillDirectories = (await readdir(skillRoot, { withFileTypes: true }))
-    .filter((entry) => entry.isDirectory())
-    .map((entry) => entry.name)
-    .sort();
+  const skillArtifacts = aiArtifactCatalog.filter(({ type }) => type === "skill");
   const displayNames = new Set();
 
-  for (const skillName of skillDirectories) {
-    const skill = await readFile(new URL(`${skillName}/SKILL.md`, skillRoot), "utf8");
-    const metadata = await readFile(new URL(`${skillName}/agents/openai.yaml`, skillRoot), "utf8");
+  for (const artifact of skillArtifacts) {
+    const skillName = artifact.src.replace(/^skills\//, "");
+    const payloadPath = artifactPayloadPath(artifact.id);
+    const skill = await readFile(join(payloadPath, "SKILL.md"), "utf8");
+    const metadata = await readFile(join(payloadPath, "agents/openai.yaml"), "utf8");
     const declaredSkillName = skill.match(/^name: ([a-z0-9-]+)$/m)?.[1];
     const displayName = metadata.match(/^  display_name: "([^"\n]+)"$/m)?.[1];
     const shortDescription = metadata.match(/^  short_description: "([^"\n]+)"$/m)?.[1];
@@ -2387,7 +2391,7 @@ test("persisted state rejects absolute and parent-relative managed paths", () =>
 });
 
 test("Codex agent adapter emits required TOML fields without Claude model metadata", async () => {
-  const source = await readProjectFile("src/ai/agents/technical-devils-advocate.md");
+  const source = await readFile(artifactPayloadPath("agent-technical-devils-advocate"), "utf8");
   const toml = createCodexAgentToml(source);
 
   assert.match(toml, /^name = "technical-devils-advocate"$/m);

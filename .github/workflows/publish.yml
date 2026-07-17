@@ -66,6 +66,8 @@ jobs:
         run: |
           pnpm --filter create-project-calavera pack --pack-destination ../../package
           pnpm --filter @schalkneethling/calavera-baseline-core pack --pack-destination ../../package
+          pnpm --filter @schalkneethling/calavera-artifact-core pack --pack-destination ../../package
+          pnpm --filter "./packages/artifacts/*" --recursive pack --pack-destination ../../../package
       - name: Upload package artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:

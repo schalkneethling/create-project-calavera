@@ -1,0 +1,11 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-npm-publishing-best-practices",
+  "type": "skill",
+  "displayName": "npm publishing best practices",
+  "payload": "payload/npm-publishing-best-practices",
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}
