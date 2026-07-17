@@ -5,13 +5,20 @@ import {
   requestPermission,
   sendNotification,
 } from "@tauri-apps/plugin-notification";
-import { inspectAppUpdate, inspectUpdates, POLL_INTERVAL, unseenUpdates } from "./update-core.js";
+import {
+  inspectAppUpdate,
+  inspectUpdates,
+  POLL_INTERVAL,
+  snapshotDiagnostics,
+  unseenUpdates,
+} from "./update-core.js";
 
 const STORAGE_KEY = "calavera-menu-bar-v1";
 const form = document.querySelector("#register");
 const projectsElement = document.querySelector("#projects");
 const statusElement = document.querySelector("#status");
 let settings = loadSettings();
+let checkAllPromise;
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -21,7 +28,12 @@ form.addEventListener("submit", async (event) => {
     cliVersion: String(data.get("cliVersion")).trim(),
     tag: String(data.get("tag")),
   };
-  await invoke("inspect_project", { path: project.path });
+  try {
+    await invoke("inspect_project", { path: project.path });
+  } catch (error) {
+    statusElement.textContent = `Could not register project: ${String(error)}`;
+    return;
+  }
   settings.projects = [...settings.projects.filter(({ path }) => path !== project.path), project];
   saveSettings();
   form.reset();
@@ -30,7 +42,15 @@ form.addEventListener("submit", async (event) => {
 
 document.querySelector("#check").addEventListener("click", checkAll);
 
-async function checkAll() {
+function checkAll() {
+  if (checkAllPromise) return checkAllPromise;
+  checkAllPromise = performCheckAll().finally(() => {
+    checkAllPromise = undefined;
+  });
+  return checkAllPromise;
+}
+
+async function performCheckAll() {
   statusElement.textContent = "Checking…";
   const results = [];
   let appUpdate;
@@ -72,7 +92,10 @@ function render(
     const heading = document.createElement("h2");
     heading.textContent = result.project.path;
     const summary = document.createElement("p");
-    summary.textContent = result.error ?? `${result.updates.length} update(s)`;
+    const diagnostics = result.snapshot ? snapshotDiagnostics(result.snapshot) : [];
+    summary.textContent =
+      result.error ??
+      (diagnostics.length > 0 ? diagnostics.join("; ") : `${result.updates.length} update(s)`);
     article.append(heading, summary);
     for (const update of result.updates) {
       const button = document.createElement("button");

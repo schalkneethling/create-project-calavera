@@ -574,7 +574,7 @@ Installation resolves npm packages into `.calavera/packages` and a verified npm 
 
 ## macOS update companion
 
-The optional Calavera menu-bar app monitors only project directories that you explicitly register. It reads recipes, artifact locks, and state without changing them; checks npm and GitHub on launch and every six hours; and deduplicates notifications by component and target version.
+The optional Calavera menu-bar app monitors only project directories that you explicitly register. It reads recipes, artifact locks, and state without changing them; checks npm and GitHub on launch, every six hours, or when you select **Check now**; and deduplicates notifications by component and target version.
 
 For project updates, the app copies the exact command and opens Terminal at the registered directory. It never executes the command. App updates open a stable GitHub release, and self-updating is intentionally outside v1.
 

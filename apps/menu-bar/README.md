@@ -4,7 +4,7 @@ The optional Tauri macOS companion watches explicitly registered Calavera projec
 
 - Project registration and preferences stay in local application storage.
 - Only the registered project's recipe, artifact lock, and state files are read.
-- Checks run at launch and every six hours; registry traffic only happens during a check.
+- Checks run at launch, every six hours, or when **Check now** is selected; registry traffic only happens during a check. Manual refresh reuses any in-flight check and updates the visible project diagnostics when it completes.
 - Update buttons copy the exact command and open Terminal at the project. The app never executes a project update.
 - App updates open the corresponding GitHub release. Version 1 has no self-updater.
 

@@ -19,6 +19,16 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      - name: Verify release tag matches the app version
+        env:
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: |
+          APP_VERSION="$(node --input-type=module -e "import config from './apps/menu-bar/src-tauri/tauri.conf.json' with { type: 'json' }; process.stdout.write(config.version)")"
+          EXPECTED_TAG="menu-bar-v${APP_VERSION}"
+          if [ "$RELEASE_TAG" != "$EXPECTED_TAG" ]; then
+            echo "Release tag $RELEASE_TAG does not match app version $APP_VERSION (expected $EXPECTED_TAG)." >&2
+            exit 1
+          fi
       - run: pnpm install --frozen-lockfile --ignore-scripts
       - run: pnpm --filter @calavera/menu-bar test
       - run: pnpm --filter @calavera/menu-bar build:web

@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "com.schalkneethling.calavera",
   "build": {
-    "beforeDevCommand": "pnpm exec vite --host 127.0.0.1",
+    "beforeDevCommand": "pnpm exec vite --host 127.0.0.1 --port 1420 --strictPort",
     "devUrl": "http://127.0.0.1:1420",
     "beforeBuildCommand": "pnpm build:web",
     "frontendDist": "../dist"
