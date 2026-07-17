@@ -1,2 +1,3 @@
 packages/cli/src/ai/hooks/**/*.mjs
 github-issue-triage-report.html
+packages/baseline-core/data/baseline.json

@@ -499,10 +499,14 @@ for the MCP recipe composition workflow:
 2. `list_integrations`
 3. `describe_integration`
 4. `list_ai_artifacts`
-5. `compose_recipe`
-6. `validate_recipe`
-7. `explain_recipe`
-8. `download_recipe`
+5. `list_baseline_targets`
+6. `describe_baseline_target`
+7. `search_baseline_features`
+8. `recommend_baseline_target`
+9. `compose_recipe`
+10. `validate_recipe`
+11. `explain_recipe`
+12. `download_recipe`
 
 WebMCP uses the same shared recipe composition model as the standard MCP server,
 but it cannot inspect, dry-run, or apply files in a local project workspace from
@@ -515,12 +519,39 @@ Build the composer with:
 npm run web:build
 ```
 
+## Baseline targets
+
+The independently deployable Baseline Target Explorer explains Widely, Newly, and fixed-year targets, shows the matching Chrome, Edge, Firefox, and Safari versions, and recommends the earliest fixed target for selected CSS features.
+
+Recipes keep integrations as string IDs and carry optional integration-specific settings separately:
+
+```json
+{
+  "integrations": ["stylelint-baseline"],
+  "integrationOptions": {
+    "stylelint-baseline": {
+      "available": 2025,
+      "severity": "warning"
+    }
+  }
+}
+```
+
+`available` accepts `"widely"`, `"newly"`, or a supported fixed year. `severity` accepts `"warning"` or `"error"`. Options are rejected unless their integration is selected, and existing recipes without `integrationOptions` retain their previous Stylelint behavior.
+
+Build the Explorer independently with:
+
+```bash
+pnpm --filter @calavera/baseline-explorer build
+```
+
 ## Publishing
 
 Calavera publishes to npm from GitHub releases with npm trusted publishing. The
 repository workflow is `.github/workflows/publish.yml`, and npm should be
 configured with that workflow as a trusted publisher for
-`create-project-calavera`.
+`create-project-calavera` and each public workspace package, including
+`@schalkneethling/calavera-baseline-core`.
 
 Before the first trusted publish:
 

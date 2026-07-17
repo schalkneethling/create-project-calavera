@@ -1,6 +1,22 @@
 {
-  "name": "@calavera/baseline-core",
-  "version": "0.0.0",
-  "private": true,
-  "type": "module"
+  "name": "@schalkneethling/calavera-baseline-core",
+  "version": "0.1.0",
+  "files": [
+    "data",
+    "src"
+  ],
+  "type": "module",
+  "exports": "./src/index.js",
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  },
+  "scripts": {
+    "build:data": "node scripts/build-data.mjs",
+    "test": "node scripts/build-data.mjs --check && node --test test/*.test.mjs"
+  },
+  "dependencies": {
+    "baseline-browser-mapping": "2.10.43",
+    "web-features": "3.34.0"
+  }
 }

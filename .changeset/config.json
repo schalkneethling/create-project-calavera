@@ -9,7 +9,6 @@
   "updateInternalDependencies": "patch",
   "ignore": [
     "@calavera/artifact-core",
-    "@calavera/baseline-core",
     "@calavera/baseline-explorer",
     "@calavera/composer",
     "@calavera/menu-bar"

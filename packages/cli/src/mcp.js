@@ -6,6 +6,13 @@ import { realpathSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import * as z from "zod";
+import {
+  baselineMetadata,
+  describeBaselineTarget,
+  listBaselineTargets,
+  recommendBaselineTarget,
+  searchBaselineFeatures,
+} from "@schalkneethling/calavera-baseline-core";
 
 import { applyRecipeObject, inspectProject } from "./index.js";
 import {
@@ -46,6 +53,9 @@ const aiArtifactInputSchema = z.object({
   id: z.string().describe(recipeToolInputDescriptions.aiArtifactId),
   target: z.string().optional().describe(recipeToolInputDescriptions.aiArtifactTarget),
 });
+const baselineTargetSchema = z
+  .union([z.enum(["widely", "newly"]), z.number().int()])
+  .describe(recipeToolInputDescriptions.baselineTarget);
 
 const toolAnnotations = {
   read: {
@@ -95,6 +105,37 @@ const toolConfigs = {
     inputSchema: {},
     annotations: toolAnnotations.read,
   },
+  list_baseline_targets: {
+    description: recipeToolDescriptions.list_baseline_targets,
+    inputSchema: {},
+    annotations: toolAnnotations.read,
+  },
+  describe_baseline_target: {
+    description: recipeToolDescriptions.describe_baseline_target,
+    inputSchema: { target: baselineTargetSchema },
+    annotations: toolAnnotations.read,
+  },
+  search_baseline_features: {
+    description: recipeToolDescriptions.search_baseline_features,
+    inputSchema: {
+      query: z.string().describe(recipeToolInputDescriptions.baselineQuery),
+      limit: z
+        .number()
+        .int()
+        .min(1)
+        .max(100)
+        .optional()
+        .describe(recipeToolInputDescriptions.baselineLimit),
+    },
+    annotations: toolAnnotations.read,
+  },
+  recommend_baseline_target: {
+    description: recipeToolDescriptions.recommend_baseline_target,
+    inputSchema: {
+      features: z.array(z.string()).min(1).describe(recipeToolInputDescriptions.baselineFeatures),
+    },
+    annotations: toolAnnotations.read,
+  },
   compose_recipe: {
     description: recipeToolDescriptions.compose_recipe,
     inputSchema: {
@@ -108,6 +149,10 @@ const toolConfigs = {
         .array(aiArtifactInputSchema)
         .optional()
         .describe(recipeToolInputDescriptions.aiArtifacts),
+      integrationOptions: z
+        .record(z.string(), z.unknown())
+        .optional()
+        .describe(recipeToolInputDescriptions.integrationOptions),
     },
     annotations: toolAnnotations.read,
   },
@@ -237,6 +282,30 @@ function listAiArtifactsTool() {
   return listAiArtifactsResponse();
 }
 
+function listBaselineTargetsTool() {
+  return { metadata: baselineMetadata, targets: listBaselineTargets() };
+}
+
+/** @param {Record<string, unknown>} args */
+function describeBaselineTargetTool(args) {
+  return describeBaselineTarget(args.target);
+}
+
+/** @param {Record<string, unknown>} args */
+function searchBaselineFeaturesTool(args) {
+  const limit = typeof args.limit === "number" ? args.limit : undefined;
+  return {
+    metadata: baselineMetadata,
+    features: searchBaselineFeatures(args.query, { limit }),
+  };
+}
+
+/** @param {Record<string, unknown>} args */
+function recommendBaselineTargetTool(args) {
+  assertStringArray("features", args.features);
+  return recommendBaselineTarget(args.features);
+}
+
 /**
  * @param {Record<string, unknown>} args
  */
@@ -341,6 +410,14 @@ export async function callMcpTool(name, input = {}) {
       return describeIntegrationTool(args);
     case "list_ai_artifacts":
       return listAiArtifactsTool();
+    case "list_baseline_targets":
+      return listBaselineTargetsTool();
+    case "describe_baseline_target":
+      return describeBaselineTargetTool(args);
+    case "search_baseline_features":
+      return searchBaselineFeaturesTool(args);
+    case "recommend_baseline_target":
+      return recommendBaselineTargetTool(args);
     case "compose_recipe":
       return composeRecipeTool(args);
     case "validate_recipe":

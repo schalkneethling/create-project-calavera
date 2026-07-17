@@ -60,8 +60,12 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Build web composer
         run: pnpm web:build
+      - name: Build Baseline Explorer
+        run: pnpm --filter @calavera/baseline-explorer build
       - name: Pack package
-        run: pnpm --filter create-project-calavera pack --pack-destination ../../package
+        run: |
+          pnpm --filter create-project-calavera pack --pack-destination ../../package
+          pnpm --filter @schalkneethling/calavera-baseline-core pack --pack-destination ../../package
       - name: Upload package artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -96,10 +100,12 @@ jobs:
             echo "No package tarball found in package/."
             exit 1
           fi
-          if [ "${#tarballs[@]}" -gt 1 ]; then
-            echo "Expected exactly one package tarball in package/, found ${#tarballs[@]}."
-            printf '%s\n' "${tarballs[@]}"
-            exit 1
-          fi
-          tarball="${tarballs[0]}"
-          npm publish "$(realpath "$tarball")" --provenance --access public
+          for tarball in "${tarballs[@]}"; do
+            package_name=$(tar -xOf "$tarball" package/package.json | node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).name))')
+            package_version=$(tar -xOf "$tarball" package/package.json | node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).version))')
+            if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
+              echo "Skipping already published ${package_name}@${package_version}."
+              continue
+            fi
+            npm publish "$(realpath "$tarball")" --provenance --access public
+          done

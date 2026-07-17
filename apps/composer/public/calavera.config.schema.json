@@ -36,6 +36,16 @@
       },
       "uniqueItems": true
     },
+    "integrationOptions": {
+      "description": "Options keyed by selected or transitively included integration ID.",
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "stylelint-baseline": {
+          "$ref": "#/$defs/stylelintBaselineOptions"
+        }
+      }
+    },
     "scripts": {
       "description": "Boolean package script flags. Calavera generates scripts for known enabled flags when the selected integrations support them.",
       "type": "object",
@@ -77,7 +87,55 @@
       }
     }
   },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "integrationOptions": {
+            "type": "object",
+            "required": ["stylelint-baseline"]
+          }
+        },
+        "required": ["integrationOptions"]
+      },
+      "then": {
+        "properties": {
+          "integrations": {
+            "type": "array",
+            "contains": {
+              "const": "stylelint-baseline"
+            }
+          }
+        }
+      }
+    }
+  ],
   "$defs": {
+    "stylelintBaselineOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["available", "severity"],
+      "properties": {
+        "available": {
+          "description": "A moving or fixed Baseline availability target.",
+          "oneOf": [
+            {
+              "type": "string",
+              "enum": ["widely", "newly"]
+            },
+            {
+              "type": "integer",
+              "minimum": 2015,
+              "maximum": 2026
+            }
+          ]
+        },
+        "severity": {
+          "type": "string",
+          "enum": ["warning", "error"]
+        }
+      }
+    },
     "integrationId": {
       "type": "string",
       "enum": [

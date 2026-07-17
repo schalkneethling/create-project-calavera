@@ -85,6 +85,7 @@ const rootProperties = [
   "profile",
   "packageManager",
   "integrations",
+  "integrationOptions",
   "scripts",
   "ai",
 ];
@@ -136,6 +137,12 @@ test("published config schema is valid JSON Schema and validates the example con
   assertValid(validate, buildRecipe("modern", ["editorconfig"], "pnpm"));
   assertValid(
     validate,
+    buildRecipe("modern", ["stylelint-baseline"], "pnpm", [], {
+      "stylelint-baseline": { available: 2025, severity: "warning" },
+    }),
+  );
+  assertValid(
+    validate,
     buildRecipe("modern", ["editorconfig"], "pnpm", [
       { type: "skill", src: "skills/frontend-engineering" },
       { type: "hook", src: "hooks/block-dangerous-commands", target: DEFAULT_AI_TARGET },
@@ -153,6 +160,30 @@ test("config schema root shape matches the maintained recipe contract", () => {
 
 test("config schema integration enum stays in catalog order", () => {
   assert.deepEqual(schemaIntegrationIds, integrationIds);
+});
+
+test("config schema rejects invalid or detached Stylelint Baseline options", () => {
+  const validate = ajv.compile(schema);
+  const valid = buildRecipe("modern", ["stylelint-baseline"], "npm", [], {
+    "stylelint-baseline": { available: "newly", severity: "error" },
+  });
+
+  assertValid(validate, valid);
+  assert.equal(
+    validate({ ...valid, integrations: ["stylelint"] }),
+    false,
+    "options must reference a selected integration",
+  );
+  assert.equal(
+    validate({
+      ...valid,
+      integrationOptions: {
+        "stylelint-baseline": { available: 2025, severity: "warning", extra: true },
+      },
+    }),
+    false,
+    "unknown option fields must be rejected",
+  );
 });
 
 test("AI artifact catalog exposes unique complete recipe items", async () => {
@@ -303,7 +334,40 @@ test("shared composition normalizes explicit tool labels and package managers", 
     packageManager: "pnpm",
     tools: ["typescript", "eslint", "prettier"],
     aiArtifacts: undefined,
+    integrationOptions: undefined,
   });
+});
+
+test("shared composition normalizes Stylelint Baseline options", () => {
+  const recipe = composeRecipe({
+    profile: "modern",
+    tools: ["stylelint-baseline"],
+    integrationOptions: {
+      "stylelint-baseline": { available: "2025", severity: "error" },
+    },
+  });
+
+  assert.deepEqual(recipe.integrationOptions, {
+    "stylelint-baseline": { available: 2025, severity: "error" },
+  });
+  assert.throws(
+    () =>
+      composeRecipe({
+        profile: "modern",
+        tools: ["stylelint"],
+        integrationOptions: {
+          "stylelint-baseline": { available: 2025, severity: "warning" },
+        },
+      }),
+    /requires the stylelint-baseline integration/,
+  );
+  assert.throws(
+    () =>
+      buildRecipe("modern", ["stylelint-baseline"], "npm", [], {
+        "stylelint-baseline": { available: 2025, severity: "notice" },
+      }),
+    /warning or error/,
+  );
 });
 
 test("shared composition resolves duplicate tool labels within the active profile", () => {
@@ -756,6 +820,23 @@ test("standard MCP validation and dry-run tools return agent-readable JSON", asy
     dryRun.result.changes.some(({ path }) => path === ".agents/skills/frontend-engineering"),
     true,
   );
+});
+
+test("Baseline MCP tools expose the same recommendation contract as Baseline core", async () => {
+  const targets = await callMcpTool("list_baseline_targets");
+  const description = await callMcpTool("describe_baseline_target", { target: 2025 });
+  const search = await callMcpTool("search_baseline_features", { query: "nesting", limit: 5 });
+  const recommendation = await callMcpTool("recommend_baseline_target", {
+    features: ["nesting", "has"],
+  });
+
+  assert.ok(targets.targets.some(({ target }) => target === 2025));
+  assert.equal(description.target, 2025);
+  assert.ok(search.features.some(({ id }) => id === "nesting"));
+  assert.equal(recommendation.recommendedTarget, 2023);
+  assert.deepEqual(recommendation.integrationOptions, {
+    "stylelint-baseline": { available: 2023, severity: "warning" },
+  });
 });
 
 test("project inspection reports package manager, files, and conflict hints", async () => {
@@ -1715,6 +1796,32 @@ test("apply composes logical CSS Stylelint plugin metadata", async () => {
       true,
     );
     assert.equal(stylelintConfig.plugins.includes("stylelint-plugin-logical-css"), true);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("apply carries recipe Baseline options into the generated Stylelint rule", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-stylelint-baseline-options-"));
+  const recipe = buildRecipe("modern", ["stylelint-baseline"], "npm", [], {
+    "stylelint-baseline": { available: 2025, severity: "error" },
+  });
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
+    assert.deepEqual(stylelintConfig.rules["plugin/use-baseline"], [
+      true,
+      { available: 2025, severity: "error" },
+    ]);
   } finally {
     process.chdir(originalDirectory);
   }

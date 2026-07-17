@@ -123,6 +123,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string} [profile]
  * @property {PackageManager} [packageManager]
  * @property {string[]} [integrations]
+ * @property {Record<string, unknown>} [integrationOptions]
  * @property {Record<string, boolean>} [scripts]
  * @property {unknown} [ai]
  *
@@ -1022,9 +1023,10 @@ export default [
 
 /**
  * @param {Integration[]} integrations
+ * @param {Record<string, unknown>} [integrationOptions]
  * @returns {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }}
  */
-function createStylelintConfig(integrations) {
+function createStylelintConfig(integrations, integrationOptions = {}) {
   /** @type {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }} */
   const config = {
     extends: [],
@@ -1055,6 +1057,11 @@ function createStylelintConfig(integrations) {
 
   config.extends = unique(config.extends);
   config.plugins = unique(config.plugins);
+
+  const baselineOptions = integrationOptions["stylelint-baseline"];
+  if (baselineOptions) {
+    config.rules["plugin/use-baseline"] = [true, baselineOptions];
+  }
 
   return config;
 }
@@ -1290,9 +1297,10 @@ async function writeManagedJSONFile(
 
 /**
  * @param {Integration[]} integrations
+ * @param {Record<string, unknown>} [integrationOptions]
  * @returns {{ path: string, contents: string }[]}
  */
-function plannedManagedFiles(integrations) {
+function plannedManagedFiles(integrations, integrationOptions = {}) {
   const plans = [];
 
   if (integrations.some((integration) => integration.id === "editorconfig")) {
@@ -1324,7 +1332,7 @@ function plannedManagedFiles(integrations) {
   if (integrations.some((integration) => integration.id === "stylelint")) {
     plans.push({
       path: ".stylelintrc.json",
-      contents: `${JSON.stringify(createStylelintConfig(integrations), null, 2)}\n`,
+      contents: `${JSON.stringify(createStylelintConfig(integrations, integrationOptions), null, 2)}\n`,
     });
   }
 
@@ -1463,7 +1471,7 @@ export async function inspectProject(recipe, options = {}) {
     }
   }
 
-  for (const filePlan of plannedManagedFiles(integrations)) {
+  for (const filePlan of plannedManagedFiles(integrations, recipe?.integrationOptions)) {
     const finding = await inspectManagedFilePlan(filePlan, previousState, reownManagedFiles);
 
     if (finding) {
@@ -1573,7 +1581,7 @@ export async function applyRecipeObject(recipe, options = {}) {
   /** @type {ManagedFileState[]} */
   const managedFiles = [];
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
-  const managedFilePlans = plannedManagedFiles(integrations);
+  const managedFilePlans = plannedManagedFiles(integrations, recipe.integrationOptions);
 
   await assertSafeManagedFileWrites(managedFilePlans, previousState, reownManagedFiles);
 
@@ -1670,7 +1678,7 @@ export async function applyRecipeObject(recipe, options = {}) {
     managedFiles.push(
       await writeManagedJSONFile(
         ".stylelintrc.json",
-        createStylelintConfig(integrations),
+        createStylelintConfig(integrations, recipe.integrationOptions),
         applyOptions.dryRun,
         changes,
         previousState,
