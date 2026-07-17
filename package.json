@@ -13,7 +13,7 @@
     "quality": "pnpm lint && pnpm format:all:check && pnpm typecheck && pnpm test",
     "lint": "oxlint . && stylelint \"**/*.{css,scss}\" && pnpm lint:skills",
     "lint:fix": "oxlint --fix . && stylelint \"**/*.{css,scss}\" --fix",
-    "lint:skills": "uv run --frozen skillspector scan packages/cli/src/ai/skills --recursive --no-llm",
+    "lint:skills": "node scripts/lint-skills.mjs",
     "format": "oxfmt --write .",
     "format:all": "oxfmt --write .",
     "format:all:check": "oxfmt --check .",
