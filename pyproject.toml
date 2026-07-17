@@ -1,0 +1,10 @@
+[project]
+name = "calavera-lint-tools"
+version = "0.0.0"
+requires-python = ">=3.12"
+dependencies = [
+  "skillspector @ git+https://github.com/NVIDIA/skillspector.git@8f534e2951e0b7d0b8fb8e84832cd3605f95c032",
+]
+
+[tool.uv]
+package = false

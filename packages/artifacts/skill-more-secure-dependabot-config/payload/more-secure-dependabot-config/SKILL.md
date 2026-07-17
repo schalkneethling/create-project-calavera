@@ -112,7 +112,7 @@ without repeating every field verbatim.
 - **Always include `github-actions`** as an ecosystem, even if the user only asked
   about npm or another runtime ecosystem.
 - **YAML formatting**: two-space indentation, string values quoted, list items with
-  `- ` prefix. Validate indentation before emitting — malformed YAML is a silent
+  `-` prefix. Validate indentation before emitting — malformed YAML is a silent
   failure in Dependabot.
 
 ---

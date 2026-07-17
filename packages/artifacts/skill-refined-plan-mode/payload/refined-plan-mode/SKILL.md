@@ -20,7 +20,8 @@ Before deciding what to do, inspect the local `.plan-review` state:
 
 Then choose the next state transition:
 
-1. If `.plan-review/approved-plan.md` exists, read it and execute the approved plan carefully.
+0. Parse explicit checkpoint, handoff, feedback, review, or reset requests and dispatch that mode before considering execution.
+1. On explicit approval, copy the current plan version into `.plan-review/approved-plan.md` and record that version in the file. Only for `/rpm:advance` or an explicit proceed request, execute it after confirming its recorded version still matches `.plan-review/.current-version`.
 2. If a current version exists and `.plan-review/feedback/plan-vN-feedback.json` exists for it, read the current plan and feedback, address every feedback item in a revised next plan version, update `.plan-review/.current-version`, and stop for review.
 3. If a current version exists with no feedback and no approval, report that the plan is awaiting review and include the reviewer launch command.
 4. If no current plan exists, clarify only what is necessary, inspect the repository enough to produce a useful plan, write `.plan-review/plans/plan-v1.md`, write `v1` to `.plan-review/.current-version`, and stop for review.
@@ -80,7 +81,7 @@ Incorporate submitted feedback into the next plan version.
 3. Read `.plan-review/plans/plan-vN.md`.
 4. Address every feedback item in a revised plan, adding a `Feedback Addressed` section that maps comments to changes made.
 5. Write the revision to `.plan-review/plans/plan-vN+1.md`.
-6. Update `.plan-review/.current-version` to the new version.
+6. Remove any stale `.plan-review/approved-plan.md`, then update `.plan-review/.current-version` to the new version.
 7. Reply with a short note naming the feedback file read and the new plan file written.
 
 If the feedback file is missing, report the exact path expected and stop.
@@ -195,7 +196,7 @@ When feedback exists:
 
 ## Execution Gate
 
-Do not begin implementation from an unapproved plan unless the user explicitly asks you to proceed. Once `.plan-review/approved-plan.md` exists or the user directly approves the plan in conversation, execute the approved plan and keep the normal agent workflow: inspect files, make focused edits, validate, and report the outcome.
+Do not begin implementation from an unapproved plan unless the user explicitly asks you to proceed. When the user directly approves the current plan, first snapshot that exact version into `.plan-review/approved-plan.md`. Remove that snapshot whenever a revised plan version is written. Execute only when the snapshot's recorded version matches `.plan-review/.current-version`, then keep the normal agent workflow: inspect files, make focused edits, validate, and report the outcome.
 
 ## User Updates
 

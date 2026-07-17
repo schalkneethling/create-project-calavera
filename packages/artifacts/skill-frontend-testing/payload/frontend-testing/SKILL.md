@@ -227,14 +227,12 @@ test.describe("Login Page", () => {
 
 ## Locator Priority
 
-Use locators that reflect how users and assistive technologies find elements:
+Use locators that reflect how users and assistive technologies find elements. API names differ:
 
-1. **`getByRole`** — First choice. Queries accessibility tree.
-2. **`getByLabelText`** — Best for form fields. Users find inputs by labels.
-3. **`getByPlaceholderText`** — When no label exists (not ideal).
-4. **`getByText`** — For non-interactive elements.
-5. **`getByAltText`** — For images.
-6. **`getByTestId`** — Last resort escape hatch.
+- **Playwright**: prefer `getByRole`, then `getByLabel`, `getByPlaceholder`, `getByText`,
+  `getByAltText`, and finally `getByTestId`.
+- **Testing Library**: prefer `getByRole`, then `getByLabelText`, `getByPlaceholderText`,
+  `getByText`, `getByAltText`, and finally `getByTestId`.
 
 If you can't find an element with semantic queries, the UI may have accessibility issues.
 

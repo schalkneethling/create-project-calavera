@@ -392,6 +392,9 @@ test("dialog opens and closes", async ({ page }) => {
       - button "Save"
       - button "Cancel"
   `);
+
+  await page.getByRole("button", { name: "Cancel" }).click();
+  await expect(page.getByRole("dialog")).toBeHidden();
 });
 ```
 
@@ -400,6 +403,8 @@ test("dialog opens and closes", async ({ page }) => {
 ARIA snapshots validate structure. Combine with other assertions for complete coverage:
 
 ```javascript
+import AxeBuilder from "@axe-core/playwright";
+
 test("product page", async ({ page }) => {
   await page.goto("/products/123");
 
@@ -441,7 +446,7 @@ console.log(snapshot);
 
 The error shows expected vs actual:
 
-```
+```text
 Expected:
 - heading "Welcome" [level=1]
 - button "Sign In"

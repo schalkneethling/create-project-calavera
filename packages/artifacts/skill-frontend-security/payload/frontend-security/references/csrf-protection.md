@@ -18,8 +18,8 @@ function generateCSRFToken(session) {
 
 // Middleware validation
 function validateCSRF(req, res, next) {
-  const token = req.headers["x-csrf-token"] || req.body._csrf;
-  const sessionToken = req.session.csrfToken;
+  const token = req.headers["x-csrf-token"] || req.body?._csrf;
+  const sessionToken = req.session?.csrfToken;
 
   if (typeof token !== "string" || typeof sessionToken !== "string") {
     return res.status(403).json({ error: "Invalid CSRF token" });
@@ -155,6 +155,9 @@ cookie automatically. For AJAX-only clients, inject the token into the page or
 use a readable signed CSRF cookie only when that exposure is an accepted tradeoff;
 the server must still verify the signature and session binding.
 
+Install body parsing, session, and cookie parsing middleware before these handlers. Missing
+session or cookie state must fail closed rather than throw or bypass validation.
+
 ```javascript
 const crypto = require("crypto");
 
@@ -185,6 +188,7 @@ function constantTimeEqual(value, expected) {
 }
 
 function generateToken(req) {
+  if (typeof req.session?.id !== "string") return null;
   const nonce = crypto.randomBytes(32).toString("base64url");
   const signature = signToken(req.session.id, nonce);
   return `${nonce}.${signature}`;
@@ -192,6 +196,7 @@ function generateToken(req) {
 
 function sendToken(req, res, next) {
   const token = generateToken(req);
+  if (!token) return res.status(403).json({ error: "Invalid CSRF state" });
 
   res.cookie(CSRF_COOKIE_NAME, token, {
     httpOnly: true,
@@ -204,10 +209,11 @@ function sendToken(req, res, next) {
 }
 
 function verifyToken(req, res, next) {
-  const token = req.headers["x-csrf-token"] || req.body._csrf;
-  const cookieToken = req.cookies[CSRF_COOKIE_NAME];
+  const token = req.headers["x-csrf-token"] || req.body?._csrf;
+  const cookieToken = req.cookies?.[CSRF_COOKIE_NAME];
+  const sessionId = req.session?.id;
 
-  if (!constantTimeEqual(token, cookieToken)) {
+  if (typeof sessionId !== "string" || !constantTimeEqual(token, cookieToken)) {
     return res.status(403).json({ error: "Invalid CSRF token" });
   }
 
@@ -216,7 +222,7 @@ function verifyToken(req, res, next) {
     return res.status(403).json({ error: "Invalid CSRF token" });
   }
 
-  if (!constantTimeEqual(signature, signToken(req.session.id, nonce))) {
+  if (!constantTimeEqual(signature, signToken(sessionId, nonce))) {
     return res.status(403).json({ error: "Invalid CSRF token" });
   }
 

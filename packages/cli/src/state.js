@@ -1,5 +1,6 @@
 // @ts-check
 import { isNotEmptyString, isPlainObject, isStringArray } from "./utils/guards.js";
+import { assertSafeRelativePath } from "./utils/fs.js";
 
 /**
  * @typedef {import("./ai/artifacts.js").AiArtifactState} AiArtifactState
@@ -68,7 +69,10 @@ function normalizeManagedFiles(value) {
     throw new Error("Calavera state contains invalid managedFiles entries.");
   }
 
-  return /** @type {ManagedFileState[]} */ (value);
+  return /** @type {ManagedFileState[]} */ (value).map((file) => ({
+    ...file,
+    path: assertSafeRelativePath(file.path, "Managed file path"),
+  }));
 }
 
 /**
@@ -96,7 +100,10 @@ function normalizeAiArtifacts(value) {
     throw new Error("Calavera state contains invalid aiArtifacts entries.");
   }
 
-  return /** @type {AiArtifactState[]} */ (value);
+  return /** @type {AiArtifactState[]} */ (value).map((artifact) => ({
+    ...artifact,
+    path: assertSafeRelativePath(artifact.path, "AI artifact path"),
+  }));
 }
 
 /**
