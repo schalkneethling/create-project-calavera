@@ -7,65 +7,17 @@
  *
  * Exit 0  = defers to permission prompt
  */
-import { readFileSync } from "node:fs";
 // --- Safe command patterns ---
 //
 // Each entry is a pattern and a label for logging purposes.
 // Order matters — more specific patterns should come before broader ones.
 const SAFE_PATTERNS = [
-    // Test runners
-    { pattern: /^npm\s+test\b/, label: "npm test" },
-    { pattern: /^npx\s+vitest\b/, label: "vitest" },
-    { pattern: /^vp\s+test\b/, label: "vp test" },
-    { pattern: /^pnpm\s+test\b/, label: "pnpm test" },
-    { pattern: /^yarn\s+test\b/, label: "yarn test" },
-    { pattern: /^bun\s+test\b/, label: "bun test" },
-    { pattern: /^jest\b/, label: "jest" },
-    { pattern: /^vitest\b/, label: "vitest (direct)" },
-    // Linting and formatting (analysis only, never destructive)
-    { pattern: /^npm\s+run\s+lint\b/, label: "npm run lint" },
-    { pattern: /^pnpm\s+run\s+lint\b/, label: "pnpm run lint" },
-    { pattern: /^yarn\s+lint\b/, label: "yarn lint" },
-    { pattern: /^bun\s+run\s+lint\b/, label: "bun run lint" },
-    { pattern: /^eslint\b/, label: "eslint" },
-    { pattern: /^prettier\s+--check\b/, label: "prettier --check" },
-    { pattern: /^stylelint\b/, label: "stylelint" },
-    // Type checking
-    { pattern: /^tsc\s+--noEmit\b/, label: "tsc --noEmit" },
-    { pattern: /^npx\s+tsc\s+--noEmit\b/, label: "npx tsc --noEmit" },
-    { pattern: /^npm\s+run\s+typecheck\b/, label: "npm run typecheck" },
-    { pattern: /^pnpm\s+run\s+typecheck\b/, label: "pnpm run typecheck" },
-    { pattern: /^bun\s+run\s+typecheck\b/, label: "bun run typecheck" },
-    // Build commands
-    { pattern: /^npm\s+run\s+build\b/, label: "npm run build" },
-    { pattern: /^pnpm\s+run\s+build\b/, label: "pnpm run build" },
-    { pattern: /^yarn\s+build\b/, label: "yarn build" },
-    { pattern: /^bun\s+run\s+build\b/, label: "bun run build" },
-    { pattern: /^vite\s+build\b/, label: "vite build" },
-    { pattern: /^tsc\b/, label: "tsc" },
-    // Vite+ (vp) commands - https://viteplus.dev/guide/#core-commands
-    { pattern: /^vp\s+test\b/, label: "vp test" },
-    { pattern: /^vp\s+check\b/, label: "vp check" },
-    { pattern: /^vp\s+lint\b/, label: "vp lint" },
-    { pattern: /^vp\s+fmt\b/, label: "vp fmt" },
-    { pattern: /^vp\s+build\b/, label: "vp build" },
-    { pattern: /^vp\s+dev\b/, label: "vp dev" },
-    { pattern: /^vp\s+preview\b/, label: "vp preview" },
-    { pattern: /^vp\s+outdated\b/, label: "vp outdated" },
-    { pattern: /^vp\s+why\b/, label: "vp why" },
-    { pattern: /^vp\s+info\b/, label: "vp info" },
-    // Dev server
-    { pattern: /^npm\s+run\s+dev\b/, label: "npm run dev" },
-    { pattern: /^pnpm\s+run\s+dev\b/, label: "pnpm run dev" },
-    { pattern: /^yarn\s+dev\b/, label: "yarn dev" },
-    { pattern: /^bun\s+run\s+dev\b/, label: "bun run dev" },
-    { pattern: /^vite\b/, label: "vite" },
     // Git read operations (no side effects)
-    { pattern: /^git\s+status\b/, label: "git status" },
-    { pattern: /^git\s+log\b/, label: "git log" },
-    { pattern: /^git\s+diff\b/, label: "git diff" },
-    { pattern: /^git\s+branch\b/, label: "git branch" },
-    { pattern: /^git\s+show\b/, label: "git show" },
+    { pattern: /^git\s+status(?:\s+--(?:short|branch|porcelain(?:=v[12])?))*$/, label: "git status" },
+    { pattern: /^git\s+log(?:\s+--oneline)?$/, label: "git log" },
+    { pattern: /^git\s+diff(?:\s+--(?:stat|name-only|name-status|check|cached|staged))*$/, label: "git diff" },
+    { pattern: /^git\s+branch(?:\s+--show-current)?$/, label: "git branch" },
+    { pattern: /^git\s+show(?:\s+--(?:stat|oneline))?$/, label: "git show" },
     // Filesystem reads
     { pattern: /^cat\b/, label: "cat" },
     { pattern: /^ls\b/, label: "ls" },
@@ -103,15 +55,21 @@ function approve() {
         },
     };
     process.stdout.write(JSON.stringify(output) + "\n");
-    process.exit(0);
+    process.exitCode = 0;
 }
 function defer() {
     // Exit 0 with no output — falls through to the normal permission prompt
-    process.exit(0);
+    process.exitCode = 0;
 }
 // --- Main ---
-function main() {
-    const raw = readFileSync("/dev/stdin", "utf-8").trim();
+async function readStdin() {
+    const chunks = [];
+    for await (const chunk of process.stdin)
+        chunks.push(chunk);
+    return Buffer.concat(chunks).toString("utf8");
+}
+async function main() {
+    const raw = (await readStdin()).trim();
     let input;
     try {
         input = JSON.parse(raw);
@@ -150,4 +108,4 @@ function main() {
     // Not on the allowlist — fall through to normal permission prompt
     defer();
 }
-main();
+main().catch(() => defer());

@@ -177,6 +177,20 @@ test("config schema rejects invalid or detached Stylelint Baseline options", () 
   );
 });
 
+test("config schema requires legacy AI paths to match their artifact type", () => {
+  const validate = ajv.compile(schema);
+  const recipe = buildRecipe("minimal", [], "npm");
+
+  for (const ai of [
+    [{ type: "skill", src: "hooks/example" }],
+    [{ type: "hook", src: "skills/example" }],
+    [{ type: "agent", src: "agents/example" }],
+    [{ type: "agent", src: "skills/example.md" }],
+  ]) {
+    assert.equal(validate({ ...recipe, ai }), false, JSON.stringify(ai));
+  }
+});
+
 test("AI artifact catalog exposes unique complete recipe items", async () => {
   const ids = new Set();
 

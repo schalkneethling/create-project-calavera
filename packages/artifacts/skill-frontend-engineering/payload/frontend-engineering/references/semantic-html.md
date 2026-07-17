@@ -322,11 +322,13 @@ Approaches (choose the simplest):
   <span class="visually-hidden">Nike Pegasus 41</span>
 </button>
 
-<!-- Option 3: aria-describedby pointing to the product heading -->
+<!-- Option 3: aria-labelledby combines the action and product heading -->
 <article>
   <h3 id="product-42">Nike Pegasus 41</h3>
   ...
-  <button aria-describedby="product-42">Add to cart</button>
+  <button aria-labelledby="add-label-42 product-42">
+    <span id="add-label-42">Add to cart</span>
+  </button>
 </article>
 ```
 

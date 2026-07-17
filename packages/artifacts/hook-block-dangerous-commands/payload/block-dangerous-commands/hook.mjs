@@ -21,8 +21,8 @@ const rules = [
     },
     {
         id: "git-push-protected",
-        test: (c) => /\bgit\s+push\b(?:\s+\S+)*\s+(?:origin\s+)?(?:main|master|production|prod|release)(?:\s|$)/.test(c) ||
-            /\bgit\s+push\b.*\S+:(?:refs\/heads\/)?(?:main|master|production|prod|release)(?:\s|$)/.test(c),
+        test: (c) => /\bgit\s+push\b(?:\s+\S+)*\s+(?:origin\s+)?\+?(?:main|master|production|prod|release)(?:\s|$)/.test(c) ||
+            /\bgit\s+push\b.*(?:^|\s)\+?\S+:(?:refs\/heads\/)?(?:main|master|production|prod|release)(?:\s|$)/.test(c),
         message: "Direct push to a protected branch (main/master/production/prod/release) is blocked. Open a pull request instead.",
     },
     {
@@ -32,7 +32,7 @@ const rules = [
     },
     {
         id: "chmod-777",
-        test: (c) => /\bchmod\s+(?:-[a-zA-Z]*\s+)*(?:777|[ugoa]*[+=][rwx]*w[rwx]*(?:\s|$))/.test(c) &&
+        test: (c) => /\bchmod\s+(?:(?:-[a-zA-Z]+|--[a-zA-Z-]+)\s+)*(?:777|[ugoa]*[+=][rwx]*w[rwx]*(?:\s|$))/.test(c) &&
             /-R|--recursive|777/.test(c),
         message: "`chmod 777` or recursive world-writable chmod is blocked. Grant the minimum permissions required.",
     },
@@ -53,7 +53,7 @@ const rules = [
     },
     {
         id: "curl-pipe-shell",
-        test: (c) => /\b(?:curl|wget|fetch)\b[^|;]*\|\s*(?:sudo\s+)?(?:bash|sh|zsh|fish|ksh|dash)\b/.test(c),
+        test: (c) => /\b(?:curl|wget|fetch)\b[^|;]*\|\s*(?:sudo\s+)?(?:(?:\/usr\/bin\/env\s+)|(?:\/(?:usr\/)?bin\/))?(?:bash|sh|zsh|fish|ksh|dash)\b/.test(c),
         message: "Piping remote content directly into a shell is blocked. Download the script, inspect it, then run it.",
     },
     {
@@ -92,30 +92,30 @@ function deny(reason) {
         },
     };
     process.stdout.write(JSON.stringify(output));
-    process.exit(2);
+    process.exitCode = 2;
 }
 async function main() {
     let payload;
     try {
         const raw = await readStdin();
         if (!raw.trim()) {
-            process.exit(0);
+            return;
         }
         payload = JSON.parse(raw);
     }
     catch {
-        process.exit(0);
+        return;
     }
     const command = payload?.tool_input?.command;
     if (typeof command !== "string" || command.length === 0) {
-        process.exit(0);
+        return;
     }
     for (const rule of rules) {
         if (rule.test(command)) {
             deny(`[${rule.id}] ${rule.message}`);
+            return;
         }
     }
-    process.exit(0);
 }
-main().catch(() => process.exit(0));
+main().catch(() => undefined);
 export {};

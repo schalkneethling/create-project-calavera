@@ -15,7 +15,7 @@ common source of validation bypasses.
 // PREFERRED: Allowlist (accept known good)
 function validateUsername(input) {
   const allowedPattern = /^[a-zA-Z0-9_]{3,20}$/;
-  return allowedPattern.test(input);
+  return typeof input === "string" && allowedPattern.test(input);
 }
 
 // AVOID: Denylist (block known bad)
@@ -32,6 +32,7 @@ function validateInput(input) {
 ```javascript
 // Basic validation (server should still verify)
 function validateEmail(email) {
+  if (typeof email !== "string") return false;
   // Simple pattern - not comprehensive but catches most issues
   const pattern = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
   return pattern.test(email) && email.length <= 254;
@@ -122,7 +123,9 @@ function parseIsoDateOnly(input) {
   if (typeof input !== "string" || !/^\d{4}-\d{2}-\d{2}$/.test(input)) return null;
 
   const [year, month, day] = input.split("-").map(Number);
-  const date = new Date(Date.UTC(year, month - 1, day));
+  const date = new Date(0);
+  date.setUTCHours(0, 0, 0, 0);
+  date.setUTCFullYear(year, month - 1, day);
 
   if (
     date.getUTCFullYear() !== year ||
@@ -154,6 +157,7 @@ differently for ambiguous inputs. Prefer explicit formats and round-trip checks.
 ```javascript
 // International format
 function validatePhone(input) {
+  if (typeof input !== "string") return false;
   // E.164 format: +[country][number], max 15 digits
   const pattern = /^\+[1-9]\d{1,14}$/;
   return pattern.test(input.replace(/[\s\-()]/g, ""));
@@ -231,19 +235,23 @@ db.query(query, [userInput]);
 ### Path Traversal Prevention
 
 ```javascript
-const path = require("path");
+const { constants } = require("node:fs");
+const fs = require("node:fs/promises");
+const path = require("node:path");
 
-function validateFilePath(userPath, baseDir) {
-  const baseCanonical = path.resolve(baseDir);
-  const resolved = path.resolve(baseDir, userPath);
-  const relativePath = path.relative(baseCanonical, resolved);
+// Keep baseDir trusted and non-writable by the request user.
+async function openValidatedFile(userPath, baseDir) {
+  const baseCanonical = await fs.realpath(baseDir);
+  const targetCanonical = await fs.realpath(path.resolve(baseCanonical, userPath));
+  const relativePath = path.relative(baseCanonical, targetCanonical);
 
-  // Ensure resolved path stays inside the base directory
   if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
     throw new Error("Path traversal detected");
   }
 
-  return resolved;
+  // O_NOFOLLOW rejects a final-component symlink swap. Trusted, non-writable
+  // parent directories prevent intermediate-component replacement.
+  return fs.open(targetCanonical, constants.O_RDONLY | constants.O_NOFOLLOW);
 }
 ```
 

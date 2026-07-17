@@ -111,8 +111,10 @@ const allowedComponents = {
   'button': () => import('./Button.astro')
 };
 
+if (!Object.hasOwn(allowedComponents, userInput)) {
+  throw new Error('Invalid component');
+}
 const loadComponent = allowedComponents[userInput];
-if (!loadComponent) throw new Error('Invalid component');
 const Component = await loadComponent();
 ---
 ```
@@ -234,20 +236,28 @@ Bun.serve({
 ### File Handling
 
 ```javascript
-const path = require("path");
+const { constants } = require("node:fs");
+const fs = require("node:fs/promises");
+const path = require("node:path");
 
-// Validate file paths
-function safeReadFile(userPath) {
-  const baseDir = "/app/public";
-  const safeBaseDir = path.resolve(baseDir);
-  const resolved = path.resolve(safeBaseDir, userPath);
-  const relativePath = path.relative(safeBaseDir, resolved);
+// Keep baseDir trusted and non-writable by the request user.
+async function safeReadFile(userPath) {
+  const baseCanonical = await fs.realpath("/app/public");
+  const targetCanonical = await fs.realpath(path.resolve(baseCanonical, userPath));
+  const relativePath = path.relative(baseCanonical, targetCanonical);
 
   if (relativePath.startsWith("..") || path.isAbsolute(relativePath)) {
     throw new Error("Path traversal detected");
   }
 
-  return Bun.file(resolved).text();
+  // O_NOFOLLOW rejects a final-component symlink swap. Trusted, non-writable
+  // parent directories prevent intermediate-component replacement.
+  const file = await fs.open(targetCanonical, constants.O_RDONLY | constants.O_NOFOLLOW);
+  try {
+    return await file.readFile("utf8");
+  } finally {
+    await file.close();
+  }
 }
 ```
 

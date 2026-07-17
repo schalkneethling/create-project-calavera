@@ -191,6 +191,8 @@ async function saveValidatedUpload(file) {
 
 ```javascript
 const contentDisposition = require("content-disposition");
+const fs = require("node:fs");
+const fsPromises = require("node:fs/promises");
 const { pipeline } = require("stream/promises");
 
 // Serve files through application, not directly
@@ -205,7 +207,13 @@ app.get("/files/:id", async (req, res) => {
   if (!fileRecord) return res.status(404).send("Not found");
   if (fileRecord.status !== "available") return res.status(404).send("Not found");
 
-  // Set safe headers
+  try {
+    await fsPromises.stat(fileRecord.path);
+  } catch {
+    return res.status(404).send("Not found");
+  }
+
+  // Set safe headers only after confirming that the file can be opened.
   res.setHeader("Content-Type", fileRecord.mimeType);
   res.setHeader(
     "Content-Disposition",
@@ -221,7 +229,7 @@ app.get("/files/:id", async (req, res) => {
       res.status(404).send("Not found");
       return;
     }
-    req.destroy(error);
+    res.destroy(error);
   }
 });
 ```
@@ -275,16 +283,16 @@ async function quarantineUpload({ buffer, detected, originalName, userId }) {
 }
 
 async function releaseAfterScan(fileRecord, cleanPath, releaseMetadata) {
-  if (fileRecord.status !== "quarantined") {
-    throw new Error("Only quarantined files can be released");
-  }
-
   const storageName = `${crypto.randomUUID()}${releaseMetadata.extension}`;
   const storagePath = path.join(UPLOAD_DIR, storageName);
+  const claimed = await db.compareAndSetFileStatus(fileRecord.id, "quarantined", "releasing");
+  if (!claimed) throw new Error("Only one worker can release a quarantined file");
 
-  await fs.rename(cleanPath, storagePath);
+  let moved = false;
   try {
-    await db.updateFile(fileRecord.id, {
+    await fs.rename(cleanPath, storagePath);
+    moved = true;
+    const released = await db.updateFileIfStatus(fileRecord.id, "releasing", {
       storageName,
       storagePath,
       storageRoot: "uploads",
@@ -292,12 +300,18 @@ async function releaseAfterScan(fileRecord, cleanPath, releaseMetadata) {
       size: releaseMetadata.size,
       status: "available",
     });
+    if (!released) throw new Error("Release claim was lost");
   } catch (error) {
-    await fs.rename(storagePath, cleanPath).catch(() => {});
+    if (moved) await fs.rename(storagePath, cleanPath).catch(() => {});
+    await db.compareAndSetFileStatus(fileRecord.id, "releasing", "quarantined");
     throw error;
   }
 }
 ```
+
+Run a reconciliation job for records left in `releasing` after a worker crash. It should inspect
+the quarantine and destination paths, then either complete the `available` update or move the file
+back and conditionally restore `quarantined`. Alert when neither safe recovery is possible.
 
 The scanner can be antivirus, sandbox detonation, CDR, image re-encoding, or a
 manual review queue depending on file type and risk. Avoid sending sensitive
@@ -581,21 +595,22 @@ const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif"];
 const upload = multer({
   storage: multer.memoryStorage(),
   limits: { fileSize: MAX_FILE_SIZE },
-  fileFilter: (req, file, cb) => {
-    // Early rejection only. Validate actual content after upload.
-    if (!ALLOWED_TYPES.includes(file.mimetype)) {
-      cb(new multer.MulterError("LIMIT_UNEXPECTED_FILE"));
-      return;
-    }
-    cb(null, true);
-  },
+  // Client-provided MIME types are advisory. Validate the buffered bytes below.
+  fileFilter: (req, file, cb) => cb(null, true),
 });
 
 // Upload endpoint
 app.post(
   "/upload",
   requireAuth, // Authentication
-  verifyToken, // CSRF token
+  (req, res, next) => {
+    // Multipart bodies are not parsed yet, so this route requires the token header.
+    if (typeof req.headers["x-csrf-token"] !== "string") {
+      return res.status(403).json({ error: "Missing CSRF token header" });
+    }
+    next();
+  },
+  verifyToken, // Verify the header token before accepting upload bytes.
   upload.single("file"), // File handling
   async (req, res) => {
     try {

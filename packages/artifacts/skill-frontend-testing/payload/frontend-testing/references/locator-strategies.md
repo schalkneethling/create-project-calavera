@@ -2,9 +2,10 @@
 
 Locators determine how tests find elements. Good locators are resilient to implementation changes while verifying accessibility.
 
-## Priority Hierarchy
+## Accessibility-Focused Locator Principle
 
-Both Playwright and Testing Library recommend this order. Each level provides accessibility verification as a byproduct.
+Both libraries prioritize user-facing semantics, but their APIs and complete priority lists differ.
+Use the library-specific names shown below rather than treating this as one identical ordering.
 
 ### 1. Accessible Roles (First Choice)
 
@@ -164,10 +165,12 @@ within(form).getByLabelText("Email");
 When strict matching fails:
 
 ```javascript
-// Get all, then filter
-const buttons = await page.getByRole("button").all();
-const buttonTexts = await Promise.all(buttons.map((button) => button.textContent()));
-const deleteButtons = buttons.filter((button, index) => buttonTexts[index]?.includes("Delete"));
+// Filter first and wait for the expected stable result set.
+const deleteButtons = page.getByRole("button", { name: /delete/i });
+await expect(deleteButtons).toHaveCount(3);
+for (let index = 0; index < (await deleteButtons.count()); index++) {
+  await expect(deleteButtons.nth(index)).toBeVisible();
+}
 
 // Or be more specific with the query
 page.getByRole("button", { name: "Delete", exact: true });
@@ -260,8 +263,8 @@ page.getByRole("alert");
 ### Playwright
 
 ```javascript
-// Log all accessible elements
-await page.getByRole("button").evaluateAll((buttons) => buttons.map((b) => b.textContent));
+// Log all button text
+console.log(await page.getByRole("button").allTextContents());
 
 // Use Playwright Inspector
 // npx playwright test --debug

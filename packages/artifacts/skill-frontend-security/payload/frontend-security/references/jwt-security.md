@@ -7,8 +7,8 @@
 Attack: Attacker changes algorithm to "none" to bypass signature verification.
 
 ```javascript
-// VULNERABLE - accepts any algorithm
-const decoded = jwt.verify(token, secret);
+// VULNERABLE - explicitly accepts unsigned tokens
+const decoded = jwt.verify(token, null, { algorithms: ["none"] });
 
 // SECURE - explicitly specify allowed algorithms
 const decoded = jwt.verify(token, secret, {
@@ -21,8 +21,10 @@ const decoded = jwt.verify(token, secret, {
 Attack: Switching from RS256 to HS256 using public key as secret.
 
 ```javascript
-// VULNERABLE - auto-detects algorithm
-const decoded = jwt.verify(token, publicKey);
+// VULNERABLE - disables the asymmetric key-type safety check for compatibility
+const decoded = jwt.verify(token, publicKey, {
+  allowInvalidAsymmetricKeyTypes: true,
+});
 
 // SECURE - specify expected algorithm
 const decoded = jwt.verify(token, publicKey, {
@@ -38,9 +40,12 @@ Attack: Brute-force weak HMAC secrets.
 // VULNERABLE - weak secret
 const token = jwt.sign(payload, "password123");
 
-// SECURE - strong random secret (256+ bits)
-const crypto = require("crypto");
-const secret = crypto.randomBytes(32); // 256 bits
+// SECURE - stable secret provisioned by a secret manager (256+ bits)
+const crypto = require("node:crypto");
+const fs = require("node:fs");
+if (typeof process.env.JWT_SECRET_BASE64 !== "string") throw new Error("Missing JWT secret");
+const secret = Buffer.from(process.env.JWT_SECRET_BASE64, "base64");
+if (secret.length < 32) throw new Error("JWT secret must contain at least 256 bits");
 const token = jwt.sign(payload, secret);
 
 // Or use RSA keys
@@ -79,8 +84,11 @@ res.cookie("__Secure-Fgp", fingerprint, {
 });
 
 // Validate both token and fingerprint
-function validateToken(token, fingerprintCookie) {
+function validateToken(token, fingerprintCookie, { requireFingerprint = false } = {}) {
   const decoded = jwt.verify(token, secret, { algorithms: ["HS256"] });
+
+  if (!requireFingerprint) return decoded;
+  if (typeof fingerprintCookie !== "string") throw new Error("Missing fingerprint cookie");
 
   const fingerprintHash = crypto.createHash("sha256").update(fingerprintCookie).digest("hex");
 
@@ -180,8 +188,20 @@ chosen for the client architecture.
 // Short-lived access tokens (15-60 minutes)
 const accessToken = jwt.sign(payload, secret, { expiresIn: "15m" });
 
-// Longer refresh tokens (days/weeks)
-const refreshToken = jwt.sign({ sub: userId, type: "refresh" }, refreshSecret, { expiresIn: "7d" });
+// Use Redis or another shared durable store in production. Atomic consume is
+// required so two requests cannot rotate the same refresh token.
+const activeRefreshTokens = new Map();
+
+function issueRefreshToken(userId) {
+  const jti = crypto.randomUUID();
+  const token = jwt.sign({ sub: userId, type: "refresh", jti }, refreshSecret, {
+    expiresIn: "7d",
+  });
+  activeRefreshTokens.set(jti, userId);
+  return token;
+}
+
+const refreshToken = issueRefreshToken(userId);
 
 // Refresh endpoint
 app.post("/refresh", async (req, res) => {
@@ -196,17 +216,20 @@ app.post("/refresh", async (req, res) => {
       throw new Error("Invalid token type");
     }
 
-    // Check if refresh token is revoked
-    if (await isTokenRevoked(decoded)) {
+    if (!decoded.jti || activeRefreshTokens.get(decoded.jti) !== decoded.sub) {
       throw new Error("Token revoked");
     }
+
+    // In production, replace this Map operation with an atomic get-and-delete.
+    activeRefreshTokens.delete(decoded.jti);
 
     // Issue new access token
     const newAccessToken = jwt.sign({ sub: decoded.sub, jti: crypto.randomUUID() }, secret, {
       expiresIn: "15m",
     });
+    const newRefreshToken = issueRefreshToken(decoded.sub);
 
-    res.json({ accessToken: newAccessToken });
+    res.json({ accessToken: newAccessToken, refreshToken: newRefreshToken });
   } catch (error) {
     res.status(401).json({ error: "Invalid refresh token" });
   }

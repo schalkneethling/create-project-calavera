@@ -215,20 +215,23 @@ setInterval(string); // Never pass strings
 // Sender - specify exact origin
 targetWindow.postMessage(data, "https://trusted-domain.com");
 
-// Receiver - always validate origin
+const trustedWindow = targetWindow;
+const messageValidators = {
+  resize: (data) => Number.isInteger(data.height) && data.height >= 0 && data.height <= 10_000,
+  navigate: (data) => typeof data.path === "string" && data.path.startsWith("/account/"),
+};
+
+// Receiver - validate origin, sender, message type, and type-specific fields.
 window.addEventListener("message", (event) => {
-  // Validate origin
-  if (event.origin !== "https://trusted-domain.com") {
-    return;
-  }
+  if (event.origin !== "https://trusted-domain.com" || event.source !== trustedWindow) return;
 
-  // Validate data structure
-  if (event.data === null || typeof event.data !== "object" || !event.data.type) {
-    return;
-  }
+  const data = event.data;
+  if (data === null || typeof data !== "object" || typeof data.type !== "string") return;
+  if (!Object.hasOwn(messageValidators, data.type)) return;
+  const validate = messageValidators[data.type];
+  if (!validate(data)) return;
 
-  // Process trusted message
-  handleMessage(event.data);
+  handleMessage(data);
 });
 ```
 

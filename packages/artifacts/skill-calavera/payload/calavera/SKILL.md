@@ -49,7 +49,7 @@ For manual MCP setup, use `npx --package create-project-calavera@<version> creat
 
 After registering the MCP server, reload or restart the agent session if the MCP host does not discover new tools dynamically. Confirm the Calavera tools are visible before composing a recipe.
 
-`npm create` needs `--` before Calavera flags, for example `npm create project-calavera -- --init`. Direct binary launchers such as `npx --package create-project-calavera create-project-calavera --help` do not need an extra `--` before Calavera flags. Avoid `npx --package create-project-calavera create-project-calavera -- --help`; MCP registrations launch `create-project-calavera-mcp` directly and should not add `--help`.
+`npm create` needs `--` before Calavera flags, for example `npm create project-calavera -- --init`. Direct binary launchers such as `npx --package create-project-calavera@<version> create-project-calavera --help` do not need an extra `--` before Calavera flags. Avoid `npx --package create-project-calavera@<version> create-project-calavera -- --help`; MCP registrations launch `create-project-calavera-mcp` directly and should not add `--help`.
 
 If a Bun-based MCP launch fails before Calavera starts with `error: bun is unable to write files to tempdir: PermissionDenied`, configure the MCP host to set `TMPDIR` to an absolute writable directory for that server. If Bun's package cache is also restricted, set `BUN_INSTALL_CACHE_DIR` to an absolute writable cache directory. Keep these overrides on Bun registrations only; they are recovery settings for restricted hosts, not default Calavera MCP config.
 
