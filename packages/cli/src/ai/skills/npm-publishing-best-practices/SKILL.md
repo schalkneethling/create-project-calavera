@@ -88,7 +88,7 @@ User or authenticated UI/API access required:
 > | npm                               | pnpm                                              | yarn                                              |
 > | --------------------------------- | ------------------------------------------------- | ------------------------------------------------- |
 > | `npm ci --ignore-scripts`         | `pnpm install --frozen-lockfile --ignore-scripts` | `yarn install --frozen-lockfile --ignore-scripts` |
-> | `npm i -g npm`                    | `pnpm add -g pnpm`                                | `yarn set version stable`                         |
+> | `npm i -g npm@12.0.1`             | `pnpm add -g pnpm@11.13.1`                        | `yarn set version 4.17.1`                         |
 > | `ignore-scripts=true` in `.npmrc` | `ignore-scripts=true` in `.npmrc`                 | `enableScripts: false` in `.yarnrc.yml`           |
 >
 > Detect the project's package manager by checking for a lockfile (`pnpm-lock.yaml`,
@@ -175,7 +175,7 @@ Node.js 22.14.0 or newer can use trusted publishing when the workflow installs n
 newer before publishing:
 
 ```yaml
-- run: npm i -g npm
+- run: npm i -g npm@12.0.1
 ```
 
 ---
