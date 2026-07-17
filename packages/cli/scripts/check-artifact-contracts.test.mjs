@@ -20,6 +20,11 @@ function assertInvalid(validate, value) {
   assert.equal(validate(value), false, "Expected contract validation to fail");
 }
 
+function assertInvalidAt(validate, value, instancePath) {
+  assertInvalid(validate, value);
+  assert.ok(validate.errors?.some((error) => error.instancePath === instancePath));
+}
+
 test("artifact schemas are valid draft 2020-12 schemas", () => {
   assert.equal(ajv.validateSchema(manifestSchema), true, ajv.errorsText(ajv.errors));
   assert.equal(ajv.validateSchema(lockSchema), true, ajv.errorsText(ajv.errors));
@@ -67,6 +72,16 @@ test("artifact manifest rejects mismatched types, unsafe payloads, and missing t
     payload: "artifact",
     compatibility: { calavera: ">=2.2.0" },
   });
+  for (const payload of [".", "./payload", "dir/./payload"]) {
+    assertInvalid(validate, {
+      schemaVersion: 1,
+      id: "skill-frontend-engineering",
+      type: "skill",
+      displayName: "Dot segment",
+      payload,
+      compatibility: { calavera: ">=2.2.0" },
+    });
+  }
   assertInvalid(validate, {
     schemaVersion: 1,
     id: "skill-frontend-engineering",
@@ -108,7 +123,7 @@ test("artifact lock accepts exact deterministic package resolutions", () => {
   });
 });
 
-test("artifact lock rejects floating versions and unsafe destinations", () => {
+test("artifact lock rejects floating versions", () => {
   const validate = ajv.compile(lockSchema);
   const entry = {
     id: "skill-frontend-engineering",
@@ -119,11 +134,51 @@ test("artifact lock rejects floating versions and unsafe destinations", () => {
     integrity: `sha512-${"a".repeat(86)}==`,
     tag: "latest",
     manifestVersion: 1,
+    destination: ".agents/skills/frontend-engineering",
+    payloadHash: "a".repeat(64),
+  };
+
+  assertInvalidAt(validate, { schemaVersion: 1, artifacts: [entry] }, "/artifacts/0/version");
+});
+
+test("artifact lock rejects unsafe destinations", () => {
+  const validate = ajv.compile(lockSchema);
+  const entry = {
+    id: "skill-frontend-engineering",
+    type: "skill",
+    package: "@schalkneethling/calavera-skill-frontend-engineering",
+    version: "1.0.0",
+    resolved: "https://registry.npmjs.org/example.tgz",
+    integrity: `sha512-${"a".repeat(86)}==`,
+    tag: "latest",
+    manifestVersion: 1,
     destination: "../skills/frontend-engineering",
     payloadHash: "a".repeat(64),
   };
 
-  assertInvalid(validate, { schemaVersion: 1, artifacts: [entry] });
+  assertInvalidAt(validate, { schemaVersion: 1, artifacts: [entry] }, "/artifacts/0/destination");
+});
+
+test("artifact lock rejects dot-segment destinations", () => {
+  const validate = ajv.compile(lockSchema);
+  const entry = {
+    id: "skill-frontend-engineering",
+    type: "skill",
+    package: "@schalkneethling/calavera-skill-frontend-engineering",
+    version: "1.0.0",
+    resolved: "https://registry.npmjs.org/example.tgz",
+    integrity: `sha512-${"a".repeat(86)}==`,
+    tag: "latest",
+    manifestVersion: 1,
+    payloadHash: "a".repeat(64),
+  };
+
+  for (const destination of [".", "./payload", "dir/./payload"]) {
+    assertInvalid(validate, {
+      schemaVersion: 1,
+      artifacts: [{ ...entry, destination }],
+    });
+  }
 });
 
 test("artifact lock rejects mismatched package types and missing targets", () => {

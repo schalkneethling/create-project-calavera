@@ -20,7 +20,8 @@ Before deciding what to do, inspect the local `.plan-review` state:
 
 Then choose the next state transition:
 
-1. If `.plan-review/approved-plan.md` exists, read it and execute the approved plan carefully.
+0. Parse explicit checkpoint, handoff, feedback, review, or reset requests and dispatch that mode before considering execution.
+1. Only for `/rpm:advance` or an explicit proceed/approval request, if `.plan-review/approved-plan.md` exists, read it and execute the approved plan carefully.
 2. If a current version exists and `.plan-review/feedback/plan-vN-feedback.json` exists for it, read the current plan and feedback, address every feedback item in a revised next plan version, update `.plan-review/.current-version`, and stop for review.
 3. If a current version exists with no feedback and no approval, report that the plan is awaiting review and include the reviewer launch command.
 4. If no current plan exists, clarify only what is necessary, inspect the repository enough to produce a useful plan, write `.plan-review/plans/plan-v1.md`, write `v1` to `.plan-review/.current-version`, and stop for review.

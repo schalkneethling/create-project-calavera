@@ -315,6 +315,11 @@ upload steps.
 ### GitHub Actions Example
 
 ```yaml
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
 permissions:
   contents: read
 

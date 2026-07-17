@@ -81,7 +81,7 @@ Visual styling and semantic meaning are related but not coupled. CSS classes bri
 
 - Use the appropriate heading level based on document structure
 - Apply CSS classes to control visual appearance (size, weight, colour)
-- Create utility classes like `.u-Heading-XXL` for consistent visual treatment regardless of semantic level
+- Create utility classes like `.u-heading-xl` for consistent visual treatment regardless of semantic level
 
 ## Document Structure
 
@@ -233,7 +233,7 @@ For reusable components containing headings:
 
 **Example pattern:**
 
-```
+```text
 Card (generic) → heading level configurable, default h3
   └─ ProductCard (specific) → inherits config, may set default based on known context
        └─ Used in section with h2 → heading level set to h3
@@ -244,7 +244,7 @@ Card (generic) → heading level configurable, default h3
 Sometimes text looks like a heading but shouldn't be one semantically. Use CSS classes to apply heading-like styling without affecting document outline:
 
 ```html
-<p class="u-Heading-L">This looks like a heading</p>
+<p class="u-heading-l">This looks like a heading</p>
 ```
 
 ## Lists
@@ -474,7 +474,7 @@ When inputs have format hints or helper text, associate them with the input via 
 <input type="email" id="email" aria-describedby="email-hint" />
 ```
 
-Multiple associations are allowed—comma-separated IDs work for both hint and error:
+Multiple associations are allowed—space-separated IDs work for both hint and error:
 
 ```html
 <input type="email" id="email" aria-invalid="true" aria-describedby="email-hint email-error" />

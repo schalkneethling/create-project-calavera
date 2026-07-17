@@ -202,7 +202,9 @@ app.post("/refresh", async (req, res) => {
     }
 
     // Issue new access token
-    const newAccessToken = jwt.sign({ sub: decoded.sub }, secret, { expiresIn: "15m" });
+    const newAccessToken = jwt.sign({ sub: decoded.sub, jti: crypto.randomUUID() }, secret, {
+      expiresIn: "15m",
+    });
 
     res.json({ accessToken: newAccessToken });
   } catch (error) {

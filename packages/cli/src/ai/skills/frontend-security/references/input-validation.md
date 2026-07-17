@@ -48,7 +48,9 @@ return input.checkValidity();
 
 ```javascript
 function matchesPathPrefix(pathname, allowedPrefix) {
-  return pathname === allowedPrefix || pathname.startsWith(`${allowedPrefix}/`);
+  return (
+    allowedPrefix === "/" || pathname === allowedPrefix || pathname.startsWith(`${allowedPrefix}/`)
+  );
 }
 
 function parseAllowedHttpUrl(input, { baseUrl, allowedOrigins, allowedPathPrefixes = ["/"] }) {
