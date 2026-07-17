@@ -20,6 +20,7 @@ import {
 } from "@clack/prompts";
 import { execa } from "execa";
 import packageJson from "../package.json" with { type: "json" };
+import { lockedArtifactSources, runArtifactCommand } from "./artifact-lifecycle.js";
 
 import {
   aiArtifactOutputPaths,
@@ -94,6 +95,11 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string[]} integrations
  * @property {{ id: string, target?: string }[]} aiArtifacts
  * @property {string[]} reownManagedFiles
+ * @property {string} [artifactAction]
+ * @property {string} [artifactId]
+ * @property {"latest" | "next"} [artifactTag]
+ * @property {boolean} [artifactAll]
+ * @property {boolean} [checkUpdates]
  *
  * @typedef {object} PackageManagerCommands
  * @property {[string, string[]]} init
@@ -173,7 +179,8 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string} nextPrompt
  * @property {{ harness: McpHarness, action: "manual" | "write" | "update" | "skip", path?: string, reason?: string }} mcp
  *
- * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult} CommandResult
+ * @typedef {{ command: `artifacts ${string}`, [key: string]: unknown }} ArtifactCommandResult
+ * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | ArtifactCommandResult} CommandResult
  */
 
 const CONFIG_FILE = "calavera.config.json";
@@ -247,6 +254,9 @@ const cliParseOptions = {
   "ai-artifacts": { type: "string", multiple: true, default: [] },
   "reown-managed-file": { type: "string", multiple: true, default: [] },
   "reown-managed-files": { type: "string", multiple: true, default: [] },
+  tag: { type: "string", default: "latest" },
+  all: { type: "boolean" },
+  "check-updates": { type: "boolean" },
 };
 
 /**
@@ -345,6 +355,8 @@ export function parseArgs(rawArgs) {
   const packageManager = optionalStringValue(values["package-manager"]);
   const agentsMd = optionalStringValue(values["agents-md"]);
   const mcpHarness = optionalStringValue(values["mcp-harness"]);
+  const artifactTag = optionalStringValue(values.tag) ?? "latest";
+  assertKnownValue("tag", artifactTag, ["latest", "next"]);
   /** @type {CliOptions} */
   const parsed = {
     command: values.help ? "help" : values.init ? "agent-init" : (positionals[0] ?? "init"),
@@ -367,6 +379,11 @@ export function parseArgs(rawArgs) {
       values["reown-managed-file"],
       values["reown-managed-files"],
     ),
+    artifactAction: positionals[1],
+    artifactId: positionals[2],
+    artifactTag: /** @type {"latest" | "next"} */ (artifactTag),
+    artifactAll: values.all === true,
+    checkUpdates: values["check-updates"] === true,
   };
 
   if (profile !== undefined) {
@@ -1585,7 +1602,8 @@ export async function applyRecipeObject(recipe, options = {}) {
 
   await assertSafeManagedFileWrites(managedFilePlans, previousState, reownManagedFiles);
 
-  const aiResult = await buildAiApplyResult(recipe, applyOptions, previousState);
+  const artifactSources = await lockedArtifactSources(recipe, applyOptions.dryRun);
+  const aiResult = await buildAiApplyResult(recipe, applyOptions, previousState, artifactSources);
 
   if (applyOptions.writeConfig) {
     const configPath = resolve(applyOptions.config ?? "calavera.config.json");
@@ -2766,6 +2784,11 @@ Commands:
   doctor               Check whether Calavera-managed files are present
   update               Re-apply the recipe in calavera.config.json
   clean                Remove stale Calavera-managed files when safe
+  artifacts install    Install exact package-backed artifact selections
+  artifacts status     Inspect locked artifacts offline by default
+  artifacts doctor     Check installed artifacts and local edits
+  artifacts migrate    Convert legacy recipe paths to stable artifact IDs
+  artifacts update     Update one artifact ID, or every artifact with --all
   help                 Show this help
 
 Options:
@@ -2777,6 +2800,9 @@ Options:
   --profile            modern, classic, or minimal
   --tool <id>          Add an integration by id or label; repeatable
   --ai-artifact <id>   Add a bundled AI artifact; repeatable
+  --tag <channel>      Artifact release channel: latest (default) or next
+  --all                Update every selected artifact
+  --check-updates      Allow artifacts status to query the registry
   --agents-md <mode>   append or fallback when AGENTS.md already exists
   --mcp-harness <host> claude-code, codex, cursor, opencode, or skip
   --json               Print JSON output
@@ -3019,6 +3045,14 @@ async function main() {
 
   if (options.command === "clean") {
     printResult(await clean(options), options.json);
+    return;
+  }
+
+  if (options.command === "artifacts") {
+    printResult(
+      /** @type {ArtifactCommandResult} */ (await runArtifactCommand(options)),
+      options.json,
+    );
     return;
   }
 

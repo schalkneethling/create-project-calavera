@@ -15,6 +15,13 @@ import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./catalog.js";
  * @typedef {"skill" | "hook" | "agent"} AiArtifactType
  *
  * @typedef {object} AiItemConfig
+ * @property {string} [id]
+ * @property {string} [type]
+ * @property {string} [src]
+ * @property {string} [target]
+ *
+ * @typedef {object} NormalizedAiItem
+ * @property {string} [id]
  * @property {string} type
  * @property {string} src
  * @property {string} [target]
@@ -49,7 +56,7 @@ const AI_HOOK_FILES = Object.freeze(["hook.mjs", "settings-fragment.json"]);
 const CODEX_AGENT_TARGET = "codex";
 
 /**
- * @param {ResolvedAiArtifact | AiArtifactState} artifact
+ * @param {ResolvedAiArtifact} artifact
  * @returns {boolean}
  */
 function isCodexAgentArtifact(artifact) {
@@ -161,8 +168,8 @@ function normalizeAiItemType(type, index) {
 function isAiItemConfig(value) {
   return (
     isPlainObject(value) &&
-    isNotEmptyString(value.type) &&
-    isNotEmptyString(value.src) &&
+    ((isNotEmptyString(value.id) && value.type === undefined && value.src === undefined) ||
+      (isNotEmptyString(value.type) && isNotEmptyString(value.src) && value.id === undefined)) &&
     (value.target === undefined || isNotEmptyString(value.target))
   );
 }
@@ -195,7 +202,7 @@ function normalizeAiTarget(type, item, index) {
 
 /**
  * @param {unknown} aiConfig
- * @returns {AiItemConfig[]}
+ * @returns {NormalizedAiItem[]}
  */
 function normalizeAiItems(aiConfig) {
   if (aiConfig === undefined) {
@@ -208,14 +215,27 @@ function normalizeAiItems(aiConfig) {
 
   return aiConfig.map((entry, index) => {
     if (!isAiItemConfig(entry)) {
-      throw new Error(
-        `AI item at index ${index} must be an object with non-empty type and src fields.`,
-      );
+      throw new Error(`AI item at index ${index} must contain id, or legacy type and src fields.`);
+    }
+
+    if (entry.id) {
+      const artifact = aiArtifactCatalog.find(({ id }) => id === entry.id);
+      if (!artifact) throw new Error(`AI item at index ${index} has unknown id "${entry.id}".`);
+      const target = entry.target?.trim();
+      if (target && artifact.targets && !artifact.targets.includes(target)) {
+        throw new Error(`AI item at index ${index} target is not supported by ${entry.id}.`);
+      }
+      return {
+        id: artifact.id,
+        type: artifact.type,
+        src: artifact.src,
+        target,
+      };
     }
 
     return {
-      type: entry.type.trim(),
-      src: entry.src.trim(),
+      type: /** @type {string} */ (entry.type).trim(),
+      src: /** @type {string} */ (entry.src).trim(),
       target: entry.target?.trim(),
     };
   });
@@ -298,7 +318,7 @@ function hookSettingsInstallPath(hookPath) {
 }
 
 /**
- * @param {ResolvedAiArtifact | AiArtifactState} artifact
+ * @param {{ type: AiArtifactType, path: string }} artifact
  * @returns {string[]}
  */
 export function aiArtifactOutputPaths(artifact) {
@@ -404,22 +424,23 @@ export async function hashAiInstall(type, installPath, target) {
  * @param {{ ai?: unknown }} recipe
  * @returns {ResolvedAiArtifact[]}
  */
-export function resolveAiArtifacts(recipe) {
+export function resolveAiArtifacts(recipe, sourcePaths = new Map()) {
   /** @type {Map<string, ResolvedAiArtifact>} */
   const deduped = new Map();
 
   for (const [index, item] of normalizeAiItems(recipe.ai).entries()) {
     const type = normalizeAiItemType(item.type, index);
     const target = normalizeAiTarget(type, item, index);
-    const sourcePath = resolveAiSourcePath(item.src, index, type);
-    const name = inferAiSourceName(type, sourcePath, index);
+    const sourcePath =
+      sourcePaths.get(item.id ?? item.src) ?? resolveAiSourcePath(item.src, index, type);
+    const name = inferAiSourceName(type, item.src, index);
     const key = [type, target, name].filter(Boolean).join(":");
 
     if (!deduped.has(key)) {
       deduped.set(key, {
         index,
         sourcePath,
-        source: item.src,
+        source: item.id ?? item.src,
         name,
         target,
         type,
@@ -442,9 +463,10 @@ function stateAiArtifactForPath(state, path) {
 
 /**
  * @param {ResolvedAiArtifact} artifact
+ * @param {string} [outputRoot]
  */
-async function copyAiArtifact(artifact) {
-  const installPath = resolve(artifact.path);
+async function copyAiArtifact(artifact, outputRoot) {
+  const installPath = outputRoot ? resolve(outputRoot, artifact.path) : resolve(artifact.path);
 
   if (artifact.type === "skill") {
     await mkdir(dirname(installPath), { recursive: true });
@@ -513,12 +535,12 @@ async function assertSafeAiWrite(artifact, path, sourceHash, previousState) {
 
 /**
  * @param {{ ai?: unknown }} recipe
- * @param {{ dryRun: boolean }} options
+ * @param {{ dryRun: boolean, outputRoot?: string }} options
  * @param {CalaveraState} previousState
  * @returns {Promise<{ artifacts: AiArtifactState[], changes: AiChange[], pointers: string[] }>}
  */
-export async function buildAiApplyResult(recipe, options, previousState) {
-  const artifacts = resolveAiArtifacts(recipe);
+export async function buildAiApplyResult(recipe, options, previousState, sourcePaths = new Map()) {
+  const artifacts = resolveAiArtifacts(recipe, sourcePaths);
   /** @type {AiChange[]} */
   const changes = [];
   /** @type {AiArtifactState[]} */
@@ -568,7 +590,7 @@ export async function buildAiApplyResult(recipe, options, previousState) {
     }
 
     if (needsWrite && !options.dryRun) {
-      await copyAiArtifact(artifact);
+      await copyAiArtifact(artifact, options.outputRoot);
     }
 
     if (artifact.type === "skill") {

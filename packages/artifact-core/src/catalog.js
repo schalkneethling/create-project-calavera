@@ -14,8 +14,41 @@ import manifest12 from "@schalkneethling/calavera-skill-refined-plan-mode" with 
 import manifest13 from "@schalkneethling/calavera-hook-auto-approve-safe-commands" with { type: "json" };
 import manifest14 from "@schalkneethling/calavera-hook-block-dangerous-commands" with { type: "json" };
 import manifest15 from "@schalkneethling/calavera-agent-technical-devils-advocate" with { type: "json" };
+import package1 from "@schalkneethling/calavera-skill-calavera/package.json" with { type: "json" };
+import package2 from "@schalkneethling/calavera-skill-code-review/package.json" with { type: "json" };
+import package3 from "@schalkneethling/calavera-skill-css-tokens/package.json" with { type: "json" };
+import package4 from "@schalkneethling/calavera-skill-frontend-engineering/package.json" with { type: "json" };
+import package5 from "@schalkneethling/calavera-skill-frontend-security/package.json" with { type: "json" };
+import package6 from "@schalkneethling/calavera-skill-frontend-testing/package.json" with { type: "json" };
+import package7 from "@schalkneethling/calavera-skill-github-goal-issue-triage/package.json" with { type: "json" };
+import package8 from "@schalkneethling/calavera-skill-more-secure-dependabot-config/package.json" with { type: "json" };
+import package9 from "@schalkneethling/calavera-skill-npm-publishing-best-practices/package.json" with { type: "json" };
+import package10 from "@schalkneethling/calavera-skill-npm-trusted-publishing-github-workflow/package.json" with { type: "json" };
+import package11 from "@schalkneethling/calavera-skill-project-goal/package.json" with { type: "json" };
+import package12 from "@schalkneethling/calavera-skill-refined-plan-mode/package.json" with { type: "json" };
+import package13 from "@schalkneethling/calavera-hook-auto-approve-safe-commands/package.json" with { type: "json" };
+import package14 from "@schalkneethling/calavera-hook-block-dangerous-commands/package.json" with { type: "json" };
+import package15 from "@schalkneethling/calavera-agent-technical-devils-advocate/package.json" with { type: "json" };
 
 export const DEFAULT_ARTIFACT_TARGET = "claude-code";
+
+const packageVersions = new Map([
+  ["@schalkneethling/calavera-skill-calavera", package1.version],
+  ["@schalkneethling/calavera-skill-code-review", package2.version],
+  ["@schalkneethling/calavera-skill-css-tokens", package3.version],
+  ["@schalkneethling/calavera-skill-frontend-engineering", package4.version],
+  ["@schalkneethling/calavera-skill-frontend-security", package5.version],
+  ["@schalkneethling/calavera-skill-frontend-testing", package6.version],
+  ["@schalkneethling/calavera-skill-github-goal-issue-triage", package7.version],
+  ["@schalkneethling/calavera-skill-more-secure-dependabot-config", package8.version],
+  ["@schalkneethling/calavera-skill-npm-publishing-best-practices", package9.version],
+  ["@schalkneethling/calavera-skill-npm-trusted-publishing-github-workflow", package10.version],
+  ["@schalkneethling/calavera-skill-project-goal", package11.version],
+  ["@schalkneethling/calavera-skill-refined-plan-mode", package12.version],
+  ["@schalkneethling/calavera-hook-auto-approve-safe-commands", package13.version],
+  ["@schalkneethling/calavera-hook-block-dangerous-commands", package14.version],
+  ["@schalkneethling/calavera-agent-technical-devils-advocate", package15.version],
+]);
 
 export const artifactCatalog = Object.freeze([
   artifact(manifest1, "@schalkneethling/calavera-skill-calavera", "skills/calavera"),
@@ -88,6 +121,7 @@ function artifact(manifest, packageName, legacyPath) {
   return Object.freeze({
     ...manifest,
     packageName,
+    version: packageVersions.get(packageName),
     legacyPath,
     group: manifest.type === "skill" ? "Skills" : manifest.type === "hook" ? "Hooks" : "Agents",
     defaultTarget: manifest.type === "skill" ? undefined : DEFAULT_ARTIFACT_TARGET,

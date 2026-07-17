@@ -108,7 +108,7 @@ function renderAiArtifacts() {
         <label for="ai-artifact-${artifact.id}">
           <input id="ai-artifact-${artifact.id}" type="checkbox" name="aiArtifact" value="${artifact.id}" />
           <span>${artifact.label}</span>
-          <small>${artifact.status}</small>
+          <small>${artifact.status} · v${artifact.version} · Calavera ${artifact.compatibility.calavera}</small>
         </label>
       `;
 
@@ -155,10 +155,7 @@ function syncIntegrationOptions() {
 function selectedAiItems() {
   return [...form.querySelectorAll('[name="aiArtifact"]:checked')].map((checkbox, index) => {
     const artifact = aiArtifactOptions.find(({ id }) => id === checkbox.value);
-    const item = {
-      type: artifact.type,
-      src: artifact.src,
-    };
+    const item = { id: artifact.id };
 
     if (artifact.defaultTarget) {
       const targetInput = form.querySelector(`[data-ai-target="${artifact.id}"]`);

@@ -14,11 +14,15 @@
   "type": "module",
   "exports": {
     ".": "./src/catalog.js",
-    "./node": "./src/node.js"
+    "./node": "./src/node.js",
+    "./registry": "./src/registry.js"
   },
   "publishConfig": {
     "access": "public",
     "provenance": true
+  },
+  "scripts": {
+    "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
     "@schalkneethling/calavera-agent-technical-devils-advocate": "workspace:^",
@@ -35,6 +39,8 @@
     "@schalkneethling/calavera-skill-npm-publishing-best-practices": "workspace:^",
     "@schalkneethling/calavera-skill-npm-trusted-publishing-github-workflow": "workspace:^",
     "@schalkneethling/calavera-skill-project-goal": "workspace:^",
-    "@schalkneethling/calavera-skill-refined-plan-mode": "workspace:^"
+    "@schalkneethling/calavera-skill-refined-plan-mode": "workspace:^",
+    "pacote": "22.0.0",
+    "semver": "7.8.5"
   }
 }

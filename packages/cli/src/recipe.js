@@ -364,16 +364,32 @@ export function listIntegrationOptions(profile) {
 }
 
 export function listAiArtifactOptions() {
-  return aiArtifactCatalog.map(({ id, type, src, group, label, status, defaultTarget }) => ({
-    id,
-    type,
-    src,
-    label,
-    group,
-    status,
-    defaultTarget,
-    description: `${label}. Type: ${type}. Source: ${src}.`,
-  }));
+  return aiArtifactCatalog.map(
+    ({
+      id,
+      type,
+      src,
+      group,
+      label,
+      status,
+      defaultTarget,
+      packageName,
+      version,
+      compatibility,
+    }) => ({
+      id,
+      type,
+      src,
+      label,
+      group,
+      status,
+      defaultTarget,
+      packageName,
+      version,
+      compatibility,
+      description: `${label}. Type: ${type}. Package: ${packageName}@${version}. Calavera compatibility: ${compatibility.calavera}. Legacy source: ${src}.`,
+    }),
+  );
 }
 
 export function normalizeIntegrationInputs(integrationInputs, profile) {
@@ -421,10 +437,7 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
 export function aiArtifactRecipeItems(artifactInputs = []) {
   return normalizeAiArtifactInputs(artifactInputs).map(({ id, target }) => {
     const artifact = aiArtifactCatalog.find((candidate) => candidate.id === id);
-    const item = {
-      type: artifact.type,
-      src: artifact.src,
-    };
+    const item = { id };
 
     if (artifact.defaultTarget) {
       item.target = target ?? artifact.defaultTarget;
@@ -717,7 +730,8 @@ export function explainRecipeResponse(recipeInput) {
     dependencies: dependencyListForRecipe(recipe),
     aiArtifacts: listAiArtifactOptions().filter((artifact) =>
       Array.isArray(recipe.ai)
-        ? recipe.ai.some((item) => item.type === artifact.type && item.src === artifact.src)
+        ? recipe.ai.some((item) => item.type === artifact.type && item.src === artifact.src) ||
+          recipe.ai.some((item) => item.id === artifact.id)
         : false,
     ),
   };

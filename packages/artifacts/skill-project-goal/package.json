@@ -13,7 +13,10 @@
     "payload"
   ],
   "type": "module",
-  "exports": "./calavera-artifact.json",
+  "exports": {
+    ".": "./calavera-artifact.json",
+    "./package.json": "./package.json"
+  },
   "publishConfig": {
     "access": "public",
     "provenance": true
