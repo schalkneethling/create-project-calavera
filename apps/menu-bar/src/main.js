@@ -15,10 +15,23 @@ import {
 
 const STORAGE_KEY = "calavera-menu-bar-v1";
 const form = document.querySelector("#register");
+const terminalSettingsForm = document.querySelector("#terminal-settings");
 const projectsElement = document.querySelector("#projects");
 const statusElement = document.querySelector("#status");
 let settings = loadSettings();
 let checkAllPromise;
+
+terminalSettingsForm.elements.application.value = settings.terminalApplication;
+
+terminalSettingsForm.addEventListener("submit", (event) => {
+  event.preventDefault();
+  const data = new FormData(terminalSettingsForm);
+  settings.terminalApplication = String(data.get("application")).trim();
+  saveSettings();
+  statusElement.textContent = settings.terminalApplication
+    ? `Preferred terminal saved: ${settings.terminalApplication}`
+    : "Terminal preference cleared. Update commands will only be copied.";
+});
 
 form.addEventListener("submit", async (event) => {
   event.preventDefault();
@@ -102,7 +115,19 @@ function render(
       button.textContent = `${update.id}: ${update.current} → ${update.available}`;
       button.addEventListener("click", async () => {
         await navigator.clipboard.writeText(update.command);
-        await invoke("open_terminal", { path: result.project.path });
+        if (!settings.terminalApplication) {
+          statusElement.textContent = `Command copied. Open your terminal in ${result.project.path}.`;
+          return;
+        }
+        try {
+          await invoke("open_terminal", {
+            path: result.project.path,
+            application: settings.terminalApplication,
+          });
+          statusElement.textContent = `Command copied. Opened ${settings.terminalApplication} at ${result.project.path}.`;
+        } catch (error) {
+          statusElement.textContent = `Command copied, but ${settings.terminalApplication} could not be opened: ${String(error)}`;
+        }
       });
       article.append(button);
     }
@@ -146,10 +171,11 @@ function loadSettings() {
     return {
       projects: [],
       notificationHistory: [],
+      terminalApplication: "",
       ...JSON.parse(localStorage.getItem(STORAGE_KEY)),
     };
   } catch {
-    return { projects: [], notificationHistory: [] };
+    return { projects: [], notificationHistory: [], terminalApplication: "" };
   }
 }
 
