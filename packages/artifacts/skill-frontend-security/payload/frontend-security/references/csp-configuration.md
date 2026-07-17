@@ -106,6 +106,8 @@ app.use(
 
 ```javascript
 // astro.config.mjs
+import { defineConfig } from "astro/config";
+
 // Development-only fallback. Prefer production headers from your hosting edge,
 // adapter middleware, or server response so each request can receive a fresh
 // nonce and avoid unsafe-inline.
@@ -158,18 +160,39 @@ Content-Security-Policy-Report-Only:
   report-uri /csp-report;
 ```
 
-Report endpoint:
+Report endpoint (apply a rate limiter before parsing and logging public reports):
 
 ```javascript
-app.post("/csp-report", express.json({ type: "application/csp-report" }), (req, res) => {
-  const report = req.body?.["csp-report"] ?? {};
-  console.warn("CSP Violation:", {
-    blockedUri: report["blocked-uri"],
-    violatedDirective: report["violated-directive"],
-    documentUri: report["document-uri"],
-  });
-  res.status(204).end();
-});
+function sanitizeReportUrl(value) {
+  if (typeof value !== "string") return undefined;
+  try {
+    const url = new URL(value);
+    url.search = "";
+    url.hash = "";
+    return url.href.slice(0, 512);
+  } catch {
+    return value.slice(0, 128);
+  }
+}
+
+app.post(
+  "/csp-report",
+  cspReportLimiter,
+  express.json({ type: "application/csp-report", limit: "16kb" }),
+  (req, res) => {
+    const report = req.body?.["csp-report"];
+    if (!report || typeof report !== "object" || Array.isArray(report)) {
+      return res.status(204).end();
+    }
+    const directive = report["violated-directive"];
+    console.warn("CSP Violation:", {
+      blockedUri: sanitizeReportUrl(report["blocked-uri"]),
+      violatedDirective: typeof directive === "string" ? directive.slice(0, 128) : undefined,
+      documentUri: sanitizeReportUrl(report["document-uri"]),
+    });
+    res.status(204).end();
+  },
+);
 ```
 
 ## Common Violations and Fixes

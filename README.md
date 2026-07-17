@@ -565,11 +565,12 @@ create-project-calavera artifacts migrate
 create-project-calavera artifacts install
 create-project-calavera artifacts status
 create-project-calavera artifacts status --check-updates
+create-project-calavera artifacts doctor
 create-project-calavera artifacts update skill-project-goal
 create-project-calavera artifacts update --all --tag next
 ```
 
-Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; ordinary `apply` requires and reuses those exact locked versions. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit, and the existing managed-state hashes continue to block overwriting local edits.
+Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; ordinary `apply` requires and reuses those exact locked versions. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit. Run `artifacts doctor` to verify installed outputs, managed state, and local edits without checking the registry. The existing managed-state hashes continue to block overwriting local edits.
 
 ## macOS update companion
 
@@ -601,9 +602,15 @@ Before the first trusted publish:
 - configure npm trusted publishing for this repository, workflow, and
   environment.
 
-To validate the package locally:
+To validate the package locally, first install
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/). It provisions
+the locked Python environment used by SkillSpector and the workflow audit.
+`pnpm workflow:check` runs `uvx zizmor@1.25.2 --offline`, so prime that exact
+version in uv's cache once while online before using the offline check.
 
 ```bash
+uv sync --frozen
+uvx zizmor@1.25.2 --version
 pnpm check
 pnpm web:build
 pnpm publish:check

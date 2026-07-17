@@ -93,16 +93,14 @@ test("page renders after loading", async ({ page }) => {
 ### Disable Animations
 
 ```javascript
-// playwright.config.js
-export default defineConfig({
-  use: {
-    // Disable CSS animations and transitions
-    contextOptions: {
-      reducedMotion: "reduce",
-    },
-  },
+test("static screenshot", async ({ page }) => {
+  await page.goto("/");
+  await expect(page).toHaveScreenshot({ animations: "disabled" });
 });
 ```
+
+`reducedMotion: "reduce"` only emulates the `prefers-reduced-motion` media feature; it does not
+disable arbitrary animations. Use it separately when testing the reduced-motion experience.
 
 Or in test:
 
@@ -260,7 +258,7 @@ Screenshots differ between browsers due to rendering differences.
 
 Playwright automatically creates separate baselines per browser:
 
-```
+```text
 example.spec.ts-snapshots/
 ├── homepage-chromium-linux.png
 ├── homepage-firefox-linux.png
@@ -315,6 +313,11 @@ upload steps.
 ### GitHub Actions Example
 
 ```yaml
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+
 permissions:
   contents: read
 
@@ -367,8 +370,10 @@ jobs:
           git config user.name "CI Bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add "**/*.png"
-          git commit -m "Update visual baselines"
-          git -c http.https://github.com/.extraheader="AUTHORIZATION: bearer $GITHUB_TOKEN" push origin HEAD:refs/heads/${GITHUB_REF_NAME}
+          if ! git diff --cached --quiet; then
+            git commit -m "Update visual baselines"
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: bearer $GITHUB_TOKEN" push origin HEAD:refs/heads/${GITHUB_REF_NAME}
+          fi
 ```
 
 ## Organizing Screenshots

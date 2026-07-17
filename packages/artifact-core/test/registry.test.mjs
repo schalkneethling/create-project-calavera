@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdtemp, readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -9,7 +9,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { artifactForId } from "../src/catalog.js";
-import { extractArtifactPackage } from "../src/registry.js";
+import { extractArtifactPackage, hashArtifactPayload } from "../src/registry.js";
 
 const packageRoot = fileURLToPath(new URL("../../artifacts/skill-project-goal/", import.meta.url));
 const artifact = artifactForId("skill-project-goal");
@@ -92,4 +92,17 @@ test("verified extraction rejects a tarball that fails npm integrity", async () 
       ),
     /integrity|checksum/i,
   );
+});
+
+test("payload hashes include empty directories", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-payload-hash-"));
+  await writeFile(join(directory, "payload.txt"), "payload\n");
+  const initialHash = await hashArtifactPayload(directory);
+
+  await mkdir(join(directory, "empty"));
+  const withEmptyDirectory = await hashArtifactPayload(directory);
+  assert.notEqual(withEmptyDirectory, initialHash);
+
+  await rm(join(directory, "empty"), { recursive: true });
+  assert.equal(await hashArtifactPayload(directory), initialHash);
 });

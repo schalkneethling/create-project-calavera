@@ -260,7 +260,7 @@ The template's SHAs are stale by design. Action versions and their commit SHAs c
 
 There are two reliable ways to produce current pins.
 
-The preferred approach is to let tooling resolve and pin for you. Write the workflow first using human-readable tags only in the temporary draft consumed by the tool (for example `actions/checkout@v4`), then run `npx actions-up` in the repository to rewrite every `uses:` reference to the latest stable release pinned to its commit SHA, with a version comment appended. This is the same tool the `npm-package-publishing` skill recommends, and it removes the chance of a hand-typed SHA being wrong. After it runs, confirm each line carries a `@<40-hex-sha> # vX.Y.Z` form.
+The preferred approach is to let tooling resolve and pin for you. Write the workflow first using human-readable tags only in the temporary draft consumed by the tool (for example `actions/checkout@v4`), then run `npx actions-up@1.16.0` in the repository to rewrite every `uses:` reference to the latest stable release pinned to its commit SHA, with a version comment appended. This is the same tool the `npm-package-publishing` skill recommends, and it removes the chance of a hand-typed SHA being wrong. After it runs, confirm each line carries a `@<40-hex-sha> # vX.Y.Z` form.
 
 If resolving manually, for each action find the latest stable release tag, then read the exact commit that tag points to and pin that commit:
 
@@ -274,7 +274,7 @@ gh api repos/actions/checkout/git/refs/tags/v4.2.2 --jq .object.sha
 
 For an annotated tag the first lookup may return a tag object rather than a commit; dereference it with `gh api repos/<owner>/<repo>/git/tags/<sha> --jq .object.sha` to reach the underlying commit. Pin the commit SHA, not the tag SHA.
 
-Keep the pins current after creation by letting Dependabot manage action updates. This is why every `uses:` line carries a `# vX.Y.Z` comment: Dependabot reads the comment to know which version a SHA represents and to raise update PRs. The companion Dependabot configuration should include a `github-actions` ecosystem entry pointing at `/` so the publish workflow is covered. Periodically re-running `npx actions-up` is a reasonable backstop if Dependabot is not enabled.
+Keep the pins current after creation by letting Dependabot manage action updates. This is why every `uses:` line carries a `# vX.Y.Z` comment: Dependabot reads the comment to know which version a SHA represents and to raise update PRs. The companion Dependabot configuration should include a `github-actions` ecosystem entry pointing at `/` so the publish workflow is covered. Periodically re-running `npx actions-up@1.16.0` is a reasonable backstop if Dependabot is not enabled.
 
 ## Checks
 
@@ -294,8 +294,11 @@ pnpm pack --pack-destination "$pack_dir"
 Confirm no placeholder markers survived into the generated file, and that every action is pinned to a 40-character SHA rather than a tag:
 
 ```bash
-# Must print nothing
-grep -n "PLACEHOLDER" .github/workflows/publish.yml
+# Must print nothing and fail if a marker remains
+if grep -n "PLACEHOLDER" .github/workflows/publish.yml; then
+  echo "Placeholder marker found" >&2
+  exit 1
+fi
 
 # Every uses: line must reference a 40-hex SHA, not a tag
 if ! grep -qE "uses: [^@]+@" .github/workflows/publish.yml; then
@@ -303,8 +306,14 @@ if ! grep -qE "uses: [^@]+@" .github/workflows/publish.yml; then
   exit 1
 fi
 
-grep -nE "uses: [^@]+@[^ ]+" .github/workflows/publish.yml \
-  | grep -vE "@[0-9a-f]{40} " && echo "Unpinned action found" || echo "All actions SHA-pinned"
+bad_refs="$(grep -nE "uses: [^@]+@[^ ]+" .github/workflows/publish.yml \
+  | grep -vE "@[0-9a-f]{40} " || true)"
+if [ -n "$bad_refs" ]; then
+  echo "$bad_refs"
+  echo "Unpinned action found" >&2
+  exit 1
+fi
+echo "All actions SHA-pinned"
 ```
 
 ## Failure Clues

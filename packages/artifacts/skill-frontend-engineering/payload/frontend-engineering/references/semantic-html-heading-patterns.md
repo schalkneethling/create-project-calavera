@@ -272,7 +272,8 @@ function Card({ title, headingLevel }) {
 
 // Safe: always has a valid level
 function Card({ title, headingLevel = 3 }) {
-  const Heading = `h${headingLevel}`;
+  const normalizedLevel = Math.min(6, Math.max(1, Number(headingLevel) || 3));
+  const Heading = `h${normalizedLevel}`;
   return <Heading>{title}</Heading>;
 }
 ```
