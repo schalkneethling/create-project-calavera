@@ -1,4 +1,5 @@
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./ai/catalog.js";
+import { resolveAiArtifacts } from "./ai/artifacts.js";
 import { integrationCatalog } from "./catalog.js";
 import {
   assertKnownValue,
@@ -6,6 +7,7 @@ import {
   assertString,
   assertStringArray,
 } from "./utils/assertions.js";
+import { isPlainObject } from "./utils/guards.js";
 
 export const CONFIG_SCHEMA_URL = "https://calavera.schalkneethling.com/calavera.config.schema.json";
 
@@ -513,9 +515,34 @@ export function validateRecipe(recipe) {
     throw new TypeError("Recipe must be an object.");
   }
 
+  const allowedKeys = new Set([
+    "$schema",
+    "version",
+    "profile",
+    "packageManager",
+    "integrations",
+    "scripts",
+    "ai",
+  ]);
+  const unknownKeys = Object.keys(recipe).filter((key) => !allowedKeys.has(key));
+  if (unknownKeys.length > 0) {
+    throw new Error(`Unknown recipe properties: ${unknownKeys.join(", ")}.`);
+  }
+  if (recipe.version !== 1) {
+    throw new Error("Recipe version must be 1.");
+  }
+
   assertKnownValue("profile", recipe.profile, profileIds);
   assertKnownValue("packageManager", recipe.packageManager, packageManagerIds);
   assertStringArray("integrations", recipe.integrations);
+  if (!isPlainObject(recipe.scripts)) {
+    throw new Error("Recipe scripts must be an object.");
+  }
+  for (const [name, enabled] of Object.entries(recipe.scripts)) {
+    if (typeof enabled !== "boolean") {
+      throw new Error(`Recipe script ${name} must be a boolean.`);
+    }
+  }
 
   const knownIntegrationIds = integrationCatalog.map(({ id }) => id);
   const unknownIntegrationIds = recipe.integrations.filter(
@@ -530,6 +557,7 @@ export function validateRecipe(recipe) {
 
   if (Object.hasOwn(recipe, "ai")) {
     assertObjectArray("ai", recipe.ai);
+    resolveAiArtifacts(recipe);
   }
 
   return recipe;

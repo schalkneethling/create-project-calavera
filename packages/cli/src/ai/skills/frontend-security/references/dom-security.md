@@ -152,9 +152,15 @@ if (
   Object.freeze(window.config);
 }
 
-// 5. Use nullish coalescing with type checking
-const config = window.config ?? {};
-if (typeof config.apiKey === "string") {
+// 5. Read only from an owned, validated configuration object
+const config =
+  Object.hasOwn(window, "config") &&
+  typeof window.config === "object" &&
+  window.config !== null &&
+  !(window.config instanceof Element)
+    ? window.config
+    : null;
+if (config && typeof config.apiKey === "string") {
   // Safe to use
 }
 ```

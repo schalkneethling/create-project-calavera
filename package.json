@@ -5,8 +5,6 @@
   "scripts": {
     "check": "pnpm quality",
     "changeset": "changeset",
-    "prettier:lint": "prettier .",
-    "prettier:format": "prettier --write .",
     "lint:js": "eslint .",
     "lint:css": "stylelint **/*.css",
     "web:dev": "pnpm --filter @calavera/composer dev",

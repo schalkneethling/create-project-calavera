@@ -254,6 +254,8 @@ metadata, and make the download route refuse anything that is not explicitly
 `available`.
 
 ```javascript
+import fs from "node:fs/promises";
+
 async function quarantineUpload({ buffer, detected, originalName, userId }) {
   const quarantinedName = `${crypto.randomUUID()}.bin`;
   const quarantinePath = path.join(QUARANTINE_DIR, quarantinedName);

@@ -106,6 +106,8 @@ app.use(
 
 ```javascript
 // astro.config.mjs
+import { defineConfig } from "astro/config";
+
 // Development-only fallback. Prefer production headers from your hosting edge,
 // adapter middleware, or server response so each request can receive a fresh
 // nonce and avoid unsafe-inline.

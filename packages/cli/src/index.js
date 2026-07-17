@@ -22,6 +22,7 @@ import { execa } from "execa";
 import packageJson from "../package.json" with { type: "json" };
 
 import {
+  aiArtifactOutputPaths,
   assertAiSourceExists,
   buildAiApplyResult,
   hashAiInstall,
@@ -54,7 +55,7 @@ import {
 } from "./recipe.js";
 import { assertKnownValue } from "./utils/assertions.js";
 import { FileWriteError } from "./utils/file-write-error.js";
-import { fileExists, readJSON, writeJSON } from "./utils/fs.js";
+import { assertWorkspacePath, fileExists, readJSON, writeJSON } from "./utils/fs.js";
 import { isNotEmptyString, isPlainObject } from "./utils/guards.js";
 import { textHash } from "./utils/hash.js";
 import { logger } from "./utils/logger.js";
@@ -85,6 +86,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {boolean} noInstall
  * @property {boolean} assumeYes
  * @property {boolean} apply
+ * @property {boolean} [writeConfig]
  * @property {PackageManager} [packageManager]
  * @property {"append" | "fallback"} [agentsMd]
  * @property {McpHarness} [mcpHarness]
@@ -113,6 +115,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string[]} [dependencies]
  * @property {string[]} [includes]
  * @property {{ extends?: string[], plugins?: string[], rules?: Record<string, unknown> }} [stylelint]
+ * @property {{ plugins?: string[] }} [prettier]
  *
  * @typedef {object} Recipe
  * @property {string} [$schema]
@@ -447,6 +450,10 @@ async function readStateIfPresent() {
  * @returns {PackageManager | undefined}
  */
 function detectPackageManager(packageJSON = {}) {
+  if (packageJSON.packageManager?.startsWith("npm")) {
+    return "npm";
+  }
+
   if (packageJSON.packageManager?.startsWith("pnpm")) {
     return "pnpm";
   }
@@ -1052,6 +1059,18 @@ function createStylelintConfig(integrations) {
   return config;
 }
 
+/**
+ * @param {Integration[]} integrations
+ * @returns {{ plugins?: string[] }}
+ */
+function createPrettierConfig(integrations) {
+  const plugins = unique(
+    integrations.flatMap((integration) => integration.prettier?.plugins ?? []),
+  );
+
+  return plugins.length > 0 ? { plugins } : {};
+}
+
 function createTSConfig() {
   return {
     compilerOptions: {
@@ -1292,7 +1311,10 @@ function plannedManagedFiles(integrations) {
   }
 
   if (integrations.some((integration) => integration.id === "prettier")) {
-    plans.push({ path: ".prettierrc.json", contents: `${JSON.stringify({}, null, 2)}\n` });
+    plans.push({
+      path: ".prettierrc.json",
+      contents: `${JSON.stringify(createPrettierConfig(integrations), null, 2)}\n`,
+    });
     plans.push({
       path: ".prettierignore",
       contents: "node_modules\npackage-lock.json\npnpm-lock.yaml\nyarn.lock\nbun.lockb\n",
@@ -1557,6 +1579,17 @@ export async function applyRecipeObject(recipe, options = {}) {
 
   const aiResult = await buildAiApplyResult(recipe, applyOptions, previousState);
 
+  if (applyOptions.writeConfig) {
+    const configPath = resolve(applyOptions.config ?? "calavera.config.json");
+    changes.push({
+      type: "write",
+      path: relative(process.cwd(), configPath),
+      action: "write",
+      ownership: "project",
+    });
+    await writeJSON(configPath, recipe, applyOptions.dryRun);
+  }
+
   packageJSON.scripts = {
     ...packageJSON.scripts,
     ...scripts,
@@ -1614,7 +1647,7 @@ export async function applyRecipeObject(recipe, options = {}) {
     managedFiles.push(
       await writeManagedJSONFile(
         ".prettierrc.json",
-        {},
+        createPrettierConfig(integrations),
         applyOptions.dryRun,
         changes,
         previousState,
@@ -2491,11 +2524,13 @@ async function doctor(options) {
     for (const artifact of aiArtifacts) {
       await assertAiSourceExists(artifact.type, artifact.sourcePath, artifact.index);
 
-      if (!(await fileExists(artifact.path))) {
-        issues.push({
-          level: "warning",
-          message: `Missing managed AI ${artifact.type}: ${artifact.path}. Run create-project-calavera apply to regenerate managed AI artifacts.`,
-        });
+      for (const path of aiArtifactOutputPaths(artifact)) {
+        if (!(await fileExists(path))) {
+          issues.push({
+            level: "warning",
+            message: `Missing managed AI ${artifact.type}: ${path}. Run create-project-calavera apply to regenerate managed AI artifacts.`,
+          });
+        }
       }
     }
   }
@@ -2546,7 +2581,7 @@ async function clean(options) {
     ? await readRecipe(options.config)
     : { integrations: [] };
   const integrations = resolveRecipeIntegrations(recipe);
-  const expectedAiPaths = new Set(resolveAiArtifacts(recipe).map((artifact) => artifact.path));
+  const expectedAiPaths = new Set(resolveAiArtifacts(recipe).flatMap(aiArtifactOutputPaths));
   const expectedFiles = new Set(expectedManagedFiles(integrations));
   const staleFiles = managedFilesFromState(state).filter((file) => !expectedFiles.has(file.path));
   const staleAiArtifacts = state.aiArtifacts.filter(
@@ -2674,12 +2709,15 @@ async function clean(options) {
   if (!options.dryRun) {
     for (const file of staleFilesSafeToRemove) {
       if (await fileExists(file.path)) {
-        await unlink(file.path);
+        await unlink(await assertWorkspacePath(file.path, process.cwd(), "Managed file path"));
       }
     }
 
     for (const artifact of staleAiArtifactsSafeToRemove) {
-      await rm(artifact.path, { force: true, recursive: true });
+      await rm(await assertWorkspacePath(artifact.path, process.cwd(), "AI artifact path"), {
+        force: true,
+        recursive: true,
+      });
     }
 
     await writeJSON(

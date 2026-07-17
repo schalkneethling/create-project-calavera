@@ -16,7 +16,7 @@ const rules = [
     },
     {
         id: "git-push-force",
-        test: (c) => /\bgit\s+push\b.*\s(?:--force\b|--force-with-lease\b|-f\b)/.test(c),
+        test: (c) => /\bgit\s+push\b.*\s(?:--force(?!-with-lease)\b|-f\b)/.test(c),
         message: "`git push --force` is blocked. Use `--force-with-lease` only after coordinating with collaborators, or create a new branch.",
     },
     {
@@ -43,7 +43,7 @@ const rules = [
     },
     {
         id: "system-redirect",
-        test: (c) => /(?:>|>>|tee(?:\s+-[a-zA-Z]*)?)\s+\/(?:etc|boot|usr|bin|sbin)\//.test(c),
+        test: (c) => /(?:>{1,2}\s*|tee(?:\s+-[a-zA-Z]*)?\s+)\/(?:etc|boot|usr|bin|sbin)\//.test(c),
         message: "Writing into /etc, /boot, /usr, /bin, or /sbin is blocked. These are system directories; use a user-writable path.",
     },
     {

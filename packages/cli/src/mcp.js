@@ -3,7 +3,6 @@
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
 import { realpathSync } from "node:fs";
-import { isAbsolute, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import packageJson from "../package.json" with { type: "json" };
 import * as z from "zod";
@@ -24,7 +23,7 @@ import {
   validateRecipeResponse,
 } from "./recipe.js";
 import { assertPlainObject, assertStringArray } from "./utils/assertions.js";
-import { writeJSON } from "./utils/fs.js";
+import { assertWorkspacePath } from "./utils/fs.js";
 
 /**
  * @typedef {import("./index.js").PackageManager} PackageManager
@@ -134,6 +133,11 @@ const toolConfigs = {
         .enum(packageManagerIds)
         .optional()
         .describe(recipeToolInputDescriptions.packageManagerOverride),
+      config: z
+        .string()
+        .default("calavera.config.json")
+        .describe(recipeToolInputDescriptions.config),
+      writeConfig: z.boolean().default(true).describe(recipeToolInputDescriptions.writeConfig),
       reownManagedFiles: reownManagedFilesSchema,
     },
     annotations: toolAnnotations.read,
@@ -193,24 +197,12 @@ function optionalReownManagedFiles(value) {
 /**
  * @param {unknown} requestedPath
  */
-function projectConfigPath(requestedPath) {
-  const projectRoot = process.cwd();
-  const configPath = resolve(
-    projectRoot,
+async function projectConfigPath(requestedPath) {
+  return assertWorkspacePath(
     typeof requestedPath === "string" ? requestedPath : "calavera.config.json",
+    process.cwd(),
+    "apply_recipe config path",
   );
-  const relativeConfigPath = relative(projectRoot, configPath);
-
-  if (
-    !relativeConfigPath ||
-    relativeConfigPath === ".." ||
-    relativeConfigPath.startsWith(`..${sep}`) ||
-    isAbsolute(relativeConfigPath)
-  ) {
-    throw new Error("apply_recipe config path must stay inside the current project workspace.");
-  }
-
-  return configPath;
 }
 
 function listProfilesTool() {
@@ -271,6 +263,7 @@ function explainRecipeTool(args) {
  */
 async function dryRunApplyTool(args) {
   const recipe = assertRecipeInput(args.recipe);
+  const writeConfig = args.writeConfig !== false;
 
   return {
     approvalBoundary:
@@ -282,6 +275,8 @@ async function dryRunApplyTool(args) {
       assumeYes: true,
       packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
       reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
+      config: await projectConfigPath(args.config),
+      writeConfig,
     }),
   };
 }
@@ -292,12 +287,8 @@ async function dryRunApplyTool(args) {
  */
 async function applyRecipeTool(args) {
   const recipe = assertRecipeInput(args.recipe);
-  const config = projectConfigPath(args.config);
+  const config = await projectConfigPath(args.config);
   const writeConfig = args.writeConfig !== false;
-
-  if (writeConfig) {
-    await writeJSON(config, recipe, false);
-  }
 
   return {
     approvalBoundary:
@@ -310,6 +301,8 @@ async function applyRecipeTool(args) {
       assumeYes: true,
       packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
       reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
+      config,
+      writeConfig,
     }),
   };
 }
