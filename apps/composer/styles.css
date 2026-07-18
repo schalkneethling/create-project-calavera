@@ -191,6 +191,14 @@ fieldset {
   padding-inline: 0;
 }
 
+.compatibility-note {
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+  margin-block: -0.25rem 0.75rem;
+  margin-inline: 0;
+}
+
 legend,
 .field {
   color: var(--teal-deep);

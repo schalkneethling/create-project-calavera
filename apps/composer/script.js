@@ -27,6 +27,13 @@ import {
   recommendBaselineTarget,
   searchBaselineFeatures,
 } from "../../packages/baseline-core/src/index.js";
+import {
+  assertRecipeIntegrationsSupported,
+  filterIntegrationsForCli,
+  integrationResponseForCli,
+  loadPublishedCliCompatibility,
+  SAFE_CLI_FALLBACK_VERSION,
+} from "./cli-compatibility.js";
 
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
@@ -37,9 +44,14 @@ const nextCommandsNote = document.querySelector("#next-commands-note");
 const webMcpBanner = document.querySelector("#webmcp-banner");
 const baselineOptions = document.querySelector("#baseline-options");
 const baselineAvailable = document.querySelector("#baseline-available");
+const cliCompatibilityNote = document.querySelector("#cli-compatibility");
 const profiles = profileIdsForRecipe();
 const packageManagers = packageManagerIdsForRecipe();
 const aiArtifactOptions = listAiArtifactOptions();
+let cliCompatibility = {
+  version: SAFE_CLI_FALLBACK_VERSION,
+  source: "fallback",
+};
 
 for (
   let year = baselineMetadata.currentYear;
@@ -57,11 +69,38 @@ function selectedProfile() {
 }
 
 function visibleCatalog(profile = selectedProfile()) {
-  return listIntegrationOptions(profile);
+  return filterIntegrationsForCli(listIntegrationOptions(profile), cliCompatibility.version);
+}
+
+function supportedIntegrationIds() {
+  return new Set(visibleCatalog().map(({ id }) => id));
+}
+
+function assertPublishedCliCompatibility(recipeInput) {
+  const validatedRecipe = validateRecipe(recipeInput);
+  return assertRecipeIntegrationsSupported(
+    validatedRecipe,
+    listIntegrationOptions(),
+    cliCompatibility.version,
+  );
+}
+
+function renderCliCompatibility() {
+  const allIntegrations = listIntegrationOptions();
+  const availableIntegrations = filterIntegrationsForCli(allIntegrations, cliCompatibility.version);
+  const hiddenCount = allIntegrations.length - availableIntegrations.length;
+  const source = cliCompatibility.source === "npm" ? "npm latest" : "safe fallback";
+
+  cliCompatibilityNote.textContent = `Showing integrations supported by create-project-calavera v${cliCompatibility.version} (${source}).${
+    hiddenCount > 0
+      ? ` ${hiddenCount} integration${hiddenCount === 1 ? " is" : "s are"} waiting for a newer CLI release.`
+      : ""
+  }`;
 }
 
 function renderIntegrations() {
   integrations.replaceChildren();
+  renderCliCompatibility();
 
   const groups = visibleCatalog().reduce((grouped, item) => {
     grouped.set(item.group, [...(grouped.get(item.group) ?? []), item]);
@@ -271,7 +310,9 @@ function downloadFile(recipeContents = recipe()) {
 }
 
 function downloadRecipe({ recipe: recipeInput } = {}) {
-  const recipeContents = recipeInput === undefined ? recipe() : validateRecipe(recipeInput);
+  const recipeContents = assertPublishedCliCompatibility(
+    recipeInput === undefined ? recipe() : recipeInput,
+  );
   downloadFile(recipeContents);
 
   return {
@@ -306,7 +347,22 @@ function registerWebMcpTools() {
         readOnlyHint: true,
         untrustedContentHint: false,
       },
-      execute: async () => listProfilesResponse({ browser: true }),
+      execute: async () => {
+        const response = listProfilesResponse({ browser: true });
+        const supportedIds = new Set(
+          filterIntegrationsForCli(listIntegrationOptions(), cliCompatibility.version).map(
+            ({ id }) => id,
+          ),
+        );
+
+        return {
+          ...response,
+          profiles: response.profiles.map((profile) => ({
+            ...profile,
+            defaultIntegrations: profile.defaultIntegrations.filter((id) => supportedIds.has(id)),
+          })),
+        };
+      },
     });
 
     navigator.modelContext.registerTool({
@@ -327,7 +383,10 @@ function registerWebMcpTools() {
         readOnlyHint: true,
         untrustedContentHint: false,
       },
-      execute: async (input) => listIntegrationsResponse(input),
+      execute: async (input) => {
+        const response = listIntegrationsResponse(input);
+        return integrationResponseForCli(response, cliCompatibility.version);
+      },
     });
 
     navigator.modelContext.registerTool({
@@ -348,7 +407,19 @@ function registerWebMcpTools() {
         readOnlyHint: true,
         untrustedContentHint: false,
       },
-      execute: async (input) => describeIntegrationResponse(input.id),
+      execute: async (input) => {
+        const integration = describeIntegrationResponse(input.id);
+        const [supportedIntegration] = filterIntegrationsForCli(
+          [integration],
+          cliCompatibility.version,
+        );
+        if (!supportedIntegration) {
+          throw new Error(
+            `${integration.id} is not available in the published Calavera CLI v${cliCompatibility.version}.`,
+          );
+        }
+        return supportedIntegration;
+      },
     });
 
     navigator.modelContext.registerTool({
@@ -505,7 +576,11 @@ function registerWebMcpTools() {
         readOnlyHint: true,
         untrustedContentHint: false,
       },
-      execute: async (input) => composeRecipeResponse(input, { browser: true }),
+      execute: async (input) => {
+        const response = composeRecipeResponse(input, { browser: true });
+        assertPublishedCliCompatibility(response.recipe);
+        return response;
+      },
     });
 
     navigator.modelContext.registerTool({
@@ -526,7 +601,19 @@ function registerWebMcpTools() {
         readOnlyHint: true,
         untrustedContentHint: false,
       },
-      execute: async (input) => validateRecipeResponse(input.recipe),
+      execute: async (input) => {
+        const validation = validateRecipeResponse(input.recipe);
+        if (!validation.ok) return validation;
+
+        try {
+          return { ok: true, recipe: assertPublishedCliCompatibility(input.recipe) };
+        } catch (error) {
+          return {
+            ok: false,
+            errors: [error instanceof Error ? error.message : String(error)],
+          };
+        }
+      },
     });
 
     navigator.modelContext.registerTool({
@@ -547,7 +634,8 @@ function registerWebMcpTools() {
         readOnlyHint: true,
         untrustedContentHint: false,
       },
-      execute: async (input) => explainRecipeResponse(input.recipe),
+      execute: async (input) =>
+        explainRecipeResponse(assertPublishedCliCompatibility(input.recipe)),
     });
 
     navigator.modelContext.registerTool({
@@ -600,3 +688,13 @@ document.querySelector("#download").addEventListener("click", () => {
 renderAiArtifacts();
 setDefaults();
 registerWebMcpTools();
+
+loadPublishedCliCompatibility().then((compatibility) => {
+  const selectedIds = new FormData(form).getAll("integration").map(String);
+  cliCompatibility = compatibility;
+  renderIntegrations();
+  const supportedIds = supportedIntegrationIds();
+  selectIntegrations(selectedIds.filter((id) => supportedIds.has(id)));
+  syncIntegrationOptions();
+  render();
+});

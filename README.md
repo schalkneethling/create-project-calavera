@@ -484,6 +484,12 @@ want Calavera to treat the existing files as local, unmanaged content.
 
 The recipe composer runs as a small Vite app:
 
+The hosted Composer reads the version currently published under the npm
+`latest` tag and only offers integrations supported by that CLI release. New
+integrations can therefore land and deploy without producing recipes that the
+published CLI cannot apply. If the npm registry is unavailable, the Composer
+falls back to the last known-safe v2.2 integration catalog.
+
 ```bash
 npm run web:dev
 ```
