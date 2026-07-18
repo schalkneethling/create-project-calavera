@@ -594,6 +594,8 @@ configured with that workflow as a trusted publisher for
 `create-project-calavera` and each public workspace package, including
 `@schalkneethling/calavera-baseline-core`.
 
+The complete independent-package, static-app, artifact-channel, recovery, and macOS rehearsal is documented in [`docs/release-and-update-journey.md`](docs/release-and-update-journey.md).
+
 Before the first trusted publish:
 
 - enable 2FA on npm and GitHub;
