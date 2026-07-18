@@ -21,6 +21,7 @@ export const integrationCatalog = [
     group: "Unused code",
     platform: "knip",
     status: "optional",
+    minimumCliVersion: "2.3.0",
     dependencies: ["knip"],
   },
   {
@@ -361,6 +362,7 @@ export const integrationCatalog = [
     group: "CSS logical properties",
     platform: "stylelint-plugin",
     status: "optional",
+    minimumCliVersion: "2.3.0",
     dependencies: ["stylelint-plugin-logical-css"],
     includes: ["stylelint"],
     stylelint: {
