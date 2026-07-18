@@ -25,7 +25,8 @@
     "release:status": "changeset status",
     "release:version": "changeset version",
     "release:contracts": "node scripts/check-release-contracts.mjs",
-    "release:rehearse": "pnpm quality && pnpm web:build && pnpm --filter @calavera/baseline-explorer build && pnpm --filter @calavera/menu-bar build:web && pnpm publish:check",
+    "release:fixture": "pnpm --filter create-project-calavera exec node --test --test-name-pattern='artifact install locks exact versions and targeted update preserves other artifacts' scripts/check-config-schema.test.mjs",
+    "release:rehearse": "pnpm quality && pnpm release:fixture && pnpm web:build && pnpm --filter @calavera/baseline-explorer build && pnpm --filter @calavera/menu-bar build:web && pnpm publish:check",
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
   },
   "devDependencies": {

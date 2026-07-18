@@ -105,9 +105,20 @@ jobs:
           for tarball in "${tarballs[@]}"; do
             package_name=$(tar -xOf "$tarball" package/package.json | node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).name))')
             package_version=$(tar -xOf "$tarball" package/package.json | node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).version))')
-            if npm view "${package_name}@${package_version}" version >/dev/null 2>&1; then
+            view_output=$(mktemp)
+            if npm view "${package_name}@${package_version}" version >"$view_output" 2>&1; then
+              rm "$view_output"
               echo "Skipping already published ${package_name}@${package_version}."
               continue
+            else
+              view_status=$?
+              if ! grep -Eq '(^|[[:space:]])(E404|404)([[:space:]]|$)' "$view_output"; then
+                cat "$view_output" >&2
+                rm "$view_output"
+                exit "$view_status"
+              fi
+              rm "$view_output"
+              echo "Confirmed ${package_name}@${package_version} is not published."
             fi
             dist_tag=latest
             if [[ "$package_version" == *-* ]]; then
