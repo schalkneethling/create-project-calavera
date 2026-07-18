@@ -1,0 +1,48 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="color-scheme" content="light dark" />
+    <title>Calavera Updates</title>
+    <link rel="stylesheet" href="/src/styles.css" />
+  </head>
+  <body>
+    <main>
+      <header>
+        <span aria-hidden="true">◉</span>
+        <div>
+          <p>Calavera companion</p>
+          <h1>Update watch</h1>
+        </div>
+      </header>
+      <form id="register">
+        <label
+          >Project path <input name="path" required placeholder="/Users/you/dev/project"
+        /></label>
+        <label>CLI version <input name="cliVersion" placeholder="2.2.0" /></label>
+        <label
+          >Channel
+          <select name="tag">
+            <option>latest</option>
+            <option>next</option>
+          </select></label
+        >
+        <button>Register project</button>
+      </form>
+      <form id="terminal-settings">
+        <label
+          >Preferred terminal application (optional)
+          <input name="application" placeholder="Ghostty" />
+        </label>
+        <small>Leave blank to copy update commands without opening an application.</small>
+        <button>Save terminal preference</button>
+      </form>
+      <div class="toolbar">
+        <button id="check">Check now</button><span id="status" role="status"></span>
+      </div>
+      <section id="projects" aria-live="polite"></section>
+    </main>
+    <script type="module" src="/src/main.js"></script>
+  </body>
+</html>
