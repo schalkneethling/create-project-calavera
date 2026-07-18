@@ -153,6 +153,7 @@ Calavera includes curated integration packs grouped by outcome:
 - Promise safety
 - Node package rules
 - Test rules
+- Unused files, dependencies, and exports
 - CSS Baseline
 - CSS property ordering
 - CSS property type validation
@@ -161,6 +162,14 @@ React best-practice checks can include React Doctor, a deterministic scanner for
 React codebases that complements linting with security, performance,
 correctness, accessibility, bundle-size, and architecture diagnostics. JSX-A11y
 linting also appears with the React checks because it targets JSX markup.
+
+The optional Knip integration adds unused-file, dependency, and export analysis
+to the generated `quality` script. Calavera writes a minimal `knip.json` that
+keeps Knip's default project discovery. When those defaults do not fit a
+project, add targeted `entry`, `project`, or `workspaces` configuration as
+described in the [Knip configuration guide](https://knip.dev/overview/configuration).
+Calavera treats those changes as local edits and will refuse to overwrite or
+remove them automatically on a later apply or clean.
 
 The CSS catalog includes `stylelint-plugin-logical-css` for logical CSS
 property, value, and unit checks, plus
