@@ -1,5 +1,7 @@
 export const NPM_LATEST_CLI_URL = "https://registry.npmjs.org/create-project-calavera/latest";
 export const SAFE_CLI_FALLBACK_VERSION = "2.2.0";
+export const CLI_VERSION_PATTERN =
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-((?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*)(?:\.(?:0|[1-9]\d*|\d*[A-Za-z-][0-9A-Za-z-]*))*))?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/;
 
 const fallbackIntegrationIds = new Set([
   "editorconfig",
@@ -47,13 +49,35 @@ const fallbackIntegrationIds = new Set([
 ]);
 
 function parseVersion(version) {
-  const match = /^(\d+)\.(\d+)\.(\d+)(-.+)?$/.exec(version);
+  const match = CLI_VERSION_PATTERN.exec(version);
   if (!match) throw new Error(`Invalid Calavera CLI version: ${version}.`);
 
   return {
     numbers: match.slice(1, 4).map(Number),
-    prerelease: Boolean(match[4]),
+    prerelease: match[4]?.split(".") ?? [],
   };
+}
+
+function comparePrereleaseIdentifiers(current, minimum) {
+  const length = Math.max(current.length, minimum.length);
+
+  for (let index = 0; index < length; index += 1) {
+    const currentIdentifier = current[index];
+    const minimumIdentifier = minimum[index];
+    if (currentIdentifier === undefined) return -1;
+    if (minimumIdentifier === undefined) return 1;
+    if (currentIdentifier === minimumIdentifier) continue;
+
+    const currentIsNumeric = /^\d+$/.test(currentIdentifier);
+    const minimumIsNumeric = /^\d+$/.test(minimumIdentifier);
+    if (currentIsNumeric && minimumIsNumeric) {
+      return Number(currentIdentifier) > Number(minimumIdentifier) ? 1 : -1;
+    }
+    if (currentIsNumeric !== minimumIsNumeric) return currentIsNumeric ? -1 : 1;
+    return currentIdentifier > minimumIdentifier ? 1 : -1;
+  }
+
+  return 0;
 }
 
 export function versionMeetsMinimum(version, minimumVersion) {
@@ -66,12 +90,18 @@ export function versionMeetsMinimum(version, minimumVersion) {
     }
   }
 
-  return !current.prerelease || minimum.prerelease;
+  if (current.prerelease.length === 0) return true;
+  if (minimum.prerelease.length === 0) return false;
+  return comparePrereleaseIdentifiers(current.prerelease, minimum.prerelease) >= 0;
 }
 
-export function minimumCliVersionForIntegration(integration) {
+export function isFallbackCliIntegration(id) {
+  return fallbackIntegrationIds.has(id);
+}
+
+function minimumCliVersionForIntegration(integration) {
   if (integration.minimumCliVersion) return integration.minimumCliVersion;
-  if (fallbackIntegrationIds.has(integration.id)) return SAFE_CLI_FALLBACK_VERSION;
+  if (isFallbackCliIntegration(integration.id)) return SAFE_CLI_FALLBACK_VERSION;
 
   throw new Error(
     `Integration ${integration.id} must declare minimumCliVersion before the hosted Composer can offer it.`,

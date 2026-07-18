@@ -4,24 +4,31 @@ import test from "node:test";
 import { integrationCatalog } from "../../../packages/cli/src/catalog.js";
 import {
   assertRecipeIntegrationsSupported,
+  CLI_VERSION_PATTERN,
   filterIntegrationsForCli,
   integrationResponseForCli,
+  isFallbackCliIntegration,
   loadPublishedCliCompatibility,
-  minimumCliVersionForIntegration,
   SAFE_CLI_FALLBACK_VERSION,
   versionMeetsMinimum,
 } from "../cli-compatibility.js";
 
 test("version comparison keeps unreleased integrations behind their CLI release", () => {
   assert.equal(versionMeetsMinimum("2.2.0", "2.3.0"), false);
+  assert.equal(versionMeetsMinimum("2.3.0-alpha", "2.3.0-beta"), false);
+  assert.equal(versionMeetsMinimum("2.3.0-beta", "2.3.0-alpha"), true);
+  assert.equal(versionMeetsMinimum("2.3.0-beta.2", "2.3.0-beta.11"), false);
   assert.equal(versionMeetsMinimum("2.3.0-next.1", "2.3.0"), false);
+  assert.equal(versionMeetsMinimum("2.3.0", "2.3.0-next.1"), true);
   assert.equal(versionMeetsMinimum("2.3.0", "2.3.0"), true);
   assert.equal(versionMeetsMinimum("3.0.0", "2.3.0"), true);
 });
 
 test("every post-v2.2 integration declares its minimum CLI version", () => {
   for (const integration of integrationCatalog) {
-    assert.doesNotThrow(() => minimumCliVersionForIntegration(integration));
+    if (isFallbackCliIntegration(integration.id)) continue;
+    assert.equal(typeof integration.minimumCliVersion, "string", integration.id);
+    assert.match(integration.minimumCliVersion, CLI_VERSION_PATTERN, integration.id);
   }
 });
 
