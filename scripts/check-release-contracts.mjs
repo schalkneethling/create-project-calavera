@@ -65,4 +65,4 @@ assert.match(menuWorkflow, /tags: \["menu-bar-v\*"\]/);
 assert.match(menuWorkflow, /--target universal-apple-darwin/);
 assert.match(menuWorkflow, /environment: publish/);
 
-console.log("Release boundaries and channels satisfy the documented contracts.");
+console.info("Release boundaries and channels satisfy the documented contracts.");

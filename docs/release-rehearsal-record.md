@@ -23,6 +23,11 @@ Copy this file into the release issue or another durable release record. Do not 
 | Selected artifact                                 |        |                       |          |                              |
 | Unrelated artifact                                |        |                       |          |                              |
 | macOS companion                                   |        |                       |          |                              |
+| MCP/WebMCP parity                                 |        |                       |          |                              |
+| Multiple-project registration                     |        |                       |          |                              |
+| Notification deduplication                        |        |                       |          |                              |
+| Copy-only behavior                                |        |                       |          |                              |
+| Preferred-terminal launch                         |        |                       |          |                              |
 
 ## Artifact channel journey
 
