@@ -116,16 +116,17 @@ explicitly, run with least privilege, and treat command output as untrusted.
 ### File System
 
 ```javascript
-const path = require("path");
-const fs = require("fs");
+const path = require("node:path");
+const fs = require("node:fs");
 
 // DANGEROUS - path traversal
 const filePath = `/uploads/${userInput}`;
 
-// SAFE - validate and resolve path
+// Keep baseDir and its parent directories trusted and non-writable by users.
 function safeReadFile(userInput, baseDir) {
-  const basePath = path.resolve(baseDir);
-  const safePath = path.resolve(basePath, userInput);
+  const basePath = fs.realpathSync(baseDir);
+  const requestedPath = path.resolve(basePath, userInput);
+  const safePath = fs.realpathSync(requestedPath);
   const relativePath = path.relative(basePath, safePath);
 
   // Verify path is within allowed directory
@@ -133,13 +134,24 @@ function safeReadFile(userInput, baseDir) {
     throw new Error("Invalid file path");
   }
 
-  return fs.readFileSync(safePath);
+  // O_NOFOLLOW prevents a final-component symlink swap between validation and open.
+  // The trusted-directory requirement prevents intermediate path replacement.
+  const fd = fs.openSync(safePath, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW);
+  try {
+    return fs.readFileSync(fd);
+  } finally {
+    fs.closeSync(fd);
+  }
 }
 ```
 
 ## Request Handling
 
 ### Rate Limiting
+
+The default memory store below is suitable only for a single-process development example. In
+multi-process or multi-instance deployments, configure a shared store such as Redis and set
+Express `trust proxy` only to the exact proxy topology so client IP keys cannot be spoofed.
 
 ```javascript
 const rateLimit = require("express-rate-limit");
@@ -227,8 +239,12 @@ app.use(
 ```javascript
 // Global error handler - don't expose details
 app.use((err, req, res, next) => {
-  // Log full error internally
-  console.error(err);
+  // Use a structured logger configured to redact credentials, request data,
+  // SQL, tokens, and PII. Emit only reviewed fields.
+  logger.error({
+    message: typeof err?.message === "string" ? err.message.slice(0, 256) : "Unhandled error",
+    stack: process.env.NODE_ENV === "development" ? err?.stack : undefined,
+  });
 
   // Send generic message to client
   res.status(500).json({

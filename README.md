@@ -565,17 +565,18 @@ create-project-calavera artifacts migrate
 create-project-calavera artifacts install
 create-project-calavera artifacts status
 create-project-calavera artifacts status --check-updates
+create-project-calavera artifacts doctor
 create-project-calavera artifacts update skill-project-goal
 create-project-calavera artifacts update --all --tag next
 ```
 
-Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; ordinary `apply` requires and reuses those exact locked versions. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit, and the existing managed-state hashes continue to block overwriting local edits.
+Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; ordinary `apply` requires and reuses those exact locked versions. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit. Run `artifacts doctor` to verify installed outputs, managed state, and local edits without checking the registry. The existing managed-state hashes continue to block overwriting local edits.
 
 ## macOS update companion
 
-The optional Calavera menu-bar app monitors only project directories that you explicitly register. It reads recipes, artifact locks, and state without changing them; checks npm and GitHub on launch and every six hours; and deduplicates notifications by component and target version.
+The optional Calavera menu-bar app monitors only project directories that you explicitly register. It reads recipes, artifact locks, and state without changing them; checks npm and GitHub on launch, every six hours, or when you select **Check now**; and deduplicates notifications by component and target version.
 
-For project updates, the app copies the exact command and opens Terminal at the registered directory. It never executes the command. App updates open a stable GitHub release, and self-updating is intentionally outside v1.
+For project updates, the app always copies the exact command and never executes it. Opening a terminal is opt-in: save your preferred terminal application's macOS name in the app to open it at the registered directory, or leave the preference blank for copy-only behavior. App updates open a stable GitHub release, and self-updating is intentionally outside v1.
 
 Local development requires Node.js, pnpm, Rust through rustup, and Xcode:
 
@@ -603,9 +604,15 @@ Before the first trusted publish:
 - configure npm trusted publishing for this repository, workflow, and
   environment.
 
-To validate the package locally:
+To validate the package locally, first install
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/). It provisions
+the locked Python environment used by SkillSpector and the workflow audit.
+`pnpm workflow:check` runs `uvx zizmor@1.25.2 --offline`, so prime that exact
+version in uv's cache once while online before using the offline check.
 
 ```bash
+uv sync --frozen
+uvx zizmor@1.25.2 --version
 pnpm check
 pnpm web:build
 pnpm publish:check

@@ -72,7 +72,7 @@ test("MCP entrypoint logs startup failures to stderr without writing stdout", as
   assert.deepEqual(exitCodes, [1]);
   assert.equal(stdoutWrites.join(""), "");
   assert.match(stderr, /create-project-calavera/);
-  assert.match(stderr, new RegExp(`v${packageJson.version}`));
+  assert.ok(stderr.includes(`v${packageJson.version}`));
   assert.match(stderr, /mode=stdio/);
   assert.match(stderr, /cwd=\/example\/project/);
   assert.match(stderr, /failed to start MCP server/);

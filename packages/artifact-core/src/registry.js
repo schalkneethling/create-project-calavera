@@ -115,12 +115,11 @@ export async function hashArtifactPayload(path) {
     hash.update(await readFile(path));
     return hash.digest("hex");
   }
-  for (const file of await payloadFiles(path)) {
-    hash
-      .update(file)
-      .update("\0")
-      .update(await readFile(join(path, file)))
-      .update("\0");
+  for (const entry of await payloadFiles(path)) {
+    hash.update(entry).update("\0");
+    if (!entry.endsWith("/")) {
+      hash.update(await readFile(join(path, entry))).update("\0");
+    }
   }
   return hash.digest("hex");
 }
@@ -134,8 +133,10 @@ async function payloadFiles(root, directory = root) {
   const files = [];
   for (const entry of await readdir(directory, { withFileTypes: true })) {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) files.push(...(await payloadFiles(root, path)));
-    else if (entry.isFile()) files.push(relative(root, path));
+    if (entry.isDirectory()) {
+      files.push(`${relative(root, path)}/`);
+      files.push(...(await payloadFiles(root, path)));
+    } else if (entry.isFile()) files.push(relative(root, path));
   }
   return files.sort();
 }

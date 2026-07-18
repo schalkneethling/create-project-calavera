@@ -391,6 +391,7 @@ export const integrationCatalog = [
     status: "optional",
     dependencies: ["prettier-plugin-tailwindcss"],
     includes: ["prettier"],
+    prettier: { plugins: ["prettier-plugin-tailwindcss"] },
   },
   {
     id: "prettier-svelte",
@@ -400,6 +401,7 @@ export const integrationCatalog = [
     status: "framework-specific",
     dependencies: ["prettier-plugin-svelte"],
     includes: ["prettier"],
+    prettier: { plugins: ["prettier-plugin-svelte"] },
   },
   {
     id: "prettier-astro",
@@ -409,5 +411,6 @@ export const integrationCatalog = [
     status: "framework-specific",
     dependencies: ["prettier-plugin-astro"],
     includes: ["prettier"],
+    prettier: { plugins: ["prettier-plugin-astro"] },
   },
 ];

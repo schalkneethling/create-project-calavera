@@ -25,17 +25,17 @@ const rules: Rule[] = [
   },
   {
     id: "git-push-force",
-    test: (c) => /\bgit\s+push\b.*\s(?:--force\b|--force-with-lease\b|-f\b)/.test(c),
+    test: (c) => /\bgit\s+push\b.*\s(?:--force(?!-with-lease)\b|-f\b)/.test(c),
     message:
       "`git push --force` is blocked. Use `--force-with-lease` only after coordinating with collaborators, or create a new branch.",
   },
   {
     id: "git-push-protected",
     test: (c) =>
-      /\bgit\s+push\b(?:\s+\S+)*\s+(?:origin\s+)?(?:main|master|production|prod|release)(?:\s|$)/.test(
+      /\bgit\s+push\b(?:\s+\S+)*\s+(?:origin\s+)?\+?(?:main|master|production|prod|release)(?:\s|$)/.test(
         c,
       ) ||
-      /\bgit\s+push\b.*\S+:(?:refs\/heads\/)?(?:main|master|production|prod|release)(?:\s|$)/.test(
+      /\bgit\s+push\b.*(?:^|\s)\+?\S+:(?:refs\/heads\/)?(?:main|master|production|prod|release)(?:\s|$)/.test(
         c,
       ),
     message:
@@ -50,8 +50,9 @@ const rules: Rule[] = [
   {
     id: "chmod-777",
     test: (c) =>
-      /\bchmod\s+(?:-[a-zA-Z]*\s+)*(?:777|[ugoa]*[+=][rwx]*w[rwx]*(?:\s|$))/.test(c) &&
-      /-R|--recursive|777/.test(c),
+      /\bchmod\s+(?:(?:-[a-zA-Z]+|--[a-zA-Z-]+)\s+)*(?:777|[ugoa]*[+=][rwx]*w[rwx]*(?:\s|$))/.test(
+        c,
+      ) && /-R|--recursive|777/.test(c),
     message:
       "`chmod 777` or recursive world-writable chmod is blocked. Grant the minimum permissions required.",
   },
@@ -62,7 +63,7 @@ const rules: Rule[] = [
   },
   {
     id: "system-redirect",
-    test: (c) => /(?:>|>>|tee(?:\s+-[a-zA-Z]*)?)\s+\/(?:etc|boot|usr|bin|sbin)\//.test(c),
+    test: (c) => /(?:>{1,2}\s*|tee(?:\s+-[a-zA-Z]*)?\s+)\/(?:etc|boot|usr|bin|sbin)\//.test(c),
     message:
       "Writing into /etc, /boot, /usr, /bin, or /sbin is blocked. These are system directories; use a user-writable path.",
   },
@@ -74,7 +75,9 @@ const rules: Rule[] = [
   {
     id: "curl-pipe-shell",
     test: (c) =>
-      /\b(?:curl|wget|fetch)\b[^|;]*\|\s*(?:sudo\s+)?(?:bash|sh|zsh|fish|ksh|dash)\b/.test(c),
+      /\b(?:curl|wget|fetch)\b[^|;]*\|\s*(?:sudo\s+)?(?:(?:\/usr\/bin\/env\s+)|(?:\/(?:usr\/)?bin\/))?(?:bash|sh|zsh|fish|ksh|dash)\b/.test(
+        c,
+      ),
     message:
       "Piping remote content directly into a shell is blocked. Download the script, inspect it, then run it.",
   },
@@ -118,7 +121,7 @@ function deny(reason: string): void {
     },
   };
   process.stdout.write(JSON.stringify(output));
-  process.exit(2);
+  process.exitCode = 2;
 }
 
 async function main(): Promise<void> {
@@ -126,26 +129,25 @@ async function main(): Promise<void> {
   try {
     const raw = await readStdin();
     if (!raw.trim()) {
-      process.exit(0);
+      return;
     }
 
     payload = JSON.parse(raw);
   } catch {
-    process.exit(0);
+    return;
   }
 
   const command = payload?.tool_input?.command;
   if (typeof command !== "string" || command.length === 0) {
-    process.exit(0);
+    return;
   }
 
   for (const rule of rules) {
     if (rule.test(command)) {
       deny(`[${rule.id}] ${rule.message}`);
+      return;
     }
   }
-
-  process.exit(0);
 }
 
-main().catch(() => process.exit(0));
+main().catch(() => undefined);

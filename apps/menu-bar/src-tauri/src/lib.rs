@@ -40,14 +40,27 @@ fn inspect_project(path: String) -> Result<ProjectSnapshot, String> {
 }
 
 #[tauri::command]
-fn open_terminal(path: String) -> Result<(), String> {
+fn open_terminal(path: String, application: String) -> Result<(), String> {
     let path = registered_path(path)?;
-    Command::new("/usr/bin/open")
-        .args(["-a", "Terminal"])
+    let application = application.trim();
+    if application.is_empty() {
+        return Err("A preferred terminal application is required.".into());
+    }
+    let output = Command::new("/usr/bin/open")
+        .args(["-a", application])
         .arg(path)
-        .spawn()
-        .map(|_| ())
-        .map_err(|error| error.to_string())
+        .output()
+        .map_err(|error| error.to_string())?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        let message = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        Err(if message.is_empty() {
+            format!("macOS could not open {application}.")
+        } else {
+            message
+        })
+    }
 }
 
 #[tauri::command]

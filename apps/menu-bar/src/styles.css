@@ -48,6 +48,14 @@ form {
   padding: 1rem 0;
 }
 
+form + form {
+  border-top: 1px solid #9a8d76;
+}
+
+small {
+  color: #53606e;
+}
+
 label {
   display: grid;
   font-size: 0.8rem;

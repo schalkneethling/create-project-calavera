@@ -88,11 +88,11 @@ User or authenticated UI/API access required:
 > | npm                               | pnpm                                              | yarn                                              |
 > | --------------------------------- | ------------------------------------------------- | ------------------------------------------------- |
 > | `npm ci --ignore-scripts`         | `pnpm install --frozen-lockfile --ignore-scripts` | `yarn install --frozen-lockfile --ignore-scripts` |
-> | `npm i -g npm`                    | `pnpm add -g pnpm`                                | `yarn set version stable`                         |
+> | `npm i -g npm@12.0.1`             | `pnpm add -g pnpm@11.13.1`                        | `yarn set version 4.17.1`                         |
 > | `ignore-scripts=true` in `.npmrc` | `ignore-scripts=true` in `.npmrc`                 | `enableScripts: false` in `.yarnrc.yml`           |
 >
 > Detect the project's package manager by checking for a lockfile (`pnpm-lock.yaml`,
-> `yarn.lock`, `bun.lockb`) or a `packageManager` field in `package.json` before
+> `yarn.lock`, `bun.lock`) or a `packageManager` field in `package.json` before
 > generating any commands or workflow steps.
 >
 > Section 2.2's trusted-publishing requirement is npm-specific: the publish step must run with a
@@ -142,8 +142,8 @@ Use a password manager with generated passwords for both accounts.
 
 ### 1.4 · Remove legacy npm tokens
 
-`Settings → Secrets & Variables → Actions`: remove any stored npm tokens. OIDC trusted publishing
-replaces them entirely — no long-lived secrets needed in the repository.
+`Settings → Secrets & Variables → Actions`: remove npm publish tokens. Retain any read-only
+registry credential required for private installs, scoped to install steps only.
 
 ---
 
@@ -175,7 +175,7 @@ Node.js 22.14.0 or newer can use trusted publishing when the workflow installs n
 newer before publishing:
 
 ```yaml
-- run: npm i -g npm
+- run: npm i -g npm@12.0.1
 ```
 
 ---
@@ -186,7 +186,7 @@ Use the [e18e setup-publish template](https://github.com/e18e/setup-publish/blob
 as your base, or scaffold it with:
 
 ```bash
-npx @e18e/setup-publish
+npx @e18e/setup-publish@1.1.0
 ```
 
 ### 3.1 · Job structure
@@ -194,7 +194,7 @@ npx @e18e/setup-publish
 The workflow **must** separate build from publish. This ensures publish permissions (the OIDC
 token) are never exposed to build-time code.
 
-```
+```text
 test  →  build  →  publish
 ```
 
@@ -227,7 +227,7 @@ should not inherit a repository token unless they explicitly need one.
 
 Add to `.npmrc` in the repository:
 
-```
+```ini
 ignore-scripts=true
 ```
 
@@ -283,7 +283,7 @@ such as `@v6` or `@v7` are mutable and must not be committed to workflow files. 
 workflows and keep them current:
 
 ```bash
-npx actions-up
+npx actions-up@1.16.0
 ```
 
 Run this periodically, or let Dependabot/Renovate manage action updates once SHAs are in place.
@@ -305,7 +305,7 @@ Integrate this into CI or run it before merging workflow changes.
 `exports` fields, wrong `main`/`module` paths, and more.
 
 ```bash
-npx publint
+npx publint@0.3.21
 ```
 
 Review the [full list of publint rules](https://publint.dev/rules) to understand what it checks.
@@ -353,7 +353,8 @@ Mention this as a suggestion, not a requirement.
 
 ### 6.3 · Protect all long-lived branches and tags
 
-Apply branch protection rules not just to `main` but to all long-lived branches and to all tags.
+Apply branch protection rules to every long-lived branch. Protect release tags separately with a
+tag ruleset; branch protection does not apply to tags.
 
 ### 6.4 · Enable immutable releases
 
@@ -409,7 +410,8 @@ Use this when setting up a new package or auditing an existing one.
 - [ ] First-time contributor approval required
 - [ ] Default workflow permissions set to read-only
 - [ ] `main` branch protected (PR + review required)
-- [ ] No npm tokens in repository secrets
+- [ ] Release tags protected by a tag ruleset
+- [ ] No publish-capable npm tokens in repository secrets
 
 ### Trusted publishing
 
@@ -429,6 +431,6 @@ Use this when setting up a new package or auditing an existing one.
 
 ### Package quality
 
-- [ ] `npx publint` passes with no errors
+- [ ] `npx publint@0.3.21` passes with no errors
 - [ ] Dependabot or Renovate configured
 - [ ] `actions-up` run to migrate to SHA-pinned actions

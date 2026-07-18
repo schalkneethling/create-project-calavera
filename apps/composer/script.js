@@ -108,7 +108,7 @@ function renderAiArtifacts() {
         <label for="ai-artifact-${artifact.id}">
           <input id="ai-artifact-${artifact.id}" type="checkbox" name="aiArtifact" value="${artifact.id}" />
           <span>${artifact.label}</span>
-          <small>${artifact.status} · v${artifact.version}</small>
+          <small>${artifact.status} · v${artifact.version} · Calavera ${artifact.compatibility.calavera}</small>
         </label>
       `;
 

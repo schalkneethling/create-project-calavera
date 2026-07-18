@@ -1,6 +1,6 @@
 // @ts-check
-import { cp, mkdir, readFile, rename, rm, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { artifactForId, artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
@@ -11,7 +11,12 @@ import {
 } from "@schalkneethling/calavera-artifact-core/registry";
 import packageJson from "../package.json" with { type: "json" };
 
-import { buildAiApplyResult, hashAiInstall, resolveAiArtifacts } from "./ai/artifacts.js";
+import {
+  aiArtifactOutputPaths,
+  buildAiApplyResult,
+  hashAiInstall,
+  resolveAiArtifacts,
+} from "./ai/artifacts.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import { fileExists } from "./utils/fs.js";
 
@@ -19,6 +24,8 @@ const LOCK_PATH = ".calavera/artifacts.lock.json";
 const STATE_PATH = ".calavera/state.json";
 const CACHE_PATH = ".calavera/cache/npm";
 const PACKAGE_PATH = ".calavera/packages";
+const TRANSACTION_PATH = ".calavera/artifact-transaction.json";
+const TRANSACTION_ROOT = ".calavera/.transactions";
 
 /**
  * @typedef {{ config: string, dryRun: boolean, artifactAction?: string, artifactId?: string, artifactTag?: "latest" | "next", artifactAll?: boolean, checkUpdates?: boolean }} ArtifactOptions
@@ -30,6 +37,7 @@ const PACKAGE_PATH = ".calavera/packages";
  * @param {{ resolve?: typeof resolveArtifactPackage, extract?: typeof extractArtifactPackage }} [services]
  */
 export async function runArtifactCommand(options, services = {}) {
+  await recoverArtifactTransaction();
   const registry = {
     resolve: services.resolve ?? resolveArtifactPackage,
     extract: services.extract ?? extractArtifactPackage,
@@ -49,8 +57,15 @@ export async function runArtifactCommand(options, services = {}) {
   }
 }
 
-/** @param {{ ai?: unknown }} recipe */
-export async function lockedArtifactSources(recipe) {
+/**
+ * @param {{ ai?: unknown }} recipe
+ * @param {boolean} [dryRun]
+ * @param {{ resolve?: typeof resolveArtifactPackage, extract?: typeof extractArtifactPackage }} [services]
+ */
+export async function lockedArtifactSources(recipe, dryRun = false, services = {}) {
+  await recoverArtifactTransaction({ readOnly: dryRun });
+  const resolvePackage = services.resolve ?? resolveArtifactPackage;
+  const extractPackage = services.extract ?? extractArtifactPackage;
   const packageSelections = Array.isArray(recipe.ai)
     ? recipe.ai.filter(
         (/** @type {unknown} */ item) =>
@@ -79,19 +94,30 @@ export async function lockedArtifactSources(recipe) {
       (await hashArtifactPayload(payloadPath)) === entry.payloadHash;
 
     if (!validLocalPayload) {
-      const stage = resolve(".calavera/.staging", selection.id);
+      const temporaryRoot = dryRun
+        ? await mkdtemp(join(tmpdir(), "calavera-locked-artifact-"))
+        : resolve(".calavera/.staging", selection.id);
+      const stage = dryRun ? join(temporaryRoot, "package") : temporaryRoot;
+      const cache = dryRun ? join(temporaryRoot, "cache") : resolve(CACHE_PATH);
+      if (dryRun && (await fileExists(CACHE_PATH))) {
+        await cp(resolve(CACHE_PATH), cache, { recursive: true });
+      }
       await rm(stage, { recursive: true, force: true });
       await mkdir(stage, { recursive: true });
-      const resolution = await resolveArtifactPackage({
+      const resolution = await resolvePackage({
         id: selection.id,
         tag: entry.tag,
         version: entry.version,
-        cache: resolve(CACHE_PATH),
+        cache,
         offline: true,
       });
-      const extracted = await extractArtifactPackage(resolution, stage, packageJson.version);
+      const extracted = await extractPackage(resolution, stage, packageJson.version);
       if (extracted.payloadHash !== entry.payloadHash) {
         throw new Error(`Locked payload hash mismatch for ${selection.id}.`);
+      }
+      if (dryRun) {
+        sources.set(selection.id, extracted.payloadPath);
+        continue;
       }
       const finalRoot = resolve(PACKAGE_PATH, selection.id, entry.version);
       await rm(finalRoot, { recursive: true, force: true });
@@ -127,26 +153,66 @@ async function migrateRecipe(options) {
 
 /** @param {ArtifactOptions} options @param {{ resolve: typeof resolveArtifactPackage }} registry */
 async function artifactStatus(options, registry) {
+  const recipe = (await fileExists(options.config)) ? await readJson(options.config) : {};
+  const selections = normalizePackageSelections(recipe.ai);
   const lock = await readLock();
   const state = await readState();
   const stateByPath = new Map(state.aiArtifacts.map((item) => [item.path, item]));
   const artifacts = [];
   for (const entry of lock.artifacts) {
-    const managed = stateByPath.get(entry.destination);
-    const exists = await fileExists(entry.destination);
-    const installedHash = exists
-      ? await hashAiInstall(entry.type, entry.destination, entry.target)
-      : null;
+    const outputPaths = aiArtifactOutputPaths({ type: entry.type, path: entry.destination });
+    const outputs = await Promise.all(
+      outputPaths.map(async (path) => {
+        const managed = stateByPath.get(path);
+        const installed = await fileExists(path);
+        const installedHash = installed
+          ? await hashAiInstall(entry.type, path, entry.target)
+          : null;
+        return {
+          installed,
+          managed: Boolean(managed),
+          locallyEdited: Boolean(installedHash && managed && installedHash !== managed.hash),
+        };
+      }),
+    );
     const latest = options.checkUpdates
       ? await registry.resolve({ id: entry.id, tag: entry.tag, cache: resolve(CACHE_PATH) })
       : null;
     artifacts.push({
       ...entry,
-      installed: exists,
-      managed: Boolean(managed),
-      locallyEdited: Boolean(installedHash && managed && installedHash !== managed.hash),
+      installed: outputs.every(({ installed }) => installed),
+      managed: outputs.every(({ managed }) => managed),
+      locallyEdited: outputs.some(({ locallyEdited }) => locallyEdited),
       latestVersion: latest?.version ?? null,
       updateAvailable: Boolean(latest && latest.version !== entry.version),
+    });
+  }
+  const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
+  for (const selection of selections.filter(({ id }) => !lockedIds.has(id))) {
+    const artifact = artifactForId(selection.id);
+    if (!artifact) throw new Error(`Unknown Calavera artifact: ${selection.id}.`);
+    const resolvedArtifact = resolveAiArtifacts({ ai: [selection] })[0];
+    if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
+    const latest = options.checkUpdates
+      ? await registry.resolve({ id: selection.id, tag: "latest", cache: resolve(CACHE_PATH) })
+      : null;
+    artifacts.push({
+      id: selection.id,
+      type: artifact.type,
+      package: artifact.packageName,
+      version: null,
+      resolved: null,
+      integrity: null,
+      tag: "latest",
+      manifestVersion: null,
+      ...(selection.target ? { target: selection.target } : {}),
+      destination: resolvedArtifact.path,
+      payloadHash: null,
+      installed: false,
+      managed: false,
+      locallyEdited: false,
+      latestVersion: latest?.version ?? null,
+      updateAvailable: false,
     });
   }
   return {
@@ -183,74 +249,114 @@ async function installArtifacts(options, updating, registry) {
   }
 
   const cache = resolve(options.dryRun ? join(tmpdir(), "calavera-artifact-cache") : CACHE_PATH);
-  const stagingRoot = resolve(
-    options.dryRun ? join(tmpdir(), "calavera-artifact-stage") : ".calavera/.staging",
-  );
+  const stagingRoot = options.dryRun
+    ? await mkdtemp(join(tmpdir(), "calavera-artifact-stage-"))
+    : resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
   const sourcePaths = new Map();
+  /** @type {ArtifactLockEntry[]} */
   const nextEntries = [];
+  let commitStarted = false;
 
   await rm(stagingRoot, { recursive: true, force: true });
   await mkdir(stagingRoot, { recursive: true });
 
-  for (const selection of selections) {
-    const locked = lockedById.get(selection.id);
-    const shouldAdvance = updating && requestedIds.has(selection.id);
-    const resolution = await registry.resolve({
-      id: selection.id,
-      tag: shouldAdvance
-        ? (options.artifactTag ?? "latest")
-        : (locked?.tag ?? options.artifactTag ?? "latest"),
-      version: shouldAdvance ? undefined : locked?.version,
-      cache,
-    });
-    const stage = join(stagingRoot, selection.id);
-    const extracted = await registry.extract(resolution, stage, packageJson.version);
-    const finalRoot = resolve(PACKAGE_PATH, selection.id, resolution.version);
-    const finalPayload = join(finalRoot, extracted.manifest.payload);
-
-    if (!options.dryRun) {
-      await rm(finalRoot, { recursive: true, force: true });
-      await mkdir(dirname(finalRoot), { recursive: true });
-      await cp(stage, finalRoot, { recursive: true });
+  try {
+    for (const selection of selections) {
+      const locked = lockedById.get(selection.id);
+      const shouldAdvance = updating && requestedIds.has(selection.id);
+      const resolution = await registry.resolve({
+        id: selection.id,
+        tag: shouldAdvance
+          ? (options.artifactTag ?? "latest")
+          : (locked?.tag ?? options.artifactTag ?? "latest"),
+        version: shouldAdvance ? undefined : locked?.version,
+        cache,
+      });
+      const stage = join(stagingRoot, "packages", selection.id);
+      const extracted = await registry.extract(resolution, stage, packageJson.version);
+      sourcePaths.set(selection.id, extracted.payloadPath);
+      const resolvedArtifact = resolveAiArtifacts({ ai: [selection] }, sourcePaths)[0];
+      if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
+      nextEntries.push({
+        id: selection.id,
+        type: /** @type {ArtifactLockEntry["type"]} */ (resolution.artifact.type),
+        package: resolution.packageName,
+        version: resolution.version,
+        resolved: resolution.resolved,
+        integrity: resolution.integrity,
+        tag: /** @type {ArtifactLockEntry["tag"]} */ (resolution.tag),
+        manifestVersion: 1,
+        ...(selection.target ? { target: selection.target } : {}),
+        destination: resolvedArtifact.path,
+        payloadHash: extracted.payloadHash,
+      });
     }
-    sourcePaths.set(selection.id, options.dryRun ? extracted.payloadPath : finalPayload);
-    const resolvedArtifact = resolveAiArtifacts({ ai: [selection] }, sourcePaths)[0];
-    if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
-    nextEntries.push({
-      id: selection.id,
-      type: resolution.artifact.type,
-      package: resolution.packageName,
-      version: resolution.version,
-      resolved: resolution.resolved,
-      integrity: resolution.integrity,
-      tag: resolution.tag,
-      manifestVersion: 1,
-      ...(selection.target ? { target: selection.target } : {}),
-      destination: resolvedArtifact.path,
-      payloadHash: extracted.payloadHash,
-    });
-  }
 
-  const state = await readState();
-  const applied = await buildAiApplyResult(recipe, { dryRun: options.dryRun }, state, sourcePaths);
-  if (!options.dryRun) {
-    const paths = new Set(applied.artifacts.map(({ path }) => path));
-    const nextState = {
-      ...state,
-      aiArtifacts: [
-        ...state.aiArtifacts.filter(({ path }) => !paths.has(path)),
-        ...applied.artifacts,
-      ],
+    const state = await readState();
+    const outputRoot = join(stagingRoot, "outputs");
+    const applied = await buildAiApplyResult(
+      recipe,
+      { dryRun: options.dryRun, outputRoot },
+      state,
+      sourcePaths,
+    );
+    if (!options.dryRun) {
+      const paths = new Set(applied.artifacts.map(({ path }) => path));
+      const nextState = {
+        ...state,
+        aiArtifacts: [
+          ...state.aiArtifacts.filter(({ path }) => !paths.has(path)),
+          ...applied.artifacts,
+        ],
+      };
+      const stagedState = join(stagingRoot, "records", "state.json");
+      const stagedLock = join(stagingRoot, "records", "artifacts.lock.json");
+      await writeJson(stagedState, nextState);
+      await writeJson(stagedLock, { schemaVersion: 1, artifacts: nextEntries });
+
+      const operations = selections.map((selection) => {
+        const entry = nextEntries.find(({ id }) => id === selection.id);
+        if (!entry) throw new Error(`Missing lock entry for ${selection.id}.`);
+        return {
+          staged: join(stagingRoot, "packages", selection.id),
+          target: resolve(PACKAGE_PATH, selection.id, entry.version),
+        };
+      });
+      const changedPaths = new Set(applied.changes.map(({ path }) => path));
+      for (const artifact of resolveAiArtifacts(recipe, sourcePaths)) {
+        const outputPaths = aiArtifactOutputPaths(artifact);
+        if (!outputPaths.some((path) => changedPaths.has(path))) continue;
+        for (const path of outputPaths) {
+          operations.push({ staged: resolve(outputRoot, path), target: resolve(path) });
+        }
+      }
+      operations.push(
+        { staged: stagedState, target: resolve(STATE_PATH) },
+        { staged: stagedLock, target: resolve(LOCK_PATH) },
+      );
+      commitStarted = true;
+      await commitArtifactTransaction(stagingRoot, operations);
+      commitStarted = false;
+    }
+    return {
+      command: updating ? "artifacts update" : "artifacts install",
+      dryRun: options.dryRun,
+      artifacts: nextEntries,
+      changes: applied.changes,
     };
-    await writeArtifactRecords(nextState, { schemaVersion: 1, artifacts: nextEntries });
-    await rm(stagingRoot, { recursive: true, force: true });
+  } finally {
+    if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) {
+      await rm(stagingRoot, { recursive: true, force: true });
+    }
   }
-  return {
-    command: updating ? "artifacts update" : "artifacts install",
-    dryRun: options.dryRun,
-    artifacts: nextEntries,
-    changes: applied.changes,
-  };
+}
+
+/** @param {unknown} ai */
+function normalizePackageSelections(ai) {
+  if (!Array.isArray(ai)) return [];
+  return normalizeSelections(
+    ai.filter((item) => item && typeof item === "object" && !Array.isArray(item) && "id" in item),
+  );
 }
 
 /** @param {unknown} ai */
@@ -267,7 +373,7 @@ function normalizeSelections(ai) {
           ? artifactForLegacyPath(String(item.src))
           : undefined;
     if (!artifact) throw new Error("Unknown artifact selection.");
-    const target = "target" in item ? String(item.target) : artifact.defaultTarget;
+    const target = "target" in item ? String(item.target).trim() : artifact.defaultTarget;
     return { id: artifact.id, ...(target ? { target } : {}) };
   });
 }
@@ -300,28 +406,113 @@ async function writeAtomicJson(path, value) {
   await rename(temporary, absolute);
 }
 
-/** @param {unknown} state @param {unknown} lock */
-async function writeArtifactRecords(state, lock) {
-  const statePath = resolve(STATE_PATH);
-  const lockPath = resolve(LOCK_PATH);
-  await mkdir(dirname(statePath), { recursive: true });
-  const stateTemporary = `${statePath}.${process.pid}.tmp`;
-  const lockTemporary = `${lockPath}.${process.pid}.tmp`;
-  const previousState = (await fileExists(statePath)) ? await readFile(statePath) : null;
-  const previousLock = (await fileExists(lockPath)) ? await readFile(lockPath) : null;
-  await writeFile(stateTemporary, `${JSON.stringify(state, null, 2)}\n`, { flag: "wx" });
-  await writeFile(lockTemporary, `${JSON.stringify(lock, null, 2)}\n`, { flag: "wx" });
+/** @param {string} path @param {unknown} value */
+async function writeJson(path, value) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+}
 
-  try {
-    await rename(stateTemporary, statePath);
-    await rename(lockTemporary, lockPath);
-  } catch (error) {
-    if (previousState) await writeFile(statePath, previousState);
-    else await rm(statePath, { force: true });
-    if (previousLock) await writeFile(lockPath, previousLock);
-    else await rm(lockPath, { force: true });
-    await rm(stateTemporary, { force: true });
-    await rm(lockTemporary, { force: true });
-    throw error;
+/** @param {string} parent @param {string} child */
+function isInside(parent, child) {
+  const path = relative(parent, child);
+  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
+}
+
+/** @param {string} transactionRoot @param {{ staged: string, target: string }[]} operations */
+async function commitArtifactTransaction(transactionRoot, operations) {
+  const projectRoot = resolve(".");
+  const normalizedRoot = resolve(transactionRoot);
+  const seenTargets = new Set();
+  const journalOperations = [];
+  for (const [index, operation] of operations.entries()) {
+    const staged = resolve(operation.staged);
+    const target = resolve(operation.target);
+    if (
+      !isInside(resolve(TRANSACTION_ROOT), normalizedRoot) ||
+      !isInside(normalizedRoot, staged) ||
+      !isInside(projectRoot, target) ||
+      seenTargets.has(target) ||
+      !(await fileExists(staged))
+    ) {
+      throw new Error("Invalid artifact transaction operation.");
+    }
+    seenTargets.add(target);
+    journalOperations.push({
+      staged,
+      target,
+      backup: join(normalizedRoot, "backups", String(index)),
+      hadTarget: await fileExists(target),
+    });
   }
+
+  await writeAtomicJson(TRANSACTION_PATH, {
+    schemaVersion: 1,
+    transactionRoot: normalizedRoot,
+    operations: journalOperations,
+  });
+  for (const operation of journalOperations) {
+    await mkdir(dirname(operation.target), { recursive: true });
+    if (operation.hadTarget) {
+      await mkdir(dirname(operation.backup), { recursive: true });
+      await rename(operation.target, operation.backup);
+    }
+    await rename(operation.staged, operation.target);
+  }
+  await rm(TRANSACTION_PATH, { force: true });
+}
+
+/** @param {{ readOnly?: boolean }} [options] */
+async function recoverArtifactTransaction(options = {}) {
+  if (!(await fileExists(TRANSACTION_PATH))) return;
+  if (options.readOnly) {
+    throw new Error("A pending artifact transaction requires recovery before a dry run.");
+  }
+  const journal = await readJson(TRANSACTION_PATH);
+  if (
+    journal.schemaVersion !== 1 ||
+    typeof journal.transactionRoot !== "string" ||
+    !Array.isArray(journal.operations)
+  ) {
+    throw new Error("Invalid artifact transaction journal.");
+  }
+  const projectRoot = resolve(".");
+  const transactionRoot = resolve(journal.transactionRoot);
+  if (!isInside(resolve(TRANSACTION_ROOT), transactionRoot)) {
+    throw new Error("Invalid artifact transaction root.");
+  }
+  const operations = journal.operations.map((operation) => {
+    if (
+      !operation ||
+      typeof operation !== "object" ||
+      typeof operation.staged !== "string" ||
+      typeof operation.target !== "string" ||
+      typeof operation.backup !== "string" ||
+      typeof operation.hadTarget !== "boolean"
+    ) {
+      throw new Error("Invalid artifact transaction journal operation.");
+    }
+    const staged = resolve(operation.staged);
+    const target = resolve(operation.target);
+    const backup = resolve(operation.backup);
+    if (
+      !isInside(transactionRoot, staged) ||
+      !isInside(transactionRoot, backup) ||
+      !isInside(projectRoot, target)
+    ) {
+      throw new Error("Artifact transaction journal path escapes its workspace.");
+    }
+    return { staged, target, backup, hadTarget: operation.hadTarget };
+  });
+
+  for (const operation of operations.reverse()) {
+    if (await fileExists(operation.backup)) {
+      await rm(operation.target, { recursive: true, force: true });
+      await mkdir(dirname(operation.target), { recursive: true });
+      await rename(operation.backup, operation.target);
+    } else if (!operation.hadTarget) {
+      await rm(operation.target, { recursive: true, force: true });
+    }
+  }
+  await rm(TRANSACTION_PATH, { force: true });
+  await rm(transactionRoot, { recursive: true, force: true });
 }
