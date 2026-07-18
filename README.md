@@ -617,7 +617,8 @@ To validate the package locally, first install
 [`uv`](https://docs.astral.sh/uv/getting-started/installation/). It provisions
 the locked Python environment used by SkillSpector and the workflow audit.
 `pnpm workflow:check` runs `uvx zizmor@1.25.2 --offline`, so prime that exact
-version in uv's cache once while online before using the offline check.
+version in uv's cache once while online before using the offline check. The
+`pnpm check` quality gate includes the repository's own Knip analysis.
 
 ```bash
 uv sync --frozen

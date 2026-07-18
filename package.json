@@ -10,10 +10,11 @@
     "web:dev": "pnpm --filter @calavera/composer dev",
     "web:build": "pnpm --filter @calavera/composer build",
     "web:preview": "pnpm --filter @calavera/composer preview",
-    "quality": "pnpm lint && pnpm format:all:check && pnpm typecheck && pnpm test && pnpm release:contracts",
+    "quality": "pnpm lint && pnpm format:all:check && pnpm typecheck && pnpm knip && pnpm test && pnpm release:contracts",
     "lint": "oxlint . && stylelint \"**/*.{css,scss}\" && pnpm lint:skills",
     "lint:fix": "oxlint --fix . && stylelint \"**/*.{css,scss}\" --fix",
     "lint:skills": "node scripts/lint-skills.mjs",
+    "knip": "knip",
     "format": "oxfmt --write .",
     "format:all": "oxfmt --write .",
     "format:all:check": "oxfmt --check .",
@@ -32,7 +33,6 @@
   "devDependencies": {
     "@changesets/cli": "^2.31.1",
     "@eslint/js": "^10.0.1",
-    "@modelcontextprotocol/sdk": "^1.29.0",
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
     "@types/node": "^26.1.1",
     "@types/pacote": "^11.1.8",
@@ -40,6 +40,7 @@
     "ajv": "8.20.0",
     "eslint": "^10.4.0",
     "globals": "^17.6.0",
+    "knip": "^6.27.0",
     "oxfmt": "^0.58.0",
     "oxlint": "^1.73.0",
     "publint": "^0.3.21",
@@ -47,8 +48,7 @@
     "stylelint-config-standard": "^40.0.0",
     "stylelint-order": "^8.1.1",
     "stylelint-plugin-use-baseline": "^1.4.2",
-    "typescript": "^6.0.3",
-    "vite": "^8.0.14"
+    "typescript": "^6.0.3"
   },
   "packageManager": "pnpm@11.3.0"
 }
