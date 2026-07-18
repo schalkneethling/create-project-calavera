@@ -75,7 +75,7 @@
         },
         "quality": {
           "type": "boolean",
-          "description": "Generate a combined quality script from the available lint, format, typecheck, and React Doctor scripts."
+          "description": "Generate a combined quality script from the available lint, format, typecheck, Knip, and React Doctor scripts."
         }
       }
     },
@@ -141,6 +141,7 @@
       "enum": [
         "editorconfig",
         "typescript",
+        "knip",
         "oxlint",
         "oxlint-eslint",
         "oxlint-typescript",

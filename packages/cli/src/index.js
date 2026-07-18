@@ -603,6 +603,7 @@ function buildScripts(recipe, integrations, packageManager) {
   const usesPrettier = has("prettier");
   const usesReactDoctor = has("react-doctor");
   const usesTypeScript = has("typescript");
+  const usesKnip = has("knip");
 
   const lintParts = [
     usesOxlint ? "oxlint ." : null,
@@ -679,11 +680,16 @@ function buildScripts(recipe, integrations, packageManager) {
     scripts["react:doctor:diff"] = "react-doctor --offline --diff";
   }
 
+  if (usesKnip) {
+    scripts.knip = "knip";
+  }
+
   if (recipe.scripts?.quality) {
     const qualityScripts = [
       "lint",
       "format:check",
       usesTypeScript && recipe.scripts?.typecheck ? "typecheck" : null,
+      usesKnip ? "knip" : null,
       usesReactDoctor ? "react:doctor" : null,
     ]
       .filter(isNotEmptyString)
@@ -1124,6 +1130,13 @@ function createReactDoctorConfig() {
   };
 }
 
+function createKnipConfig() {
+  return {
+    $schema: "https://unpkg.com/knip@6/schema.json",
+    ignoreExportsUsedInFile: true,
+  };
+}
+
 /**
  * @param {string} path
  * @returns {string}
@@ -1357,6 +1370,13 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
     plans.push({
       path: "react-doctor.config.json",
       contents: `${JSON.stringify(createReactDoctorConfig(), null, 2)}\n`,
+    });
+  }
+
+  if (integrations.some((integration) => integration.id === "knip")) {
+    plans.push({
+      path: "knip.json",
+      contents: `${JSON.stringify(createKnipConfig(), null, 2)}\n`,
     });
   }
 
@@ -1710,6 +1730,19 @@ export async function applyRecipeObject(recipe, options = {}) {
       await writeManagedJSONFile(
         "react-doctor.config.json",
         createReactDoctorConfig(),
+        applyOptions.dryRun,
+        changes,
+        previousState,
+        reownManagedFiles,
+      ),
+    );
+  }
+
+  if (integrations.some((integration) => integration.id === "knip")) {
+    managedFiles.push(
+      await writeManagedJSONFile(
+        "knip.json",
+        createKnipConfig(),
         applyOptions.dryRun,
         changes,
         previousState,
@@ -2535,6 +2568,7 @@ async function doctor(options) {
       integrations.some((integration) => integration.id === "react-doctor")
         ? "react-doctor.config.json"
         : null,
+      integrations.some((integration) => integration.id === "knip") ? "knip.json" : null,
       integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
     ].filter(isNotEmptyString);
 
@@ -2583,6 +2617,7 @@ function expectedManagedFiles(integrations) {
     integrations.some((integration) => integration.id === "react-doctor")
       ? "react-doctor.config.json"
       : null,
+    integrations.some((integration) => integration.id === "knip") ? "knip.json" : null,
     integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
   ].filter(isNotEmptyString);
 }

@@ -8,6 +8,7 @@ export const packageManagerLockfiles = Object.freeze({
 export const integrationConfigFiles = Object.freeze({
   editorconfig: [".editorconfig"],
   eslint: ["eslint.config.js"],
+  knip: ["knip.json"],
   oxlint: ["oxlint.json"],
   oxfmt: [],
   prettier: [".prettierrc.json", ".prettierignore"],

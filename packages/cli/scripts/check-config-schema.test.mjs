@@ -561,6 +561,9 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
   assert.equal(modernToolIds.includes("eslint-react"), false);
   assert.ok(classicToolIds.includes("eslint-react"));
   assert.equal(classicToolIds.includes("oxlint-react"), false);
+  assert.ok(modernToolIds.includes("knip"));
+  assert.ok(classicToolIds.includes("knip"));
+  assert.ok(listIntegrationOptions("minimal").some(({ id }) => id === "knip"));
   assert.deepEqual(
     response.profiles.map(({ id }) => id),
     profiles,
@@ -2276,6 +2279,115 @@ test("apply writes selected Prettier plugins into configuration", async () => {
     assert.deepEqual(JSON.parse(await readFile(".prettierrc.json", "utf8")), {
       plugins: ["prettier-plugin-tailwindcss", "prettier-plugin-astro"],
     });
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+test("Knip is managed across apply, doctor, local-edit protection, and clean", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-knip-"));
+  const recipe = buildRecipe("minimal", ["knip"], "npm");
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+
+    const dryRun = await applyRecipeObject(recipe, {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.deepEqual(dryRun.dependencies, ["knip"]);
+    assert.equal(
+      dryRun.changes.some(({ type, path }) => type === "write" && path === "knip.json"),
+      true,
+    );
+    await assertPathMissing("knip.json", "dry-run apply must not write Knip configuration");
+
+    const doctorBeforeApply = JSON.parse(
+      (
+        await execFileAsync(
+          process.execPath,
+          [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
+          { env: { ...process.env, NO_COLOR: "1" } },
+        )
+      ).stdout,
+    );
+    assert.equal(
+      doctorBeforeApply.issues.some(({ message }) => message.includes("knip.json")),
+      true,
+    );
+
+    await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    const packageFile = JSON.parse(await readFile("package.json", "utf8"));
+    assert.equal(packageFile.scripts.knip, "knip");
+    assert.equal(packageFile.scripts.quality, "npm run knip");
+    assert.deepEqual(JSON.parse(await readFile("knip.json", "utf8")), {
+      $schema: "https://unpkg.com/knip@6/schema.json",
+      ignoreExportsUsedInFile: true,
+    });
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.equal(
+      state.managedFiles.some(({ path }) => path === "knip.json"),
+      true,
+    );
+
+    const doctorAfterApply = JSON.parse(
+      (
+        await execFileAsync(
+          process.execPath,
+          [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
+          { env: { ...process.env, NO_COLOR: "1" } },
+        )
+      ).stdout,
+    );
+    assert.equal(
+      doctorAfterApply.issues.some(({ message }) => message.includes("knip.json")),
+      false,
+    );
+
+    await writeFile("knip.json", `${JSON.stringify({ entry: ["src/index.js"] }, null, 2)}\n`);
+    await assert.rejects(
+      () =>
+        applyRecipeObject(recipe, {
+          dryRun: true,
+          json: true,
+          noInstall: true,
+          assumeYes: true,
+        }),
+      /Refusing to overwrite existing managed file: knip\.json/,
+    );
+
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
+    );
+    const cleanResult = JSON.parse(
+      (
+        await execFileAsync(
+          process.execPath,
+          [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
+          { env: { ...process.env, NO_COLOR: "1" } },
+        )
+      ).stdout,
+    );
+    assert.equal(
+      cleanResult.changes.some(({ type, path }) => type === "skip" && path === "knip.json"),
+      true,
+    );
+    assert.equal(
+      await readFile("knip.json", "utf8"),
+      '{\n  "entry": [\n    "src/index.js"\n  ]\n}\n',
+    );
   } finally {
     process.chdir(originalDirectory);
     await rm(projectDirectory, { force: true, recursive: true });

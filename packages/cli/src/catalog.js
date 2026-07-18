@@ -16,6 +16,14 @@ export const integrationCatalog = [
     dependencies: ["typescript", "@types/node"],
   },
   {
+    id: "knip",
+    label: "Knip",
+    group: "Unused code",
+    platform: "knip",
+    status: "optional",
+    dependencies: ["knip"],
+  },
+  {
     id: "oxlint",
     label: "Oxlint",
     group: "Modern JS/TS linting",
