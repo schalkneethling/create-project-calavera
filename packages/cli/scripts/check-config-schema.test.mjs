@@ -22,6 +22,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { artifactPayloadPath } from "@schalkneethling/calavera-artifact-core/node";
 import Ajv2020 from "ajv/dist/2020.js";
+import { HtmlValidate } from "html-validate";
 import packageJson from "../package.json" with { type: "json" };
 import * as prettier from "prettier";
 
@@ -142,6 +143,7 @@ test("published config schema is valid JSON Schema and validates the example con
 
   assertValid(validate, config);
   assertValid(validate, buildRecipe("modern", ["editorconfig"], "pnpm"));
+  assertValid(validate, buildRecipe("minimal", ["html-validate"], "pnpm"));
   assertValid(
     validate,
     buildRecipe("modern", ["stylelint-baseline"], "pnpm", [], {
@@ -564,6 +566,10 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
   assert.ok(modernToolIds.includes("knip"));
   assert.ok(classicToolIds.includes("knip"));
   assert.ok(listIntegrationOptions("minimal").some(({ id }) => id === "knip"));
+  const htmlValidate = listIntegrationOptions("minimal").find(({ id }) => id === "html-validate");
+  assert.equal(htmlValidate?.group, "HTML");
+  assert.equal(htmlValidate?.platform, "html-validate");
+  assert.equal(htmlValidate?.minimumCliVersion, "2.3.0");
   assert.deepEqual(
     response.profiles.map(({ id }) => id),
     profiles,
@@ -2388,6 +2394,158 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
       await readFile("knip.json", "utf8"),
       '{\n  "entry": [\n    "src/index.js"\n  ]\n}\n',
     );
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-html-validate-"));
+  const recipe = buildRecipe("minimal", ["html-validate"], "npm");
+  const expectedConfig = {
+    extends: ["html-validate:recommended", "html-validate:document"],
+    rules: {},
+  };
+  const expectedIgnore = "node_modules/\ndist/\ncoverage/\n";
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+
+    const dryRun = await applyRecipeObject(recipe, {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.deepEqual(dryRun.dependencies, ["html-validate"]);
+    assert.deepEqual(
+      dryRun.changes.filter(({ type }) => type === "write").map(({ path }) => path),
+      [".htmlvalidate.json", ".htmlvalidateignore"],
+    );
+    await assertPathMissing(".htmlvalidate.json");
+    await assertPathMissing(".htmlvalidateignore");
+
+    const mcpDryRun = await callMcpTool("dry_run_apply", { recipe });
+    assert.deepEqual(
+      mcpDryRun.result.changes
+        .filter(({ type, path }) => type === "write" && path.startsWith(".htmlvalidate"))
+        .map(({ path }) => path),
+      [".htmlvalidate.json", ".htmlvalidateignore"],
+    );
+
+    await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.deepEqual(JSON.parse(await readFile(".htmlvalidate.json", "utf8")), expectedConfig);
+    assert.equal(await readFile(".htmlvalidateignore", "utf8"), expectedIgnore);
+
+    const validator = new HtmlValidate(expectedConfig);
+    const validation = await validator.validateString(
+      '<!DOCTYPE html><html lang="en"><head><meta charset="utf-8"><title>Valid HTML</title></head><body><main><h1>Valid HTML</h1></main></body></html>',
+    );
+    assert.equal(validation.valid, true, JSON.stringify(validation.results));
+    const dishonestStyle = await validator.validateString(
+      '<!doctype html><html lang="en"><head><meta charset="utf-8" /><title>Invalid HTML style</title></head><body></body></html>',
+    );
+    assert.deepEqual(
+      dishonestStyle.results.flatMap(({ messages }) => messages.map(({ ruleId }) => ruleId)),
+      ["doctype-style", "void-style"],
+    );
+
+    const packageFile = JSON.parse(await readFile("package.json", "utf8"));
+    assert.equal(packageFile.scripts["lint:html"], 'html-validate "**/*.html"');
+    assert.equal(packageFile.scripts.quality, "npm run lint:html");
+
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.deepEqual(
+      state.managedFiles.map(({ path }) => path),
+      [".htmlvalidate.json", ".htmlvalidateignore"],
+    );
+
+    const { stdout: doctorStdout } = await execFileAsync(
+      process.execPath,
+      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
+      { env: { ...process.env, NO_COLOR: "1" } },
+    );
+    assert.equal(
+      JSON.parse(doctorStdout).issues.some(({ message }) => message.includes("htmlvalidate")),
+      false,
+    );
+
+    await writeFile(".htmlvalidate.json", `${JSON.stringify({ rules: {} }, null, 2)}\n`);
+    await assert.rejects(
+      () =>
+        applyRecipeObject(recipe, {
+          dryRun: true,
+          json: true,
+          noInstall: true,
+          assumeYes: true,
+        }),
+      /Refusing to overwrite existing managed file: \.htmlvalidate\.json/,
+    );
+
+    await writeFile(".htmlvalidate.json", `${JSON.stringify(expectedConfig, null, 2)}\n`);
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
+    );
+    const { stdout: cleanStdout } = await execFileAsync(
+      process.execPath,
+      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
+      { env: { ...process.env, NO_COLOR: "1" } },
+    );
+    assert.deepEqual(
+      JSON.parse(cleanStdout).changes.map(({ type, path }) => ({ type, path })),
+      [
+        { type: "delete", path: ".htmlvalidate.json" },
+        { type: "delete", path: ".htmlvalidateignore" },
+      ],
+    );
+    await assertPathMissing(".htmlvalidate.json");
+    await assertPathMissing(".htmlvalidateignore");
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+test("HTML validation does not disable Oxfmt HTML formatting", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-html-oxfmt-"));
+  const recipe = buildRecipe("minimal", ["oxfmt", "html-validate"], "npm");
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+
+    const dryRun = await applyRecipeObject(recipe, {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.equal(
+      dryRun.changes.some(({ path }) => path === ".oxfmtrc.json"),
+      false,
+    );
+
+    await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    const packageFile = JSON.parse(await readFile("package.json", "utf8"));
+    assert.equal(packageFile.scripts.format, "oxfmt --write .");
+    assert.equal(packageFile.scripts["format:check"], "oxfmt --check .");
+    assert.equal(packageFile.scripts["lint:html"], 'html-validate "**/*.html"');
+    await assertPathMissing(".oxfmtrc.json");
   } finally {
     process.chdir(originalDirectory);
     await rm(projectDirectory, { force: true, recursive: true });

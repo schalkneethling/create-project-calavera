@@ -120,6 +120,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string} [status]
  * @property {string[]} [dependencies]
  * @property {string[]} [includes]
+ * @property {{ extends?: string[], rules?: Record<string, unknown> }} [htmlValidate]
  * @property {{ extends?: string[], plugins?: string[], rules?: Record<string, unknown> }} [stylelint]
  * @property {{ plugins?: string[] }} [prettier]
  *
@@ -198,6 +199,7 @@ const AGENT_BOOTSTRAP_NEXT_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const SCRIPT_SOURCE_EXTENSIONS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
 const TSC_INCLUDE_PATTERNS = SCRIPT_SOURCE_EXTENSIONS.map((extension) => `src/**/*.${extension}`);
+const HTML_VALIDATE_IGNORE = "node_modules/\ndist/\ncoverage/\n";
 
 /** @type {Record<PackageManager, PackageManagerCommands>} */
 const packageManagerCommands = {
@@ -604,6 +606,7 @@ function buildScripts(recipe, integrations, packageManager) {
   const usesReactDoctor = has("react-doctor");
   const usesTypeScript = has("typescript");
   const usesKnip = has("knip");
+  const usesHtmlValidate = has("html-validate");
 
   const lintParts = [
     usesOxlint ? "oxlint ." : null,
@@ -684,9 +687,14 @@ function buildScripts(recipe, integrations, packageManager) {
     scripts.knip = "knip";
   }
 
+  if (usesHtmlValidate) {
+    scripts["lint:html"] = 'html-validate "**/*.html"';
+  }
+
   if (recipe.scripts?.quality) {
     const qualityScripts = [
       "lint",
+      usesHtmlValidate ? "lint:html" : null,
       "format:check",
       usesTypeScript && recipe.scripts?.typecheck ? "typecheck" : null,
       usesKnip ? "knip" : null,
@@ -1101,6 +1109,20 @@ function createPrettierConfig(integrations) {
   return plugins.length > 0 ? { plugins } : {};
 }
 
+/**
+ * @param {Integration[]} integrations
+ * @returns {{ extends: string[], rules: Record<string, unknown> }}
+ */
+function createHtmlValidateConfig(integrations) {
+  return {
+    extends: unique(integrations.flatMap((integration) => integration.htmlValidate?.extends ?? [])),
+    rules: Object.assign(
+      {},
+      ...integrations.map((integration) => integration.htmlValidate?.rules ?? {}),
+    ),
+  };
+}
+
 function createTSConfig() {
   return {
     compilerOptions: {
@@ -1364,6 +1386,14 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
       path: ".stylelintrc.json",
       contents: `${JSON.stringify(createStylelintConfig(integrations, integrationOptions), null, 2)}\n`,
     });
+  }
+
+  if (integrations.some((integration) => integration.id === "html-validate")) {
+    plans.push({
+      path: ".htmlvalidate.json",
+      contents: `${JSON.stringify(createHtmlValidateConfig(integrations), null, 2)}\n`,
+    });
+    plans.push({ path: ".htmlvalidateignore", contents: HTML_VALIDATE_IGNORE });
   }
 
   if (integrations.some((integration) => integration.id === "react-doctor")) {
@@ -1717,6 +1747,29 @@ export async function applyRecipeObject(recipe, options = {}) {
       await writeManagedJSONFile(
         ".stylelintrc.json",
         createStylelintConfig(integrations, recipe.integrationOptions),
+        applyOptions.dryRun,
+        changes,
+        previousState,
+        reownManagedFiles,
+      ),
+    );
+  }
+
+  if (integrations.some((integration) => integration.id === "html-validate")) {
+    managedFiles.push(
+      await writeManagedJSONFile(
+        ".htmlvalidate.json",
+        createHtmlValidateConfig(integrations),
+        applyOptions.dryRun,
+        changes,
+        previousState,
+        reownManagedFiles,
+      ),
+    );
+    managedFiles.push(
+      await writeManagedFile(
+        ".htmlvalidateignore",
+        HTML_VALIDATE_IGNORE,
         applyOptions.dryRun,
         changes,
         previousState,
@@ -2565,6 +2618,12 @@ async function doctor(options) {
       integrations.some((integration) => integration.id === "stylelint")
         ? ".stylelintrc.json"
         : null,
+      integrations.some((integration) => integration.id === "html-validate")
+        ? ".htmlvalidate.json"
+        : null,
+      integrations.some((integration) => integration.id === "html-validate")
+        ? ".htmlvalidateignore"
+        : null,
       integrations.some((integration) => integration.id === "react-doctor")
         ? "react-doctor.config.json"
         : null,
@@ -2614,6 +2673,12 @@ function expectedManagedFiles(integrations) {
     integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
     integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,
     integrations.some((integration) => integration.id === "stylelint") ? ".stylelintrc.json" : null,
+    integrations.some((integration) => integration.id === "html-validate")
+      ? ".htmlvalidate.json"
+      : null,
+    integrations.some((integration) => integration.id === "html-validate")
+      ? ".htmlvalidateignore"
+      : null,
     integrations.some((integration) => integration.id === "react-doctor")
       ? "react-doctor.config.json"
       : null,
