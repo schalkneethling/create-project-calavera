@@ -25,6 +25,19 @@ export const integrationCatalog = [
     dependencies: ["knip"],
   },
   {
+    id: "html-validate",
+    label: "HTML Validate",
+    group: "HTML",
+    platform: "html-validate",
+    status: "optional",
+    minimumCliVersion: "2.3.0",
+    dependencies: ["html-validate"],
+    htmlValidate: {
+      extends: ["html-validate:recommended", "html-validate:document"],
+      rules: {},
+    },
+  },
+  {
     id: "oxlint",
     label: "Oxlint",
     group: "Modern JS/TS linting",

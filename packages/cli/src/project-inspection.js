@@ -8,6 +8,7 @@ export const packageManagerLockfiles = Object.freeze({
 export const integrationConfigFiles = Object.freeze({
   editorconfig: [".editorconfig"],
   eslint: ["eslint.config.js"],
+  "html-validate": [".htmlvalidate.json", ".htmlvalidateignore"],
   knip: ["knip.json"],
   oxlint: ["oxlint.json"],
   oxfmt: [],

@@ -154,6 +154,7 @@ Calavera includes curated integration packs grouped by outcome:
 - Node package rules
 - Test rules
 - Unused files, dependencies, and exports
+- HTML validation
 - CSS Baseline
 - CSS property ordering
 - CSS property type validation
@@ -170,6 +171,24 @@ project, add targeted `entry`, `project`, or `workspaces` configuration as
 described in the [Knip configuration guide](https://knip.dev/overview/configuration).
 Calavera treats those changes as local edits and will refuse to overwrite or
 remove them automatically on a later apply or clean.
+
+The optional HTML Validate integration adds `html-validate`, writes
+`.htmlvalidate.json` with the `html-validate:recommended` and
+`html-validate:document` presets, and ignores `node_modules/`, `dist/`, and
+`coverage/` through `.htmlvalidateignore`. It also adds `lint:html` to the
+generated `quality` script. The recommended preset already includes HTML
+Validate's accessibility rules, so Calavera does not add a redundant separate
+accessibility integration.
+
+HTML Validate follows HTML semantics and Calavera deliberately leaves its
+doctype and void-element style rules at their honest defaults. Oxfmt 0.59.0
+cannot currently be configured to preserve an uppercase `<!DOCTYPE html>` or
+omit the slash it adds to void elements such as `<meta />`. Calavera does not
+blanket-exclude HTML from Oxfmt or weaken HTML Validate to hide this conflict.
+Projects selecting both tools should review the formatter/validator interaction
+until [Oxc issue #24645](https://github.com/oxc-project/oxc/issues/24645) is
+resolved. See the [HTML Validate preset documentation](https://html-validate.org/rules/presets.html)
+for the rules included by each preset.
 
 The CSS catalog includes `stylelint-plugin-logical-css` for logical CSS
 property, value, and unit checks, plus

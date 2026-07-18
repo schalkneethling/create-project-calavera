@@ -142,6 +142,7 @@
         "editorconfig",
         "typescript",
         "knip",
+        "html-validate",
         "oxlint",
         "oxlint-eslint",
         "oxlint-typescript",
