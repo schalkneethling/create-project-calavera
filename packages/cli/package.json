@@ -55,6 +55,7 @@
     "@schalkneethling/calavera-baseline-core": "workspace:^",
     "execa": "^9.6.0",
     "prettier": "^3.5.3",
+    "yaml": "^2.9.0",
     "zod": "^4.4.3"
   }
 }

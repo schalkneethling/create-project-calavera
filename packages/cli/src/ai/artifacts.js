@@ -43,7 +43,7 @@ import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./catalog.js";
  * @property {string} hash
  * @property {string} [target]
  *
- * @typedef {{ type: string, path: string, category?: "ai", aiType?: AiArtifactType, name?: string, reason?: string }} AiChange
+ * @typedef {{ type: string, path: string, category?: "ai", aiType?: AiArtifactType, name?: string, reason?: string, action?: "write" | "update", ownership?: "project" }} AiChange
  */
 
 const AI_SOURCE_DIRECTORIES = Object.freeze({
@@ -54,6 +54,69 @@ const AI_SOURCE_DIRECTORIES = Object.freeze({
 
 const AI_HOOK_FILES = Object.freeze(["hook.mjs", "settings-fragment.json"]);
 const CODEX_AGENT_TARGET = "codex";
+export const CODE_RABBIT_CONFIG_PATH = ".coderabbit.yaml";
+const CODE_RABBIT_SKILL_FILTERS = Object.freeze([
+  "!.claude/skills/**",
+  "!.agents/skills/**",
+  "!pnpm-lock.yaml",
+]);
+const CODE_RABBIT_SKILL_CONFIG = `# CodeRabbit configuration — https://docs.coderabbit.ai/reference/yaml-template
+#
+# The .claude/skills and .agents/skills directories contain vendored AI-agent
+# skill documentation copied from upstream packages. Findings in those files
+# belong upstream, so excluding them keeps reviews focused on project code.
+
+reviews:
+  path_filters:
+    - "!.claude/skills/**"
+    - "!.agents/skills/**"
+    - "!pnpm-lock.yaml"
+`;
+
+/**
+ * @returns {Promise<{ contents: string, type: "write" | "update" } | undefined>}
+ */
+async function planCodeRabbitSkillConfig() {
+  if (!(await fileExists(CODE_RABBIT_CONFIG_PATH))) {
+    return { contents: CODE_RABBIT_SKILL_CONFIG, type: "write" };
+  }
+
+  const { isMap, isSeq, parseDocument } = await import("yaml");
+  const current = await readFile(CODE_RABBIT_CONFIG_PATH, "utf8");
+  const document = parseDocument(current);
+
+  if (document.errors.length > 0) {
+    throw new Error(
+      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: ${document.errors.map(({ message }) => message).join("; ")}`,
+    );
+  }
+
+  const reviews = document.get("reviews", true);
+  if (reviews === undefined) {
+    document.set("reviews", {});
+  } else if (!isMap(reviews)) {
+    throw new Error(`Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews must be a mapping.`);
+  }
+
+  let pathFilters = document.getIn(["reviews", "path_filters"], true);
+  if (pathFilters === undefined) {
+    document.setIn(["reviews", "path_filters"], []);
+    pathFilters = document.getIn(["reviews", "path_filters"], true);
+  }
+  if (!isSeq(pathFilters)) {
+    throw new Error(
+      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews.path_filters must be an array.`,
+    );
+  }
+
+  const existingFilters = new Set(pathFilters.toJSON().map(String));
+  for (const filter of CODE_RABBIT_SKILL_FILTERS) {
+    if (!existingFilters.has(filter)) pathFilters.add(filter);
+  }
+
+  const contents = document.toString({ lineWidth: 0 });
+  return contents === current ? undefined : { contents, type: "update" };
+}
 
 /**
  * @param {ResolvedAiArtifact} artifact
@@ -541,6 +604,9 @@ async function assertSafeAiWrite(artifact, path, sourceHash, previousState) {
  */
 export async function buildAiApplyResult(recipe, options, previousState, sourcePaths = new Map()) {
   const artifacts = resolveAiArtifacts(recipe, sourcePaths);
+  const codeRabbitPlan = artifacts.some(({ type }) => type === "skill")
+    ? await planCodeRabbitSkillConfig()
+    : undefined;
   /** @type {AiChange[]} */
   const changes = [];
   /** @type {AiArtifactState[]} */
@@ -609,6 +675,22 @@ export async function buildAiApplyResult(recipe, options, previousState, sourceP
           ? "Codex custom agent files are installed under .codex/agents/."
           : `Agent files for ${artifact.target} are installed under .agents/agents/${artifact.target}/ in their original Markdown/frontmatter format.`,
       );
+    }
+  }
+
+  if (codeRabbitPlan) {
+    changes.push({
+      type: codeRabbitPlan.type,
+      path: CODE_RABBIT_CONFIG_PATH,
+      action: codeRabbitPlan.type,
+      ownership: "project",
+    });
+    if (!options.dryRun) {
+      const configPath = options.outputRoot
+        ? resolve(options.outputRoot, CODE_RABBIT_CONFIG_PATH)
+        : resolve(CODE_RABBIT_CONFIG_PATH);
+      await mkdir(dirname(configPath), { recursive: true });
+      await writeFile(configPath, codeRabbitPlan.contents);
     }
   }
 

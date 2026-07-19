@@ -14,6 +14,7 @@ import packageJson from "../package.json" with { type: "json" };
 import {
   aiArtifactOutputPaths,
   buildAiApplyResult,
+  CODE_RABBIT_CONFIG_PATH,
   hashAiInstall,
   resolveAiArtifacts,
 } from "./ai/artifacts.js";
@@ -329,6 +330,12 @@ async function installArtifacts(options, updating, registry) {
         for (const path of outputPaths) {
           operations.push({ staged: resolve(outputRoot, path), target: resolve(path) });
         }
+      }
+      if (changedPaths.has(CODE_RABBIT_CONFIG_PATH)) {
+        operations.push({
+          staged: resolve(outputRoot, CODE_RABBIT_CONFIG_PATH),
+          target: resolve(CODE_RABBIT_CONFIG_PATH),
+        });
       }
       operations.push(
         { staged: stagedState, target: resolve(STATE_PATH) },

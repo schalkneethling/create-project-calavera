@@ -470,6 +470,14 @@ choose their `.agents/hooks/<target>/` or `.agents/agents/<target>/` directory.
 The current bundled hooks and agents come from `claude-toolkit` and default to
 `claude-code`.
 
+When a recipe installs a skill, Calavera also creates or updates
+`.coderabbit.yaml` so CodeRabbit excludes `.claude/skills/**`,
+`.agents/skills/**`, and `pnpm-lock.yaml`. This avoids spending downstream
+review tokens on vendored skill documentation whose findings belong upstream.
+Existing CodeRabbit settings and path filters are preserved. The file remains
+project-owned rather than Calavera-managed, so `clean` does not remove these
+review preferences.
+
 Set an agent item's `target` to `codex` when you want Calavera to generate a
 Codex custom-agent TOML file under `.codex/agents/` instead of preserving the
 source Markdown under `.agents/agents/<target>/`.
