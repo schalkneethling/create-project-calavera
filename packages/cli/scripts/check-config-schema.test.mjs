@@ -893,6 +893,7 @@ test("artifact install locks exact versions and targeted update preserves other 
     assert.equal(lock.artifacts.find(({ id }) => id === "skill-code-review").version, "0.1.0");
     assert.equal((await stat(".agents/skills/project-goal/SKILL.md")).isFile(), true);
     assert.equal((await stat(".agents/skills/code-review/SKILL.md")).isFile(), true);
+    assert.match(await readFile(".coderabbit.yaml", "utf8"), /!\.agents\/skills\/\*\*/);
 
     await writeFile(".agents/skills/project-goal/SKILL.md", "local edit\n");
     releases.set("skill-project-goal", "0.3.0");
@@ -1438,6 +1439,7 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     const fallbackGuidance = await readFile("AGENTS.calavera.md", "utf8");
     const mcpGuidance = await readFile(".agents/calavera/mcp.md", "utf8");
     const skill = await readFile(".agents/skills/calavera/SKILL.md", "utf8");
+    const codeRabbitConfig = await readFile(".coderabbit.yaml", "utf8");
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
 
     assert.equal(existingGuidance, "Existing project guidance.\n");
@@ -1531,6 +1533,8 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(skill, /reports `-32000`/);
     assert.match(skill, /outcome as unknown instead of failed/);
     assert.match(skill, /Fallbacks/);
+    assert.match(codeRabbitConfig, /!\.claude\/skills\/\*\*/);
+    assert.match(codeRabbitConfig, /!\.agents\/skills\/\*\*/);
     assert.match(skill, /npm create project-calavera@<version> apply -- --dry-run/);
     assert.match(skill, /pnpm dlx create-project-calavera@<version> apply --dry-run/);
     assert.match(skill, /yarn dlx create-project-calavera@<version> apply --dry-run/);
@@ -2958,6 +2962,153 @@ test("MCP AI-only apply preserves existing managed tooling state", async () => {
     );
   } finally {
     process.chdir(originalDirectory);
+  }
+});
+
+test("skill apply adds CodeRabbit exclusions across dry-run, MCP, and apply", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-skills-"));
+  const recipe = buildRecipe("minimal", [], "npm", [
+    { type: "skill", src: "skills/frontend-engineering" },
+  ]);
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+
+    const dryRun = await applyRecipeObject(recipe, {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.equal(
+      dryRun.changes.some(({ type, path }) => type === "write" && path === ".coderabbit.yaml"),
+      true,
+    );
+    await assertPathMissing(".coderabbit.yaml");
+
+    const mcpDryRun = await callMcpTool("dry_run_apply", { recipe });
+    assert.equal(
+      mcpDryRun.result.changes.some(
+        ({ type, path }) => type === "write" && path === ".coderabbit.yaml",
+      ),
+      true,
+    );
+
+    await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    const config = await readFile(".coderabbit.yaml", "utf8");
+    assert.match(config, /CodeRabbit configuration/);
+    assert.match(config, /vendored AI-agent/);
+    assert.match(config, /- "!\.claude\/skills\/\*\*"/);
+    assert.match(config, /- "!\.agents\/skills\/\*\*"/);
+    assert.match(config, /- "!pnpm-lock\.yaml"/);
+
+    const repeatedApply = await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.equal(
+      repeatedApply.changes.some(({ path }) => path === ".coderabbit.yaml"),
+      false,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+test("skill apply preserves existing CodeRabbit settings and path filters", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-merge-"));
+  const recipe = buildRecipe("minimal", [], "npm", [
+    { type: "skill", src: "skills/frontend-engineering" },
+  ]);
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile(
+      ".coderabbit.yaml",
+      'language: en-US\nreviews:\n  profile: chill\n  path_filters:\n    - "src/**"\n',
+    );
+
+    const result = await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.equal(
+      result.changes.some(({ type, path }) => type === "update" && path === ".coderabbit.yaml"),
+      true,
+    );
+    const config = await readFile(".coderabbit.yaml", "utf8");
+    assert.match(config, /language: en-US/);
+    assert.match(config, /profile: chill/);
+    assert.match(config, /src\/\*\*/);
+    assert.match(config, /!\.claude\/skills\/\*\*/);
+    assert.match(config, /!\.agents\/skills\/\*\*/);
+    assert.match(config, /!pnpm-lock\.yaml/);
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+test("skill apply rejects incompatible CodeRabbit configuration before writing skills", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-invalid-"));
+  const recipe = buildRecipe("minimal", [], "npm", [
+    { type: "skill", src: "skills/frontend-engineering" },
+  ]);
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile(".coderabbit.yaml", "reviews: []\n");
+
+    await assert.rejects(
+      () =>
+        applyRecipeObject(recipe, {
+          json: true,
+          noInstall: true,
+          assumeYes: true,
+        }),
+      /\.coderabbit\.yaml: reviews must be a mapping/,
+    );
+    await assertPathMissing(".agents/skills/frontend-engineering");
+    assert.equal(await readFile(".coderabbit.yaml", "utf8"), "reviews: []\n");
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+test("non-skill AI artifacts do not add CodeRabbit configuration", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-hook-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    const result = await applyRecipeObject(
+      buildRecipe("minimal", [], "npm", [
+        { type: "hook", src: "hooks/auto-approve-safe-commands" },
+      ]),
+      { dryRun: true, json: true, noInstall: true, assumeYes: true },
+    );
+    assert.equal(
+      result.changes.some(({ path }) => path === ".coderabbit.yaml"),
+      false,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
