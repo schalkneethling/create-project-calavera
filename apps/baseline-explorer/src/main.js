@@ -234,8 +234,8 @@ for (const button of document.querySelectorAll("[data-mode]")) {
 for (const button of document.querySelectorAll("[data-output]")) {
   button.addEventListener("click", () => {
     state.output = button.dataset.output;
-    for (const tab of document.querySelectorAll("[data-output]")) {
-      tab.setAttribute("aria-selected", String(tab === button));
+    for (const outputButton of document.querySelectorAll("[data-output]")) {
+      outputButton.setAttribute("aria-pressed", String(outputButton === button));
     }
     if (state.mode === "target") renderTarget();
     else renderRecommendation();

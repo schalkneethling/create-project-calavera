@@ -167,7 +167,7 @@ h1 {
 }
 
 .mode-switcher button[aria-pressed="true"],
-.output-tabs button[aria-selected="true"] {
+.output-tabs button[aria-pressed="true"] {
   background: var(--navy);
   color: white;
 }
