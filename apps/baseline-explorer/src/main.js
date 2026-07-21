@@ -8,6 +8,7 @@ import {
 } from "@schalkneethling/calavera-baseline-core";
 
 import "./styles.css";
+import { tabFocusIndex } from "./tabs.js";
 
 const browserLabels = {
   chrome: "Chrome",
@@ -45,9 +46,15 @@ const elements = Object.fromEntries(
     "browser-runway",
     "result-details",
     "output-section",
-    "generated-output",
-    "copy-output",
   ].map((id) => [id, document.getElementById(id)]),
+);
+const outputTabs = [...document.querySelectorAll('[role="tab"][data-output]')];
+const outputPanels = [...document.querySelectorAll('[role="tabpanel"][data-output-panel]')];
+const generatedOutputs = Object.fromEntries(
+  [...document.querySelectorAll("[data-generated-output]")].map((element) => [
+    element.dataset.generatedOutput,
+    element,
+  ]),
 );
 
 function targetLabel(target) {
@@ -84,8 +91,23 @@ function renderOutput(target) {
     rule: output.stylelintRule,
     config: output.stylelintConfig,
   };
-  elements["generated-output"].textContent = JSON.stringify(values[state.output], null, 2);
+  for (const [format, value] of Object.entries(values)) {
+    generatedOutputs[format].textContent = JSON.stringify(value, null, 2);
+  }
+  selectOutput(state.output);
   elements["output-section"].hidden = false;
+}
+
+function selectOutput(output) {
+  state.output = output;
+  for (const tab of outputTabs) {
+    const selected = tab.dataset.output === output;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  }
+  for (const panel of outputPanels) {
+    panel.hidden = panel.dataset.outputPanel !== output;
+  }
 }
 
 function renderTarget() {
@@ -231,21 +253,31 @@ elements["feature-search"].addEventListener("input", renderFeatureResults);
 for (const button of document.querySelectorAll("[data-mode]")) {
   button.addEventListener("click", () => setMode(button.dataset.mode));
 }
-for (const button of document.querySelectorAll("[data-output]")) {
+for (const [index, button] of outputTabs.entries()) {
   button.addEventListener("click", () => {
-    state.output = button.dataset.output;
-    for (const outputButton of document.querySelectorAll("[data-output]")) {
-      outputButton.setAttribute("aria-pressed", String(outputButton === button));
+    selectOutput(button.dataset.output);
+  });
+  button.addEventListener("keydown", (event) => {
+    if (event.key === "Enter" || event.key === " ") {
+      event.preventDefault();
+      selectOutput(button.dataset.output);
+      return;
     }
-    if (state.mode === "target") renderTarget();
-    else renderRecommendation();
+    const nextIndex = tabFocusIndex(index, event.key, outputTabs.length);
+    if (nextIndex === null) return;
+    event.preventDefault();
+    for (const outputTab of outputTabs) outputTab.tabIndex = -1;
+    outputTabs[nextIndex].tabIndex = 0;
+    outputTabs[nextIndex].focus();
   });
 }
-elements["copy-output"].addEventListener("click", async () => {
-  await navigator.clipboard.writeText(elements["generated-output"].textContent);
-  elements["copy-output"].textContent = "Copied";
-  setTimeout(() => (elements["copy-output"].textContent = "Copy"), 1500);
-});
+for (const button of document.querySelectorAll("[data-copy-output]")) {
+  button.addEventListener("click", async () => {
+    await navigator.clipboard.writeText(generatedOutputs[button.dataset.copyOutput].textContent);
+    button.textContent = "Copied";
+    setTimeout(() => (button.textContent = "Copy"), 1500);
+  });
+}
 
 renderSelectedFeatures();
 renderFeatureResults();
