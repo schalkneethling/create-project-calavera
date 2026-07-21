@@ -143,6 +143,7 @@
         "typescript",
         "knip",
         "html-validate",
+        "varlock",
         "oxlint",
         "oxlint-eslint",
         "oxlint-typescript",

@@ -1,4 +1,4 @@
-# Draft: Contributing a Calavera Integration, From Catalog Entry to Post-Install Pointers
+# Contributing a Calavera Integration, From Catalog Entry to Post-Install Pointers
 
 Calavera works best when a new tool integration starts in the catalog. Metadata
 should describe the integration first; integration-specific behavior should be
@@ -195,9 +195,11 @@ missing Varlock lines under a small heading:
 
 ```gitignore
 # Varlock
+# Varlock recommends committing non-local .env.* files.
+# Review broader existing ignore rules before opting into that convention.
 !.env.schema
-!.env.*
 .env.local
+.env.*.local
 ```
 
 In this post, scaffold means "create a starter file only when the file does not
@@ -257,8 +259,7 @@ developers are expected to edit.
 Dry-run output should also describe the intent accurately. The current
 `apply --dry-run --json` payload uses the shared `changes` shape from
 [`packages/cli/src/index.js`](../packages/cli/src/index.js): `type`, `path`, and optional fields such as
-`scripts` and `removedDefaultTestScript`. It does not currently include
-ownership markers such as `managed` or `scaffold`.
+`action`, `ownership`, `scripts`, and `removedDefaultTestScript`.
 
 A useful dry-run result for a fresh project would therefore include changes like:
 
@@ -289,14 +290,20 @@ A useful dry-run result for a fresh project would therefore include changes like
     },
     {
       "type": "write",
-      "path": ".env.schema"
+      "path": ".env.schema",
+      "action": "scaffold",
+      "ownership": "project"
     },
     {
       "type": "update",
-      "path": ".gitignore"
+      "path": ".gitignore",
+      "action": "merge",
+      "ownership": "project"
     }
   ],
-  "pointers": []
+  "pointers": [
+    "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private."
+  ]
 }
 ```
 
@@ -308,13 +315,9 @@ Would add scripts: lint, format:check, typecheck, env:load, quality
 Would write .editorconfig
 Would write oxlint.json
 Would write tsconfig.json
-Would write .env.schema
+Would scaffold .env.schema
 Would update .gitignore
 ```
-
-Because the change list does not encode ownership, use the surrounding
-documentation, state-file assertions, and tests to make the managed versus
-project-owned distinction clear.
 
 ## Add Doctor Coverage
 
@@ -428,7 +431,7 @@ test("varlock apply is idempotent around project-owned files", async () => {
       integrations: ["varlock"],
     }),
     ".env.schema": "APP_ENV=production\nCUSTOM_TOKEN=\n",
-    ".gitignore": "# Varlock\n!.env.schema\n!.env.*\n.env.local\n",
+    ".gitignore": "# Varlock\n!.env.schema\n.env.local\n.env.*.local\n",
   });
 
   await runCalavera(project, ["apply", "--no-install", "--yes"]);
@@ -465,25 +468,24 @@ Do not use a pointer for verbose documentation, warnings that belong in
 `doctor`, or details already clear from the change list. Keep each pointer short,
 specific, and actionable.
 
-For a Varlock-style integration, a useful pointer might be:
+The Varlock integration emits this pointer:
 
 ```text
-Review .env.schema and add required project environment variables before enabling env:load in CI.
+Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.
 ```
 
 Pointers should be available in JSON as stable strings so agents can display,
 summarize, or route them. They should also print in human output after `apply`
 so project developers see the same follow-up without needing `--json`.
 
-For example, if Varlock chose to emit a pointer after scaffolding the starter
-schema, the `apply --json` shape should remain simple:
+The `apply --json` shape remains simple:
 
 ```json
 {
   "command": "apply",
   "dryRun": false,
   "pointers": [
-    "Review .env.schema and add required project environment variables before enabling env:load in CI."
+    "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private."
   ]
 }
 ```

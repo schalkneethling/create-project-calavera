@@ -32,15 +32,17 @@ test("every post-v2.2 integration declares its minimum CLI version", () => {
   }
 });
 
-test("v2.2 compatibility excludes Knip and logical CSS until v2.3 is published", () => {
+test("v2.2 compatibility excludes post-v2.2 integrations until v2.3 is published", () => {
   const v220Ids = filterIntegrationsForCli(integrationCatalog, "2.2.0").map(({ id }) => id);
   const v230Ids = filterIntegrationsForCli(integrationCatalog, "2.3.0").map(({ id }) => id);
 
   assert.equal(v220Ids.includes("stylelint-logical-css"), false);
   assert.equal(v220Ids.includes("knip"), false);
+  assert.equal(v220Ids.includes("varlock"), false);
   assert.equal(v220Ids.includes("stylelint-baseline"), true);
   assert.equal(v230Ids.includes("stylelint-logical-css"), true);
   assert.equal(v230Ids.includes("knip"), true);
+  assert.equal(v230Ids.includes("varlock"), true);
 });
 
 test("WebMCP catalog responses and recipes use the same published CLI boundary", () => {

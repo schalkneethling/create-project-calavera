@@ -38,6 +38,15 @@ export const integrationCatalog = [
     },
   },
   {
+    id: "varlock",
+    label: "Varlock",
+    group: "Environment variables",
+    platform: "varlock",
+    status: "optional",
+    minimumCliVersion: "2.3.0",
+    dependencies: ["varlock"],
+  },
+  {
     id: "oxlint",
     label: "Oxlint",
     group: "Modern JS/TS linting",

@@ -200,6 +200,22 @@ const AGENT_BOOTSTRAP_NEXT_PROMPT =
 const SCRIPT_SOURCE_EXTENSIONS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
 const TSC_INCLUDE_PATTERNS = SCRIPT_SOURCE_EXTENSIONS.map((extension) => `src/**/*.${extension}`);
 const HTML_VALIDATE_IGNORE = "node_modules/\ndist/\ncoverage/\n";
+const VARLOCK_SCHEMA = `# @defaultSensitive=false
+# @defaultRequired=infer
+
+# Application environment
+# @type=enum(development, staging, production)
+# @required
+APP_ENV=development
+`;
+const VARLOCK_GITIGNORE_HEADING = "# Varlock";
+const VARLOCK_GITIGNORE_COMMENTS = [
+  "# Varlock recommends committing non-local .env.* files.",
+  "# Review broader existing ignore rules before opting into that convention.",
+];
+const VARLOCK_GITIGNORE_LINES = ["!.env.schema", ".env.local", ".env.*.local"];
+const VARLOCK_POINTER =
+  "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
 
 /** @type {Record<PackageManager, PackageManagerCommands>} */
 const packageManagerCommands = {
@@ -607,6 +623,7 @@ function buildScripts(recipe, integrations, packageManager) {
   const usesTypeScript = has("typescript");
   const usesKnip = has("knip");
   const usesHtmlValidate = has("html-validate");
+  const usesVarlock = has("varlock");
 
   const lintParts = [
     usesOxlint ? "oxlint ." : null,
@@ -691,6 +708,10 @@ function buildScripts(recipe, integrations, packageManager) {
     scripts["lint:html"] = 'html-validate "**/*.html"';
   }
 
+  if (usesVarlock) {
+    scripts["env:load"] = "varlock load";
+  }
+
   if (recipe.scripts?.quality) {
     const qualityScripts = [
       "lint",
@@ -699,6 +720,7 @@ function buildScripts(recipe, integrations, packageManager) {
       usesTypeScript && recipe.scripts?.typecheck ? "typecheck" : null,
       usesKnip ? "knip" : null,
       usesReactDoctor ? "react:doctor" : null,
+      usesVarlock ? "env:load" : null,
     ]
       .filter(isNotEmptyString)
       .filter((script) => Boolean(scripts[script]));
@@ -1157,6 +1179,75 @@ function createKnipConfig() {
     $schema: "https://unpkg.com/knip@6/schema.json",
     ignoreExportsUsedInFile: true,
   };
+}
+
+/**
+ * @param {string} existing
+ * @returns {string | undefined}
+ */
+function mergeVarlockGitignore(existing) {
+  const existingLines = new Set(existing.split("\n").map((line) => line.trim()));
+  const missingLines = VARLOCK_GITIGNORE_LINES.filter((line) => !existingLines.has(line));
+
+  if (missingLines.length === 0) {
+    return undefined;
+  }
+
+  const section = [
+    existingLines.has(VARLOCK_GITIGNORE_HEADING) ? null : VARLOCK_GITIGNORE_HEADING,
+    ...VARLOCK_GITIGNORE_COMMENTS.filter((line) => !existingLines.has(line)),
+    ...missingLines,
+  ].filter(isNotEmptyString);
+  const prefix = existing.trimEnd();
+  return `${prefix ? `${prefix}\n\n` : ""}${section.join("\n")}\n`;
+}
+
+/**
+ * @returns {Promise<Array<{ type: "write" | "update", path: string, action: "scaffold" | "merge", contents: string }>>}
+ */
+async function planVarlockProjectFiles() {
+  const plans = [];
+
+  if (!(await fileExists(".env.schema"))) {
+    plans.push({
+      type: /** @type {const} */ ("write"),
+      path: ".env.schema",
+      action: /** @type {const} */ ("scaffold"),
+      contents: VARLOCK_SCHEMA,
+    });
+  }
+
+  const existingGitignore = (await fileExists(".gitignore"))
+    ? await readFile(".gitignore", "utf8")
+    : "";
+  const gitignore = mergeVarlockGitignore(existingGitignore);
+  if (gitignore !== undefined) {
+    plans.push({
+      type: /** @type {const} */ ("update"),
+      path: ".gitignore",
+      action: /** @type {const} */ ("merge"),
+      contents: gitignore,
+    });
+  }
+
+  return plans;
+}
+
+/**
+ * @param {Array<{ type: "write" | "update", path: string, action: "scaffold" | "merge", contents: string }>} plans
+ * @param {boolean} dryRun
+ * @param {Change[]} changes
+ */
+async function applyVarlockProjectFiles(plans, dryRun, changes) {
+  for (const plan of plans) {
+    changes.push({
+      type: plan.type,
+      path: plan.path,
+      action: plan.action,
+      ownership: "project",
+    });
+    if (!dryRun) await writeFile(plan.path, plan.contents);
+  }
 }
 
 /**
@@ -1649,6 +1740,8 @@ export async function applyRecipeObject(recipe, options = {}) {
   const managedFiles = [];
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
   const managedFilePlans = plannedManagedFiles(integrations, recipe.integrationOptions);
+  const usesVarlock = integrations.some(({ id }) => id === "varlock");
+  const varlockFilePlans = usesVarlock ? await planVarlockProjectFiles() : [];
 
   await assertSafeManagedFileWrites(managedFilePlans, previousState, reownManagedFiles);
 
@@ -1817,6 +1910,8 @@ export async function applyRecipeObject(recipe, options = {}) {
     );
   }
 
+  await applyVarlockProjectFiles(varlockFilePlans, applyOptions.dryRun, changes);
+
   if (!applyOptions.dryRun) {
     await writeJSON("package.json", packageJSON, false);
   }
@@ -1853,7 +1948,7 @@ export async function applyRecipeObject(recipe, options = {}) {
     integrations: integrations.map((integration) => integration.id),
     projectInspection,
     changes: [...changes, ...aiResult.changes],
-    pointers: aiResult.pointers,
+    pointers: [...aiResult.pointers, ...(usesVarlock ? [VARLOCK_POINTER] : [])],
   };
 }
 
@@ -2638,6 +2733,17 @@ async function doctor(options) {
           message: `Missing managed file: ${file}. Run create-project-calavera apply to regenerate managed files.`,
         });
       }
+    }
+
+    if (
+      integrations.some((integration) => integration.id === "varlock") &&
+      !(await fileExists(".env.schema"))
+    ) {
+      issues.push({
+        level: "warning",
+        message:
+          "Missing Varlock schema: .env.schema. Run create-project-calavera apply to scaffold it.",
+      });
     }
 
     for (const artifact of aiArtifacts) {

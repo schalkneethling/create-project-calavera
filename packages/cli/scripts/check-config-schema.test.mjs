@@ -144,6 +144,7 @@ test("published config schema is valid JSON Schema and validates the example con
   assertValid(validate, config);
   assertValid(validate, buildRecipe("modern", ["editorconfig"], "pnpm"));
   assertValid(validate, buildRecipe("minimal", ["html-validate"], "pnpm"));
+  assertValid(validate, buildRecipe("minimal", ["varlock"], "pnpm"));
   assertValid(
     validate,
     buildRecipe("modern", ["stylelint-baseline"], "pnpm", [], {
@@ -570,6 +571,10 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
   assert.equal(htmlValidate?.group, "HTML");
   assert.equal(htmlValidate?.platform, "html-validate");
   assert.equal(htmlValidate?.minimumCliVersion, "2.3.0");
+  const varlock = listIntegrationOptions("minimal").find(({ id }) => id === "varlock");
+  assert.equal(varlock?.group, "Environment variables");
+  assert.equal(varlock?.platform, "varlock");
+  assert.equal(varlock?.minimumCliVersion, "2.3.0");
   assert.deepEqual(
     response.profiles.map(({ id }) => id),
     profiles,
@@ -2550,6 +2555,148 @@ test("HTML validation does not disable Oxfmt HTML formatting", async () => {
     assert.equal(packageFile.scripts["format:check"], "oxfmt --check .");
     assert.equal(packageFile.scripts["lint:html"], 'html-validate "**/*.html"');
     await assertPathMissing(".oxfmtrc.json");
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+test("Varlock scaffolds project-owned environment files across CLI, MCP, doctor, and clean", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-varlock-"));
+  const recipe = buildRecipe("minimal", ["varlock"], "npm");
+  const expectedSchema = `# @defaultSensitive=false
+# @defaultRequired=infer
+
+# Application environment
+# @type=enum(development, staging, production)
+# @required
+APP_ENV=development
+`;
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+    await writeFile(".gitignore", "node_modules/\n.env.*\n");
+
+    const dryRun = await applyRecipeObject(recipe, {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.deepEqual(dryRun.dependencies, ["varlock"]);
+    assert.equal(
+      dryRun.changes.some(
+        ({ type, path, action, ownership }) =>
+          type === "write" &&
+          path === ".env.schema" &&
+          action === "scaffold" &&
+          ownership === "project",
+      ),
+      true,
+    );
+    assert.equal(
+      dryRun.changes.some(
+        ({ type, path, action, ownership }) =>
+          type === "update" &&
+          path === ".gitignore" &&
+          action === "merge" &&
+          ownership === "project",
+      ),
+      true,
+    );
+    assert.equal(
+      dryRun.pointers.some((pointer) => pointer.includes(".env.schema")),
+      true,
+    );
+    await assertPathMissing(".env.schema");
+    assert.equal(await readFile(".gitignore", "utf8"), "node_modules/\n.env.*\n");
+
+    const mcpDryRun = await callMcpTool("dry_run_apply", { recipe });
+    assert.equal(
+      mcpDryRun.result.changes.some(({ path, action }) => {
+        return path === ".env.schema" && action === "scaffold";
+      }),
+      true,
+    );
+    assert.equal(
+      mcpDryRun.result.changes.some(({ path, action }) => {
+        return path === ".gitignore" && action === "merge";
+      }),
+      true,
+    );
+
+    await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.equal(await readFile(".env.schema", "utf8"), expectedSchema);
+    const gitignore = await readFile(".gitignore", "utf8");
+    assert.match(gitignore, /^\.env\.\*$/m);
+    assert.match(gitignore, /^!\.env\.schema$/m);
+    assert.match(gitignore, /^\.env\.local$/m);
+    assert.match(gitignore, /^\.env\.\*\.local$/m);
+    assert.match(gitignore, /Varlock recommends committing non-local \.env\.\* files/);
+
+    const packageFile = JSON.parse(await readFile("package.json", "utf8"));
+    assert.equal(packageFile.scripts["env:load"], "varlock load");
+    assert.equal(packageFile.scripts.quality, "npm run env:load");
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.equal(
+      state.managedFiles.some(({ path }) => path === ".env.schema"),
+      false,
+    );
+    assert.equal(
+      state.managedFiles.some(({ path }) => path === ".gitignore"),
+      false,
+    );
+
+    await writeFile(".env.schema", `${expectedSchema}CUSTOM_TOKEN=\n`);
+    const repeatedApply = await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.equal(
+      repeatedApply.changes.some(({ path }) => path === ".env.schema"),
+      false,
+    );
+    assert.equal(
+      repeatedApply.changes.some(({ path }) => path === ".gitignore"),
+      false,
+    );
+    assert.equal(await readFile(".env.schema", "utf8"), `${expectedSchema}CUSTOM_TOKEN=\n`);
+    assert.equal((await readFile(".gitignore", "utf8")).match(/^# Varlock$/gm)?.length, 1);
+
+    await rm(".env.schema");
+    const { stdout: doctorStdout } = await execFileAsync(
+      process.execPath,
+      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "doctor", "--json"],
+      { env: { ...process.env, NO_COLOR: "1" } },
+    );
+    assert.equal(
+      JSON.parse(doctorStdout).issues.some(
+        ({ message }) => message.includes("Missing Varlock schema") && message.includes("apply"),
+      ),
+      true,
+    );
+
+    await writeFile(".env.schema", `${expectedSchema}CUSTOM_TOKEN=\n`);
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
+    );
+    const { stdout: cleanStdout } = await execFileAsync(
+      process.execPath,
+      [fileURLToPath(new URL("../src/index.js", import.meta.url)), "clean", "--yes", "--json"],
+      { env: { ...process.env, NO_COLOR: "1" } },
+    );
+    assert.equal(JSON.parse(cleanStdout).changes.length, 0);
+    assert.equal(await readFile(".env.schema", "utf8"), `${expectedSchema}CUSTOM_TOKEN=\n`);
+    assert.equal(await readFile(".gitignore", "utf8"), gitignore);
   } finally {
     process.chdir(originalDirectory);
     await rm(projectDirectory, { force: true, recursive: true });
