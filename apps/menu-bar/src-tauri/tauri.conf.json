@@ -1,0 +1,41 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "Calavera",
+  "version": "0.1.0",
+  "identifier": "com.schalkneethling.calavera",
+  "build": {
+    "beforeDevCommand": "pnpm exec vite --host 127.0.0.1 --port 1420 --strictPort",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "pnpm build:web",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "macOSPrivateApi": true,
+    "security": {
+      "csp": "default-src 'self'; connect-src 'self' https://registry.npmjs.org https://api.github.com; style-src 'self'; script-src 'self'"
+    },
+    "windows": [
+      {
+        "label": "main",
+        "title": "Calavera Updates",
+        "width": 420,
+        "height": 680,
+        "visible": false,
+        "resizable": true
+      }
+    ]
+  },
+  "bundle": {
+    "active": true,
+    "targets": ["dmg"],
+    "category": "DeveloperTool",
+    "shortDescription": "Calavera project update notifier",
+    "longDescription": "Read-only menu-bar notifications for Calavera CLI, artifact, and app updates.",
+    "macOS": {
+      "minimumSystemVersion": "11.0",
+      "signingIdentity": null
+    },
+    "createUpdaterArtifacts": false,
+    "icon": ["icons/icon.png"]
+  }
+}

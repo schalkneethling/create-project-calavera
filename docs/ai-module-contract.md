@@ -37,11 +37,11 @@ Toolkit hook and agent items to `claude-code`.
 
 ## Bundled Catalog
 
-The Toolkit assets are now bundled under `src/ai/`:
+The Toolkit assets are maintained as independently versioned packages under `packages/artifacts/`:
 
-- `src/ai/skills/`
-- `src/ai/hooks/`
-- `src/ai/agents/`
+- `packages/artifacts/skill-*/payload/`
+- `packages/artifacts/hook-*/payload/`
+- `packages/artifacts/agent-*/payload/`
 
 Toolkit's static root `config.json` collections are not carried forward as
 default Calavera presets. Users and configuration surfaces choose the exact
@@ -77,8 +77,7 @@ Calavera ownership to vendor runtime directories or settings files.
 
 ## Source Resolution
 
-AI item `src` values resolve against the bundled `src/ai/` root and must stay
-inside the matching top-level artifact directory:
+Legacy AI item `src` values resolve through the shared artifact catalog and must exactly match one of these maintained path shapes:
 
 - `skill`: `skills/<name>`
 - `hook`: `hooks/<name>`

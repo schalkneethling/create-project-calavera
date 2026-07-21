@@ -153,14 +153,43 @@ Calavera includes curated integration packs grouped by outcome:
 - Promise safety
 - Node package rules
 - Test rules
+- Unused files, dependencies, and exports
+- HTML validation
 - CSS Baseline
 - CSS property ordering
 - CSS property type validation
+- Environment variable schema and validation with [Varlock](https://varlock.dev)
 
 React best-practice checks can include React Doctor, a deterministic scanner for
 React codebases that complements linting with security, performance,
 correctness, accessibility, bundle-size, and architecture diagnostics. JSX-A11y
 linting also appears with the React checks because it targets JSX markup.
+
+The optional Knip integration adds unused-file, dependency, and export analysis
+to the generated `quality` script. Calavera writes a minimal `knip.json` that
+keeps Knip's default project discovery. When those defaults do not fit a
+project, add targeted `entry`, `project`, or `workspaces` configuration as
+described in the [Knip configuration guide](https://knip.dev/overview/configuration).
+Calavera treats those changes as local edits and will refuse to overwrite or
+remove them automatically on a later apply or clean.
+
+The optional HTML Validate integration adds `html-validate`, writes
+`.htmlvalidate.json` with the `html-validate:recommended` and
+`html-validate:document` presets, and ignores `node_modules/`, `dist/`, and
+`coverage/` through `.htmlvalidateignore`. It also adds `lint:html` to the
+generated `quality` script. The recommended preset already includes HTML
+Validate's accessibility rules, so Calavera does not add a redundant separate
+accessibility integration.
+
+HTML Validate follows HTML semantics and Calavera deliberately leaves its
+doctype and void-element style rules at their honest defaults. Oxfmt 0.59.0
+cannot currently be configured to preserve an uppercase `<!DOCTYPE html>` or
+omit the slash it adds to void elements such as `<meta />`. Calavera does not
+blanket-exclude HTML from Oxfmt or weaken HTML Validate to hide this conflict.
+Projects selecting both tools should review the formatter/validator interaction
+until [Oxc issue #24645](https://github.com/oxc-project/oxc/issues/24645) is
+resolved. See the [HTML Validate preset documentation](https://html-validate.org/rules/presets.html)
+for the rules included by each preset.
 
 The CSS catalog includes `stylelint-plugin-logical-css` for logical CSS
 property, value, and unit checks, plus
@@ -169,12 +198,12 @@ experimental integration.
 
 Adding a new integration should be a catalog-first change. For example, a
 Stylelint plugin entry can declare its package dependency, parent `stylelint`
-integration, plugin name, and default rules in `src/catalog.js`; the CLI then
+integration, plugin name, and default rules in `packages/cli/src/catalog.js`; the CLI then
 uses that metadata when generating `.stylelintrc.json`.
 
 See
 [`docs/contributing-calavera-integration-varlock.md`](docs/contributing-calavera-integration-varlock.md)
-for a draft contributor walkthrough based on Theo Ephraim's Varlock integration.
+for a contributor walkthrough based on Theo Ephraim's Varlock integration.
 
 ## CLI
 
@@ -412,7 +441,7 @@ for the current boundary, research questions, and phase-two handoff plan.
 
 Generated recipes reference the public draft 2020-12 schema at
 [`https://calavera.schalkneethling.com/calavera.config.schema.json`](https://calavera.schalkneethling.com/calavera.config.schema.json).
-The maintained schema lives at `web/public/calavera.config.schema.json` so it is
+The maintained schema lives at `apps/composer/public/calavera.config.schema.json` so it is
 published with the web composer.
 
 ## AI Artifacts
@@ -441,6 +470,14 @@ Skills install into `.agents/skills/`. Hook and agent items can set `target` to
 choose their `.agents/hooks/<target>/` or `.agents/agents/<target>/` directory.
 The current bundled hooks and agents come from `claude-toolkit` and default to
 `claude-code`.
+
+When a recipe installs a skill, Calavera also creates or updates
+`.coderabbit.yaml` so CodeRabbit excludes `.claude/skills/**`,
+`.agents/skills/**`, and `pnpm-lock.yaml`. This avoids spending downstream
+review tokens on vendored skill documentation whose findings belong upstream.
+Existing CodeRabbit settings and path filters are preserved. The file remains
+project-owned rather than Calavera-managed, so `clean` does not remove these
+review preferences.
 
 Set an agent item's `target` to `codex` when you want Calavera to generate a
 Codex custom-agent TOML file under `.codex/agents/` instead of preserving the
@@ -475,6 +512,12 @@ want Calavera to treat the existing files as local, unmanaged content.
 
 The recipe composer runs as a small Vite app:
 
+The hosted Composer reads the version currently published under the npm
+`latest` tag and only offers integrations supported by that CLI release. New
+integrations can therefore land and deploy without producing recipes that the
+published CLI cannot apply. If the npm registry is unavailable, the Composer
+falls back to the last known-safe v2.2 integration catalog.
+
 ```bash
 npm run web:dev
 ```
@@ -499,10 +542,14 @@ for the MCP recipe composition workflow:
 2. `list_integrations`
 3. `describe_integration`
 4. `list_ai_artifacts`
-5. `compose_recipe`
-6. `validate_recipe`
-7. `explain_recipe`
-8. `download_recipe`
+5. `list_baseline_targets`
+6. `describe_baseline_target`
+7. `search_baseline_features`
+8. `recommend_baseline_target`
+9. `compose_recipe`
+10. `validate_recipe`
+11. `explain_recipe`
+12. `download_recipe`
 
 WebMCP uses the same shared recipe composition model as the standard MCP server,
 but it cannot inspect, dry-run, or apply files in a local project workspace from
@@ -515,12 +562,82 @@ Build the composer with:
 npm run web:build
 ```
 
+## Baseline targets
+
+The independently deployable Baseline Target Explorer explains Widely, Newly, and fixed-year targets, shows the matching Chrome, Edge, Firefox, and Safari versions, and recommends the earliest fixed target for selected CSS features.
+
+Recipes keep integrations as string IDs and carry optional integration-specific settings separately:
+
+```json
+{
+  "integrations": ["stylelint-baseline"],
+  "integrationOptions": {
+    "stylelint-baseline": {
+      "available": 2025,
+      "severity": "warning"
+    }
+  }
+}
+```
+
+`available` accepts `"widely"`, `"newly"`, or a supported fixed year. `severity` accepts `"warning"` or `"error"`. Options are rejected unless their integration is selected, and existing recipes without `integrationOptions` retain their previous Stylelint behavior.
+
+Build the Explorer independently with:
+
+```bash
+pnpm --filter @calavera/baseline-explorer build
+```
+
+## Versioned artifacts
+
+New recipes select package-backed skills, hooks, and agents by stable ID:
+
+```json
+{
+  "ai": [
+    { "id": "skill-project-goal" },
+    { "id": "agent-technical-devils-advocate", "target": "codex" }
+  ]
+}
+```
+
+Legacy `{ "type", "src", "target" }` entries remain readable during the compatibility window. Migrate and manage exact versions with:
+
+```bash
+create-project-calavera artifacts migrate
+create-project-calavera artifacts install
+create-project-calavera artifacts status
+create-project-calavera artifacts status --check-updates
+create-project-calavera artifacts doctor
+create-project-calavera artifacts update skill-project-goal
+create-project-calavera artifacts update --all --tag next
+```
+
+Installation resolves npm packages into `.calavera/packages` and a verified npm cache without changing consumer `package.json` or `node_modules`. `.calavera/artifacts.lock.json` records exact versions, integrity, destinations, and payload hashes; ordinary `apply` requires and reuses those exact locked versions. Only `artifacts update` advances a version. Status is offline unless `--check-updates` is explicit. Run `artifacts doctor` to verify installed outputs, managed state, and local edits without checking the registry. The existing managed-state hashes continue to block overwriting local edits.
+
+## macOS update companion
+
+The optional Calavera menu-bar app monitors only project directories that you explicitly register. It reads recipes, artifact locks, and state without changing them; checks npm and GitHub on launch, every six hours, or when you select **Check now**; and deduplicates notifications by component and target version.
+
+For project updates, the app always copies the exact command and never executes it. Opening a terminal is opt-in: save your preferred terminal application's macOS name in the app to open it at the registered directory, or leave the preference blank for copy-only behavior. App updates open a stable GitHub release, and self-updating is intentionally outside v1.
+
+Local development requires Node.js, pnpm, Rust through rustup, and Xcode:
+
+```bash
+pnpm --filter @calavera/menu-bar dev
+```
+
+Tags matching `menu-bar-v*` run the independent macOS release workflow, which builds a universal signed, notarized, and stapled DMG through the protected `publish` environment.
+
 ## Publishing
 
 Calavera publishes to npm from GitHub releases with npm trusted publishing. The
 repository workflow is `.github/workflows/publish.yml`, and npm should be
 configured with that workflow as a trusted publisher for
-`create-project-calavera`.
+`create-project-calavera` and each public workspace package, including
+`@schalkneethling/calavera-baseline-core`.
+
+The complete independent-package, static-app, artifact-channel, recovery, and macOS rehearsal is documented in [`docs/release-and-update-journey.md`](docs/release-and-update-journey.md).
 
 Before the first trusted publish:
 
@@ -530,9 +647,16 @@ Before the first trusted publish:
 - configure npm trusted publishing for this repository, workflow, and
   environment.
 
-To validate the package locally:
+To validate the package locally, first install
+[`uv`](https://docs.astral.sh/uv/getting-started/installation/). It provisions
+the locked Python environment used by SkillSpector and the workflow audit.
+`pnpm workflow:check` runs `uvx zizmor@1.25.2 --offline`, so prime that exact
+version in uv's cache once while online before using the offline check. The
+`pnpm check` quality gate includes the repository's own Knip analysis.
 
 ```bash
+uv sync --frozen
+uvx zizmor@1.25.2 --version
 pnpm check
 pnpm web:build
 pnpm publish:check

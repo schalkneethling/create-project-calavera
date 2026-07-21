@@ -1,0 +1,24 @@
+{
+  "name": "@schalkneethling/calavera-skill-css-tokens",
+  "version": "0.1.0",
+  "description": "CSS tokens artifact for Calavera.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/schalkneethling/create-project-calavera.git",
+    "directory": "packages/artifacts/skill-css-tokens"
+  },
+  "files": [
+    "calavera-artifact.json",
+    "payload"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./calavera-artifact.json",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

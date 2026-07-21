@@ -1,0 +1,123 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta
+      name="description"
+      content="Explore Web Platform Baseline targets and generate matching Stylelint and Calavera configuration."
+    />
+    <title>Baseline Target Explorer · Calavera</title>
+    <script type="module" src="/src/main.js"></script>
+  </head>
+  <body>
+    <a class="skip-link" href="#workspace">Skip to explorer</a>
+    <header class="masthead">
+      <a class="wordmark" href="https://calavera.schalkneethling.com">Calavera</a>
+      <p>Baseline Target Explorer</p>
+      <a href="https://github.com/schalkneethling/create-project-calavera">Source</a>
+    </header>
+
+    <main id="workspace">
+      <section class="intro" aria-labelledby="page-title">
+        <p class="eyebrow">CSS compatibility, made inspectable</p>
+        <h1 id="page-title">Choose the line your CSS can cross.</h1>
+        <p class="lede">
+          Translate Baseline targets or the features you need into browser versions, Stylelint
+          rules, and a Calavera recipe.
+        </p>
+        <dl class="source-stamp" aria-label="Dataset details">
+          <div>
+            <dt>CSS features</dt>
+            <dd id="feature-count">—</dd>
+          </div>
+          <div>
+            <dt>WebDX data</dt>
+            <dd id="dataset-version">—</dd>
+          </div>
+          <div>
+            <dt>Mapped through</dt>
+            <dd id="dataset-date">—</dd>
+          </div>
+        </dl>
+      </section>
+
+      <section class="explorer-shell" aria-label="Baseline explorer">
+        <nav class="mode-switcher" aria-label="Choose an exploration mode">
+          <button type="button" data-mode="target" aria-pressed="true">Explain a target</button>
+          <button type="button" data-mode="features" aria-pressed="false">
+            Recommend from features
+          </button>
+        </nav>
+
+        <div class="workbench">
+          <section class="controls" aria-labelledby="controls-title">
+            <p class="section-label" id="controls-title">Set the compatibility line</p>
+
+            <div id="target-controls">
+              <label for="target">Baseline target</label>
+              <select id="target"></select>
+              <p class="field-note" id="target-note"></p>
+            </div>
+
+            <div id="feature-controls" hidden>
+              <label for="feature-search">CSS features your project needs</label>
+              <input
+                id="feature-search"
+                type="search"
+                placeholder="Try nesting, subgrid, :has()…"
+                autocomplete="off"
+              />
+              <div class="selected-features" id="selected-features" aria-live="polite"></div>
+              <div class="feature-results" id="feature-results"></div>
+            </div>
+          </section>
+
+          <section class="result" aria-live="polite" aria-labelledby="result-title">
+            <div class="result-heading">
+              <div>
+                <p class="section-label">Compatibility result</p>
+                <h2 id="result-title">Widely available</h2>
+              </div>
+              <span class="status-chip" id="result-status">Moving target</span>
+            </div>
+            <p class="result-description" id="result-description"></p>
+            <div
+              class="browser-runway"
+              id="browser-runway"
+              aria-label="Minimum browser versions"
+            ></div>
+            <div class="result-details" id="result-details"></div>
+          </section>
+        </div>
+      </section>
+
+      <section class="output-section" id="output-section" aria-labelledby="output-title">
+        <div>
+          <p class="section-label">Carry the decision into your project</p>
+          <h2 id="output-title">Generated configuration</h2>
+        </div>
+        <div class="output-tabs" role="tablist" aria-label="Generated configuration formats">
+          <button type="button" role="tab" aria-selected="true" data-output="calavera">
+            Calavera
+          </button>
+          <button type="button" role="tab" aria-selected="false" data-output="rule">
+            Stylelint rule
+          </button>
+          <button type="button" role="tab" aria-selected="false" data-output="config">
+            Stylelint config
+          </button>
+        </div>
+        <div class="code-frame">
+          <button class="copy-button" id="copy-output" type="button">Copy</button>
+          <pre><code id="generated-output"></code></pre>
+        </div>
+      </section>
+    </main>
+
+    <footer>
+      <p>Baseline describes browser interoperability, not your audience’s usage share.</p>
+      <p>Data from the WebDX Community Group.</p>
+    </footer>
+  </body>
+</html>

@@ -23,6 +23,12 @@ jobs:
         with:
           node-version: 24
           package-manager-cache: false
+      - name: Setup uv
+        uses: astral-sh/setup-uv@11f9893b081a58869d3b5fccaea48c9e9e46f990 # v8.3.2
+        with:
+          version: "0.11.16"
+          python-version: "3.12"
+          enable-cache: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Check
@@ -54,8 +60,14 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Build web composer
         run: pnpm web:build
+      - name: Build Baseline Explorer
+        run: pnpm --filter @calavera/baseline-explorer build
       - name: Pack package
-        run: pnpm pack --pack-destination package
+        run: |
+          pnpm --filter create-project-calavera pack --pack-destination ../../package
+          pnpm --filter @schalkneethling/calavera-baseline-core pack --pack-destination ../../package
+          pnpm --filter @schalkneethling/calavera-artifact-core pack --pack-destination ../../package
+          pnpm --filter "./packages/artifacts/*" --recursive pack --pack-destination ../../../package
       - name: Upload package artifact
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a
         with:
@@ -90,10 +102,27 @@ jobs:
             echo "No package tarball found in package/."
             exit 1
           fi
-          if [ "${#tarballs[@]}" -gt 1 ]; then
-            echo "Expected exactly one package tarball in package/, found ${#tarballs[@]}."
-            printf '%s\n' "${tarballs[@]}"
-            exit 1
-          fi
-          tarball="${tarballs[0]}"
-          npm publish "$(realpath "$tarball")" --provenance --access public
+          for tarball in "${tarballs[@]}"; do
+            package_name=$(tar -xOf "$tarball" package/package.json | node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).name))')
+            package_version=$(tar -xOf "$tarball" package/package.json | node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).version))')
+            view_output=$(mktemp)
+            if npm view "${package_name}@${package_version}" version >"$view_output" 2>&1; then
+              rm "$view_output"
+              echo "Skipping already published ${package_name}@${package_version}."
+              continue
+            else
+              view_status=$?
+              if ! grep -Eq '(^|[[:space:]])(E404|404)([[:space:]]|$)' "$view_output"; then
+                cat "$view_output" >&2
+                rm "$view_output"
+                exit "$view_status"
+              fi
+              rm "$view_output"
+              echo "Confirmed ${package_name}@${package_version} is not published."
+            fi
+            dist_tag=latest
+            if [[ "$package_version" == *-* ]]; then
+              dist_tag=next
+            fi
+            npm publish "$(realpath "$tarball")" --provenance --access public --tag "$dist_tag"
+          done

@@ -1,0 +1,24 @@
+{
+  "name": "@schalkneethling/calavera-skill-npm-publishing-best-practices",
+  "version": "0.1.0",
+  "description": "npm publishing best practices artifact for Calavera.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/schalkneethling/create-project-calavera.git",
+    "directory": "packages/artifacts/skill-npm-publishing-best-practices"
+  },
+  "files": [
+    "calavera-artifact.json",
+    "payload"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./calavera-artifact.json",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

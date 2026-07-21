@@ -10,6 +10,7 @@ Calavera helps web developers compose, apply, inspect, and refresh repeatable pr
 - Maintainers who want a checked-in tooling recipe that can be re-applied as project tooling evolves.
 - Agents and automation workflows that need deterministic CLI commands, dry runs, and JSON output when preparing or auditing project tooling.
 - Users who prefer a visual composer for choosing profiles and integration packs before applying the generated recipe with the CLI.
+- Users who want focused, opt-in companion tools that explain Calavera choices or notify them about available updates without modifying projects automatically.
 
 ## Core Goals
 
@@ -24,7 +25,7 @@ Calavera helps web developers compose, apply, inspect, and refresh repeatable pr
    - Track generated files in `.calavera/state.json` so stale managed files can be cleaned deliberately.
 
 3. Keep integrations catalog-first.
-   - Add or change integrations primarily through `src/catalog.js` metadata: dependencies, parent integrations, plugin names, status, and tool-specific config.
+   - Add or change integrations primarily through `packages/cli/src/catalog.js` metadata: dependencies, parent integrations, plugin names, status, and tool-specific config.
    - Let the CLI and web composer consume that catalog rather than duplicating behavior by hand.
    - Make experimental and framework-specific integrations visible as such.
 
@@ -38,6 +39,11 @@ Calavera helps web developers compose, apply, inspect, and refresh repeatable pr
    - Export a valid `calavera.config.json` that the CLI can apply.
    - Expose WebMCP tools so capable agents can read options, configure the form, and download the recipe.
 
+6. Support focused companion applications.
+   - Offer independently deployable tools, such as the Baseline Target Explorer, when a focused interface makes a complex configuration choice easier to understand.
+   - Allow an optional desktop companion to inspect explicitly registered Calavera projects and notify users about available updates.
+   - Keep companion applications read-only by default and route project changes through inspectable CLI commands.
+
 ## Success Looks Like
 
 - A user can run `npm create project-calavera init`, review or edit `calavera.config.json`, run `apply`, and get working lint, format, type-check, and CSS tooling scripts.
@@ -45,14 +51,16 @@ Calavera helps web developers compose, apply, inspect, and refresh repeatable pr
 - Adding a new integration requires a small, understandable catalog update plus focused generation logic only when the target tool truly needs it.
 - Generated files are readable, conventional, and easy to review, delete, or regenerate.
 - The web composer and CLI expose the same conceptual choices, so users do not have to learn two different product models.
+- Companion applications share Calavera's public contracts and recommendation logic instead of developing separate interpretations of project state.
 - The package can be validated, packed, and published through the existing secure npm trusted publishing workflow.
 
 ## Non-Goals
 
 - Calavera is not an application scaffold. It should not generate app routes, components, business logic, UI systems, databases, or deployment-specific application code.
 - Calavera is not a framework replacement or framework opinion engine. It may offer framework-specific tooling packs, but it should not decide whether a project uses Vite, Astro, Next.js, Bun, React, Vue, Svelte, or another starter.
-- Calavera is not a machine setup tool. Editor extensions, global apps, shell profiles, operating-system packages, and developer workstation preferences are out of scope.
+- Calavera is not a general machine setup tool. Editor extensions, shell profiles, operating-system packages, and developer workstation configuration remain out of scope. The optional Calavera desktop companion is limited to reading explicitly registered projects, reporting update availability, and opening user-approved CLI workflows.
 - Calavera should not become a hidden build system. It should generate ordinary project files and package scripts that remain understandable without Calavera running constantly in the background.
+- Companion applications must not execute project updates automatically or become required for ordinary CLI, MCP, or Composer workflows.
 - Calavera should not optimize for every possible lint or formatting rule. Curated defaults, explicit optional packs, and maintainable catalog metadata matter more than exhaustive coverage.
 - Calavera should not silently overwrite unrelated project intent. Managed files and scripts should be predictable, inspectable, and recoverable through dry runs and state.
 
@@ -69,9 +77,9 @@ Calavera helps web developers compose, apply, inspect, and refresh repeatable pr
 
 ## Current Focus
 
-The current project centers on the recipe-driven CLI, the shared integration catalog, and the Vite-based Calavera Composer. Near-term work should preserve parity between the CLI and composer, improve generated tooling quality, and keep automation-friendly outputs stable.
+The current project centers on the recipe-driven CLI, the shared integration catalog, and the Vite-based Calavera Composer. Near-term work will establish a pnpm workspace boundary for the CLI, Composer, focused web tools, shared domain packages, versioned AI artifacts, and an optional macOS companion while preserving automation-friendly outputs and CLI compatibility.
 
-The public draft 2020-12 recipe schema is maintained in `web/public/calavera.config.schema.json` and published with the composer at `https://calavera.schalkneethling.com/calavera.config.schema.json`.
+The public draft 2020-12 recipe schema is maintained in `apps/composer/public/calavera.config.schema.json` and published with the composer at `https://calavera.schalkneethling.com/calavera.config.schema.json`.
 
 ## Open Questions
 
