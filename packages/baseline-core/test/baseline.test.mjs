@@ -10,12 +10,23 @@ import {
   recommendBaselineTarget,
   searchBaselineFeatures,
 } from "../src/index.js";
+import { isCssSpecificationUrl } from "../src/specification-url.js";
 
 test("generated Baseline data records pinned sources and CSS features", () => {
   assert.equal(baselineMetadata.sources.webFeatures, "3.34.0");
   assert.equal(baselineMetadata.sources.baselineBrowserMapping, "2.10.43");
   assert.ok(baselineMetadata.featureCount > 100);
   assert.ok(searchBaselineFeatures("nesting").some(({ id }) => id === "nesting"));
+});
+
+test("CSS specification URLs require the exact approved host", () => {
+  assert.equal(isCssSpecificationUrl("https://drafts.csswg.org/css-grid/"), true);
+  assert.equal(isCssSpecificationUrl("https://drafts.csswg.org.evil.example/css-grid/"), false);
+  assert.equal(
+    isCssSpecificationUrl("https://evil.example/?url=https://drafts.csswg.org/css-grid/"),
+    false,
+  );
+  assert.equal(isCssSpecificationUrl("not a URL containing drafts.csswg.org"), false);
 });
 
 test("target descriptions distinguish moving and fixed targets", () => {

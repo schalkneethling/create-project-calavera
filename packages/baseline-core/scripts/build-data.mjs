@@ -4,6 +4,7 @@ import { getAllVersions, getCompatibleVersions } from "baseline-browser-mapping"
 import { features } from "web-features";
 
 import packageJson from "../package.json" with { type: "json" };
+import { isCssSpecificationUrl } from "../src/specification-url.js";
 
 const CURRENT_YEAR = new Date().getUTCFullYear();
 const FIRST_BASELINE_YEAR = 2015;
@@ -21,7 +22,7 @@ function isCssFeature(feature) {
   return (
     feature.compat_features?.some((key) => key.startsWith("css.")) ||
     feature.group?.includes("css") ||
-    feature.spec?.some((url) => url.includes("csswg.org"))
+    feature.spec?.some(isCssSpecificationUrl)
   );
 }
 
