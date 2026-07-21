@@ -1,0 +1,12 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "hook-block-dangerous-commands",
+  "type": "hook",
+  "displayName": "Block dangerous commands",
+  "payload": "payload/block-dangerous-commands",
+  "targets": ["claude-code", "codex", "cursor", "opencode"],
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}

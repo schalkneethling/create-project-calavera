@@ -1,0 +1,11 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-code-review",
+  "type": "skill",
+  "displayName": "Code review",
+  "payload": "payload/code-review",
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}

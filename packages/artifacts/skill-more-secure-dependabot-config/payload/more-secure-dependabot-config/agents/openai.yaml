@@ -1,0 +1,4 @@
+interface:
+  display_name: "Secure Dependabot Config"
+  short_description: "Create a safer Dependabot update configuration."
+  default_prompt: "Use $dependabot-config to improve this Dependabot configuration."

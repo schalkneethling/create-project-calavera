@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GitHub Issue Triage Report - schalkneethling/create-project-calavera</title>
+  <style>
+    :root { color-scheme: light; font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
+    body { margin: 0; background: #f8fafc; color: #172033; line-height: 1.5; }
+    main { max-width: 1180px; margin: 0 auto; padding: 32px 20px 48px; }
+    h1, h2, h3 { line-height: 1.2; margin: 0 0 12px; }
+    p { margin: 0 0 14px; }
+    .meta, .summary, details { background: #fff; border: 1px solid #d9e2ef; border-radius: 8px; box-shadow: 0 1px 2px rgb(15 23 42 / 0.04); }
+    .meta, .summary { padding: 18px; margin-bottom: 18px; }
+    .counts { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 10px; }
+    .count { background: #eef4ff; border-radius: 999px; padding: 5px 10px; font-weight: 700; }
+    details { margin-top: 18px; overflow: hidden; }
+    summary { cursor: pointer; padding: 16px 18px; font-weight: 800; background: #edf2f7; }
+    .details-body { padding: 18px; }
+    table { width: 100%; border-collapse: collapse; margin-top: 16px; font-size: 14px; }
+    th, td { border-top: 1px solid #e2e8f0; padding: 10px; text-align: left; vertical-align: top; }
+    th { background: #f8fafc; font-size: 12px; text-transform: uppercase; letter-spacing: 0.04em; color: #526176; }
+    a { color: #164fa3; text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .priority, .label { display: inline-block; border-radius: 999px; padding: 2px 8px; font-size: 12px; font-weight: 800; white-space: nowrap; }
+    .priority.p0 { background: #fee2e2; color: #991b1b; }
+    .priority.p1 { background: #ffedd5; color: #9a3412; }
+    .priority.p2 { background: #fef9c3; color: #854d0e; }
+    .priority.p3 { background: #dcfce7; color: #166534; }
+    .label { background: #e9eef6; color: #334155; margin: 0 4px 4px 0; }
+    .status-ok { color: #166534; font-weight: 800; }
+    .goal { border-left: 4px solid #164fa3; padding-left: 14px; margin: 14px 0; }
+  </style>
+</head>
+<body>
+  <main>
+    <h1>GitHub Issue Triage Report</h1>
+    <section class="meta" aria-labelledby="meta-heading">
+      <h2 id="meta-heading">Run Metadata</h2>
+      <p><strong>Generated:</strong> 2026-07-08T17:43:02.273Z</p>
+      <p><strong>Input repository:</strong> <a href="https://github.com/schalkneethling/create-project-calavera">schalkneethling/create-project-calavera</a></p>
+      <p><strong>Label update status:</strong> <span class="status-ok">Applied</span>. Priority labels p0, p1, p2, and p3 already existed. Closed #265 as resolved by #266. Verified every remaining open issue has exactly one priority label.</p>
+    </section>
+
+    <section class="summary" aria-labelledby="summary-heading">
+      <h2 id="summary-heading">Summary</h2>
+      <p>Total open issues triaged: <strong>9</strong></p>
+      <div class="counts" aria-label="Priority counts">
+        <span class="count">p0: 0</span>
+        <span class="count">p1: 0</span>
+        <span class="count">p2: 2</span>
+        <span class="count">p3: 7</span>
+      </div>
+      <p style="margin-top: 14px;"><strong>Next issue:</strong> <a href="https://github.com/schalkneethling/create-project-calavera/issues/228">#228 Add useful one-line summaries to list_integrations</a></p>
+    </section>
+
+    <details open>
+      <summary>schalkneethling/create-project-calavera - 9 open issues - p0 0, p1 0, p2 2, p3 7 - next: #228</summary>
+      <div class="details-body">
+        <h2>Project Goal Summary</h2>
+        <p class="goal">Calavera helps web developers compose, apply, inspect, and refresh repeatable project tooling recipes without coupling those recipes to any one application framework. Current focus is the recipe-driven CLI, shared integration catalog, and Vite-based composer, with emphasis on CLI/composer parity, generated tooling quality, and stable automation-friendly outputs.</p>
+        <h3>Next-Issue Nomination</h3>
+        <p><a href="https://github.com/schalkneethling/create-project-calavera/issues/228">#228 Add useful one-line summaries to list_integrations</a> is the best next issue because it improves the catalog-first MCP selection flow and helps agents/users choose integrations without extra inspection calls.</p>
+        <table>
+          <thead>
+            <tr>
+              <th>Priority</th>
+              <th>Issue</th>
+              <th>Rationale tied to GOAL.md</th>
+              <th>Impact</th>
+              <th>Current labels</th>
+              <th>Notes</th>
+            </tr>
+          </thead>
+          <tbody>
+              <tr>
+                <td><span class="priority p2">p2</span></td>
+                <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/166">#166 Consider Ajv for Calavera recipe schema validation</a></td>
+                <td>Aligns with the public draft 2020-12 recipe schema and automation-friendly validation, especially for external tooling and agents.</td>
+                <td>Medium: useful confidence and contract validation, but still exploratory rather than an immediate blocker.</td>
+                <td><span class="label">enhancement</span> <span class="label">p2</span></td>
+                <td>Existing priority retained.</td>
+              </tr>
+              <tr>
+                <td><span class="priority p2">p2</span></td>
+                <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/228">#228 Add useful one-line summaries to list_integrations</a></td>
+                <td>Directly supports catalog-first choices and agent workflows by making integration selection clearer without extra describe calls.</td>
+                <td>Medium: improves CLI/MCP ergonomics and reduces friction, but does not block core apply/update flows.</td>
+                <td><span class="label">enhancement</span> <span class="label">p2</span></td>
+                <td>Existing priority retained. Nominated next issue after #265 was closed as resolved by #266.</td>
+              </tr>
+              <tr>
+                <td><span class="priority p3">p3</span></td>
+                <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/160">#160 Make bundled AI artifacts vendor-neutral over time</a></td>
+                <td>Documentation and naming cleanup that may improve portability later, but current tool-specific behavior remains acceptable when clearly labeled.</td>
+                <td>Low: long-term documentation and artifact naming clarity.</td>
+                <td><span class="label">documentation</span> <span class="label">p3</span></td>
+                <td>Existing priority retained.</td>
+              </tr>
+              <tr>
+                <td><span class="priority p3">p3</span></td>
+                <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/175">#175 Introduce a typographic scale for composer CSS</a></td>
+                <td>Composer polish and maintainability work; useful but not urgent for the current goal.</td>
+                <td>Low: CSS maintainability.</td>
+                <td><span class="label">enhancement</span> <span class="label">p3</span></td>
+                <td>Existing priority retained.</td>
+              </tr>
+              <tr>
+                <td><span class="priority p3">p3</span></td>
+                <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/176">#176 Introduce color tokens for composer component states</a></td>
+                <td>Improves composer CSS organization, but has weak immediate impact on CLI/composer parity or generated tooling quality.</td>
+                <td>Low: CSS maintainability.</td>
+                <td><span class="label">enhancement</span> <span class="label">p3</span></td>
+                <td>Existing priority retained.</td>
+              </tr>
+              <tr>
+                <td><span class="priority p3">p3</span></td>
+                <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/177">#177 Introduce spacing tokens for composer CSS</a></td>
+                <td>Useful for composer maintainability, but mainly style-system polish outside the core recipe application path.</td>
+                <td>Low: CSS maintainability and contributor-friendly cleanup.</td>
+                <td><span class="label">enhancement</span> <span class="label">good first issue</span> <span class="label">p3</span></td>
+                <td>Existing priority retained.</td>
+              </tr>
+              <tr>
+                <td><span class="priority p3">p3</span></td>
+                <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/230">#230 Avoid redundant quality script aliases when only one check exists</a></td>
+                <td>Keeps generated scripts tidy, but affects a narrower edge of script generation and is not blocking repeatability.</td>
+                <td>Low: generated package script polish.</td>
+                <td><span class="label">enhancement</span> <span class="label">p3</span></td>
+                <td>Existing priority retained.</td>
+              </tr>
+              <tr>
+                <td><span class="priority p3">p3</span></td>
+                <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/232">#232 Align optional agent bootstrap command with other next commands</a></td>
+                <td>Improves composer polish and visual hierarchy, but does not affect generated recipe correctness or automation behavior.</td>
+                <td>Low: user-facing polish in the web composer.</td>
+                <td><span class="label">enhancement</span> <span class="label">p3</span> <span class="label">contribution-welcome</span></td>
+                <td>Existing priority retained.</td>
+              </tr>
+              <tr>
+                <td><span class="priority p3">p3</span></td>
+                <td><a href="https://github.com/schalkneethling/create-project-calavera/issues/247">#247 Centralize user-facing strings and agent prompts</a></td>
+                <td>Supports maintainability of CLI/MCP messages and generated guidance, but is internal cleanup rather than near-term product capability.</td>
+                <td>Low: helpful for consistency and future localization, not urgent for current recipe/composer goals.</td>
+                <td><span class="label">enhancement</span> <span class="label">p3</span></td>
+                <td>Priority label retained from prior triage.</td>
+              </tr>
+          </tbody>
+        </table>
+      </div>
+    </details>
+  </main>
+</body>
+</html>

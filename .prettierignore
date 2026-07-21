@@ -1,0 +1,4 @@
+packages/cli/src/ai/hooks/**/*.mjs
+packages/artifacts/hook-*/payload/**/*.mjs
+github-issue-triage-report.html
+packages/baseline-core/data/baseline.json

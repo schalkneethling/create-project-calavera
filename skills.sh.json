@@ -1,0 +1,27 @@
+{
+  "$schema": "https://skills.sh/schemas/skills.sh.schema.json",
+  "notGrouped": "bottom",
+  "groupings": [
+    {
+      "title": "Calavera workflows",
+      "description": "Project recipe, planning, and goal-setting skills for Calavera-driven work.",
+      "skills": ["calavera", "refined-plan-mode", "project-goal"]
+    },
+    {
+      "title": "Frontend quality",
+      "description": "Skills for frontend engineering, CSS systems, testing, and browser security.",
+      "skills": ["frontend-engineering", "css-tokens", "frontend-testing", "frontend-security"]
+    },
+    {
+      "title": "Maintainer automation",
+      "description": "Skills for code review, issue triage, dependency upkeep, and secure npm publishing.",
+      "skills": [
+        "code-review",
+        "github-goal-issue-triage",
+        "more-secure-dependabot-config",
+        "npm-publishing-best-practices",
+        "npm-trusted-publishing-github-workflow"
+      ]
+    }
+  ]
+}

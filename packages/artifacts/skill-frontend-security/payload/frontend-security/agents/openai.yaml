@@ -1,0 +1,4 @@
+interface:
+  display_name: "Frontend Security"
+  short_description: "Audit browser code for security vulnerabilities."
+  default_prompt: "Use $frontend-security to audit this frontend code for security risks."

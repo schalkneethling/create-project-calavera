@@ -1,0 +1,9 @@
+- _Always_ ensure that we have the latest changes from the remote repository.
+- _Always_ ensure that no feature work is started from main. Always use a feature branch.
+- When creating the feature branch, always include the GitHub issue number in the branch name.
+- When writing the pull request description, always include fix #<issue_number> at the end of the description. If the pull request fixes multiple issues, include all of them.
+- Do _not_ write types for the sake of types in TypeScript. Only define types when TypeScript cannot cleanly infer from usage.
+- Match validation and test tooling to the kind of confidence needed:
+  - Use tests for repository invariants, contract checks, and drift checks.
+  - Use a JSON Schema validator such as Ajv when validating JSON Schema behavior or arbitrary JSON data against a published schema.
+  - Consider Valibot, Zod, or similar libraries when a typed authoring schema should become the source of truth, especially if JSON Schema will be generated from it.

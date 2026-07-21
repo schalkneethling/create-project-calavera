@@ -1,0 +1,4 @@
+interface:
+  display_name: "Refined Plan Mode"
+  short_description: "Develop a decision-complete implementation plan."
+  default_prompt: "Use $refined-plan-mode to create an implementation plan for this work."

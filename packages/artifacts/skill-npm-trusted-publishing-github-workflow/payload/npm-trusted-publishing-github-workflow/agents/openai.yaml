@@ -1,0 +1,4 @@
+interface:
+  display_name: "npm Trusted Publishing Workflow"
+  short_description: "Build a secure npm OIDC publish workflow."
+  default_prompt: "Use $npm-trusted-publishing-github-workflow to create a trusted npm publish workflow."

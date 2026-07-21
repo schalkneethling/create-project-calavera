@@ -1,0 +1,4 @@
+interface:
+  display_name: "npm Publishing Security"
+  short_description: "Audit secure npm package publishing workflows."
+  default_prompt: "Use $npm-package-publishing to audit this package publishing setup."
