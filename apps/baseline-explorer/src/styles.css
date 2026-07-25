@@ -18,6 +18,15 @@
   box-sizing: border-box;
 }
 
+.visually-hidden {
+  block-size: 1px;
+  clip-path: inset(50%);
+  inline-size: 1px;
+  overflow: hidden;
+  position: absolute;
+  white-space: nowrap;
+}
+
 body {
   background:
     linear-gradient(90deg, transparent 49.9%, rgb(16 24 43 / 6%) 50%, transparent 50.1%) 0 0 / 3rem
@@ -100,8 +109,7 @@ footer {
   padding: clamp(3.5rem, 8vw, 6.5rem) 0 clamp(3rem, 6vw, 5rem);
 }
 
-.eyebrow,
-.section-label {
+.eyebrow {
   font:
     700 0.72rem/1.2 SFMono-Regular,
     Consolas,
@@ -175,7 +183,6 @@ h1 {
 .explorer-shell {
   background: var(--paper);
   border: 1px solid #809fac;
-  border-radius: 0.7rem;
   box-shadow: 0.75rem 0.75rem 0 var(--navy);
   overflow: clip;
 }
@@ -190,10 +197,17 @@ h1 {
 .output-tabs button {
   background: transparent;
   border: 0;
-  border-right: 1px solid #809fac;
+  border-radius: 0;
   color: var(--ink);
   cursor: pointer;
+}
+
+.mode-switcher button {
   padding: 0.9rem 1.2rem;
+}
+
+.output-tabs button {
+  padding: 0.7rem 1rem;
 }
 
 .mode-switcher button[aria-pressed="true"],
@@ -231,6 +245,10 @@ input[type="search"] {
   color: var(--ink);
   padding: 0.9rem;
   width: 100%;
+}
+
+select {
+  padding-inline: 1.15rem 2.75rem;
 }
 
 button:focus-visible,
@@ -374,8 +392,7 @@ h2 {
 }
 
 .output-tabs {
-  border: 1px solid #809fac;
-  border-bottom: 0;
+  align-self: end;
   display: flex;
   grid-column: 2;
 }
