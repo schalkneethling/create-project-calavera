@@ -1,0 +1,7 @@
+{
+  "$schema": "../gen/schemas/desktop-schema.json",
+  "identifier": "default",
+  "description": "Core capability for the Calavera menu-bar window",
+  "windows": ["main"],
+  "permissions": ["core:default", "notification:default"]
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-project-goal",
+  "type": "skill",
+  "displayName": "Project goal",
+  "payload": "payload/project-goal",
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}

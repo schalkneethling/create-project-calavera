@@ -1,0 +1,24 @@
+{
+  "name": "@schalkneethling/calavera-hook-block-dangerous-commands",
+  "version": "0.1.0",
+  "description": "Block dangerous commands artifact for Calavera.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/schalkneethling/create-project-calavera.git",
+    "directory": "packages/artifacts/hook-block-dangerous-commands"
+  },
+  "files": [
+    "calavera-artifact.json",
+    "payload"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./calavera-artifact.json",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}

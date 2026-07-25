@@ -1,0 +1,2 @@
+export const BASELINE_SNAPSHOT_DATE = "2026-07-25";
+export const BASELINE_SNAPSHOT_YEAR = Number(BASELINE_SNAPSHOT_DATE.slice(0, 4));

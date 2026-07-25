@@ -1,0 +1,11 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-frontend-engineering",
+  "type": "skill",
+  "displayName": "Frontend engineering",
+  "payload": "payload/frontend-engineering",
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}

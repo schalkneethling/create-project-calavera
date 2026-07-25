@@ -1,0 +1,12 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "agent-technical-devils-advocate",
+  "type": "agent",
+  "displayName": "Technical devil's advocate",
+  "payload": "payload/technical-devils-advocate.md",
+  "targets": ["claude-code", "codex", "cursor", "opencode"],
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}

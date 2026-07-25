@@ -1,0 +1,6 @@
+{
+  "$schema": "https://unpkg.com/knip@6/schema.json",
+  "ignore": ["packages/artifacts/*/payload/**/*.mts"],
+  "ignoreBinaries": ["uv", "uvx"],
+  "ignoreExportsUsedInFile": true
+}

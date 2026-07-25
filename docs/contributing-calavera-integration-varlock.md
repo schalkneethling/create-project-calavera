@@ -1,4 +1,4 @@
-# Draft: Contributing a Calavera Integration, From Catalog Entry to Post-Install Pointers
+# Contributing a Calavera Integration, From Catalog Entry to Post-Install Pointers
 
 Calavera works best when a new tool integration starts in the catalog. Metadata
 should describe the integration first; integration-specific behavior should be
@@ -43,7 +43,7 @@ That one entry establishes the contract Calavera needs:
 - `dependencies`: the development packages Calavera installs when the recipe
   selects the integration.
 
-Start in [`src/catalog.js`](../src/catalog.js). Then decide whether metadata is
+Start in [`packages/cli/src/catalog.js`](../packages/cli/src/catalog.js). Then decide whether metadata is
 enough or whether the integration needs a small behavior hook.
 
 Metadata is enough for integrations that only add packages or plugin settings to
@@ -60,7 +60,7 @@ clear dry-run output. React Doctor is another familiar example: it needs package
 scripts plus a generated `react-doctor.config.json`.
 
 When an integration needs custom behavior, keep it narrow and keyed from the
-resolved integration ID or platform in [`src/index.js`](../src/index.js). Add the
+resolved integration ID or platform in [`packages/cli/src/index.js`](../packages/cli/src/index.js). Add the
 script, file plan, diagnostic, pointer, or dry-run output in the same flow that
 already handles similar integrations, then protect that behavior with focused
 tests.
@@ -122,7 +122,7 @@ The Varlock contribution added an `env:load` script:
 It also wired that script into the aggregate command used by the recipe. When
 Theo opened PR #127, that aggregate script was named `check`. Calavera has since
 renamed it to `quality`, so a new integration should follow the current
-`quality` model in [`src/index.js`](../src/index.js) rather than copying the old
+`quality` model in [`packages/cli/src/index.js`](../packages/cli/src/index.js) rather than copying the old
 `check` name from the PR.
 
 Use the tool's real validation command as the script body. Varlock uses
@@ -195,9 +195,11 @@ missing Varlock lines under a small heading:
 
 ```gitignore
 # Varlock
+# Varlock recommends committing non-local .env.* files.
+# Review broader existing ignore rules before opting into that convention.
 !.env.schema
-!.env.*
 .env.local
+.env.*.local
 ```
 
 In this post, scaffold means "create a starter file only when the file does not
@@ -256,9 +258,8 @@ developers are expected to edit.
 
 Dry-run output should also describe the intent accurately. The current
 `apply --dry-run --json` payload uses the shared `changes` shape from
-[`src/index.js`](../src/index.js): `type`, `path`, and optional fields such as
-`scripts` and `removedDefaultTestScript`. It does not currently include
-ownership markers such as `managed` or `scaffold`.
+[`packages/cli/src/index.js`](../packages/cli/src/index.js): `type`, `path`, and optional fields such as
+`action`, `ownership`, `scripts`, and `removedDefaultTestScript`.
 
 A useful dry-run result for a fresh project would therefore include changes like:
 
@@ -289,14 +290,20 @@ A useful dry-run result for a fresh project would therefore include changes like
     },
     {
       "type": "write",
-      "path": ".env.schema"
+      "path": ".env.schema",
+      "action": "scaffold",
+      "ownership": "project"
     },
     {
       "type": "update",
-      "path": ".gitignore"
+      "path": ".gitignore",
+      "action": "merge",
+      "ownership": "project"
     }
   ],
-  "pointers": []
+  "pointers": [
+    "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private."
+  ]
 }
 ```
 
@@ -308,13 +315,9 @@ Would add scripts: lint, format:check, typecheck, env:load, quality
 Would write .editorconfig
 Would write oxlint.json
 Would write tsconfig.json
-Would write .env.schema
+Would scaffold .env.schema
 Would update .gitignore
 ```
-
-Because the change list does not encode ownership, use the surrounding
-documentation, state-file assertions, and tests to make the managed versus
-project-owned distinction clear.
 
 ## Add Doctor Coverage
 
@@ -358,8 +361,8 @@ restore the starter file.
 
 The web composer should not drift from the CLI catalog model. When a new
 integration should be available in the composer, add it to
-[`src/catalog.js`](../src/catalog.js) and make sure
-[`src/recipe.js`](../src/recipe.js) exposes it for the intended profile or
+[`packages/cli/src/catalog.js`](../packages/cli/src/catalog.js) and make sure
+[`packages/cli/src/recipe.js`](../packages/cli/src/recipe.js) exposes it for the intended profile or
 profiles through the shared recipe core.
 
 For Varlock, that meant adding it to the Environment variables group so a project
@@ -369,9 +372,9 @@ hand-editing the recipe.
 If the integration changes recipe shape, profile scoping, schema behavior, or
 the shared catalog response exposed to WebMCP, update the matching test or drift
 check. Calavera's public recipe schema lives at
-[`web/public/calavera.config.schema.json`](../web/public/calavera.config.schema.json),
+[`apps/composer/public/calavera.config.schema.json`](../apps/composer/public/calavera.config.schema.json),
 and repository drift checks live in
-[`scripts/check-config-schema.test.mjs`](../scripts/check-config-schema.test.mjs).
+[`packages/cli/scripts/check-config-schema.test.mjs`](../packages/cli/scripts/check-config-schema.test.mjs).
 
 ## Test the Contribution
 
@@ -428,7 +431,7 @@ test("varlock apply is idempotent around project-owned files", async () => {
       integrations: ["varlock"],
     }),
     ".env.schema": "APP_ENV=production\nCUSTOM_TOKEN=\n",
-    ".gitignore": "# Varlock\n!.env.schema\n!.env.*\n.env.local\n",
+    ".gitignore": "# Varlock\n!.env.schema\n.env.local\n.env.*.local\n",
   });
 
   await runCalavera(project, ["apply", "--no-install", "--yes"]);
@@ -465,25 +468,24 @@ Do not use a pointer for verbose documentation, warnings that belong in
 `doctor`, or details already clear from the change list. Keep each pointer short,
 specific, and actionable.
 
-For a Varlock-style integration, a useful pointer might be:
+The Varlock integration emits this pointer:
 
 ```text
-Review .env.schema and add required project environment variables before enabling env:load in CI.
+Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.
 ```
 
 Pointers should be available in JSON as stable strings so agents can display,
 summarize, or route them. They should also print in human output after `apply`
 so project developers see the same follow-up without needing `--json`.
 
-For example, if Varlock chose to emit a pointer after scaffolding the starter
-schema, the `apply --json` shape should remain simple:
+The `apply --json` shape remains simple:
 
 ```json
 {
   "command": "apply",
   "dryRun": false,
   "pointers": [
-    "Review .env.schema and add required project environment variables before enabling env:load in CI."
+    "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private."
   ]
 }
 ```
@@ -495,21 +497,21 @@ Review .env.schema and add required project environment variables before enablin
 ```
 
 Start from the current pointer behavior in
-[`src/index.js`](../src/index.js) and the documented contract in
+[`packages/cli/src/index.js`](../packages/cli/src/index.js) and the documented contract in
 [`docs/ai-module-contract.md`](ai-module-contract.md#post-install-pointers).
 
 ## Contributor Starting Points
 
 When adding the next integration, begin with these files:
 
-- [`src/catalog.js`](../src/catalog.js): shared integration metadata.
-- [`src/index.js`](../src/index.js): script building, managed files, `apply`,
+- [`packages/cli/src/catalog.js`](../packages/cli/src/catalog.js): shared integration metadata.
+- [`packages/cli/src/index.js`](../packages/cli/src/index.js): script building, managed files, `apply`,
   `doctor`, result printing, and JSON output.
-- [`web/script.js`](../web/script.js): composer exposure for selectable
+- [`apps/composer/script.js`](../apps/composer/script.js): composer exposure for selectable
   integrations.
-- [`web/public/calavera.config.schema.json`](../web/public/calavera.config.schema.json):
+- [`apps/composer/public/calavera.config.schema.json`](../apps/composer/public/calavera.config.schema.json):
   public recipe schema.
-- [`scripts/check-config-schema.test.mjs`](../scripts/check-config-schema.test.mjs):
+- [`packages/cli/scripts/check-config-schema.test.mjs`](../packages/cli/scripts/check-config-schema.test.mjs):
   catalog/schema drift and contract checks.
 - [`README.md`](../README.md): public integration catalog summary.
 

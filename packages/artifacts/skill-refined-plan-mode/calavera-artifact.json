@@ -1,0 +1,11 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-refined-plan-mode",
+  "type": "skill",
+  "displayName": "Refined plan mode",
+  "payload": "payload/refined-plan-mode",
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}

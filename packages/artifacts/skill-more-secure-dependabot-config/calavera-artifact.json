@@ -1,0 +1,11 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-more-secure-dependabot-config",
+  "type": "skill",
+  "displayName": "More secure Dependabot config",
+  "payload": "payload/more-secure-dependabot-config",
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-css-tokens",
+  "type": "skill",
+  "displayName": "CSS tokens",
+  "payload": "payload/css-tokens",
+  "compatibility": {
+    "calavera": ">=2.2.0 <3"
+  }
+}

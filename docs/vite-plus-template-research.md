@@ -241,10 +241,10 @@ duplicated between the web UI, WebMCP tools, future MCP server, and rich CLI.
 That shared core is the main dependency for keeping the agent-first, CLI, and
 Web UI paths in parity.
 
-The shared surface in `src/recipe.js` powers or should power:
+The shared surface in `packages/cli/src/recipe.js` powers or should power:
 
 - existing web composer controls;
-- WebMCP tools in `web/script.js`;
+- WebMCP tools in `apps/composer/script.js`;
 - standard MCP tools;
 - the rich interactive CLI composer;
 - CLI commands that need recipe inspection or validation.
