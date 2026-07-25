@@ -1,5 +1,5 @@
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./ai/catalog.js";
-import { resolveAiArtifacts } from "./ai/artifacts.js";
+import { normalizeAiItems } from "./ai/recipe-items.js";
 import { integrationCatalog } from "./catalog.js";
 import { normalizeBaselineTarget } from "@schalkneethling/calavera-baseline-core";
 import {
@@ -650,7 +650,7 @@ export function validateRecipe(recipe) {
 
   if (Object.hasOwn(recipe, "ai")) {
     assertObjectArray("ai", recipe.ai);
-    resolveAiArtifacts(recipe);
+    normalizeAiItems(recipe.ai);
   }
 
   return recipe;
