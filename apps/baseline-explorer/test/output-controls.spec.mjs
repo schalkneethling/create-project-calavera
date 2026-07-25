@@ -19,6 +19,20 @@ async function expectSelected(page, selectedId) {
   }
 }
 
+test("empty recommendations hide data dividers until a feature is selected", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "Recommend from features" }).click();
+
+  const browserRunway = page.locator("#browser-runway");
+  const resultDetails = page.locator("#result-details");
+  await expect(browserRunway).toBeHidden();
+  await expect(resultDetails).toBeHidden();
+
+  await page.locator('.feature-option input[value="nesting"]').check();
+  await expect(browserRunway).toBeVisible();
+  await expect(resultDetails).toBeVisible();
+});
+
 test("generated-output tabs implement the APG interaction and copy each format", async ({
   page,
 }) => {
