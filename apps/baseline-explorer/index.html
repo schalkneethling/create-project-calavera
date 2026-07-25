@@ -98,19 +98,71 @@
           <h2 id="output-title">Generated configuration</h2>
         </div>
         <div class="output-tabs" role="tablist" aria-label="Generated configuration formats">
-          <button type="button" role="tab" aria-selected="true" data-output="calavera">
+          <button
+            type="button"
+            id="output-tab-calavera"
+            role="tab"
+            aria-selected="true"
+            aria-controls="output-panel-calavera"
+            tabindex="0"
+            data-output="calavera"
+          >
             Calavera
           </button>
-          <button type="button" role="tab" aria-selected="false" data-output="rule">
+          <button
+            type="button"
+            id="output-tab-rule"
+            role="tab"
+            aria-selected="false"
+            aria-controls="output-panel-rule"
+            tabindex="-1"
+            data-output="rule"
+          >
             Stylelint rule
           </button>
-          <button type="button" role="tab" aria-selected="false" data-output="config">
+          <button
+            type="button"
+            id="output-tab-config"
+            role="tab"
+            aria-selected="false"
+            aria-controls="output-panel-config"
+            tabindex="-1"
+            data-output="config"
+          >
             Stylelint config
           </button>
         </div>
-        <div class="code-frame">
-          <button class="copy-button" id="copy-output" type="button">Copy</button>
-          <pre><code id="generated-output"></code></pre>
+        <div
+          class="code-frame"
+          id="output-panel-calavera"
+          role="tabpanel"
+          aria-labelledby="output-tab-calavera"
+          data-output-panel="calavera"
+        >
+          <button class="copy-button" type="button" data-copy-output="calavera">Copy</button>
+          <pre><code data-generated-output="calavera"></code></pre>
+        </div>
+        <div
+          class="code-frame"
+          id="output-panel-rule"
+          role="tabpanel"
+          aria-labelledby="output-tab-rule"
+          data-output-panel="rule"
+          hidden
+        >
+          <button class="copy-button" type="button" data-copy-output="rule">Copy</button>
+          <pre><code data-generated-output="rule"></code></pre>
+        </div>
+        <div
+          class="code-frame"
+          id="output-panel-config"
+          role="tabpanel"
+          aria-labelledby="output-tab-config"
+          data-output-panel="config"
+          hidden
+        >
+          <button class="copy-button" type="button" data-copy-output="config">Copy</button>
+          <pre><code data-generated-output="config"></code></pre>
         </div>
       </section>
     </main>

@@ -657,6 +657,7 @@ version in uv's cache once while online before using the offline check. The
 ```bash
 uv sync --frozen
 uvx zizmor@1.25.2 --version
+pnpm --filter @calavera/baseline-explorer exec playwright install chromium
 pnpm check
 pnpm web:build
 pnpm publish:check
