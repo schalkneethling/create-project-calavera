@@ -3075,6 +3075,21 @@ function printResult(result, asJSON = false) {
 
   if (result.command === "clean") {
     logger.info(result.message);
+
+    for (const change of result.changes) {
+      if (change.type === "delete") {
+        logger.info(result.dryRun ? `Would remove ${change.path}` : `Removed ${change.path}`);
+      }
+
+      if (change.type === "skip") {
+        logger.info(
+          result.dryRun
+            ? `Would skip ${change.path}: ${change.reason}`
+            : `Skipped ${change.path}: ${change.reason}`,
+        );
+      }
+    }
+
     return;
   }
 

@@ -2821,6 +2821,74 @@ test("clean treats a matching managed run-if-files helper as stale", async () =>
   }
 });
 
+test("clean human output reports planned and completed deletes and locally edited skips", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-clean-output-"));
+  const safePath = ".editorconfig";
+  const safeContents = "root = true\n";
+  const editedPath = "knip.json";
+  const originalEditedContents = "{}\n";
+  const localEditedContents = '{\n  "entry": ["src/index.js"]\n}\n';
+  const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
+  const environment = { ...process.env, NO_COLOR: "1" };
+
+  try {
+    process.chdir(projectDirectory);
+    await mkdir(".calavera");
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
+    );
+    await writeFile(safePath, safeContents);
+    await writeFile(editedPath, localEditedContents);
+    await writeFile(
+      ".calavera/state.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          profile: "minimal",
+          integrations: [],
+          files: [safePath, editedPath],
+          managedFiles: [
+            { path: safePath, hash: textHash(safeContents) },
+            { path: editedPath, hash: textHash(originalEditedContents) },
+          ],
+          aiArtifacts: [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { stdout: dryRunStdout } = await execFileAsync(
+      process.execPath,
+      [cliPath, "clean", "--dry-run", "--yes"],
+      { env: environment },
+    );
+
+    assert.match(dryRunStdout, /Dry run complete\. No files were removed\./);
+    assert.match(dryRunStdout, /Would remove \.editorconfig/);
+    assert.match(dryRunStdout, /Would skip knip\.json: Managed file has local edits/);
+    assert.equal(await readFile(safePath, "utf8"), safeContents);
+    assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
+
+    const { stdout: cleanStdout } = await execFileAsync(
+      process.execPath,
+      [cliPath, "clean", "--yes"],
+      { env: environment },
+    );
+
+    assert.match(cleanStdout, /Removed stale managed files\./);
+    assert.match(cleanStdout, /Removed \.editorconfig/);
+    assert.match(cleanStdout, /Skipped knip\.json: Managed file has local edits/);
+    await assertPathMissing(safePath);
+    assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
 test("apply dry-run human output distinguishes owned writes and omitted scripts", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-cli-dry-run-output-"));
