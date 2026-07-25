@@ -82,6 +82,7 @@ function normalizeAiTarget(type, item, index) {
  * @param {string} src
  * @param {number} index
  * @param {AiArtifactType} type
+ * @returns {(typeof aiArtifactCatalog)[number]}
  */
 function validateAiSource(src, index, type) {
   const artifact = aiArtifactCatalog.find((candidate) => candidate.src === src);
@@ -95,6 +96,8 @@ function validateAiSource(src, index, type) {
       `AI item at index ${index} ${type} source must be under ${AI_SOURCE_DIRECTORIES[type]}/: ${src}.`,
     );
   }
+
+  return artifact;
 }
 
 /**
@@ -120,15 +123,11 @@ export function normalizeAiItems(aiConfig) {
     if (entry.id) {
       const artifact = aiArtifactCatalog.find(({ id }) => id === entry.id);
       if (!artifact) throw new Error(`AI item at index ${index} has unknown id "${entry.id}".`);
-      const target = entry.target?.trim();
-      if (target && artifact.targets && !artifact.targets.includes(target)) {
-        throw new Error(`AI item at index ${index} target is not supported by ${entry.id}.`);
-      }
       item = {
         id: artifact.id,
         type: artifact.type,
         src: artifact.src,
-        target,
+        target: entry.target?.trim(),
       };
     } else {
       item = {
@@ -140,7 +139,13 @@ export function normalizeAiItems(aiConfig) {
 
     const type = normalizeAiItemType(item.type, index);
     const target = normalizeAiTarget(type, item, index);
-    validateAiSource(item.src, index, type);
+    const artifact = validateAiSource(item.src, index, type);
+
+    if (item.target !== undefined && artifact.targets && !artifact.targets.includes(target)) {
+      throw new Error(
+        `AI item at index ${index} target is not supported by ${item.id ?? item.src}.`,
+      );
+    }
 
     return {
       id: item.id,

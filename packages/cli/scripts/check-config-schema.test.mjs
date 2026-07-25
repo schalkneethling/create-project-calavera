@@ -578,7 +578,21 @@ test("shared recipe validation rejects unsafe AI types, sources, and targets", (
     () =>
       validateRecipe({
         ...recipe,
-        ai: [{ id: "hook-block-dangerous-commands", target: "../codex" }],
+        ai: [{ id: "hook-block-dangerous-commands", target: "windsurf" }],
+      }),
+    /target is not supported/,
+  );
+  assert.throws(
+    () =>
+      validateRecipe({
+        ...recipe,
+        ai: [
+          {
+            type: "hook",
+            src: "hooks/block-dangerous-commands",
+            target: "windsurf",
+          },
+        ],
       }),
     /target is not supported/,
   );

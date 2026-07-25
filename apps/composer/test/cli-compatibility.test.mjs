@@ -100,6 +100,8 @@ test("Composer build rejects Node-only modules in its browser graph", () => {
     ({ name }) => name === "browser-only-module-graph",
   );
 
+  assert.ok(browserOnlyPlugin);
+  assert.equal(browserOnlyPlugin.enforce, "pre");
   assert.throws(
     () =>
       browserOnlyPlugin.resolveId.call(
@@ -111,6 +113,8 @@ test("Composer build rejects Node-only modules in its browser graph", () => {
         "node:path",
         "packages/cli/src/recipe.js",
       ),
-    /Node-only module node:path reached the Composer/,
+    {
+      message: "Node-only module node:path reached the Composer from packages/cli/src/recipe.js.",
+    },
   );
 });
