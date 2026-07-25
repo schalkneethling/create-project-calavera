@@ -1,6 +1,10 @@
 import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
+import baselineData from "../data/baseline.json" with { type: "json" };
+import { BASELINE_SNAPSHOT_DATE, BASELINE_SNAPSHOT_YEAR } from "../scripts/snapshot.mjs";
 import {
   baselineConfiguration,
   baselineMetadata,
@@ -15,8 +19,40 @@ import { isCssSpecificationUrl } from "../src/specification-url.js";
 test("generated Baseline data records pinned sources and CSS features", () => {
   assert.equal(baselineMetadata.sources.webFeatures, "3.34.0");
   assert.equal(baselineMetadata.sources.baselineBrowserMapping, "2.10.43");
+  assert.equal(baselineMetadata.generatedAt, `${BASELINE_SNAPSHOT_DATE}T00:00:00.000Z`);
+  assert.equal(baselineMetadata.currentYear, BASELINE_SNAPSHOT_YEAR);
   assert.ok(baselineMetadata.featureCount > 100);
   assert.ok(searchBaselineFeatures("nesting").some(({ id }) => id === "nesting"));
+});
+
+test("generated browser metadata does not exceed the snapshot cutoff", () => {
+  assert.ok(Object.hasOwn(baselineData.browserTargets.years, String(BASELINE_SNAPSHOT_YEAR)));
+
+  const releaseDates = [
+    baselineData.browserTargets.widely,
+    baselineData.browserTargets.newly,
+    ...Object.values(baselineData.browserTargets.years),
+  ].flatMap((target) =>
+    Object.values(target).flatMap(({ releaseDate }) => (releaseDate ? [releaseDate] : [])),
+  );
+
+  assert.ok(releaseDates.length > 0);
+  assert.ok(releaseDates.every((releaseDate) => releaseDate <= BASELINE_SNAPSHOT_DATE));
+});
+
+test("generated Baseline data is independent of a later system clock", () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      "--import",
+      fileURLToPath(new URL("./fixtures/future-date.mjs", import.meta.url)),
+      fileURLToPath(new URL("../scripts/build-data.mjs", import.meta.url)),
+      "--check",
+    ],
+    { encoding: "utf8" },
+  );
+
+  assert.equal(result.status, 0, result.stderr || result.stdout);
 });
 
 test("CSS specification URLs require the exact approved host", () => {
