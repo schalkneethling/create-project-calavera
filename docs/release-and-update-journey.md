@@ -22,7 +22,7 @@ Private applications are excluded from Changesets. Public packages are neither f
 
 ## Baseline data refresh
 
-1. Update the pinned `web-features` and `baseline-browser-mapping` versions in `packages/baseline-core`.
+1. Update the pinned `web-features` and `baseline-browser-mapping` versions in `packages/baseline-core`, then advance `scripts/snapshot.mjs` to the intended non-future cutoff date.
 2. Run the data generator and review the generated source versions, generation date, feature changes, and browser mappings.
 3. Run Baseline unit and cross-surface parity tests.
 4. Add a Changeset for Baseline core. Deploy the Explorer separately; do not couple its static deployment to npm publication.

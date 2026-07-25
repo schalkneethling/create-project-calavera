@@ -1,12 +1,12 @@
 import { readFile, writeFile } from "node:fs/promises";
 
-import { getAllVersions, getCompatibleVersions } from "baseline-browser-mapping";
+import { getCompatibleVersions } from "baseline-browser-mapping";
 import { features } from "web-features";
 
 import packageJson from "../package.json" with { type: "json" };
 import { isCssSpecificationUrl } from "../src/specification-url.js";
+import { BASELINE_SNAPSHOT_DATE, BASELINE_SNAPSHOT_YEAR } from "./snapshot.mjs";
 
-const CURRENT_YEAR = new Date().getUTCFullYear();
 const FIRST_BASELINE_YEAR = 2015;
 const CORE_BROWSERS = new Set([
   "chrome",
@@ -71,37 +71,24 @@ const cssFeatures = Object.entries(features)
   .sort((left, right) => left.name.localeCompare(right.name) || left.id.localeCompare(right.id));
 
 const years = Object.fromEntries(
-  Array.from({ length: CURRENT_YEAR - FIRST_BASELINE_YEAR + 1 }, (_, index) => {
+  Array.from({ length: BASELINE_SNAPSHOT_YEAR - FIRST_BASELINE_YEAR + 1 }, (_, index) => {
     const year = FIRST_BASELINE_YEAR + index;
     return [year, browserVersions({ targetYear: year })];
   }),
 );
-const allVersions = getAllVersions({ suppressWarnings: true });
-if (!Array.isArray(allVersions)) {
-  throw new Error("Expected Baseline browser mapping to return an array.");
-}
-const sourceReleaseDate = allVersions
-  .flatMap(({ release_date: releaseDate }) =>
-    /^\d{4}-\d{2}-\d{2}$/.test(releaseDate ?? "") ? [releaseDate] : [],
-  )
-  .sort()
-  .at(-1);
-if (!sourceReleaseDate) {
-  throw new Error("Expected Baseline browser mapping to include release dates.");
-}
 
 const dataset = {
   schemaVersion: 1,
-  generatedAt: `${sourceReleaseDate}T00:00:00.000Z`,
+  generatedAt: `${BASELINE_SNAPSHOT_DATE}T00:00:00.000Z`,
   sources: {
     webFeatures: packageJson.dependencies["web-features"],
     baselineBrowserMapping: packageJson.dependencies["baseline-browser-mapping"],
   },
   firstBaselineYear: FIRST_BASELINE_YEAR,
-  currentYear: CURRENT_YEAR,
+  currentYear: BASELINE_SNAPSHOT_YEAR,
   browserTargets: {
-    widely: browserVersions({}),
-    newly: browserVersions({ targetYear: CURRENT_YEAR }),
+    widely: browserVersions({ widelyAvailableOnDate: BASELINE_SNAPSHOT_DATE }),
+    newly: browserVersions({ targetYear: BASELINE_SNAPSHOT_YEAR }),
     years,
   },
   features: cssFeatures,
