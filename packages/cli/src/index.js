@@ -3054,8 +3054,9 @@ function printHelp() {
 /**
  * @param {CommandResult} result
  * @param {boolean} [asJSON]
+ * @param {boolean} [commandDryRun]
  */
-function printResult(result, asJSON = false) {
+function printResult(result, asJSON = false, commandDryRun = false) {
   if (asJSON) {
     console.info(JSON.stringify(result, null, 2));
     return;
@@ -3074,7 +3075,23 @@ function printResult(result, asJSON = false) {
   }
 
   if (result.command === "clean") {
+    const dryRun = result.dryRun ?? commandDryRun;
     logger.info(result.message);
+
+    for (const change of result.changes) {
+      if (change.type === "delete") {
+        logger.info(dryRun ? `Would remove ${change.path}` : `Removed ${change.path}`);
+      }
+
+      if (change.type === "skip") {
+        logger.info(
+          dryRun
+            ? `Would skip ${change.path}: ${change.reason}`
+            : `Skipped ${change.path}: ${change.reason}`,
+        );
+      }
+    }
+
     return;
   }
 
@@ -3250,7 +3267,7 @@ async function main() {
   }
 
   if (options.command === "clean") {
-    printResult(await clean(options), options.json);
+    printResult(await clean(options), options.json, options.dryRun);
     return;
   }
 
