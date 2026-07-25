@@ -26,6 +26,8 @@ test("generated Baseline data records pinned sources and CSS features", () => {
 });
 
 test("generated browser metadata does not exceed the snapshot cutoff", () => {
+  assert.ok(Object.hasOwn(baselineData.browserTargets.years, String(BASELINE_SNAPSHOT_YEAR)));
+
   const releaseDates = [
     baselineData.browserTargets.widely,
     baselineData.browserTargets.newly,
