@@ -402,6 +402,8 @@ h2 {
 
 .output-tabs {
   align-self: end;
+  border: 1px solid #809fac;
+  border-bottom: 0;
   display: flex;
   grid-column: 2;
 }
