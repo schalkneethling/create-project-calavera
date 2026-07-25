@@ -2837,7 +2837,7 @@ test("clean human output reports planned and completed deletes and locally edite
     await mkdir(".calavera");
     await writeFile(
       "calavera.config.json",
-      `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
+      `${JSON.stringify(buildRecipe("minimal", ["editorconfig"], "npm"), null, 2)}\n`,
     );
     await writeFile(safePath, safeContents);
     await writeFile(editedPath, localEditedContents);
@@ -2858,6 +2858,35 @@ test("clean human output reports planned and completed deletes and locally edite
         null,
         2,
       )}\n`,
+    );
+
+    const { stdout: skipOnlyJsonStdout } = await execFileAsync(
+      process.execPath,
+      [cliPath, "clean", "--dry-run", "--yes", "--json"],
+      { env: environment },
+    );
+    const skipOnlyJsonResult = JSON.parse(skipOnlyJsonStdout);
+
+    assert.equal(Object.hasOwn(skipOnlyJsonResult, "dryRun"), false);
+
+    const { stdout: skipOnlyDryRunStdout } = await execFileAsync(
+      process.execPath,
+      [cliPath, "clean", "--dry-run", "--yes"],
+      { env: environment },
+    );
+
+    assert.match(
+      skipOnlyDryRunStdout,
+      /No stale managed items were safe to remove\. Some stale items have local edits\./,
+    );
+    assert.match(skipOnlyDryRunStdout, /Would skip knip\.json: Managed file has local edits/);
+    assert.doesNotMatch(skipOnlyDryRunStdout, /^Skipped knip\.json:/m);
+    assert.equal(await readFile(safePath, "utf8"), safeContents);
+    assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
+
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
     );
 
     const { stdout: dryRunStdout } = await execFileAsync(
