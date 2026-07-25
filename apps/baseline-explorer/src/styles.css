@@ -100,12 +100,13 @@ footer {
 
 .intro {
   display: grid;
-  gap: 1.5rem clamp(3rem, 7vw, 7rem);
+  gap: 1.5rem;
   grid-template-areas:
-    "eyebrow eyebrow"
-    "title stamp"
-    "lede stamp";
-  grid-template-columns: minmax(0, 1.65fr) minmax(17rem, 0.65fr);
+    "eyebrow"
+    "title"
+    "lede"
+    "stamp";
+  grid-template-columns: minmax(0, 1fr);
   padding: clamp(3.5rem, 8vw, 6.5rem) 0 clamp(3rem, 6vw, 5rem);
 }
 
@@ -153,19 +154,27 @@ h1 {
 }
 
 .source-stamp {
-  align-self: center;
-  background: rgb(248 252 254 / 78%);
+  align-self: start;
+  border-bottom: 1px solid #9bb6c4;
   border-top: 4px solid var(--cyan);
+  display: grid;
   grid-area: stamp;
-  margin: 0;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  margin: 1.25rem 0 0;
+  max-width: 54rem;
+  width: 100%;
 }
 
 .source-stamp div {
-  border-bottom: 1px solid #9bb6c4;
+  border-right: 1px solid #9bb6c4;
   display: grid;
-  gap: 1rem;
-  grid-template-columns: 1fr 1.4fr;
-  padding: 0.85rem 0;
+  gap: 0.35rem;
+  grid-template-columns: 1fr;
+  padding: 1rem 1.2rem;
+}
+
+.source-stamp div:last-child {
+  border-right: 0;
 }
 
 .source-stamp dt {
@@ -459,11 +468,6 @@ footer {
 
   .intro {
     gap: 1.25rem;
-    grid-template-areas:
-      "eyebrow"
-      "title"
-      "lede"
-      "stamp";
     padding-block: 3.5rem;
   }
 
@@ -473,7 +477,17 @@ footer {
   }
 
   .source-stamp {
+    grid-template-columns: 1fr;
     margin-top: 1.25rem;
+  }
+
+  .source-stamp div {
+    border-bottom: 1px solid #9bb6c4;
+    border-right: 0;
+  }
+
+  .source-stamp div:last-child {
+    border-bottom: 0;
   }
 
   .controls {
