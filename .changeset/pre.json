@@ -22,5 +22,17 @@
     "@schalkneethling/calavera-baseline-core": "0.1.0",
     "create-project-calavera": "2.2.0"
   },
-  "changesets": []
+  "changesets": [
+    "calm-rabbits-review",
+    "clean-css-hosts",
+    "clear-wolves-clean",
+    "deterministic-baseline-snapshot",
+    "friendly-bones-check",
+    "quiet-bats-explore",
+    "quiet-spiders-validate",
+    "safe-dingos-compose",
+    "theos-varlock-integration",
+    "tidy-skulls-package",
+    "wise-ravens-lock"
+  ]
 }
