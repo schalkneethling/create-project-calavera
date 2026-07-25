@@ -31,6 +31,8 @@ jobs:
           enable-cache: false
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Install Playwright browser
+        run: pnpm --filter @calavera/baseline-explorer exec playwright install --with-deps chromium
       - name: Check
         run: pnpm check
       - name: Validate package
