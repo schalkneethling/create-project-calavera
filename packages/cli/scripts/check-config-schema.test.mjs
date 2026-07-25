@@ -555,6 +555,35 @@ test("shared recipe validation rejects malformed AI items and unknown properties
   assert.throws(() => validateRecipe({ ...recipe, unexpected: true }), /Unknown recipe properties/);
 });
 
+test("shared recipe validation rejects unsafe AI types, sources, and targets", () => {
+  const recipe = buildRecipe("minimal", [], "npm");
+
+  assert.throws(
+    () =>
+      validateRecipe({
+        ...recipe,
+        ai: [{ type: "plugin", src: "skills/project-goal" }],
+      }),
+    /unsupported type "plugin"/,
+  );
+  assert.throws(
+    () =>
+      validateRecipe({
+        ...recipe,
+        ai: [{ type: "skill", src: "hooks/block-dangerous-commands" }],
+      }),
+    /skill source must be under skills\//,
+  );
+  assert.throws(
+    () =>
+      validateRecipe({
+        ...recipe,
+        ai: [{ id: "hook-block-dangerous-commands", target: "../codex" }],
+      }),
+    /target is not supported/,
+  );
+});
+
 test("shared catalog helpers expose WebMCP-ready profile scoped options", () => {
   const modernToolIds = listIntegrationOptions("modern").map(({ id }) => id);
   const classicToolIds = listIntegrationOptions("classic").map(({ id }) => id);

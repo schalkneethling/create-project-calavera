@@ -5,26 +5,14 @@ import { basename, dirname, join, resolve } from "node:path";
 import { artifactPayloadPath } from "@schalkneethling/calavera-artifact-core/node";
 
 import { fileExists } from "../utils/fs.js";
-import { isNotEmptyString, isPlainObject } from "../utils/guards.js";
+import { isNotEmptyString } from "../utils/guards.js";
 import { hashDirectory, hashFile, textHash } from "../utils/hash.js";
-import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./catalog.js";
+import { normalizeAiItems } from "./recipe-items.js";
 
 /**
  * @typedef {import("../state.js").CalaveraState} CalaveraState
  *
  * @typedef {"skill" | "hook" | "agent"} AiArtifactType
- *
- * @typedef {object} AiItemConfig
- * @property {string} [id]
- * @property {string} [type]
- * @property {string} [src]
- * @property {string} [target]
- *
- * @typedef {object} NormalizedAiItem
- * @property {string} [id]
- * @property {string} type
- * @property {string} src
- * @property {string} [target]
  *
  * @typedef {object} ResolvedAiArtifact
  * @property {number} index
@@ -45,12 +33,6 @@ import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./catalog.js";
  *
  * @typedef {{ type: string, path: string, category?: "ai", aiType?: AiArtifactType, name?: string, reason?: string, action?: "write" | "update", ownership?: "project" }} AiChange
  */
-
-const AI_SOURCE_DIRECTORIES = Object.freeze({
-  skill: "skills",
-  hook: "hooks",
-  agent: "agents",
-});
 
 const AI_HOOK_FILES = Object.freeze(["hook.mjs", "settings-fragment.json"]);
 const CODEX_AGENT_TARGET = "codex";
@@ -209,120 +191,8 @@ export function createCodexAgentToml(markdown) {
   return `${lines.join("\n")}\n`;
 }
 
-/**
- * @param {string} type
- * @param {number} index
- * @returns {AiArtifactType}
- */
-function normalizeAiItemType(type, index) {
-  if (Object.hasOwn(AI_SOURCE_DIRECTORIES, type)) {
-    return /** @type {AiArtifactType} */ (type);
-  }
-
-  throw new Error(
-    `AI item at index ${index} has unsupported type "${type}". Supported types: skill, hook, agent.`,
-  );
-}
-
-/**
- * @param {unknown} value
- * @returns {value is AiItemConfig}
- */
-function isAiItemConfig(value) {
-  return (
-    isPlainObject(value) &&
-    ((isNotEmptyString(value.id) && value.type === undefined && value.src === undefined) ||
-      (isNotEmptyString(value.type) && isNotEmptyString(value.src) && value.id === undefined)) &&
-    (value.target === undefined || isNotEmptyString(value.target))
-  );
-}
-
-/**
- * @param {AiArtifactType} type
- * @param {AiItemConfig} item
- * @param {number} index
- * @returns {string | undefined}
- */
-function normalizeAiTarget(type, item, index) {
-  if (type === "skill") {
-    if (item.target !== undefined) {
-      throw new Error(`AI item at index ${index} target only applies to hook and agent items.`);
-    }
-
-    return undefined;
-  }
-
-  const target = item.target?.trim() || DEFAULT_AI_TARGET;
-
-  if (target.includes("/") || target.includes("\\") || target === "." || target === "..") {
-    throw new Error(
-      `AI item at index ${index} target must be a single directory name without path separators or traversal.`,
-    );
-  }
-
-  return target;
-}
-
-/**
- * @param {unknown} aiConfig
- * @returns {NormalizedAiItem[]}
- */
-function normalizeAiItems(aiConfig) {
-  if (aiConfig === undefined) {
-    return [];
-  }
-
-  if (!Array.isArray(aiConfig)) {
-    throw new Error("The optional ai config key must be an array.");
-  }
-
-  return aiConfig.map((entry, index) => {
-    if (!isAiItemConfig(entry)) {
-      throw new Error(`AI item at index ${index} must contain id, or legacy type and src fields.`);
-    }
-
-    if (entry.id) {
-      const artifact = aiArtifactCatalog.find(({ id }) => id === entry.id);
-      if (!artifact) throw new Error(`AI item at index ${index} has unknown id "${entry.id}".`);
-      const target = entry.target?.trim();
-      if (target && artifact.targets && !artifact.targets.includes(target)) {
-        throw new Error(`AI item at index ${index} target is not supported by ${entry.id}.`);
-      }
-      return {
-        id: artifact.id,
-        type: artifact.type,
-        src: artifact.src,
-        target,
-      };
-    }
-
-    return {
-      type: /** @type {string} */ (entry.type).trim(),
-      src: /** @type {string} */ (entry.src).trim(),
-      target: entry.target?.trim(),
-    };
-  });
-}
-
-/**
- * @param {string} src
- * @param {number} index
- * @param {AiArtifactType} type
- * @returns {string}
- */
-function resolveAiSourcePath(src, index, type) {
-  const artifact = aiArtifactCatalog.find((candidate) => candidate.src === src);
-
-  if (!artifact) {
-    throw new Error(`AI item at index ${index} source must stay within src/ai/: ${src}.`);
-  }
-
-  if (artifact.type !== type) {
-    throw new Error(
-      `AI item at index ${index} ${type} source must be under ${AI_SOURCE_DIRECTORIES[type]}/: ${src}.`,
-    );
-  }
-
+/** @param {string} src */
+function resolveAiSourcePath(src) {
   return artifactPayloadPath(src);
 }
 
@@ -492,10 +362,8 @@ export function resolveAiArtifacts(recipe, sourcePaths = new Map()) {
   const deduped = new Map();
 
   for (const [index, item] of normalizeAiItems(recipe.ai).entries()) {
-    const type = normalizeAiItemType(item.type, index);
-    const target = normalizeAiTarget(type, item, index);
-    const sourcePath =
-      sourcePaths.get(item.id ?? item.src) ?? resolveAiSourcePath(item.src, index, type);
+    const { type, target } = item;
+    const sourcePath = sourcePaths.get(item.id ?? item.src) ?? resolveAiSourcePath(item.src);
     const name = inferAiSourceName(type, item.src, index);
     const key = [type, target, name].filter(Boolean).join(":");
 

@@ -12,6 +12,7 @@ import {
   SAFE_CLI_FALLBACK_VERSION,
   versionMeetsMinimum,
 } from "../cli-compatibility.js";
+import viteConfig from "../vite.config.js";
 
 test("version comparison keeps unreleased integrations behind their CLI release", () => {
   assert.equal(versionMeetsMinimum("2.2.0", "2.3.0"), false);
@@ -92,4 +93,24 @@ test("published CLI lookup accepts valid npm latest metadata", async () => {
   }));
 
   assert.deepEqual(compatibility, { version: "2.3.0", source: "npm" });
+});
+
+test("Composer build rejects Node-only modules in its browser graph", () => {
+  const browserOnlyPlugin = viteConfig.plugins.find(
+    ({ name }) => name === "browser-only-module-graph",
+  );
+
+  assert.throws(
+    () =>
+      browserOnlyPlugin.resolveId.call(
+        {
+          error(message) {
+            throw new Error(message);
+          },
+        },
+        "node:path",
+        "packages/cli/src/recipe.js",
+      ),
+    /Node-only module node:path reached the Composer/,
+  );
 });
