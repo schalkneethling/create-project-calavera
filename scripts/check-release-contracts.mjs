@@ -54,6 +54,16 @@ assert.match(rootPackage.scripts["release:rehearse"], /@calavera\/baseline-explo
 assert.match(rootPackage.scripts["release:rehearse"], /@calavera\/menu-bar build:web/);
 assert.match(workspace, /packages:\n\s+- "apps\/\*"/);
 assert.match(workspace, /- "packages\/artifacts\/\*"/);
+const packDestinations = [...publishWorkflow.matchAll(/--pack-destination\s+([^\s]+)/g)].map(
+  ([, destination]) => destination,
+);
+assert.equal(packDestinations.length, 4, "publish workflow must pack every public package group");
+assert.deepEqual(
+  [...new Set(packDestinations)],
+  ["package"],
+  "publish workflow must pack tarballs into the upload directory",
+);
+assert.match(publishWorkflow, /path: package\/\*\.tgz/);
 assert.match(publishWorkflow, /npm view .*version >"\$view_output" 2>&1/);
 assert.match(publishWorkflow, /grep -Eq .*E404\|404/);
 assert.match(publishWorkflow, /exit "\$view_status"/);
