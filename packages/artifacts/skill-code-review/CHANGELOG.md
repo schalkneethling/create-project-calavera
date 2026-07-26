@@ -1,5 +1,11 @@
 # @schalkneethling/calavera-skill-code-review
 
+## 0.2.0-next.3
+
+### Patch Changes
+
+- e3e46a7: Verify the complete prerelease cohort through npm trusted publishing without a token fallback.
+
 ## 0.2.0-next.2
 
 ### Patch Changes

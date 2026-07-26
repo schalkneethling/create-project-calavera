@@ -24,6 +24,7 @@
   },
   "changesets": [
     "bright-wolves-retry",
+    "calm-owls-publish",
     "calm-rabbits-review",
     "clean-css-hosts",
     "clear-wolves-clean",
