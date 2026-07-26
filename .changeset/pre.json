@@ -23,6 +23,7 @@
     "create-project-calavera": "2.2.0"
   },
   "changesets": [
+    "bright-wolves-retry",
     "calm-rabbits-review",
     "clean-css-hosts",
     "clear-wolves-clean",

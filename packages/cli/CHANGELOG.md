@@ -1,5 +1,14 @@
 # create-project-calavera
 
+## 2.3.0-next.1
+
+### Patch Changes
+
+- 76d85ef: Retry the prerelease cohort after correcting the package artifact upload destination.
+- Updated dependencies [76d85ef]
+  - @schalkneethling/calavera-baseline-core@0.2.0-next.1
+  - @schalkneethling/calavera-artifact-core@0.2.0-next.1
+
 ## 2.3.0-next.0
 
 ### Minor Changes
