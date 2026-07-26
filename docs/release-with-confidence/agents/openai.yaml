@@ -1,0 +1,4 @@
+interface:
+  display_name: "Release with Confidence"
+  short_description: "Guide staged, evidence-backed software releases"
+  default_prompt: "Use $release-with-confidence to guide this project through a safe staged release."
