@@ -1,5 +1,11 @@
 # @schalkneethling/calavera-hook-block-dangerous-commands
 
+## 0.2.0-next.2
+
+### Patch Changes
+
+- 71d46d1: Retry the complete prerelease cohort with npm-compatible provenance metadata.
+
 ## 0.2.0-next.1
 
 ### Patch Changes
