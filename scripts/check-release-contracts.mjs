@@ -31,6 +31,17 @@ assert.equal(
   true,
   "releaseable workspaces must remain public",
 );
+for (const [index, packageJson] of publicPackages.entries()) {
+  assert.deepEqual(
+    packageJson.repository,
+    {
+      type: "git",
+      url: "git+ssh://git@github.com/schalkneethling/create-project-calavera.git",
+      directory: publicPackagePaths[index],
+    },
+    `${packageJson.name} must identify its monorepo source for npm provenance`,
+  );
+}
 assert.equal(
   applications.every(({ private: isPrivate }) => isPrivate === true),
   true,
