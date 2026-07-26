@@ -98,10 +98,6 @@ jobs:
           name: package
           path: package
       - name: Publish package
-        # Temporary first-publication bridge for #336. Remove through #337 after
-        # every new package has a trusted publisher configured.
-        env:
-          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
           mapfile -t tarballs < <(find package -maxdepth 1 -name "*.tgz" -print)
           if [ "${#tarballs[@]}" -eq 0 ]; then
@@ -130,5 +126,5 @@ jobs:
             if [[ "$package_version" == *-* ]]; then
               dist_tag=next
             fi
-            npm publish "$(realpath "$tarball")" --provenance --access public --tag "$dist_tag"
+            npm publish "$(realpath "$tarball")" --access public --tag "$dist_tag"
           done
