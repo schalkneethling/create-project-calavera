@@ -1,5 +1,27 @@
 # @schalkneethling/calavera-artifact-core
 
+## 0.2.0-next.1
+
+### Patch Changes
+
+- 76d85ef: Retry the prerelease cohort after correcting the package artifact upload destination.
+- Updated dependencies [76d85ef]
+  - @schalkneethling/calavera-skill-calavera@0.2.0-next.1
+  - @schalkneethling/calavera-skill-code-review@0.2.0-next.1
+  - @schalkneethling/calavera-skill-css-tokens@0.2.0-next.1
+  - @schalkneethling/calavera-skill-frontend-engineering@0.2.0-next.1
+  - @schalkneethling/calavera-skill-frontend-security@0.2.0-next.1
+  - @schalkneethling/calavera-skill-frontend-testing@0.2.0-next.1
+  - @schalkneethling/calavera-skill-github-goal-issue-triage@0.2.0-next.1
+  - @schalkneethling/calavera-skill-more-secure-dependabot-config@0.2.0-next.1
+  - @schalkneethling/calavera-skill-npm-publishing-best-practices@0.2.0-next.1
+  - @schalkneethling/calavera-skill-npm-trusted-publishing-github-workflow@0.2.0-next.1
+  - @schalkneethling/calavera-skill-project-goal@0.2.0-next.1
+  - @schalkneethling/calavera-skill-refined-plan-mode@0.2.0-next.1
+  - @schalkneethling/calavera-hook-auto-approve-safe-commands@0.2.0-next.1
+  - @schalkneethling/calavera-hook-block-dangerous-commands@0.2.0-next.1
+  - @schalkneethling/calavera-agent-technical-devils-advocate@0.2.0-next.1
+
 ## 0.2.0-next.0
 
 ### Minor Changes

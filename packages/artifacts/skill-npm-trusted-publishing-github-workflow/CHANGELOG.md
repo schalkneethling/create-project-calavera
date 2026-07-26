@@ -1,5 +1,11 @@
 # @schalkneethling/calavera-skill-npm-trusted-publishing-github-workflow
 
+## 0.2.0-next.1
+
+### Patch Changes
+
+- 76d85ef: Retry the prerelease cohort after correcting the package artifact upload destination.
+
 ## 0.2.0-next.0
 
 ### Minor Changes
