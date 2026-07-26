@@ -9,6 +9,17 @@ const menuWorkflow = await readFile(".github/workflows/menu-bar-release.yml", "u
 const workspace = await readFile("pnpm-workspace.yaml", "utf8");
 const rootPackage = await readJson("package.json");
 
+const workflowJob = (workflow, jobName) => {
+  const lines = workflow.split("\n");
+  const start = lines.findIndex((line) => line === `  ${jobName}:`);
+  assert.notEqual(start, -1, `workflow must define jobs.${jobName}`);
+  const nextJob = lines.findIndex(
+    (line, index) => index > start && /^  [a-zA-Z0-9_-]+:$/.test(line),
+  );
+  return lines.slice(start, nextJob === -1 ? undefined : nextJob).join("\n");
+};
+const publishJob = workflowJob(publishWorkflow, "publish");
+
 const publicPackagePaths = ["packages/artifact-core", "packages/baseline-core", "packages/cli"];
 for (const entry of await readdir("packages/artifacts", { withFileTypes: true })) {
   if (entry.isDirectory()) publicPackagePaths.push(join("packages/artifacts", entry.name));
@@ -80,9 +91,10 @@ assert.match(publishWorkflow, /grep -Eq .*E404\|404/);
 assert.match(publishWorkflow, /exit "\$view_status"/);
 assert.match(publishWorkflow, /\[\[ "\$package_version" == \*-\* \]\]/);
 assert.match(publishWorkflow, /dist_tag=next/);
-assert.match(publishWorkflow, /id-token: write/);
-assert.match(publishWorkflow, /npm publish .*--access public.*--tag "\$dist_tag"/);
-assert.doesNotMatch(publishWorkflow, /NODE_AUTH_TOKEN|NPM_TOKEN/);
+assert.match(publishJob, /^    environment: publish$/m);
+assert.match(publishJob, /^      id-token: write$/m);
+assert.match(publishJob, /npm publish .*--access public.*--tag "\$dist_tag"/);
+assert.doesNotMatch(publishJob, /NODE_AUTH_TOKEN|NPM_TOKEN/);
 assert.match(publishWorkflow, /Skipping already published/);
 assert.match(menuWorkflow, /tags: \["menu-bar-v\*"\]/);
 assert.match(menuWorkflow, /--target universal-apple-darwin/);
