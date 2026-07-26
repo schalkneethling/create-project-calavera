@@ -1,5 +1,17 @@
 # @schalkneethling/calavera-agent-technical-devils-advocate
 
+## 0.2.0
+
+### Minor Changes
+
+- dd70f1e: Extract every maintained Calavera skill, hook, and agent into an independently versioned package backed by a validated artifact manifest and shared catalog.
+
+### Patch Changes
+
+- 76d85ef: Retry the prerelease cohort after correcting the package artifact upload destination.
+- e3e46a7: Verify the complete prerelease cohort through npm trusted publishing without a token fallback.
+- 71d46d1: Retry the complete prerelease cohort with npm-compatible provenance metadata.
+
 ## 0.2.0-next.3
 
 ### Patch Changes
