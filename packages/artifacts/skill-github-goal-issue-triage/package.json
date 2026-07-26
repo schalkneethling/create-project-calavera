@@ -1,6 +1,6 @@
 {
   "name": "@schalkneethling/calavera-skill-github-goal-issue-triage",
-  "version": "0.2.0-next.2",
+  "version": "0.2.0-next.3",
   "description": "GitHub goal issue triage artifact for Calavera.",
   "license": "MIT",
   "repository": {

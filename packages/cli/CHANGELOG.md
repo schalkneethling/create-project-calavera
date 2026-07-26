@@ -1,5 +1,14 @@
 # create-project-calavera
 
+## 2.3.0-next.3
+
+### Patch Changes
+
+- e3e46a7: Verify the complete prerelease cohort through npm trusted publishing without a token fallback.
+- Updated dependencies [e3e46a7]
+  - @schalkneethling/calavera-baseline-core@0.2.0-next.3
+  - @schalkneethling/calavera-artifact-core@0.2.0-next.3
+
 ## 2.3.0-next.2
 
 ### Patch Changes
