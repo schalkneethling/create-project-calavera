@@ -29,6 +29,7 @@
     "clear-wolves-clean",
     "deterministic-baseline-snapshot",
     "friendly-bones-check",
+    "gentle-bats-recover",
     "quiet-bats-explore",
     "quiet-spiders-validate",
     "safe-dingos-compose",

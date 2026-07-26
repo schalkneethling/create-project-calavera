@@ -1,5 +1,14 @@
 # create-project-calavera
 
+## 2.3.0-next.2
+
+### Patch Changes
+
+- 71d46d1: Retry the complete prerelease cohort with npm-compatible provenance metadata.
+- Updated dependencies [71d46d1]
+  - @schalkneethling/calavera-baseline-core@0.2.0-next.2
+  - @schalkneethling/calavera-artifact-core@0.2.0-next.2
+
 ## 2.3.0-next.1
 
 ### Patch Changes
