@@ -21,6 +21,9 @@ each irreversible action.
 - Keep secrets out of commands, logs, reports, and committed files.
 - Do not weaken integrity, provenance, signing, protected environments, or local-edit checks to make
   a release pass.
+- Treat the gates as one evidence chain. If any gate fails or produces unexpected output, stop,
+  recover, then restart the full applicable gate sequence from its first gate on the exact resulting
+  state. Never resume at the failed command.
 - If publication partially succeeds, preserve good versions and make the workflow safely rerunnable.
 
 ## 1. Map the release before changing it
@@ -155,7 +158,9 @@ Stop at the failed gate and record what changed externally.
   unintended generated changes.
 - If signing fails locally, restore the signing agent; do not silently disable signing.
 
-Require a fresh successful rehearsal after every recovery change.
+After any failure or recovery, invalidate the current evidence chain and restart the full applicable
+gate sequence from its first gate. Preserve partial external state, but do not reuse earlier passing
+results as approval for the recovered candidate.
 
 ## 8. Finish the release
 

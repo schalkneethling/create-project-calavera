@@ -3,16 +3,36 @@
 Use this reference to select checks for the project at hand. Do not copy commands blindly: discover
 the repository's package manager, version tool, registry, hosting provider, and release scripts first.
 
+## Gate restart rule
+
+Treat one pass through the release gates as one evidence chain. If any command or check fails, output
+is unexpected, a corrective change is made, or external state changes only partially:
+
+1. Stop immediately.
+2. Record the failure and every external mutation that already happened.
+3. Recover or fix forward without weakening a gate.
+4. Synchronize the repository and record the exact resulting commit and external state.
+5. Restart the full applicable gate sequence from its first gate.
+
+Do not resume at the failed command. Earlier passing results remain useful diagnostic history, but
+they are not approval evidence for the recovered candidate. This rule applies even when the failure
+looks transient: a clean uninterrupted pass is the release gate.
+
+For a partial publish, preserve the versions that already exist and make the retry idempotent, but
+restart the gates for the corrected candidate or workflow before publishing the missing versions.
+
 ## Contents
 
-1. Release inventory
-2. Branch and version gates
-3. Local rehearsal
-4. Artifact and registry preflight
-5. Secure publication
-6. Prerelease and stable promotion
-7. Failure recovery
-8. Evidence record
+1. Gate restart rule
+2. Release inventory
+3. Branch and version gates
+4. Local rehearsal
+5. Artifact and registry preflight
+6. Secure publication
+7. Prerelease and stable promotion
+8. Failure recovery
+9. Evidence record
+10. Calavera terminal examples
 
 ## 1. Release inventory
 
@@ -214,6 +234,8 @@ After any failure, ask:
 4. Does the recovery require a new version?
 5. Which prior evidence is invalidated?
 
+Then restart the full applicable sequence at its first gate. Do not rerun only the failed step.
+
 ## 8. Evidence record
 
 Capture:
@@ -256,3 +278,279 @@ Recovery:
 ```
 
 Do not record credentials, private filesystem paths, or sensitive registry responses.
+
+## 9. Calavera terminal examples
+
+These are commands used during the Calavera `2.3.0` release. They are concrete examples, not
+universal defaults. Discover and use the target repository's scripts, package manager, package names,
+release tool, workflow, registry, and version numbers.
+
+Apply the gate restart rule to every command block below. If any command fails or its output differs
+from the stated expectation, stop. After recovery, return to repository synchronization and repeat
+the full applicable sequence.
+
+### Synchronize and record the exact state
+
+```bash
+git status --short --branch
+git pull --ff-only origin main
+git rev-parse HEAD
+git rev-parse origin/main
+pnpm install --frozen-lockfile
+```
+
+Expected before rehearsal:
+
+- a clean worktree;
+- local `main` equal to `origin/main`;
+- the recorded candidate SHA;
+- a frozen install with no lockfile changes.
+
+On a feature, integration, or generated version branch, pull that branch rather than switching to
+`main` and losing context. Keep the local `main` reference synchronized because Changesets compares
+against its configured base branch.
+
+### Run repository npm scripts
+
+Calavera exposed release gates as package scripts:
+
+```bash
+pnpm release:rehearse
+pnpm workflow:check
+pnpm release:status
+```
+
+Its rehearsal composed existing scripts rather than duplicating their behavior:
+
+```json
+{
+  "scripts": {
+    "quality": "pnpm lint && pnpm format:all:check && pnpm typecheck && pnpm knip && pnpm test && pnpm release:contracts",
+    "publish:check": "pnpm --filter create-project-calavera publish:check && pnpm --filter @schalkneethling/calavera-baseline-core exec publint && pnpm --filter @schalkneethling/calavera-artifact-core exec publint && pnpm --filter './packages/artifacts/*' --recursive exec publint",
+    "release:status": "changeset status",
+    "release:version": "changeset version",
+    "release:rehearse": "pnpm quality && pnpm release:fixture && pnpm web:build && pnpm --filter @calavera/baseline-explorer build && pnpm --filter @calavera/menu-bar build:web && pnpm publish:check",
+    "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
+  }
+}
+```
+
+Run these individually when diagnosing a failure:
+
+```bash
+pnpm quality
+pnpm release:fixture
+pnpm web:build
+pnpm --filter @calavera/baseline-explorer build
+pnpm --filter @calavera/menu-bar build:web
+pnpm publish:check
+pnpm release:contracts
+```
+
+Passing individual commands during diagnosis does not resume the release. After the fix, restart at
+the synchronization block and run the composed gates again.
+
+### Inspect and change Changesets state
+
+Before changing versions:
+
+```bash
+pnpm release:status
+```
+
+Examples of Calavera's prerelease transitions:
+
+```bash
+pnpm changeset pre enter next
+pnpm release:version
+
+# After the complete candidate cohort was verified:
+pnpm changeset pre exit
+pnpm release:version
+```
+
+`release:version` mutates manifests, changelogs and Changesets state. Simulate it first in a true
+disposable copy, then inspect every generated file. Do not run it merely to see what might happen in
+the working repository.
+
+When Changesets could not find where `HEAD` diverged from `main`, Calavera synchronized the genuine
+local `main` reference and restarted the gates. It did not force or fabricate branch history.
+
+### Pack every public workspace into one clean directory
+
+```bash
+mkdir -p package
+find package -maxdepth 1 -type f -name '*.tgz' -delete
+
+pnpm --filter create-project-calavera pack --pack-destination package
+pnpm --filter @schalkneethling/calavera-baseline-core pack --pack-destination package
+pnpm --filter @schalkneethling/calavera-artifact-core pack --pack-destination package
+pnpm --filter "./packages/artifacts/*" --recursive pack --pack-destination package
+
+find package -maxdepth 1 -type f -name '*.tgz' | sort
+```
+
+Calavera expected exactly eighteen archives: one CLI package and seventeen shared or artifact
+packages. A missing archive, unexpected archive, duplicate identity, or prerelease suffix during
+stable rehearsal fails the gate and restarts the sequence.
+
+### Read the embedded package identities
+
+```bash
+for tarball in package/*.tgz; do
+  tar -xOf "$tarball" package/package.json |
+    node -e '
+      let body = "";
+      process.stdin.on("data", chunk => body += chunk);
+      process.stdin.on("end", () => {
+        const pkg = JSON.parse(body);
+        console.log(`${pkg.name}@${pkg.version}`);
+      });
+    '
+done | sort
+```
+
+Inspect the packed manifest rather than trusting the source manifest. Calavera also inspected
+repository metadata directly from a tarball:
+
+```bash
+tar -xOf \
+  package/schalkneethling-calavera-baseline-core-0.2.0.tgz \
+  package/package.json |
+  node -e '
+    let body = "";
+    process.stdin.on("data", chunk => body += chunk);
+    process.stdin.on("end", () => {
+      console.log(JSON.stringify(JSON.parse(body).repository, null, 2));
+    });
+  '
+```
+
+### Confirm exact versions are absent from npm
+
+This preflight distinguishes an explicit missing-version response from registry, DNS,
+authentication, or other failures:
+
+```bash
+for tarball in package/*.tgz; do
+  package_name=$(
+    tar -xOf "$tarball" package/package.json |
+      node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).name))'
+  )
+  package_version=$(
+    tar -xOf "$tarball" package/package.json |
+      node -e 'let body=""; process.stdin.on("data", chunk => body += chunk); process.stdin.on("end", () => process.stdout.write(JSON.parse(body).version))'
+  )
+
+  view_output=$(mktemp)
+
+  if npm view "${package_name}@${package_version}" version >"$view_output" 2>&1; then
+    rm "$view_output"
+    echo "ERROR: already published ${package_name}@${package_version}"
+    exit 1
+  else
+    view_status=$?
+
+    if ! grep -Eq '(^|[[:space:]])(E404|404)([[:space:]]|$)' "$view_output"; then
+      cat "$view_output" >&2
+      rm "$view_output"
+      exit "$view_status"
+    fi
+
+    rm "$view_output"
+    echo "Confirmed absent: ${package_name}@${package_version}"
+  fi
+done
+```
+
+Any output other than the complete expected set of `Confirmed absent` lines fails the gate.
+
+### Create and verify a draft GitHub release
+
+Confirm the tag and release do not exist:
+
+```bash
+git ls-remote --tags origin refs/tags/v2.3.0
+gh release view v2.3.0
+```
+
+Create a draft targeting the exact rehearsed commit:
+
+```bash
+gh release create v2.3.0 \
+  --draft \
+  --target 4c7fba960ce58fd52e5483dd863ab14f4e550f10 \
+  --title "Calavera 2.3.0" \
+  --generate-notes
+```
+
+Verify the draft before publication:
+
+```bash
+gh release view v2.3.0 \
+  --json name,tagName,isDraft,isPrerelease,targetCommitish,url,body
+```
+
+Publishing is an irreversible human checkpoint:
+
+```bash
+gh release edit v2.3.0 --draft=false --latest
+```
+
+Do not run the publication command until the user explicitly approves the verified draft.
+
+### Monitor each remote job
+
+```bash
+gh run view <run-id> --json status,conclusion,url,headSha,event,jobs
+gh run watch <run-id> --exit-status --interval 10
+```
+
+Calavera required the release event and workflow `headSha` to match the rehearsed commit. Test, build,
+archive upload and protected OIDC publication each had to complete successfully.
+
+If any remote job fails, record partial external state, recover, and restart the full gates. Do not
+rerun only the failed job and treat earlier checks as current release approval.
+
+### Verify registry channels and provenance
+
+```bash
+npm view create-project-calavera dist-tags --json
+npm view @schalkneethling/calavera-baseline-core dist-tags --json
+npm view @schalkneethling/calavera-artifact-core dist-tags --json
+```
+
+Calavera expected:
+
+- `latest` to resolve the stable version;
+- `next` to remain on the verified `next.3` candidate;
+- unrelated packages and channels to remain unchanged.
+
+It inspected the publish log for both package identities and provenance statements:
+
+```bash
+gh run view <run-id> --job <publish-job-id> --log |
+  rg 'Signed provenance statement|\+ (@schalkneethling/|create-project-calavera@)'
+```
+
+Compare the number of published identities and provenance statements with the release inventory.
+
+### Execute the published package as a consumer
+
+```bash
+pnpm dlx create-project-calavera@2.3.0 --help
+```
+
+For project-mutating behavior, create a fresh temporary consumer project and exercise dry run,
+application, repeat application, local-edit protection, cleanup and doctor commands. Do not test a
+published package only through the source workspace.
+
+### Clean local staging only after verification
+
+```bash
+find package -maxdepth 1 -type f -name '*.tgz' -delete
+rmdir package 2>/dev/null || true
+git status --short --branch
+```
+
+The final expected state is a clean stable branch synchronized with its remote.
