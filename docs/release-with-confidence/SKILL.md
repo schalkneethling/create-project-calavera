@@ -33,6 +33,7 @@ Read repository instructions and inspect:
 - test, build, pack, publish, deployment, and signing workflows;
 - registry channels or distribution tracks;
 - protected environments, OIDC permissions, provenance, and token fallbacks;
+- package-name reservation and trusted-publisher bootstrap or reconciliation tooling;
 - application surfaces that deploy independently of packages;
 - existing release runbooks and rehearsal records.
 
@@ -105,6 +106,12 @@ Before publishing:
 - confirm the publish job depends on successful test and build jobs;
 - confirm packed artifacts cross the job boundary instead of rebuilding with publish privileges;
 - confirm registry lookup distinguishes a missing version from network or authentication failure.
+
+When an npm release introduces new public package names or needs to reconcile trusted-publisher
+settings, evaluate Fledgling. Read
+[`references/fledgling.md`](references/fledgling.md) before using it. Keep Fledgling scoped to
+package claiming and trust configuration; retain the project's existing version, changelog, pack,
+publish, and verification workflow.
 
 Create the release as a draft first. Verify its tag, target commit, title, notes, and prerelease flag.
 Pause for approval, then publish. Monitor test, build, artifact upload, and publish separately.

@@ -151,6 +151,11 @@ Prefer workload identity/OIDC trusted publishing:
 - require package provenance;
 - remove long-lived token fallbacks after any unavoidable bootstrap.
 
+For new npm package names or trusted-publisher drift, consider the optional Fledgling workflow in
+[`fledgling.md`](fledgling.md). Use its plan and reconciliation output as evidence; do not treat
+successful trust setup as evidence that package contents, versions, or the publish workflow are
+correct.
+
 Some registries require a package to exist before trusted publishing can be configured. If bootstrap
 credentials are unavoidable:
 
