@@ -280,6 +280,29 @@ the workspace.
 
 Then, finally, we cleaned up the temporary tarballs.
 
+## One tool I will likely bring to the next release
+
+I learned about [Fledgling](https://github.com/dmno-dev/fledgling) after completing this release. It
+focuses on exactly the awkward bootstrap loop we handled manually: claiming new npm package names,
+configuring OIDC trusted publishers, and reconciling that configuration across a monorepo.
+
+For Calavera, it could have claimed the seventeen new package names with minimal placeholders,
+configured each one against the same GitHub workflow and protected `publish` environment, and then
+been rerun idempotently as the cohort came online. Its `sync` flow would also have given us a useful
+feedback loop before removing the bootstrap token and again before the token-free `next.3` candidate:
+show the actual npm trust configuration, compare it with the repository's intended configuration,
+apply only approved differences, then require a no-drift result.
+
+It would not have found the missing tarball upload, the packed provenance metadata problem, the
+GitHub Actions PR permission, or the Changesets private-app edge case. Those remain independent
+release gates. Fledgling would have made one fragile part of the journey easier; it would not have
+made the rest of the rehearsal unnecessary.
+
+I will likely use it next time, but with the same constraints this release taught me to value: pin and
+review the tool version, inspect its plan first, keep a human confirmation before it claims names or
+changes trust, avoid moving `latest` with a placeholder unintentionally, and keep Changesets, package
+inspection, provenance and registry verification as separate evidence.
+
 ## What I will carry into the next release
 
 The biggest lesson is that a release is a product workflow. It has users, interfaces, failure states,
