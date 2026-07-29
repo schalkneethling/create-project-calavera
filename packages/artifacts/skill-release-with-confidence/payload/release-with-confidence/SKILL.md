@@ -3,7 +3,7 @@ name: release-with-confidence
 description: Guide a software project through a staged, evidence-backed release with deliberate human checkpoints, prerelease channels, secure CI publication, recovery from partial failures, stable promotion, and post-release verification. Use when preparing, rehearsing, publishing, promoting, or recovering a package, monorepo, application, CLI, desktop app, or multi-surface release—especially with Changesets, npm trusted publishing, GitHub Releases, independent packages, or an integration branch.
 ---
 
-# Release With Confidence
+# Release with Confidence
 
 Treat a release as a sequence of verified state transitions, not one large command. Discover the
 project's own tooling first, preserve its release boundaries, and stop for explicit approval before

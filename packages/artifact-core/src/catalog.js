@@ -14,6 +14,7 @@ import manifest12 from "@schalkneethling/calavera-skill-refined-plan-mode" with 
 import manifest13 from "@schalkneethling/calavera-hook-auto-approve-safe-commands" with { type: "json" };
 import manifest14 from "@schalkneethling/calavera-hook-block-dangerous-commands" with { type: "json" };
 import manifest15 from "@schalkneethling/calavera-agent-technical-devils-advocate" with { type: "json" };
+import manifest16 from "@schalkneethling/calavera-skill-release-with-confidence" with { type: "json" };
 import package1 from "@schalkneethling/calavera-skill-calavera/package.json" with { type: "json" };
 import package2 from "@schalkneethling/calavera-skill-code-review/package.json" with { type: "json" };
 import package3 from "@schalkneethling/calavera-skill-css-tokens/package.json" with { type: "json" };
@@ -29,6 +30,7 @@ import package12 from "@schalkneethling/calavera-skill-refined-plan-mode/package
 import package13 from "@schalkneethling/calavera-hook-auto-approve-safe-commands/package.json" with { type: "json" };
 import package14 from "@schalkneethling/calavera-hook-block-dangerous-commands/package.json" with { type: "json" };
 import package15 from "@schalkneethling/calavera-agent-technical-devils-advocate/package.json" with { type: "json" };
+import package16 from "@schalkneethling/calavera-skill-release-with-confidence/package.json" with { type: "json" };
 
 export const DEFAULT_ARTIFACT_TARGET = "claude-code";
 
@@ -48,6 +50,7 @@ const packageVersions = new Map([
   ["@schalkneethling/calavera-hook-auto-approve-safe-commands", package13.version],
   ["@schalkneethling/calavera-hook-block-dangerous-commands", package14.version],
   ["@schalkneethling/calavera-agent-technical-devils-advocate", package15.version],
+  ["@schalkneethling/calavera-skill-release-with-confidence", package16.version],
 ]);
 
 export const artifactCatalog = Object.freeze([
@@ -94,6 +97,11 @@ export const artifactCatalog = Object.freeze([
     manifest12,
     "@schalkneethling/calavera-skill-refined-plan-mode",
     "skills/refined-plan-mode",
+  ),
+  artifact(
+    manifest16,
+    "@schalkneethling/calavera-skill-release-with-confidence",
+    "skills/release-with-confidence",
   ),
   artifact(
     manifest13,

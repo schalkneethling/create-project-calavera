@@ -148,6 +148,9 @@ importers:
       '@schalkneethling/calavera-skill-refined-plan-mode':
         specifier: workspace:^
         version: link:../artifacts/skill-refined-plan-mode
+      '@schalkneethling/calavera-skill-release-with-confidence':
+        specifier: workspace:^
+        version: link:../artifacts/skill-release-with-confidence
       pacote:
         specifier: 22.0.0
         version: 22.0.0
@@ -184,6 +187,8 @@ importers:
   packages/artifacts/skill-project-goal: {}
 
   packages/artifacts/skill-refined-plan-mode: {}
+
+  packages/artifacts/skill-release-with-confidence: {}
 
   packages/baseline-core:
     dependencies:

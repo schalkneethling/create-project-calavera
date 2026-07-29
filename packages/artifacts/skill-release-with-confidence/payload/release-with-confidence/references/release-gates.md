@@ -1,4 +1,4 @@
-# Release gates and recovery reference
+# Release gates and recovery
 
 Use this reference to select checks for the project at hand. Do not copy commands without
 consideration: discover the repository's package manager, version tool, registry, hosting provider,

@@ -40,6 +40,7 @@
     "@schalkneethling/calavera-skill-npm-trusted-publishing-github-workflow": "workspace:^",
     "@schalkneethling/calavera-skill-project-goal": "workspace:^",
     "@schalkneethling/calavera-skill-refined-plan-mode": "workspace:^",
+    "@schalkneethling/calavera-skill-release-with-confidence": "workspace:^",
     "pacote": "22.0.0",
     "semver": "7.8.5"
   }

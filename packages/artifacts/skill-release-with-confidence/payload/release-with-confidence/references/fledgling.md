@@ -1,4 +1,4 @@
-# Optional Fledgling workflow for npm trust bootstrap
+# Optional Fledgling workflow for npm trust bootstrapping
 
 Use [Fledgling](https://github.com/dmno-dev/fledgling) when an npm release introduces new public
 package names or when trusted-publisher configuration may have drifted across a single package or

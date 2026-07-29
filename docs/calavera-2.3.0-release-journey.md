@@ -14,6 +14,9 @@ Target Explorer, package-backed skills, hooks and agents, a macOS update compani
 resolver, a shared Baseline engine, and a publication pipeline built around npm trusted publishing
 and signed provenance.
 
+Not all of those surfaces shipped together. The companion was implemented as a repository preview;
+the stable release described here was the npm package cohort.
+
 The final release contained eighteen public packages. The CLI moved to `2.3.0`; seventeen new shared
 and artifact packages reached `0.2.0`. The stable publish completed without a long-lived npm token and
 produced a signed provenance statement for every package.
@@ -54,17 +57,22 @@ After it merged, `next` flowed into the following branch before that branch open
 
 That gave us a repeated rhythm:
 
-```text
-main
-  └── next
-       └── phase branch 1
-            └── phase branch 2
-                 └── phase branch 3
+```mermaid
+sequenceDiagram
+  participant main
+  participant next
+  participant phase as phase branch
+  main->>next: create integration branch
+  loop each phase
+    next->>phase: branch from integrated state
+    phase->>next: review, test and merge
+  end
+  next->>main: final integration PR
 ```
 
-The diagram is less important than the behavior it enabled. Every phase could be reviewed and tested
-as a bounded change. The integrated result remained available on `next`. `main` stayed stable until
-the complete system had been exercised.
+Each new phase started from the integrated result of the phases before it. Every phase could therefore
+be reviewed and tested as a bounded change, while `next` always held the complete result so far.
+`main` stayed stable until the whole system had been exercised.
 
 This also gave manual testing somewhere to live. For a change this large, "the tests pass" was
 necessary but nowhere near sufficient. I wanted to switch between increments, use the applications,
@@ -95,7 +103,8 @@ flowchart LR
 
 The applications can deploy independently. The shared packages contain reusable domain behavior.
 The CLI remains the only surface in this diagram that installs tooling into a project; the menu-bar
-companion is deliberately read-only.
+companion is deliberately read-only. That companion exists in the repository as a dogfood preview,
+but was not part of the npm release and is not yet available as an installable macOS application.
 
 The public package name, commands, binaries, schema URL and Composer behavior were preserved. CI
 learned how to test, build, pack and release workspace packages independently.
@@ -134,9 +143,10 @@ as "Which linters support TypeScript?" I recorded that CLI/MCP/WebMCP responsibi
 public tools as part of a release article.
 
 The UI itself received the kind of scrutiny that broad plans often postpone. We replaced output
-controls with the WAI-ARIA Authoring Practices tabs pattern, moved keyboard behavior into Playwright
-coverage, removed unsafe `innerHTML` rendering, normalized dates to UTC, and iterated on the visual
-hierarchy through direct browser feedback.
+controls with the
+[WAI-ARIA Authoring Practices tabs pattern](https://www.w3.org/WAI/ARIA/apg/patterns/tabs/), moved
+keyboard behavior into Playwright coverage, removed unsafe `innerHTML` rendering, normalized dates
+to UTC, and iterated on the visual hierarchy through direct browser feedback.
 
 Baseline also taught us an important data lesson: reproducible builds need a pinned time boundary.
 Deriving "current year" from the wall clock made identical source inputs produce different snapshots.
@@ -296,7 +306,9 @@ stopped existing.
 This is where [Fledgling](https://github.com/dmno-dev/fledgling) would have saved the most time. Instead
 of configuring the same trusted publisher manually across seventeen packages, it could have claimed
 the imminent package names, applied the shared workflow and protected-environment configuration, and
-then reported any remaining trust drift.
+then reported any remaining trust drift. Those placeholders should only bootstrap real packages that
+are ready to follow promptly; using empty packages to reserve speculative names would create a
+separate npm policy concern.
 
 ### `next.3`: prove OIDC, do not assume it
 
@@ -402,8 +414,8 @@ More concretely:
 8. **Pause before irreversible actions.** Draft releases, explicit approvals and one-step gates kept
    the process inspectable.
 
-I have turned that process into a reusable agent skill alongside this article. The commands will
-change from project to project. The discipline should not.
+I have turned that process into the `release-with-confidence` agent skill. The commands will change
+from project to project. The discipline should not.
 
 Calavera 2.3.0 is live. It is almost an entirely new architecture, but it still serves the original
 goal: make project tooling choices explicit, inspectable and repeatable.

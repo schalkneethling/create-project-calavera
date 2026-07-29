@@ -18,8 +18,8 @@ The repository now has explicit boundaries for:
 - every maintained skill, hook and agent.
 
 Public packages use independent semantic versions. The Composer and Baseline Explorer remain
-independently deployable static applications. The menu-bar app has its own release stream. A change no
-longer needs to move unrelated surfaces simply because they share a repository.
+independently deployable static applications. The menu-bar app is designed for its own release stream.
+A change no longer needs to move unrelated surfaces simply because they share a repository.
 
 In practice, that means a documentation-only Composer deployment does not require a CLI release, a
 skill correction can publish without bumping the other artifacts, and a Baseline data refresh can
@@ -103,11 +103,11 @@ Calavera 2.3.0 also adds:
 - minimum CLI compatibility metadata so the hosted Composer does not offer integrations before the
   published CLI can apply them.
 
-This protection is automatic when a recipe installs at least one skill. During dry run, Calavera
-reports the proposed `.coderabbit.yaml` write or update. On apply, it adds path filters for
-`.claude/skills/**`, `.agents/skills/**`, and `pnpm-lock.yaml` while preserving existing CodeRabbit
-settings and filters. The project owns the resulting file, so Calavera does not remove those review
-preferences during cleanup.
+Skill installation now protects CodeRabbit review budgets as well. This is automatic when a recipe
+installs at least one skill. During dry run, Calavera reports the proposed `.coderabbit.yaml` write or
+update. On apply, it adds path filters for `.claude/skills/**`, `.agents/skills/**`, and
+`pnpm-lock.yaml` while preserving existing CodeRabbit settings and filters. The project owns the
+resulting file, so Calavera does not remove those review preferences during cleanup.
 
 ## Safer project changes
 
