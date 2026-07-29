@@ -1,3 +1,6 @@
+import satisfies from "semver/functions/satisfies.js";
+import validRange from "semver/ranges/valid.js";
+
 export const NPM_LATEST_CLI_URL = "https://registry.npmjs.org/create-project-calavera/latest";
 export const SAFE_CLI_FALLBACK_VERSION = "2.2.0";
 export const CLI_VERSION_PATTERN =
@@ -80,19 +83,31 @@ function comparePrereleaseIdentifiers(current, minimum) {
   return 0;
 }
 
-export function versionMeetsMinimum(version, minimumVersion) {
+function compareVersions(version, referenceVersion) {
   const current = parseVersion(version);
-  const minimum = parseVersion(minimumVersion);
+  const reference = parseVersion(referenceVersion);
 
   for (let index = 0; index < current.numbers.length; index += 1) {
-    if (current.numbers[index] !== minimum.numbers[index]) {
-      return current.numbers[index] > minimum.numbers[index];
+    if (current.numbers[index] !== reference.numbers[index]) {
+      return current.numbers[index] > reference.numbers[index] ? 1 : -1;
     }
   }
 
-  if (current.prerelease.length === 0) return true;
-  if (minimum.prerelease.length === 0) return false;
-  return comparePrereleaseIdentifiers(current.prerelease, minimum.prerelease) >= 0;
+  if (current.prerelease.length === 0 && reference.prerelease.length === 0) return 0;
+  if (current.prerelease.length === 0) return 1;
+  if (reference.prerelease.length === 0) return -1;
+  return comparePrereleaseIdentifiers(current.prerelease, reference.prerelease);
+}
+
+export function versionMeetsMinimum(version, minimumVersion) {
+  return compareVersions(version, minimumVersion) >= 0;
+}
+
+export function versionSatisfiesCompatibility(version, compatibility) {
+  if (!validRange(compatibility)) {
+    throw new Error(`Invalid Calavera compatibility range: ${compatibility}.`);
+  }
+  return satisfies(version, compatibility);
 }
 
 export function isFallbackCliIntegration(id) {
@@ -121,6 +136,25 @@ export function integrationResponseForCli(response, cliVersion) {
   };
 }
 
+export function filterArtifactsForCli(artifacts, cliVersion) {
+  return artifacts.filter((artifact) => {
+    const compatibility = artifact.compatibility?.calavera;
+    if (typeof compatibility !== "string") {
+      throw new Error(
+        `Artifact ${artifact.id} must declare Calavera compatibility before the hosted Composer can offer it.`,
+      );
+    }
+    return versionSatisfiesCompatibility(cliVersion, compatibility);
+  });
+}
+
+export function artifactResponseForCli(response, cliVersion) {
+  return {
+    ...response,
+    artifacts: filterArtifactsForCli(response.artifacts, cliVersion),
+  };
+}
+
 export function assertRecipeIntegrationsSupported(recipe, integrations, cliVersion) {
   const supportedIds = new Set(
     filterIntegrationsForCli(integrations, cliVersion).map(({ id }) => id),
@@ -130,6 +164,29 @@ export function assertRecipeIntegrationsSupported(recipe, integrations, cliVersi
   if (unsupportedIds.length > 0) {
     throw new Error(
       `The published Calavera CLI v${cliVersion} does not support: ${unsupportedIds.join(
+        ", ",
+      )}. Wait for the required CLI release before downloading this recipe.`,
+    );
+  }
+
+  return recipe;
+}
+
+export function assertRecipeArtifactsSupported(recipe, artifacts, cliVersion) {
+  const supportedIds = new Set(filterArtifactsForCli(artifacts, cliVersion).map(({ id }) => id));
+  const unsupportedIds = (recipe.ai ?? [])
+    .map((item) => {
+      if (item.id) return supportedIds.has(item.id) ? undefined : item.id;
+      const artifact = artifacts.find(
+        (candidate) => candidate.type === item.type && candidate.src === item.src,
+      );
+      return artifact && !supportedIds.has(artifact.id) ? artifact.id : undefined;
+    })
+    .filter(Boolean);
+
+  if (unsupportedIds.length > 0) {
+    throw new Error(
+      `The published Calavera CLI v${cliVersion} does not support these AI artifacts: ${unsupportedIds.join(
         ", ",
       )}. Wait for the required CLI release before downloading this recipe.`,
     );

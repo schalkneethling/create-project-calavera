@@ -28,7 +28,10 @@ import {
   searchBaselineFeatures,
 } from "../../packages/baseline-core/src/index.js";
 import {
+  artifactResponseForCli,
+  assertRecipeArtifactsSupported,
   assertRecipeIntegrationsSupported,
+  filterArtifactsForCli,
   filterIntegrationsForCli,
   integrationResponseForCli,
   loadPublishedCliCompatibility,
@@ -47,7 +50,7 @@ const baselineAvailable = document.querySelector("#baseline-available");
 const cliCompatibilityNote = document.querySelector("#cli-compatibility");
 const profiles = profileIdsForRecipe();
 const packageManagers = packageManagerIdsForRecipe();
-const aiArtifactOptions = listAiArtifactOptions();
+const allAiArtifactOptions = listAiArtifactOptions();
 let cliCompatibility = {
   version: SAFE_CLI_FALLBACK_VERSION,
   source: "fallback",
@@ -76,11 +79,20 @@ function supportedIntegrationIds() {
   return new Set(visibleCatalog().map(({ id }) => id));
 }
 
+function visibleAiArtifacts() {
+  return filterArtifactsForCli(allAiArtifactOptions, cliCompatibility.version);
+}
+
 function assertPublishedCliCompatibility(recipeInput) {
   const validatedRecipe = validateRecipe(recipeInput);
-  return assertRecipeIntegrationsSupported(
+  assertRecipeIntegrationsSupported(
     validatedRecipe,
     listIntegrationOptions(),
+    cliCompatibility.version,
+  );
+  return assertRecipeArtifactsSupported(
+    validatedRecipe,
+    allAiArtifactOptions,
     cliCompatibility.version,
   );
 }
@@ -88,13 +100,20 @@ function assertPublishedCliCompatibility(recipeInput) {
 function renderCliCompatibility() {
   const allIntegrations = listIntegrationOptions();
   const availableIntegrations = filterIntegrationsForCli(allIntegrations, cliCompatibility.version);
-  const hiddenCount = allIntegrations.length - availableIntegrations.length;
+  const hiddenIntegrationCount = allIntegrations.length - availableIntegrations.length;
+  const hiddenArtifactCount = allAiArtifactOptions.length - visibleAiArtifacts().length;
   const source = cliCompatibility.source === "npm" ? "npm latest" : "safe fallback";
+  const hidden = [
+    hiddenIntegrationCount > 0
+      ? `${hiddenIntegrationCount} integration${hiddenIntegrationCount === 1 ? "" : "s"}`
+      : undefined,
+    hiddenArtifactCount > 0
+      ? `${hiddenArtifactCount} AI artifact${hiddenArtifactCount === 1 ? "" : "s"}`
+      : undefined,
+  ].filter(Boolean);
 
-  cliCompatibilityNote.textContent = `Showing integrations supported by create-project-calavera v${cliCompatibility.version} (${source}).${
-    hiddenCount > 0
-      ? ` ${hiddenCount} integration${hiddenCount === 1 ? " is" : "s are"} waiting for a newer CLI release.`
-      : ""
+  cliCompatibilityNote.textContent = `Showing catalog choices supported by create-project-calavera v${cliCompatibility.version} (${source}).${
+    hidden.length > 0 ? ` ${hidden.join(" and ")} waiting for a newer CLI release.` : ""
   }`;
 }
 
@@ -130,7 +149,7 @@ function renderIntegrations() {
 function renderAiArtifacts() {
   aiArtifacts.replaceChildren();
 
-  const groups = aiArtifactOptions.reduce((grouped, item) => {
+  const groups = visibleAiArtifacts().reduce((grouped, item) => {
     grouped.set(item.group, [...(grouped.get(item.group) ?? []), item]);
     return grouped;
   }, new Map());
@@ -193,7 +212,7 @@ function syncIntegrationOptions() {
 
 function selectedAiItems() {
   return [...form.querySelectorAll('[name="aiArtifact"]:checked')].map((checkbox, index) => {
-    const artifact = aiArtifactOptions.find(({ id }) => id === checkbox.value);
+    const artifact = allAiArtifactOptions.find(({ id }) => id === checkbox.value);
     const item = { id: artifact.id };
 
     if (artifact.defaultTarget) {
@@ -434,7 +453,11 @@ function registerWebMcpTools() {
         readOnlyHint: true,
         untrustedContentHint: false,
       },
-      execute: async () => listAiArtifactsResponse(recipe().ai ?? []),
+      execute: async () =>
+        artifactResponseForCli(
+          listAiArtifactsResponse(recipe().ai ?? []),
+          cliCompatibility.version,
+        ),
     });
 
     navigator.modelContext.registerTool({
@@ -693,6 +716,7 @@ loadPublishedCliCompatibility().then((compatibility) => {
   const selectedIds = new FormData(form).getAll("integration").map(String);
   cliCompatibility = compatibility;
   renderIntegrations();
+  renderAiArtifacts();
   const supportedIds = supportedIntegrationIds();
   selectIntegrations(selectedIds.filter((id) => supportedIds.has(id)));
   syncIntegrationOptions();

@@ -1,0 +1,11 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-release-with-confidence",
+  "type": "skill",
+  "displayName": "Release with confidence",
+  "payload": "payload/release-with-confidence",
+  "compatibility": {
+    "calavera": ">=2.4.0 <3"
+  }
+}

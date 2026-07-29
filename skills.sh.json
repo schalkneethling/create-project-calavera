@@ -20,7 +20,8 @@
         "github-goal-issue-triage",
         "more-secure-dependabot-config",
         "npm-publishing-best-practices",
-        "npm-trusted-publishing-github-workflow"
+        "npm-trusted-publishing-github-workflow",
+        "release-with-confidence"
       ]
     }
   ]

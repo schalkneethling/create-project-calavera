@@ -2,14 +2,19 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { integrationCatalog } from "../../../packages/cli/src/catalog.js";
+import { aiArtifactCatalog } from "../../../packages/cli/src/ai/catalog.js";
 import {
+  artifactResponseForCli,
+  assertRecipeArtifactsSupported,
   assertRecipeIntegrationsSupported,
   CLI_VERSION_PATTERN,
+  filterArtifactsForCli,
   filterIntegrationsForCli,
   integrationResponseForCli,
   isFallbackCliIntegration,
   loadPublishedCliCompatibility,
   SAFE_CLI_FALLBACK_VERSION,
+  versionSatisfiesCompatibility,
   versionMeetsMinimum,
 } from "../cli-compatibility.js";
 import viteConfig from "../vite.config.js";
@@ -23,6 +28,18 @@ test("version comparison keeps unreleased integrations behind their CLI release"
   assert.equal(versionMeetsMinimum("2.3.0", "2.3.0-next.1"), true);
   assert.equal(versionMeetsMinimum("2.3.0", "2.3.0"), true);
   assert.equal(versionMeetsMinimum("3.0.0", "2.3.0"), true);
+});
+
+test("artifact compatibility honors complete Calavera version ranges", () => {
+  assert.equal(versionSatisfiesCompatibility("2.3.0", ">=2.3.0 <3"), true);
+  assert.equal(versionSatisfiesCompatibility("2.4.0-next.1", ">=2.4.0 <3"), false);
+  assert.equal(versionSatisfiesCompatibility("2.4.0", ">=2.4.0 <3"), true);
+  assert.equal(versionSatisfiesCompatibility("3.0.0", ">=2.4.0 <3"), false);
+  assert.equal(versionSatisfiesCompatibility("2.5.0", "^2.4.0"), true);
+  assert.throws(
+    () => versionSatisfiesCompatibility("2.4.0", "not a semver range"),
+    /Invalid Calavera compatibility range/,
+  );
 });
 
 test("every post-v2.2 integration declares its minimum CLI version", () => {
@@ -73,6 +90,37 @@ test("WebMCP catalog responses and recipes use the same published CLI boundary",
     ),
     { integrations: ["stylelint-logical-css"] },
   );
+
+  const artifactResponse = artifactResponseForCli({ artifacts: aiArtifactCatalog }, "2.3.0");
+  assert.equal(
+    artifactResponse.artifacts.some(({ id }) => id === "skill-release-with-confidence"),
+    false,
+  );
+  assert.throws(
+    () =>
+      assertRecipeArtifactsSupported(
+        { ai: [{ id: "skill-release-with-confidence" }] },
+        aiArtifactCatalog,
+        "2.3.0",
+      ),
+    /does not support these AI artifacts: skill-release-with-confidence/,
+  );
+  assert.deepEqual(
+    assertRecipeArtifactsSupported(
+      { ai: [{ id: "skill-release-with-confidence" }] },
+      aiArtifactCatalog,
+      "2.4.0",
+    ),
+    { ai: [{ id: "skill-release-with-confidence" }] },
+  );
+});
+
+test("release-with-confidence remains hidden until CLI 2.4.0 is published", () => {
+  const v230Ids = filterArtifactsForCli(aiArtifactCatalog, "2.3.0").map(({ id }) => id);
+  const v240Ids = filterArtifactsForCli(aiArtifactCatalog, "2.4.0").map(({ id }) => id);
+
+  assert.equal(v230Ids.includes("skill-release-with-confidence"), false);
+  assert.equal(v240Ids.includes("skill-release-with-confidence"), true);
 });
 
 test("published CLI lookup fails closed to the known v2.2 catalog", async () => {
