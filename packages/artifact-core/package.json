@@ -1,6 +1,6 @@
 {
   "name": "@schalkneethling/calavera-artifact-core",
-  "version": "0.2.0",
+  "version": "0.3.0-next.0",
   "description": "Catalog and package resolution primitives for Calavera artifacts.",
   "license": "MIT",
   "repository": {

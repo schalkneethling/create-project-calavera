@@ -23,5 +23,5 @@
     "@schalkneethling/calavera-baseline-core": "0.2.0",
     "create-project-calavera": "2.3.0"
   },
-  "changesets": []
+  "changesets": ["brave-skulls-release"]
 }
