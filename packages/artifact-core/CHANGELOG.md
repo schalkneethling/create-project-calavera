@@ -1,5 +1,16 @@
 # @schalkneethling/calavera-artifact-core
 
+## 0.3.0-next.0
+
+### Minor Changes
+
+- d65cb63: Add the Release with Confidence skill as an independently versioned Calavera artifact, expose it through the shared catalog, and keep browser surfaces gated until a compatible CLI is published.
+
+### Patch Changes
+
+- Updated dependencies [d65cb63]
+  - @schalkneethling/calavera-skill-release-with-confidence@0.2.0-next.0
+
 ## 0.2.0
 
 ### Minor Changes
