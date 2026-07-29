@@ -80,13 +80,32 @@ The existing CLI and MCP server moved into `packages/cli`. The Composer moved in
 Empty boundaries were established for the Baseline Explorer, menu-bar app, shared Baseline code,
 artifact infrastructure, and the eventual artifact packages.
 
+For readers who have not seen Calavera's repository, the important relationships now look like this:
+
+```mermaid
+flowchart LR
+  baselineCore["Baseline core"] --> explorer["Baseline Explorer"]
+  baselineCore --> composer["Composer"]
+  baselineCore --> cli["CLI and MCP"]
+  artifactPackages["Versioned skills, hooks and agents"] --> artifactCore["Artifact core"]
+  artifactCore --> cli
+  cli --> projects["User projects"]
+  menuBar["macOS companion"] -. "reads recipe, lock and state" .-> projects
+```
+
+The applications can deploy independently. The shared packages contain reusable domain behavior.
+The CLI remains the only surface in this diagram that installs tooling into a project; the menu-bar
+companion is deliberately read-only.
+
 The public package name, commands, binaries, schema URL and Composer behavior were preserved. CI
-learned how to test, build, pack and release workspace packages independently. Changesets was
-configured for independent versions rather than one synchronized monorepo number.
+learned how to test, build, pack and release workspace packages independently.
+[Changesets](https://github.com/changesets/changesets) was configured for independent versions rather
+than one synchronized monorepo number.
 
 That separation mattered later. When failures appeared, we could tell whether they belonged to the
 repository move, a product capability, or the release system. Mixing all three would have made every
-diagnosis harder.
+diagnosis harder. The fewer variables involved in each failure, the easier it was to find the actual
+cause.
 
 ## Baseline was the vertical slice
 
@@ -100,6 +119,19 @@ Calavera recipe.
 
 The CLI, Composer, MCP and WebMCP all consume the same recommendation model. That parity was a release
 contract, not an aspiration.
+
+The test suite already covers the pinned data cutoff, moving and fixed targets, approximate dates,
+Limited availability, earliest-target recommendations, browser mappings, generated Stylelint rules,
+recipe options, schema validation, MCP results and browser keyboard behavior. Sharing an
+implementation is helpful, but it is not enough evidence by itself. I opened
+[#358](https://github.com/schalkneethling/create-project-calavera/issues/358) to turn representative
+recommendations into an explicit fixture matrix across every public surface.
+
+Dogfooding also raised a broader product question. An agent may be better served by deterministic CLI
+commands for project work, while MCP concentrates on discovery and natural-language questions such
+as "Which linters support TypeScript?" I recorded that CLI/MCP/WebMCP responsibility review in
+[#354](https://github.com/schalkneethling/create-project-calavera/issues/354) rather than changing the
+public tools as part of a release article.
 
 The UI itself received the kind of scrutiny that broad plans often postpone. We replaced output
 controls with the WAI-ARIA Authoring Practices tabs pattern, moved keyboard behavior into Playwright
@@ -117,12 +149,20 @@ project dependency.
 
 Calavera now publishes each maintained skill, hook and agent as its own npm package. A package carries
 one payload and one `calavera-artifact.json` manifest. The manifest declares stable identity, type,
-payload path, supported targets and compatible CLI range.
+payload path, supported targets when applicable, and compatible CLI range.
 
 Consumer projects do not gain those packages in `package.json` or `node_modules`. Calavera resolves
 registry metadata and tarballs, verifies npm integrity, package identity, manifest compatibility and
 payload hashes, then installs the managed output into the project. Exact resolutions live in
-`.calavera/artifacts.lock.json`; installed hashes and ownership remain in `.calavera/state.json`.
+`.calavera/artifacts.lock.json`, which records what package version should be installed. Installed
+hashes and ownership remain in `.calavera/state.json`, which records what Calavera may safely update
+or remove.
+
+The dedicated manifest has already earned its keep: it separates artifact identity from npm package
+identity, validates hook and agent targets, declares CLI compatibility, and gives catalog generation
+and payload verification one contract. It is still worth asking whether some of that data belongs in
+`package.json` instead. [#355](https://github.com/schalkneethling/create-project-calavera/issues/355)
+captures that pros-and-cons review before the current format becomes an unquestioned convention.
 
 That separation made several promises possible:
 
@@ -171,9 +211,19 @@ That small workflow caught a human-output bug: JSON dry-run output listed the de
 human-readable result only said that nothing had been removed. The code was doing the right thing and
 the interface was hiding it. We fixed the message and added a regression test.
 
-The same care applied to artifact locks, targeted updates, invalid integrity, hook sidecars, browser
-keyboard behavior and the menu-bar app's preferred-terminal handling. A release checklist is most
-valuable when it describes what a person should observe, not merely which command should exit zero.
+The same care applied beyond that small fixture:
+
+- updating one artifact had to change only that artifact's exact lock entry;
+- a corrupt or mismatched tarball had to fail before any project file changed;
+- a missing or locally edited hook settings sidecar had to make artifact status unhealthy;
+- Explorer tabs had to support Arrow, Home, End, Enter and Space in a real browser;
+- the menu-bar app had to copy the update command even when a preferred terminal could not be opened.
+
+A release checklist is most valuable when it describes what a person should observe, not merely which
+command should exit zero. This is also the kind of care I wrote about in
+[Do we no longer care about the code?](https://schalkneethling.com/posts/do-we-no-longer-care-about-the-code/):
+understanding and testing the system well enough to find where it is wrong, where it falls short, or
+where a technically correct result still creates a poor experience.
 
 ## Respecting work already in flight
 
@@ -197,8 +247,11 @@ The integrated code passed review and rehearsal. Publishing still took four prer
 Changesets generated the version commit and pushed `changeset-release/main`, then GitHub rejected the
 attempt to create a pull request. Repository Actions were not allowed to create PRs.
 
-The fix was a repository setting, not a broader workflow token. Once enabled, the release PR could be
-created normally.
+The workflow had already done the versioning work correctly; the failure happened at the GitHub API
+boundary. In the repository's Actions settings, we enabled the permission that allows GitHub Actions
+to create pull requests. The fix was a repository setting, not a broader workflow token or a
+personal-access token. After the gate was enabled, the same release automation could create its
+reviewable version PR normally.
 
 ### `next.0`: the package artifact did not exist where CI expected it
 
@@ -206,7 +259,9 @@ The build packed successfully, but the upload step looked for `package/*.tgz` an
 Packing and uploading used different destination assumptions.
 
 We fixed the workflow so every public package group packs into the same `package` directory consumed
-by the artifact upload. A release contract now asserts that relationship.
+by the artifact upload. `scripts/check-release-contracts.mjs` now asserts that the pack destination
+and `actions/upload-artifact` path agree, so a future drift fails during ordinary repository checks
+instead of after a release is published.
 
 ### `next.1`: first publication met provenance reality
 
@@ -216,7 +271,18 @@ Baseline package because the repository metadata inside its packed manifest was 
 npm's source verification.
 
 The useful word there is _packed_. The source `package.json` is not the final evidence. We inspected
-the tarball, corrected canonical repository metadata, and produced another candidate.
+the actual archive:
+
+```bash
+tar -xOf \
+  package/schalkneethling-calavera-baseline-core-0.2.0-next.1.tgz \
+  package/package.json
+```
+
+That exposed the metadata npm was evaluating. We corrected the canonical repository URL and monorepo
+directory, then extended the release contract so every public package must declare repository
+metadata that matches its workspace. The check became deterministic before we produced another
+candidate.
 
 ### `next.2`: bootstrap succeeded
 
@@ -226,6 +292,11 @@ packages; the root CLI already had it.
 Then we removed the token fallback from the workflow, deleted the GitHub environment secret, revoked
 the npm token, and tightened npm publishing access. The bootstrap credential did its one job and
 stopped existing.
+
+This is where [Fledgling](https://github.com/dmno-dev/fledgling) would have saved the most time. Instead
+of configuring the same trusted publisher manually across seventeen packages, it could have claimed
+the imminent package names, applied the shared workflow and protected-environment configuration, and
+then reported any remaining trust drift.
 
 ### `next.3`: prove OIDC, do not assume it
 
@@ -278,7 +349,11 @@ Afterward we verified all eighteen `latest` tags, confirmed every `next` tag sti
 `next.3`, checked eighteen provenance statements, resolved the stable CLI from npm, and ran it outside
 the workspace.
 
-Then, finally, we cleaned up the temporary tarballs.
+Then, finally, we cleaned up the temporary tarballs and confirmed the worktree was clean. The pack
+inventory, embedded-manifest checks, exact-version registry probes, dist-tag comparison, provenance
+count and cleanup are all deterministic enough to become a reusable tool rather than a collection of
+carefully reconstructed shell commands. That follow-up is now
+[#357](https://github.com/schalkneethling/create-project-calavera/issues/357).
 
 ## One tool I will likely bring to the next release
 

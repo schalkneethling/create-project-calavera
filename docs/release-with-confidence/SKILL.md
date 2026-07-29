@@ -74,7 +74,7 @@ mutation. Select the applicable gates and create a durable record containing:
 - packed artifact identities and contents;
 - registry-before and registry-after observations;
 - candidate and stable channel values;
-- provenance/signing evidence;
+- applicable integrity evidence for each surface, or a justified alternative or `N/A`;
 - failures, recovery actions, and follow-up issues.
 
 Use repository-native checks. Typical gates include a frozen install, quality suite, package
@@ -119,8 +119,11 @@ publish, and verification workflow.
 Create the release as a draft first. Verify its tag, target commit, title, notes, and prerelease flag.
 Pause for approval, then publish. Monitor test, build, artifact upload, and publish separately.
 
-After publishing, verify every expected package or artifact, its candidate channel, provenance or
-signature, and the unchanged stable channel. Exercise the candidate in a fresh consumer project.
+After publishing, verify every expected package or artifact, its candidate channel, and the unchanged
+stable channel. Define integrity evidence per surface—for example npm provenance, a signed and
+notarized desktop artifact, a checksum or signature, or an immutable deployment commit. Record the
+applicable evidence, or an explicit justified alternative or `N/A` when that mechanism does not apply.
+Exercise the candidate in a fresh consumer project.
 
 ## 6. Promote to stable
 
@@ -170,7 +173,7 @@ Verify:
 - the release is neither draft nor prerelease when stable was intended;
 - all expected versions resolve from the public distribution channel;
 - candidate channels retain the intended candidate versions;
-- provenance or signing exists for every artifact;
+- each surface has its required integrity evidence, a justified alternative, or an explicit `N/A`;
 - a consumer can resolve and execute the released version;
 - the worktree is clean and temporary artifacts are removed;
 - follow-up issues capture deferred cleanup or tooling bugs.

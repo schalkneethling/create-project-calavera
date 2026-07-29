@@ -71,6 +71,29 @@ Fledgling can publish a minimal placeholder for an unclaimed name. That is an ir
 registry mutation even though it contains no project code. Its default placeholder version is
 `0.0.0`, and its default tag is `latest`.
 
+### Package-name safety and npm policy
+
+Fledgling's documented plan checks the exact requested package names. It does not claim to search for
+confusingly similar names or to perform a typosquatting review. Treat that as a separate registry and
+maintainer check.
+
+Before claiming a name:
+
+- search npm for the exact name and likely misspellings, separators and scope variants;
+- check whether the name could confuse users about authorship or an existing project;
+- prefer an organization-owned scope when that establishes clear ownership and avoids dependency
+  confusion;
+- review trademarks and npm's
+  [package name guidelines](https://docs.npmjs.com/package-name-guidelines/);
+- do not rely on npm's
+  [automated typosquat detection](https://docs.npmjs.com/threats-and-mitigations/) as the only review.
+
+npm's [package-name dispute policy](https://docs.npmjs.com/policies/disputes/) says names are
+first-come, first-served for immediate active use and that a package with no genuine function may be
+treated as squatting. Use a Fledgling placeholder only as a short bootstrap step for an imminent,
+real package release—not to reserve speculative future names. If the functional package is not ready
+to follow promptly, stop and resolve the naming and policy question before claiming it.
+
 Before approval, decide:
 
 - whether the organization owns the intended npm scope;
@@ -123,17 +146,3 @@ Keep independent evidence that:
 
 Trust reconciliation proves only that npm accepts the configured CI identity. It does not prove the
 workflow is safe or that a release is correct.
-
-## How it would have helped Calavera
-
-Fledgling would have reduced the manual bootstrap work for Calavera's seventeen new package names:
-
-- claim each missing name with a minimal placeholder;
-- configure the same GitHub workflow and protected `publish` environment for every package;
-- rerun idempotently as package setup progressed;
-- reconcile all publishers before removing the bootstrap token;
-- provide a no-drift check before the token-free `next.3` candidate.
-
-It would not have detected Calavera's mismatched tarball upload path, invalid packed repository
-metadata, GitHub Actions PR permission, or Changesets private-app exit behavior. Those remain separate
-release gates.

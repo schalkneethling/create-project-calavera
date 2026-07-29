@@ -1,7 +1,8 @@
 # Release gates and recovery reference
 
-Use this reference to select checks for the project at hand. Do not copy commands blindly: discover
-the repository's package manager, version tool, registry, hosting provider, and release scripts first.
+Use this reference to select checks for the project at hand. Do not copy commands without
+consideration: discover the repository's package manager, version tool, registry, hosting provider,
+and release scripts first.
 
 ## Gate restart rule
 
@@ -74,7 +75,8 @@ Before versioning:
 - confirm the local stable branch reference is current;
 - list pending release notes and affected packages;
 - compare calculated versions with the release inventory;
-- reject vacuous success, unrelated private packages, and synchronized bumps that were not intended.
+- reject an empty success result, unrelated private packages, and synchronized bumps that were not
+  intended.
 
 Some version tools compare against a named local base branch. If the base reference is missing, fetch
 or create the tracking branch normally. Do not fabricate divergence or force-move a branch to silence
@@ -262,7 +264,7 @@ Remote gates:
 - Test job:
 - Build/upload job:
 - Publish job:
-- Provenance/signing:
+- Integrity evidence by surface (or justified alternative/N/A):
 
 Registry:
 - Candidate channels:
