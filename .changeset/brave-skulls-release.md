@@ -4,4 +4,4 @@
 "create-project-calavera": minor
 ---
 
-Add the Release with Confidence skill as an independently versioned Calavera artifact and expose it through the shared artifact catalog.
+Add the Release with Confidence skill as an independently versioned Calavera artifact, expose it through the shared catalog, and keep browser surfaces gated until a compatible CLI is published.
