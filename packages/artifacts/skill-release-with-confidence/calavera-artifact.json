@@ -6,6 +6,6 @@
   "displayName": "Release with confidence",
   "payload": "payload/release-with-confidence",
   "compatibility": {
-    "calavera": ">=2.4.0 <3"
+    "calavera": ">=2.4.0-next.0 <3"
   }
 }

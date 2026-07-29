@@ -11,11 +11,16 @@ import { promisify } from "node:util";
 import { artifactForId } from "../src/catalog.js";
 import { extractArtifactPackage, hashArtifactPayload } from "../src/registry.js";
 
-const packageRoot = fileURLToPath(new URL("../../artifacts/skill-project-goal/", import.meta.url));
+const projectGoalPackageRoot = fileURLToPath(
+  new URL("../../artifacts/skill-project-goal/", import.meta.url),
+);
+const releasePackageRoot = fileURLToPath(
+  new URL("../../artifacts/skill-release-with-confidence/", import.meta.url),
+);
 const artifact = artifactForId("skill-project-goal");
 const execFileAsync = promisify(execFile);
 
-async function packFixture(directory) {
+async function packFixture(directory, packageRoot = projectGoalPackageRoot) {
   await execFileAsync("pnpm", ["pack", "--pack-destination", directory], { cwd: packageRoot });
   const name = (await readdir(directory)).find((entry) => entry.endsWith(".tgz"));
   if (!name) throw new Error("Fixture package did not produce a tarball.");
@@ -91,6 +96,58 @@ test("verified extraction rejects a tarball that fails npm integrity", async () 
         "2.2.0",
       ),
     /integrity|checksum/i,
+  );
+});
+
+test("prerelease CLIs accept compatible stable-line and prerelease artifacts", async () => {
+  for (const [id, packageRoot] of [
+    ["skill-project-goal", projectGoalPackageRoot],
+    ["skill-release-with-confidence", releasePackageRoot],
+  ]) {
+    const directory = await mkdtemp(join(tmpdir(), `calavera-registry-${id}-`));
+    const packed = await packFixture(directory, packageRoot);
+    const selectedArtifact = artifactForId(id);
+    const result = await extractArtifactPackage(
+      {
+        artifact: selectedArtifact,
+        packageName: selectedArtifact.packageName,
+        version: selectedArtifact.version,
+        resolved: packed.path,
+        integrity: packed.integrity,
+        tag: "next",
+        cache: join(directory, "cache"),
+        offline: false,
+      },
+      join(directory, "package"),
+      "2.4.0-next.0",
+    );
+
+    assert.equal(result.manifest.id, id);
+  }
+});
+
+test("prerelease CLIs below an artifact minimum remain incompatible", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-prerelease-minimum-"));
+  const packed = await packFixture(directory, releasePackageRoot);
+  const selectedArtifact = artifactForId("skill-release-with-confidence");
+
+  await assert.rejects(
+    () =>
+      extractArtifactPackage(
+        {
+          artifact: selectedArtifact,
+          packageName: selectedArtifact.packageName,
+          version: selectedArtifact.version,
+          resolved: packed.path,
+          integrity: packed.integrity,
+          tag: "next",
+          cache: join(directory, "cache"),
+          offline: false,
+        },
+        join(directory, "package"),
+        "2.3.0-next.0",
+      ),
+    /not compatible/,
   );
 });
 
