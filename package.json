@@ -24,8 +24,10 @@
     "typecheck": "tsc --noEmit",
     "publish:check": "pnpm --filter create-project-calavera publish:check && pnpm --filter @schalkneethling/calavera-baseline-core exec publint && pnpm --filter @schalkneethling/calavera-artifact-core exec publint && pnpm --filter './packages/artifacts/*' --recursive exec publint",
     "release:status": "changeset status",
-    "release:version": "changeset version",
-    "release:contracts": "node scripts/check-release-contracts.mjs",
+    "release:version": "node scripts/release-version.mjs",
+    "release:prepare": "node scripts/release-orchestrator.mjs prepare",
+    "release:publish": "node scripts/release-orchestrator.mjs publish",
+    "release:contracts": "node scripts/check-release-contracts.mjs && node --test scripts/release-orchestrator.test.mjs",
     "release:fixture": "pnpm --filter create-project-calavera exec node --test --test-name-pattern='artifact install locks exact versions and targeted update preserves other artifacts' scripts/check-config-schema.test.mjs",
     "release:rehearse": "pnpm quality && pnpm release:fixture && pnpm web:build && pnpm --filter @calavera/baseline-explorer build && pnpm --filter @calavera/menu-bar build:web && pnpm publish:check",
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
@@ -39,17 +41,25 @@
     "@types/semver": "^7.7.1",
     "ajv": "8.20.0",
     "eslint": "^10.4.0",
+    "fledgling": "1.2.0",
     "globals": "^17.6.0",
     "html-validate": "^11.5.6",
     "knip": "^6.27.0",
     "oxfmt": "^0.58.0",
     "oxlint": "^1.73.0",
     "publint": "^0.3.21",
+    "semver": "7.8.5",
     "stylelint": "^17.12.0",
     "stylelint-config-standard": "^40.0.0",
     "stylelint-order": "^8.1.1",
     "stylelint-plugin-use-baseline": "^1.4.2",
     "typescript": "^6.0.3"
   },
-  "packageManager": "pnpm@11.3.0"
+  "packageManager": "pnpm@11.3.0",
+  "fledgling": {
+    "provider": "github",
+    "workflow": "publish.yml",
+    "environment": "publish",
+    "permissions": "publish"
+  }
 }

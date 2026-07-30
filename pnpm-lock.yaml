@@ -32,6 +32,9 @@ importers:
       eslint:
         specifier: ^10.4.0
         version: 10.6.0(jiti@2.7.0)
+      fledgling:
+        specifier: 1.2.0
+        version: 1.2.0(@gunshi/plugin-i18n@0.36.0)
       globals:
         specifier: ^17.6.0
         version: 17.7.0
@@ -50,6 +53,9 @@ importers:
       publint:
         specifier: ^0.3.21
         version: 0.3.21
+      semver:
+        specifier: 7.8.5
+        version: 7.8.5
       stylelint:
         specifier: ^17.12.0
         version: 17.14.0(typescript@6.0.3)
@@ -244,6 +250,21 @@ packages:
     resolution: {integrity: sha512-Nq8OhGWiZIZGV6hLHoyAKLLcJihP/xFeBMGJoUrxTX2psI8dCifzLhZISFb+VWS3wFMRDmCGw5R+dOySCqPLhw==}
     engines: {node: '>=6.9.0'}
 
+  '@bomb.sh/tab@0.0.17':
+    resolution: {integrity: sha512-rGhqfWwaSF6qN5Gm5P9EH9eybrwLEowHTkV+wsRgFewT6aQCQWVWXLclVk0McgVIlWCGX+W9mYYC1Egsg+Znsw==}
+    hasBin: true
+    peerDependencies:
+      cac: ^6.7.14
+      citty: ^0.1.6 || ^0.2.0
+      commander: ^13.1.0
+    peerDependenciesMeta:
+      cac:
+        optional: true
+      citty:
+        optional: true
+      commander:
+        optional: true
+
   '@cacheable/memory@2.2.0':
     resolution: {integrity: sha512-CTLKqLItRCEixEAewD3/j9DB3/o96gpTPD4eJ1v+DGOlxZRZncRQkGYqqnAGCscYd6RNeXfGeiuCphsPtqyIfQ==}
 
@@ -414,6 +435,25 @@ packages:
   '@gar/promise-retry@1.0.3':
     resolution: {integrity: sha512-GmzA9ckNokPypTg10pgpeHNQe7ph+iIKKmhKu3Ob9ANkswreCx7R3cKmY781K8QK3AqVL3xVh9A42JvIAbkkSA==}
     engines: {node: ^20.17.0 || >=22.9.0}
+
+  '@gunshi/plugin-completion@0.36.0':
+    resolution: {integrity: sha512-79EIxM3KIksBNHEzl1dW3ZQcjLuKxz2LYMK/gF/wRri+z/SlkqcpS3gqv/p3HiIK+2pegpTd5o5AKznko5kDXw==}
+    engines: {node: '>= 22'}
+    peerDependencies:
+      '@gunshi/plugin-i18n': 0.36.0
+
+  '@gunshi/plugin-i18n@0.36.0':
+    resolution: {integrity: sha512-T4IZh6lWApMiQ6UnBku5oGUgFgcv07GoZNF8v8aRoqcbmW9FQ6UVW8Em6s/oSFLMuIthR5B6OgcgI3ptZlgrZw==}
+    engines: {node: '>= 22'}
+    peerDependencies:
+      '@gunshi/plugin-global': 0.36.0
+    peerDependenciesMeta:
+      '@gunshi/plugin-global':
+        optional: true
+
+  '@gunshi/plugin@0.36.0':
+    resolution: {integrity: sha512-y0/lUz7k1kSF9pbINqmz1VoG7lkvMDzw/onbHtf0Ot2cteLQkncplJFLo1qQWterwtduYfRjYeYZRlj4kZc5pg==}
+    engines: {node: '>= 22'}
 
   '@hono/node-server@1.19.14':
     resolution: {integrity: sha512-GwtvgtXxnWsucXvbQXkRgqksiH2Qed37H9xHZocE5sA3N8O8O8/8FA3uclQXxXVzc9XBZuEOMK7+r02FmSpHtw==}
@@ -1727,6 +1767,11 @@ packages:
   flatted@3.4.2:
     resolution: {integrity: sha512-PjDse7RzhcPkIJwy5t7KPWQSZ9cAbzQXcafsetQoD7sOJRQlGikNbx7yZp2OotDnJyrDcbyRq3Ttb18iYOqkxA==}
 
+  fledgling@1.2.0:
+    resolution: {integrity: sha512-9CQjNV6PmqZ1vHwv8kaIYoie3jQd+H8vIGGSHR+5GlwZjKf/8vHShuZK5M2O7/kb7GyOvHqjJ/u2i9lSvKuKLQ==}
+    engines: {node: '>=18'}
+    hasBin: true
+
   form-data@4.0.6:
     resolution: {integrity: sha512-vKatAh4SlVfgbv+YtmhiRjhEMJsYpsG1Y2rMQtR+SVSbytsSD1YGzDIcrAJmdFec88u/+VoGmxnl+80gL1tRCQ==}
     engines: {node: '>= 6'}
@@ -1829,6 +1874,10 @@ packages:
 
   graceful-fs@4.2.11:
     resolution: {integrity: sha512-RbJ5/jmFcNNCcDV5o9eTnBLJ/HszWV0P73bc+Ff4nS/rJj+YaS6IGyiOL0VoBYX+l1Wrl3k63h/KrH+nhJ0XvQ==}
+
+  gunshi@0.36.0:
+    resolution: {integrity: sha512-LJhM/2YiC4GfsaT2fnvccNkGXzbtMCBkgXpyLSM+1QVal2n7k8VJZol8qm1qgm2wmaQ6NBVmcGZIOkB/ms+6uQ==}
+    engines: {node: '>= 22'}
 
   has-flag@5.0.1:
     resolution: {integrity: sha512-CsNUt5x9LUdx6hnk/E2SZLsDyvfqANZSUq4+D3D8RzDJ2M+HDTIkF60ibS1vHaK55vzgiZw1bEPFG9yH7l33wA==}
@@ -3030,6 +3079,8 @@ snapshots:
 
   '@babel/runtime@7.29.7': {}
 
+  '@bomb.sh/tab@0.0.17': {}
+
   '@cacheable/memory@2.2.0':
     dependencies:
       '@cacheable/utils': 2.5.0
@@ -3287,6 +3338,22 @@ snapshots:
       levn: 0.4.1
 
   '@gar/promise-retry@1.0.3': {}
+
+  '@gunshi/plugin-completion@0.36.0(@gunshi/plugin-i18n@0.36.0)':
+    dependencies:
+      '@bomb.sh/tab': 0.0.17
+      '@gunshi/plugin': 0.36.0
+      '@gunshi/plugin-i18n': 0.36.0
+    transitivePeerDependencies:
+      - cac
+      - citty
+      - commander
+
+  '@gunshi/plugin-i18n@0.36.0':
+    dependencies:
+      '@gunshi/plugin': 0.36.0
+
+  '@gunshi/plugin@0.36.0': {}
 
   '@hono/node-server@1.19.14(hono@4.12.27)':
     dependencies:
@@ -4367,6 +4434,19 @@ snapshots:
 
   flatted@3.4.2: {}
 
+  fledgling@1.2.0(@gunshi/plugin-i18n@0.36.0):
+    dependencies:
+      '@clack/prompts': 1.7.0
+      '@gunshi/plugin-completion': 0.36.0(@gunshi/plugin-i18n@0.36.0)
+      gunshi: 0.36.0
+      picocolors: 1.1.1
+      tinyglobby: 0.2.17
+    transitivePeerDependencies:
+      - '@gunshi/plugin-i18n'
+      - cac
+      - citty
+      - commander
+
   form-data@4.0.6:
     dependencies:
       asynckit: 0.4.0
@@ -4485,6 +4565,8 @@ snapshots:
   gopd@1.2.0: {}
 
   graceful-fs@4.2.11: {}
+
+  gunshi@0.36.0: {}
 
   has-flag@5.0.1: {}
 

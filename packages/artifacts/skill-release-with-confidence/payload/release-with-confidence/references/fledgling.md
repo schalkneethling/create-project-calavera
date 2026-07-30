@@ -48,6 +48,11 @@ Adapt the provider and workflow to the project. Tie the publisher to a protected
 CI provider supports it. Request only `publish` unless the project deliberately uses npm staged
 publishing.
 
+Install the reviewed version as a local development dependency and invoke that pinned binary. If its
+package includes an unrelated install hook, explicitly disable that build script only after verifying
+the published CLI is already built and functional; do not enable arbitrary dependency lifecycle
+scripts merely to install release tooling.
+
 Fledgling skips packages marked `private: true`. Add explicit ignore patterns for public workspace
 packages that must never be claimed or managed.
 
@@ -69,7 +74,9 @@ with the release inventory and verify that private or ignored packages are absen
 
 Fledgling can publish a minimal placeholder for an unclaimed name. That is an irreversible public
 registry mutation even though it contains no project code. Its default placeholder version is
-`0.0.0`, and its default tag is `latest`.
+`0.0.0`. npm may create `latest` for the first version even when a non-stable placeholder tag was
+requested. Follow the claim promptly with the real reviewed initial stable package through the
+project's OIDC workflow, verify that `latest` points to it, and remove the temporary placeholder tag.
 
 ### Package-name safety and npm policy
 
@@ -123,7 +130,7 @@ Never use Fledgling's force-replacement option without reviewing the exact trust
 obtaining explicit approval. Replacing trust revokes the existing publisher before creating the new
 one.
 
-## Use `sync` as the feedback loop
+## Verify npm state directly
 
 Run the pinned `fledgling sync` command:
 
@@ -133,8 +140,14 @@ Run the pinned `fledgling sync` command:
 - during periodic release-security reviews.
 
 Use interactive mode so Fledgling reads npm state, reports exact differences, and pauses before
-applying them. Record the plan without credentials. Apply only reviewed differences, then run `sync`
-again and require a no-drift result.
+applying them. Record the plan without credentials. Apply only reviewed differences.
+
+Treat npm itself as the authority after mutation. Verify each publisher with `npm trust list`, and
+verify exact versions and dist-tags with `npm view`. A tool's reconciliation command is useful
+advisory feedback, but registry propagation or a tool defect can produce a false mismatch; do not
+replace a publisher merely because the wrapper reports drift. Compare the exact npm trust record
+first. A duplicate trust creation conflict is evidence to inspect, not permission to force-replace
+the existing publisher.
 
 Keep independent evidence that:
 

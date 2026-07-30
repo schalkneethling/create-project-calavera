@@ -81,6 +81,12 @@ Use repository-native checks. Typical gates include a frozen install, quality su
 validation, workflow audit, version-plan inspection, builds, packing, fixture installation, migration
 tests, and clean-environment smoke tests.
 
+If the repository provides a reviewed release orchestrator, use it as the primary path. For example,
+Calavera uses `release:prepare` for the complete read-only evidence chain and `release:publish` for
+revalidation, the explicit publication checkpoint, monitoring, and post-release consumer checks.
+Use the individual commands in the reference as recovery and diagnostic tools, not as a routine
+copy-and-paste checklist.
+
 ## 4. Rehearse the exact candidate
 
 Run the full rehearsal on the exact commit intended for release:
@@ -118,6 +124,11 @@ publish, and verification workflow.
 
 Create the release as a draft first. Verify its tag, target commit, title, notes, and prerelease flag.
 Pause for approval, then publish. Monitor test, build, artifact upload, and publish separately.
+
+Use a SemVer implementation such as
+[`node-semver`](https://github.com/npm/node-semver) for version validity, prerelease detection, and
+compatibility ranges. Do not infer release channels or prerelease compatibility with ad hoc string
+comparison.
 
 After publishing, verify every expected package or artifact, its candidate channel, and the unchanged
 stable channel. Define integrity evidence per surface—for example npm provenance, a signed and

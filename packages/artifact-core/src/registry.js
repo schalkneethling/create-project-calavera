@@ -90,7 +90,10 @@ function validateArtifactManifest(manifest, artifact, cliVersion) {
     throw new Error(`Invalid artifact manifest for ${artifact.packageName}.`);
   }
   const compatibility = /** @type {Record<string, unknown>} */ (manifest.compatibility).calavera;
-  if (typeof compatibility !== "string" || !semver.satisfies(cliVersion, compatibility)) {
+  if (
+    typeof compatibility !== "string" ||
+    !semver.satisfies(cliVersion, compatibility, { includePrerelease: true })
+  ) {
     throw new Error(
       `${artifact.packageName} is not compatible with create-project-calavera ${cliVersion}.`,
     );

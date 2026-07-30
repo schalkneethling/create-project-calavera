@@ -291,6 +291,37 @@ Apply the gate restart rule to every command block below. If any command fails o
 from the stated expectation, stop. After recovery, return to repository synchronization and repeat
 the full applicable sequence.
 
+### Prefer the automated gate
+
+Current Calavera releases normally require two commands:
+
+```bash
+pnpm release:prepare
+pnpm release:publish
+```
+
+`release:prepare` synchronizes and identifies the exact candidate, runs the frozen install and all
+local gates, calculates the complete public workspace inventory, and distinguishes exact npm 404s
+from registry failures. It is read-only unless a newly introduced npm package requires the explicit
+`--bootstrap` transition:
+
+```bash
+pnpm release:prepare -- --bootstrap
+```
+
+That transition uses the pinned Fledgling dependency to claim only the reviewed package names and
+configure trusted publishing, publishes the real initial stable packages through the existing OIDC
+workflow, removes the temporary bootstrap tag, and restarts the gates.
+
+`release:publish` reruns preparation, creates or verifies a draft release for the exact commit,
+pauses once for publication approval, watches the matching workflow run, verifies provenance and
+dist-tags, and exercises the published CLI and a changed artifact in a disposable consumer.
+Successful reruns rediscover and verify an already published release instead of repeating it.
+
+Use `--yes` only when the operator has already reviewed the exact transition and deliberately wants
+to answer the script's publication checkpoint non-interactively. The detailed commands below remain
+valuable for diagnosis and recovery. They are not the normal release interface.
+
 ### Synchronize and record the exact state
 
 ```bash
@@ -330,7 +361,9 @@ Its rehearsal composed existing scripts rather than duplicating their behavior:
     "quality": "pnpm lint && pnpm format:all:check && pnpm typecheck && pnpm knip && pnpm test && pnpm release:contracts",
     "publish:check": "pnpm --filter create-project-calavera publish:check && pnpm --filter @schalkneethling/calavera-baseline-core exec publint && pnpm --filter @schalkneethling/calavera-artifact-core exec publint && pnpm --filter './packages/artifacts/*' --recursive exec publint",
     "release:status": "changeset status",
-    "release:version": "changeset version",
+    "release:version": "node scripts/release-version.mjs",
+    "release:prepare": "node scripts/release-orchestrator.mjs prepare",
+    "release:publish": "node scripts/release-orchestrator.mjs publish",
     "release:rehearse": "pnpm quality && pnpm release:fixture && pnpm web:build && pnpm --filter @calavera/baseline-explorer build && pnpm --filter @calavera/menu-bar build:web && pnpm publish:check",
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
   }
@@ -373,7 +406,8 @@ pnpm release:version
 
 `release:version` mutates manifests, changelogs and Changesets state. Simulate it first in a true
 disposable copy, then inspect every generated file. Do not run it merely to see what might happen in
-the working repository.
+the working repository. Calavera's wrapper also formats only the generated JSON, Markdown, and YAML
+files so Changesets prerelease state is deterministic.
 
 When Changesets could not find where `HEAD` diverged from `main`, Calavera synchronized the genuine
 local `main` reference and restarted the gates. It did not force or fabricate branch history.
