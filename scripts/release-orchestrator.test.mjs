@@ -425,6 +425,10 @@ test("stable version generation preserves ignored private applications", async (
     ],
     { cwd: directory },
   );
+  const fixtureCommit = execFileSync("git", ["rev-parse", "--short=7", "HEAD"], {
+    cwd: directory,
+    encoding: "utf8",
+  }).trim();
 
   versionPackages({
     rootDir: directory,
@@ -436,6 +440,10 @@ test("stable version generation preserves ignored private applications", async (
     await readFile(join(directory, "packages", "fixture", "package.json"), "utf8"),
   );
   assert.equal(publicManifest.version, "1.1.0");
+  assert.equal(
+    await readFile(join(directory, "packages", "fixture", "CHANGELOG.md"), "utf8"),
+    `# fixture-package\n\n## 1.1.0\n\n### Minor Changes\n\n- ${fixtureCommit}: Add a fixture feature.\n`,
+  );
   assert.equal(
     await readFile(join(directory, "apps", "unversioned", "package.json"), "utf8"),
     unversionedManifest,
