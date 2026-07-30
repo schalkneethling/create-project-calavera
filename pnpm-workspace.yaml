@@ -3,6 +3,9 @@ packages:
   - "packages/*"
   - "packages/artifacts/*"
 
+allowBuilds:
+  fledgling: false
+
 minimumReleaseAge: 1440
 minimumReleaseAgeExclude:
   - "@schalkneethling/css-property-type-validator-core"

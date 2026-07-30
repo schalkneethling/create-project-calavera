@@ -5,9 +5,11 @@ import { join } from "node:path";
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const changesets = await readJson(".changeset/config.json");
 const publishWorkflow = await readFile(".github/workflows/publish.yml", "utf8");
+const releasePrWorkflow = await readFile(".github/workflows/release-pr.yml", "utf8");
 const menuWorkflow = await readFile(".github/workflows/menu-bar-release.yml", "utf8");
 const workspace = await readFile("pnpm-workspace.yaml", "utf8");
 const rootPackage = await readJson("package.json");
+const knip = await readJson("knip.json");
 
 const workflowJob = (workflow, jobName) => {
   const lines = workflow.split("\n");
@@ -74,6 +76,28 @@ for (const application of [
 assert.match(rootPackage.scripts["release:fixture"], /targeted update preserves other artifacts/);
 assert.match(rootPackage.scripts["release:rehearse"], /@calavera\/baseline-explorer build/);
 assert.match(rootPackage.scripts["release:rehearse"], /@calavera\/menu-bar build:web/);
+assert.equal(rootPackage.scripts["release:version"], "node scripts/release-version.mjs");
+assert.equal(
+  rootPackage.scripts["release:prepare"],
+  "node scripts/release-orchestrator.mjs prepare",
+);
+assert.equal(
+  rootPackage.scripts["release:publish"],
+  "node scripts/release-orchestrator.mjs publish",
+);
+assert.match(rootPackage.scripts["release:contracts"], /release-orchestrator\.test\.mjs/);
+assert.equal(rootPackage.devDependencies.fledgling, "1.2.0");
+assert(
+  knip.ignoreDependencies.includes("fledgling"),
+  "Knip must account for Fledgling's subprocess-only CLI invocation",
+);
+assert.deepEqual(rootPackage.fledgling, {
+  provider: "github",
+  workflow: "publish.yml",
+  environment: "publish",
+  permissions: "publish",
+});
+assert.match(releasePrWorkflow, /version: pnpm release:version/);
 assert.match(workspace, /packages:\n\s+- "apps\/\*"/);
 assert.match(workspace, /- "packages\/artifacts\/\*"/);
 const packDestinations = [...publishWorkflow.matchAll(/--pack-destination\s+([^\s]+)/g)].map(
