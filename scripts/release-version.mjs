@@ -1,6 +1,6 @@
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync } from "node:fs";
-import { extname, join, resolve } from "node:path";
+import { existsSync, readFileSync, unlinkSync, writeFileSync } from "node:fs";
+import { dirname, extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
@@ -28,15 +28,58 @@ function capturePendingPaths(rootDir) {
   ];
 }
 
+function captureIgnoredPackages(rootDir) {
+  const config = JSON.parse(readFileSync(join(rootDir, ".changeset", "config.json"), "utf8"));
+  const ignoredPackages = new Set(config.ignore ?? []);
+
+  return captureGitPaths(rootDir, ["ls-files", "--", ":(glob)**/package.json"])
+    .map((manifestPath) => {
+      const manifestContents = readFileSync(join(rootDir, manifestPath));
+      const manifest = JSON.parse(manifestContents);
+      const changelogPath = join(dirname(manifestPath), "CHANGELOG.md");
+
+      return {
+        name: manifest.name,
+        manifestPath,
+        manifestContents,
+        changelogPath,
+        changelogContents: existsSync(join(rootDir, changelogPath))
+          ? readFileSync(join(rootDir, changelogPath))
+          : undefined,
+      };
+    })
+    .filter(({ name }) => ignoredPackages.has(name));
+}
+
+function restoreIgnoredPackages(rootDir, packages) {
+  for (const { manifestPath, manifestContents, changelogPath, changelogContents } of packages) {
+    writeFileSync(join(rootDir, manifestPath), manifestContents);
+
+    if (changelogContents === undefined) {
+      if (existsSync(join(rootDir, changelogPath))) {
+        unlinkSync(join(rootDir, changelogPath));
+      }
+    } else {
+      writeFileSync(join(rootDir, changelogPath), changelogContents);
+    }
+  }
+}
+
 export function versionPackages(options = {}) {
   const rootDir = options.rootDir ?? root;
   const changesetBin = options.changesetBin ?? join(root, "node_modules", ".bin", "changeset");
   const formatterBin = options.formatterBin ?? join(root, "node_modules", ".bin", "oxfmt");
+  const commandStdio = options.commandStdio ?? "inherit";
 
   const pathsBeforeVersioning = new Map(
     capturePendingPaths(rootDir).map((path) => [path, readFileSync(join(rootDir, path))]),
   );
-  execFileSync(changesetBin, ["version"], { cwd: rootDir, stdio: "inherit" });
+  const ignoredPackages = captureIgnoredPackages(rootDir);
+  try {
+    execFileSync(changesetBin, ["version"], { cwd: rootDir, stdio: commandStdio });
+  } finally {
+    restoreIgnoredPackages(rootDir, ignoredPackages);
+  }
 
   const generatedPaths = capturePendingPaths(rootDir).filter((path) => {
     const previousContents = pathsBeforeVersioning.get(path);
@@ -51,7 +94,7 @@ export function versionPackages(options = {}) {
   if (formatPaths.length > 0) {
     execFileSync(formatterBin, ["--write", ...formatPaths], {
       cwd: rootDir,
-      stdio: "inherit",
+      stdio: commandStdio,
     });
   }
 }

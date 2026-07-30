@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -302,6 +302,7 @@ test("version generation formats one-item prerelease state deterministically", a
     rootDir: directory,
     changesetBin: join(root, "node_modules", ".bin", "changeset"),
     formatterBin: join(root, "node_modules", ".bin", "oxfmt"),
+    commandStdio: "pipe",
   };
   versionPackages(options);
 
@@ -326,4 +327,136 @@ test("version generation formats one-item prerelease state deterministically", a
 
   versionPackages(options);
   assert.equal(await readFile(join(directory, ".changeset", "pre.json"), "utf8"), preState);
+});
+
+test("stable version generation preserves ignored private applications", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-version-exit-fixture-"));
+  await mkdir(join(directory, ".changeset"));
+  await mkdir(join(directory, "packages", "fixture"), { recursive: true });
+  await mkdir(join(directory, "apps", "unversioned"), { recursive: true });
+  await mkdir(join(directory, "apps", "versioned"), { recursive: true });
+  await writeFile(
+    join(directory, "package.json"),
+    `${JSON.stringify(
+      {
+        name: "release-exit-fixture",
+        private: true,
+        workspaces: ["packages/*", "apps/*"],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  await writeFile(join(directory, ".oxfmtrc.json"), "{}\n");
+  await writeFile(
+    join(directory, ".changeset", "config.json"),
+    `${JSON.stringify(
+      {
+        $schema: "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+        changelog: "@changesets/cli/changelog",
+        commit: false,
+        fixed: [],
+        linked: [],
+        access: "public",
+        baseBranch: "main",
+        updateInternalDependencies: "patch",
+        ignore: ["unversioned-app", "versioned-app"],
+        privatePackages: {
+          version: false,
+          tag: false,
+        },
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  await writeFile(
+    join(directory, ".changeset", "pre.json"),
+    `${JSON.stringify(
+      {
+        mode: "exit",
+        tag: "next",
+        initialVersions: {
+          "fixture-package": "1.0.0",
+          "versioned-app": "0.1.0",
+        },
+        changesets: ["one-change"],
+      },
+      null,
+      2,
+    )}\n`,
+  );
+  await writeFile(
+    join(directory, ".changeset", "one-change.md"),
+    `---\n"fixture-package": minor\n---\n\nAdd a fixture feature.\n`,
+  );
+  await writeFile(
+    join(directory, "packages", "fixture", "package.json"),
+    `${JSON.stringify({ name: "fixture-package", version: "1.1.0-next.0" }, null, 2)}\n`,
+  );
+  const unversionedManifest = `${JSON.stringify(
+    { name: "unversioned-app", private: true },
+    null,
+    2,
+  )}\n`;
+  const versionedManifest = `${JSON.stringify(
+    { name: "versioned-app", version: "0.1.0", private: true },
+    null,
+    2,
+  )}\n`;
+  const versionedChangelog = "# Existing private app history\n";
+  await writeFile(join(directory, "apps", "unversioned", "package.json"), unversionedManifest);
+  await writeFile(join(directory, "apps", "versioned", "package.json"), versionedManifest);
+  await writeFile(join(directory, "apps", "versioned", "CHANGELOG.md"), versionedChangelog);
+
+  execFileSync("git", ["init", "-b", "main"], { cwd: directory });
+  execFileSync("git", ["add", "."], { cwd: directory });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Calavera Test",
+      "-c",
+      "user.email=calavera@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "-m",
+      "fixture",
+    ],
+    { cwd: directory },
+  );
+  const fixtureCommit = execFileSync("git", ["rev-parse", "--short=7", "HEAD"], {
+    cwd: directory,
+    encoding: "utf8",
+  }).trim();
+
+  versionPackages({
+    rootDir: directory,
+    changesetBin: join(root, "node_modules", ".bin", "changeset"),
+    formatterBin: join(root, "node_modules", ".bin", "oxfmt"),
+    commandStdio: "pipe",
+  });
+
+  const publicManifest = JSON.parse(
+    await readFile(join(directory, "packages", "fixture", "package.json"), "utf8"),
+  );
+  assert.equal(publicManifest.version, "1.1.0");
+  assert.equal(
+    await readFile(join(directory, "packages", "fixture", "CHANGELOG.md"), "utf8"),
+    `# fixture-package\n\n## 1.1.0\n\n### Minor Changes\n\n- ${fixtureCommit}: Add a fixture feature.\n`,
+  );
+  assert.equal(
+    await readFile(join(directory, "apps", "unversioned", "package.json"), "utf8"),
+    unversionedManifest,
+  );
+  assert.equal(
+    await readFile(join(directory, "apps", "versioned", "package.json"), "utf8"),
+    versionedManifest,
+  );
+  assert.equal(
+    await readFile(join(directory, "apps", "versioned", "CHANGELOG.md"), "utf8"),
+    versionedChangelog,
+  );
+  await assert.rejects(access(join(directory, "apps", "unversioned", "CHANGELOG.md")), /ENOENT/);
 });
