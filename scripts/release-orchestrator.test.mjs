@@ -302,6 +302,7 @@ test("version generation formats one-item prerelease state deterministically", a
     rootDir: directory,
     changesetBin: join(root, "node_modules", ".bin", "changeset"),
     formatterBin: join(root, "node_modules", ".bin", "oxfmt"),
+    commandStdio: "pipe",
   };
   versionPackages(options);
 
@@ -434,6 +435,7 @@ test("stable version generation preserves ignored private applications", async (
     rootDir: directory,
     changesetBin: join(root, "node_modules", ".bin", "changeset"),
     formatterBin: join(root, "node_modules", ".bin", "oxfmt"),
+    commandStdio: "pipe",
   });
 
   const publicManifest = JSON.parse(

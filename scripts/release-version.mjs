@@ -69,13 +69,14 @@ export function versionPackages(options = {}) {
   const rootDir = options.rootDir ?? root;
   const changesetBin = options.changesetBin ?? join(root, "node_modules", ".bin", "changeset");
   const formatterBin = options.formatterBin ?? join(root, "node_modules", ".bin", "oxfmt");
+  const commandStdio = options.commandStdio ?? "inherit";
 
   const pathsBeforeVersioning = new Map(
     capturePendingPaths(rootDir).map((path) => [path, readFileSync(join(rootDir, path))]),
   );
   const ignoredPackages = captureIgnoredPackages(rootDir);
   try {
-    execFileSync(changesetBin, ["version"], { cwd: rootDir, stdio: "inherit" });
+    execFileSync(changesetBin, ["version"], { cwd: rootDir, stdio: commandStdio });
   } finally {
     restoreIgnoredPackages(rootDir, ignoredPackages);
   }
@@ -93,7 +94,7 @@ export function versionPackages(options = {}) {
   if (formatPaths.length > 0) {
     execFileSync(formatterBin, ["--write", ...formatPaths], {
       cwd: rootDir,
-      stdio: "inherit",
+      stdio: commandStdio,
     });
   }
 }
