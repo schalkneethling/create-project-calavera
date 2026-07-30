@@ -8,12 +8,15 @@ import { fileURLToPath } from "node:url";
 
 import {
   discoverPublicPackages,
+  hasExpectedTrust,
   hasPendingVersionBumps,
   isExplicitRegistryNotFound,
   packagesFromReleaseNotes,
+  parseOptions,
   releaseChannel,
   releaseTag,
   validateReleaseMetadata,
+  waitForRun,
 } from "./release-orchestrator.mjs";
 import { generatedFormatPaths, versionPackages } from "./release-version.mjs";
 
@@ -34,11 +37,76 @@ test("registry absence accepts only explicit 404 responses", () => {
 test("release channels and tags are derived from exact versions", () => {
   assert.equal(releaseChannel("2.4.0-next.1"), "next");
   assert.equal(releaseChannel("2.4.0"), "latest");
+  assert.equal(releaseChannel("1.0.0+build-1"), "latest");
   assert.equal(
     releaseTag([{ name: "create-project-calavera", version: "2.4.0-next.1" }], "a".repeat(40)),
     "v2.4.0-next.1",
   );
   assert.equal(releaseTag([], "abcdef1234567890"), "packages-abcdef123456");
+});
+
+test("release options require an explicit tag value", () => {
+  assert.deepEqual(parseOptions(["--tag", "v2.4.0-next.1", "--yes"]), {
+    yes: true,
+    bootstrap: false,
+    tag: "v2.4.0-next.1",
+  });
+  assert.throws(() => parseOptions(["--tag"]), /requires a following value/);
+  assert.throws(() => parseOptions(["--tag", "--yes"]), /requires a following value/);
+});
+
+test("trusted publisher verification uses npm's structured response", () => {
+  assert.equal(
+    hasExpectedTrust({
+      id: "publisher-id",
+      type: "github",
+      file: "publish.yml",
+      repository: "schalkneethling/create-project-calavera",
+      environment: "publish",
+      permissions: ["createPackage"],
+    }),
+    true,
+  );
+  assert.equal(
+    hasExpectedTrust({
+      type: "github",
+      file: "publish.yml",
+      repository: "schalkneethling/create-project-calavera",
+      environment: "publish",
+      permissions: ["createStagedPackage"],
+    }),
+    false,
+  );
+});
+
+test("release workflow polling waits asynchronously within a configurable budget", async () => {
+  let polls = 0;
+  const delays = [];
+  const run = await waitForRun("v2.4.0-next.1", "abc123", {
+    pollIntervalMs: 20,
+    timeoutMs: 60,
+    getRuns() {
+      polls += 1;
+      return polls === 2
+        ? [{ headSha: "abc123", headBranch: "v2.4.0-next.1", databaseId: 42 }]
+        : [];
+    },
+    async delay(milliseconds) {
+      delays.push(milliseconds);
+    },
+  });
+  assert.equal(run.databaseId, 42);
+  assert.deepEqual(delays, [20]);
+
+  await assert.rejects(
+    waitForRun("missing", "abc123", {
+      pollIntervalMs: 20,
+      timeoutMs: 40,
+      getRuns: () => [],
+      delay: async () => {},
+    }),
+    /No publish\.yml run appeared/,
+  );
 });
 
 test("Changesets status distinguishes pending bumps from NO-package summaries", () => {
@@ -205,6 +273,7 @@ test("version generation formats one-item prerelease state deterministically", a
     2,
   )}\n`;
   await writeFile(join(directory, "apps", "private", "package.json"), privateManifest);
+  await writeFile(join(directory, "tracked-notes.json"), '{ "before": true }\n');
 
   execFileSync("git", ["init", "-b", "main"], { cwd: directory });
   execFileSync("git", ["add", "."], { cwd: directory });
@@ -224,6 +293,11 @@ test("version generation formats one-item prerelease state deterministically", a
     { cwd: directory },
   );
 
+  const preexistingTrackedChange = '{"tracked" : "leave unchanged"}\n';
+  const preexistingUntrackedChange = '{"untracked" : "leave unchanged"}\n';
+  await writeFile(join(directory, "tracked-notes.json"), preexistingTrackedChange);
+  await writeFile(join(directory, "untracked-notes.json"), preexistingUntrackedChange);
+
   const options = {
     rootDir: directory,
     changesetBin: join(root, "node_modules", ".bin", "changeset"),
@@ -240,6 +314,14 @@ test("version generation formats one-item prerelease state deterministically", a
   assert.equal(
     await readFile(join(directory, "apps", "private", "package.json"), "utf8"),
     privateManifest,
+  );
+  assert.equal(
+    await readFile(join(directory, "tracked-notes.json"), "utf8"),
+    preexistingTrackedChange,
+  );
+  assert.equal(
+    await readFile(join(directory, "untracked-notes.json"), "utf8"),
+    preexistingUntrackedChange,
   );
 
   versionPackages(options);

@@ -1,5 +1,5 @@
 import { execFileSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { extname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -21,18 +21,30 @@ function captureGitPaths(rootDir, args) {
   return output.split("\n").filter(Boolean);
 }
 
+function capturePendingPaths(rootDir) {
+  return [
+    ...captureGitPaths(rootDir, ["diff", "--name-only", "--diff-filter=ACMR"]),
+    ...captureGitPaths(rootDir, ["ls-files", "--others", "--exclude-standard"]),
+  ];
+}
+
 export function versionPackages(options = {}) {
   const rootDir = options.rootDir ?? root;
   const changesetBin = options.changesetBin ?? join(root, "node_modules", ".bin", "changeset");
   const formatterBin = options.formatterBin ?? join(root, "node_modules", ".bin", "oxfmt");
 
+  const pathsBeforeVersioning = new Map(
+    capturePendingPaths(rootDir).map((path) => [path, readFileSync(join(rootDir, path))]),
+  );
   execFileSync(changesetBin, ["version"], { cwd: rootDir, stdio: "inherit" });
 
-  const changedPaths = [
-    ...captureGitPaths(rootDir, ["diff", "--name-only", "--diff-filter=ACMR"]),
-    ...captureGitPaths(rootDir, ["ls-files", "--others", "--exclude-standard"]),
-  ];
-  const formatPaths = generatedFormatPaths(changedPaths).filter((path) =>
+  const generatedPaths = capturePendingPaths(rootDir).filter((path) => {
+    const previousContents = pathsBeforeVersioning.get(path);
+    return (
+      previousContents === undefined || !previousContents.equals(readFileSync(join(rootDir, path)))
+    );
+  });
+  const formatPaths = generatedFormatPaths(generatedPaths).filter((path) =>
     existsSync(join(rootDir, path)),
   );
 

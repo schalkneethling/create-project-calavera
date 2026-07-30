@@ -282,18 +282,25 @@ function fledglingArgs(packageNames, dryRun) {
   ];
 }
 
+export function hasExpectedTrust(response) {
+  const entries = Array.isArray(response) ? response : [response];
+  return entries.some(
+    (entry) =>
+      entry?.type === "github" &&
+      entry.file === workflow &&
+      entry.repository === repository &&
+      entry.environment === publishEnvironment &&
+      Array.isArray(entry.permissions) &&
+      entry.permissions.includes("createPackage"),
+  );
+}
+
 function verifyTrust(packageName) {
-  const trust = capture("npm", ["trust", "list", packageName]);
-  for (const expected of [
-    "type: github",
-    `file: ${workflow}`,
-    `repository: ${repository}`,
-    `environment: ${publishEnvironment}`,
-    "permissions: publish",
-  ]) {
-    if (!trust.includes(expected)) {
-      throw new ReleaseError(`Trusted publisher for ${packageName} is missing ${expected}.`);
-    }
+  const response = captureJson("npm", ["trust", "list", packageName, "--json"]);
+  if (!hasExpectedTrust(response)) {
+    throw new ReleaseError(
+      `Trusted publisher for ${packageName} does not match the required GitHub workflow, repository, environment, and publish permission.`,
+    );
   }
 }
 
@@ -312,7 +319,7 @@ async function bootstrapNewPackages(plan, options) {
       `New package names require a reviewed bootstrap. Re-run pnpm release:prepare -- --bootstrap after reviewing the Fledgling plan.`,
     );
   }
-  if (newPackages.some(({ version }) => version.includes("-"))) {
+  if (newPackages.some(({ version }) => semver.prerelease(version) !== null)) {
     throw new ReleaseError(
       "Bootstrap new package names before prerelease versioning so a real stable initial version can replace npm's mandatory latest placeholder.",
     );
@@ -348,7 +355,7 @@ async function bootstrapNewPackages(plan, options) {
   }
 
   run("gh", ["release", "edit", tag, "--repo", repository, "--draft=false", "--prerelease=true"]);
-  const workflowRun = waitForRun(tag, plan.sha);
+  const workflowRun = await waitForRun(tag, plan.sha);
   console.info(`Watching bootstrap publication ${workflowRun.url}`);
   run("gh", [
     "run",
@@ -467,25 +474,41 @@ export function packagesFromReleaseNotes(plan, body) {
     .map((pkg) => ({ ...pkg, published: false }));
 }
 
-function waitForRun(tag, sha) {
-  for (let attempt = 0; attempt < 24; attempt += 1) {
-    const runs = captureJson("gh", [
-      "run",
-      "list",
-      "--repo",
-      repository,
-      "--workflow",
-      workflow,
-      "--event",
-      "release",
-      "--limit",
-      "20",
-      "--json",
-      "databaseId,headSha,headBranch,status,conclusion,url",
-    ]);
+function listWorkflowRuns() {
+  return captureJson("gh", [
+    "run",
+    "list",
+    "--repo",
+    repository,
+    "--workflow",
+    workflow,
+    "--event",
+    "release",
+    "--limit",
+    "20",
+    "--json",
+    "databaseId,headSha,headBranch,status,conclusion,url",
+  ]);
+}
+
+function delay(milliseconds) {
+  return new Promise((resolveDelay) => {
+    setTimeout(resolveDelay, milliseconds);
+  });
+}
+
+export async function waitForRun(tag, sha, options = {}) {
+  const pollIntervalMs = options.pollIntervalMs ?? 5000;
+  const timeoutMs = options.timeoutMs ?? 300000;
+  const attempts = Math.max(1, Math.ceil(timeoutMs / pollIntervalMs));
+  const getRuns = options.getRuns ?? listWorkflowRuns;
+  const wait = options.delay ?? delay;
+
+  for (let attempt = 0; attempt < attempts; attempt += 1) {
+    const runs = getRuns();
     const selected = runs.find((run) => run.headSha === sha && run.headBranch === tag);
     if (selected) return selected;
-    Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 5000);
+    if (attempt < attempts - 1) await wait(pollIntervalMs);
   }
   throw new ReleaseError(`No ${workflow} run appeared for ${tag} at ${sha}.`);
 }
@@ -625,7 +648,7 @@ export async function publishRelease(options = {}) {
         releasedIdentities.has(`${pkg.name}@${pkg.version}`) ? { ...pkg, published: false } : pkg,
       ),
     };
-    const workflowRun = waitForRun(tag, plan.sha);
+    const workflowRun = await waitForRun(tag, plan.sha);
     verifyPublishedPackages(verificationPlan, workflowRun.databaseId);
     await smokePublishedArtifacts(verificationPlan);
     console.info(`Release ${tag} and its package inventory are already published and verified.`);
@@ -644,7 +667,7 @@ export async function publishRelease(options = {}) {
     ...(prerelease ? ["--prerelease=true"] : ["--latest"]),
   ]);
 
-  const workflowRun = waitForRun(tag, plan.sha);
+  const workflowRun = await waitForRun(tag, plan.sha);
   console.info(`Watching ${workflowRun.url}`);
   run("gh", [
     "run",
@@ -662,13 +685,19 @@ export async function publishRelease(options = {}) {
   console.info(`Release ${tag} is published and verified.`);
 }
 
-function parseOptions(args) {
+export function parseOptions(args) {
   const options = {
     yes: args.includes("--yes"),
     bootstrap: args.includes("--bootstrap"),
   };
   const tagIndex = args.indexOf("--tag");
-  if (tagIndex !== -1) options.tag = args[tagIndex + 1];
+  if (tagIndex !== -1) {
+    const tag = args[tagIndex + 1];
+    if (!tag || tag.startsWith("--")) {
+      throw new ReleaseError("--tag requires a following value.");
+    }
+    options.tag = tag;
+  }
   return options;
 }
 
@@ -684,7 +713,7 @@ export async function main(args = process.argv.slice(2)) {
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
+    process.stderr.write(`${error instanceof Error ? error.message : error}\n`);
     process.exitCode = 1;
   });
 }
