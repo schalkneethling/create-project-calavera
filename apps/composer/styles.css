@@ -24,6 +24,8 @@
   --marigold: #f5c85b;
   --outline: #26324d;
   --muted: #6c594e;
+  --border-radius-default: 0.5rem;
+  --space-xxs: 0.25rem;
   --space-xs: 0.5rem;
   --space-sm: 0.625rem;
   --space-md: 0.75rem;
@@ -79,7 +81,8 @@ select {
   background: rgb(47 129 112 / 9%);
   border-inline-start: 0.25rem solid var(--teal);
   margin-block-start: var(--space-xl);
-  padding: var(--space-lg) var(--space-xl);
+  padding-block: var(--space-lg);
+  padding-inline: var(--space-xl);
 }
 
 .integration-options h2,
@@ -122,7 +125,7 @@ a:hover {
 .webmcp-banner {
   background: rgb(255 250 240 / 76%);
   border: 0.0625rem solid rgb(47 129 112 / 42%);
-  border-radius: 0.5rem;
+  border-radius: var(--border-radius-default);
   color: var(--teal-deep);
   font-size: 0.9rem;
   font-weight: 700;
@@ -182,7 +185,7 @@ h1 {
 .panel {
   background: linear-gradient(135deg, rgb(255 255 255 / 72%), rgb(255 244 216 / 86%)), var(--paper);
   border: 0.125rem solid var(--outline);
-  border-radius: 0.5rem;
+  border-radius: var(--border-radius-default);
   box-shadow: 0.5rem 0.5rem 0 rgb(22 25 47 / 14%);
   min-inline-size: 0;
   padding: var(--space-2xl);
@@ -201,7 +204,7 @@ fieldset {
   color: var(--muted);
   font-size: 0.9rem;
   line-height: 1.5;
-  margin-block: -0.25rem var(--space-md);
+  margin-block: calc(var(--space-xxs) * -1) var(--space-md);
   margin-inline: 0;
 }
 
@@ -260,7 +263,7 @@ select:focus-visible {
   font-size: 0.84rem;
   font-weight: 700;
   margin-block-start: var(--space-xs);
-  padding-inline-start: 1.35rem;
+  padding-inline-start: var(--space-2xl);
 }
 
 .artifact-target input {
@@ -270,7 +273,7 @@ select:focus-visible {
   color: var(--ink);
   display: block;
   inline-size: 100%;
-  margin-block-start: 0.25rem;
+  margin-block-start: var(--space-xxs);
   padding-block: 0.45rem;
   padding-inline: 0.55rem;
 }
@@ -289,7 +292,7 @@ select:focus-visible {
 .integration-group {
   background: rgb(255 250 240 / 72%);
   border: 0.0625rem solid rgb(38 50 77 / 28%);
-  border-radius: 0.5rem;
+  border-radius: var(--border-radius-default);
   min-inline-size: 0;
   padding: var(--space-lg);
 }
@@ -416,7 +419,7 @@ code {
 
 pre {
   background: linear-gradient(180deg, rgb(232 93 81 / 8%), transparent 34%), var(--ink);
-  border-radius: 0.5rem;
+  border-radius: var(--border-radius-default);
   box-shadow: inset 0 0 0 0.0625rem rgb(245 200 91 / 20%);
   color: #fff4d8;
   margin-block: 0;
