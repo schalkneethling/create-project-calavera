@@ -12,6 +12,12 @@ First-party packages use these names:
 
 Artifact IDs retain their existing `skill-`, `hook-`, or `agent-` prefix. IDs are stable recipe and catalog identifiers; npm package names are distribution identifiers. The catalog maps IDs and legacy `src/ai` paths to package names.
 
+## Dependency isolation
+
+The artifact catalog contains only identity, routing, target, and compatibility metadata. Neither `create-project-calavera` nor `@schalkneethling/calavera-artifact-core` declares independently versioned artifact packages as runtime dependencies. They therefore do not appear transitively in a consumer's `package.json`, dependency lockfile, or `node_modules` through a Calavera CLI installation.
+
+Artifact packages enter the project only through the explicit artifact lifecycle and are extracted into `.calavera`. Install and update may resolve from npm; ordinary apply only reuses or restores an exact locked version offline. The small Calavera guidance payload used by `--init` is owned by the CLI package so bootstrap remains offline; a contract test keeps that copy identical to the versioned source artifact.
+
 Each manifest declares:
 
 - schema version and stable artifact ID;

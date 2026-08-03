@@ -1,10 +1,13 @@
 import assert from "node:assert/strict";
-import { readFile, stat } from "node:fs/promises";
+import { readFile, readdir, stat } from "node:fs/promises";
+import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import Ajv2020 from "ajv/dist/2020.js";
 import { artifactCatalog } from "@schalkneethling/calavera-artifact-core";
-import { artifactPayloadPath } from "@schalkneethling/calavera-artifact-core/node";
+
+const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.meta.url));
 
 async function readProjectJson(path) {
   return JSON.parse(await readFile(new URL(`../${path}`, import.meta.url), "utf8"));
@@ -67,27 +70,74 @@ test("every first-party artifact package has a valid manifest and payload", asyn
   const validate = ajv.compile(manifestSchema);
   const ids = new Set();
   const packageNames = new Set();
+  const packageDirectories = await readdir(artifactPackagesRoot, { withFileTypes: true });
+
+  assert.deepEqual(
+    packageDirectories
+      .filter((entry) => entry.isDirectory())
+      .map(({ name }) => name)
+      .sort(),
+    artifactCatalog.map(({ id }) => id).sort(),
+  );
 
   for (const artifact of artifactCatalog) {
-    const { packageName, version, legacyPath, group, defaultTarget, ...manifest } = artifact;
+    const packageRoot = join(artifactPackagesRoot, artifact.id);
+    const manifest = JSON.parse(
+      await readFile(join(packageRoot, "calavera-artifact.json"), "utf8"),
+    );
+    const packageMetadata = JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8"));
     assertValid(validate, manifest);
+    assert.deepEqual(artifact, {
+      ...manifest,
+      packageName: packageMetadata.name,
+      legacyPath: `${artifact.type}s/${artifact.id.slice(artifact.type.length + 1)}${artifact.type === "agent" ? ".md" : ""}`,
+      group: artifact.type === "skill" ? "Skills" : artifact.type === "hook" ? "Hooks" : "Agents",
+      defaultTarget: artifact.type === "skill" ? undefined : "claude-code",
+    });
     assert.equal(ids.has(artifact.id), false, `Duplicate artifact ID: ${artifact.id}`);
     assert.equal(
-      packageNames.has(packageName),
+      packageNames.has(artifact.packageName),
       false,
-      `Duplicate artifact package: ${packageName}`,
+      `Duplicate artifact package: ${artifact.packageName}`,
     );
-    assert.match(packageName, new RegExp(`^@schalkneethling/calavera-${artifact.type}-`));
+    assert.match(artifact.packageName, new RegExp(`^@schalkneethling/calavera-${artifact.type}-`));
     assert.equal(
-      (await stat(artifactPayloadPath(artifact.id))).isDirectory(),
+      (await stat(join(packageRoot, artifact.payload))).isDirectory(),
       artifact.type !== "agent",
     );
     ids.add(artifact.id);
-    assert.equal(typeof legacyPath, "string");
-    assert.match(version, /^\d+\.\d+\.\d+/);
-    assert.equal(typeof group, "string");
-    assert.equal(defaultTarget, artifact.type === "skill" ? undefined : "claude-code");
-    packageNames.add(packageName);
+    assert.equal(typeof artifact.legacyPath, "string");
+    assert.equal(typeof artifact.group, "string");
+    assert.equal(artifact.defaultTarget, artifact.type === "skill" ? undefined : "claude-code");
+    packageNames.add(artifact.packageName);
+  }
+});
+
+test("published CLI packages do not depend on independently versioned artifacts", async () => {
+  const packageMetadata = await Promise.all([
+    readProjectJson("package.json"),
+    readProjectJson("../artifact-core/package.json"),
+  ]);
+
+  for (const metadata of packageMetadata) {
+    const dependencies = Object.keys(metadata.dependencies ?? {});
+    assert.equal(
+      dependencies.some((name) => /^@schalkneethling\/calavera-(?:skill|hook|agent)-/.test(name)),
+      false,
+      `${metadata.name} must resolve artifacts only during explicit lifecycle operations`,
+    );
+  }
+});
+
+test("the CLI-owned bootstrap skill matches the versioned Calavera artifact", async () => {
+  const sourceRoot = join(artifactPackagesRoot, "skill-calavera", "payload", "calavera");
+  const bootstrapRoot = fileURLToPath(new URL("../src/bootstrap/calavera/", import.meta.url));
+
+  for (const path of ["SKILL.md", join("agents", "openai.yaml")]) {
+    assert.equal(
+      await readFile(join(bootstrapRoot, path), "utf8"),
+      await readFile(join(sourceRoot, path), "utf8"),
+    );
   }
 });
 

@@ -29,6 +29,7 @@ async function packFixture(directory, packageRoot = projectGoalPackageRoot) {
   return {
     path,
     tarball,
+    version: JSON.parse(await readFile(join(packageRoot, "package.json"), "utf8")).version,
     integrity: `sha512-${createHash("sha512").update(tarball).digest("base64")}`,
   };
 }
@@ -40,7 +41,7 @@ test("verified extraction checks package identity, manifest compatibility, and p
     {
       artifact,
       packageName: artifact.packageName,
-      version: artifact.version,
+      version: packed.version,
       resolved: packed.path,
       integrity: packed.integrity,
       tag: "latest",
@@ -59,7 +60,7 @@ test("verified extraction checks package identity, manifest compatibility, and p
         {
           artifact,
           packageName: artifact.packageName,
-          version: artifact.version,
+          version: packed.version,
           resolved: packed.path,
           integrity: packed.integrity,
           tag: "latest",
@@ -85,7 +86,7 @@ test("verified extraction rejects a tarball that fails npm integrity", async () 
         {
           artifact,
           packageName: artifact.packageName,
-          version: artifact.version,
+          version: packed.version,
           resolved: tarballPath,
           integrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
           tag: "latest",
@@ -111,7 +112,7 @@ test("prerelease CLIs accept compatible stable-line and prerelease artifacts", a
       {
         artifact: selectedArtifact,
         packageName: selectedArtifact.packageName,
-        version: selectedArtifact.version,
+        version: packed.version,
         resolved: packed.path,
         integrity: packed.integrity,
         tag: "next",
@@ -137,7 +138,7 @@ test("prerelease CLIs below an artifact minimum remain incompatible", async () =
         {
           artifact: selectedArtifact,
           packageName: selectedArtifact.packageName,
-          version: selectedArtifact.version,
+          version: packed.version,
           resolved: packed.path,
           integrity: packed.integrity,
           tag: "next",

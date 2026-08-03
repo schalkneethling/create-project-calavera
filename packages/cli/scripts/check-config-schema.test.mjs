@@ -21,11 +21,44 @@ import { promisify } from "node:util";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
-import { artifactPayloadPath } from "@schalkneethling/calavera-artifact-core/node";
+import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
 import Ajv2020 from "ajv/dist/2020.js";
 import { HtmlValidate } from "html-validate";
 import packageJson from "../package.json" with { type: "json" };
 import * as prettier from "prettier";
+
+const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.meta.url));
+
+function artifactFixturePayloadPath(id) {
+  const artifact = artifactForId(id);
+  assert.ok(artifact, `Unknown artifact fixture: ${id}`);
+  return join(artifactPackagesRoot, id, artifact.payload);
+}
+
+async function lockArtifactFixtures(ids) {
+  const artifacts = [];
+
+  for (const id of ids) {
+    const artifact = artifactForId(id);
+    assert.ok(artifact, `Unknown artifact fixture: ${id}`);
+    const version = "0.0.0-test";
+    const payloadPath = join(".calavera", "packages", id, version, artifact.payload);
+    await mkdir(dirname(payloadPath), { recursive: true });
+    await cp(artifactFixturePayloadPath(id), payloadPath, { recursive: true });
+    artifacts.push({
+      id,
+      version,
+      tag: "latest",
+      payloadHash: await hashArtifactPayload(payloadPath),
+    });
+  }
+
+  await mkdir(".calavera", { recursive: true });
+  await writeFile(
+    ".calavera/artifacts.lock.json",
+    `${JSON.stringify({ schemaVersion: 1, artifacts }, null, 2)}\n`,
+  );
+}
 
 import {
   buildAiApplyResult,
@@ -234,7 +267,7 @@ test("AI artifact catalog exposes unique complete recipe items", async () => {
   const ids = new Set();
 
   for (const artifact of aiArtifactCatalog) {
-    const sourceStats = await stat(artifactPayloadPath(artifact.id));
+    const sourceStats = await stat(artifactFixturePayloadPath(artifact.id));
 
     assert.equal(typeof artifact.id, "string");
     assert.equal(typeof artifact.label, "string");
@@ -268,7 +301,7 @@ test("bundled skills expose complete OpenAI interface metadata", async () => {
 
   for (const artifact of skillArtifacts) {
     const skillName = artifact.src.replace(/^skills\//, "");
-    const payloadPath = artifactPayloadPath(artifact.id);
+    const payloadPath = artifactFixturePayloadPath(artifact.id);
     const skill = await readFile(join(payloadPath, "SKILL.md"), "utf8");
     const metadata = await readFile(join(payloadPath, "agents/openai.yaml"), "utf8");
     const declaredSkillName = skill.match(/^name: ([a-z0-9-]+)$/m)?.[1];
@@ -904,7 +937,9 @@ test("artifact install locks exact versions and targeted update preserves other 
       const payload = `payload/${slug}`;
       const payloadPath = join(destination, payload);
       await mkdir(dirname(payloadPath), { recursive: true });
-      await cp(artifactPayloadPath(resolution.artifact.id), payloadPath, { recursive: true });
+      await cp(artifactFixturePayloadPath(resolution.artifact.id), payloadPath, {
+        recursive: true,
+      });
       return {
         manifest: { type: "skill", payload },
         payloadPath,
@@ -989,7 +1024,7 @@ test("artifact status includes both managed hook outputs", async () => {
     extract: async (_resolution, destination) => {
       const payloadPath = join(destination, "payload", "auto-approve-safe-commands");
       await mkdir(dirname(payloadPath), { recursive: true });
-      await cp(artifactPayloadPath(artifact.id), payloadPath, { recursive: true });
+      await cp(artifactFixturePayloadPath(artifact.id), payloadPath, { recursive: true });
       return {
         manifest: { type: "hook", payload: "payload/auto-approve-safe-commands" },
         payloadPath,
@@ -1295,26 +1330,35 @@ test("standard MCP compose_recipe returns structured schema-valid content", asyn
 });
 
 test("standard MCP validation and dry-run tools return agent-readable JSON", async () => {
+  const originalDirectory = process.cwd();
+  await using projectDirectory = await mkdtempDisposable(join(tmpdir(), "calavera-mcp-dry-run-"));
   const recipe = composeRecipe({
     profile: "minimal",
     packageManager: "npm",
     aiArtifacts: [{ id: "skill-frontend-engineering" }],
   });
   recipe.ai = [{ type: "skill", src: "skills/frontend-engineering" }];
-  const validation = await callMcpTool("validate_recipe", { recipe });
-  const dryRun = await callMcpTool("dry_run_apply", { recipe });
+  process.chdir(projectDirectory.path);
 
-  assert.equal(validation.ok, true);
-  assert.match(dryRun.approvalBoundary, /before calling apply_recipe/);
-  assert.equal(dryRun.result.dryRun, true);
-  assert.equal(
-    dryRun.result.changes.some(({ path }) => path === "calavera.config.json"),
-    true,
-  );
-  assert.equal(
-    dryRun.result.changes.some(({ path }) => path === ".agents/skills/frontend-engineering"),
-    true,
-  );
+  try {
+    await lockArtifactFixtures(["skill-frontend-engineering"]);
+    const validation = await callMcpTool("validate_recipe", { recipe });
+    const dryRun = await callMcpTool("dry_run_apply", { recipe });
+
+    assert.equal(validation.ok, true);
+    assert.match(dryRun.approvalBoundary, /before calling apply_recipe/);
+    assert.equal(dryRun.result.dryRun, true);
+    assert.equal(
+      dryRun.result.changes.some(({ path }) => path === "calavera.config.json"),
+      true,
+    );
+    assert.equal(
+      dryRun.result.changes.some(({ path }) => path === ".agents/skills/frontend-engineering"),
+      true,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
 });
 
 test("Baseline MCP tools expose the same recommendation contract as Baseline core", async () => {
@@ -3155,6 +3199,7 @@ test("hook apply plans both outputs and protects an unowned settings sidecar", a
   try {
     process.chdir(projectDirectory);
     await writeFile("package.json", JSON.stringify({ scripts: {} }));
+    await lockArtifactFixtures(["hook-auto-approve-safe-commands"]);
     const dryRun = await applyRecipeObject(recipe, {
       dryRun: true,
       json: true,
@@ -3234,6 +3279,7 @@ test("MCP AI-only apply preserves existing managed tooling state", async () => {
   try {
     process.chdir(projectDirectory);
     await mkdir(".calavera");
+    await lockArtifactFixtures(["skill-frontend-engineering"]);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     await writeFile("oxlint.json", oxlintConfig);
     await writeFile(
@@ -3286,6 +3332,7 @@ test("skill apply adds CodeRabbit exclusions across dry-run, MCP, and apply", as
   try {
     process.chdir(projectDirectory);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await lockArtifactFixtures(["skill-frontend-engineering"]);
 
     const dryRun = await applyRecipeObject(recipe, {
       dryRun: true,
@@ -3346,6 +3393,7 @@ test("skill apply preserves existing CodeRabbit settings and path filters", asyn
   try {
     process.chdir(projectDirectory);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await lockArtifactFixtures(["skill-frontend-engineering"]);
     await writeFile(
       ".coderabbit.yaml",
       'language: en-US\nreviews:\n  profile: chill\n  path_filters:\n    - "src/**"\n',
@@ -3385,6 +3433,7 @@ test("skill apply rejects incompatible CodeRabbit configuration before writing s
   try {
     process.chdir(projectDirectory);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await lockArtifactFixtures(["skill-frontend-engineering"]);
     await writeFile(".coderabbit.yaml", "reviews: []\n");
 
     await assert.rejects(
@@ -3411,6 +3460,7 @@ test("non-skill AI artifacts do not add CodeRabbit configuration", async () => {
   try {
     process.chdir(projectDirectory);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await lockArtifactFixtures(["hook-auto-approve-safe-commands"]);
     const result = await applyRecipeObject(
       buildRecipe("minimal", [], "npm", [
         { type: "hook", src: "hooks/auto-approve-safe-commands" },
@@ -3562,7 +3612,10 @@ test("persisted state rejects absolute and parent-relative managed paths", () =>
 });
 
 test("Codex agent adapter emits required TOML fields without Claude model metadata", async () => {
-  const source = await readFile(artifactPayloadPath("agent-technical-devils-advocate"), "utf8");
+  const source = await readFile(
+    artifactFixturePayloadPath("agent-technical-devils-advocate"),
+    "utf8",
+  );
   const toml = createCodexAgentToml(source);
 
   assert.match(toml, /^name = "technical-devils-advocate"$/m);
@@ -3574,7 +3627,8 @@ test("Codex agent adapter emits required TOML fields without Claude model metada
 
 test("Claude Code agent adapter preserves the read-only allowlist and payload hash", async () => {
   const originalDirectory = process.cwd();
-  const source = await readFile(artifactPayloadPath("agent-technical-devils-advocate"), "utf8");
+  const sourcePath = artifactFixturePayloadPath("agent-technical-devils-advocate");
+  const source = await readFile(sourcePath, "utf8");
   await using projectDirectory = await mkdtempDisposable(join(tmpdir(), "calavera-claude-agent-"));
 
   try {
@@ -3591,6 +3645,7 @@ test("Claude Code agent adapter preserves the read-only allowlist and payload ha
       },
       { dryRun: false },
       createEmptyState(),
+      new Map([["agent-technical-devils-advocate", sourcePath]]),
     );
     const installed = await readFile(
       ".agents/agents/claude-code/technical-devils-advocate.md",
@@ -3609,12 +3664,14 @@ test("Claude Code agent adapter preserves the read-only allowlist and payload ha
 });
 
 test("Codex-targeted agent recipes resolve to .codex custom-agent TOML", async () => {
+  const sourcePath = artifactFixturePayloadPath("agent-technical-devils-advocate");
   const result = await buildAiApplyResult(
     {
       ai: [{ type: "agent", src: "agents/technical-devils-advocate.md", target: "codex" }],
     },
     { dryRun: true },
     createEmptyState(),
+    new Map([["agent-technical-devils-advocate", sourcePath]]),
   );
 
   assert.deepEqual(result.changes, [
