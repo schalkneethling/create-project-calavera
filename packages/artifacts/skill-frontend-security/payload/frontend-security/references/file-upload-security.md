@@ -240,9 +240,10 @@ Destroy potential malicious content by re-encoding images:
 
 ```javascript
 const sharp = require("sharp");
+const MAX_IMAGE_PIXELS = 40_000_000; // Set from the product's accepted dimensions and memory budget.
 
 async function sanitizeImage(inputPath, outputPath) {
-  await sharp(inputPath)
+  await sharp(inputPath, { limitInputPixels: MAX_IMAGE_PIXELS })
     .rotate() // Apply EXIF orientation
     .toFormat("jpeg", { quality: 90 }) // Re-encode without preserving metadata
     .toFile(outputPath);
@@ -589,6 +590,7 @@ const app = express();
 const UPLOAD_DIR = "/var/app/uploads";
 const QUARANTINE_DIR = "/var/app/quarantine";
 const MAX_FILE_SIZE = 5 * 1024 * 1024;
+const MAX_IMAGE_PIXELS = 40_000_000; // Set from accepted dimensions and the memory budget.
 const ALLOWED_TYPES = ["image/jpeg", "image/png", "image/gif"];
 
 // Multer setup
@@ -628,7 +630,10 @@ app.post(
       const quarantinePath = path.join(QUARANTINE_DIR, quarantinedName);
 
       // Re-encode images before scanning and release.
-      const output = await sharp(file.buffer).rotate().toFormat("jpeg", { quality: 90 }).toBuffer();
+      const output = await sharp(file.buffer, { limitInputPixels: MAX_IMAGE_PIXELS })
+        .rotate()
+        .toFormat("jpeg", { quality: 90 })
+        .toBuffer();
       await fs.writeFile(quarantinePath, output, { mode: 0o600 });
 
       let fileRecord;

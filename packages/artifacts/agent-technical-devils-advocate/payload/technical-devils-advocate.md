@@ -1,6 +1,7 @@
 ---
 name: technical-devils-advocate
-model: claude-4.6-opus-high-thinking
+model: opus
+effort: high
 description: Technical devil's advocate that challenges feature plans, strategies, and implementation approaches. Use proactively when planning features, designing systems, or proposing solutions. ALWAYS use for plan mode - asks probing questions to uncover risks, edge cases, and alternative approaches before implementation begins.
 ---
 

@@ -87,7 +87,7 @@ Visual styling and semantic meaning are related but not coupled. CSS classes bri
 
 ### Skip Navigation Links
 
-Skip links let keyboard and screen reader users bypass repeated navigation blocks and jump directly to meaningful content. They are required on any page with a navigation block or other repeated content before the main content.
+Skip links are the recommended default for letting keyboard users bypass repeated navigation and jump directly to meaningful content. WCAG 2.4.1 requires a bypass mechanism for repeated blocks; depending on the page structure, suitable headings, landmarks, or another mechanism may also satisfy that requirement.
 
 Place skip links as the **first focusable element** in `<body>`. They can be visually hidden and revealed on focus:
 
@@ -128,17 +128,17 @@ Place skip links as the **first focusable element** in `<body>`. They can be vis
 
 Use landmark elements to convey page structure:
 
-| Element   | Use When                     | Notes                                                                            |
-| --------- | ---------------------------- | -------------------------------------------------------------------------------- |
-| `header`  | Page or section header       | Can appear multiple times in different contexts                                  |
-| `footer`  | Page or section footer       | Contact info, copyright, related links                                           |
-| `nav`     | Navigation sections          | Must be labelled; avoid "navigation" in the label (screen readers announce this) |
-| `main`    | Primary content              | Only one per page; must contain the primary `<h1>`                               |
-| `aside`   | Tangentially related content | Content removable without changing the page's main story (sidebars, ads)         |
-| `search`  | Search functionality         | Contains the search form, not the results                                        |
-| `form`    | User input                   | Only becomes a landmark when labelled via `aria-labelledby` or `aria-label`      |
-| `article` | Self-contained content       | Would make sense syndicated or standalone                                        |
-| `section` | Thematic grouping            | Only becomes a landmark when labelled                                            |
+| Element   | Use When                     | Notes                                                                                                                                                                                                       |
+| --------- | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `header`  | Page or section header       | Can appear multiple times in different contexts                                                                                                                                                             |
+| `footer`  | Page or section footer       | Contact info, copyright, related links                                                                                                                                                                      |
+| `nav`     | Navigation sections          | One may be unnamed; give multiple landmarks names that distinguish their purpose. Identical repeated navigation may share a name. Avoid "navigation" in the label because screen readers announce the role. |
+| `main`    | Primary content              | Only one per page; must contain the primary `<h1>`                                                                                                                                                          |
+| `aside`   | Tangentially related content | Content removable without changing the page's main story (sidebars, ads)                                                                                                                                    |
+| `search`  | Search functionality         | Contains the search form, not the results                                                                                                                                                                   |
+| `form`    | User input                   | Only becomes a landmark when labelled via `aria-labelledby` or `aria-label`                                                                                                                                 |
+| `article` | Self-contained content       | Would make sense syndicated or standalone                                                                                                                                                                   |
+| `section` | Thematic grouping            | Only becomes a landmark when labelled                                                                                                                                                                       |
 
 #### `<main>` must contain the primary `<h1>`
 
@@ -251,27 +251,27 @@ Sometimes text looks like a heading but shouldn't be one semantically. Use CSS c
 
 ### When to Use Lists
 
-Lists are most useful when **knowing the number of items helps the user**:
+Use a list when sibling items have a semantic relationship that should remain clear without visual styling:
 
-- Navigation menus (how many options?)
-- Search results (how many matches?)
-- Image galleries (how many images?)
+- Navigation menus
+- Search results
+- Image galleries
 - Steps in a process
 
 **Questions to ask:**
 
 - Are these items genuinely peers?
-- Would removing one make the others feel incomplete?
-- Is there an implicit "here are N things" being communicated?
+- Does the order or ranking carry meaning?
+- Are these term-description pairs rather than peer items?
 
 ### List Types
 
-| Type   | Use When                                 | Example                               |
-| ------ | ---------------------------------------- | ------------------------------------- |
-| `ul`   | Unordered collection where count matters | Nav items, search results             |
-| `ol`   | Sequential steps or ranked items         | Recipes, instructions, top-10 lists   |
-| `dl`   | Term-description pairs                   | Glossaries, metadata, key-value pairs |
-| `menu` | Toolbar commands                         | Action buttons, not navigation        |
+| Type   | Use When                                       | Example                               |
+| ------ | ---------------------------------------------- | ------------------------------------- |
+| `ul`   | Related peer items without meaningful sequence | Nav items, search results             |
+| `ol`   | Items whose sequence or ranking matters        | Recipes, instructions, top-10 lists   |
+| `dl`   | Term-description pairs                         | Glossaries, metadata, key-value pairs |
+| `menu` | Toolbar commands                               | Action buttons, not navigation        |
 
 **Ordered list attributes:** Use `reversed` for countdown-style lists (e.g., a top 10 listed from 10 to 1). Use `start` to begin numbering from a specific value. Both are native HTML—no JavaScript required.
 
@@ -287,7 +287,7 @@ Note: A single `dt` can have multiple `dd` elements for multiple related descrip
 
 ### Decorative List Separators
 
-When using CSS `::before` or `::after` to inject visual separators (e.g., breadcrumb `›`), browsers automatically exclude generated content from the accessibility tree—no extra markup is required. Do **not** try to hide it with `aria-hidden: "true"` as a CSS property; that is invalid and has no effect. If injecting separators via HTML (not CSS), use `<span aria-hidden="true">` on the HTML element.
+Keep visual separators decorative. Prefer borders or other non-content styling because CSS-generated `::before` and `::after` content can be exposed inconsistently across browser and assistive-technology combinations. If generated content is necessary, test the supported combinations. Do **not** try to hide it with `aria-hidden: "true"` as a CSS property; that is invalid and has no effect. If injecting separators via HTML, use `<span aria-hidden="true">` on the element.
 
 ## Interactive Elements
 
@@ -410,20 +410,22 @@ Legends can be visually hidden while still providing accessible names.
 ```html
 <!-- Correct: all filter controls share a single search landmark -->
 <search aria-label="Filter employees">
-  <label for="q">Search</label>
-  <input type="search" id="q" name="q" />
+  <form action="/employees" method="get">
+    <label for="q">Search</label>
+    <input type="search" id="q" name="q" />
 
-  <label for="dept">Department</label>
-  <select id="dept" name="dept">
-    ...
-  </select>
+    <label for="dept">Department</label>
+    <select id="dept" name="dept">
+      ...
+    </select>
 
-  <label for="status">Status</label>
-  <select id="status" name="status">
-    ...
-  </select>
+    <label for="status">Status</label>
+    <select id="status" name="status">
+      ...
+    </select>
 
-  <button type="submit">Apply filters</button>
+    <button type="submit">Apply filters</button>
+  </form>
 </search>
 
 <!-- Wrong: only the text input is wrapped -->
@@ -531,7 +533,7 @@ In order of preference:
 2. **Horizontal scroll** — Preserves semantics but may challenge users with motor difficulties
 3. **Component duplication (cards on mobile)** — Last resort; maintain accessibility in both versions
 
-Note: Modern browsers (including Safari) no longer strip table semantics when applying `display: grid` or `display: flex`, opening new responsive possibilities.
+Keep the table's native display and put overflow on a wrapper. Changing table elements to `display: grid` or `display: flex` can remove native table semantics in some browser and assistive-technology combinations; rely on altered display semantics only after testing every supported combination.
 
 ## Code Review Checklist
 

@@ -40,18 +40,22 @@ export const CODE_RABBIT_CONFIG_PATH = ".coderabbit.yaml";
 const CODE_RABBIT_SKILL_FILTERS = Object.freeze([
   "!.claude/skills/**",
   "!.agents/skills/**",
+  "!.agents/agents/claude-code/**",
+  "!.calavera/packages/**",
   "!pnpm-lock.yaml",
 ]);
 const CODE_RABBIT_SKILL_CONFIG = `# CodeRabbit configuration — https://docs.coderabbit.ai/reference/yaml-template
 #
-# The .claude/skills and .agents/skills directories contain vendored AI-agent
-# skill documentation copied from upstream packages. Findings in those files
-# belong upstream, so excluding them keeps reviews focused on project code.
+# The skill, agent, and package directories below contain vendored AI-agent
+# artifacts copied from upstream packages. Findings in those files belong
+# upstream, so excluding them keeps reviews focused on project code.
 
 reviews:
   path_filters:
     - "!.claude/skills/**"
     - "!.agents/skills/**"
+    - "!.agents/agents/claude-code/**"
+    - "!.calavera/packages/**"
     - "!pnpm-lock.yaml"
 `;
 

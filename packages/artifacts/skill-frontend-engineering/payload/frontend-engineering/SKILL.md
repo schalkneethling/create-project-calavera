@@ -13,7 +13,7 @@ Use this skill as the entry point for frontend work. Start with the relevant imp
 - For CSS, Sass/Less, CSS modules, scoped styles, CSS-in-JS, layout, responsive behavior, motion, colors, focus states, or selectors, read `references/css-authoring.md` and `references/css-patterns.md`.
 - For forms, authentication, untrusted input, browser storage, URLs, HTML injection, API calls, uploads, or other security-sensitive browser flows, load the `frontend-security` skill.
 - For behavior changes, accessibility checks, visual changes, or regression coverage, load the `frontend-testing` skill.
-- For a new or foundational custom-property system, load the `css-tokens` skill.
+- For a new or foundational custom-property system, load the `css-tokens` skill when it is installed; otherwise define the required tokens locally with explicit fallback values.
 
 ## Working Principles
 

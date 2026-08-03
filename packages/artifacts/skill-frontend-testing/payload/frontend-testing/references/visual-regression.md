@@ -80,8 +80,8 @@ Visual tests fail due to timing, rendering, or environment differences. Stabiliz
 test("page renders after loading", async ({ page }) => {
   await page.goto("/");
 
-  // Wait for network to be idle
-  await page.waitForLoadState("networkidle");
+  // Wait for an application-specific readiness signal.
+  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 
   // Wait for web fonts to load
   await page.evaluate(() => document.fonts.ready);
@@ -323,11 +323,12 @@ permissions:
 
 jobs:
   visual-tests:
+    runs-on: ubuntu-latest
     permissions:
       contents: read
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4.2.2 - re-resolve before use
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 - re-resolve before use
         with:
           persist-credentials: false
 
@@ -347,17 +348,37 @@ jobs:
 For consistent baselines, generate in CI:
 
 ```yaml
+on:
+  workflow_dispatch:
+
 permissions:
   contents: read
 
 jobs:
+  visual-tests:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - name: Checkout
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 - re-resolve before use
+        with:
+          persist-credentials: false
+
+      - name: Run visual tests
+        run: npx playwright test --project=chromium
+
   update-baselines:
+    needs: visual-tests
+    if: github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
     permissions:
       contents: write
     steps:
       - name: Checkout
-        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v4.2.2 - re-resolve before use
+        uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2 - re-resolve before use
         with:
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
 
       - name: Update baselines
@@ -365,14 +386,16 @@ jobs:
 
       - name: Commit baselines
         env:
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GITHUB_TOKEN: ${{ github.token }}
         run: |
+          test "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH"
           git config user.name "CI Bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add "**/*.png"
+          git add '**/*.png'
           if ! git diff --cached --quiet; then
             git commit -m "Update visual baselines"
-            git -c http.https://github.com/.extraheader="AUTHORIZATION: bearer $GITHUB_TOKEN" push origin HEAD:refs/heads/${GITHUB_REF_NAME}
+            git -c http.https://github.com/.extraheader="AUTHORIZATION: bearer $GITHUB_TOKEN" push origin "HEAD:refs/heads/${DEFAULT_BRANCH}"
           fi
 ```
 
@@ -485,7 +508,7 @@ await expect(page).toHaveScreenshot();
 
 // GOOD: Wait for stable state
 await page.goto("/");
-await page.waitForLoadState("networkidle");
+await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
 await page.evaluate(() => document.fonts.ready);
 await expect(page).toHaveScreenshot();
 ```

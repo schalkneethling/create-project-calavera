@@ -3293,6 +3293,8 @@ test("skill apply adds CodeRabbit exclusions across dry-run, MCP, and apply", as
     assert.match(config, /vendored AI-agent/);
     assert.match(config, /- "!\.claude\/skills\/\*\*"/);
     assert.match(config, /- "!\.agents\/skills\/\*\*"/);
+    assert.match(config, /- "!\.agents\/agents\/claude-code\/\*\*"/);
+    assert.match(config, /- "!\.calavera\/packages\/\*\*"/);
     assert.match(config, /- "!pnpm-lock\.yaml"/);
 
     const repeatedApply = await applyRecipeObject(recipe, {
@@ -3340,6 +3342,8 @@ test("skill apply preserves existing CodeRabbit settings and path filters", asyn
     assert.match(config, /src\/\*\*/);
     assert.match(config, /!\.claude\/skills\/\*\*/);
     assert.match(config, /!\.agents\/skills\/\*\*/);
+    assert.match(config, /!\.agents\/agents\/claude-code\/\*\*/);
+    assert.match(config, /!\.calavera\/packages\/\*\*/);
     assert.match(config, /!pnpm-lock\.yaml/);
   } finally {
     process.chdir(originalDirectory);
