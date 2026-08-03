@@ -5,6 +5,7 @@ import {
   cp,
   mkdir,
   mkdtemp,
+  mkdtempDisposable,
   readFile,
   rm,
   stat,
@@ -3569,6 +3570,42 @@ test("Codex agent adapter emits required TOML fields without Claude model metada
   assert.match(toml, /^developer_instructions = "You are a technical devil's advocate/m);
   assert.doesNotMatch(toml, /^model = /m);
   assert.doesNotMatch(toml, /claude-4\.6-opus-high-thinking/);
+});
+
+test("Claude Code agent adapter preserves the read-only allowlist and payload hash", async () => {
+  const originalDirectory = process.cwd();
+  const source = await readFile(artifactPayloadPath("agent-technical-devils-advocate"), "utf8");
+  await using projectDirectory = await mkdtempDisposable(join(tmpdir(), "calavera-claude-agent-"));
+
+  try {
+    process.chdir(projectDirectory.path);
+    const result = await buildAiApplyResult(
+      {
+        ai: [
+          {
+            type: "agent",
+            src: "agents/technical-devils-advocate.md",
+            target: "claude-code",
+          },
+        ],
+      },
+      { dryRun: false },
+      createEmptyState(),
+    );
+    const installed = await readFile(
+      ".agents/agents/claude-code/technical-devils-advocate.md",
+      "utf8",
+    );
+
+    assert.equal(installed, source);
+    assert.match(installed, /^model: opus$/m);
+    assert.match(installed, /^permissionMode: plan$/m);
+    assert.match(installed, /^tools: Read, Glob, Grep$/m);
+    assert.doesNotMatch(installed, /^tools:.*(?:Write|Edit|Bash)/m);
+    assert.equal(result.artifacts[0].hash, textHash(source));
+  } finally {
+    process.chdir(originalDirectory);
+  }
 });
 
 test("Codex-targeted agent recipes resolve to .codex custom-agent TOML", async () => {
