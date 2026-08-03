@@ -7,7 +7,6 @@ export const aiArtifactCatalog = artifactCatalog.map((artifact) => ({
   type: artifact.type,
   src: artifact.legacyPath,
   packageName: artifact.packageName,
-  version: artifact.version,
   compatibility: artifact.compatibility,
   payload: artifact.payload,
   targets: artifact.targets,

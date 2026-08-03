@@ -70,7 +70,10 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
   const packageSelections = Array.isArray(recipe.ai)
     ? recipe.ai.filter(
         (/** @type {unknown} */ item) =>
-          item && typeof item === "object" && !Array.isArray(item) && "id" in item,
+          item &&
+          typeof item === "object" &&
+          !Array.isArray(item) &&
+          ("id" in item || "src" in item),
       )
     : [];
   if (packageSelections.length === 0) return new Map();
@@ -362,7 +365,10 @@ async function installArtifacts(options, updating, registry) {
 function normalizePackageSelections(ai) {
   if (!Array.isArray(ai)) return [];
   return normalizeSelections(
-    ai.filter((item) => item && typeof item === "object" && !Array.isArray(item) && "id" in item),
+    ai.filter(
+      (item) =>
+        item && typeof item === "object" && !Array.isArray(item) && ("id" in item || "src" in item),
+    ),
   );
 }
 

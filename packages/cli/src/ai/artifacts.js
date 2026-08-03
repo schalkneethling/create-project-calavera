@@ -2,7 +2,7 @@
 import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
-import { artifactPayloadPath } from "@schalkneethling/calavera-artifact-core/node";
+import { artifactForId, artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
 
 import { fileExists } from "../utils/fs.js";
 import { isNotEmptyString } from "../utils/guards.js";
@@ -195,9 +195,13 @@ export function createCodexAgentToml(markdown) {
   return `${lines.join("\n")}\n`;
 }
 
-/** @param {string} src */
-function resolveAiSourcePath(src) {
-  return artifactPayloadPath(src);
+/**
+ * @param {{ id?: string, src: string }} item
+ * @param {Map<string, string>} sourcePaths
+ */
+function resolveAiSourcePath(item, sourcePaths) {
+  const artifact = item.id ? artifactForId(item.id) : artifactForLegacyPath(item.src);
+  return (artifact && sourcePaths.get(artifact.id)) ?? sourcePaths.get(item.src) ?? item.src;
 }
 
 /**
@@ -367,7 +371,7 @@ export function resolveAiArtifacts(recipe, sourcePaths = new Map()) {
 
   for (const [index, item] of normalizeAiItems(recipe.ai).entries()) {
     const { type, target } = item;
-    const sourcePath = sourcePaths.get(item.id ?? item.src) ?? resolveAiSourcePath(item.src);
+    const sourcePath = resolveAiSourcePath(item, sourcePaths);
     const name = inferAiSourceName(type, item.src, index);
     const key = [type, target, name].filter(Boolean).join(":");
 

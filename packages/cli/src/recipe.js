@@ -365,18 +365,7 @@ export function listIntegrationOptions(profile) {
 
 export function listAiArtifactOptions() {
   return aiArtifactCatalog.map(
-    ({
-      id,
-      type,
-      src,
-      group,
-      label,
-      status,
-      defaultTarget,
-      packageName,
-      version,
-      compatibility,
-    }) => ({
+    ({ id, type, src, group, label, status, defaultTarget, packageName, compatibility }) => ({
       id,
       type,
       src,
@@ -385,9 +374,8 @@ export function listAiArtifactOptions() {
       status,
       defaultTarget,
       packageName,
-      version,
       compatibility,
-      description: `${label}. Type: ${type}. Package: ${packageName}@${version}. Calavera compatibility: ${compatibility.calavera}. Legacy source: ${src}.`,
+      description: `${label}. Type: ${type}. Package: ${packageName}, resolved only during explicit artifact installation and explicit artifact updates. Calavera compatibility: ${compatibility.calavera}. Legacy source: ${src}.`,
     }),
   );
 }

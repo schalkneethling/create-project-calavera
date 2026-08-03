@@ -195,6 +195,7 @@ const AGENT_BOOTSTRAP_SECTION_END = "<!-- calavera-agent-bootstrap:end -->";
 const AGENT_BOOTSTRAP_SKILL_RECIPE = {
   ai: [{ type: "skill", src: "skills/calavera" }],
 };
+const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/", import.meta.url));
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const SCRIPT_SOURCE_EXTENSIONS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
@@ -2358,6 +2359,7 @@ export async function agentBootstrap(options = {}) {
     AGENT_BOOTSTRAP_SKILL_RECIPE,
     { dryRun: bootstrapOptions.dryRun },
     previousState,
+    new Map([["skill-calavera", AGENT_BOOTSTRAP_SKILL_PATH]]),
   );
   /** @type {Change[]} */
   const changes = [...aiResult.changes];

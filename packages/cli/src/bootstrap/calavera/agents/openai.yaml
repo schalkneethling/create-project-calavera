@@ -1,0 +1,4 @@
+interface:
+  display_name: "Calavera"
+  short_description: "Compose and apply a project tooling recipe."
+  default_prompt: "Use $calavera to inspect this project and compose a tooling recipe."

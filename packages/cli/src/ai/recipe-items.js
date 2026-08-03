@@ -141,7 +141,11 @@ export function normalizeAiItems(aiConfig) {
     const target = normalizeAiTarget(type, item, index);
     const artifact = validateAiSource(item.src, index, type);
 
-    if (item.target !== undefined && artifact.targets && !artifact.targets.includes(target)) {
+    if (
+      item.target !== undefined &&
+      artifact.targets &&
+      (!target || !artifact.targets.includes(target))
+    ) {
       throw new Error(
         `AI item at index ${index} target is not supported by ${item.id ?? item.src}.`,
       );
