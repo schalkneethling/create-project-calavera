@@ -5,6 +5,7 @@ import {
   cp,
   mkdir,
   mkdtemp,
+  mkdtempDisposable,
   readFile,
   rm,
   stat,
@@ -3573,11 +3574,11 @@ test("Codex agent adapter emits required TOML fields without Claude model metada
 
 test("Claude Code agent adapter preserves the read-only allowlist and payload hash", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-claude-agent-"));
   const source = await readFile(artifactPayloadPath("agent-technical-devils-advocate"), "utf8");
+  await using projectDirectory = await mkdtempDisposable(join(tmpdir(), "calavera-claude-agent-"));
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     const result = await buildAiApplyResult(
       {
         ai: [
@@ -3604,7 +3605,6 @@ test("Claude Code agent adapter preserves the read-only allowlist and payload ha
     assert.equal(result.artifacts[0].hash, textHash(source));
   } finally {
     process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
