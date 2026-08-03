@@ -19,6 +19,8 @@ import DOMPurify from 'dompurify';
 ### URL Handling
 
 ```jsx
+import { useMemo } from "react";
+
 // DANGEROUS - javascript: URLs in href
 <a href={userInput}>Link</a>;
 

@@ -17,8 +17,19 @@ Make heading level a prop/parameter with a sensible default.
 
 ```jsx
 // React example
+function normalizeHeadingLevel(value, fallback) {
+  const isSupportedValue =
+    typeof value === "number" || (typeof value === "string" && /^[1-6]$/.test(value));
+  if (!isSupportedValue) {
+    return fallback;
+  }
+
+  const candidate = Number(value);
+  return Number.isInteger(candidate) && candidate >= 1 && candidate <= 6 ? candidate : fallback;
+}
+
 function Card({ title, headingLevel = 3, children }) {
-  const safeHeadingLevel = Math.min(6, Math.max(1, Number(headingLevel) || 3));
+  const safeHeadingLevel = normalizeHeadingLevel(headingLevel, 3);
   const Heading = `h${safeHeadingLevel}`;
   return (
     <article className="card">
@@ -32,7 +43,7 @@ function Card({ title, headingLevel = 3, children }) {
 ```twig
 {# Twig example #}
 {% set requested_level = heading_level|default(3) %}
-{% set heading_tag = requested_level < 1 ? 1 : requested_level > 6 ? 6 : requested_level %}
+{% set heading_tag = requested_level matches '/^[1-6]$/' ? requested_level : 3 %}
 <article class="card">
   <h{{ heading_tag }}>{{ title }}</h{{ heading_tag }}>
   {{ content }}
@@ -98,9 +109,20 @@ function CardList({ cards }) {
 Create a heading component that handles both semantic and visual concerns.
 
 ```jsx
+function normalizeHeadingLevel(value, fallback) {
+  const isSupportedValue =
+    typeof value === "number" || (typeof value === "string" && /^[1-6]$/.test(value));
+  if (!isSupportedValue) {
+    return fallback;
+  }
+
+  const candidate = Number(value);
+  return Number.isInteger(candidate) && candidate >= 1 && candidate <= 6 ? candidate : fallback;
+}
+
 function Heading({ level, visualLevel = level, children, className = "" }) {
-  const semanticLevel = Math.min(6, Math.max(1, Number(level) || 2));
-  const visualHeadingLevel = Math.min(6, Math.max(1, Number(visualLevel) || semanticLevel));
+  const semanticLevel = normalizeHeadingLevel(level, 2);
+  const visualHeadingLevel = normalizeHeadingLevel(visualLevel, semanticLevel);
   const Tag = `h${semanticLevel}`;
   const visualClass = `u-heading-${visualHeadingLevel}`;
 
@@ -131,8 +153,9 @@ Generic components inherit heading config when specialised.
 
 ```jsx
 // Generic card
+// Reuse normalizeHeadingLevel from Pattern 1.
 function Card({ title, headingLevel = 3, headingClass, children }) {
-  const safeHeadingLevel = Math.min(6, Math.max(1, Number(headingLevel) || 3));
+  const safeHeadingLevel = normalizeHeadingLevel(headingLevel, 3);
   const Heading = `h${safeHeadingLevel}`;
   return (
     <article className="card">

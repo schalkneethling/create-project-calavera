@@ -20,6 +20,8 @@ const workflowJob = (workflow, jobName) => {
   );
   return lines.slice(start, nextJob === -1 ? undefined : nextJob).join("\n");
 };
+const testJob = workflowJob(publishWorkflow, "test");
+const buildJob = workflowJob(publishWorkflow, "build");
 const publishJob = workflowJob(publishWorkflow, "publish");
 
 const publicPackagePaths = ["packages/artifact-core", "packages/baseline-core", "packages/cli"];
@@ -105,18 +107,44 @@ const packDestinations = [...publishWorkflow.matchAll(/--pack-destination\s+([^\
 );
 assert.equal(packDestinations.length, 4, "publish workflow must pack every public package group");
 assert.deepEqual(
-  [...new Set(packDestinations)],
-  ["package"],
-  "publish workflow must pack tarballs into the upload directory",
+  packDestinations,
+  Array(4).fill('"$PACKAGE_DIR"'),
+  "publish workflow must pack tarballs into the isolated package directory",
 );
-assert.match(publishWorkflow, /path: package\/\*\.tgz/);
+assert.match(testJob, /uses: pnpm\/setup@[0-9a-f]{40}/);
+assert.match(testJob, /runtime: node@24/);
+assert.match(buildJob, /uses: pnpm\/setup@[0-9a-f]{40}/);
+assert.match(buildJob, /runtime: node@24/);
+assert.match(
+  buildJob,
+  /PACKAGE_DIR: \$\{\{ runner\.temp \}\}\/package-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/,
+);
+assert.match(
+  buildJob,
+  /path: \$\{\{ runner\.temp \}\}\/package-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}\/\*\.tgz/,
+);
+assert.match(
+  buildJob,
+  /- name: Upload package artifact[\s\S]*?\n {10}name: package[\s\S]*?\n {10}overwrite: true/,
+);
+assert.match(
+  publishJob,
+  /PACKAGE_DIR: \$\{\{ runner\.temp \}\}\/package-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/,
+);
+assert.match(
+  publishJob,
+  /path: \$\{\{ runner\.temp \}\}\/package-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}/,
+);
+assert.match(publishJob, /- name: Download package artifact[\s\S]*?\n {10}name: package/);
+assert.match(publishWorkflow, /find "\$PACKAGE_DIR" -maxdepth 1 -name "\*\.tgz"/);
 assert.match(publishWorkflow, /npm view .*version >"\$view_output" 2>&1/);
 assert.match(publishWorkflow, /grep -Eq .*E404\|404/);
 assert.match(publishWorkflow, /exit "\$view_status"/);
 assert.match(publishWorkflow, /\[\[ "\$package_version" == \*-\* \]\]/);
 assert.match(publishWorkflow, /dist_tag=next/);
-assert.match(publishJob, /^    environment: publish$/m);
-assert.match(publishJob, /^      id-token: write$/m);
+assert.match(publishJob, /^ {4}environment: publish$/m);
+assert.match(publishJob, /^ {6}id-token: write$/m);
+assert.match(publishJob, /node-version: 24\.8\.0/);
 assert.match(publishJob, /npm publish .*--access public.*--tag "\$dist_tag"/);
 assert.doesNotMatch(publishJob, /NODE_AUTH_TOKEN|NPM_TOKEN/);
 assert.match(publishWorkflow, /Skipping already published/);

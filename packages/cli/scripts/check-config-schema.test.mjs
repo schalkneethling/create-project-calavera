@@ -2259,6 +2259,8 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     assert.equal(packageFile.scripts["format:check"], "oxfmt --check .");
     assert.equal(packageFile.scripts.typecheck, "tsc --noEmit");
     assert.doesNotMatch(JSON.stringify(packageFile.scripts), /run-if-files/);
+    const oxlintConfig = JSON.parse(await readFile("oxlint.json", "utf8"));
+    assert.deepEqual(oxlintConfig.rules.curly, ["error", "all"]);
     const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist/**"), true);
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist-types/**"), true);
@@ -2266,6 +2268,27 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     await assertPathMissing(".calavera/run-if-files.mjs");
   } finally {
     process.chdir(originalDirectory);
+  }
+});
+
+test("generated ESLint configuration requires curly braces", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-eslint-curly-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+
+    await applyRecipeObject(buildRecipe("classic", ["eslint"], "npm"), {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    assert.match(await readFile("eslint.config.js", "utf8"), /curly: \["error", "all"\]/);
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
@@ -3293,6 +3316,8 @@ test("skill apply adds CodeRabbit exclusions across dry-run, MCP, and apply", as
     assert.match(config, /vendored AI-agent/);
     assert.match(config, /- "!\.claude\/skills\/\*\*"/);
     assert.match(config, /- "!\.agents\/skills\/\*\*"/);
+    assert.match(config, /- "!\.agents\/agents\/claude-code\/\*\*"/);
+    assert.match(config, /- "!\.calavera\/packages\/\*\*"/);
     assert.match(config, /- "!pnpm-lock\.yaml"/);
 
     const repeatedApply = await applyRecipeObject(recipe, {
@@ -3340,6 +3365,8 @@ test("skill apply preserves existing CodeRabbit settings and path filters", asyn
     assert.match(config, /src\/\*\*/);
     assert.match(config, /!\.claude\/skills\/\*\*/);
     assert.match(config, /!\.agents\/skills\/\*\*/);
+    assert.match(config, /!\.agents\/agents\/claude-code\/\*\*/);
+    assert.match(config, /!\.calavera\/packages\/\*\*/);
     assert.match(config, /!pnpm-lock\.yaml/);
   } finally {
     process.chdir(originalDirectory);
@@ -3429,8 +3456,11 @@ test("JSON apply installs dependencies without writing spinner UI to stdout", as
     });
 
     assert.equal(result.dryRun, false);
-    assert.deepEqual(result.dependencies, ["oxlint"]);
-    assert.match(await readFile("install-called.txt", "utf8"), /install --save-dev oxlint/);
+    assert.deepEqual(result.dependencies, ["oxlint@>=0.15.13"]);
+    assert.equal(
+      await readFile("install-called.txt", "utf8"),
+      "install --save-dev oxlint@>=0.15.13",
+    );
     assert.doesNotMatch(stdoutWrites.join(""), /Installing development dependencies/);
     assert.doesNotMatch(stdoutWrites.join(""), /Dependencies installed/);
   } finally {

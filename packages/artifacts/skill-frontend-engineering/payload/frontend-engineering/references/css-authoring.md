@@ -4,7 +4,7 @@ Guidance for writing CSS that prioritizes web standards, accessibility, performa
 
 ## Core Principles
 
-1. **Web standards first** — Use native CSS features before reaching for libraries or frameworks. No Tailwind, no CSS-in-JS unless explicitly requested.
+1. **Web standards first** — Prefer native CSS features for new implementations. Follow the project's established styling conventions, including Tailwind or CSS-in-JS, when they are already in use or explicitly required.
 2. **Accessibility as a requirement** — Ensure styles support, never hinder, assistive technologies. Respect user preferences (motion, color scheme, contrast).
 3. **Performance matters** — Minimize repaints, avoid layout thrashing, use efficient selectors.
 4. **Readable over clever** — Future maintainers (including the author) should understand the code at a glance.

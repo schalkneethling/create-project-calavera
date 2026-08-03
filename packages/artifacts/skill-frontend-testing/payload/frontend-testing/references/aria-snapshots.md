@@ -479,8 +479,8 @@ await expect(locator).toMatchAriaSnapshot(`
 
 // GOOD: Testing structure with flexible matching
 await expect(locator).toMatchAriaSnapshot(`
-  - text /Order #\d+/
-  - text /Total: \$[\d.]+/
+  - text /Order #\\d+/
+  - text /Total: \\$[\\d.]+/
 `);
 ```
 
@@ -511,7 +511,7 @@ Always review snapshot updates:
 
 ```bash
 # See what changed
-git diff **/*.aria.yml
+git diff -- '**/*.aria.yml'
 
 # Verify changes are intentional before committing
 ```

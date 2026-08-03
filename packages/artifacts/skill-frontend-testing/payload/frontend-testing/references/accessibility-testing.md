@@ -168,6 +168,7 @@ test("product page is accessible", async ({ page, makeAxeBuilder }) => {
 
 ```javascript
 const results = await new AxeBuilder({ page }).analyze();
+const includeRawHtml = process.env.AXE_LOG_RAW_HTML === "1" && !process.env.CI;
 
 // Structure of a violation
 results.violations.forEach((violation) => {
@@ -177,11 +178,14 @@ results.violations.forEach((violation) => {
   console.log(`Help: ${violation.helpUrl}`);
 
   violation.nodes.forEach((node) => {
-    console.log(`  Element: ${node.html}`);
+    console.log(`  Target: ${JSON.stringify(node.target)}`);
+    if (includeRawHtml) console.log(`  Element HTML: ${node.html}`);
     console.log(`  Fix: ${node.failureSummary}`);
   });
 });
 ```
+
+Raw HTML can contain rendered user data or form values. Keep it disabled in CI and require an explicit local opt-in when it is needed for diagnosis.
 
 ### Impact Levels
 

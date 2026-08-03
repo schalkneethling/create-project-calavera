@@ -207,8 +207,13 @@ The Shared First approach may use more lines, but results in more maintainable, 
 Custom properties can reduce repetition by keeping the property declaration shared while scoping only the value to each viewport. Use sparingly — overuse can make code harder to follow.
 
 ```css
+:root {
+  --size-16: 1rem;
+  --size-32: 2rem;
+}
+
 .Dialog-container {
-  padding-block: var(--Dialog-block-padding);
+  padding-block: var(--Dialog-block-padding, 1rem);
 }
 
 @media (width < 48rem) {

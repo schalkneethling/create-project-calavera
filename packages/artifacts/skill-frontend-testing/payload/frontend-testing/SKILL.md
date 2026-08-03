@@ -99,7 +99,7 @@ The distinction: acceptance tests should rarely change on refactor; implementati
 
 **ARIA snapshots** are particularly valuable for E2E tests. A single snapshot can replace multiple individual assertions while validating the accessibility tree structure.
 
-**DOM Environment for Unit Tests:** Prefer happy-dom over jsdom. It's faster, and its API limitations serve as a useful signal — if happy-dom doesn't support what you're testing, consider whether it belongs in an E2E test instead.
+**DOM Environment for Unit Tests:** Use happy-dom for fast tests that need a small DOM surface. Use jsdom when component tests require broader DOM APIs. Use Playwright when behavior depends on a real browser, layout, navigation, or browser accessibility APIs. A missing happy-dom API alone does not make a test E2E-worthy; choose the environment that matches the behavior under test and the project's declared dependencies.
 
 ### Step 5: Write Tests Before/Alongside Code
 
@@ -230,7 +230,7 @@ test.describe("Login Page", () => {
 Use locators that reflect how users and assistive technologies find elements. API names differ:
 
 - **Playwright**: prefer `getByRole`, then `getByLabel`, `getByPlaceholder`, `getByText`,
-  `getByAltText`, and finally `getByTestId`.
+  `getByAltText`, `getByTitle`, and finally `getByTestId`.
 - **Testing Library**: prefer `getByRole`, then `getByLabelText`, `getByPlaceholderText`,
   `getByText`, `getByAltText`, and finally `getByTestId`.
 

@@ -259,4 +259,8 @@ Referrer-Policy: strict-origin-when-cross-origin
 Permissions-Policy: geolocation=(), microphone=(), camera=()
 ```
 
+This default matches `frame-ancestors 'none'`. Use `X-Frame-Options: SAMEORIGIN` only with
+`frame-ancestors 'self'`. `X-Frame-Options` cannot express cross-origin allowlists; use CSP's
+`frame-ancestors` directive for those policies instead.
+
 OWASP Reference: https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html
