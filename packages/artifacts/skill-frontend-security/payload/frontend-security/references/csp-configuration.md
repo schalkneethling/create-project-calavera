@@ -253,12 +253,14 @@ Deploy CSP with these additional headers:
 
 ```http
 X-Content-Type-Options: nosniff
-X-Frame-Options: SAMEORIGIN
+X-Frame-Options: DENY
 X-XSS-Protection: 0
 Referrer-Policy: strict-origin-when-cross-origin
 Permissions-Policy: geolocation=(), microphone=(), camera=()
 ```
 
-Use `DENY` instead when the effective `frame-ancestors` policy is `'none'`. Keep the legacy header aligned with CSP rather than expressing conflicting embedding policies.
+This default matches `frame-ancestors 'none'`. Use `X-Frame-Options: SAMEORIGIN` only with
+`frame-ancestors 'self'`. `X-Frame-Options` cannot express cross-origin allowlists; use CSP's
+`frame-ancestors` directive for those policies instead.
 
 OWASP Reference: https://cheatsheetseries.owasp.org/cheatsheets/Content_Security_Policy_Cheat_Sheet.html

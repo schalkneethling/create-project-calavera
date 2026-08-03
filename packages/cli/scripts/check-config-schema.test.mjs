@@ -2259,11 +2259,33 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     assert.equal(packageFile.scripts["format:check"], "oxfmt --check .");
     assert.equal(packageFile.scripts.typecheck, "tsc --noEmit");
     assert.doesNotMatch(JSON.stringify(packageFile.scripts), /run-if-files/);
+    const oxlintConfig = JSON.parse(await readFile("oxlint.json", "utf8"));
+    assert.deepEqual(oxlintConfig.rules.curly, ["error", "all"]);
     const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist/**"), true);
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist-types/**"), true);
     assert.equal(stylelintConfig.ignoreFiles.includes("node_modules/**"), true);
     await assertPathMissing(".calavera/run-if-files.mjs");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("generated ESLint configuration requires curly braces", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-eslint-curly-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+
+    await applyRecipeObject(buildRecipe("classic", ["eslint"], "npm"), {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+
+    assert.match(await readFile("eslint.config.js", "utf8"), /curly: \["error", "all"\]/);
   } finally {
     process.chdir(originalDirectory);
   }

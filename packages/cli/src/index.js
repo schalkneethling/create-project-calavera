@@ -1007,7 +1007,9 @@ function createOxlintConfig(integrations) {
 
   return {
     plugins: unique(pluginNames),
-    rules: {},
+    rules: {
+      curly: ["error", "all"],
+    },
   };
 }
 
@@ -1051,6 +1053,7 @@ function createESLintConfig(integrations) {
       }
     },
     rules: {
+      curly: ["error", "all"],
       "no-console": ["error", { allow: ["clear", "info"] }],
     },
   }`;

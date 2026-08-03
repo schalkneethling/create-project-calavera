@@ -18,6 +18,12 @@ Make heading level a prop/parameter with a sensible default.
 ```jsx
 // React example
 function normalizeHeadingLevel(value, fallback) {
+  const isSupportedValue =
+    typeof value === "number" || (typeof value === "string" && /^[1-6]$/.test(value));
+  if (!isSupportedValue) {
+    return fallback;
+  }
+
   const candidate = Number(value);
   return Number.isInteger(candidate) && candidate >= 1 && candidate <= 6 ? candidate : fallback;
 }
@@ -104,6 +110,12 @@ Create a heading component that handles both semantic and visual concerns.
 
 ```jsx
 function normalizeHeadingLevel(value, fallback) {
+  const isSupportedValue =
+    typeof value === "number" || (typeof value === "string" && /^[1-6]$/.test(value));
+  if (!isSupportedValue) {
+    return fallback;
+  }
+
   const candidate = Number(value);
   return Number.isInteger(candidate) && candidate >= 1 && candidate <= 6 ? candidate : fallback;
 }

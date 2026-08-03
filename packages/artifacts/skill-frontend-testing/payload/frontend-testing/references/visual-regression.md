@@ -80,8 +80,8 @@ Visual tests fail due to timing, rendering, or environment differences. Stabiliz
 test("page renders after loading", async ({ page }) => {
   await page.goto("/");
 
-  // Wait for an application-specific readiness signal.
-  await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+  // The application sets this marker only after its data and UI are ready.
+  await expect(page.getByTestId("app-ready")).toBeVisible();
 
   // Wait for web fonts to load
   await page.evaluate(() => document.fonts.ready);
@@ -369,7 +369,6 @@ jobs:
         run: npx playwright test --project=chromium
 
   update-baselines:
-    needs: visual-tests
     if: github.event_name == 'workflow_dispatch' && github.ref_name == github.event.repository.default_branch
     runs-on: ubuntu-latest
     permissions:
@@ -382,17 +381,27 @@ jobs:
           persist-credentials: false
 
       - name: Update baselines
-        run: npx playwright test --update-snapshots
+        run: npx playwright test --project=chromium --update-snapshots
 
       - name: Commit baselines
         env:
           DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           GITHUB_TOKEN: ${{ github.token }}
+          PLAYWRIGHT_SNAPSHOT_DIR: tests/visual.spec.ts-snapshots
         run: |
           test "$GITHUB_REF_NAME" = "$DEFAULT_BRANCH"
           git config user.name "CI Bot"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add '**/*.png'
+          git add -- "$PLAYWRIGHT_SNAPSHOT_DIR"
+          while IFS= read -r staged_file; do
+            case "$staged_file" in
+              "$PLAYWRIGHT_SNAPSHOT_DIR"/*) ;;
+              *)
+                echo "Unexpected staged file outside $PLAYWRIGHT_SNAPSHOT_DIR: $staged_file" >&2
+                exit 1
+                ;;
+            esac
+          done < <(git diff --cached --name-only)
           if ! git diff --cached --quiet; then
             git commit -m "Update visual baselines"
             git -c http.https://github.com/.extraheader="AUTHORIZATION: bearer $GITHUB_TOKEN" push origin "HEAD:refs/heads/${DEFAULT_BRANCH}"
@@ -508,7 +517,8 @@ await expect(page).toHaveScreenshot();
 
 // GOOD: Wait for stable state
 await page.goto("/");
-await expect(page.getByRole("heading", { name: "Dashboard" })).toBeVisible();
+// The application sets this marker only after its data and UI are ready.
+await expect(page.getByTestId("app-ready")).toBeVisible();
 await page.evaluate(() => document.fonts.ready);
 await expect(page).toHaveScreenshot();
 ```

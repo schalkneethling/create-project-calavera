@@ -375,6 +375,8 @@ walk.call(YAML.load_file(".github/workflows/publish.yml"))
 
 abort "No uses entries found" if uses.empty?
 bad_refs = uses.reject do |ref|
+  next true if ref.start_with?("./", "docker://")
+
   sha = ref[/@([0-9a-f]{40})\z/i, 1]
   sha && !sha.match?(/\A(.)\1{39}\z/)
 end
