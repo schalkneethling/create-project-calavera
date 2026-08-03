@@ -52,7 +52,7 @@
     "stylelint": "^17.12.0",
     "stylelint-config-standard": "^40.0.0",
     "stylelint-order": "^8.1.1",
-    "stylelint-plugin-use-baseline": "^1.4.2",
+    "stylelint-plugin-use-baseline": "^1.4.5",
     "typescript": "^7.0.2"
   },
   "packageManager": "pnpm@11.3.0",
