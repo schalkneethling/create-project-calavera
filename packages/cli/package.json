@@ -50,7 +50,7 @@
   },
   "dependencies": {
     "@clack/prompts": "^1.4.0",
-    "@modelcontextprotocol/sdk": "^1.29.0",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "@schalkneethling/calavera-artifact-core": "workspace:^",
     "@schalkneethling/calavera-baseline-core": "workspace:^",
     "execa": "^10.0.1",
