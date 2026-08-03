@@ -42,22 +42,36 @@ async function lockArtifactFixtures(ids) {
     const artifact = artifactForId(id);
     assert.ok(artifact, `Unknown artifact fixture: ${id}`);
     const version = "0.0.0-test";
+    const slug = id.slice(artifact.type.length + 1);
+    const target = artifact.type === "skill" ? {} : { target: "claude-code" };
+    const destination =
+      artifact.type === "skill"
+        ? join(".agents", "skills", slug)
+        : artifact.type === "hook"
+          ? join(".agents", "hooks", "claude-code", `${slug}.mjs`)
+          : join(".agents", "agents", "claude-code", `${slug}.md`);
     const payloadPath = join(".calavera", "packages", id, version, artifact.payload);
     await mkdir(dirname(payloadPath), { recursive: true });
     await cp(artifactFixturePayloadPath(id), payloadPath, { recursive: true });
     artifacts.push({
       id,
+      type: artifact.type,
+      package: artifact.packageName,
       version,
+      resolved: `https://registry.example/${id}-${version}.tgz`,
+      integrity: `sha512-${"a".repeat(86)}==`,
       tag: "latest",
+      manifestVersion: 1,
+      ...target,
+      destination,
       payloadHash: await hashArtifactPayload(payloadPath),
     });
   }
 
+  const lock = { schemaVersion: 1, artifacts };
+  assertValid(validateArtifactLock, lock);
   await mkdir(".calavera", { recursive: true });
-  await writeFile(
-    ".calavera/artifacts.lock.json",
-    `${JSON.stringify({ schemaVersion: 1, artifacts }, null, 2)}\n`,
-  );
+  await writeFile(".calavera/artifacts.lock.json", `${JSON.stringify(lock, null, 2)}\n`);
 }
 
 import {
@@ -152,6 +166,9 @@ const schemaProperties = schema.properties ?? {};
 const scriptProperties = schemaProperties.scripts?.properties ?? {};
 const schemaIntegrationIds = schema.$defs?.integrationId?.enum;
 const ajv = new Ajv2020({ allErrors: true, validateFormats: false });
+const validateArtifactLock = ajv.compile(
+  await readProjectJson("schemas/artifacts-lock.schema.json"),
+);
 
 function assertValid(validate, value) {
   assert.equal(validate(value), true, ajv.errorsText(validate.errors));

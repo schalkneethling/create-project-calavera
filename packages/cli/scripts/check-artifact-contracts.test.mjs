@@ -13,6 +13,21 @@ async function readProjectJson(path) {
   return JSON.parse(await readFile(new URL(`../${path}`, import.meta.url), "utf8"));
 }
 
+async function relativeFilePaths(root, directory = "") {
+  const paths = [];
+
+  for (const entry of await readdir(join(root, directory), { withFileTypes: true })) {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) {
+      paths.push(...(await relativeFilePaths(root, path)));
+    } else {
+      paths.push(path);
+    }
+  }
+
+  return paths.sort();
+}
+
 const ajv = new Ajv2020({ allErrors: true, validateFormats: false });
 const manifestSchema = await readProjectJson("schemas/calavera-artifact.schema.json");
 const lockSchema = await readProjectJson("schemas/artifacts-lock.schema.json");
@@ -120,7 +135,11 @@ test("published CLI packages do not depend on independently versioned artifacts"
   ]);
 
   for (const metadata of packageMetadata) {
-    const dependencies = Object.keys(metadata.dependencies ?? {});
+    const dependencies = [
+      ...Object.keys(metadata.dependencies ?? {}),
+      ...Object.keys(metadata.optionalDependencies ?? {}),
+      ...Object.keys(metadata.peerDependencies ?? {}),
+    ];
     assert.equal(
       dependencies.some((name) => /^@schalkneethling\/calavera-(?:skill|hook|agent)-/.test(name)),
       false,
@@ -132,8 +151,12 @@ test("published CLI packages do not depend on independently versioned artifacts"
 test("the CLI-owned bootstrap skill matches the versioned Calavera artifact", async () => {
   const sourceRoot = join(artifactPackagesRoot, "skill-calavera", "payload", "calavera");
   const bootstrapRoot = fileURLToPath(new URL("../src/bootstrap/calavera/", import.meta.url));
+  const sourceFiles = await relativeFilePaths(sourceRoot);
+  const bootstrapFiles = await relativeFilePaths(bootstrapRoot);
 
-  for (const path of ["SKILL.md", join("agents", "openai.yaml")]) {
+  assert.deepEqual(bootstrapFiles, sourceFiles);
+
+  for (const path of sourceFiles) {
     assert.equal(
       await readFile(join(bootstrapRoot, path), "utf8"),
       await readFile(join(sourceRoot, path), "utf8"),

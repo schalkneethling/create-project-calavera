@@ -375,7 +375,7 @@ export function listAiArtifactOptions() {
       defaultTarget,
       packageName,
       compatibility,
-      description: `${label}. Type: ${type}. Package: ${packageName}, resolved only during explicit artifact installation. Calavera compatibility: ${compatibility.calavera}. Legacy source: ${src}.`,
+      description: `${label}. Type: ${type}. Package: ${packageName}, resolved only during explicit artifact installation and explicit artifact updates. Calavera compatibility: ${compatibility.calavera}. Legacy source: ${src}.`,
     }),
   );
 }
