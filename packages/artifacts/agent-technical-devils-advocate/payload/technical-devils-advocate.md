@@ -2,6 +2,8 @@
 name: technical-devils-advocate
 model: opus
 effort: high
+permissionMode: plan
+tools: Read, Glob, Grep
 description: Technical devil's advocate that challenges feature plans, strategies, and implementation approaches. Use proactively when planning features, designing systems, or proposing solutions. ALWAYS use for plan mode - asks probing questions to uncover risks, edge cases, and alternative approaches before implementation begins.
 ---
 

@@ -3571,6 +3571,43 @@ test("Codex agent adapter emits required TOML fields without Claude model metada
   assert.doesNotMatch(toml, /claude-4\.6-opus-high-thinking/);
 });
 
+test("Claude Code agent adapter preserves the read-only allowlist and payload hash", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-claude-agent-"));
+  const source = await readFile(artifactPayloadPath("agent-technical-devils-advocate"), "utf8");
+
+  try {
+    process.chdir(projectDirectory);
+    const result = await buildAiApplyResult(
+      {
+        ai: [
+          {
+            type: "agent",
+            src: "agents/technical-devils-advocate.md",
+            target: "claude-code",
+          },
+        ],
+      },
+      { dryRun: false },
+      createEmptyState(),
+    );
+    const installed = await readFile(
+      ".agents/agents/claude-code/technical-devils-advocate.md",
+      "utf8",
+    );
+
+    assert.equal(installed, source);
+    assert.match(installed, /^model: opus$/m);
+    assert.match(installed, /^permissionMode: plan$/m);
+    assert.match(installed, /^tools: Read, Glob, Grep$/m);
+    assert.doesNotMatch(installed, /^tools:.*(?:Write|Edit|Bash)/m);
+    assert.equal(result.artifacts[0].hash, textHash(source));
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
 test("Codex-targeted agent recipes resolve to .codex custom-agent TOML", async () => {
   const result = await buildAiApplyResult(
     {
