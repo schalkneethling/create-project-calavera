@@ -52,7 +52,7 @@ export const integrationCatalog = [
     group: "Modern JS/TS linting",
     platform: "oxlint",
     status: "recommended",
-    dependencies: ["oxlint"],
+    dependencies: ["oxlint@>=0.15.13"],
   },
   {
     id: "oxlint-eslint",

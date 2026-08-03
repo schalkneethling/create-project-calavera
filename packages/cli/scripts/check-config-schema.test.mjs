@@ -2288,6 +2288,7 @@ test("generated ESLint configuration requires curly braces", async () => {
     assert.match(await readFile("eslint.config.js", "utf8"), /curly: \["error", "all"\]/);
   } finally {
     process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
@@ -3455,8 +3456,11 @@ test("JSON apply installs dependencies without writing spinner UI to stdout", as
     });
 
     assert.equal(result.dryRun, false);
-    assert.deepEqual(result.dependencies, ["oxlint"]);
-    assert.match(await readFile("install-called.txt", "utf8"), /install --save-dev oxlint/);
+    assert.deepEqual(result.dependencies, ["oxlint@>=0.15.13"]);
+    assert.equal(
+      await readFile("install-called.txt", "utf8"),
+      "install --save-dev oxlint@>=0.15.13",
+    );
     assert.doesNotMatch(stdoutWrites.join(""), /Installing development dependencies/);
     assert.doesNotMatch(stdoutWrites.join(""), /Dependencies installed/);
   } finally {
