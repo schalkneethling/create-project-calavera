@@ -1,5 +1,11 @@
 # @schalkneethling/calavera-artifact-core
 
+## 0.4.0
+
+### Minor Changes
+
+- 9386307: Isolate independently versioned skills, hooks, and agents from the CLI runtime dependency graph while preserving explicit locked artifact installation and updates.
+
 ## 0.3.0
 
 ### Minor Changes
