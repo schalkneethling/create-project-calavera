@@ -3,6 +3,10 @@ import { normalizeAiItems } from "./ai/recipe-items.js";
 import { integrationCatalog } from "./catalog.js";
 import { normalizeBaselineTarget } from "@schalkneethling/calavera-baseline-core";
 import {
+  GITHUB_REPOSITORY_CONTROLS_ID,
+  normalizeGithubRepositoryControlsOptions,
+} from "./github-repository-controls-options.js";
+import {
   assertKnownValue,
   assertObjectArray,
   assertPlainObject,
@@ -162,7 +166,7 @@ export const recipeToolInputDescriptions = Object.freeze({
   aiArtifactTarget: "Optional target directory for hook and agent artifacts.",
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
-    "Options keyed by selected integration ID. Stylelint Baseline accepts available and severity.",
+    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; GitHub repository controls require repository identity and accept governance policy overrides.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
   baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
   baselineLimit: "Maximum number of Baseline feature search results.",
@@ -502,21 +506,26 @@ export function resolveRecipeIntegrations(recipe) {
 }
 
 export function normalizeIntegrationOptions(integrationOptions, integrationIds) {
+  const resolvedIds = new Set(
+    resolveRecipeIntegrations({ integrations: integrationIds }).map(({ id }) => id),
+  );
   if (integrationOptions === undefined) {
+    if (resolvedIds.has(GITHUB_REPOSITORY_CONTROLS_ID)) {
+      throw new Error(
+        "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.",
+      );
+    }
     return undefined;
   }
 
   assertPlainObject("integrationOptions", integrationOptions);
-  const supportedIds = ["stylelint-baseline"];
+  const supportedIds = ["stylelint-baseline", GITHUB_REPOSITORY_CONTROLS_ID];
   const unknownIds = Object.keys(integrationOptions).filter((id) => !supportedIds.includes(id));
 
   if (unknownIds.length > 0) {
     throw new Error(`Unknown integrationOptions: ${unknownIds.join(", ")}.`);
   }
 
-  const resolvedIds = new Set(
-    resolveRecipeIntegrations({ integrations: integrationIds }).map(({ id }) => id),
-  );
   const normalized = {};
 
   if (Object.hasOwn(integrationOptions, "stylelint-baseline")) {
@@ -546,6 +555,21 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
     }
 
     normalized["stylelint-baseline"] = { available, severity };
+  }
+
+  if (Object.hasOwn(integrationOptions, GITHUB_REPOSITORY_CONTROLS_ID)) {
+    if (!resolvedIds.has(GITHUB_REPOSITORY_CONTROLS_ID)) {
+      throw new Error(
+        "integrationOptions.github-repository-controls requires the github-repository-controls integration.",
+      );
+    }
+    normalized[GITHUB_REPOSITORY_CONTROLS_ID] = normalizeGithubRepositoryControlsOptions(
+      integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID],
+    );
+  } else if (resolvedIds.has(GITHUB_REPOSITORY_CONTROLS_ID)) {
+    throw new Error(
+      "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.",
+    );
   }
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;

@@ -247,6 +247,33 @@ test("config schema rejects invalid or detached Stylelint Baseline options", () 
   );
 });
 
+test("config schema validates attached GitHub repository-control options", () => {
+  const validate = ajv.compile(schema);
+  const valid = buildRecipe("minimal", ["github-repository-controls"], "npm", [], {
+    "github-repository-controls": {
+      repository: "octocat/example",
+      requiredChecks: ["quality"],
+      mergeMethods: ["squash"],
+    },
+  });
+
+  assertValid(validate, valid);
+  assert.equal(
+    validate({ ...valid, integrations: ["editorconfig"] }),
+    false,
+    "repository-control options must reference a selected integration",
+  );
+  assert.equal(
+    validate({ ...valid, integrationOptions: undefined }),
+    false,
+    "the selected integration must include repository-control options",
+  );
+  assert.throws(
+    () => buildRecipe("minimal", ["github-repository-controls"], "npm"),
+    /integrationOptions\.github-repository-controls is required/,
+  );
+});
+
 test("config schema accepts package-backed artifact selections and legacy items", () => {
   const validate = ajv.compile(schema);
   assertValid(validate, {

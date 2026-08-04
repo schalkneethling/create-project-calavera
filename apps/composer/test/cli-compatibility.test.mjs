@@ -63,6 +63,14 @@ test("v2.2 compatibility excludes post-v2.2 integrations until v2.3 is published
   assert.equal(v230Ids.includes("varlock"), true);
 });
 
+test("repository controls require the Calavera 2.5 CLI contract", () => {
+  const before = filterIntegrationsForCli(integrationCatalog, "2.4.0").map(({ id }) => id);
+  const supported = filterIntegrationsForCli(integrationCatalog, "2.5.0").map(({ id }) => id);
+
+  assert.equal(before.includes("github-repository-controls"), false);
+  assert.equal(supported.includes("github-repository-controls"), true);
+});
+
 test("WebMCP catalog responses and recipes use the same published CLI boundary", () => {
   const response = integrationResponseForCli(
     { profile: "minimal", integrations: integrationCatalog },

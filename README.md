@@ -159,6 +159,7 @@ Calavera includes curated integration packs grouped by outcome:
 - CSS property ordering
 - CSS property type validation
 - Environment variable schema and validation with [Varlock](https://varlock.dev)
+- GitHub repository governance, security settings, and drift checks
 
 React best-practice checks can include React Doctor, a deterministic scanner for
 React codebases that complements linting with security, performance,
@@ -204,6 +205,32 @@ uses that metadata when generating `.stylelintrc.json`.
 See
 [`docs/contributing-calavera-integration-varlock.md`](docs/contributing-calavera-integration-varlock.md)
 for a contributor walkthrough based on Theo Ephraim's Varlock integration.
+
+### GitHub repository controls
+
+The optional `github-repository-controls` integration generates a committed desired-state policy,
+Dependabot configuration, a portable Node.js administration script, and setup documentation. A
+recipe must identify the expected repository so the generated script can refuse to operate against
+the wrong remote:
+
+```json
+{
+  "integrations": ["github-repository-controls"],
+  "integrationOptions": {
+    "github-repository-controls": {
+      "repository": "octocat/example",
+      "requiredChecks": ["quality"],
+      "mergeMethods": ["squash"],
+      "codeqlLanguages": ["actions", "javascript-typescript"]
+    }
+  }
+}
+```
+
+`calavera apply` only writes local files and package scripts. Run `repo:controls:check` for a
+read-only GitHub drift report, then run `repo:controls:apply` separately after reviewing the plan.
+The apply command requires confirmation unless `--yes` is passed explicitly. GitHub features that
+are unavailable for the repository or plan are reported as unsupported rather than ordinary drift.
 
 ## CLI
 
