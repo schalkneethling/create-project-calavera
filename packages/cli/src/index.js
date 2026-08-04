@@ -21,6 +21,10 @@ import {
 import { execa } from "execa";
 import packageJson from "../package.json" with { type: "json" };
 import { lockedArtifactSources, runArtifactCommand } from "./artifact-lifecycle.js";
+import {
+  GITHUB_REPOSITORY_CONTROLS_ID,
+  githubRepositoryControlManagedFiles,
+} from "./github-repository-controls.js";
 
 import {
   aiArtifactOutputPaths,
@@ -625,6 +629,7 @@ function buildScripts(recipe, integrations, packageManager) {
   const usesKnip = has("knip");
   const usesHtmlValidate = has("html-validate");
   const usesVarlock = has("varlock");
+  const usesGithubRepositoryControls = has(GITHUB_REPOSITORY_CONTROLS_ID);
 
   const lintParts = [
     usesOxlint ? "oxlint ." : null,
@@ -711,6 +716,11 @@ function buildScripts(recipe, integrations, packageManager) {
 
   if (usesVarlock) {
     scripts["env:load"] = "varlock load";
+  }
+
+  if (usesGithubRepositoryControls) {
+    scripts["repo:controls:check"] = "node scripts/repository-controls.mjs";
+    scripts["repo:controls:apply"] = "node scripts/repository-controls.mjs --apply";
   }
 
   if (recipe.scripts?.quality) {
@@ -1512,6 +1522,12 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
     });
   }
 
+  if (integrations.some((integration) => integration.id === GITHUB_REPOSITORY_CONTROLS_ID)) {
+    plans.push(
+      ...githubRepositoryControlManagedFiles(integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID]),
+    );
+  }
+
   return plans;
 }
 
@@ -1622,8 +1638,19 @@ export async function inspectProject(recipe, options = {}) {
   }
 
   const packageScripts = packageJSON.scripts ?? {};
-  for (const scriptName of ["lint", "lint:fix", "format", "format:check", "typecheck"]) {
-    if (recipe?.scripts?.[scriptName] && typeof packageScripts[scriptName] === "string") {
+  for (const scriptName of [
+    "lint",
+    "lint:fix",
+    "format",
+    "format:check",
+    "typecheck",
+    "repo:controls:check",
+    "repo:controls:apply",
+  ]) {
+    const managedByRecipe = scriptName.startsWith("repo:controls:")
+      ? integrationIds.has(GITHUB_REPOSITORY_CONTROLS_ID)
+      : recipe?.scripts?.[scriptName];
+    if (managedByRecipe && typeof packageScripts[scriptName] === "string") {
       findings.push({
         severity: "warning",
         kind: "existing-package-script",
@@ -1912,6 +1939,23 @@ export async function applyRecipeObject(recipe, options = {}) {
         reownManagedFiles,
       ),
     );
+  }
+
+  if (integrations.some((integration) => integration.id === GITHUB_REPOSITORY_CONTROLS_ID)) {
+    for (const file of githubRepositoryControlManagedFiles(
+      recipe.integrationOptions?.[GITHUB_REPOSITORY_CONTROLS_ID],
+    )) {
+      managedFiles.push(
+        await writeManagedFile(
+          file.path,
+          file.contents,
+          applyOptions.dryRun,
+          changes,
+          previousState,
+          reownManagedFiles,
+        ),
+      );
+    }
   }
 
   await applyVarlockProjectFiles(varlockFilePlans, applyOptions.dryRun, changes);

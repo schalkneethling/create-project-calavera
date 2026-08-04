@@ -37,6 +37,7 @@ import {
   loadPublishedCliCompatibility,
   SAFE_CLI_FALLBACK_VERSION,
 } from "./cli-compatibility.js";
+import { releaseEnvironmentInputSchema } from "./repository-controls-input-schema.js";
 
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
@@ -47,6 +48,7 @@ const nextCommandsNote = document.querySelector("#next-commands-note");
 const webMcpBanner = document.querySelector("#webmcp-banner");
 const baselineOptions = document.querySelector("#baseline-options");
 const baselineAvailable = document.querySelector("#baseline-available");
+const repositoryControlsOptions = document.querySelector("#repository-controls-options");
 const cliCompatibilityNote = document.querySelector("#cli-compatibility");
 const profiles = profileIdsForRecipe();
 const packageManagers = packageManagerIdsForRecipe();
@@ -208,6 +210,16 @@ function syncIntegrationOptions() {
     form.querySelector('[name="integration"][value="stylelint-baseline"]:checked'),
   );
   baselineOptions.hidden = !enabled;
+  repositoryControlsOptions.hidden = !form.querySelector(
+    '[name="integration"][value="github-repository-controls"]:checked',
+  );
+}
+
+function commaSeparatedValues(value) {
+  return String(value ?? "")
+    .split(",")
+    .map((item) => item.trim())
+    .filter(Boolean);
 }
 
 function selectedAiItems() {
@@ -230,16 +242,32 @@ function recipe() {
   const packageManager = data.get("packageManager");
 
   const hasBaseline = data.getAll("integration").includes("stylelint-baseline");
-  const integrationOptions = hasBaseline
-    ? {
-        "stylelint-baseline": {
-          available: /^\d{4}$/.test(String(data.get("baselineAvailable")))
-            ? Number(data.get("baselineAvailable"))
-            : data.get("baselineAvailable"),
-          severity: data.get("baselineSeverity"),
-        },
-      }
-    : undefined;
+  const hasRepositoryControls = data.getAll("integration").includes("github-repository-controls");
+  const integrationOptions =
+    hasBaseline || hasRepositoryControls
+      ? {
+          ...(hasBaseline
+            ? {
+                "stylelint-baseline": {
+                  available: /^\d{4}$/.test(String(data.get("baselineAvailable")))
+                    ? Number(data.get("baselineAvailable"))
+                    : data.get("baselineAvailable"),
+                  severity: data.get("baselineSeverity"),
+                },
+              }
+            : {}),
+          ...(hasRepositoryControls
+            ? {
+                "github-repository-controls": {
+                  repository: data.get("repositoryControlsRepository"),
+                  requiredChecks: commaSeparatedValues(
+                    data.get("repositoryControlsRequiredChecks"),
+                  ),
+                },
+              }
+            : {}),
+        }
+      : undefined;
 
   return buildRecipe(
     String(data.get("profile") ?? ""),
@@ -275,7 +303,11 @@ function renderNextCommands() {
 }
 
 function render() {
-  output.textContent = JSON.stringify(recipe(), null, 2);
+  try {
+    output.textContent = JSON.stringify(recipe(), null, 2);
+  } catch (error) {
+    output.textContent = error instanceof Error ? error.message : String(error);
+  }
   renderNextCommands();
 }
 
@@ -587,6 +619,54 @@ function registerWebMcpTools() {
                     oneOf: [{ type: "string", enum: ["widely", "newly"] }, { type: "integer" }],
                   },
                   severity: { type: "string", enum: ["warning", "error"] },
+                },
+              },
+              "github-repository-controls": {
+                type: "object",
+                additionalProperties: false,
+                required: ["repository"],
+                properties: {
+                  repository: {
+                    type: "string",
+                    pattern: "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$",
+                  },
+                  requiredChecks: {
+                    type: "array",
+                    items: { type: "string" },
+                  },
+                  defaultBranch: { type: "string" },
+                  mergeMethods: {
+                    type: "array",
+                    items: { type: "string", enum: ["merge", "squash", "rebase"] },
+                  },
+                  wiki: { type: "boolean" },
+                  projects: { type: "boolean" },
+                  autoMerge: { type: "boolean" },
+                  deleteBranchOnMerge: { type: "boolean" },
+                  updateBranch: { type: "boolean" },
+                  dependabotEcosystems: {
+                    type: "array",
+                    items: { type: "string", enum: ["npm", "github-actions"] },
+                  },
+                  codeqlLanguages: {
+                    type: "array",
+                    items: {
+                      type: "string",
+                      enum: [
+                        "actions",
+                        "c-cpp",
+                        "csharp",
+                        "go",
+                        "java-kotlin",
+                        "javascript-typescript",
+                        "python",
+                        "ruby",
+                        "swift",
+                      ],
+                    },
+                  },
+                  codeqlQuerySuite: { type: "string", enum: ["default", "extended"] },
+                  releaseEnvironment: releaseEnvironmentInputSchema,
                 },
               },
             },

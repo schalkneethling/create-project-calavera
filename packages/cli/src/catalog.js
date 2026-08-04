@@ -47,6 +47,15 @@ export const integrationCatalog = [
     dependencies: ["varlock"],
   },
   {
+    id: "github-repository-controls",
+    label: "GitHub repository controls",
+    group: "Repository governance",
+    platform: "github",
+    status: "optional",
+    minimumCliVersion: "2.5.0",
+    dependencies: [],
+  },
+  {
     id: "oxlint",
     label: "Oxlint",
     group: "Modern JS/TS linting",

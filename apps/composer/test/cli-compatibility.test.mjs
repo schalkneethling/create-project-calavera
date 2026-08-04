@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import Ajv from "ajv";
 import { integrationCatalog } from "../../../packages/cli/src/catalog.js";
 import { aiArtifactCatalog } from "../../../packages/cli/src/ai/catalog.js";
 import {
@@ -18,6 +19,17 @@ import {
   versionMeetsMinimum,
 } from "../cli-compatibility.js";
 import viteConfig from "../vite.config.js";
+import { releaseEnvironmentInputSchema } from "../repository-controls-input-schema.js";
+
+test("WebMCP release-environment schema accepts every disabled representation", () => {
+  const validate = new Ajv({ strict: true }).compile(releaseEnvironmentInputSchema);
+
+  assert.equal(validate(false), true);
+  assert.equal(validate(null), true);
+  assert.equal(validate({ reviewers: ["octocat"] }), true);
+  assert.equal(validate({}), false);
+  assert.equal(validate({ reviewers: ["octocat"], waitTimer: 43_201 }), false);
+});
 
 test("version comparison keeps unreleased integrations behind their CLI release", () => {
   assert.equal(versionMeetsMinimum("2.2.0", "2.3.0"), false);
@@ -61,6 +73,14 @@ test("v2.2 compatibility excludes post-v2.2 integrations until v2.3 is published
   assert.equal(v230Ids.includes("stylelint-logical-css"), true);
   assert.equal(v230Ids.includes("knip"), true);
   assert.equal(v230Ids.includes("varlock"), true);
+});
+
+test("repository controls require the Calavera 2.5 CLI contract", () => {
+  const before = filterIntegrationsForCli(integrationCatalog, "2.4.0").map(({ id }) => id);
+  const supported = filterIntegrationsForCli(integrationCatalog, "2.5.0").map(({ id }) => id);
+
+  assert.equal(before.includes("github-repository-controls"), false);
+  assert.equal(supported.includes("github-repository-controls"), true);
 });
 
 test("WebMCP catalog responses and recipes use the same published CLI boundary", () => {

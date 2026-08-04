@@ -8,6 +8,12 @@ export const packageManagerLockfiles = Object.freeze({
 export const integrationConfigFiles = Object.freeze({
   editorconfig: [".editorconfig"],
   eslint: ["eslint.config.js"],
+  "github-repository-controls": [
+    ".github/repository-controls.json",
+    ".github/dependabot.yml",
+    "scripts/repository-controls.mjs",
+    "docs/repository-controls.md",
+  ],
   "html-validate": [".htmlvalidate.json", ".htmlvalidateignore"],
   knip: ["knip.json"],
   oxlint: ["oxlint.json"],

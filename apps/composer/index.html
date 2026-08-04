@@ -112,6 +112,33 @@
                 >.
               </p>
             </section>
+            <section id="repository-controls-options" class="integration-options" hidden>
+              <h2>GitHub repository controls</h2>
+              <div class="option-grid">
+                <label for="repository-controls-repository">
+                  Repository (owner/name)
+                  <input
+                    id="repository-controls-repository"
+                    name="repositoryControlsRepository"
+                    placeholder="octocat/example"
+                    autocomplete="off"
+                  />
+                </label>
+                <label for="repository-controls-required-checks">
+                  Required checks (comma-separated)
+                  <input
+                    id="repository-controls-required-checks"
+                    name="repositoryControlsRequiredChecks"
+                    placeholder="quality"
+                    autocomplete="off"
+                  />
+                </label>
+              </div>
+              <p>
+                Calavera generates local desired-state tooling only. Applying remote GitHub changes
+                remains a separate, confirmed command.
+              </p>
+            </section>
           </fieldset>
 
           <fieldset>
