@@ -21,7 +21,7 @@
     "test": "node scripts/build-data.mjs --check && node --test test/*.test.mjs"
   },
   "dependencies": {
-    "baseline-browser-mapping": "2.10.43",
+    "baseline-browser-mapping": "2.11.9",
     "web-features": "3.34.2"
   }
 }
