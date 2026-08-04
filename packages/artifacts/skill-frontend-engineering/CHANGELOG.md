@@ -1,5 +1,11 @@
 # @schalkneethling/calavera-skill-frontend-engineering
 
+## 0.2.1
+
+### Patch Changes
+
+- ad107fd: Apply upstream review corrections to frontend, publishing, and agent artifacts, and exclude installed Calavera package and Claude agent payloads from downstream CodeRabbit reviews.
+
 ## 0.2.0
 
 ### Minor Changes
