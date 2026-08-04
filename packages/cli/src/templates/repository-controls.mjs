@@ -12,6 +12,7 @@ const CONFIG_LIMIT = 1024 * 1024;
 const API_RESPONSE_LIMIT = 20 * 1024 * 1024;
 const CODEQL_ATTEMPTS = 12;
 const CODEQL_DELAY_MS = 5_000;
+const MAX_PAGES = 100;
 const root = fileURLToPath(new URL("..", import.meta.url));
 const configPath = fileURLToPath(new URL("../.github/repository-controls.json", import.meta.url));
 
@@ -74,9 +75,22 @@ export class GitHubApi {
     }
   }
 
-  capability(endpoint) {
+  capability(endpoint, options = {}) {
     try {
-      return { supported: true, value: this.request("GET", endpoint) };
+      if (!options.paginate) {
+        return { supported: true, value: this.request("GET", endpoint) };
+      }
+      const value = [];
+      const separator = endpoint.includes("?") ? "&" : "?";
+      for (let page = 1; page <= MAX_PAGES; page += 1) {
+        const response = this.request("GET", `${endpoint}${separator}per_page=100&page=${page}`);
+        if (!Array.isArray(response)) {
+          throw new Error(`GitHub API GET ${endpoint} did not return a paginated array.`);
+        }
+        value.push(...response);
+        if (response.length < 100) return { supported: true, value };
+      }
+      throw new Error(`GitHub API GET ${endpoint} exceeded ${MAX_PAGES} pages.`);
     } catch (error) {
       if (
         error.status === 403 ||
@@ -108,6 +122,7 @@ function run(command, args, options = {}) {
 
 export function desiredState(config, reviewerIds = []) {
   const mergeMethods = new Set(config.repositorySettings.mergeMethods);
+  const codeqlDefaultSetup = config.security.codeqlDefaultSetup ?? {};
   return {
     defaultBranch: config.defaultBranch,
     immutableReleases: true,
@@ -126,10 +141,9 @@ export function desiredState(config, reviewerIds = []) {
       dependabotAlerts: config.security.dependabotAlerts,
       dependabotSecurityUpdates: config.security.dependabotSecurityUpdates,
       dependabotSecurityUpdatesPaused: false,
-      codeqlDefaultSetup: {
-        ...config.security.codeqlDefaultSetup,
-        languages: [...config.security.codeqlDefaultSetup.languages].sort(),
-      },
+      codeqlDefaultSetup: normalizeCodeqlDefaultSetup(
+        codeqlDefaultSetupPayload(codeqlDefaultSetup),
+      ),
     },
     mainRuleset: {
       name: config.mainRuleset.name,
@@ -220,7 +234,7 @@ export function normalizeCodeqlDefaultSetup(setup) {
   };
 }
 
-export function codeqlDefaultSetupPayload(control) {
+export function codeqlDefaultSetupPayload(control = {}) {
   return {
     state: control.state,
     languages: control.languages,
@@ -345,7 +359,9 @@ export function planRepositoryControlChanges(current, desired) {
     changes.push(drift("workflow-permissions", "update"));
   }
   if (current.security.dependabotAlerts !== desired.security.dependabotAlerts) {
-    changes.push(drift("dependabot-alerts", "enable"));
+    changes.push(
+      drift("dependabot-alerts", desired.security.dependabotAlerts ? "enable" : "disable"),
+    );
   }
   if (current.security.dependabotSecurityUpdatesPaused) {
     changes.push({
@@ -357,7 +373,12 @@ export function planRepositoryControlChanges(current, desired) {
   } else if (
     current.security.dependabotSecurityUpdates !== desired.security.dependabotSecurityUpdates
   ) {
-    changes.push(drift("dependabot-security-updates", "enable"));
+    changes.push(
+      drift(
+        "dependabot-security-updates",
+        desired.security.dependabotSecurityUpdates ? "enable" : "disable",
+      ),
+    );
   }
   if (!current.security.codeqlSupported) {
     changes.push({
@@ -403,10 +424,18 @@ export async function waitForCodeql(read, desired, options = {}) {
 function validateConfig(config) {
   if (config?.schemaVersion !== 1)
     throw new Error("Unsupported repository-controls schema version.");
-  if (typeof config.repository !== "string" || !config.repository.includes("/")) {
+  if (
+    typeof config.repository !== "string" ||
+    !/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(config.repository)
+  ) {
     throw new Error("Repository controls must declare repository in owner/name format.");
   }
-  if (!config.repositorySettings || !config.security || !config.mainRuleset) {
+  if (
+    !config.repositorySettings ||
+    !config.security ||
+    !config.mainRuleset ||
+    !config.manualControls
+  ) {
     throw new Error("Repository controls configuration is incomplete.");
   }
 }
@@ -429,7 +458,7 @@ export function readRepositoryControlState(api, repository, desired) {
   const dependabotAlerts = dependabotAlertsEnabled(api, repository);
   const dependabotSecurityUpdates = api.optional(`repos/${repository}/automated-security-fixes`);
   const codeql = api.capability(`repos/${repository}/code-scanning/default-setup`);
-  const rulesetsCapability = api.capability(`repos/${repository}/rulesets`);
+  const rulesetsCapability = api.capability(`repos/${repository}/rulesets`, { paginate: true });
   const rulesets = rulesetsCapability.supported ? rulesetsCapability.value : [];
   const rulesetSummary = rulesets.find((candidate) => candidate.name === desired.mainRuleset.name);
   const ruleset = rulesetSummary
@@ -607,9 +636,15 @@ export async function runRepositoryControls(options = {}) {
         can_approve_pull_request_reviews: desired.workflowPermissions.canApprovePullRequestReviews,
       });
     } else if (change.control === "dependabot-alerts") {
-      api.request("PUT", `repos/${config.repository}/vulnerability-alerts`);
+      api.request(
+        change.operation === "enable" ? "PUT" : "DELETE",
+        `repos/${config.repository}/vulnerability-alerts`,
+      );
     } else if (change.control === "dependabot-security-updates") {
-      api.request("PUT", `repos/${config.repository}/automated-security-fixes`);
+      api.request(
+        change.operation === "enable" ? "PUT" : "DELETE",
+        `repos/${config.repository}/automated-security-fixes`,
+      );
     } else if (change.control === "codeql-default-setup") {
       api.request(
         "PATCH",

@@ -1,6 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
+import Ajv from "ajv";
 import { integrationCatalog } from "../../../packages/cli/src/catalog.js";
 import { aiArtifactCatalog } from "../../../packages/cli/src/ai/catalog.js";
 import {
@@ -18,6 +19,17 @@ import {
   versionMeetsMinimum,
 } from "../cli-compatibility.js";
 import viteConfig from "../vite.config.js";
+import { releaseEnvironmentInputSchema } from "../repository-controls-input-schema.js";
+
+test("WebMCP release-environment schema accepts every disabled representation", () => {
+  const validate = new Ajv({ strict: true }).compile(releaseEnvironmentInputSchema);
+
+  assert.equal(validate(false), true);
+  assert.equal(validate(null), true);
+  assert.equal(validate({ reviewers: ["octocat"] }), true);
+  assert.equal(validate({}), false);
+  assert.equal(validate({ reviewers: ["octocat"], waitTimer: 43_201 }), false);
+});
 
 test("version comparison keeps unreleased integrations behind their CLI release", () => {
   assert.equal(versionMeetsMinimum("2.2.0", "2.3.0"), false);

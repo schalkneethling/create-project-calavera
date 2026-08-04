@@ -274,6 +274,25 @@ test("config schema validates attached GitHub repository-control options", () =>
   );
 });
 
+test("recipe validation requires and normalizes selected repository-control options", () => {
+  const recipe = {
+    ...buildRecipe("minimal", [], "npm"),
+    integrations: ["github-repository-controls"],
+  };
+  assert.throws(
+    () => validateRecipe(recipe),
+    /integrationOptions\.github-repository-controls is required/,
+  );
+
+  recipe.integrationOptions = {
+    "github-repository-controls": { repository: "octocat/example" },
+  };
+  assert.equal(validateRecipe(recipe), recipe);
+  assert.deepEqual(recipe.integrationOptions["github-repository-controls"].mergeMethods, [
+    "squash",
+  ]);
+});
+
 test("config schema accepts package-backed artifact selections and legacy items", () => {
   const validate = ajv.compile(schema);
   assertValid(validate, {

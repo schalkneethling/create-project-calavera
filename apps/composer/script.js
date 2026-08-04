@@ -37,6 +37,7 @@ import {
   loadPublishedCliCompatibility,
   SAFE_CLI_FALLBACK_VERSION,
 } from "./cli-compatibility.js";
+import { releaseEnvironmentInputSchema } from "./repository-controls-input-schema.js";
 
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
@@ -665,23 +666,7 @@ function registerWebMcpTools() {
                     },
                   },
                   codeqlQuerySuite: { type: "string", enum: ["default", "extended"] },
-                  releaseEnvironment: {
-                    oneOf: [
-                      { const: false },
-                      {
-                        type: "object",
-                        additionalProperties: false,
-                        required: ["reviewers"],
-                        properties: {
-                          name: { type: "string" },
-                          reviewers: { type: "array", items: { type: "string" } },
-                          waitTimer: { type: "integer", minimum: 0, maximum: 43200 },
-                          preventSelfReview: { type: "boolean" },
-                          branches: { type: "array", items: { type: "string" } },
-                        },
-                      },
-                    ],
-                  },
+                  releaseEnvironment: releaseEnvironmentInputSchema,
                 },
               },
             },

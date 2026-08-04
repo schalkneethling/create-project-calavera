@@ -656,8 +656,14 @@ export function validateRecipe(recipe) {
 
   assertNoFormatterConflict(recipe.integrations);
 
-  if (Object.hasOwn(recipe, "integrationOptions")) {
-    normalizeIntegrationOptions(recipe.integrationOptions, recipe.integrations);
+  const normalizedIntegrationOptions = normalizeIntegrationOptions(
+    recipe.integrationOptions,
+    recipe.integrations,
+  );
+  if (normalizedIntegrationOptions !== undefined) {
+    recipe.integrationOptions = normalizedIntegrationOptions;
+  } else if (Object.hasOwn(recipe, "integrationOptions")) {
+    delete recipe.integrationOptions;
   }
 
   if (Object.hasOwn(recipe, "ai")) {

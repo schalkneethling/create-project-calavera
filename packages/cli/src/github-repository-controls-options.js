@@ -103,6 +103,16 @@ function normalizeReleaseEnvironment(value, defaultBranch) {
       "github-repository-controls.releaseEnvironment.reviewers must contain at least one GitHub login.",
     );
   }
+  const branches = normalizeStringArray(
+    "github-repository-controls.releaseEnvironment.branches",
+    value.branches,
+    [defaultBranch],
+  );
+  if (branches.length === 0) {
+    throw new Error(
+      "github-repository-controls.releaseEnvironment.branches must contain at least one branch.",
+    );
+  }
   return {
     name: normalizeString(
       "github-repository-controls.releaseEnvironment.name",
@@ -116,11 +126,7 @@ function normalizeReleaseEnvironment(value, defaultBranch) {
       value.preventSelfReview,
       false,
     ),
-    branches: normalizeStringArray(
-      "github-repository-controls.releaseEnvironment.branches",
-      value.branches,
-      [defaultBranch],
-    ),
+    branches,
   };
 }
 

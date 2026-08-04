@@ -102,16 +102,16 @@ Calavera generated a committed desired-state policy for \`${config.repository}\`
 Run the read-only drift check before applying any remote changes:
 
 \`\`\`sh
-npm run repo:controls:check
+node scripts/repository-controls.mjs
 \`\`\`
 
 Review the reported plan, then apply it interactively:
 
 \`\`\`sh
-npm run repo:controls:apply
+node scripts/repository-controls.mjs --apply
 \`\`\`
 
-For intentional unattended administration, pass \`--yes\` through your package manager.
+For intentional unattended administration, add \`--yes\` to the apply command.
 
 ## Manual controls
 

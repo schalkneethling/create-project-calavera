@@ -227,10 +227,11 @@ the wrong remote:
 }
 ```
 
-`calavera apply` only writes local files and package scripts. Run `repo:controls:check` for a
-read-only GitHub drift report, then run `repo:controls:apply` separately after reviewing the plan.
-The apply command requires confirmation unless `--yes` is passed explicitly. GitHub features that
-are unavailable for the repository or plan are reported as unsupported rather than ordinary drift.
+`calavera apply` only writes local files and package scripts. Run `npm run repo:controls:check` for
+a read-only GitHub drift report, then run `npm run repo:controls:apply` separately after reviewing
+the plan. The apply command requires confirmation unless you pass `--yes` explicitly, for example
+`npm run repo:controls:apply -- --yes`. GitHub features that are unavailable for the repository or
+plan are reported as unsupported rather than ordinary drift.
 
 ## CLI
 
