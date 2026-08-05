@@ -10,8 +10,8 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 const API_VERSION = "2026-03-10";
 const CONFIG_LIMIT = 1024 * 1024;
 const API_RESPONSE_LIMIT = 20 * 1024 * 1024;
-const CODEQL_ATTEMPTS = 12;
-const CODEQL_DELAY_MS = 5_000;
+export const CODEQL_ATTEMPTS = 36;
+export const CODEQL_DELAY_MS = 5_000;
 const MAX_PAGES = 100;
 const root = fileURLToPath(new URL("..", import.meta.url));
 const configPath = fileURLToPath(new URL("../.github/repository-controls.json", import.meta.url));
@@ -230,7 +230,7 @@ export function normalizeCodeqlDefaultSetup(setup) {
     querySuite: setup.query_suite ?? "default",
     threatModel: setup.threat_model ?? "remote",
     runnerType: setup.runner_type ?? "standard",
-    runnerLabel: setup.runner_label ?? null,
+    runnerLabel: setup.runner_label || null,
   };
 }
 
