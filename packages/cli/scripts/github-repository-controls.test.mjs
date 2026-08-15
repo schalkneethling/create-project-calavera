@@ -15,6 +15,8 @@ import {
 import { applyRecipeObject } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
 import {
+  CODEQL_ATTEMPTS,
+  CODEQL_DELAY_MS,
   GitHubApi,
   dependabotAlertsEnabled,
   desiredState,
@@ -172,9 +174,17 @@ test("planner separates drift, manual remediation, and unsupported controls", ()
   ]);
 });
 
-test("CodeQL normalization tolerates omitted optional response fields", () => {
+test("CodeQL normalization tolerates omitted fields and empty runner labels", () => {
   assert.deepEqual(normalizeCodeqlDefaultSetup({ state: "not-configured" }), {
     state: "not-configured",
+    languages: [],
+    querySuite: "default",
+    threatModel: "remote",
+    runnerType: "standard",
+    runnerLabel: null,
+  });
+  assert.deepEqual(normalizeCodeqlDefaultSetup({ state: "configured", runner_label: "" }), {
+    state: "configured",
     languages: [],
     querySuite: "default",
     threatModel: "remote",
@@ -202,6 +212,10 @@ test("desired CodeQL state normalizes omitted defaults like the GitHub response"
     runnerLabel: null,
   });
   const current = structuredClone(desired);
+  current.security.codeqlDefaultSetup = normalizeCodeqlDefaultSetup({
+    ...codeqlDefaultSetupPayload(desired.security.codeqlDefaultSetup),
+    runner_label: "",
+  });
   current.security.codeqlSupported = true;
   current.rulesetsSupported = true;
   assert.deepEqual(planRepositoryControlChanges(current, desired), []);
@@ -309,6 +323,10 @@ test("repository-state reads update a matching ruleset returned after the first 
 });
 
 test("CodeQL verification polling is bounded", async () => {
+  assert.equal(CODEQL_ATTEMPTS, 36);
+  assert.equal(CODEQL_DELAY_MS, 5_000);
+  assert.equal((CODEQL_ATTEMPTS - 1) * CODEQL_DELAY_MS, 175_000);
+
   let reads = 0;
   await assert.rejects(
     () =>
