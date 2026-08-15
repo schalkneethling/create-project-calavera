@@ -54,7 +54,7 @@
     "@schalkneethling/calavera-artifact-core": "workspace:^",
     "@schalkneethling/calavera-baseline-core": "workspace:^",
     "execa": "^10.0.1",
-    "prettier": "^3.5.3",
+    "prettier": "^3.9.6",
     "yaml": "^2.9.0",
     "zod": "^4.4.3"
   }
