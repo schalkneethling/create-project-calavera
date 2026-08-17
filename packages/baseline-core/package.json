@@ -22,6 +22,6 @@
   },
   "dependencies": {
     "baseline-browser-mapping": "2.11.9",
-    "web-features": "3.34.2"
+    "web-features": "3.34.3"
   }
 }
