@@ -148,6 +148,9 @@ export function desiredState(config, reviewerIds = []) {
     mainRuleset: {
       name: config.mainRuleset.name,
       enforcement: "active",
+      target: "branch",
+      noBypassActors: true,
+      codeScanning: config.mainRuleset.codeScanning ?? null,
       targetDefaultBranch: true,
       requiredChecks: [...config.mainRuleset.requiredChecks].sort(),
       strictStatusChecks: config.mainRuleset.requiredChecks.length > 0,
@@ -245,7 +248,7 @@ export function codeqlDefaultSetupPayload(control = {}) {
   };
 }
 
-export function normalizeMainRuleset(ruleset) {
+export function normalizeMainRuleset(ruleset, manageCodeScanning = true) {
   if (!ruleset) return null;
   const pullRequest = ruleset.rules.find((rule) => rule.type === "pull_request");
   const statusChecks = ruleset.rules.find((rule) => rule.type === "required_status_checks");
@@ -253,13 +256,17 @@ export function normalizeMainRuleset(ruleset) {
   const checkParameters = statusChecks?.parameters ?? {};
   return {
     name: ruleset.name,
+    target: ruleset.target,
+    noBypassActors: Array.isArray(ruleset.bypass_actors) && ruleset.bypass_actors.length === 0,
+    codeScanning: manageCodeScanning ? normalizeCodeScanning(ruleset) : null,
     enforcement: ["active", "disabled", "evaluate"].includes(ruleset.enforcement)
       ? ruleset.enforcement
       : "disabled",
     targetDefaultBranch:
       ruleset.conditions?.ref_name?.include?.length === 1 &&
       ruleset.conditions.ref_name.include[0] === "~DEFAULT_BRANCH" &&
-      (ruleset.conditions.ref_name.exclude?.length ?? 0) === 0,
+      Array.isArray(ruleset.conditions.ref_name.exclude) &&
+      ruleset.conditions.ref_name.exclude.length === 0,
     requiredChecks: (checkParameters.required_status_checks ?? [])
       .map((check) => check.context)
       .sort(),
@@ -277,7 +284,19 @@ export function normalizeMainRuleset(ruleset) {
   };
 }
 
-export function mainRulesetPayload(control, enforcement = control.enforcement) {
+function normalizeCodeScanning(ruleset) {
+  const tools = ruleset.rules
+    .filter(({ type }) => type === "code_scanning")
+    .flatMap((rule) => rule.parameters?.code_scanning_tools ?? [])
+    .filter(({ tool }) => tool === "CodeQL");
+  if (tools.length !== 1) return null;
+  return {
+    alertsThreshold: tools[0].alerts_threshold,
+    securityAlertsThreshold: tools[0].security_alerts_threshold,
+  };
+}
+
+export function mainRulesetPayload(control, enforcement = control.enforcement, existing = null) {
   const rules = [
     { type: "deletion" },
     { type: "non_fast_forward" },
@@ -300,6 +319,33 @@ export function mainRulesetPayload(control, enforcement = control.enforcement) {
         do_not_enforce_on_create: control.allowBranchCreationWithoutChecks,
         required_status_checks: control.requiredChecks.map((context) => ({ context })),
         strict_required_status_checks_policy: control.strictStatusChecks,
+      },
+    });
+  }
+  const managedTypes = new Set([
+    "deletion",
+    "non_fast_forward",
+    "pull_request",
+    "required_status_checks",
+  ]);
+  if (control.codeScanning) managedTypes.add("code_scanning");
+  rules.push(...(existing?.rules ?? []).filter(({ type }) => !managedTypes.has(type)));
+  if (control.codeScanning) {
+    const otherTools = (existing?.rules ?? [])
+      .filter(({ type }) => type === "code_scanning")
+      .flatMap((rule) => rule.parameters?.code_scanning_tools ?? [])
+      .filter(({ tool }) => tool !== "CodeQL");
+    rules.push({
+      type: "code_scanning",
+      parameters: {
+        code_scanning_tools: [
+          ...otherTools,
+          {
+            tool: "CodeQL",
+            alerts_threshold: control.codeScanning.alertsThreshold,
+            security_alerts_threshold: control.codeScanning.securityAlertsThreshold,
+          },
+        ],
       },
     });
   }
@@ -438,6 +484,20 @@ function validateConfig(config) {
   ) {
     throw new Error("Repository controls configuration is incomplete.");
   }
+  const scanning = config.mainRuleset.codeScanning;
+  if (
+    scanning != null &&
+    (typeof scanning !== "object" ||
+      Array.isArray(scanning) ||
+      Object.keys(scanning).some(
+        (key) => !["alertsThreshold", "securityAlertsThreshold"].includes(key),
+      ) ||
+      !["none", "errors", "errors_and_warnings", "all"].includes(scanning.alertsThreshold) ||
+      !["none", "critical", "high_or_higher", "medium_or_higher", "all"].includes(
+        scanning.securityAlertsThreshold,
+      ))
+  )
+    throw new Error("Invalid mainRuleset.codeScanning thresholds.");
 }
 
 function resolveReviewers(api, config) {
@@ -458,9 +518,13 @@ export function readRepositoryControlState(api, repository, desired) {
   const dependabotAlerts = dependabotAlertsEnabled(api, repository);
   const dependabotSecurityUpdates = api.optional(`repos/${repository}/automated-security-fixes`);
   const codeql = api.capability(`repos/${repository}/code-scanning/default-setup`);
-  const rulesetsCapability = api.capability(`repos/${repository}/rulesets`, { paginate: true });
+  const rulesetsCapability = api.capability(`repos/${repository}/rulesets?includes_parents=false`, {
+    paginate: true,
+  });
   const rulesets = rulesetsCapability.supported ? rulesetsCapability.value : [];
-  const rulesetSummary = rulesets.find((candidate) => candidate.name === desired.mainRuleset.name);
+  const matches = rulesets.filter((candidate) => candidate.name === desired.mainRuleset.name);
+  if (matches.length > 1) throw new Error("Multiple repository rulesets match the managed name.");
+  const rulesetSummary = matches[0];
   const ruleset = rulesetSummary
     ? api.request("GET", `repos/${repository}/rulesets/${rulesetSummary.id}`)
     : null;
@@ -498,10 +562,11 @@ export function readRepositoryControlState(api, repository, desired) {
       },
       rulesetsSupported: rulesetsCapability.supported,
       rulesetsDetail: rulesetsCapability.detail ?? null,
-      mainRuleset: normalizeMainRuleset(ruleset),
+      mainRuleset: normalizeMainRuleset(ruleset, Boolean(desired.mainRuleset.codeScanning)),
       releaseEnvironment: normalizeReleaseEnvironment(environment, policies, variables),
     },
     rulesetId: ruleset?.id ?? null,
+    ruleset,
   };
 }
 
@@ -663,7 +728,7 @@ export async function runRepositoryControls(options = {}) {
       api.request(
         "PUT",
         `repos/${config.repository}/rulesets/${rulesetId}`,
-        mainRulesetPayload(desired.mainRuleset),
+        mainRulesetPayload(desired.mainRuleset, desired.mainRuleset.enforcement, current.ruleset),
       );
     } else if (change.control === "release-environment" && desired.releaseEnvironment) {
       applyReleaseEnvironment(api, config.repository, desired.releaseEnvironment);

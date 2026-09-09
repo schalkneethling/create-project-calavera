@@ -60,6 +60,10 @@ export function createRepositoryControlsConfig(options) {
     },
     mainRuleset: {
       name: "protect-default-branch",
+      codeScanning: {
+        alertsThreshold: "errors_and_warnings",
+        securityAlertsThreshold: "medium_or_higher",
+      },
       requiredChecks: options.requiredChecks,
       allowedMergeMethods: options.mergeMethods,
     },
@@ -112,6 +116,14 @@ node scripts/repository-controls.mjs --apply
 \`\`\`
 
 For intentional unattended administration, add \`--yes\` to the apply command.
+
+## CodeQL merge protection
+
+The generated policy uses the ${config.security.codeqlDefaultSetup.querySuite} query suite and requires CodeQL results, blocking errors and warnings plus medium-or-higher security alerts. Edit \`mainRuleset.codeScanning\` in the committed policy to choose thresholds; set it to null to leave scanning rules unmanaged (existing remote rules are retained). Older policies without this field leave scanning rules unmanaged. Re-applying the Calavera recipe regenerates the policy.
+
+Checks verify active branch enforcement, default-branch scope without exclusions, and an explicitly empty bypass list. Applying repairs these shared protections and preserves unrelated rules and other scanners. Review the plan before applying.
+
+GitHub must support code-scanning merge protection for the repository. A required scan must have results for both the commit and target reference. See [GitHub rules documentation](https://docs.github.com/en/rest/repos/rules).
 
 ## Manual controls
 
