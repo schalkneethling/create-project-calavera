@@ -234,7 +234,8 @@ the plan. The apply command requires confirmation unless you pass `--yes` explic
 plan are reported as unsupported rather than ordinary drift.
 
 Newly generated policies use the extended CodeQL query suite (override with
-`codeqlQuerySuite: "default"` in the recipe). The managed default-branch ruleset requires CodeQL
+`codeqlQuerySuite: "default"` in the recipe). Policy languages are required coverage; remote apply
+preserves additional configured CodeQL languages. The managed default-branch ruleset requires CodeQL
 results and blocks errors/warnings and medium-or-higher security alerts. The committed policy's
 `mainRuleset.codeScanning` object exposes `alertsThreshold` and `securityAlertsThreshold` using
 [GitHub's threshold values](https://docs.github.com/en/rest/repos/rules). Set it to `null` to leave

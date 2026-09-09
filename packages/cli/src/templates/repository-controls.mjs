@@ -265,8 +265,9 @@ export function normalizeMainRuleset(ruleset, manageCodeScanning = true) {
     targetDefaultBranch:
       ruleset.conditions?.ref_name?.include?.length === 1 &&
       ruleset.conditions.ref_name.include[0] === "~DEFAULT_BRANCH" &&
-      Array.isArray(ruleset.conditions.ref_name.exclude) &&
-      ruleset.conditions.ref_name.exclude.length === 0,
+      (ruleset.conditions.ref_name.exclude === undefined ||
+        (Array.isArray(ruleset.conditions.ref_name.exclude) &&
+          ruleset.conditions.ref_name.exclude.length === 0)),
     requiredChecks: (checkParameters.required_status_checks ?? [])
       .map((check) => check.context)
       .sort(),
@@ -522,7 +523,9 @@ export function readRepositoryControlState(api, repository, desired) {
     paginate: true,
   });
   const rulesets = rulesetsCapability.supported ? rulesetsCapability.value : [];
-  const matches = rulesets.filter((candidate) => candidate.name === desired.mainRuleset.name);
+  const matches = rulesets.filter(
+    (candidate) => candidate.name === desired.mainRuleset.name && candidate.target === "branch",
+  );
   if (matches.length > 1) throw new Error("Multiple repository rulesets match the managed name.");
   const rulesetSummary = matches[0];
   const ruleset = rulesetSummary
@@ -663,6 +666,13 @@ export async function runRepositoryControls(options = {}) {
   const reviewerIds = resolveReviewers(api, config);
   const desired = desiredState(config, reviewerIds);
   const current = readRepositoryControlState(api, config.repository, desired);
+  // Policy languages are required coverage, not a request to remove existing coverage.
+  desired.security.codeqlDefaultSetup.languages = [
+    ...new Set([
+      ...desired.security.codeqlDefaultSetup.languages,
+      ...(current.state.security.codeqlDefaultSetup?.languages ?? []),
+    ]),
+  ].sort();
   const changes = planRepositoryControlChanges(current.state, desired);
   printChanges(changes, log);
   if (config.manualControls.dependabotMalwareAlerts) {

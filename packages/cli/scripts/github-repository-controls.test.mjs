@@ -321,7 +321,8 @@ test("repository-state reads update a matching ruleset returned after the first 
           supported: true,
           value: [
             ...Array.from({ length: 100 }, (_, id) => ({ id, name: `ruleset-${id}` })),
-            { id: 101, name: desired.mainRuleset.name },
+            { id: 100, name: desired.mainRuleset.name, target: "tag" },
+            { id: 101, name: desired.mainRuleset.name, target: "branch" },
           ],
         };
       }
@@ -332,6 +333,19 @@ test("repository-state reads update a matching ruleset returned after the first 
   const current = readRepositoryControlState(api, config.repository, desired);
   assert.equal(current.rulesetId, 101);
   assert.deepEqual(current.state.mainRuleset, desired.mainRuleset);
+
+  const capability = api.capability;
+  let summaries = [{ id: 100, name: desired.mainRuleset.name, target: "tag" }];
+  api.capability = (endpoint, options) =>
+    endpoint.endsWith("/rulesets?includes_parents=false")
+      ? { supported: true, value: summaries }
+      : capability(endpoint, options);
+  assert.equal(readRepositoryControlState(api, config.repository, desired).rulesetId, null);
+  summaries = [101, 102].map((id) => ({ id, name: desired.mainRuleset.name, target: "branch" }));
+  assert.throws(
+    () => readRepositoryControlState(api, config.repository, desired),
+    /Multiple repository rulesets/,
+  );
 });
 
 test("CodeQL verification polling is bounded", async () => {
@@ -408,7 +422,10 @@ test("generated check stays read-only and apply mutates only planned drift", asy
       }
       if (endpoint.endsWith("/rulesets?includes_parents=false")) {
         assert.deepEqual(options, { paginate: true });
-        return { supported: true, value: [{ id: 1, name: desired.mainRuleset.name }] };
+        return {
+          supported: true,
+          value: [{ id: 1, name: desired.mainRuleset.name, target: "branch" }],
+        };
       }
       throw new Error(`Unexpected capability GET: ${endpoint}`);
     },
@@ -491,7 +508,10 @@ test("apply uses DELETE for planned Dependabot disable operations", async () => 
         };
       }
       if (endpoint.endsWith("/rulesets?includes_parents=false")) {
-        return { supported: true, value: [{ id: 1, name: desired.mainRuleset.name }] };
+        return {
+          supported: true,
+          value: [{ id: 1, name: desired.mainRuleset.name, target: "branch" }],
+        };
       }
       throw new Error(`Unexpected capability GET: ${endpoint}`);
     },
@@ -623,7 +643,7 @@ test("CodeQL protection detects weakened thresholds and ineffective rulesets", (
       rule.conditions.ref_name.exclude = ["~DEFAULT_BRANCH"];
     },
     (rule) => {
-      delete rule.conditions.ref_name.exclude;
+      rule.conditions.ref_name.exclude = "";
     },
     (rule) => {
       delete rule.bypass_actors;
@@ -702,12 +722,16 @@ test("apply repairs scanning drift and verifies the returned ruleset", async () 
     let ruleset = mainRulesetPayload(desired.mainRuleset);
     ruleset.rules = ruleset.rules.filter(({ type }) => type !== "code_scanning");
     ruleset.rules.push({ type: "required_signatures" });
+    delete ruleset.conditions.ref_name.exclude;
     const writes = [];
     const api = {
       request(method, endpoint, body) {
         if (method === "PUT" && endpoint.endsWith("/rulesets/1")) {
           writes.push(body);
-          if (converge) ruleset = body;
+          if (converge) {
+            ruleset = structuredClone(body);
+            delete ruleset.conditions.ref_name.exclude;
+          }
           return body;
         }
         assert.equal(method, "GET");
@@ -734,7 +758,10 @@ test("apply repairs scanning drift and verifies the returned ruleset", async () 
             value: codeqlDefaultSetupPayload(desired.security.codeqlDefaultSetup),
           };
         if (endpoint.endsWith("/rulesets?includes_parents=false"))
-          return { supported: true, value: [{ id: 1, name: desired.mainRuleset.name }] };
+          return {
+            supported: true,
+            value: [{ id: 1, name: desired.mainRuleset.name, target: "branch" }],
+          };
         assert.fail(`Unexpected capability ${endpoint}`);
       },
     };
@@ -748,5 +775,80 @@ test("apply repairs scanning drift and verifies the returned ruleset", async () 
     } else await assert.rejects(apply, /still differ after apply/);
     assert.equal(writes.length, 1);
     assert.ok(writes[0].rules.some(({ type }) => type === "required_signatures"));
+  }
+});
+
+test("CodeQL apply preserves additional languages and verifies the merged coverage", async () => {
+  for (const preserve of [true, false]) {
+    const config = createRepositoryControlsConfig(
+      normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    );
+    const original = structuredClone(config);
+    const desired = desiredState(config);
+    let setup = {
+      ...codeqlDefaultSetupPayload(desired.security.codeqlDefaultSetup),
+      languages: ["javascript", "typescript", "python"],
+      query_suite: "default",
+    };
+    const writes = [];
+    const api = {
+      request(method, endpoint, body) {
+        if (method === "PATCH" && endpoint.endsWith("/code-scanning/default-setup")) {
+          writes.push(body);
+          setup = structuredClone(body);
+          if (!preserve)
+            setup.languages = setup.languages.filter((language) => language !== "python");
+          return {};
+        }
+        assert.equal(method, "GET");
+        if (endpoint.endsWith("/code-scanning/default-setup")) return setup;
+        if (endpoint.endsWith("/rulesets/1"))
+          return { id: 1, ...mainRulesetPayload(desired.mainRuleset) };
+        if (endpoint === "repos/octocat/example")
+          return {
+            default_branch: "main",
+            ...repositorySettingsPayload(desired.repositorySettings),
+          };
+        if (endpoint.endsWith("/actions/permissions/workflow"))
+          return { default_workflow_permissions: "read", can_approve_pull_request_reviews: false };
+        assert.fail(`Unexpected request ${endpoint}`);
+      },
+      optional(endpoint) {
+        if (endpoint.endsWith("/immutable-releases")) return { enabled: true };
+        if (endpoint.endsWith("/vulnerability-alerts")) return undefined;
+        if (endpoint.endsWith("/automated-security-fixes")) return { enabled: true, paused: false };
+        assert.fail(`Unexpected optional ${endpoint}`);
+      },
+      capability(endpoint) {
+        if (endpoint.endsWith("/code-scanning/default-setup"))
+          return { supported: true, value: setup };
+        if (endpoint.endsWith("/rulesets?includes_parents=false"))
+          return {
+            supported: true,
+            value: [{ id: 1, name: desired.mainRuleset.name, target: "branch" }],
+          };
+        assert.fail(`Unexpected capability ${endpoint}`);
+      },
+    };
+    const options = {
+      config,
+      api,
+      skipGhChecks: true,
+      log: () => {},
+      polling: { attempts: 2, delayMs: 0, delay: async () => {} },
+    };
+    assert.deepEqual((await runRepositoryControls(options)).changes, [
+      { control: "codeql-default-setup", operation: "update", status: "drift" },
+    ]);
+    assert.deepEqual(writes, []);
+    const result = runRepositoryControls({ ...options, apply: true, yes: true });
+    if (preserve) {
+      assert.equal((await result).ok, true);
+      assert.equal((await runRepositoryControls({ ...options, apply: true, yes: true })).ok, true);
+    } else await assert.rejects(result, /did not reach the desired state/);
+    assert.equal(writes.length, 1);
+    assert.deepEqual(writes[0].languages, ["actions", "javascript-typescript", "python"]);
+    assert.equal(writes[0].query_suite, "extended");
+    assert.deepEqual(config, original);
   }
 });
