@@ -233,6 +233,20 @@ the plan. The apply command requires confirmation unless you pass `--yes` explic
 `npm run repo:controls:apply -- --yes`. GitHub features that are unavailable for the repository or
 plan are reported as unsupported rather than ordinary drift.
 
+Newly generated policies use the extended CodeQL query suite (override with
+`codeqlQuerySuite: "default"` in the recipe). Policy languages are required coverage; remote apply
+preserves additional configured CodeQL languages. The managed default-branch ruleset requires CodeQL
+results and blocks errors/warnings and medium-or-higher security alerts. The committed policy's
+`mainRuleset.codeScanning` object exposes `alertsThreshold` and `securityAlertsThreshold` using
+[GitHub's threshold values](https://docs.github.com/en/rest/repos/rules). Set it to `null` to leave
+scanning rules unmanaged; older policies without the field retain that behavior. Regenerating the
+policy with `calavera apply` restores the generated thresholds.
+
+The drift check also verifies branch targeting, active enforcement, no exclusions, and an explicitly
+empty bypass list. Remote apply repairs those shared protections while preserving unrelated rule
+types and other scanners. Code-scanning merge protection requires GitHub support and scan results
+for both the commit and target reference; enabling default setup alone does not guarantee a PR can merge.
+
 ## CLI
 
 Create a recipe:

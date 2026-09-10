@@ -167,7 +167,7 @@ export function normalizeGithubRepositoryControlsOptions(value) {
   if (mergeMethods.length === 0) {
     throw new Error("github-repository-controls.mergeMethods must contain at least one method.");
   }
-  const codeqlQuerySuite = value.codeqlQuerySuite ?? "default";
+  const codeqlQuerySuite = value.codeqlQuerySuite ?? "extended";
   if (codeqlQuerySuite !== "default" && codeqlQuerySuite !== "extended") {
     throw new Error("github-repository-controls.codeqlQuerySuite must be default or extended.");
   }
