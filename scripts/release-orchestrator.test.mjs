@@ -11,6 +11,7 @@ import {
   hasExpectedTrust,
   hasPendingVersionBumps,
   isExplicitRegistryNotFound,
+  npmViewWithRetry,
   packagesFromReleaseNotes,
   parseOptions,
   releaseChannel,
@@ -107,6 +108,56 @@ test("release workflow polling waits asynchronously within a configurable budget
     }),
     /No publish\.yml run appeared/,
   );
+});
+
+test("npm view retries only explicit 404 responses, waiting the given backoff between attempts", async () => {
+  let calls = 0;
+  const delays = [];
+  const result = await npmViewWithRetry(["@scope/pkg@1.0.0", "version", "--json"], {
+    delays: [10, 20],
+    async delay(milliseconds) {
+      delays.push(milliseconds);
+    },
+    viewNpm() {
+      calls += 1;
+      return calls < 3
+        ? { status: 1, stdout: "", stderr: "npm error code E404" }
+        : { status: 0, stdout: '"1.0.0"\n', stderr: "" };
+    },
+  });
+  assert.equal(result, '"1.0.0"');
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [10, 20]);
+});
+
+test("npm view retry fails immediately on a non-404 error without waiting", async () => {
+  let waited = false;
+  await assert.rejects(
+    npmViewWithRetry(["@scope/pkg@1.0.0", "version", "--json"], {
+      delays: [10],
+      async delay() {
+        waited = true;
+      },
+      viewNpm: () => ({ status: 1, stdout: "", stderr: "npm error code ENOTFOUND" }),
+    }),
+    /failed with exit code 1/,
+  );
+  assert.equal(waited, false);
+});
+
+test("npm view retry exhausts its bounded backoff with actionable guidance", async () => {
+  const delays = [];
+  await assert.rejects(
+    npmViewWithRetry(["@scope/pkg@1.0.0", "version", "--json"], {
+      delays: [10, 20],
+      async delay(milliseconds) {
+        delays.push(milliseconds);
+      },
+      viewNpm: () => ({ status: 1, stdout: "", stderr: "npm error code E404" }),
+    }),
+    /re-run pnpm release:publish/,
+  );
+  assert.deepEqual(delays, [10, 20]);
 });
 
 test("Changesets status distinguishes pending bumps from NO-package summaries", () => {

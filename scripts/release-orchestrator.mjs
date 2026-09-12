@@ -367,7 +367,7 @@ async function bootstrapNewPackages(plan, options) {
     "--interval",
     "10",
   ]);
-  verifyPublishedPackages(plan, workflowRun.databaseId);
+  await verifyPublishedPackages(plan, workflowRun.databaseId);
 
   for (const pkg of newPackages) {
     run("npm", ["dist-tag", "rm", pkg.name, "bootstrap"]);
@@ -513,7 +513,38 @@ export async function waitForRun(tag, sha, options = {}) {
   throw new ReleaseError(`No ${workflow} run appeared for ${tag} at ${sha}.`);
 }
 
-function verifyPublishedPackages(plan, runId) {
+// npm's own publish output warns a fresh version "may take a few minutes to become available";
+// these delays give `npm view` that same window before treating an explicit 404 as a real failure.
+export const NPM_VIEW_RETRY_DELAYS_MS = [5000, 10000, 20000, 30000, 30000, 30000];
+
+function defaultViewNpm(args) {
+  return run("npm", ["view", ...args], { capture: true, allowFailure: true });
+}
+
+export async function npmViewWithRetry(args, options = {}) {
+  const wait = options.delay ?? delay;
+  const delays = options.delays ?? NPM_VIEW_RETRY_DELAYS_MS;
+  const viewNpm = options.viewNpm ?? defaultViewNpm;
+
+  for (let attempt = 0; ; attempt += 1) {
+    const result = viewNpm(args);
+    if (result.status === 0) return result.stdout.trim();
+    if (!isExplicitRegistryNotFound(result)) {
+      throw new ReleaseError(
+        `${commandText("npm", ["view", ...args])} failed with exit code ${result.status}.`,
+      );
+    }
+    if (attempt >= delays.length) {
+      const totalSeconds = Math.round(delays.reduce((total, ms) => total + ms, 0) / 1000);
+      throw new ReleaseError(
+        `npm view ${args.join(" ")} still reports the version missing after ${delays.length} retries over ~${totalSeconds}s. npm warns a fresh publish "may take a few minutes to become available" — wait a few minutes and re-run pnpm release:publish; already-published packages are skipped.`,
+      );
+    }
+    await wait(delays[attempt]);
+  }
+}
+
+async function verifyPublishedPackages(plan, runId, options = {}) {
   const candidates = plan.packages.filter(({ published }) => !published);
   const log = capture("gh", ["run", "view", String(runId), "--repo", repository, "--log"]);
   const provenanceCount = log.match(/Signed provenance statement/g)?.length ?? 0;
@@ -526,11 +557,20 @@ function verifyPublishedPackages(plan, runId) {
     if (!log.includes(`+ ${pkg.name}@${pkg.version}`)) {
       throw new ReleaseError(`Publish log does not confirm ${pkg.name}@${pkg.version}.`);
     }
-    const version = capture("npm", ["view", `${pkg.name}@${pkg.version}`, "version", "--json"]);
+    const version = await npmViewWithRetry(
+      [`${pkg.name}@${pkg.version}`, "version", "--json"],
+      options,
+    );
     if (JSON.parse(version) !== pkg.version) {
       throw new ReleaseError(`Registry did not return ${pkg.name}@${pkg.version}.`);
     }
-    const tags = captureJson("npm", ["view", pkg.name, "dist-tags", "--json"]);
+    const tagsRaw = await npmViewWithRetry([pkg.name, "dist-tags", "--json"], options);
+    let tags;
+    try {
+      tags = JSON.parse(tagsRaw);
+    } catch {
+      throw new ReleaseError(`npm view ${pkg.name} dist-tags --json returned malformed JSON.`);
+    }
     if (tags[pkg.channel] !== pkg.version) {
       throw new ReleaseError(`${pkg.name} ${pkg.channel} does not point to ${pkg.version}.`);
     }
@@ -649,7 +689,7 @@ export async function publishRelease(options = {}) {
       ),
     };
     const workflowRun = await waitForRun(tag, plan.sha);
-    verifyPublishedPackages(verificationPlan, workflowRun.databaseId);
+    await verifyPublishedPackages(verificationPlan, workflowRun.databaseId);
     await smokePublishedArtifacts(verificationPlan);
     console.info(`Release ${tag} and its package inventory are already published and verified.`);
     return plan;
@@ -679,7 +719,7 @@ export async function publishRelease(options = {}) {
     "--interval",
     "10",
   ]);
-  verifyPublishedPackages(plan, workflowRun.databaseId);
+  await verifyPublishedPackages(plan, workflowRun.databaseId);
   await smokePublishedArtifacts(plan);
   assertCandidateUnchanged(plan.sha);
   console.info(`Release ${tag} is published and verified.`);
