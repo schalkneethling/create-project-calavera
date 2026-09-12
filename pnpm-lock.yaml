@@ -66,8 +66,8 @@ importers:
         specifier: ^8.1.1
         version: 8.1.1(stylelint@17.15.0(typescript@7.0.2))
       stylelint-plugin-use-baseline:
-        specifier: ^1.4.5
-        version: 1.4.5(stylelint@17.15.0(typescript@7.0.2))
+        specifier: ^1.4.6
+        version: 1.4.6(stylelint@17.15.0(typescript@7.0.2))
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -2106,8 +2106,8 @@ packages:
     resolution: {integrity: sha512-+Pgi+vMuUNkJyExiMBt5IlFoMyKnr5zhJ4Uspz58WOhBF5QoIZkFyNHIbBAtHwzVAgk5RtndVNsDRN61/mmDqg==}
     engines: {node: '>=12'}
 
-  is-plain-object@5.0.0:
-    resolution: {integrity: sha512-VRSzKkbMm5jMDoKLbltAkFQ5Qr7VDiTFGXxYFXXowVj387GeGNOCsOH6Msy00SGZ3Fp84b1Naa1psqgcCIEP5Q==}
+  is-plain-object@5.1.0:
+    resolution: {integrity: sha512-bUi/yjmtKYcRVUtWRGr0UA6xEFh2I6zWUwMrUXB3s7bmYCaZ8a+0ZsTRkrawh/mzlSD1Y0Ph8bp/U+TvBpWDNw==}
     engines: {node: '>=0.10.0'}
 
   is-promise@4.0.0:
@@ -2407,11 +2407,6 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
-  nanoid@3.3.16:
-    resolution: {integrity: sha512-bzlKTyNJ7+LdGIIwy8ijFpIqEQIvafahV7eYykJ8Cvh42EdJeODoJ6gUJXpQJvej1BddH8OqTXZNE/KfbWAu8Q==}
-    engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
-    hasBin: true
-
   nanoid@3.3.18:
     resolution: {integrity: sha512-DTg4MJbGMWkfi6VZFdNt2/caMbQy4Ou+Op/hJQvGEWcnVfoA1QA+xzRKAzw9jD6+GVOOeYr/mIcuDSdug6F6+w==}
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
@@ -2660,10 +2655,6 @@ packages:
 
   postcss@8.5.15:
     resolution: {integrity: sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A==}
-    engines: {node: ^10 || ^12 || >=14}
-
-  postcss@8.5.25:
-    resolution: {integrity: sha512-DTPx3RWSSnWyzLxQnlH0rJP+EW5ekl16ZU4/psbIhA0e53kJfdgaN5vKM+xP7yJtXVu+nfdVFmlgFDEKAe4Pyw==}
     engines: {node: ^10 || ^12 || >=14}
 
   postcss@8.5.26:
@@ -2938,8 +2929,8 @@ packages:
     peerDependencies:
       stylelint: ^16.18.0 || ^17.0.0
 
-  stylelint-plugin-use-baseline@1.4.5:
-    resolution: {integrity: sha512-/AHhNgy3VQKx8bEc3ZeTc2tVOqU3Gdyr+55ZzUHrTtY0L/uGw9gyeIDWUQWpQiY4EwpAlQ009bSvQDt8cdqvmw==}
+  stylelint-plugin-use-baseline@1.4.6:
+    resolution: {integrity: sha512-8FyloHsa3YXt0y3wVYToV1frYgX/p7GYOCV7EjV/BjiNFzzGnqJvcKK94vNBfI/BOUi1d8L+VdgBqx5zNMF3uw==}
     peerDependencies:
       stylelint: ^16.0.2 || ^17.0.0
 
@@ -4831,7 +4822,7 @@ snapshots:
 
   is-plain-obj@4.1.0: {}
 
-  is-plain-object@5.0.0: {}
+  is-plain-object@5.1.0: {}
 
   is-promise@4.0.0: {}
 
@@ -5080,8 +5071,6 @@ snapshots:
   ms@2.1.3: {}
 
   nanoid@3.3.12: {}
-
-  nanoid@3.3.16: {}
 
   nanoid@3.3.18: {}
 
@@ -5398,12 +5387,6 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.1
 
-  postcss@8.5.25:
-    dependencies:
-      nanoid: 3.3.16
-      picocolors: 1.1.1
-      source-map-js: 1.2.1
-
   postcss@8.5.26:
     dependencies:
       nanoid: 3.3.18
@@ -5698,11 +5681,11 @@ snapshots:
       postcss-sorting: 10.0.0(postcss@8.5.15)
       stylelint: 17.15.0(typescript@7.0.2)
 
-  stylelint-plugin-use-baseline@1.4.5(stylelint@17.15.0(typescript@7.0.2)):
+  stylelint-plugin-use-baseline@1.4.6(stylelint@17.15.0(typescript@7.0.2)):
     dependencies:
       css-tree: 3.2.1
-      is-plain-object: 5.0.0
-      postcss: 8.5.25
+      is-plain-object: 5.1.0
+      postcss: 8.5.28
       postcss-value-parser: 4.2.0
       stylelint: 17.15.0(typescript@7.0.2)
 
