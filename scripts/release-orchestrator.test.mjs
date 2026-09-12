@@ -219,18 +219,21 @@ test("version generation formats one-item prerelease state deterministically", a
       {
         name: "release-fixture",
         private: true,
-        workspaces: ["packages/*", "apps/*"],
       },
       null,
       2,
     )}\n`,
+  );
+  await writeFile(
+    join(directory, "pnpm-workspace.yaml"),
+    'packages:\n  - "packages/*"\n  - "apps/*"\n',
   );
   await writeFile(join(directory, ".oxfmtrc.json"), "{}\n");
   await writeFile(
     join(directory, ".changeset", "config.json"),
     `${JSON.stringify(
       {
-        $schema: "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+        $schema: "https://unpkg.com/@changesets/config@4.0.0/schema.json",
         changelog: false,
         commit: false,
         fixed: [],
@@ -239,6 +242,7 @@ test("version generation formats one-item prerelease state deterministically", a
         baseBranch: "main",
         updateInternalDependencies: "patch",
         ignore: ["private-app"],
+        format: false,
       },
       null,
       2,
@@ -310,7 +314,8 @@ test("version generation formats one-item prerelease state deterministically", a
   const packageManifest = JSON.parse(
     await readFile(join(directory, "packages", "fixture", "package.json"), "utf8"),
   );
-  assert.match(preState, /"changesets": \["one-change"\]/);
+  assert.deepEqual(JSON.parse(preState), { mode: "pre", tag: "next" });
+  await access(join(directory, ".changeset", "pre", "one-change.md"));
   assert.equal(packageManifest.version, "1.1.0-next.0");
   assert.equal(
     await readFile(join(directory, "apps", "private", "package.json"), "utf8"),
@@ -341,18 +346,21 @@ test("stable version generation preserves ignored private applications", async (
       {
         name: "release-exit-fixture",
         private: true,
-        workspaces: ["packages/*", "apps/*"],
       },
       null,
       2,
     )}\n`,
+  );
+  await writeFile(
+    join(directory, "pnpm-workspace.yaml"),
+    'packages:\n  - "packages/*"\n  - "apps/*"\n',
   );
   await writeFile(join(directory, ".oxfmtrc.json"), "{}\n");
   await writeFile(
     join(directory, ".changeset", "config.json"),
     `${JSON.stringify(
       {
-        $schema: "https://unpkg.com/@changesets/config@3.1.1/schema.json",
+        $schema: "https://unpkg.com/@changesets/config@4.0.0/schema.json",
         changelog: "@changesets/cli/changelog",
         commit: false,
         fixed: [],
@@ -365,6 +373,7 @@ test("stable version generation preserves ignored private applications", async (
           version: false,
           tag: false,
         },
+        format: false,
       },
       null,
       2,
@@ -376,18 +385,14 @@ test("stable version generation preserves ignored private applications", async (
       {
         mode: "exit",
         tag: "next",
-        initialVersions: {
-          "fixture-package": "1.0.0",
-          "versioned-app": "0.1.0",
-        },
-        changesets: ["one-change"],
       },
       null,
       2,
     )}\n`,
   );
+  await mkdir(join(directory, ".changeset", "pre"));
   await writeFile(
-    join(directory, ".changeset", "one-change.md"),
+    join(directory, ".changeset", "pre", "one-change.md"),
     `---\n"fixture-package": minor\n---\n\nAdd a fixture feature.\n`,
   );
   await writeFile(
@@ -410,6 +415,22 @@ test("stable version generation preserves ignored private applications", async (
   await writeFile(join(directory, "apps", "versioned", "CHANGELOG.md"), versionedChangelog);
 
   execFileSync("git", ["init", "-b", "main"], { cwd: directory });
+  execFileSync(
+    "git",
+    [
+      "-c",
+      "user.name=Calavera Test",
+      "-c",
+      "user.email=calavera@example.invalid",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--allow-empty",
+      "-m",
+      "seed repository",
+    ],
+    { cwd: directory },
+  );
   execFileSync("git", ["add", "."], { cwd: directory });
   execFileSync(
     "git",

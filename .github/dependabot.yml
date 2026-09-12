@@ -20,7 +20,3 @@ updates:
       default-days: 7
       include:
         - "*"
-    ignore:
-      # v2+ requires Changesets CLI v3; we're still on CLI v2.
-      - dependency-name: "changesets/action"
-        update-types: ["version-update:semver-major"]

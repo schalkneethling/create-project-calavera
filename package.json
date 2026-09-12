@@ -33,7 +33,7 @@
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
   },
   "devDependencies": {
-    "@changesets/cli": "^2.31.1",
+    "@changesets/cli": "^3.0.2",
     "@eslint/js": "^10.0.1",
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
     "@types/node": "^26.1.2",

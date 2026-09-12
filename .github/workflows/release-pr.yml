@@ -29,9 +29,10 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Create or update release pull request
-        # Pinned to v1 (not v2+): v2 requires Changesets CLI v3, we're still on CLI v2.
-        uses: changesets/action@a45c4d594aa4e2c509dc14a9f2b3b67ba3780d0d
+        # changesets/action's major version must stay in lockstep with @changesets/cli's
+        # major version in package.json (v2 needs CLI v3+). Dependabot bumps these two
+        # independently across ecosystems, so verify both together on any major bump.
+        uses: changesets/action@ae32849d5ba541f9ae29e40e22a623bc13562f51
         with:
-          version: pnpm release:version
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          version-script: pnpm release:version
+          github-token: ${{ secrets.GITHUB_TOKEN }}
