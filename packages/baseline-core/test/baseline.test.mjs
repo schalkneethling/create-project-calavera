@@ -17,8 +17,8 @@ import {
 import { isCssSpecificationUrl } from "../src/specification-url.js";
 
 test("generated Baseline data records pinned sources and CSS features", () => {
-  assert.equal(baselineMetadata.sources.webFeatures, "3.34.0");
-  assert.equal(baselineMetadata.sources.baselineBrowserMapping, "2.10.43");
+  assert.equal(baselineMetadata.sources.webFeatures, "3.37.0");
+  assert.equal(baselineMetadata.sources.baselineBrowserMapping, "2.11.9");
   assert.equal(baselineMetadata.generatedAt, `${BASELINE_SNAPSHOT_DATE}T00:00:00.000Z`);
   assert.equal(baselineMetadata.currentYear, BASELINE_SNAPSHOT_YEAR);
   assert.ok(baselineMetadata.featureCount > 100);

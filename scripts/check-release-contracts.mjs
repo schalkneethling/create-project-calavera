@@ -88,7 +88,7 @@ assert.equal(
   "node scripts/release-orchestrator.mjs publish",
 );
 assert.match(rootPackage.scripts["release:contracts"], /release-orchestrator\.test\.mjs/);
-assert.equal(rootPackage.devDependencies.fledgling, "1.2.0");
+assert.equal(rootPackage.devDependencies.fledgling, "1.2.1");
 assert(
   knip.ignoreDependencies.includes("fledgling"),
   "Knip must account for Fledgling's subprocess-only CLI invocation",
@@ -99,7 +99,7 @@ assert.deepEqual(rootPackage.fledgling, {
   environment: "publish",
   permissions: "publish",
 });
-assert.match(releasePrWorkflow, /version: pnpm release:version/);
+assert.match(releasePrWorkflow, /version-script: pnpm release:version/);
 assert.match(workspace, /packages:\n\s+- "apps\/\*"/);
 assert.match(workspace, /- "packages\/artifacts\/\*"/);
 const packDestinations = [...publishWorkflow.matchAll(/--pack-destination\s+([^\s]+)/g)].map(
