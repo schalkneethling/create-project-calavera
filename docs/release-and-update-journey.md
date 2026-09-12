@@ -2,6 +2,8 @@
 
 Calavera has independent release surfaces. A change should release only the package or application whose inputs changed.
 
+For the concrete, step-by-step commands to run once a Changesets version PR is open and ready to release, see [`release-runbook.md`](./release-runbook.md).
+
 | Surface                           | Version or deployment boundary                  | Trigger                                      |
 | --------------------------------- | ----------------------------------------------- | -------------------------------------------- |
 | CLI, Baseline core, artifact core | Independent npm semver through Changesets       | Approved GitHub release                      |

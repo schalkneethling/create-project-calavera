@@ -679,7 +679,7 @@ configured with that workflow as a trusted publisher for
 `create-project-calavera` and each public workspace package, including
 `@schalkneethling/calavera-baseline-core`.
 
-The complete independent-package, static-app, artifact-channel, recovery, and macOS rehearsal is documented in [`docs/release-and-update-journey.md`](docs/release-and-update-journey.md).
+The complete independent-package, static-app, artifact-channel, recovery, and macOS rehearsal is documented in [`docs/release-and-update-journey.md`](docs/release-and-update-journey.md). For the concrete, step-by-step commands to run once a Changesets version PR is open and ready to release, see [`docs/release-runbook.md`](docs/release-runbook.md).
 
 Before the first trusted publish:
 
