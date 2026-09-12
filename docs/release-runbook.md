@@ -12,6 +12,8 @@ release.
   authenticated against it.
 - [`uv`](https://docs.astral.sh/uv/getting-started/installation/) available, so `pnpm workflow:check`
   can run `uvx zizmor` offline.
++ Run `uv sync --frozen` before the release rehearsal.
++ Prime the exact tool with `uvx zizmor@1.25.2 --version` while online.
 - npm CLI 11.15.0+ if the release includes a brand-new package name (see "New packages" below).
 - You do not need a local npm token. Publishing happens inside the protected `publish` GitHub
   environment through npm trusted publishing, not from your machine.
