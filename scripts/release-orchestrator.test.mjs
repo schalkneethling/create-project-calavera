@@ -17,6 +17,7 @@ import {
   releaseChannel,
   releaseTag,
   validateReleaseMetadata,
+  verifyPublishedPackages,
   waitForRun,
 } from "./release-orchestrator.mjs";
 import { generatedFormatPaths, versionPackages } from "./release-version.mjs";
@@ -158,6 +159,70 @@ test("npm view retry exhausts its bounded backoff with actionable guidance", asy
     /re-run pnpm release:publish/,
   );
   assert.deepEqual(delays, [10, 20]);
+});
+
+test("verifyPublishedPackages rejects malformed exact-version JSON", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement\n+ pkg-a@1.0.0",
+      viewNpm: (args) =>
+        args[1] === "version"
+          ? { status: 0, stdout: "not-json", stderr: "" }
+          : { status: 0, stdout: "{}", stderr: "" },
+    }),
+    /pkg-a@1\.0\.0 version --json returned malformed JSON/,
+  );
+});
+
+test("verifyPublishedPackages rejects malformed dist-tags JSON", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement\n+ pkg-a@1.0.0",
+      viewNpm: (args) =>
+        args[1] === "version"
+          ? { status: 0, stdout: '"1.0.0"', stderr: "" }
+          : { status: 0, stdout: "not-json", stderr: "" },
+    }),
+    /pkg-a dist-tags --json returned malformed JSON/,
+  );
+});
+
+test("verifyPublishedPackages rejects a registry version that differs from the plan", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement\n+ pkg-a@1.0.0",
+      viewNpm: (args) =>
+        args[1] === "version"
+          ? { status: 0, stdout: '"0.9.9"', stderr: "" }
+          : { status: 0, stdout: '{"latest":"0.9.9"}', stderr: "" },
+    }),
+    /Registry did not return pkg-a@1\.0\.0/,
+  );
+});
+
+test("verifyPublishedPackages rejects a missing or incorrect dist-tag for the package's channel", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement\n+ pkg-a@1.0.0",
+      viewNpm: (args) =>
+        args[1] === "version"
+          ? { status: 0, stdout: '"1.0.0"', stderr: "" }
+          : { status: 0, stdout: "{}", stderr: "" },
+    }),
+    /pkg-a latest does not point to 1\.0\.0/,
+  );
 });
 
 test("Changesets status distinguishes pending bumps from NO-package summaries", () => {

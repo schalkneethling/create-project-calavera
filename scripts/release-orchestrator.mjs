@@ -554,9 +554,12 @@ export async function npmViewWithRetry(args, options = {}) {
   }
 }
 
-async function verifyPublishedPackages(plan, runId, options = {}) {
+export async function verifyPublishedPackages(plan, runId, options = {}) {
   const candidates = plan.packages.filter(({ published }) => !published);
-  const log = capture("gh", ["run", "view", String(runId), "--repo", repository, "--log"]);
+  const readLog =
+    options.readLog ??
+    (() => capture("gh", ["run", "view", String(runId), "--repo", repository, "--log"]));
+  const log = readLog();
   const provenanceCount = log.match(/Signed provenance statement/g)?.length ?? 0;
   if (provenanceCount < candidates.length) {
     throw new ReleaseError(
