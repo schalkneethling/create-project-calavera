@@ -42,6 +42,16 @@ function capture(command, args, options = {}) {
   return run(command, args, { ...options, capture: true }).stdout.trim();
 }
 
+function runQuiet(command, args, options = {}) {
+  const result = run(command, args, { ...options, capture: true, allowFailure: true });
+  if (result.status !== 0) {
+    throw new ReleaseError(
+      `${commandText(command, args)} failed with exit code ${result.status}.\n${result.stderr || result.stdout}`,
+    );
+  }
+  return result;
+}
+
 function captureJson(command, args, options = {}) {
   const output = capture(command, args, options);
   try {
@@ -367,7 +377,7 @@ async function bootstrapNewPackages(plan, options) {
     "--interval",
     "10",
   ]);
-  verifyPublishedPackages(plan, workflowRun.databaseId);
+  await verifyPublishedPackages(plan, workflowRun.databaseId);
 
   for (const pkg of newPackages) {
     run("npm", ["dist-tag", "rm", pkg.name, "bootstrap"]);
@@ -513,9 +523,43 @@ export async function waitForRun(tag, sha, options = {}) {
   throw new ReleaseError(`No ${workflow} run appeared for ${tag} at ${sha}.`);
 }
 
-function verifyPublishedPackages(plan, runId) {
+// npm's own publish output warns a fresh version "may take a few minutes to become available";
+// these delays give `npm view` that same window before treating an explicit 404 as a real failure.
+export const NPM_VIEW_RETRY_DELAYS_MS = [5000, 10000, 20000, 30000, 30000, 30000];
+
+function defaultViewNpm(args) {
+  return run("npm", ["view", ...args], { capture: true, allowFailure: true });
+}
+
+export async function npmViewWithRetry(args, options = {}) {
+  const wait = options.delay ?? delay;
+  const delays = options.delays ?? NPM_VIEW_RETRY_DELAYS_MS;
+  const viewNpm = options.viewNpm ?? defaultViewNpm;
+
+  for (let attempt = 0; ; attempt += 1) {
+    const result = viewNpm(args);
+    if (result.status === 0) return result.stdout.trim();
+    if (!isExplicitRegistryNotFound(result)) {
+      throw new ReleaseError(
+        `${commandText("npm", ["view", ...args])} failed with exit code ${result.status}.`,
+      );
+    }
+    if (attempt >= delays.length) {
+      const totalSeconds = Math.round(delays.reduce((total, ms) => total + ms, 0) / 1000);
+      throw new ReleaseError(
+        `npm view ${args.join(" ")} still reports the version missing after ${delays.length} retries over ~${totalSeconds}s. npm warns a fresh publish "may take a few minutes to become available" — wait a few minutes and re-run pnpm release:publish; already-published packages are skipped.`,
+      );
+    }
+    await wait(delays[attempt]);
+  }
+}
+
+export async function verifyPublishedPackages(plan, runId, options = {}) {
   const candidates = plan.packages.filter(({ published }) => !published);
-  const log = capture("gh", ["run", "view", String(runId), "--repo", repository, "--log"]);
+  const readLog =
+    options.readLog ??
+    (() => capture("gh", ["run", "view", String(runId), "--repo", repository, "--log"]));
+  const log = readLog();
   const provenanceCount = log.match(/Signed provenance statement/g)?.length ?? 0;
   if (provenanceCount < candidates.length) {
     throw new ReleaseError(
@@ -526,11 +570,28 @@ function verifyPublishedPackages(plan, runId) {
     if (!log.includes(`+ ${pkg.name}@${pkg.version}`)) {
       throw new ReleaseError(`Publish log does not confirm ${pkg.name}@${pkg.version}.`);
     }
-    const version = capture("npm", ["view", `${pkg.name}@${pkg.version}`, "version", "--json"]);
-    if (JSON.parse(version) !== pkg.version) {
+    const versionRaw = await npmViewWithRetry(
+      [`${pkg.name}@${pkg.version}`, "version", "--json"],
+      options,
+    );
+    let version;
+    try {
+      version = JSON.parse(versionRaw);
+    } catch {
+      throw new ReleaseError(
+        `npm view ${pkg.name}@${pkg.version} version --json returned malformed JSON.`,
+      );
+    }
+    if (version !== pkg.version) {
       throw new ReleaseError(`Registry did not return ${pkg.name}@${pkg.version}.`);
     }
-    const tags = captureJson("npm", ["view", pkg.name, "dist-tags", "--json"]);
+    const tagsRaw = await npmViewWithRetry([pkg.name, "dist-tags", "--json"], options);
+    let tags;
+    try {
+      tags = JSON.parse(tagsRaw);
+    } catch {
+      throw new ReleaseError(`npm view ${pkg.name} dist-tags --json returned malformed JSON.`);
+    }
     if (tags[pkg.channel] !== pkg.version) {
       throw new ReleaseError(`${pkg.name} ${pkg.channel} does not point to ${pkg.version}.`);
     }
@@ -543,13 +604,14 @@ function verifyPublishedPackages(plan, runId) {
 async function smokePublishedArtifacts(plan) {
   const cli = plan.packages.find(({ name }) => name === "create-project-calavera");
   if (!cli) throw new ReleaseError("The workspace does not expose create-project-calavera.");
-  run("npx", [
+  runQuiet("npx", [
     "--yes",
     "--package",
     `${cli.name}@${cli.version}`,
     "create-project-calavera",
     "--help",
   ]);
+  console.info(`Smoke-tested npx create-project-calavera@${cli.version} --help.`);
 
   const candidateArtifact = plan.packages.find(
     ({ published, path }) => !published && path.startsWith("packages/artifacts/"),
@@ -579,7 +641,7 @@ async function smokePublishedArtifacts(plan) {
         2,
       )}\n`,
     );
-    run(
+    runQuiet(
       "npx",
       [
         "--yes",
@@ -593,6 +655,9 @@ async function smokePublishedArtifacts(plan) {
         "--yes",
       ],
       { cwd: directory },
+    );
+    console.info(
+      `Smoke-tested artifacts install for ${manifest.id}@${candidateArtifact.version} into a disposable fixture.`,
     );
     const lock = JSON.parse(
       await readFile(join(directory, ".calavera", "artifacts.lock.json"), "utf8"),
@@ -649,7 +714,7 @@ export async function publishRelease(options = {}) {
       ),
     };
     const workflowRun = await waitForRun(tag, plan.sha);
-    verifyPublishedPackages(verificationPlan, workflowRun.databaseId);
+    await verifyPublishedPackages(verificationPlan, workflowRun.databaseId);
     await smokePublishedArtifacts(verificationPlan);
     console.info(`Release ${tag} and its package inventory are already published and verified.`);
     return plan;
@@ -679,7 +744,7 @@ export async function publishRelease(options = {}) {
     "--interval",
     "10",
   ]);
-  verifyPublishedPackages(plan, workflowRun.databaseId);
+  await verifyPublishedPackages(plan, workflowRun.databaseId);
   await smokePublishedArtifacts(plan);
   assertCandidateUnchanged(plan.sha);
   console.info(`Release ${tag} is published and verified.`);

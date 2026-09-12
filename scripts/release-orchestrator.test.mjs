@@ -11,11 +11,13 @@ import {
   hasExpectedTrust,
   hasPendingVersionBumps,
   isExplicitRegistryNotFound,
+  npmViewWithRetry,
   packagesFromReleaseNotes,
   parseOptions,
   releaseChannel,
   releaseTag,
   validateReleaseMetadata,
+  verifyPublishedPackages,
   waitForRun,
 } from "./release-orchestrator.mjs";
 import { generatedFormatPaths, versionPackages } from "./release-version.mjs";
@@ -106,6 +108,120 @@ test("release workflow polling waits asynchronously within a configurable budget
       delay: async () => {},
     }),
     /No publish\.yml run appeared/,
+  );
+});
+
+test("npm view retries only explicit 404 responses, waiting the given backoff between attempts", async () => {
+  let calls = 0;
+  const delays = [];
+  const result = await npmViewWithRetry(["@scope/pkg@1.0.0", "version", "--json"], {
+    delays: [10, 20],
+    async delay(milliseconds) {
+      delays.push(milliseconds);
+    },
+    viewNpm() {
+      calls += 1;
+      return calls < 3
+        ? { status: 1, stdout: "", stderr: "npm error code E404" }
+        : { status: 0, stdout: '"1.0.0"\n', stderr: "" };
+    },
+  });
+  assert.equal(result, '"1.0.0"');
+  assert.equal(calls, 3);
+  assert.deepEqual(delays, [10, 20]);
+});
+
+test("npm view retry fails immediately on a non-404 error without waiting", async () => {
+  let waited = false;
+  await assert.rejects(
+    npmViewWithRetry(["@scope/pkg@1.0.0", "version", "--json"], {
+      delays: [10],
+      async delay() {
+        waited = true;
+      },
+      viewNpm: () => ({ status: 1, stdout: "", stderr: "npm error code ENOTFOUND" }),
+    }),
+    /failed with exit code 1/,
+  );
+  assert.equal(waited, false);
+});
+
+test("npm view retry exhausts its bounded backoff with actionable guidance", async () => {
+  const delays = [];
+  await assert.rejects(
+    npmViewWithRetry(["@scope/pkg@1.0.0", "version", "--json"], {
+      delays: [10, 20],
+      async delay(milliseconds) {
+        delays.push(milliseconds);
+      },
+      viewNpm: () => ({ status: 1, stdout: "", stderr: "npm error code E404" }),
+    }),
+    /re-run pnpm release:publish/,
+  );
+  assert.deepEqual(delays, [10, 20]);
+});
+
+test("verifyPublishedPackages rejects malformed exact-version JSON", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement\n+ pkg-a@1.0.0",
+      viewNpm: (args) =>
+        args[1] === "version"
+          ? { status: 0, stdout: "not-json", stderr: "" }
+          : { status: 0, stdout: "{}", stderr: "" },
+    }),
+    /pkg-a@1\.0\.0 version --json returned malformed JSON/,
+  );
+});
+
+test("verifyPublishedPackages rejects malformed dist-tags JSON", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement\n+ pkg-a@1.0.0",
+      viewNpm: (args) =>
+        args[1] === "version"
+          ? { status: 0, stdout: '"1.0.0"', stderr: "" }
+          : { status: 0, stdout: "not-json", stderr: "" },
+    }),
+    /pkg-a dist-tags --json returned malformed JSON/,
+  );
+});
+
+test("verifyPublishedPackages rejects a registry version that differs from the plan", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement\n+ pkg-a@1.0.0",
+      viewNpm: (args) =>
+        args[1] === "version"
+          ? { status: 0, stdout: '"0.9.9"', stderr: "" }
+          : { status: 0, stdout: '{"latest":"0.9.9"}', stderr: "" },
+    }),
+    /Registry did not return pkg-a@1\.0\.0/,
+  );
+});
+
+test("verifyPublishedPackages rejects a missing or incorrect dist-tag for the package's channel", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement\n+ pkg-a@1.0.0",
+      viewNpm: (args) =>
+        args[1] === "version"
+          ? { status: 0, stdout: '"1.0.0"', stderr: "" }
+          : { status: 0, stdout: "{}", stderr: "" },
+    }),
+    /pkg-a latest does not point to 1\.0\.0/,
   );
 });
 

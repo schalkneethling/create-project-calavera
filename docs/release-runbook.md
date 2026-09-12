@@ -95,7 +95,10 @@ Typing the exact phrase is the one human approval in the whole flow. After that,
 1. flips the draft release to published, setting the prerelease flag from the version channel;
 2. waits for the resulting `.github/workflows/publish.yml` run (triggered by `release: published`) and
    watches it to completion;
-3. verifies npm provenance and the correct dist-tag for every package in the plan;
+3. verifies npm provenance and the correct dist-tag for every package in the plan. Each `npm view`
+   lookup here retries a bounded number of times on an explicit "not found yet" response — npm's own
+   publish output warns a fresh version "may take a few minutes to become available" — before failing;
+   any other registry error still fails immediately;
 4. smoke-tests the published CLI with `npx create-project-calavera@<version> --help`, and, when an
    artifact package changed, installs it into a disposable fixture project.
 
