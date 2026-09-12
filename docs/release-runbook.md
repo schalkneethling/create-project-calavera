@@ -10,10 +10,15 @@ release.
 
 - A local clone with `origin` pointing at this repository, and the [`gh`](https://cli.github.com/) CLI
   authenticated against it.
-- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) available, so `pnpm workflow:check`
-  can run `uvx zizmor` offline.
-+ Run `uv sync --frozen` before the release rehearsal.
-+ Prime the exact tool with `uvx zizmor@1.25.2 --version` while online.
+- [`uv`](https://docs.astral.sh/uv/getting-started/installation/) available. `pnpm workflow:check` runs
+  `uvx zizmor@1.25.2 --offline`, so prime that exact version once while online before relying on the
+  offline check:
+  ```bash
+  uvx zizmor@1.25.2 --version
+  ```
+  After that, `uvx zizmor` is available offline for every subsequent `workflow:check` run. You do not
+  need a separate `uv sync` step: the rehearsal's SkillSpector scan runs through `uv run --frozen`,
+  which synchronizes its own environment from the locked dependencies automatically.
 - npm CLI 11.15.0+ if the release includes a brand-new package name (see "New packages" below).
 - You do not need a local npm token. Publishing happens inside the protected `publish` GitHub
   environment through npm trusted publishing, not from your machine.
@@ -104,15 +109,35 @@ pnpm release:publish -- --yes
 ## 6. Confirm
 
 `release:publish` exits non-zero if any check in step 5 fails — treat a non-zero exit as "not
-released" even if some packages already reached npm. To double-check independently:
+released" even if some packages already reached npm. To double-check independently, look up every
+public workspace, not just the CLI: the same public/private split used in step 4's plan is available
+from pnpm directly.
 
 ```bash
-npm view create-project-calavera dist-tags --json
-npm view @schalkneethling/calavera-artifact-core dist-tags --json
+pnpm list -r --depth -1 --json |
+  node -e '
+    let body = "";
+    process.stdin.on("data", (chunk) => (body += chunk));
+    process.stdin.on("end", () => {
+      for (const pkg of JSON.parse(body)) {
+        if (pkg.private === false) console.log(pkg.name);
+      }
+    });
+  ' |
+  while read -r name; do
+    echo "== $name =="
+    npm view "$name" dist-tags --json
+  done
 ```
 
-`latest` should resolve to the new stable version for every package the plan listed; unrelated
-packages and channels should be unchanged.
+Compare each package's dist-tags against the channel the step 4 plan printed for it (`-> latest` or
+`-> next`):
+
+- for a stable (`latest`) release, `latest` should resolve to the new version;
+- for a `next` prerelease, `next` should resolve to the new version while `latest` stays on whatever it
+  pointed to before.
+
+Unrelated packages and channels should be unchanged either way.
 
 ## New packages (bootstrap)
 
