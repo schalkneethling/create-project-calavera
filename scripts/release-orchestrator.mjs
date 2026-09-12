@@ -42,6 +42,16 @@ function capture(command, args, options = {}) {
   return run(command, args, { ...options, capture: true }).stdout.trim();
 }
 
+function runQuiet(command, args, options = {}) {
+  const result = run(command, args, { ...options, capture: true, allowFailure: true });
+  if (result.status !== 0) {
+    throw new ReleaseError(
+      `${commandText(command, args)} failed with exit code ${result.status}.\n${result.stderr || result.stdout}`,
+    );
+  }
+  return result;
+}
+
 function captureJson(command, args, options = {}) {
   const output = capture(command, args, options);
   try {
@@ -591,13 +601,14 @@ async function verifyPublishedPackages(plan, runId, options = {}) {
 async function smokePublishedArtifacts(plan) {
   const cli = plan.packages.find(({ name }) => name === "create-project-calavera");
   if (!cli) throw new ReleaseError("The workspace does not expose create-project-calavera.");
-  run("npx", [
+  runQuiet("npx", [
     "--yes",
     "--package",
     `${cli.name}@${cli.version}`,
     "create-project-calavera",
     "--help",
   ]);
+  console.info(`Smoke-tested npx create-project-calavera@${cli.version} --help.`);
 
   const candidateArtifact = plan.packages.find(
     ({ published, path }) => !published && path.startsWith("packages/artifacts/"),
@@ -627,7 +638,7 @@ async function smokePublishedArtifacts(plan) {
         2,
       )}\n`,
     );
-    run(
+    runQuiet(
       "npx",
       [
         "--yes",
@@ -641,6 +652,9 @@ async function smokePublishedArtifacts(plan) {
         "--yes",
       ],
       { cwd: directory },
+    );
+    console.info(
+      `Smoke-tested artifacts install for ${manifest.id}@${candidateArtifact.version} into a disposable fixture.`,
     );
     const lock = JSON.parse(
       await readFile(join(directory, ".calavera", "artifacts.lock.json"), "utf8"),
