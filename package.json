@@ -44,7 +44,7 @@
     "fledgling": "1.2.1",
     "globals": "^17.6.0",
     "html-validate": "^11.6.0",
-    "knip": "^6.32.2",
+    "knip": "^6.34.0",
     "oxfmt": "^0.61.0",
     "oxlint": "^1.76.0",
     "publint": "^0.3.24",
