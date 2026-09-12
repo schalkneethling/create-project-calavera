@@ -1,6 +1,6 @@
 {
   "name": "@schalkneethling/calavera-skill-npm-trusted-publishing-github-workflow",
-  "version": "0.2.0",
+  "version": "0.2.1",
   "description": "npm trusted publishing GitHub workflow artifact for Calavera.",
   "license": "MIT",
   "repository": {

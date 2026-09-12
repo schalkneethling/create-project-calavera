@@ -1,5 +1,21 @@
 # create-project-calavera
 
+## 2.5.0
+
+### Minor Changes
+
+- 499016c: Add an optional GitHub repository-controls integration that generates managed desired-state,
+  Dependabot, audit/apply script, and documentation files without mutating GitHub during Calavera
+  apply.
+- dc6be3d: Extend GitHub repository controls with CodeQL merge protection and default newly generated policies to the extended query suite. Verify branch scope and bypass protections, preserve unrelated rules and scanners during updates, and retain read-only checks and explicit apply with read-back verification.
+
+### Patch Changes
+
+- 9386307: Isolate independently versioned skills, hooks, and agents from the CLI runtime dependency graph while preserving explicit locked artifact installation and updates.
+- ad107fd: Apply upstream review corrections to frontend, publishing, and agent artifacts, and exclude installed Calavera package and Claude agent payloads from downstream CodeRabbit reviews.
+- Updated dependencies [9386307]
+  - @schalkneethling/calavera-artifact-core@0.4.0
+
 ## 2.4.0
 
 ### Minor Changes
