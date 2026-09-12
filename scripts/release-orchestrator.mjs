@@ -557,11 +557,19 @@ async function verifyPublishedPackages(plan, runId, options = {}) {
     if (!log.includes(`+ ${pkg.name}@${pkg.version}`)) {
       throw new ReleaseError(`Publish log does not confirm ${pkg.name}@${pkg.version}.`);
     }
-    const version = await npmViewWithRetry(
+    const versionRaw = await npmViewWithRetry(
       [`${pkg.name}@${pkg.version}`, "version", "--json"],
       options,
     );
-    if (JSON.parse(version) !== pkg.version) {
+    let version;
+    try {
+      version = JSON.parse(versionRaw);
+    } catch {
+      throw new ReleaseError(
+        `npm view ${pkg.name}@${pkg.version} version --json returned malformed JSON.`,
+      );
+    }
+    if (version !== pkg.version) {
       throw new ReleaseError(`Registry did not return ${pkg.name}@${pkg.version}.`);
     }
     const tagsRaw = await npmViewWithRetry([pkg.name, "dist-tags", "--json"], options);
