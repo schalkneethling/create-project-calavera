@@ -12,7 +12,7 @@ maximizing the amount of work included in one PR.
   question.
 - Split work along independently mergeable behavior boundaries, not arbitrary
   file or line counts.
-- Use GitHub stacked pull requests to enable the above when a sessions will span multiple pull requests (gh stack).
+- Install the GitHub stacked pull request extension with `gh extension install github/gh-stack`, then use GitHub stacked pull requests to enable the above when a session will span multiple pull requests (`gh stack`).
 - Sequence dependent PRs so each merge leaves `main` working, testable, and not
   misleading.
 - Write or refine issues around those same reviewable slices. Avoid acceptance

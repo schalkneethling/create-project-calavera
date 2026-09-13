@@ -2,7 +2,7 @@
 
 **Status:** Draft 1, 9 September 2026. Owner: Schalk Neethling.
 **Purpose:** The single document a coding agent (Claude Code, or another harness) reads before doing any work on Calavera's Vite+ delegation and css-evolve integration. It records what Calavera is for, what has been decided, what is still open, how the work is sequenced, and the rules every change follows.
-**Companions:** `css-evolve-evolution-brief.md` (the sibling brief), `cross-project-interface-contract.md` (the surfaces the two projects share), `cross-repo-sequencing-map.md` (handoff order), `calavera-catalog-audit-template.md` (Phase 0 deliverable). Read this brief and the interface contract first.
+**Companions:** `css-evolve-evolution-brief.md` (the sibling brief), `docs/cross-repo/interface-contract.md` (the surfaces the two projects share), `docs/cross-repo/sequencing-map.md` (handoff order), `docs/catalog-audit.md` (Phase 0 deliverable). Read this brief and the interface contract first.
 
 ---
 
@@ -13,8 +13,8 @@ For an orchestrating agent:
 1. Copy this file to `docs/evolution-brief.md` in the Calavera repository and link it from the root `AGENTS.md`.
 2. Treat Section 3 (Decisions) as settled. Do not reopen a decision in a PR; open a decision issue instead and stop.
 3. Treat Section 4 (Open Questions) as spikes. Each spike produces an ADR under `docs/adr/` and a recommendation; implementation waits for the ADR to be accepted.
-4. The live plan is `cross-repo-sequencing-map.md` Section 0 (current increment); work only that. The phases in Section 6 are the long-horizon order, not a to-do list. Phase 0 (the catalog audit) gates everything after it. Each issue is one PR. Each PR answers one primary review question. Halt at every `CHECKPOINT` and wait for review and merge before continuing.
-5. Anything css-evolve depends on is listed in `cross-project-interface-contract.md` with a freeze point. Do not change a frozen surface; write a cross-repo request instead (see `AGENTS.md`).
+4. The live plan is `docs/cross-repo/sequencing-map.md` Section 0 (current increment); work only that. The phases in Section 6 are the long-horizon order, not a to-do list. Phase 0 (the catalog audit) gates everything after it. Each issue is one PR. Each PR answers one primary review question. Halt at every `CHECKPOINT` and wait for review and merge before continuing.
+5. Anything css-evolve depends on is listed in `docs/cross-repo/interface-contract.md` with a freeze point. Do not change a frozen surface; write a cross-repo request instead (see `AGENTS.md`).
 6. Never announce completion of a phase without the acceptance criteria passing in CI.
 7. When this brief and the code disagree, the brief is the intent; open an issue rather than silently choosing.
 
@@ -66,7 +66,7 @@ Recorded here so the audit has a baseline and so an agent does not rediscover it
 
 ## 4. Open Questions (spikes, each ends in an ADR)
 
-**CQ1. Non-`vp` projects.** Resolved by Increment 1 (see `cross-repo-sequencing-map.md` Section 0): Calavera provides no JS or TS toolchain to any project; a project that has not adopted Vite+ runs `vp create` or `vp migrate` first. Original question kept for the record: After delegation, what does Calavera offer a project that has not adopted Vite+: the Minimal profile plus the kept integrations and a recommendation to run `vp create` or `vp migrate`, or a reduced Classic path? Default proposal: the former; maintaining two toolchain worlds is the failure mode C1 exists to prevent. Blocks Phase 1.
+**CQ1. Non-`vp` projects.** Resolved by Increment 1 (see `docs/cross-repo/sequencing-map.md` Section 0): Calavera provides no JS or TS toolchain to any project; a project that has not adopted Vite+ runs `vp create` or `vp migrate` first. Original question kept for the record: After delegation, what does Calavera offer a project that has not adopted Vite+: the Minimal profile plus the kept integrations and a recommendation to run `vp create` or `vp migrate`, or a reduced Classic path? Default proposal: the former; maintaining two toolchain worlds is the failure mode C1 exists to prevent. Blocks Phase 1.
 
 **CQ2. Vite+ detection signal.** Which of these, in what precedence, marks a project as `vp`-managed: a `vite-plus` dependency, a `vp`-written toolchain pin, `vp` commands in `package.json` scripts, a Vite+ configuration file. Must be a pure function of the project directory with a documented result in `inspect_project`. Blocks Phase 1.
 
@@ -87,11 +87,11 @@ Recorded here so the audit has a baseline and so an agent does not rediscover it
 
 ## 6. Phases, Issues, Acceptance Criteria
 
-Issue identifiers are `CAL-nnn`. One issue is one PR. Cross-repo handoffs are named `H<n>` and defined in `cross-repo-sequencing-map.md`.
+Issue identifiers are `CAL-nnn`. One issue is one PR. Cross-repo handoffs are named `H<n>` and defined in `docs/cross-repo/sequencing-map.md`.
 
 ### Phase 0: Catalog audit (one week)
 
-- CAL-001 Complete `calavera-catalog-audit-template.md` for every profile component, integration, artifact, and MCP tool: keep, delegate to Vite+, or remove, with evidence (what `vp create`, `vp check`, `vp test`, or `vp fmt` already produces) and a proposed issue per removal.
+- CAL-001 Complete `docs/catalog-audit.md` for every profile component, integration, artifact, and MCP tool: keep, delegate to Vite+, or remove, with evidence (what `vp create`, `vp check`, `vp test`, or `vp fmt` already produces) and a proposed issue per removal.
 - CAL-002 Spike CQ2 (detection signal). ADR.
 - CAL-003 Spike CQ1 (non-`vp` projects). ADR.
 

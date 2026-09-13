@@ -22,10 +22,13 @@
 **Values:**
 
 ```ts
+export type Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
+export type FourDigitYear = `${Digit}${Digit}${Digit}${Digit}`;
+
 export type BaselineTargetValue =
   | "widely"          // Baseline Widely available
   | "newly"           // Baseline Newly available
-  | `${number}`;      // a four-digit year, meaning "features that became Baseline Newly available in or before this year"
+  | FourDigitYear;    // a four-digit year, meaning "features that became Baseline Newly available in or before this year"
 ```
 
 **Semantics:** a feature is *available* under a target when its Baseline status, according to the pinned `web-features` snapshot, satisfies the target. `browserslist` fallback maps to the most conservative Baseline target whose browser set is a superset of the browserslist query; the engine reports which fallback it used.
@@ -185,7 +188,7 @@ css-evolve does not read this schema; it exists here so css-evolve's I4 declarat
 - **Apply** (Calavera): the pipeline that writes a recipe into a project; `dry_run_apply` is the approval boundary.
 - **`vp`-managed** (Calavera): a project where Vite+ owns the JS and TS toolchain, as detected under CQ2.
 - **Baseline target** (both): the I1 value and its resolution by the Calavera engine.
-- **Handoff** (both): a named point in `cross-repo-sequencing-map.md` where one project delivers a frozen surface the other consumes.
+- **Handoff** (both): a named point in `docs/cross-repo/sequencing-map.md` where one project delivers a frozen surface the other consumes.
 
 ## I9. Change Log
 

@@ -82,4 +82,4 @@ When a handoff is late: the producing agent records the slip and the new target 
 
 ## 5. Contacts and Escalation
 
-Schalk is the only human in the loop for both repositories. An agent that needs a decision from the other side writes a cross-repo request in its own repository under `docs/cross-repo/requests/` (template in `AGENTS.md`), stops the blocked issue, records the block in `STATUS.md`, and continues with unblocked work. Requests are answered in the same folder of the requesting repository once Schalk carries the answer across.
+Schalk is the only human in the loop for both repositories. An agent that needs a decision from the other side writes a cross-repo request in its own repository under `docs/cross-repo/requests/` (template in `docs/cross-repo/request-template.md`), stops the blocked issue, records the block in `STATUS.md`, and continues with unblocked work. Requests are answered in the same folder of the requesting repository once Schalk carries the answer across.
