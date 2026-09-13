@@ -132,7 +132,59 @@ The candidate signal table, condensed from the findings, compares the CQ2 candid
 | `AGENTS.md` with `<!--VITE PLUS START-->` markers                                  | Yes             | Yes            | Yes                            | No                           | Prose; legitimately absent with `--no-agent`        |
 | `.vp`, `vp.toml`, `.node-version`, `.tool-versions`, `mise.toml`                   | Absent          | Absent         | Absent                         | Absent                       | No such file exists in 0.3.1                        |
 
-The last row settles the second CQ2 candidate. No dedicated `vp`-written toolchain-pin file exists in 0.3.1: the pin lives in `package.json` as `devEngines.packageManager` and `engines.node`, and for pnpm projects in the `pnpm-workspace.yaml` catalog.
+The last row settles the second CQ2 candidate. No dedicated `vp`-written toolchain-pin file exists in 0.3.1. The pin lives in `package.json` as `devEngines.packageManager` and `engines.node`, and the `vite` package pin moves with the package manager.
+
+`vp create --help` accepts exactly four package managers, `pnpm`, `npm`, `yarn`, and `bun`, so Deno is not a shape `vp create` produces. Running `vp create vite:library` once per manager shows where the pin lands:
+
+| Package manager | `vite-plus` entry in `devDependencies` | `vite` pin in `package.json`                                              | Pin file outside `package.json`                       |
+| --------------- | -------------------------------------- | ------------------------------------------------------------------------- | ----------------------------------------------------- |
+| npm             | `"^0.2.4"`                             | `overrides.vite`                                                          | none                                                  |
+| pnpm            | `"catalog:"`                           | none                                                                      | `pnpm-workspace.yaml` under `catalog` and `overrides` |
+| Yarn 4          | `"catalog:"`                           | `resolutions.vite`                                                        | `.yarnrc.yml` under `catalog`                         |
+| Bun             | `"^0.2.4"`                             | `overrides.vite`, plus `devDependencies.vite` aliased to the same package | none                                                  |
+
+The Yarn manifest and its companion file, condensed:
+
+```json
+{
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "bumpp": "^11.1.0",
+    "typescript": "^7.0.2",
+    "vite-plus": "catalog:"
+  },
+  "resolutions": { "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1" },
+  "devEngines": { "packageManager": { "name": "yarn", "version": "4.18.0", "onFail": "download" } }
+}
+```
+
+```yaml
+nodeLinker: node-modules
+npmPreapprovedPackages:
+  - vitest
+  - "@vitest/*"
+catalog:
+  vite: npm:@voidzero-dev/vite-plus-core@0.3.1
+  vite-plus: 0.3.1
+```
+
+The Bun manifest differs from npm only in the extra alias:
+
+```json
+{
+  "devDependencies": {
+    "@types/node": "^26.1.1",
+    "bumpp": "^11.1.0",
+    "typescript": "^7.0.2",
+    "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1",
+    "vite-plus": "^0.2.4"
+  },
+  "overrides": { "vite": "npm:@voidzero-dev/vite-plus-core@0.3.1" },
+  "devEngines": { "packageManager": { "name": "bun", "version": "1.4.2", "onFail": "download" } }
+}
+```
+
+In every case the `vite-plus` key is present under `devDependencies`. Only its value and the location of the `vite` pin vary, which is why the value is ignored by the primary signal and the pin is corroboration rather than a verdict. One caveat on the evidence: the Yarn scaffold wrote its files, but its dependency install failed inside the sandbox used for this probe, so the Yarn lockfile was not observed.
 
 On the Calavera side, `inspectProject` in `packages/cli/src/index.js` returns exactly `{ packageManager, files, findings }`, with findings typed as `{ severity: "info" | "warning" | "error", kind: string, message: string, path?: string }` and stable `kind` strings such as `"package-manager"`. No JSON Schema or `.d.ts` governs the return value and `inspect_project` is not a frozen surface, so the contract's Rule 3 on additive change applies. The function performs only local filesystem reads, the constraint CQ2 asks detection to preserve.
 
@@ -144,13 +196,13 @@ One signal decides the verdict. A project directory is `vp`-managed when `vite-p
 
 This is `vp`'s own definition, applied the way `vp` applies it. Any other choice lets Calavera and Vite+ disagree about whether `vp` manages a project, and Calavera is wrong by construction whenever they do.
 
-Three corroborating signals are recorded but never decide anything. In precedence order they are the nearest `vite.config.{js,mjs,cjs,ts,mts,cts}` whose source text imports from `"vite-plus"`; a pin of `vite` to `npm:@voidzero-dev/vite-plus-core@<version>` in `overrides` or in the `pnpm-workspace.yaml` catalog; and a `package.json` script that invokes `vp` as a bare command word. Their job is diagnosis, not classification: they tell a reader why a verdict looks wrong. Because they cannot change a verdict, the configuration check is a textual search for the import specifier rather than a parse, which is enough to separate `"vite-plus"` from `"vite"`.
+Three corroborating signals are recorded but never decide anything. In precedence order they are the nearest `vite.config.{js,mjs,cjs,ts,mts,cts}` whose source text imports from `"vite-plus"`; a pin of `vite` to `npm:@voidzero-dev/vite-plus-core@<version>` wherever the package manager keeps it, which is `overrides.vite` or `resolutions.vite` in `package.json`, or `catalog.vite` in `pnpm-workspace.yaml` or `.yarnrc.yml`; and a `package.json` script that invokes `vp` as a bare command word. The pin check is one signal with four locations, not four signals, so a project reads the same whichever of pnpm, npm, Yarn, or Bun it uses. Their job is diagnosis, not classification: they tell a reader why a verdict looks wrong. Because they cannot change a verdict, the configuration check is a textual search for the import specifier rather than a parse, which is enough to separate `"vite-plus"` from `"vite"`.
 
 Four things are deliberately not signals. Prose is not read at all, so a repository that discusses `vp` only in `AGENTS.md`, `CLAUDE.md`, or a README does not match. `devEngines.packageManager` is a general Node convention. Lockfiles are independent of Vite+, and `vp migrate` leaves a stale `package-lock.json` next to the `pnpm-lock.yaml` it creates. `.vite-hooks/pre-commit` is absent whenever hooks are declined.
 
 ### The pure-function contract
 
-Detection is one function whose only input is an absolute project directory path. It reads, from the local filesystem only, the `package.json` at that directory and at each ancestor until a match or the filesystem root, the nearest `vite.config.*` file, and `pnpm-workspace.yaml` at the directory that stopped the walk. It makes no network call, spawns no process, resolves nothing through `node_modules`, and consults no global toolchain. The result is deterministic for a given tree, installed dependencies or not.
+Detection is one function whose only input is an absolute project directory path. It reads, from the local filesystem only, the `package.json` at that directory and at each ancestor until a match or the filesystem root, the nearest `vite.config.*` file, and `pnpm-workspace.yaml` and `.yarnrc.yml` at the directory that stopped the walk. It makes no network call, spawns no process, resolves nothing through `node_modules`, and consults no global toolchain. The result is deterministic for a given tree, installed dependencies or not.
 
 Its output is a record, not a boolean:
 
@@ -160,12 +212,15 @@ Its output is a record, not a boolean:
  *   status: "managed" | "unmanaged" | "unknown",
  *   signal?: "vite-plus-dependency",
  *   manifestPath?: string,
- *   corroborating: Array<"vite-plus-config-import" | "vite-plus-core-pin" | "vp-scripts">
+ *   corroborating: Array<"vite-plus-config-import" | "vite-plus-core-pin" | "vp-scripts">,
+ *   ancestor?: { manifestPath: string, status: "managed" | "unmanaged" }
  * }} VitePlusDetection
  */
 ```
 
-`status` is `"managed"` when the primary signal matched, `"unmanaged"` when the walk completed without a match, and `"unknown"` when no `package.json` was readable at the inspected directory or an input-output error cut the walk short. The `"unknown"` case takes precedence: when the inspected directory itself has no readable manifest, the walk does not start and no ancestor can produce a verdict. This is the one place the function is stricter than `vp`, which climbs regardless, and it is deliberate, because Calavera cannot apply a recipe to a directory that has no manifest of its own, so an ancestor match would be an answer to a question nobody can act on. Unreadable manifests above the inspected directory are skipped exactly as `vp` skips them. `manifestPath` is the matching manifest, relative to the inspected directory when it lies inside it and absolute otherwise, so a match from an ancestor above the project is visible rather than implied. `corroborating` lists what was found, in the precedence order above, and is empty when nothing was.
+`status` is `"managed"` when the primary signal matched, `"unmanaged"` when the walk completed without a match, and `"unknown"` when no `package.json` was readable at the inspected directory or an input-output error cut the walk short. The `"unknown"` case takes precedence over anything found above it: when the inspected directory itself has no readable manifest, no ancestor can turn the verdict into `"managed"` or `"unmanaged"`, because Calavera cannot apply a recipe to a directory that has no manifest of its own. The walk still runs, exactly as `vp` climbs, and what it finds is reported in `ancestor`: the nearest ancestor manifest that could be read and whether that manifest, and the walk above it, declares `vite-plus`. `ancestor` is present only when `status` is `"unknown"` and such a manifest exists. Unreadable manifests above the inspected directory are skipped exactly as `vp` skips them. `manifestPath` is the matching manifest, relative to the inspected directory when it lies inside it and absolute otherwise, so a match from an ancestor above the project is visible rather than implied. `corroborating` lists what was found, in the precedence order above, and is empty when nothing was.
+
+The `ancestor` field exists so that a later apply flow can act on it. Calavera can already create a manifest, so a directory without one is a decision point, not a dead end. The decision recorded here, with implementation deferred, is that when `status` is `"unknown"` and `ancestor` is present, the flow offers three choices at the approval boundary and never picks one itself: create a manifest in the inspected directory and apply there, with the ancestor verdict carried into the recipe; apply at the ancestor directory instead, re-running inspection there so that the verdict is its own; or abandon. Because `dry_run_apply` is the approval boundary under C8, the choice is presented there and only the CLI acts on it. CAL-010 populates the field; the three-way prompt is a follow-up listed at the end of this document.
 
 ### What `inspect_project` reports
 
@@ -176,7 +231,7 @@ The verdict is also surfaced through the existing findings pattern, with stable 
 - `vite-plus-managed`, severity `info`. The message names the matched signal and any corroboration; `path` is the matching manifest.
 - `vite-plus-unmanaged`, severity `info`, so that the negative case is evidence rather than silence.
 - `vite-plus-signal-conflict`, severity `warning`, when the verdict is `"unmanaged"` and at least one corroborating signal was found. The message names which ones, since this is the shape of a project whose scripts still call `vp` after the dependency was removed.
-- `vite-plus-detection-unknown`, severity `warning`, naming the path that could not be read.
+- `vite-plus-detection-unknown`, severity `warning`, naming the path that could not be read and, when `ancestor` is present, the ancestor manifest and its verdict.
 
 The change is additive: one optional field and four finding kinds, with nothing changed or removed. Under the interface contract's Rule 3 that is a minor version, released with a Changeset. `inspect_project` has no committed output schema, so the JSDoc typedef and the tool documentation are the only places the shape is recorded.
 
@@ -200,29 +255,33 @@ One current behavior is worth naming because CAL-010 will meet it: `readPackageJ
 
 Each fixture is built in a temporary directory. The last column names the primary signal where one matched, and the corroboration recorded.
 
-| Fixture                                               | Files                                                                                                                                                                     | Expected `status` | Expected signal and corroboration                                                                                                            |
-| ----------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vp create vite:library`                              | `package.json` with `devDependencies["vite-plus"]`, `overrides.vite`, `vp` scripts; `vite.config.ts` importing from `vite-plus`                                           | `managed`         | `vite-plus-dependency` at `package.json`; corroborating `vite-plus-config-import`, `vite-plus-core-pin`, `vp-scripts`                        |
-| `vp create vite:monorepo` root                        | root `package.json` with `workspaces`, `devDependencies["vite-plus"]`, `overrides.vite`, `vp` scripts; root `vite.config.ts` importing from `vite-plus`                   | `managed`         | `vite-plus-dependency` at `package.json`; all three corroborating                                                                            |
-| Monorepo workspace member with a local declaration    | `apps/website/package.json` with `devDependencies["vite-plus"]` and `vp` scripts, no local `vite.config.*`; root as above                                                 | `managed`         | `vite-plus-dependency` at `package.json`; corroborating `vp-scripts` only                                                                    |
-| Monorepo workspace member without a local declaration | `apps/site/package.json` with no `vite-plus` key; root `package.json` declaring it                                                                                        | `managed`         | `vite-plus-dependency` at `../../package.json`; corroboration from the ancestor pin                                                          |
-| `vp migrate` output with a stale lockfile             | `package.json` with `devDependencies["vite-plus"]: "catalog:"`, `vp` scripts; `pnpm-workspace.yaml` catalog pin; both `pnpm-lock.yaml` and a leftover `package-lock.json` | `managed`         | `vite-plus-dependency`; corroborating `vite-plus-config-import`, `vite-plus-core-pin`, `vp-scripts`; the stale lockfile changes nothing here |
-| Plain `create-vite` project                           | `package.json` with `devDependencies.vite`, `vite`-only scripts; no `vite.config.*`                                                                                       | `unmanaged`       | no signal, no corroboration, no conflict warning                                                                                             |
-| Plain Vite with a hand-written configuration          | as above plus `vite.config.ts` importing `defineConfig` from `"vite"`                                                                                                     | `unmanaged`       | no signal; the import check must not match `"vite"`                                                                                          |
-| `vite-plus` as a `peerDependency` only                | `package.json` with `peerDependencies["vite-plus"]` and no `dependencies` or `devDependencies` entry                                                                      | `unmanaged`       | no signal; no conflict warning                                                                                                               |
-| `vp` named only in prose                              | plain Vite `package.json`; `AGENTS.md` and `README.md` describing `vp check`                                                                                              | `unmanaged`       | no signal; no corroboration, proving no prose file is read                                                                                   |
-| Scripts call `vp`, dependency absent                  | `package.json` with `"build": "vp build"` and no `vite-plus` key anywhere                                                                                                 | `unmanaged`       | no signal; corroborating `vp-scripts`; emits `vite-plus-signal-conflict`                                                                     |
-| Pin present, dependency absent                        | `package.json` with `overrides.vite` set to `npm:@voidzero-dev/vite-plus-core@0.3.1` and no `vite-plus` key                                                               | `unmanaged`       | no signal; corroborating `vite-plus-core-pin`; emits `vite-plus-signal-conflict`                                                             |
-| No `package.json`                                     | an empty directory                                                                                                                                                        | `unknown`         | emits `vite-plus-detection-unknown`                                                                                                          |
-| Unparseable `package.json`                            | `package.json` containing `{`                                                                                                                                             | `unknown`         | emits `vite-plus-detection-unknown` naming the path; the walk does not throw                                                                 |
+| Fixture                                               | Files                                                                                                                                                                               | Expected `status` | Expected signal and corroboration                                                                                                            |
+| ----------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| `vp create vite:library`                              | `package.json` with `devDependencies["vite-plus"]`, `overrides.vite`, `vp` scripts; `vite.config.ts` importing from `vite-plus`                                                     | `managed`         | `vite-plus-dependency` at `package.json`; corroborating `vite-plus-config-import`, `vite-plus-core-pin`, `vp-scripts`                        |
+| `vp create vite:monorepo` root                        | root `package.json` with `workspaces`, `devDependencies["vite-plus"]`, `overrides.vite`, `vp` scripts; root `vite.config.ts` importing from `vite-plus`                             | `managed`         | `vite-plus-dependency` at `package.json`; all three corroborating                                                                            |
+| Monorepo workspace member with a local declaration    | `apps/website/package.json` with `devDependencies["vite-plus"]` and `vp` scripts, no local `vite.config.*`; root as above                                                           | `managed`         | `vite-plus-dependency` at `package.json`; corroborating `vp-scripts` only                                                                    |
+| Monorepo workspace member without a local declaration | `apps/site/package.json` with no `vite-plus` key; root `package.json` declaring it                                                                                                  | `managed`         | `vite-plus-dependency` at `../../package.json`; corroboration from the ancestor pin                                                          |
+| `vp migrate` output with a stale lockfile             | `package.json` with `devDependencies["vite-plus"]: "catalog:"`, `vp` scripts; `pnpm-workspace.yaml` catalog pin; both `pnpm-lock.yaml` and a leftover `package-lock.json`           | `managed`         | `vite-plus-dependency`; corroborating `vite-plus-config-import`, `vite-plus-core-pin`, `vp-scripts`; the stale lockfile changes nothing here |
+| Plain `create-vite` project                           | `package.json` with `devDependencies.vite`, `vite`-only scripts; no `vite.config.*`                                                                                                 | `unmanaged`       | no signal, no corroboration, no conflict warning                                                                                             |
+| Plain Vite with a hand-written configuration          | as above plus `vite.config.ts` importing `defineConfig` from `"vite"`                                                                                                               | `unmanaged`       | no signal; the import check must not match `"vite"`                                                                                          |
+| `vite-plus` as a `peerDependency` only                | `package.json` with `peerDependencies["vite-plus"]` and no `dependencies` or `devDependencies` entry                                                                                | `unmanaged`       | no signal; no conflict warning                                                                                                               |
+| `vp` named only in prose                              | plain Vite `package.json`; `AGENTS.md` and `README.md` describing `vp check`                                                                                                        | `unmanaged`       | no signal; no corroboration, proving no prose file is read                                                                                   |
+| Scripts call `vp`, dependency absent                  | `package.json` with `"build": "vp build"` and no `vite-plus` key anywhere                                                                                                           | `unmanaged`       | no signal; corroborating `vp-scripts`; emits `vite-plus-signal-conflict`                                                                     |
+| Pin present, dependency absent                        | `package.json` with `overrides.vite` set to `npm:@voidzero-dev/vite-plus-core@0.3.1` and no `vite-plus` key                                                                         | `unmanaged`       | no signal; corroborating `vite-plus-core-pin`; emits `vite-plus-signal-conflict`                                                             |
+| `vp create vite:library` with Yarn                    | `package.json` with `devDependencies["vite-plus"]: "catalog:"`, `resolutions.vite`, `vp` scripts; `.yarnrc.yml` catalog pin; `vite.config.ts` importing from `vite-plus`            | `managed`         | `vite-plus-dependency`; all three corroborating, with the pin found in `resolutions` and `.yarnrc.yml`                                       |
+| `vp create vite:library` with Bun                     | `package.json` with `devDependencies["vite-plus"]`, `devDependencies.vite` aliased to `vite-plus-core`, `overrides.vite`, `vp` scripts; `vite.config.ts` importing from `vite-plus` | `managed`         | `vite-plus-dependency`; all three corroborating; the alias in `devDependencies` is not itself a signal                                       |
+| No `package.json`, no ancestor manifest               | an empty directory under a temporary root with no `package.json` above it                                                                                                           | `unknown`         | emits `vite-plus-detection-unknown`; `ancestor` absent                                                                                       |
+| No `package.json`, managed ancestor                   | an empty subdirectory of the `vp create vite:library` fixture                                                                                                                       | `unknown`         | emits `vite-plus-detection-unknown`; `ancestor` is `{ manifestPath: "../package.json", status: "managed" }`                                  |
+| No `package.json`, unmanaged ancestor                 | an empty subdirectory of the plain `create-vite` fixture                                                                                                                            | `unknown`         | emits `vite-plus-detection-unknown`; `ancestor` is `{ manifestPath: "../package.json", status: "unmanaged" }`                                |
+| Unparseable `package.json`                            | `package.json` containing `{`                                                                                                                                                       | `unknown`         | emits `vite-plus-detection-unknown` naming the path; the walk does not throw                                                                 |
 
-The first six rows together satisfy the CAL-010 criterion that both directions are tested. The fixtures mirror the files recorded for vite-plus 0.3.1.
+The managed and unmanaged rows together satisfy the CAL-010 criterion that both directions are tested, and the Yarn and Bun rows cover every package manager `vp create` accepts. The fixtures mirror the files recorded for vite-plus 0.3.1.
 
 ## Alternatives considered
 
 **A Vite+ configuration file as the primary signal.** A `vite.config.*` importing from `vite-plus` is unambiguous where it exists, and `vp migrate` creates one even for a project that had none. It fails on workspace members: `apps/website` has no local configuration file, so a configuration-first rule either misses such members or climbs to the root and must then explain why a root file governs a member. The dependency check answers both with one rule.
 
-**The toolchain pin as the primary signal.** The `npm:@voidzero-dev/vite-plus-core` pin is the most load-bearing artifact in the evidence. It is rejected as primary because it lives in two places depending on the package manager, with more variants likely; because a monorepo member inherits it from a root several levels up; and because the string matched is an internal package name Vite+ never promised to keep. As corroboration, a rename costs nothing.
+**The toolchain pin as the primary signal.** The `npm:@voidzero-dev/vite-plus-core` pin is the most load-bearing artifact in the evidence. It is rejected as primary because it already lives in four places across the four supported package managers, `overrides`, `resolutions`, the pnpm catalog, and the Yarn catalog, with more variants likely; because a monorepo member inherits it from a root several levels up; and because the string matched is an internal package name Vite+ never promised to keep. As corroboration, a rename costs nothing.
 
 **`vp` commands in scripts as the primary signal.** Scripts are the easiest signal to read and the weakest to trust. They survive removal of the dependency, they are copied between repositories by hand, and they would classify a project whose author aspires to `vp` as one that already has it. As corroboration, that case shows up as a conflict warning, which is the useful thing to say about it.
 
@@ -237,6 +296,7 @@ The first six rows together satisfy the CAL-010 criterion that both directions a
 Each of these is a proposed issue title, not work done here.
 
 - "inspect_project should not fail outright on an unparseable package.json". Decide whether the tool degrades to a finding, and which kind.
+- "Offer create-here, apply-at-ancestor, or abandon when the inspected directory has no manifest". Implements the three-way choice recorded under the pure-function contract, at the `dry_run_apply` boundary, using the `ancestor` field.
 - "doctor warns when a recipe carries JS or TS toolchain integrations in a vp-managed project".
 - "Record the vp-managed detection result in the interface contract glossary". I8 defines the term by reference to CQ2 and should point at this ADR once accepted.
 - "Regenerate the vp detection fixtures against a newer vite-plus". The table is pinned to 0.3.1; a drift check beats rereading the output by hand.

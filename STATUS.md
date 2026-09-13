@@ -37,7 +37,7 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## Decisions taken this session (with ADR link)
 
-- CQ2 Vite+ detection signal: `docs/adr/0001-vite-plus-detection-signal.md` (Proposed, pending acceptance).
+- CQ2 Vite+ detection signal: `docs/adr/0001-vite-plus-detection-signal.md` (Proposed, pending acceptance). Revised after review: the pin location is recorded for pnpm, npm, Yarn, and Bun, and the manifest-less directory case records the ancestor manifest so a later apply flow can offer create-here, apply-at-ancestor, or abandon at the `dry_run_apply` boundary.
 
 ## Next session starts with
 
