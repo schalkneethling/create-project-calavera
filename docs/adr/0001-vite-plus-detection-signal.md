@@ -1,6 +1,6 @@
 # ADR-0001: Vite+ detection signal
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-13, Schalk Neethling)
 - **Date:** 2026-09-13
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/428
 - **Decides:** CQ2 (Vite+ detection signal) from `docs/evolution-brief.md`
@@ -293,11 +293,11 @@ The managed and unmanaged rows together satisfy the CAL-010 criterion that both 
 
 ## Open questions and follow-ups
 
-Each of these is a proposed issue title, not work done here.
+Each of these is opened as its own issue; none is work done here.
 
-- "inspect_project should not fail outright on an unparseable package.json". Decide whether the tool degrades to a finding, and which kind.
-- "Offer create-here, apply-at-ancestor, or abandon when the inspected directory has no manifest". Implements the three-way choice recorded under the pure-function contract, at the `dry_run_apply` boundary, using the `ancestor` field.
-- "doctor warns when a recipe carries JS or TS toolchain integrations in a vp-managed project".
-- "Record the vp-managed detection result in the interface contract glossary". I8 defines the term by reference to CQ2 and should point at this ADR once accepted.
-- "Regenerate the vp detection fixtures against a newer vite-plus". The table is pinned to 0.3.1; a drift check beats rereading the output by hand.
+- "inspect_project should not fail outright on an unparseable package.json" (https://github.com/schalkneethling/create-project-calavera/issues/429). Decide whether the tool degrades to a finding, and which kind.
+- "Offer create-here, apply-at-ancestor, or abandon when the inspected directory has no manifest" (https://github.com/schalkneethling/create-project-calavera/issues/430). Implements the three-way choice recorded under the pure-function contract, at the `dry_run_apply` boundary, using the `ancestor` field.
+- "doctor warns when a recipe carries JS or TS toolchain integrations in a vp-managed project" (https://github.com/schalkneethling/create-project-calavera/issues/431).
+- "Record the vp-managed detection result in the interface contract glossary" (https://github.com/schalkneethling/create-project-calavera/issues/432). I8 defines the term by reference to CQ2 and should point at this ADR once accepted.
+- "Regenerate the vp detection fixtures against a newer vite-plus" (https://github.com/schalkneethling/create-project-calavera/issues/433). The table is pinned to 0.3.1; a drift check beats rereading the output by hand.
 - "Promote a dedicated Vite+ toolchain pin file to a detection signal". Opened only when such a file ships.

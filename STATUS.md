@@ -4,7 +4,7 @@ Updated: 2026-09-13
 
 ## Current phase and checkpoint
 
-Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint 0 is in progress: the CQ2 ADR is drafted and awaits acceptance.
+Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint 0 is in progress: the CQ2 ADR is accepted; the audit worksheet (CAL-001) remains.
 
 ## Completed this session
 
@@ -12,7 +12,7 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## In progress
 
-- CAL-002: ADR-0001 status is Proposed. Acceptance by Schalk closes the issue and unblocks CAL-010.
+- none
 
 ## Blocked
 
@@ -37,9 +37,9 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## Decisions taken this session (with ADR link)
 
-- CQ2 Vite+ detection signal: `docs/adr/0001-vite-plus-detection-signal.md` (Proposed, pending acceptance). Revised after review: the pin location is recorded for pnpm, npm, Yarn, and Bun, and the manifest-less directory case records the ancestor manifest so a later apply flow can offer create-here, apply-at-ancestor, or abandon at the `dry_run_apply` boundary.
+- CQ2 Vite+ detection signal: `docs/adr/0001-vite-plus-detection-signal.md` (Accepted 2026-09-13). Revised after review: the pin location is recorded for pnpm, npm, Yarn, and Bun, and the manifest-less directory case records the ancestor manifest so a later apply flow can offer create-here, apply-at-ancestor, or abandon at the `dry_run_apply` boundary.
 
 ## Next session starts with
 
-- If ADR-0001 is accepted: CAL-010 `vp` detection in `inspect_project` with the fixture table from the ADR; then CAL-001 (reduced audit rows).
-- Follow-up issues named in the ADR's last section are not yet opened; open them when CAL-010 starts or when the ADR is accepted, whichever comes first.
+- CAL-010 `vp` detection in `inspect_project` with the fixture table from the ADR; then CAL-001 (reduced audit rows).
+- The five follow-up issues named in the ADR are open: #429 to #433.
