@@ -3,32 +3,42 @@
 Updated: 2026-09-13
 
 ## Current phase and checkpoint
-Phase N. Last checkpoint passed: CP<n> on YYYY-MM-DD.
+
+Increment 1 (sequencing map Section 0). Last checkpoint passed: none.
 
 ## Completed this session
-- CAL-nnn — one line, PR link.
+
+- none
 
 ## In progress
-- CAL-nnn — one line, what remains.
+
+- none
 
 ## Blocked
-- CAL-nnn — blocked on <handoff or request path>, since YYYY-MM-DD.
+
+- none
 
 ## Handoffs
-- H1: delivered <package>@<version> <date> | pending
+
+- H0: pending (Increment 1 exit condition)
+- H1: pending
 - H3: pending
 - H6: pending
 - H7: pending
 - Consumed: H2 pending | H4 names pending | H5 pending
 
 ## Audit
-- Rows classified: n of N. Removals opened: n. Awaiting approval: n.
+
+- Rows classified: 0 of N. Removals opened: 0. Awaiting approval: 0.
 
 ## Open cross-repo requests
-- docs/cross-repo/requests/<file> — one line.
+
+- none
 
 ## Decisions taken this session (with ADR link)
-- ADR-000n — one line.
+
+- none
 
 ## Next session starts with
-- The single next action.
+
+- CAL-002: spike CQ2 (Vite+ detection signal) and write the ADR; then CAL-001 (reduced audit rows).

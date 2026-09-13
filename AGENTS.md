@@ -2,7 +2,7 @@ Calavera is what runs after `vp create`: Baseline target, CSS verification (css-
 
 ## Repository rules
 
-- For pull request guidance, please see @PR.md
+- For pull request guidance, please see PR.md
 - _Always_ ensure that we have the latest changes from the remote repository.
 - _Always_ ensure that no feature work is started from main. Always use a feature branch.
 - When creating the feature branch, always include the GitHub issue number in the branch name.
