@@ -117,6 +117,13 @@ Calavera MCP tools are exposed: `inspect_project`, `list_profiles`,
 `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `validate_recipe`,
 `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
 
+The `inspect_project` response includes an optional `vitePlus` field reporting
+whether the project is managed by Vite+, with a `status` of `managed`,
+`unmanaged`, or `unknown`, the primary signal that matched, and any
+corroborating signals found alongside it. Agents composing or explaining a
+recipe should read `status` only and leave the matched signal and
+corroboration for a human reviewing the output.
+
 Agents should not work around missing MCP tools by reading npm cache internals
 or importing Calavera source files from package cache paths. Configure or repair
 the MCP registration first. If MCP cannot be registered, use the Web UI fallback

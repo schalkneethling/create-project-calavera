@@ -25,6 +25,7 @@ import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   githubRepositoryControlManagedFiles,
 } from "./github-repository-controls.js";
+import { detectVitePlus } from "./vite-plus-detection.js";
 
 import {
   aiArtifactOutputPaths,
@@ -82,6 +83,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {import("./ai/artifacts.js").AiArtifactState} AiArtifactState
  * @typedef {import("./state.js").CalaveraState} CalaveraState
  * @typedef {import("./state.js").ManagedFileState} ManagedFileState
+ * @typedef {import("./vite-plus-detection.js").VitePlusDetection} VitePlusDetection
  *
  * @typedef {object} CliOptions
  * @property {string} command
@@ -140,7 +142,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  *
  * @typedef {{ script: string, reason: string }} ScriptOmission
  * @typedef {{ severity: "info" | "warning" | "error", kind: string, message: string, path?: string }} ProjectInspectionFinding
- * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[] }} ProjectInspection
+ * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus?: VitePlusDetection }} ProjectInspection
  * @typedef {{ reownManagedFiles?: string[] }} ProjectInspectionOptions
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[] }} ScriptPlan
  * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean }} Change
@@ -1586,6 +1588,66 @@ async function inspectManagedFilePlan(filePlan, previousState, reownManagedFiles
 }
 
 /**
+ * Builds the `inspect_project` findings for a Vite+ detection result, per
+ * ADR-0001's "What inspect_project reports" section.
+ *
+ * @param {VitePlusDetection} detection
+ * @returns {ProjectInspectionFinding[]}
+ */
+function vitePlusFindings(detection) {
+  if (detection.status === "managed") {
+    const corroborationSuffix =
+      detection.corroborating.length > 0
+        ? ` Corroborating signals: ${detection.corroborating.join(", ")}.`
+        : "";
+
+    return [
+      {
+        severity: "info",
+        kind: "vite-plus-managed",
+        path: detection.manifestPath,
+        message: `This project is managed by Vite+, matched via the ${detection.signal} signal at ${detection.manifestPath}.${corroborationSuffix}`,
+      },
+    ];
+  }
+
+  if (detection.status === "unmanaged") {
+    /** @type {ProjectInspectionFinding[]} */
+    const findings = [
+      {
+        severity: "info",
+        kind: "vite-plus-unmanaged",
+        message:
+          "This project is not managed by Vite+; no vite-plus dependency was found in this manifest or any ancestor manifest.",
+      },
+    ];
+
+    if (detection.corroborating.length > 0) {
+      findings.push({
+        severity: "warning",
+        kind: "vite-plus-signal-conflict",
+        message: `The project is unmanaged by Vite+, but the following corroborating signals were found: ${detection.corroborating.join(", ")}; confirm whether the vite-plus dependency was removed intentionally.`,
+      });
+    }
+
+    return findings;
+  }
+
+  const ancestorSuffix = detection.ancestor
+    ? ` The nearest ancestor manifest, ${detection.ancestor.manifestPath}, is ${detection.ancestor.status}.`
+    : "";
+
+  return [
+    {
+      severity: "warning",
+      kind: "vite-plus-detection-unknown",
+      path: "package.json",
+      message: `package.json could not be read, so Vite+ management could not be determined.${ancestorSuffix}`,
+    },
+  ];
+}
+
+/**
  * @param {Recipe} [recipe]
  * @param {ProjectInspectionOptions} [options]
  * @returns {Promise<ProjectInspection>}
@@ -1615,6 +1677,9 @@ export async function inspectProject(recipe, options = {}) {
       message: `Detected ${packageManager} as the project package manager.`,
     });
   }
+
+  const vitePlus = await detectVitePlus(process.cwd());
+  findings.push(...vitePlusFindings(vitePlus));
 
   const presentLockfiles = Object.values(packageManagerLockfiles)
     .flat()
@@ -1717,6 +1782,7 @@ export async function inspectProject(recipe, options = {}) {
     packageManager,
     files,
     findings,
+    vitePlus,
   };
 }
 
