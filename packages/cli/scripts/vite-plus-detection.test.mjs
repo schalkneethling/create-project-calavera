@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, realpath, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtempDisposable, readdir, realpath, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -13,8 +13,18 @@ import { detectVitePlus } from "../src/vite-plus-detection.js";
  * @param {Record<string, string>} files
  * @returns {Promise<string>} the canonical absolute path of the fixture root
  */
+/**
+ * Builds a fixture in a disposable temporary directory. `root` is the resolved
+ * path, so absolute manifest paths compare equal on platforms where the
+ * temporary root is a symlink. Use with `await using` so the directory is
+ * removed when the test scope ends.
+ *
+ * @param {string} label
+ * @param {Record<string, string>} files
+ */
 async function createFixture(label, files) {
-  const root = await realpath(await mkdtemp(join(tmpdir(), `calavera-vite-plus-${label}-`)));
+  const directory = await mkdtempDisposable(join(tmpdir(), `calavera-vite-plus-${label}-`));
+  const root = await realpath(directory.path);
 
   for (const [relativePath, contents] of Object.entries(files)) {
     const target = join(root, relativePath);
@@ -22,7 +32,10 @@ async function createFixture(label, files) {
     await writeFile(target, contents);
   }
 
-  return root;
+  return {
+    root,
+    [Symbol.asyncDispose]: () => directory[Symbol.asyncDispose](),
+  };
 }
 
 /** @param {unknown} value */
@@ -126,43 +139,37 @@ async function hasAncestorManifest(directory) {
 }
 
 test("vp create vite:library", async () => {
-  const root = await createFixture("library", {
+  await using fixture = await createFixture("library", {
     "package.json": json(libraryManifest),
     "vite.config.ts": vitePlusConfig,
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "managed",
-      signal: "vite-plus-dependency",
-      manifestPath: "package.json",
-      corroborating: ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "managed",
+    signal: "vite-plus-dependency",
+    manifestPath: "package.json",
+    corroborating: ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"],
+  });
 });
 
 test("vp create vite:monorepo root", async () => {
-  const root = await createFixture("monorepo-root", {
+  await using fixture = await createFixture("monorepo-root", {
     "package.json": json(monorepoRootManifest),
     "vite.config.ts": vitePlusConfig,
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "managed",
-      signal: "vite-plus-dependency",
-      manifestPath: "package.json",
-      corroborating: ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "managed",
+    signal: "vite-plus-dependency",
+    manifestPath: "package.json",
+    corroborating: ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"],
+  });
 });
 
 test("monorepo workspace member with a local declaration", async () => {
-  const root = await createFixture("member-local", {
+  await using fixture = await createFixture("member-local", {
     "package.json": json(monorepoRootManifest),
     "vite.config.ts": vitePlusConfig,
     "apps/website/package.json": json({
@@ -174,21 +181,18 @@ test("monorepo workspace member with a local declaration", async () => {
       devDependencies: { typescript: "^7.0.2", "vite-plus": "0.3.1" },
     }),
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(join(root, "apps", "website")), {
-      status: "managed",
-      signal: "vite-plus-dependency",
-      manifestPath: "package.json",
-      corroborating: ["vp-scripts"],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(join(root, "apps", "website")), {
+    status: "managed",
+    signal: "vite-plus-dependency",
+    manifestPath: "package.json",
+    corroborating: ["vp-scripts"],
+  });
 });
 
 test("monorepo workspace member without a local declaration", async () => {
-  const root = await createFixture("member-inherited", {
+  await using fixture = await createFixture("member-inherited", {
     "package.json": json(monorepoRootManifest),
     "apps/site/package.json": json({
       name: "site",
@@ -198,21 +202,18 @@ test("monorepo workspace member without a local declaration", async () => {
       devDependencies: { typescript: "^7.0.2" },
     }),
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(join(root, "apps", "site")), {
-      status: "managed",
-      signal: "vite-plus-dependency",
-      manifestPath: join(root, "package.json"),
-      corroborating: ["vite-plus-core-pin"],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(join(root, "apps", "site")), {
+    status: "managed",
+    signal: "vite-plus-dependency",
+    manifestPath: join(root, "package.json"),
+    corroborating: ["vite-plus-core-pin"],
+  });
 });
 
 test("vp migrate output with a stale lockfile", async () => {
-  const root = await createFixture("migrated", {
+  await using fixture = await createFixture("migrated", {
     "package.json": json({
       name: "migrated",
       version: "0.0.0",
@@ -225,52 +226,43 @@ test("vp migrate output with a stale lockfile", async () => {
     "pnpm-lock.yaml": "lockfileVersion: '9.0'\n",
     "package-lock.json": json({ name: "migrated", lockfileVersion: 3 }),
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "managed",
-      signal: "vite-plus-dependency",
-      manifestPath: "package.json",
-      corroborating: ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "managed",
+    signal: "vite-plus-dependency",
+    manifestPath: "package.json",
+    corroborating: ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"],
+  });
 });
 
 test("plain create-vite project", async () => {
-  const root = await createFixture("plain-vite", {
+  await using fixture = await createFixture("plain-vite", {
     "package.json": json(plainViteManifest),
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "unmanaged",
-      corroborating: [],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "unmanaged",
+    corroborating: [],
+  });
 });
 
 test("plain Vite with a hand-written configuration", async () => {
-  const root = await createFixture("plain-vite-config", {
+  await using fixture = await createFixture("plain-vite-config", {
     "package.json": json(plainViteManifest),
     "vite.config.ts": plainViteConfig,
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "unmanaged",
-      corroborating: [],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "unmanaged",
+    corroborating: [],
+  });
 });
 
 test("vite-plus as a peerDependency only", async () => {
-  const root = await createFixture("peer-only", {
+  await using fixture = await createFixture("peer-only", {
     "package.json": json({
       name: "vite-plus-plugin",
       version: "0.0.0",
@@ -278,36 +270,30 @@ test("vite-plus as a peerDependency only", async () => {
       peerDependencies: { "vite-plus": "^0.3.0" },
     }),
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "unmanaged",
-      corroborating: [],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "unmanaged",
+    corroborating: [],
+  });
 });
 
 test("vp named only in prose", async () => {
-  const root = await createFixture("prose-only", {
+  await using fixture = await createFixture("prose-only", {
     "package.json": json(plainViteManifest),
     "AGENTS.md": "# Agents\n\nRun `vp check` before every commit.\n",
     "README.md": "# Project\n\nThis project uses `vp build` one day.\n",
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "unmanaged",
-      corroborating: [],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "unmanaged",
+    corroborating: [],
+  });
 });
 
 test("scripts call vp, dependency absent", async () => {
-  const root = await createFixture("scripts-only", {
+  await using fixture = await createFixture("scripts-only", {
     "package.json": json({
       name: "scripts-only",
       version: "0.0.0",
@@ -316,19 +302,16 @@ test("scripts call vp, dependency absent", async () => {
       devDependencies: { typescript: "~6.0.2" },
     }),
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "unmanaged",
-      corroborating: ["vp-scripts"],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "unmanaged",
+    corroborating: ["vp-scripts"],
+  });
 });
 
 test("pin present, dependency absent", async () => {
-  const root = await createFixture("pin-only", {
+  await using fixture = await createFixture("pin-only", {
     "package.json": json({
       name: "pin-only",
       version: "0.0.0",
@@ -337,19 +320,16 @@ test("pin present, dependency absent", async () => {
       overrides: { vite: "npm:@voidzero-dev/vite-plus-core@0.3.1" },
     }),
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "unmanaged",
-      corroborating: ["vite-plus-core-pin"],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "unmanaged",
+    corroborating: ["vite-plus-core-pin"],
+  });
 });
 
 test("vp create vite:library with Yarn", async () => {
-  const root = await createFixture("yarn-library", {
+  await using fixture = await createFixture("yarn-library", {
     "package.json": json({
       name: "gen-library",
       version: "0.0.0",
@@ -361,21 +341,18 @@ test("vp create vite:library with Yarn", async () => {
     ".yarnrc.yml": yarnrcCatalog,
     "vite.config.ts": vitePlusConfig,
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "managed",
-      signal: "vite-plus-dependency",
-      manifestPath: "package.json",
-      corroborating: ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "managed",
+    signal: "vite-plus-dependency",
+    manifestPath: "package.json",
+    corroborating: ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"],
+  });
 });
 
 test("vp create vite:library with Bun", async () => {
-  const root = await createFixture("bun-library", {
+  await using fixture = await createFixture("bun-library", {
     "package.json": json({
       name: "gen-library",
       version: "0.0.0",
@@ -390,112 +367,94 @@ test("vp create vite:library with Bun", async () => {
     }),
     "vite.config.ts": vitePlusConfig,
   });
+  const root = fixture.root;
 
-  try {
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "managed",
-      signal: "vite-plus-dependency",
-      manifestPath: "package.json",
-      corroborating: ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "managed",
+    signal: "vite-plus-dependency",
+    manifestPath: "package.json",
+    corroborating: ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"],
+  });
 });
 
 test("no package.json, no ancestor manifest", async (t) => {
-  const root = await createFixture("no-ancestor", {});
+  await using fixture = await createFixture("no-ancestor", {});
+  const root = fixture.root;
 
-  try {
-    if (await hasAncestorManifest(dirname(root))) {
-      t.skip(
-        `An ancestor of ${root} contains a package.json, so this environment cannot host the fixture.`,
-      );
-      return;
-    }
-
-    assert.deepEqual(await detectVitePlus(root), {
-      status: "unknown",
-      corroborating: [],
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
+  if (await hasAncestorManifest(dirname(root))) {
+    t.skip(
+      `An ancestor of ${root} contains a package.json, so this environment cannot host the fixture.`,
+    );
+    return;
   }
+
+  assert.deepEqual(await detectVitePlus(root), {
+    status: "unknown",
+    corroborating: [],
+  });
 });
 
 test("no package.json, managed ancestor", async () => {
-  const root = await createFixture("managed-ancestor", {
+  await using fixture = await createFixture("managed-ancestor", {
     "package.json": json(libraryManifest),
     "vite.config.ts": vitePlusConfig,
   });
+  const root = fixture.root;
   const child = join(root, "src", "empty");
   await mkdir(child, { recursive: true });
 
-  try {
-    assert.deepEqual(await detectVitePlus(child), {
-      status: "unknown",
-      corroborating: [],
-      ancestor: { manifestPath: join(root, "package.json"), status: "managed" },
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(child), {
+    status: "unknown",
+    corroborating: [],
+    ancestor: { manifestPath: join(root, "package.json"), status: "managed" },
+  });
 });
 
 test("no package.json, unmanaged ancestor", async () => {
-  const root = await createFixture("unmanaged-ancestor", {
+  await using fixture = await createFixture("unmanaged-ancestor", {
     "package.json": json(plainViteManifest),
   });
+  const root = fixture.root;
   const child = join(root, "src", "empty");
   await mkdir(child, { recursive: true });
 
-  try {
-    assert.deepEqual(await detectVitePlus(child), {
-      status: "unknown",
-      corroborating: [],
-      ancestor: { manifestPath: join(root, "package.json"), status: "unmanaged" },
-    });
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(await detectVitePlus(child), {
+    status: "unknown",
+    corroborating: [],
+    ancestor: { manifestPath: join(root, "package.json"), status: "unmanaged" },
+  });
 });
 
 test("unparseable package.json", async () => {
-  const root = await createFixture("unparseable", {
+  await using fixture = await createFixture("unparseable", {
     "package.json": "{",
   });
+  const root = fixture.root;
 
-  try {
-    const detection = await detectVitePlus(root);
+  const detection = await detectVitePlus(root);
 
-    assert.equal(detection.status, "unknown");
-    assert.deepEqual(detection.corroborating, []);
-    assert.equal(Object.hasOwn(detection, "signal"), false);
-    assert.equal(Object.hasOwn(detection, "manifestPath"), false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.equal(detection.status, "unknown");
+  assert.deepEqual(detection.corroborating, []);
+  assert.equal(Object.hasOwn(detection, "signal"), false);
+  assert.equal(Object.hasOwn(detection, "manifestPath"), false);
 });
 
 test("package.json that parses to an array", async () => {
-  const root = await createFixture("array-manifest", {
+  await using fixture = await createFixture("array-manifest", {
     "package.json": "[]",
   });
+  const root = fixture.root;
 
-  try {
-    const detection = await detectVitePlus(root);
+  const detection = await detectVitePlus(root);
 
-    assert.equal(detection.status, "unknown");
-    assert.deepEqual(detection.corroborating, []);
-    assert.equal(Object.hasOwn(detection, "signal"), false);
-    assert.equal(Object.hasOwn(detection, "manifestPath"), false);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.equal(detection.status, "unknown");
+  assert.deepEqual(detection.corroborating, []);
+  assert.equal(Object.hasOwn(detection, "signal"), false);
+  assert.equal(Object.hasOwn(detection, "manifestPath"), false);
 });
 
 test("detection does not search ancestors for a configuration file", async () => {
-  const root = await createFixture("config-not-inherited", {
+  await using fixture = await createFixture("config-not-inherited", {
     "package.json": json(monorepoRootManifest),
     "vite.config.ts": vitePlusConfig,
     "apps/api/package.json": json({
@@ -505,33 +464,27 @@ test("detection does not search ancestors for a configuration file", async () =>
       devDependencies: { "vite-plus": "0.3.1" },
     }),
   });
+  const root = fixture.root;
 
-  try {
-    const detection = await detectVitePlus(join(root, "apps", "api"));
+  const detection = await detectVitePlus(join(root, "apps", "api"));
 
-    assert.equal(detection.status, "managed");
-    assert.equal(detection.corroborating.includes("vite-plus-config-import"), false);
-    assert.deepEqual(detection.corroborating, []);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.equal(detection.status, "managed");
+  assert.equal(detection.corroborating.includes("vite-plus-config-import"), false);
+  assert.deepEqual(detection.corroborating, []);
 });
 
 test("detection writes nothing into the inspected tree", async () => {
-  const root = await createFixture("purity", {
+  await using fixture = await createFixture("purity", {
     "package.json": json(libraryManifest),
     "vite.config.ts": vitePlusConfig,
     "pnpm-workspace.yaml": pnpmWorkspaceCatalog,
     "src/main.ts": "export const answer = 42;\n",
   });
+  const root = fixture.root;
 
-  try {
-    const before = await listTree(root);
-    await detectVitePlus(root);
-    const after = await listTree(root);
+  const before = await listTree(root);
+  await detectVitePlus(root);
+  const after = await listTree(root);
 
-    assert.deepEqual(after, before);
-  } finally {
-    await rm(root, { recursive: true, force: true });
-  }
+  assert.deepEqual(after, before);
 });
