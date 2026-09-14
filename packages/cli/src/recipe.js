@@ -125,7 +125,7 @@ export const webMcpToolNames = Object.freeze([...recipeCompositionToolNames, "do
 
 export const recipeToolDescriptions = Object.freeze({
   inspect_project:
-    "Inspect the current project for package-manager signals, existing tooling files, and likely Calavera adoption conflicts before composing or applying a recipe.",
+    "Inspect the current project for package-manager signals, existing tooling files, and likely Calavera adoption conflicts before composing or applying a recipe. Also reports whether the project is managed by Vite+ and which signal matched.",
   list_profiles:
     "List Calavera profiles, package managers, and default integrations. Use this first when composing a recipe.",
   list_integrations:

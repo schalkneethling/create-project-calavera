@@ -1522,6 +1522,69 @@ test("MCP inspect_project exposes current project conflict hints", async () => {
   }
 });
 
+test("MCP inspect_project reports a vp create-shaped project as Vite+ managed", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-inspect-vite-plus-managed-"));
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({
+        name: "vp-managed-fixture",
+        devDependencies: { "vite-plus": "^0.3.1" },
+        scripts: { build: "vp build", dev: "vp dev" },
+      }),
+    );
+    await writeFile("vite.config.ts", 'import { defineConfig } from "vite-plus";\n');
+
+    const response = await callMcpTool("inspect_project", {
+      recipe: composeRecipe({ profile: "minimal", packageManager: "npm" }),
+    });
+
+    assert.equal(response.vitePlus?.status, "managed");
+    const managedFinding = response.findings.find(({ kind }) => kind === "vite-plus-managed");
+    assert.equal(managedFinding?.path, "package.json");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("MCP inspect_project reports a plain create-vite project as unmanaged", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(
+    join(tmpdir(), "calavera-mcp-inspect-vite-plus-unmanaged-"),
+  );
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({
+        name: "plain-vite-fixture",
+        devDependencies: { vite: "^5.0.0" },
+        scripts: { build: "vite build", dev: "vite" },
+      }),
+    );
+
+    const response = await callMcpTool("inspect_project", {
+      recipe: composeRecipe({ profile: "minimal", packageManager: "npm" }),
+    });
+
+    assert.equal(response.vitePlus?.status, "unmanaged");
+    assert.equal(
+      response.findings.some(({ kind }) => kind === "vite-plus-unmanaged"),
+      true,
+    );
+    assert.equal(
+      response.findings.some(({ kind }) => kind === "vite-plus-signal-conflict"),
+      false,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
 test("agent bootstrap dry-run previews guidance without writing files", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-dry-run-"));
