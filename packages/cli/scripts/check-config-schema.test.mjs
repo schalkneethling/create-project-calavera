@@ -509,19 +509,16 @@ test("shared composition normalizes Stylelint Baseline options", () => {
   );
 });
 
-test("shared composition resolves duplicate tool labels within the active profile", () => {
-  assert.deepEqual(normalizeIntegrationInputs(["JSX-A11y"], "modern"), ["oxlint-jsx-a11y"]);
+test("shared composition resolves tool labels within the active profile", () => {
   assert.deepEqual(normalizeIntegrationInputs(["JSX-A11y"], "classic"), ["eslint-jsx-a11y"]);
+  assert.deepEqual(normalizeIntegrationInputs(["JSX-A11y"], "modern"), ["JSX-A11y"]);
 });
 
 test("JSX accessibility integrations are grouped with React options", () => {
-  const modernJsxA11y = listIntegrationOptions("modern").find(({ id }) => id === "oxlint-jsx-a11y");
   const classicJsxA11y = listIntegrationOptions("classic").find(
     ({ id }) => id === "eslint-jsx-a11y",
   );
 
-  assert.equal(modernJsxA11y?.label, "JSX-A11y");
-  assert.equal(modernJsxA11y?.group, "React best practices");
   assert.equal(classicJsxA11y?.label, "JSX-A11y");
   assert.equal(classicJsxA11y?.group, "React best practices");
 });
@@ -622,7 +619,7 @@ test("shared composition output validates against the published schema", () => {
   const recipe = composeRecipe({
     profile: "modern",
     packageManager: "bun",
-    tools: ["Oxlint", "Oxc React best practices", "Stylelint"],
+    tools: ["Oxfmt", "React Doctor", "Stylelint"],
     aiArtifacts: [{ id: "skill-frontend-engineering" }],
   });
   assertValid(validate, recipe);
@@ -700,10 +697,10 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
   const classicToolIds = listIntegrationOptions("classic").map(({ id }) => id);
   const response = catalogResponse(composeRecipe({ profile: "minimal" }));
 
-  assert.ok(modernToolIds.includes("oxlint-react"));
+  assert.ok(modernToolIds.includes("oxfmt"));
   assert.equal(modernToolIds.includes("eslint-react"), false);
   assert.ok(classicToolIds.includes("eslint-react"));
-  assert.equal(classicToolIds.includes("oxlint-react"), false);
+  assert.equal(classicToolIds.includes("oxfmt"), false);
   assert.ok(modernToolIds.includes("knip"));
   assert.ok(classicToolIds.includes("knip"));
   assert.ok(listIntegrationOptions("minimal").some(({ id }) => id === "knip"));
@@ -724,15 +721,15 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
 
 test("shared explanation helpers include selected and included integration reasons", () => {
   const explanation = explainRecipeIntegrations(
-    buildRecipe("modern", ["oxlint-react", "stylelint-standard"]),
+    buildRecipe("classic", ["eslint-react", "stylelint-standard"]),
   );
 
   assert.deepEqual(
     explanation.map(({ id }) => id),
-    ["oxlint", "oxlint-react", "stylelint", "stylelint-standard"],
+    ["eslint", "eslint-react", "stylelint", "stylelint-standard"],
   );
-  assert.match(explanation.find(({ id }) => id === "oxlint").reason, /requires it/);
-  assert.match(explanation.find(({ id }) => id === "oxlint-react").reason, /Explicitly selected/);
+  assert.match(explanation.find(({ id }) => id === "eslint").reason, /requires it/);
+  assert.match(explanation.find(({ id }) => id === "eslint-react").reason, /Explicitly selected/);
 });
 
 test("shared composition operation responses expose catalog, recipe, and explanation data", () => {
@@ -740,7 +737,7 @@ test("shared composition operation responses expose catalog, recipe, and explana
   const recipeResponse = composeRecipeResponse({
     profile: "modern",
     packageManager: "pnpm",
-    tools: ["Oxlint", "Stylelint"],
+    tools: ["Oxfmt", "Stylelint"],
     aiArtifacts: [{ id: "Frontend engineering" }],
   });
 
@@ -756,7 +753,7 @@ test("shared composition operation responses expose catalog, recipe, and explana
     listIntegrationsResponse({ profile: "classic" }).integrations.map(({ id }) => id),
     listIntegrationOptions("classic").map(({ id }) => id),
   );
-  assert.equal(describeIntegrationResponse("Oxlint").id, "oxlint");
+  assert.equal(describeIntegrationResponse("Oxfmt").id, "oxfmt");
   assert.equal(
     listAiArtifactsResponse().artifacts.some(({ id }) => id === "skill-frontend-engineering"),
     true,
@@ -765,7 +762,7 @@ test("shared composition operation responses expose catalog, recipe, and explana
     listAiArtifactsResponse().artifacts[0].description,
     /Calavera compatibility: >=2\.2\.0 <3/,
   );
-  assert.deepEqual(recipeResponse.recipe.integrations, ["oxlint", "stylelint"]);
+  assert.deepEqual(recipeResponse.recipe.integrations, ["oxfmt", "stylelint"]);
   assert.equal(validateRecipeResponse(recipeResponse.recipe).ok, true);
   assert.equal(
     explainRecipeResponse(recipeResponse.recipe).aiArtifacts[0].id,
@@ -781,9 +778,9 @@ test("CLI parser accepts scripted rich composer options", () => {
     "--package-manager",
     "pnpm",
     "--integration",
-    "Oxlint,Stylelint",
+    "Oxfmt,Stylelint",
     "--tool",
-    "Oxc React best practices",
+    "React Doctor",
     "--ai-artifact",
     "skill-frontend-engineering",
     "--ai-artifact",
@@ -795,7 +792,7 @@ test("CLI parser accepts scripted rich composer options", () => {
   assert.equal(options.command, "init");
   assert.equal(options.profile, "modern");
   assert.equal(options.packageManager, "pnpm");
-  assert.deepEqual(options.integrations, ["Oxlint", "Stylelint", "Oxc React best practices"]);
+  assert.deepEqual(options.integrations, ["Oxfmt", "Stylelint", "React Doctor"]);
   assert.deepEqual(options.aiArtifacts, [
     { id: "skill-frontend-engineering" },
     { id: "hook-block-dangerous-commands", target: "codex" },
@@ -806,11 +803,11 @@ test("CLI parser accepts scripted rich composer options", () => {
     parseArgs([
       "apply",
       "--reown-managed-file",
-      "oxlint.json",
+      ".stylelintrc.json",
       "--reown-managed-files",
       ".prettierrc.json,tsconfig.json",
     ]).reownManagedFiles,
-    ["oxlint.json", ".prettierrc.json", "tsconfig.json"],
+    [".stylelintrc.json", ".prettierrc.json", "tsconfig.json"],
   );
 
   assert.deepEqual(
@@ -1231,14 +1228,14 @@ test("CLI rich composer writes a schema-valid config without applying by default
       apply: false,
       profile: "modern",
       packageManager: "pnpm",
-      integrations: ["Oxlint", "Stylelint"],
+      integrations: ["Oxfmt", "Stylelint"],
       aiArtifacts: [{ id: "Frontend engineering" }],
     });
     const writtenConfig = JSON.parse(await readFile("calavera.config.json", "utf8"));
 
     assert.equal(result.validation.ok, true);
     assert.deepEqual(writtenConfig, result.recipe);
-    assert.deepEqual(writtenConfig.integrations, ["oxlint", "stylelint"]);
+    assert.deepEqual(writtenConfig.integrations, ["oxfmt", "stylelint"]);
     assert.deepEqual(writtenConfig.ai, [{ id: "skill-frontend-engineering" }]);
     assertValid(ajv.compile(schema), writtenConfig);
     await assertPathMissing("package.json", "config-only compose must not create package.json");
@@ -1377,13 +1374,13 @@ test("standard MCP compose_recipe returns structured schema-valid content", asyn
       arguments: {
         profile: "modern",
         packageManager: "pnpm",
-        tools: ["Oxlint", "Stylelint"],
+        tools: ["Oxfmt", "Stylelint"],
         aiArtifacts: [{ id: "Frontend engineering" }],
       },
     });
     const recipe = result.structuredContent.recipe;
 
-    assert.deepEqual(recipe.integrations, ["oxlint", "stylelint"]);
+    assert.deepEqual(recipe.integrations, ["oxfmt", "stylelint"]);
     assert.deepEqual(recipe.ai, [{ id: "skill-frontend-engineering" }]);
     assertValid(ajv.compile(schema), recipe);
   } finally {
@@ -1464,7 +1461,7 @@ test("project inspection reports package manager, files, and conflict hints", as
     await writeFile("eslint.config.js", "export default [];\n");
     await writeFile(".editorconfig", "local edits\n");
 
-    const recipe = buildRecipe("modern", ["editorconfig", "oxlint"], "npm");
+    const recipe = buildRecipe("modern", ["editorconfig", "stylelint"], "npm");
     const inspection = await inspectProject(recipe);
 
     assert.equal(inspection.packageManager, "pnpm");
@@ -1484,12 +1481,6 @@ test("project inspection reports package manager, files, and conflict hints", as
       inspection.findings.some(
         ({ kind, path, severity }) =>
           kind === "managed-file-conflict" && path === ".editorconfig" && severity === "error",
-      ),
-      true,
-    );
-    assert.equal(
-      inspection.findings.some(
-        ({ kind, path }) => kind === "equivalent-tooling" && path === "eslint.config.js",
       ),
       true,
     );
@@ -2175,24 +2166,25 @@ test("apply dry runs allow formatting-only drift in managed JSON files", async (
     process.chdir(projectDirectory);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
-    const recipe = buildRecipe("modern", ["oxlint"], "npm");
+    const recipe = buildRecipe("modern", ["stylelint"], "npm");
     await applyRecipeObject(recipe, {
       json: true,
       noInstall: true,
       assumeYes: true,
     });
 
-    const formattedOxlintConfig = `${JSON.stringify(
-      JSON.parse(await readFile("oxlint.json", "utf8")),
+    const formattedStylelintConfig = `${JSON.stringify(
+      JSON.parse(await readFile(".stylelintrc.json", "utf8")),
       null,
       4,
     )}\n`;
-    await writeFile("oxlint.json", formattedOxlintConfig);
+    await writeFile(".stylelintrc.json", formattedStylelintConfig);
 
     const inspection = await inspectProject(recipe);
     assert.equal(
       inspection.findings.some(
-        (finding) => finding.kind === "managed-file-conflict" && finding.path === "oxlint.json",
+        (finding) =>
+          finding.kind === "managed-file-conflict" && finding.path === ".stylelintrc.json",
       ),
       false,
     );
@@ -2206,7 +2198,9 @@ test("apply dry runs allow formatting-only drift in managed JSON files", async (
 
     assert.equal(result.dryRun, true);
     assert.equal(
-      result.changes.some((change) => change.type === "write" && change.path === "oxlint.json"),
+      result.changes.some(
+        (change) => change.type === "write" && change.path === ".stylelintrc.json",
+      ),
       true,
     );
   } finally {
@@ -2222,31 +2216,23 @@ test("apply can re-own approved managed file drift before writing recipe updates
     process.chdir(projectDirectory);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
-    const initialRecipe = buildRecipe("modern", ["oxlint"], "npm");
+    const initialRecipe = buildRecipe("modern", ["stylelint"], "npm");
     await applyRecipeObject(initialRecipe, {
       json: true,
       noInstall: true,
       assumeYes: true,
     });
 
-    const formattedOxlintConfig = `${JSON.stringify(
-      JSON.parse(await readFile("oxlint.json", "utf8")),
+    const formattedStylelintConfig = `${JSON.stringify(
+      JSON.parse(await readFile(".stylelintrc.json", "utf8")),
       null,
       4,
     )}\n`;
-    await writeFile("oxlint.json", formattedOxlintConfig);
+    await writeFile(".stylelintrc.json", formattedStylelintConfig);
 
     const nextRecipe = buildRecipe(
       "modern",
-      [
-        "oxlint",
-        "oxlint-eslint",
-        "oxlint-typescript",
-        "oxlint-unicorn",
-        "oxlint-oxc",
-        "oxlint-react",
-        "oxlint-jsx-a11y",
-      ],
+      ["stylelint", "stylelint-standard", "stylelint-order", "stylelint-baseline"],
       "npm",
     );
 
@@ -2258,21 +2244,22 @@ test("apply can re-own approved managed file drift before writing recipe updates
           noInstall: true,
           assumeYes: true,
         }),
-      /Refusing to overwrite existing managed file: oxlint\.json/,
+      /Refusing to overwrite existing managed file: \.stylelintrc\.json/,
     );
 
     const inspection = await inspectProject(nextRecipe, {
-      reownManagedFiles: [".\\oxlint.json"],
+      reownManagedFiles: [".\\.stylelintrc.json"],
     });
     assert.equal(
       inspection.findings.some(
-        (finding) => finding.kind === "managed-file-conflict" && finding.path === "oxlint.json",
+        (finding) =>
+          finding.kind === "managed-file-conflict" && finding.path === ".stylelintrc.json",
       ),
       false,
     );
     assert.equal(
       inspection.findings.some(
-        (finding) => finding.kind === "managed-file-reown" && finding.path === "oxlint.json",
+        (finding) => finding.kind === "managed-file-reown" && finding.path === ".stylelintrc.json",
       ),
       true,
     );
@@ -2282,12 +2269,12 @@ test("apply can re-own approved managed file drift before writing recipe updates
       json: true,
       noInstall: true,
       assumeYes: true,
-      reownManagedFiles: ["./oxlint.json"],
+      reownManagedFiles: ["./.stylelintrc.json"],
     });
     assert.equal(dryRun.dryRun, true);
     assert.equal(
       dryRun.projectInspection.findings.some(
-        (finding) => finding.kind === "managed-file-reown" && finding.path === "oxlint.json",
+        (finding) => finding.kind === "managed-file-reown" && finding.path === ".stylelintrc.json",
       ),
       true,
     );
@@ -2296,22 +2283,16 @@ test("apply can re-own approved managed file drift before writing recipe updates
       json: true,
       noInstall: true,
       assumeYes: true,
-      reownManagedFiles: [join(projectDirectory, "oxlint.json")],
+      reownManagedFiles: [join(projectDirectory, ".stylelintrc.json")],
     });
 
-    const oxlintConfig = JSON.parse(await readFile("oxlint.json", "utf8"));
-    assert.deepEqual(oxlintConfig.plugins, [
-      "eslint",
-      "typescript",
-      "unicorn",
-      "oxc",
-      "react",
-      "jsx-a11y",
-    ]);
+    const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
+    assert.deepEqual(stylelintConfig.extends, ["stylelint-config-standard"]);
+    assert.deepEqual(stylelintConfig.plugins, ["stylelint-order", "stylelint-plugin-use-baseline"]);
 
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
     assert.deepEqual(state.managedFiles, [
-      { path: "oxlint.json", hash: textHash(await readFile("oxlint.json", "utf8")) },
+      { path: ".stylelintrc.json", hash: textHash(await readFile(".stylelintrc.json", "utf8")) },
     ]);
   } finally {
     process.chdir(originalDirectory);
@@ -2396,7 +2377,7 @@ test("apply dry runs reject mixed formatter integrations", async () => {
 test("apply uses direct tool scripts without the run-if-files helper", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-direct-scripts-"));
-  const recipe = buildRecipe("modern", ["typescript", "oxlint", "oxfmt", "stylelint"], "npm");
+  const recipe = buildRecipe("modern", ["typescript", "oxfmt", "stylelint"], "npm");
 
   try {
     process.chdir(projectDirectory);
@@ -2421,17 +2402,12 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     });
 
     const packageFile = JSON.parse(await readFile("package.json", "utf8"));
-    assert.equal(packageFile.scripts.lint, 'oxlint . && stylelint "**/*.{css,scss}"');
-    assert.equal(
-      packageFile.scripts["lint:fix"],
-      'oxlint --fix . && stylelint "**/*.{css,scss}" --fix',
-    );
+    assert.equal(packageFile.scripts.lint, 'stylelint "**/*.{css,scss}"');
+    assert.equal(packageFile.scripts["lint:fix"], 'stylelint "**/*.{css,scss}" --fix');
     assert.equal(packageFile.scripts.format, "oxfmt --write .");
     assert.equal(packageFile.scripts["format:check"], "oxfmt --check .");
     assert.equal(packageFile.scripts.typecheck, "tsc --noEmit");
     assert.doesNotMatch(JSON.stringify(packageFile.scripts), /run-if-files/);
-    const oxlintConfig = JSON.parse(await readFile("oxlint.json", "utf8"));
-    assert.deepEqual(oxlintConfig.rules.curly, ["error", "all"]);
     const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist/**"), true);
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist-types/**"), true);
@@ -2949,7 +2925,7 @@ test("doctor does not expect the removed run-if-files helper", async () => {
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     await writeFile(
       "calavera.config.json",
-      `${JSON.stringify(buildRecipe("modern", ["typescript", "oxlint"], "npm"), null, 2)}\n`,
+      `${JSON.stringify(buildRecipe("modern", ["typescript", "oxfmt"], "npm"), null, 2)}\n`,
     );
 
     const { stdout } = await execFileAsync(
@@ -2979,7 +2955,7 @@ test("clean treats a matching managed run-if-files helper as stale", async () =>
     await mkdir(".calavera");
     await writeFile(
       "calavera.config.json",
-      `${JSON.stringify(buildRecipe("modern", ["oxlint"], "npm"), null, 2)}\n`,
+      `${JSON.stringify(buildRecipe("modern", ["oxfmt"], "npm"), null, 2)}\n`,
     );
     await writeFile(helperPath, helperContents);
     await writeFile(
@@ -2988,7 +2964,7 @@ test("clean treats a matching managed run-if-files helper as stale", async () =>
         {
           version: 1,
           profile: "modern",
-          integrations: ["oxlint"],
+          integrations: ["oxfmt"],
           files: [helperPath],
           managedFiles: [{ path: helperPath, hash: textHash(helperContents) }],
           aiArtifacts: [],
@@ -3177,7 +3153,7 @@ test("apply uses project devEngines package manager over an implicit npm recipe 
       )}\n`,
     );
 
-    const result = await applyRecipeObject(buildRecipe("modern", ["oxlint"], "npm"), {
+    const result = await applyRecipeObject(buildRecipe("modern", ["oxfmt"], "npm"), {
       dryRun: true,
       json: true,
       noInstall: true,
@@ -3400,23 +3376,23 @@ test("hook apply plans both outputs and protects an unowned settings sidecar", a
 test("MCP AI-only apply preserves existing managed tooling state", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-mcp-ai-only-apply-"));
-  const oxlintConfig = `${JSON.stringify({ plugins: ["typescript"] }, null, 2)}\n`;
+  const stylelintConfig = `${JSON.stringify({ plugins: ["stylelint-order"] }, null, 2)}\n`;
 
   try {
     process.chdir(projectDirectory);
     await mkdir(".calavera");
     await lockArtifactFixtures(["skill-frontend-engineering"]);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
-    await writeFile("oxlint.json", oxlintConfig);
+    await writeFile(".stylelintrc.json", stylelintConfig);
     await writeFile(
       ".calavera/state.json",
       `${JSON.stringify(
         {
           version: 1,
           profile: "modern",
-          integrations: ["oxlint"],
-          files: ["oxlint.json"],
-          managedFiles: [{ path: "oxlint.json", hash: textHash(oxlintConfig) }],
+          integrations: ["stylelint"],
+          files: [".stylelintrc.json"],
+          managedFiles: [{ path: ".stylelintrc.json", hash: textHash(stylelintConfig) }],
           aiArtifacts: [],
         },
         null,
@@ -3436,9 +3412,11 @@ test("MCP AI-only apply preserves existing managed tooling state", async () => {
 
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
     assert.equal(state.profile, "modern");
-    assert.deepEqual(state.integrations, ["oxlint"]);
-    assert.deepEqual(state.files, ["oxlint.json"]);
-    assert.deepEqual(state.managedFiles, [{ path: "oxlint.json", hash: textHash(oxlintConfig) }]);
+    assert.deepEqual(state.integrations, ["stylelint"]);
+    assert.deepEqual(state.files, [".stylelintrc.json"]);
+    assert.deepEqual(state.managedFiles, [
+      { path: ".stylelintrc.json", hash: textHash(stylelintConfig) },
+    ]);
     assert.equal(
       state.aiArtifacts.some((artifact) => artifact.path === ".agents/skills/frontend-engineering"),
       true,
@@ -3627,17 +3605,14 @@ test("JSON apply installs dependencies without writing spinner UI to stdout", as
       return originalStdoutWrite.call(this, chunk, ...args);
     };
 
-    const result = await applyRecipeObject(buildRecipe("modern", ["oxlint"], "npm"), {
+    const result = await applyRecipeObject(buildRecipe("modern", ["stylelint"], "npm"), {
       json: true,
       assumeYes: true,
     });
 
     assert.equal(result.dryRun, false);
-    assert.deepEqual(result.dependencies, ["oxlint@>=0.15.13"]);
-    assert.equal(
-      await readFile("install-called.txt", "utf8"),
-      "install --save-dev oxlint@>=0.15.13",
-    );
+    assert.deepEqual(result.dependencies, ["stylelint"]);
+    assert.equal(await readFile("install-called.txt", "utf8"), "install --save-dev stylelint");
     assert.doesNotMatch(stdoutWrites.join(""), /Installing development dependencies/);
     assert.doesNotMatch(stdoutWrites.join(""), /Dependencies installed/);
   } finally {

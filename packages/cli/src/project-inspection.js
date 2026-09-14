@@ -16,7 +16,6 @@ export const integrationConfigFiles = Object.freeze({
   ],
   "html-validate": [".htmlvalidate.json", ".htmlvalidateignore"],
   knip: ["knip.json"],
-  oxlint: ["oxlint.json"],
   oxfmt: [],
   prettier: [".prettierrc.json", ".prettierignore"],
   "react-doctor": ["react-doctor.config.json"],

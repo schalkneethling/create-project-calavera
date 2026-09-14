@@ -6,12 +6,6 @@
   "integrations": [
     "editorconfig",
     "typescript",
-    "oxlint",
-    "oxlint-eslint",
-    "oxlint-typescript",
-    "oxlint-unicorn",
-    "oxlint-oxc",
-    "oxlint-jsdoc",
     "oxfmt",
     "stylelint",
     "stylelint-standard",
