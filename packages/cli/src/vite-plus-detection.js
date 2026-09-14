@@ -51,7 +51,7 @@ async function readManifest(manifestPath) {
 
   try {
     const parsed = JSON.parse(contents);
-    return parsed && typeof parsed === "object" ? parsed : undefined;
+    return parsed && typeof parsed === "object" && !Array.isArray(parsed) ? parsed : undefined;
   } catch {
     return undefined;
   }

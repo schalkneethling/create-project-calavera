@@ -477,6 +477,23 @@ test("unparseable package.json", async () => {
   }
 });
 
+test("package.json that parses to an array", async () => {
+  const root = await createFixture("array-manifest", {
+    "package.json": "[]",
+  });
+
+  try {
+    const detection = await detectVitePlus(root);
+
+    assert.equal(detection.status, "unknown");
+    assert.deepEqual(detection.corroborating, []);
+    assert.equal(Object.hasOwn(detection, "signal"), false);
+    assert.equal(Object.hasOwn(detection, "manifestPath"), false);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("detection does not search ancestors for a configuration file", async () => {
   const root = await createFixture("config-not-inherited", {
     "package.json": json(monorepoRootManifest),
