@@ -38,7 +38,7 @@
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
     "@types/node": "^26.5.1",
     "@types/pacote": "^11.1.8",
-    "@types/semver": "^7.7.1",
+    "@types/semver": "^7.8.0",
     "ajv": "8.20.0",
     "eslint": "^10.10.0",
     "fledgling": "1.2.1",
