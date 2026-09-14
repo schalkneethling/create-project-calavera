@@ -2,6 +2,8 @@
 import { readFile } from "node:fs/promises";
 import { dirname, isAbsolute, join, relative } from "node:path";
 
+import { parse as parseYAML } from "yaml";
+
 /**
  * @typedef {{
  *   status: "managed" | "unmanaged" | "unknown",
@@ -24,13 +26,6 @@ export const viteConfigFileNames = Object.freeze([
   "vite.config.ts",
   "vite.config.mts",
   "vite.config.cts",
-]);
-
-/** Corroborating finding kinds, in the precedence order ADR-0001 defines. */
-export const corroboratingKinds = Object.freeze([
-  "vite-plus-config-import",
-  "vite-plus-core-pin",
-  "vp-scripts",
 ]);
 
 const catalogFileNames = Object.freeze(["pnpm-workspace.yaml", ".yarnrc.yml"]);
@@ -82,8 +77,8 @@ function declaresVitePlus(manifest) {
 }
 
 /**
- * Climbs from a directory to the filesystem root, yielding the directory of
- * every level including the starting one.
+ * Climbs from a directory to the filesystem root, yielding every level
+ * including the starting one.
  *
  * @param {string} directory
  */
@@ -103,19 +98,36 @@ function* directoryAndAncestors(directory) {
 }
 
 /**
+ * The one upward walk both callers share. It climbs from a directory to the
+ * filesystem root, reads each `package.json` once, and yields only the
+ * manifests it could read and parse, skipping the rest exactly as `vp` skips
+ * them.
+ *
+ * @param {string} directory
+ * @returns {AsyncGenerator<{ manifestPath: string, manifest: Record<string, unknown> }>}
+ */
+async function* readableManifests(directory) {
+  for (const current of directoryAndAncestors(directory)) {
+    const manifestPath = join(current, "package.json");
+    const manifest = await readManifest(manifestPath);
+
+    if (manifest) {
+      yield { manifestPath, manifest };
+    }
+  }
+}
+
+/**
  * Walks upward from the inspected directory looking for the nearest manifest
- * that declares `vite-plus`, skipping manifests that cannot be read or parsed.
+ * that declares `vite-plus`.
  *
  * @param {string} projectDirectory
  * @returns {Promise<{ manifestPath: string, manifest: Record<string, unknown> } | undefined>}
  */
 async function findDeclaringManifest(projectDirectory) {
-  for (const directory of directoryAndAncestors(projectDirectory)) {
-    const manifestPath = join(directory, "package.json");
-    const manifest = await readManifest(manifestPath);
-
-    if (manifest && declaresVitePlus(manifest)) {
-      return { manifestPath, manifest };
+  for await (const entry of readableManifests(projectDirectory)) {
+    if (declaresVitePlus(entry.manifest)) {
+      return entry;
     }
   }
 
@@ -124,7 +136,10 @@ async function findDeclaringManifest(projectDirectory) {
 
 /**
  * Finds the nearest readable manifest strictly above the inspected directory,
- * and reports whether it, or anything above it, declares `vite-plus`.
+ * and reports whether it, or anything above it, declares `vite-plus`. One
+ * climb answers both questions: the first manifest yielded is the nearest one,
+ * and the walk continues only to learn whether any level declares the
+ * dependency.
  *
  * @param {string} projectDirectory
  * @returns {Promise<{ manifestPath: string, status: "managed" | "unmanaged" } | undefined>}
@@ -135,22 +150,22 @@ async function findAncestorVerdict(projectDirectory) {
     return undefined;
   }
 
-  for (const directory of directoryAndAncestors(parent)) {
-    const manifestPath = join(directory, "package.json");
-    const manifest = await readManifest(manifestPath);
+  /** @type {string | undefined} */
+  let nearestManifestPath;
 
-    if (!manifest) {
-      continue;
+  for await (const entry of readableManifests(parent)) {
+    nearestManifestPath ??= entry.manifestPath;
+
+    if (declaresVitePlus(entry.manifest)) {
+      return { manifestPath: nearestManifestPath, status: "managed" };
     }
-
-    const declaring = declaresVitePlus(manifest)
-      ? { manifestPath }
-      : await findDeclaringManifest(directory);
-
-    return { manifestPath, status: declaring ? "managed" : "unmanaged" };
   }
 
-  return undefined;
+  if (!nearestManifestPath) {
+    return undefined;
+  }
+
+  return { manifestPath: nearestManifestPath, status: "unmanaged" };
 }
 
 /**
@@ -185,36 +200,22 @@ function isVitePlusCorePin(value) {
 }
 
 /**
- * Line-oriented search for a `catalog.vite` pin in a package manager
- * companion file. A YAML parser is not needed to read one pin, so none is
- * added as a dependency.
+ * Reads `catalog.vite` from a package manager companion file. A file that
+ * cannot be parsed as YAML carries no pin this function can report, so it
+ * reads as no pin rather than as a failure.
  *
  * @param {string} source
  */
 function catalogPinsVitePlusCore(source) {
-  let inCatalog = false;
+  let document;
 
-  for (const line of source.split("\n")) {
-    if (!line.trim() || line.trimStart().startsWith("#")) {
-      continue;
-    }
-
-    if (!line.startsWith(" ") && !line.startsWith("\t")) {
-      inCatalog = line.trim() === "catalog:";
-      continue;
-    }
-
-    if (!inCatalog) {
-      continue;
-    }
-
-    const match = /^\s+vite:\s*(\S+)\s*$/.exec(line);
-    if (match && isVitePlusCorePin(match[1].replaceAll('"', "").replaceAll("'", ""))) {
-      return true;
-    }
+  try {
+    document = parseYAML(source);
+  } catch {
+    return false;
   }
 
-  return false;
+  return isVitePlusCorePin(asRecord(asRecord(document).catalog).vite);
 }
 
 /**
@@ -223,10 +224,9 @@ function catalogPinsVitePlusCore(source) {
  * `resolutions.vite` in the manifest that stopped the walk, or `catalog.vite`
  * in `pnpm-workspace.yaml` or `.yarnrc.yml` next to that manifest.
  *
- * @param {Record<string, unknown>} manifest
- * @param {string} manifestDirectory
+ * @param {{ manifest: Record<string, unknown>, directory: string }} pin
  */
-async function hasVitePlusCorePin(manifest, manifestDirectory) {
+async function hasVitePlusCorePin({ manifest, directory }) {
   if (
     isVitePlusCorePin(asRecord(manifest.overrides).vite) ||
     isVitePlusCorePin(asRecord(manifest.resolutions).vite)
@@ -238,7 +238,7 @@ async function hasVitePlusCorePin(manifest, manifestDirectory) {
     let source;
 
     try {
-      source = await readFile(join(manifestDirectory, fileName), "utf8");
+      source = await readFile(join(directory, fileName), "utf8");
     } catch {
       continue;
     }
@@ -268,6 +268,40 @@ function hasVpScripts(manifest) {
   return Object.values(asRecord(manifest.scripts)).some(
     (script) => typeof script === "string" && invokesVp(script),
   );
+}
+
+/**
+ * Collects the corroborating signals, in the precedence order ADR-0001
+ * defines, from whatever is readable. The configuration signal needs only the
+ * inspected directory, so it is the one signal that can be computed when the
+ * inspected directory has no readable manifest of its own; the pin and the
+ * script signals both read that manifest, so in the `"unknown"` case they are
+ * skipped and both arguments are absent.
+ *
+ * @param {string} projectDirectory
+ * @param {{
+ *   ownManifest?: Record<string, unknown>,
+ *   pin?: { manifest: Record<string, unknown>, directory: string }
+ * }} readable
+ * @returns {Promise<VitePlusDetection["corroborating"]>}
+ */
+async function collectCorroborating(projectDirectory, { ownManifest, pin } = {}) {
+  /** @type {VitePlusDetection["corroborating"]} */
+  const corroborating = [];
+
+  if (await hasVitePlusConfigImport(projectDirectory)) {
+    corroborating.push("vite-plus-config-import");
+  }
+
+  if (pin && (await hasVitePlusCorePin(pin))) {
+    corroborating.push("vite-plus-core-pin");
+  }
+
+  if (ownManifest && hasVpScripts(ownManifest)) {
+    corroborating.push("vp-scripts");
+  }
+
+  return corroborating;
 }
 
 /**
@@ -305,23 +339,12 @@ export async function detectVitePlus(projectDirectory) {
   }
 
   const declaring = await findDeclaringManifest(projectDirectory);
-  const pinManifest = declaring ? declaring.manifest : ownManifest;
-  const pinDirectory = declaring ? dirname(declaring.manifestPath) : projectDirectory;
-
-  /** @type {VitePlusDetection["corroborating"]} */
-  const corroborating = [];
-
-  if (await hasVitePlusConfigImport(projectDirectory)) {
-    corroborating.push("vite-plus-config-import");
-  }
-
-  if (await hasVitePlusCorePin(pinManifest, pinDirectory)) {
-    corroborating.push("vite-plus-core-pin");
-  }
-
-  if (hasVpScripts(ownManifest)) {
-    corroborating.push("vp-scripts");
-  }
+  const corroborating = await collectCorroborating(projectDirectory, {
+    ownManifest,
+    pin: declaring
+      ? { manifest: declaring.manifest, directory: dirname(declaring.manifestPath) }
+      : { manifest: ownManifest, directory: projectDirectory },
+  });
 
   if (!declaring) {
     return { status: "unmanaged", corroborating };
@@ -338,21 +361,13 @@ export async function detectVitePlus(projectDirectory) {
 /**
  * A directory whose own manifest is missing or unparseable is never
  * `"managed"`, whatever its ancestors declare. The walk still runs, exactly as
- * `vp` climbs, and what it finds is reported in `ancestor`. The pin and script
- * signals are skipped because both read the inspected directory's own
- * manifest, which is the file that could not be read.
+ * `vp` climbs, and what it finds is reported in `ancestor`.
  *
  * @param {string} projectDirectory
  * @returns {Promise<VitePlusDetection>}
  */
 async function buildUnknownDetection(projectDirectory) {
-  /** @type {VitePlusDetection["corroborating"]} */
-  const corroborating = [];
-
-  if (await hasVitePlusConfigImport(projectDirectory)) {
-    corroborating.push("vite-plus-config-import");
-  }
-
+  const corroborating = await collectCorroborating(projectDirectory, {});
   const ancestor = await findAncestorVerdict(projectDirectory);
 
   if (!ancestor) {
