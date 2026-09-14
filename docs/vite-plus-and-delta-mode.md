@@ -6,7 +6,16 @@ generated scripts that assume a specific app starter or task runner.
 
 ## Vite+ Awareness
 
-Vite+ detection belongs in two places:
+The authoritative answer to whether a project is managed by Vite+ comes from
+one pure function, and `inspect_project` reports its result as the optional
+`vitePlus` field and four stable finding kinds. The primary signal is a
+`vite-plus` key under `dependencies` or `devDependencies` in the inspected
+project's own `package.json` or the nearest ancestor manifest that declares
+it, matched exactly as Vite+ matches it for its own self-check; see
+[ADR-0001](./adr/0001-vite-plus-detection-signal.md) for the full signal set,
+the corroborating signals, and the fixture table. Catalog metadata still
+describes the project shapes an integration suits, and `doctor` stays
+advisory:
 
 - Catalog metadata should describe framework-specific integrations, including
   whether an integration is useful for Vite, Vite+, React, Vue, Svelte, or another
