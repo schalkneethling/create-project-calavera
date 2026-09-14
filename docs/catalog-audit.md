@@ -29,44 +29,44 @@ A row may not be classified `keep` if the only reason is that Calavera's impleme
 
 One row per entry. Fill every column. Add rows for anything `list_integrations` or `list_ai_artifacts` reports that is not pre-listed below.
 
-| Entry | Kind | What it does today | Does Vite+ do this? (evidence) | Classification | Non-`vp` treatment (per CQ1) | Removal or follow-up issue | Notes |
-|---|---|---|---|---|---|---|---|
-| Modern profile: Oxlint | profile component | | | | | | |
-| Modern profile: Oxfmt | profile component | | | | | | |
-| Modern profile: Stylelint | profile component | | Not until Oxlint language plugins (RFC #21936) | | | | CSS lane; see H8 |
-| Modern profile: TypeScript config | profile component | | | | | | |
-| Classic profile: ESLint flat config | profile component | | | | | | `@eslint/css` remains the CSS lint host for css-evolve; distinguish JS ESLint from CSS ESLint |
-| Classic profile: Prettier | profile component | | | | | | Calavera already rejects Oxfmt plus Prettier |
-| Classic profile: Stylelint | profile component | | | | | | |
-| Classic profile: TypeScript config | profile component | | | | | | |
-| Minimal profile: EditorConfig | profile component | | | | | | |
-| React best practices (incl. React Doctor, JSX-A11y) | integration | | | | | | |
-| Imports and modules | integration | | Oxlint rule coverage? | | | | |
-| Promise safety | integration | | Oxlint rule coverage? | | | | |
-| Node package rules | integration | | Oxlint rule coverage? | | | | |
-| Test rules | integration | | Oxlint / Vitest rule coverage? | | | | |
-| Knip (unused files, deps, exports) | integration | | | | | | |
-| HTML validation (html-validate) | integration | | | | | | |
-| CSS Baseline | integration | | | | | | Consumer of I2; likely `keep` until H8 |
-| CSS property ordering | integration | | | | | | |
-| CSS property type validation | integration | | | | | | Superseded by css-evolve integration (CAL-031); classify accordingly |
-| Varlock (env schema) | integration | | | | | | |
-| GitHub governance and drift checks | integration | | | | | | |
-| `package.json` scripts management (`quality` composite) | pipeline feature | | `vp check` / `staged`? | | | | Distinguish composing Calavera-owned tasks from duplicating `vp` commands |
-| `.agents/` skills | artifact class | | | | | | |
-| `.agents/` hooks | artifact class | | | | | | |
-| `.agents/` subagents | artifact class | | | | | | |
-| `css-tokens` skill | artifact | | | | | | Relationship to css-evolve tokens (D9) to be decided; record proposal |
-| MCP: `inspect_project` | MCP tool | | | | | | Gains `vp` detection (CAL-010) |
-| MCP: `list_profiles` | MCP tool | | | | | | |
-| MCP: `list_integrations` | MCP tool | | | | | | |
-| MCP: `list_ai_artifacts` | MCP tool | | | | | | |
-| MCP: `compose_recipe` / `validate_recipe` / `explain_recipe` | MCP tool | | | | | | |
-| MCP: `dry_run_apply` / `apply_recipe` | MCP tool | | | | | | Safety property; `keep` |
-| Composer web UI (incl. WebMCP surface) | surface | | | | | | |
-| Baseline Target Explorer | surface | | | | | | Consumer of I2 |
-| macOS menu-bar app | surface | | | | | | Out of Vite+ scope; `keep`; see #398 |
-| Release verification | pipeline feature | | `vp pack`? | | | | See #357 (H7) |
+| Entry                                                        | Kind              | What it does today | Does Vite+ do this? (evidence)                 | Classification | Non-`vp` treatment (per CQ1) | Removal or follow-up issue | Notes                                                                                         |
+| ------------------------------------------------------------ | ----------------- | ------------------ | ---------------------------------------------- | -------------- | ---------------------------- | -------------------------- | --------------------------------------------------------------------------------------------- |
+| Modern profile: Oxlint                                       | profile component |                    |                                                |                |                              |                            |                                                                                               |
+| Modern profile: Oxfmt                                        | profile component |                    |                                                |                |                              |                            |                                                                                               |
+| Modern profile: Stylelint                                    | profile component |                    | Not until Oxlint language plugins (RFC #21936) |                |                              |                            | CSS lane; see H8                                                                              |
+| Modern profile: TypeScript config                            | profile component |                    |                                                |                |                              |                            |                                                                                               |
+| Classic profile: ESLint flat config                          | profile component |                    |                                                |                |                              |                            | `@eslint/css` remains the CSS lint host for css-evolve; distinguish JS ESLint from CSS ESLint |
+| Classic profile: Prettier                                    | profile component |                    |                                                |                |                              |                            | Calavera already rejects Oxfmt plus Prettier                                                  |
+| Classic profile: Stylelint                                   | profile component |                    |                                                |                |                              |                            |                                                                                               |
+| Classic profile: TypeScript config                           | profile component |                    |                                                |                |                              |                            |                                                                                               |
+| Minimal profile: EditorConfig                                | profile component |                    |                                                |                |                              |                            |                                                                                               |
+| React best practices (incl. React Doctor, JSX-A11y)          | integration       |                    |                                                |                |                              |                            |                                                                                               |
+| Imports and modules                                          | integration       |                    | Oxlint rule coverage?                          |                |                              |                            |                                                                                               |
+| Promise safety                                               | integration       |                    | Oxlint rule coverage?                          |                |                              |                            |                                                                                               |
+| Node package rules                                           | integration       |                    | Oxlint rule coverage?                          |                |                              |                            |                                                                                               |
+| Test rules                                                   | integration       |                    | Oxlint / Vitest rule coverage?                 |                |                              |                            |                                                                                               |
+| Knip (unused files, deps, exports)                           | integration       |                    |                                                |                |                              |                            |                                                                                               |
+| HTML validation (html-validate)                              | integration       |                    |                                                |                |                              |                            |                                                                                               |
+| CSS Baseline                                                 | integration       |                    |                                                |                |                              |                            | Consumer of I2; likely `keep` until H8                                                        |
+| CSS property ordering                                        | integration       |                    |                                                |                |                              |                            |                                                                                               |
+| CSS property type validation                                 | integration       |                    |                                                |                |                              |                            | Superseded by css-evolve integration (CAL-031); classify accordingly                          |
+| Varlock (env schema)                                         | integration       |                    |                                                |                |                              |                            |                                                                                               |
+| GitHub governance and drift checks                           | integration       |                    |                                                |                |                              |                            |                                                                                               |
+| `package.json` scripts management (`quality` composite)      | pipeline feature  |                    | `vp check` / `staged`?                         |                |                              |                            | Distinguish composing Calavera-owned tasks from duplicating `vp` commands                     |
+| `.agents/` skills                                            | artifact class    |                    |                                                |                |                              |                            |                                                                                               |
+| `.agents/` hooks                                             | artifact class    |                    |                                                |                |                              |                            |                                                                                               |
+| `.agents/` subagents                                         | artifact class    |                    |                                                |                |                              |                            |                                                                                               |
+| `css-tokens` skill                                           | artifact          |                    |                                                |                |                              |                            | Relationship to css-evolve tokens (D9) to be decided; record proposal                         |
+| MCP: `inspect_project`                                       | MCP tool          |                    |                                                |                |                              |                            | Gains `vp` detection (CAL-010)                                                                |
+| MCP: `list_profiles`                                         | MCP tool          |                    |                                                |                |                              |                            |                                                                                               |
+| MCP: `list_integrations`                                     | MCP tool          |                    |                                                |                |                              |                            |                                                                                               |
+| MCP: `list_ai_artifacts`                                     | MCP tool          |                    |                                                |                |                              |                            |                                                                                               |
+| MCP: `compose_recipe` / `validate_recipe` / `explain_recipe` | MCP tool          |                    |                                                |                |                              |                            |                                                                                               |
+| MCP: `dry_run_apply` / `apply_recipe`                        | MCP tool          |                    |                                                |                |                              |                            | Safety property; `keep`                                                                       |
+| Composer web UI (incl. WebMCP surface)                       | surface           |                    |                                                |                |                              |                            |                                                                                               |
+| Baseline Target Explorer                                     | surface           |                    |                                                |                |                              |                            | Consumer of I2                                                                                |
+| macOS menu-bar app                                           | surface           |                    |                                                |                |                              |                            | Out of Vite+ scope; `keep`; see #398                                                          |
+| Release verification                                         | pipeline feature  |                    | `vp pack`?                                     |                |                              |                            | See #357 (H7)                                                                                 |
 
 ## 4. Summary (fill after the table)
 
@@ -77,7 +77,7 @@ One row per entry. Fill every column. Add rows for anything `list_integrations` 
 
 ## 5. Sign-off
 
-| Role | Name | Date |
-|---|---|---|
-| Prepared by | Claude Code | |
-| Approved by | Schalk Neethling | |
+| Role        | Name             | Date |
+| ----------- | ---------------- | ---- |
+| Prepared by | Claude Code      |      |
+| Approved by | Schalk Neethling |      |

@@ -26,12 +26,12 @@ export type Digit = "0" | "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9";
 export type FourDigitYear = `${Digit}${Digit}${Digit}${Digit}`;
 
 export type BaselineTargetValue =
-  | "widely"          // Baseline Widely available
-  | "newly"           // Baseline Newly available
-  | FourDigitYear;    // a four-digit year, meaning "features that became Baseline Newly available in or before this year"
+  | "widely" // Baseline Widely available
+  | "newly" // Baseline Newly available
+  | FourDigitYear; // a four-digit year, meaning "features that became Baseline Newly available in or before this year"
 ```
 
-**Semantics:** a feature is *available* under a target when its Baseline status, according to the pinned `web-features` snapshot, satisfies the target. `browserslist` fallback maps to the most conservative Baseline target whose browser set is a superset of the browserslist query; the engine reports which fallback it used.
+**Semantics:** a feature is _available_ under a target when its Baseline status, according to the pinned `web-features` snapshot, satisfies the target. `browserslist` fallback maps to the most conservative Baseline target whose browser set is a superset of the browserslist query; the engine reports which fallback it used.
 
 **Freeze:** Calavera Checkpoint 2.
 
@@ -55,13 +55,16 @@ export function resolveBaselineTarget(options: { cwd: string }): Promise<Resolve
 
 ```ts
 export type FeatureAvailability = {
-  featureId: string;                 // web-features id, e.g. "function", "if", "anchor-positioning"
+  featureId: string; // web-features id, e.g. "function", "if", "anchor-positioning"
   available: boolean;
   status: "widely" | "newly" | "limited" | "unknown";
-  since?: string;                    // ISO date the feature reached the reported status
+  since?: string; // ISO date the feature reached the reported status
 };
 
-export function isFeatureAvailable(featureId: string, target: BaselineTargetValue): FeatureAvailability;
+export function isFeatureAvailable(
+  featureId: string,
+  target: BaselineTargetValue,
+): FeatureAvailability;
 export function featuresForCss(css: string): string[]; // web-features ids referenced by the stylesheet, best effort; css-evolve may supply its own detector and pass ids directly
 ```
 
@@ -75,10 +78,10 @@ export function snapshotInfo(): { webFeaturesVersion: string; generatedAt: strin
 
 ```ts
 export type LightningCssMapping = {
-  targets: Record<string, number>;   // Lightning CSS browser targets object
-  include?: number;                  // Lightning CSS Features bitmask to force-include
-  exclude?: number;                  // Lightning CSS Features bitmask to exclude
-  notes: string[];                   // human-readable explanation of each decision
+  targets: Record<string, number>; // Lightning CSS browser targets object
+  include?: number; // Lightning CSS Features bitmask to force-include
+  exclude?: number; // Lightning CSS Features bitmask to exclude
+  notes: string[]; // human-readable explanation of each decision
 };
 
 export function lightningCssMapping(target: BaselineTargetValue): LightningCssMapping;
@@ -100,7 +103,7 @@ export type Subject =
   | { kind: "pseudo-element"; selector: string; pseudo: string; property: string };
 
 export type Diagnostic = {
-  code: string;                       // stable identifier, kebab-case, documented in css-evolve docs/diagnostics.md
+  code: string; // stable identifier, kebab-case, documented in css-evolve docs/diagnostics.md
   severity: "error" | "warning" | "info";
   message: string;
   loc: { file: string; start: Position; end: Position };
@@ -114,7 +117,7 @@ export type Diagnostic = {
 };
 
 export type DiagnosticReport = {
-  version: "1";                       // report format version; bumps only on a breaking change to this type
+  version: "1"; // report format version; bumps only on a breaking change to this type
   tool: { name: "css-evolve"; version: string };
   baselineTarget?: ResolvedBaselineTarget;
   diagnostics: Diagnostic[];
@@ -132,16 +135,16 @@ export type DiagnosticReport = {
 
 What css-evolve requires in a consuming project. Calavera expresses this as catalog metadata; css-evolve documents it here and in its README and does not ship scaffolding.
 
-| Item | Value |
-|---|---|
+| Item               | Value                                                                                                                                                                                       |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | Dependencies (dev) | `@schalkneethling/css-evolve-cli`, `@schalkneethling/css-evolve-eslint-plugin`, `@schalkneethling/css-evolve-vite-plugin`; `@schalkneethling/css-evolve-browser` when expectations are used |
-| `vp run` tasks | `lint:css` → `css-evolve check`; `expect:css` → `css-evolve expect`; `probe:css` → `css-evolve probe` (development only) |
-| `staged` entry | `*.css` → `css-evolve check --format json` |
-| Composite script | `lint:css` is appended to Calavera's generated `quality` script |
-| ESLint | `@eslint/css` language registration plus `css-evolve/*` rules in the flat config, added as a managed block with ownership notes |
-| Vite | `cssEvolve()` plugin in `vite.config`, added as a managed block; reads I2 through Calavera's engine |
-| MCP registration | `css-evolve-mcp` over stdio, project-local, written only after consent in `dry_run_apply` |
-| Configuration | none beyond `baselineTarget` (I1); css-evolve has no config file of its own in 1.0 |
+| `vp run` tasks     | `lint:css` → `css-evolve check`; `expect:css` → `css-evolve expect`; `probe:css` → `css-evolve probe` (development only)                                                                    |
+| `staged` entry     | `*.css` → `css-evolve check --format json`                                                                                                                                                  |
+| Composite script   | `lint:css` is appended to Calavera's generated `quality` script                                                                                                                             |
+| ESLint             | `@eslint/css` language registration plus `css-evolve/*` rules in the flat config, added as a managed block with ownership notes                                                             |
+| Vite               | `cssEvolve()` plugin in `vite.config`, added as a managed block; reads I2 through Calavera's engine                                                                                         |
+| MCP registration   | `css-evolve-mcp` over stdio, project-local, written only after consent in `dry_run_apply`                                                                                                   |
+| Configuration      | none beyond `baselineTarget` (I1); css-evolve has no config file of its own in 1.0                                                                                                          |
 
 **Freeze:** css-evolve Checkpoint 4 (handoff H4). Task and script names freeze earlier, at css-evolve Checkpoint 1, so Calavera's CQ3 spike can proceed.
 
@@ -192,6 +195,6 @@ css-evolve does not read this schema; it exists here so css-evolve's I4 declarat
 
 ## I9. Change Log
 
-| Date | Surface | Change | Request |
-|---|---|---|---|
-| 2026-09-09 | all | initial draft | — |
+| Date       | Surface | Change        | Request |
+| ---------- | ------- | ------------- | ------- |
+| 2026-09-09 | all     | initial draft | —       |
