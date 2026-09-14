@@ -136,7 +136,9 @@ environment of choice.
 
 ## Profiles
 
-- **Modern**: Oxlint, Oxfmt, Stylelint, TypeScript
+- **Modern**: Oxfmt, Stylelint, TypeScript. In a `vp`-managed project,
+  JavaScript and TypeScript linting comes from `vp lint`; Calavera does not
+  scaffold a linter for that language pair.
 - **Classic**: ESLint flat config, Prettier, Stylelint, TypeScript
 - **Minimal**: EditorConfig only
 
@@ -263,11 +265,11 @@ Run `init` without selection flags for guided prompts that present the available
 options. Use selection flags only for scripted or CI flows:
 
 ```bash
-npm create project-calavera init -- --profile modern --package-manager pnpm --tool oxlint --tool stylelint
+npm create project-calavera init -- --profile modern --package-manager pnpm --tool stylelint-order
 ```
 
 Wrap labels that contain spaces in quotes, for example
-`--tool "Oxc React best practices"`. Prefer ids such as `oxlint-react` in
+`--tool "CSS property ordering"`. Prefer ids such as `stylelint-order` in
 scripts and CI so commands stay copy-pastable.
 
 Apply a recipe:
