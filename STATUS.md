@@ -4,7 +4,7 @@ Updated: 2026-09-14
 
 ## Current phase and checkpoint
 
-Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint 0 is in progress: the CQ2 ADR is accepted; the reduced audit worksheet (CAL-001, #448) is complete and awaits approval of its eleven `remove` rows.
+Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint 0 is in progress: the CQ2 ADR is accepted; the reduced audit worksheet (CAL-001, #448) is complete and approved; Checkpoint 0 criteria met for the reduced scope.
 
 ## Completed this session
 
@@ -31,7 +31,7 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## Audit
 
-- Rows classified: 13 of 37. Removals opened: 0. Awaiting approval: 11.
+- Rows classified: 13 of 37 (24 deferred in #449). Removals opened: 5 (#452 to #456). Awaiting approval: 0.
 
 ## Open cross-repo requests
 
@@ -39,9 +39,10 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## Decisions taken this session (with ADR link)
 
+- Reduced audit approved: eleven `remove`, two `watch`, one `keep`; ESLint plugin entries found inert (#450) and removed with CAL-015; reintroduction only as metadata edits to the Vite+ lint block (#451). No ADR; ADRs come with each removal PR.
 - CQ2 Vite+ detection signal: `docs/adr/0001-vite-plus-detection-signal.md` (Accepted 2026-09-13). Revised after review: the pin location is recorded for pnpm, npm, Yarn, and Bun, and the manifest-less directory case records the ancestor manifest so a later apply flow can offer create-here, apply-at-ancestor, or abandon at the `dry_run_apply` boundary.
 
 ## Next session starts with
 
-- On approval of the audit rows: open CAL-012 to CAL-016 from the worksheet titles, then CAL-011 (profiles collapse on a `vp` project). React Doctor follow-up: re-express its two scripts as `vp run` tasks.
+- CAL-012 (#452) first, since the other removals and CAL-011 build on the catalog it leaves behind; then CAL-013 to CAL-016 (#453 to #456), one PR each with an ADR; then CAL-011 (profiles collapse on a `vp` project). React Doctor follow-up: re-express its two scripts as `vp run` tasks.
 - The five follow-up issues named in the ADR are open: #429 to #433. The unparseable-manifest MCP-level test waits on #429.
