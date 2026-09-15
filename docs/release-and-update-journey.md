@@ -24,10 +24,10 @@ Private applications are excluded from Changesets. Public packages are neither f
 
 ## Baseline data refresh
 
-1. Update the pinned `web-features` and `baseline-browser-mapping` versions in `packages/baseline-core`, then advance `scripts/snapshot.mjs` to the intended non-future cutoff date.
-2. Run the data generator and review the generated source versions, generation date, feature changes, and browser mappings.
-3. Run Baseline unit and cross-surface parity tests.
-4. Add a Changeset for Baseline core. Deploy the Explorer separately; do not couple its static deployment to npm publication.
+1. Update the pinned `web-features` and `baseline-browser-mapping` versions in `packages/baseline-core` (Dependabot or a manual edit), then run `pnpm install`.
+2. Run `pnpm build:data` in `packages/baseline-core`. When the pinned browser mapping contains a release later than the snapshot cutoff, the generator prompts for a new cutoff (default: today, UTC) and rewrites `scripts/snapshot.mjs`; it then regenerates `data/baseline.json` and offers to write `.changeset/baseline-data-refresh.md` as a patch for Baseline core. In a non-interactive shell, pass `--cutoff YYYY-MM-DD` and `--changeset` instead. The generator refuses a cutoff that is malformed, in the future, or earlier than the latest browser release.
+3. Review the generated source versions, cutoff, feature changes, browser mappings, and Changeset text. `pnpm test` fails with a message naming the stale cutoff, the latest release, and the source version until the refresh is complete.
+4. Run Baseline unit and cross-surface parity tests. Deploy the Explorer separately; do not couple its static deployment to npm publication.
 
 The initial release remains CSS-focused. Browserslist, minimum-version, analytics, RUM, percentage-coverage, and general JavaScript compatibility inputs are deferred audience-mode work.
 
