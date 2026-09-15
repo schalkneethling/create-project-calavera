@@ -1,6 +1,6 @@
 # STATUS
 
-Updated: 2026-09-14
+Updated: 2026-09-15
 
 ## Current phase and checkpoint
 
@@ -8,13 +8,14 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## Completed this session
 
+- CAL-012 (#452, PR #459, merged): Oxlint integration and its fourteen plugin pack entries removed; ADR-0002 accepted; Changeset records a major bump for `create-project-calavera` and a patch for the Calavera skill package. Red tests, removal, and docs landed as separate commits. Follow-up #458 (one source for the managed-file list) opened.
 - CAL-001 reduced (#448): thirteen in-scope catalog entries (fourteen worksheet rows, because React Doctor is split from the React lint packs) classified with evidence from real `vp` runs on the CAL-002 scratch projects and the Vite+ documentation. Result: eleven `remove` (Oxlint, Oxfmt, TypeScript configuration, ESLint flat config, Prettier, and the five rule packs), two `watch` (Stylelint, trigger H8 and the Oxlint CSS language plugin), one `keep` (React Doctor). Five removal issues proposed, CAL-012 to CAL-016; rule packs fold into their base removals because every pack entry includes its base integration. Deferred rows tracked in #449. Branch `cal-001-448-reduced-audit`.
 - CAL-010 (#435): `detectVitePlus` in `packages/cli/src/vite-plus-detection.js`, a pure function over the project directory, with one `node --test` case per ADR-0001 fixture row plus purity and no-ancestor-config tests; `inspect_project` returns the `vitePlus` record and the four finding kinds; docs amended and a minor Changeset added. Red, green, and refactor landed as separate commits on branch `cal-010-435-vp-detection`. Awaiting pull request review.
 - CAL-002 (#428): probed vite-plus 0.3.1 with real `vp create vite:library`, `vp create vite:monorepo`, and `vp migrate` runs, surveyed the `inspect_project` surface, and wrote `docs/adr/0001-vite-plus-detection-signal.md`. The ADR chooses the `vite-plus` dependency in the nearest ancestor `package.json` as the single primary signal, matching `vp`'s own self-check, with three corroborating signals recorded for diagnosis only, and specifies the `vitePlus` field and four finding kinds that `inspect_project` reports.
 
 ## In progress
 
-- CAL-012 (#452): Oxlint removal on branch `cal-012-452-remove-oxlint`; ADR-0002, docs, Changeset (major), red tests, and the removal are committed and pushed. Full CLI suite 180 pass on Node 24; lint, format, typecheck, knip, skills lint, and release contracts clean. Awaiting pull request.
+- none
 
 ## Blocked
 
@@ -31,7 +32,7 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## Audit
 
-- Entries classified: 13 of 37 (fourteen worksheet rows; 24 entries deferred in #449). Removals opened: 5 (#452 to #456). Awaiting approval: 0.
+- Entries classified: 13 of 37 (fourteen worksheet rows; 24 entries deferred in #449). Removals opened: 5 (#452 to #456). Merged: 1 (CAL-012). Awaiting approval: 0.
 
 ## Open cross-repo requests
 
@@ -39,10 +40,11 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## Decisions taken this session (with ADR link)
 
+- Oxlint removal: `docs/adr/0002-remove-oxlint.md` (Accepted 2026-09-14, merged in #459).
 - Reduced audit approved: eleven `remove`, two `watch`, one `keep`; ESLint plugin entries found inert (#450), with `eslint-unicorn` and `eslint-sonarjs` approved for removal under CAL-015 alongside the curated pack entries; reintroduction only as metadata edits to the Vite+ lint block (#451). No ADR; ADRs come with each removal PR.
 - CQ2 Vite+ detection signal: `docs/adr/0001-vite-plus-detection-signal.md` (Accepted 2026-09-13). Revised after review: the pin location is recorded for pnpm, npm, Yarn, and Bun, and the manifest-less directory case records the ancestor manifest so a later apply flow can offer create-here, apply-at-ancestor, or abandon at the `dry_run_apply` boundary.
 
 ## Next session starts with
 
-- CAL-012 (#452) first, since the other removals and CAL-011 build on the catalog it leaves behind; then CAL-013 to CAL-016 (#453 to #456), one PR each with an ADR; then CAL-011 (profiles collapse on a `vp` project). React Doctor follow-up: re-express its two scripts as `vp run` tasks.
-- The five follow-up issues named in the ADR are open: #429 to #433. The unparseable-manifest MCP-level test waits on #429.
+- CAL-013 (#453, Oxfmt) next, then CAL-014 to CAL-016 (#454 to #456), one PR each with an ADR; then CAL-011 (profiles collapse on a `vp` project). React Doctor follow-up: re-express its two scripts as `vp run` tasks.
+- A Version Packages pull request for 3.0.0 will open from the CAL-012 Changeset; hold it until CAL-013 to CAL-016 have merged so the major ships once. The five follow-up issues named in ADR-0001 are open: #429 to #433. The unparseable-manifest MCP-level test waits on #429.

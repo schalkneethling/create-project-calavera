@@ -1,6 +1,6 @@
 # ADR-0002: Remove Oxlint
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-14, merged in #459)
 - **Date:** 2026-09-14
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/452
 - **Decides:** removal of the Oxlint integration and its fourteen plugin pack entries under C1, applying the `remove` classification recorded for the "Modern profile: Oxlint" row and the five rule pack rows of `docs/catalog-audit.md`.
