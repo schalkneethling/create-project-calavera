@@ -31,7 +31,7 @@ export const profileCatalog = [
   {
     id: "classic",
     label: "classic",
-    description: "Widely used JavaScript, TypeScript, CSS linting, and formatting defaults.",
+    description: "CSS linting defaults; JavaScript and TypeScript checks come from Vite+.",
   },
   {
     id: "minimal",
