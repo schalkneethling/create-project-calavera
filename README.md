@@ -137,7 +137,8 @@ a type-check script; JavaScript and TypeScript type checking comes from
   linting comes from `vp lint`, formatting from `vp fmt`, and type checking from
   `vp check`; Calavera does not scaffold a linter, formatter, or TypeScript
   configuration for that language pair.
-- **Classic**: Prettier, Stylelint
+- **Classic**: Stylelint. Identical to Modern in what it scaffolds; the two
+  profiles are collapsed in a later change.
 - **Minimal**: EditorConfig only
 
 ## Integration Catalog
