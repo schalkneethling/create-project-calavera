@@ -19,7 +19,7 @@ The tool identity differing from `tsc` is not evidence that Vite+ does it badly,
 
 ## Decision
 
-Remove the `typescript` catalog entry, the `tsconfig.json` template and managed-file record, the `typecheck` script, the recipe's `scripts.typecheck` option (which names that script and has no other subject once it is gone), the entry's file in project inspection, the Composer option and label, and the schema enum value and property that accept the `typescript` id and `typecheck` flag. Tests, documentation, and MCP listings for all of this are removed with the code they cover, not left as dead references.
+Remove the `typescript` catalog entry, the `tsconfig.json` template and managed-file record, the `typecheck` script, the recipe's `scripts.typecheck` option (which names that script and has no other subject once it is gone), the entry's file in project inspection, the Composer option and label, the schema enum value that accepts the `typescript` id, and the schema's documented `scripts.typecheck` property. A recipe naming `typescript` fails validation as an unknown id once its enum value is gone; a recipe still setting `scripts.typecheck` continues to validate, because the removed property was documented rather than the only thing the schema accepts there, and the generic schema still accepts any boolean script flag, so the flag is ignored rather than rejected, as the Consequences section states. Tests, documentation, and MCP listings for all of this are removed with the code they cover, not left as dead references.
 
 The `typescript-eslint` entry keeps installing `typescript` on its own, independent of this removal, until CAL-015 removes `typescript-eslint` itself; it needs `typescript` to parse syntax, not to type-check it.
 

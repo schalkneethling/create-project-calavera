@@ -127,14 +127,14 @@ Use the tool's real validation command as the script body. Varlock uses
 `varlock load` because it prints the resolved redacted environment and exits
 non-zero on schema violations.
 
-For a `pnpm` project that already has lint, format, and type-check scripts, the
+For a `pnpm` project that already has lint and format scripts, the
 Varlock-specific result should look like this:
 
 ```json
 {
   "scripts": {
     "env:load": "varlock load",
-    "quality": "pnpm lint && pnpm format:check && pnpm typecheck && pnpm env:load"
+    "quality": "pnpm lint && pnpm format:check && pnpm env:load"
   }
 }
 ```
