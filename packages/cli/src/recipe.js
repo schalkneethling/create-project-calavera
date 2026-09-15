@@ -25,7 +25,8 @@ export const profileCatalog = [
   {
     id: "modern",
     label: "modern",
-    description: "Newer, faster JavaScript, TypeScript, CSS linting, and formatting defaults.",
+    description:
+      "CSS linting and TypeScript configuration defaults; JavaScript and TypeScript checks come from Vite+.",
   },
   {
     id: "classic",

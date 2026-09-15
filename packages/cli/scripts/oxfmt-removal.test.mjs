@@ -7,7 +7,7 @@ import test from "node:test";
 import { integrationCatalog } from "../src/catalog.js";
 import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
-import { buildRecipe, profileDefaults } from "../src/recipe.js";
+import { buildRecipe, catalogResponse, composeRecipe, profileDefaults } from "../src/recipe.js";
 
 function hasOxfmtId(ids) {
   return ids.some((id) => id.startsWith("oxfmt"));
@@ -45,6 +45,33 @@ test("list_profiles keeps the modern profile without any Oxfmt default", async (
     `Oxfmt ids still default for modern: ${modern.defaultIntegrations.join(", ")}`,
   );
   assert.equal(hasOxfmtId(profileDefaults.modern), false);
+  assert.doesNotMatch(
+    modern.description,
+    /format/i,
+    `The modern profile description must not claim formatting: ${modern.description}`,
+  );
+  assert.doesNotMatch(
+    modern.description,
+    /JavaScript.*lint|TypeScript.*lint/i,
+    `The modern profile description must not claim JavaScript or TypeScript linting: ${modern.description}`,
+  );
+});
+
+test("catalogResponse keeps the modern profile description free of formatting and JS/TS linting claims", () => {
+  const response = catalogResponse(composeRecipe({ profile: "modern" }));
+  const modern = response.profiles.find(({ id }) => id === "modern");
+
+  assert.ok(modern, "The modern profile must still be listed in catalogResponse.");
+  assert.doesNotMatch(
+    modern.description,
+    /format/i,
+    `The modern profile description must not claim formatting: ${modern.description}`,
+  );
+  assert.doesNotMatch(
+    modern.description,
+    /JavaScript.*lint|TypeScript.*lint/i,
+    `The modern profile description must not claim JavaScript or TypeScript linting: ${modern.description}`,
+  );
 });
 
 test("compose_recipe rejects the oxfmt id as unknown", async () => {
