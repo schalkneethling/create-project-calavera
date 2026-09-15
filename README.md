@@ -3,8 +3,8 @@
 [![skills.sh](https://skills.sh/b/schalkneethling/create-project-calavera)](https://skills.sh/schalkneethling/create-project-calavera)
 
 [Project Calavera](https://github.com/schalkneethling/create-project-calavera/)
-is an open-source CLI tool that scaffolds linters, formatters, TypeScript
-configs, AI tooling such as agent skills, hooks, and subagents, and other common
+is an open-source CLI tool that scaffolds linters, formatters, AI tooling such
+as agent skills, hooks, and subagents, and other common
 project infrastructure for web projects. It works standalone for vanilla
 JavaScript, TypeScript, and library projects, and it works as a complement to
 framework scaffolding tools like Vite+ and `vp create`, giving any project a
@@ -120,7 +120,6 @@ npm --force create project-calavera apply
 ## What Calavera Manages
 
 - Linting and formatting tools
-- TypeScript config with JavaScript and TypeScript type checking
 - Stylelint and CSS quality plugins
 - AI skills, hooks, and agents under `.agents/`
 - `package.json` scripts
@@ -128,19 +127,18 @@ npm --force create project-calavera apply
 
 Editor extensions, global apps, shell setup, and machine-level configuration are
 out of scope. Install the matching editor integrations for your development
-environment of choice.
+environment of choice. Calavera does not scaffold a TypeScript configuration or
+a type-check script; JavaScript and TypeScript type checking comes from
+`vp check` in a `vp`-managed project.
 
 ## Profiles
 
-- **Modern**: Stylelint, TypeScript. In a `vp`-managed project, JavaScript and
-  TypeScript linting comes from `vp lint` and formatting comes from `vp fmt`;
-  Calavera does not scaffold a linter or formatter for that language pair.
-- **Classic**: ESLint flat config, Prettier, Stylelint, TypeScript
+- **Modern**: Stylelint. In a `vp`-managed project, JavaScript and TypeScript
+  linting comes from `vp lint`, formatting from `vp fmt`, and type checking from
+  `vp check`; Calavera does not scaffold a linter, formatter, or TypeScript
+  configuration for that language pair.
+- **Classic**: ESLint flat config, Prettier, Stylelint
 - **Minimal**: EditorConfig only
-
-When the TypeScript integration is selected, Calavera generates a `tsconfig.json`
-that can check `.js`, `.jsx`, `.ts`, and `.tsx` files. JavaScript files can opt
-into checking with `// @ts-check` and JSDoc annotations.
 
 ## Integration Catalog
 

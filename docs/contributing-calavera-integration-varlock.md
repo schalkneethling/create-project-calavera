@@ -71,11 +71,10 @@ The matching recipe entry a project developer would write is intentionally small
   "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
   "profile": "modern",
   "packageManager": "pnpm",
-  "integrations": ["editorconfig", "typescript", "stylelint", "varlock"],
+  "integrations": ["editorconfig", "knip", "stylelint", "varlock"],
   "scripts": {
     "lint": true,
     "format:check": true,
-    "typecheck": true,
     "quality": true
   }
 }
@@ -151,7 +150,7 @@ or project-owned.
 Managed files are generated from the recipe and recorded in
 `.calavera/state.json` with hashes. Calavera can later inspect, update, and clean
 them because it knows exactly what it wrote. Examples include generated lint
-configs, `tsconfig.json`, React Doctor config, and helper scripts.
+configs, `knip.json`, React Doctor config, and helper scripts.
 
 Project-owned files are different. Calavera may create a starter file or merge a
 small block into an existing file, but it should not later assume ownership. The
@@ -214,8 +213,8 @@ generates and owns, but not `.env.schema` or `.gitignore`:
 {
   "version": 1,
   "profile": "modern",
-  "integrations": ["editorconfig", "typescript", "stylelint", "varlock"],
-  "files": [".editorconfig", ".stylelintrc.json", "tsconfig.json"],
+  "integrations": ["editorconfig", "knip", "stylelint", "varlock"],
+  "files": [".editorconfig", ".stylelintrc.json", "knip.json"],
   "managedFiles": [
     {
       "path": ".editorconfig",
@@ -226,7 +225,7 @@ generates and owns, but not `.env.schema` or `.gitignore`:
       "hash": "..."
     },
     {
-      "path": "tsconfig.json",
+      "path": "knip.json",
       "hash": "..."
     }
   ]
@@ -267,13 +266,13 @@ A useful dry-run result for a fresh project would therefore include changes like
   "command": "apply",
   "dryRun": true,
   "packageManager": "pnpm",
-  "dependencies": ["typescript", "@types/node", "stylelint", "varlock"],
-  "integrations": ["editorconfig", "typescript", "stylelint", "varlock"],
+  "dependencies": ["knip", "stylelint", "varlock"],
+  "integrations": ["editorconfig", "knip", "stylelint", "varlock"],
   "changes": [
     {
       "type": "update",
       "path": "package.json",
-      "scripts": ["lint", "format:check", "typecheck", "env:load", "quality"]
+      "scripts": ["lint", "format:check", "knip", "env:load", "quality"]
     },
     {
       "type": "write",
@@ -285,7 +284,7 @@ A useful dry-run result for a fresh project would therefore include changes like
     },
     {
       "type": "write",
-      "path": "tsconfig.json"
+      "path": "knip.json"
     },
     {
       "type": "write",
@@ -310,10 +309,10 @@ The corresponding human output should follow the current dry-run printer:
 
 ```text
 Would update package.json
-Would add scripts: lint, format:check, typecheck, env:load, quality
+Would add scripts: lint, format:check, knip, env:load, quality
 Would write .editorconfig
 Would write .stylelintrc.json
-Would write tsconfig.json
+Would write knip.json
 Would scaffold .env.schema
 Would update .gitignore
 ```
