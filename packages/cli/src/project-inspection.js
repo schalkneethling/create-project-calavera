@@ -7,7 +7,6 @@ export const packageManagerLockfiles = Object.freeze({
 
 export const integrationConfigFiles = Object.freeze({
   editorconfig: [".editorconfig"],
-  eslint: ["eslint.config.js"],
   "github-repository-controls": [
     ".github/repository-controls.json",
     ".github/dependabot.yml",
@@ -16,11 +15,8 @@ export const integrationConfigFiles = Object.freeze({
   ],
   "html-validate": [".htmlvalidate.json", ".htmlvalidateignore"],
   knip: ["knip.json"],
-  oxfmt: [],
-  prettier: [".prettierrc.json", ".prettierignore"],
   "react-doctor": ["react-doctor.config.json"],
   stylelint: [".stylelintrc.json"],
-  typescript: ["tsconfig.json"],
 });
 
 export const projectInspectionFiles = Object.freeze([

@@ -3,8 +3,8 @@
 [![skills.sh](https://skills.sh/b/schalkneethling/create-project-calavera)](https://skills.sh/schalkneethling/create-project-calavera)
 
 [Project Calavera](https://github.com/schalkneethling/create-project-calavera/)
-is an open-source CLI tool that scaffolds linters, formatters, TypeScript
-configs, AI tooling such as agent skills, hooks, and subagents, and other common
+is an open-source CLI tool that scaffolds linters, formatters, AI tooling such
+as agent skills, hooks, and subagents, and other common
 project infrastructure for web projects. It works standalone for vanilla
 JavaScript, TypeScript, and library projects, and it works as a complement to
 framework scaffolding tools like Vite+ and `vp create`, giving any project a
@@ -55,10 +55,6 @@ changes before calling `apply_recipe`.
 If MCP tools are not exposed, agents should configure or repair MCP setup first;
 they should not inspect npm cache internals or import Calavera source files from
 package cache paths as a substitute for MCP setup.
-
-Choose one formatter for the project. Calavera rejects recipes that include both
-Oxfmt and Prettier because they would compete for the same formatting scripts
-and config ownership.
 
 If the agent finds likely conflicts, it should pause and list whether each one
 is a hard stop or a migration decision the user can still approve. A dry run is
@@ -124,7 +120,6 @@ npm --force create project-calavera apply
 ## What Calavera Manages
 
 - Linting and formatting tools
-- TypeScript config with JavaScript and TypeScript type checking
 - Stylelint and CSS quality plugins
 - AI skills, hooks, and agents under `.agents/`
 - `package.json` scripts
@@ -132,29 +127,25 @@ npm --force create project-calavera apply
 
 Editor extensions, global apps, shell setup, and machine-level configuration are
 out of scope. Install the matching editor integrations for your development
-environment of choice.
+environment of choice. Calavera does not scaffold a TypeScript configuration or
+a type-check script; JavaScript and TypeScript type checking comes from
+`vp check` in a `vp`-managed project.
 
 ## Profiles
 
-- **Modern**: Oxfmt, Stylelint, TypeScript. In a `vp`-managed project,
-  JavaScript and TypeScript linting comes from `vp lint`; Calavera does not
-  scaffold a linter for that language pair.
-- **Classic**: ESLint flat config, Prettier, Stylelint, TypeScript
+- **Modern**: Stylelint. In a `vp`-managed project, JavaScript and TypeScript
+  linting comes from `vp lint`, formatting from `vp fmt`, and type checking from
+  `vp check`; Calavera does not scaffold a linter, formatter, or TypeScript
+  configuration for that language pair.
+- **Classic**: Stylelint. Identical to Modern in what it scaffolds; the two
+  profiles are collapsed in a later change.
 - **Minimal**: EditorConfig only
-
-When the TypeScript integration is selected, Calavera generates a `tsconfig.json`
-that can check `.js`, `.jsx`, `.ts`, and `.tsx` files. JavaScript files can opt
-into checking with `// @ts-check` and JSDoc annotations.
 
 ## Integration Catalog
 
 Calavera includes curated integration packs grouped by outcome:
 
-- React best practices
-- Imports and modules
-- Promise safety
-- Node package rules
-- Test rules
+- React Doctor
 - Unused files, dependencies, and exports
 - HTML validation
 - CSS Baseline
@@ -163,10 +154,11 @@ Calavera includes curated integration packs grouped by outcome:
 - Environment variable schema and validation with [Varlock](https://varlock.dev)
 - GitHub repository governance, security settings, and drift checks
 
-React best-practice checks can include React Doctor, a deterministic scanner for
-React codebases that complements linting with security, performance,
-correctness, accessibility, bundle-size, and architecture diagnostics. JSX-A11y
-linting also appears with the React checks because it targets JSX markup.
+React Doctor is a deterministic scanner for React codebases that complements
+`vp lint` with security, performance, correctness, accessibility, bundle-size,
+and architecture diagnostics. The curated JavaScript and TypeScript rule packs
+that once accompanied it are gone; a Vite+ project enables Oxlint plugins in the
+`lint` block of `vite.config.ts`.
 
 The optional Knip integration adds unused-file, dependency, and export analysis
 to the generated `quality` script. Calavera writes a minimal `knip.json` that
@@ -185,10 +177,11 @@ Validate's accessibility rules, so Calavera does not add a redundant separate
 accessibility integration.
 
 HTML Validate follows HTML semantics and Calavera deliberately leaves its
-doctype and void-element style rules at their honest defaults. Oxfmt 0.59.0
-cannot currently be configured to preserve an uppercase `<!DOCTYPE html>` or
-omit the slash it adds to void elements such as `<meta />`. Calavera does not
-blanket-exclude HTML from Oxfmt or weaken HTML Validate to hide this conflict.
+doctype and void-element style rules at their honest defaults. Oxfmt, the
+formatter `vp fmt` is built on, cannot currently be configured to preserve an
+uppercase `<!DOCTYPE html>` or omit the slash it adds to void elements such as
+`<meta />`. Calavera does not blanket-exclude HTML from `vp fmt` or weaken HTML
+Validate to hide this conflict.
 Projects selecting both tools should review the formatter/validator interaction
 until [Oxc issue #24645](https://github.com/oxc-project/oxc/issues/24645) is
 resolved. See the [HTML Validate preset documentation](https://html-validate.org/rules/presets.html)

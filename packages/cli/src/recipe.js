@@ -25,12 +25,14 @@ export const profileCatalog = [
   {
     id: "modern",
     label: "modern",
-    description: "Newer, faster JavaScript, TypeScript, CSS linting, and formatting defaults.",
+    description:
+      "CSS linting defaults; Calavera does not configure JavaScript or TypeScript checks, which come from Vite+.",
   },
   {
     id: "classic",
     label: "classic",
-    description: "Widely used JavaScript, TypeScript, CSS linting, and formatting defaults.",
+    description:
+      "CSS linting defaults; Calavera does not configure JavaScript or TypeScript checks, which come from Vite+.",
   },
   {
     id: "minimal",
@@ -184,25 +186,8 @@ export const recipeToolInputDescriptions = Object.freeze({
 
 /** @type {Record<string, string[]>} */
 export const profileDefaults = {
-  modern: [
-    "editorconfig",
-    "typescript",
-    "oxfmt",
-    "stylelint",
-    "stylelint-standard",
-    "stylelint-baseline",
-  ],
-  classic: [
-    "editorconfig",
-    "typescript",
-    "eslint",
-    "typescript-eslint",
-    "eslint-config-prettier",
-    "prettier",
-    "stylelint",
-    "stylelint-standard",
-    "stylelint-baseline",
-  ],
+  modern: ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
+  classic: ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
   minimal: ["editorconfig"],
 };
 
@@ -210,32 +195,12 @@ const profileIds = profileCatalog.map(({ id }) => id);
 const packageManagerIds = packageManagerCatalog.map(({ id }) => id);
 
 const profileSpecificIntegrations = {
-  oxfmt: ["modern"],
   "react-doctor": ["modern", "classic"],
-  eslint: ["classic"],
-  "typescript-eslint": ["classic"],
-  "eslint-config-prettier": ["classic"],
-  "eslint-react": ["classic"],
-  "eslint-jsx-a11y": ["classic"],
-  "eslint-import": ["classic"],
-  "eslint-n": ["classic"],
-  "eslint-promise": ["classic"],
-  "eslint-unicorn": ["classic"],
-  "eslint-sonarjs": ["classic"],
-  "eslint-vitest": ["classic"],
-  "eslint-jest": ["classic"],
-  prettier: ["classic"],
-  "prettier-tailwind": ["classic"],
-  "prettier-svelte": ["classic"],
-  "prettier-astro": ["classic"],
 };
 
 export const defaultScriptFlags = {
   lint: true,
   "lint:fix": true,
-  format: true,
-  "format:check": true,
-  typecheck: true,
   quality: true,
 };
 
@@ -245,18 +210,6 @@ function normalizedToken(value) {
 
 function integrationProfiles(id) {
   return profileSpecificIntegrations[id] ?? profileIds;
-}
-
-function assertNoFormatterConflict(integrationIds) {
-  const resolvedIntegrationIds = new Set(
-    resolveRecipeIntegrations({ integrations: integrationIds }).map(({ id }) => id),
-  );
-
-  if (resolvedIntegrationIds.has("oxfmt") && resolvedIntegrationIds.has("prettier")) {
-    throw new Error(
-      "Choose either Oxfmt or Prettier, not both. Calavera should not install two formatters for the same project.",
-    );
-  }
 }
 
 function integrationIdForInput(value, integrationOptions = integrationCatalog) {
@@ -440,8 +393,6 @@ export function validateRecipeCompositionInput({
       `Invalid tools for the ${profile} profile: ${invalidIntegrationIds.join(", ")}. Use tool IDs or labels from list_integrations. Allowed IDs: ${allowedIntegrationIds.join(", ")}.`,
     );
   }
-
-  assertNoFormatterConflict(integrationIds);
 
   const normalizedOptions = normalizeIntegrationOptions(integrationOptions, integrationIds);
 
@@ -634,8 +585,6 @@ export function validateRecipe(recipe) {
     throw new Error(`Unknown integrations: ${unknownIntegrationIds.join(", ")}.`);
   }
 
-  assertNoFormatterConflict(recipe.integrations);
-
   const normalizedIntegrationOptions = normalizeIntegrationOptions(
     recipe.integrationOptions,
     recipe.integrations,
@@ -749,7 +698,7 @@ export function catalogResponse(currentConfiguration) {
     toolInput: {
       accepts:
         "Use either an integration id or its label in the compose_recipe tools array. Matching is case-insensitive.",
-      examples: ["typescript", "Stylelint", "JSX-A11y"],
+      examples: ["editorconfig", "Stylelint", "JSX-A11y"],
     },
     defaults: profileDefaults,
     currentConfiguration,

@@ -3,13 +3,11 @@
   "profile": "modern",
   "integrations": [
     "editorconfig",
-    "typescript",
-    "oxfmt",
     "stylelint",
     "stylelint-standard",
     "stylelint-order",
     "stylelint-baseline",
     "css-property-type-validator"
   ],
-  "files": [".editorconfig", ".stylelintrc.json", "tsconfig.json"]
+  "files": [".editorconfig", ".stylelintrc.json"]
 }

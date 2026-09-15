@@ -128,7 +128,6 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string[]} [includes]
  * @property {{ extends?: string[], rules?: Record<string, unknown> }} [htmlValidate]
  * @property {{ extends?: string[], plugins?: string[], rules?: Record<string, unknown> }} [stylelint]
- * @property {{ plugins?: string[] }} [prettier]
  *
  * @typedef {object} Recipe
  * @property {string} [$schema]
@@ -204,8 +203,6 @@ const AGENT_BOOTSTRAP_SKILL_RECIPE = {
 const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/", import.meta.url));
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
-const SCRIPT_SOURCE_EXTENSIONS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
-const TSC_INCLUDE_PATTERNS = SCRIPT_SOURCE_EXTENSIONS.map((extension) => `src/**/*.${extension}`);
 const HTML_VALIDATE_IGNORE = "node_modules/\ndist/\ncoverage/\n";
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
@@ -621,26 +618,16 @@ function buildScripts(recipe, integrations, packageManager) {
   const supportedPackageManager = assertSupportedPackageManager(packageManager);
   /** @param {string} id */
   const has = (id) => integrations.some((integration) => integration.id === id);
-  const usesESLint = has("eslint");
   const usesStylelint = has("stylelint");
-  const usesOxfmt = has("oxfmt");
-  const usesPrettier = has("prettier");
   const usesReactDoctor = has("react-doctor");
-  const usesTypeScript = has("typescript");
   const usesKnip = has("knip");
   const usesHtmlValidate = has("html-validate");
   const usesVarlock = has("varlock");
   const usesGithubRepositoryControls = has(GITHUB_REPOSITORY_CONTROLS_ID);
 
-  const lintParts = [
-    usesESLint ? "eslint ." : null,
-    usesStylelint ? 'stylelint "**/*.{css,scss}"' : null,
-  ].filter(Boolean);
+  const lintParts = [usesStylelint ? 'stylelint "**/*.{css,scss}"' : null].filter(Boolean);
 
-  const lintFixParts = [
-    usesESLint ? "eslint --fix ." : null,
-    usesStylelint ? 'stylelint "**/*.{css,scss}" --fix' : null,
-  ].filter(Boolean);
+  const lintFixParts = [usesStylelint ? 'stylelint "**/*.{css,scss}" --fix' : null].filter(Boolean);
 
   /** @type {Record<string, string>} */
   const scripts = {};
@@ -662,41 +649,6 @@ function buildScripts(recipe, integrations, packageManager) {
     omittedScripts.push({
       script: "lint:fix",
       reason: "lint:fix was requested but no fix-capable linting integration is selected.",
-    });
-  }
-
-  if (recipe.scripts?.format) {
-    if (usesOxfmt) {
-      scripts.format = "oxfmt --write .";
-    } else if (usesPrettier) {
-      scripts.format = "prettier --write .";
-    } else {
-      omittedScripts.push({
-        script: "format",
-        reason: "format was requested but no formatter integration is selected.",
-      });
-    }
-  }
-
-  if (recipe.scripts?.["format:check"]) {
-    if (usesOxfmt) {
-      scripts["format:check"] = "oxfmt --check .";
-    } else if (usesPrettier) {
-      scripts["format:check"] = "prettier --check .";
-    } else {
-      omittedScripts.push({
-        script: "format:check",
-        reason: "format:check was requested but no formatter integration is selected.",
-      });
-    }
-  }
-
-  if (recipe.scripts?.typecheck && usesTypeScript) {
-    scripts.typecheck = "tsc --noEmit";
-  } else if (recipe.scripts?.typecheck) {
-    omittedScripts.push({
-      script: "typecheck",
-      reason: "typecheck was requested but the TypeScript integration is not selected.",
     });
   }
 
@@ -726,8 +678,6 @@ function buildScripts(recipe, integrations, packageManager) {
     const qualityScripts = [
       "lint",
       usesHtmlValidate ? "lint:html" : null,
-      "format:check",
-      usesTypeScript && recipe.scripts?.typecheck ? "typecheck" : null,
       usesKnip ? "knip" : null,
       usesReactDoctor ? "react:doctor" : null,
       usesVarlock ? "env:load" : null,
@@ -774,7 +724,6 @@ function createAgentBootstrapGuidanceBody() {
 - Inspect existing project tooling before composing a recipe and raise likely config conflicts early.
 - If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use \`dry_run_apply\` to show concrete impact when adoption still looks possible.
 - Start with \`inspect_project\`, \`list_profiles\`, \`list_integrations\`, and \`list_ai_artifacts\`; use \`describe_integration\` when the user asks for more information or an option needs explanation.
-- Choose either Oxfmt or Prettier for formatting; do not select both in the same recipe.
 - Compose recipes with \`compose_recipe\`, validate them with \`validate_recipe\`, and explain the selected integrations with \`explain_recipe\`.
 - Always present \`dry_run_apply\` output to the user before changing files.
 - Call \`apply_recipe\` only after the user explicitly approves the dry-run result.
@@ -987,12 +936,7 @@ If the MCP transport closes or reports \`-32000\` during or immediately after
 \`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package
 metadata before retrying the apply.
 
-## Formatter choice
-
-Choose one formatter per project. Do not combine Oxfmt and Prettier in one
-recipe; they would compete for the same formatting scripts and config ownership.
-
-Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
+Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, and \`.stylelintrc.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
 
 If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
 
@@ -1003,70 +947,6 @@ Then run \`${commands.applyDryRun}\` and ask for approval before running \`${com
 Suggested first prompt:
 
 > ${AGENT_BOOTSTRAP_NEXT_PROMPT}
-`;
-}
-
-/**
- * @param {Integration[]} integrations
- * @returns {string}
- */
-function createESLintConfig(integrations) {
-  const useTypeScript = integrations.some((integration) => integration.id === "typescript-eslint");
-  const usePrettier = integrations.some(
-    (integration) => integration.id === "eslint-config-prettier",
-  );
-
-  const imports = [
-    'import js from "@eslint/js";',
-    'import globals from "globals";',
-    useTypeScript ? 'import tseslint from "typescript-eslint";' : null,
-    usePrettier ? 'import eslintConfigPrettier from "eslint-config-prettier";' : null,
-  ].filter(Boolean);
-
-  const configs = [
-    "js.configs.recommended",
-    useTypeScript ? "...tseslint.configs.strictTypeChecked" : null,
-    useTypeScript ? "...tseslint.configs.stylisticTypeChecked" : null,
-    usePrettier ? "eslintConfigPrettier" : null,
-  ].filter(Boolean);
-
-  const baseConfig = `{
-    languageOptions: {
-      globals: {
-        ...globals.browser,
-        ...globals.nodeBuiltin,
-      },${
-        useTypeScript
-          ? `
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },`
-          : ""
-      }
-    },
-    rules: {
-      curly: ["error", "all"],
-      "no-console": ["error", { allow: ["clear", "info"] }],
-    },
-  }`;
-
-  if (useTypeScript) {
-    return `${imports.join("\n")}
-
-export default tseslint.config(
-  ${configs.join(",\n  ")},
-  ${baseConfig},
-);
-`;
-  }
-
-  return `${imports.join("\n")}
-
-export default [
-  ${configs.join(",\n  ")},
-  ${baseConfig},
-];
 `;
 }
 
@@ -1117,18 +997,6 @@ function createStylelintConfig(integrations, integrationOptions = {}) {
 
 /**
  * @param {Integration[]} integrations
- * @returns {{ plugins?: string[] }}
- */
-function createPrettierConfig(integrations) {
-  const plugins = unique(
-    integrations.flatMap((integration) => integration.prettier?.plugins ?? []),
-  );
-
-  return plugins.length > 0 ? { plugins } : {};
-}
-
-/**
- * @param {Integration[]} integrations
  * @returns {{ extends: string[], rules: Record<string, unknown> }}
  */
 function createHtmlValidateConfig(integrations) {
@@ -1138,29 +1006,6 @@ function createHtmlValidateConfig(integrations) {
       {},
       ...integrations.map((integration) => integration.htmlValidate?.rules ?? {}),
     ),
-  };
-}
-
-function createTSConfig() {
-  return {
-    compilerOptions: {
-      allowJs: true,
-      esModuleInterop: true,
-      forceConsistentCasingInFileNames: true,
-      isolatedModules: true,
-      module: "ESNext",
-      moduleResolution: "bundler",
-      noEmit: true,
-      noUncheckedIndexedAccess: true,
-      resolveJsonModule: true,
-      skipLibCheck: true,
-      strict: true,
-      target: "ESNext",
-      types: ["node"],
-      verbatimModuleSyntax: true,
-    },
-    include: TSC_INCLUDE_PATTERNS,
-    exclude: ["node_modules"],
   };
 }
 
@@ -1446,21 +1291,6 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
     plans.push({ path: ".editorconfig", contents: createEditorConfig() });
   }
 
-  if (integrations.some((integration) => integration.id === "eslint")) {
-    plans.push({ path: "eslint.config.js", contents: createESLintConfig(integrations) });
-  }
-
-  if (integrations.some((integration) => integration.id === "prettier")) {
-    plans.push({
-      path: ".prettierrc.json",
-      contents: `${JSON.stringify(createPrettierConfig(integrations), null, 2)}\n`,
-    });
-    plans.push({
-      path: ".prettierignore",
-      contents: "node_modules\npackage-lock.json\npnpm-lock.yaml\nyarn.lock\nbun.lockb\n",
-    });
-  }
-
   if (integrations.some((integration) => integration.id === "stylelint")) {
     plans.push({
       path: ".stylelintrc.json",
@@ -1487,13 +1317,6 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
     plans.push({
       path: "knip.json",
       contents: `${JSON.stringify(createKnipConfig(), null, 2)}\n`,
-    });
-  }
-
-  if (integrations.some((integration) => integration.id === "typescript")) {
-    plans.push({
-      path: "tsconfig.json",
-      contents: `${JSON.stringify(createTSConfig(), null, 2)}\n`,
     });
   }
 
@@ -1676,15 +1499,7 @@ export async function inspectProject(recipe, options = {}) {
   }
 
   const packageScripts = packageJSON.scripts ?? {};
-  for (const scriptName of [
-    "lint",
-    "lint:fix",
-    "format",
-    "format:check",
-    "typecheck",
-    "repo:controls:check",
-    "repo:controls:apply",
-  ]) {
+  for (const scriptName of ["lint", "lint:fix", "repo:controls:check", "repo:controls:apply"]) {
     const managedByRecipe = scriptName.startsWith("repo:controls:")
       ? integrationIds.has(GITHUB_REPOSITORY_CONTROLS_ID)
       : recipe?.scripts?.[scriptName];
@@ -1828,42 +1643,6 @@ export async function applyRecipeObject(recipe, options = {}) {
     );
   }
 
-  if (integrations.some((integration) => integration.id === "eslint")) {
-    managedFiles.push(
-      await writeManagedFile(
-        "eslint.config.js",
-        createESLintConfig(integrations),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
-  if (integrations.some((integration) => integration.id === "prettier")) {
-    managedFiles.push(
-      await writeManagedJSONFile(
-        ".prettierrc.json",
-        createPrettierConfig(integrations),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-    managedFiles.push(
-      await writeManagedFile(
-        ".prettierignore",
-        "node_modules\npackage-lock.json\npnpm-lock.yaml\nyarn.lock\nbun.lockb\n",
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
   if (integrations.some((integration) => integration.id === "stylelint")) {
     managedFiles.push(
       await writeManagedJSONFile(
@@ -1918,19 +1697,6 @@ export async function applyRecipeObject(recipe, options = {}) {
       await writeManagedJSONFile(
         "knip.json",
         createKnipConfig(),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
-  if (integrations.some((integration) => integration.id === "typescript")) {
-    managedFiles.push(
-      await writeManagedJSONFile(
-        "tsconfig.json",
-        createTSConfig(),
         applyOptions.dryRun,
         changes,
         previousState,
@@ -2753,9 +2519,6 @@ async function doctor(options) {
       integrations.some((integration) => integration.id === "editorconfig")
         ? ".editorconfig"
         : null,
-      integrations.some((integration) => integration.id === "eslint") ? "eslint.config.js" : null,
-      integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
-      integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,
       integrations.some((integration) => integration.id === "stylelint")
         ? ".stylelintrc.json"
         : null,
@@ -2769,7 +2532,6 @@ async function doctor(options) {
         ? "react-doctor.config.json"
         : null,
       integrations.some((integration) => integration.id === "knip") ? "knip.json" : null,
-      integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
     ].filter(isNotEmptyString);
 
     for (const file of expectedFiles) {
@@ -2820,9 +2582,6 @@ async function doctor(options) {
 function expectedManagedFiles(integrations) {
   return [
     integrations.some((integration) => integration.id === "editorconfig") ? ".editorconfig" : null,
-    integrations.some((integration) => integration.id === "eslint") ? "eslint.config.js" : null,
-    integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
-    integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,
     integrations.some((integration) => integration.id === "stylelint") ? ".stylelintrc.json" : null,
     integrations.some((integration) => integration.id === "html-validate")
       ? ".htmlvalidate.json"
@@ -2834,7 +2593,6 @@ function expectedManagedFiles(integrations) {
       ? "react-doctor.config.json"
       : null,
     integrations.some((integration) => integration.id === "knip") ? "knip.json" : null,
-    integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
   ].filter(isNotEmptyString);
 }
 

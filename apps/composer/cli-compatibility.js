@@ -8,21 +8,7 @@ export const CLI_VERSION_PATTERN =
 
 const fallbackIntegrationIds = new Set([
   "editorconfig",
-  "typescript",
   "react-doctor",
-  "oxfmt",
-  "eslint",
-  "typescript-eslint",
-  "eslint-config-prettier",
-  "eslint-react",
-  "eslint-jsx-a11y",
-  "eslint-import",
-  "eslint-n",
-  "eslint-promise",
-  "eslint-unicorn",
-  "eslint-sonarjs",
-  "eslint-vitest",
-  "eslint-jest",
   "stylelint",
   "stylelint-standard",
   "stylelint-order",
@@ -30,10 +16,6 @@ const fallbackIntegrationIds = new Set([
   "stylelint-scss",
   "stylelint-stylistic",
   "css-property-type-validator",
-  "prettier",
-  "prettier-tailwind",
-  "prettier-svelte",
-  "prettier-astro",
 ]);
 
 function parseVersion(version) {

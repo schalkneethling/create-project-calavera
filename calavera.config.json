@@ -5,8 +5,6 @@
   "packageManager": "pnpm",
   "integrations": [
     "editorconfig",
-    "typescript",
-    "oxfmt",
     "stylelint",
     "stylelint-standard",
     "stylelint-order",
@@ -16,9 +14,6 @@
   "scripts": {
     "lint": true,
     "lint:fix": true,
-    "format": true,
-    "format:check": true,
-    "typecheck": true,
     "quality": true
   }
 }
