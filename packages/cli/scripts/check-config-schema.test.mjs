@@ -619,25 +619,11 @@ test("shared composition output validates against the published schema", () => {
   const recipe = composeRecipe({
     profile: "modern",
     packageManager: "bun",
-    tools: ["Oxfmt", "React Doctor", "Stylelint"],
+    tools: ["React Doctor", "Stylelint"],
     aiArtifacts: [{ id: "skill-frontend-engineering" }],
   });
   assertValid(validate, recipe);
   assert.equal(validateRecipe(recipe), recipe);
-});
-
-test("shared recipe validation rejects mixed formatter integrations", () => {
-  const mixedFormatterRecipe = buildRecipe("modern", ["oxfmt", "prettier"], "npm");
-
-  assert.throws(
-    () => validateRecipe(mixedFormatterRecipe),
-    /Choose either Oxfmt or Prettier, not both/,
-  );
-  assert.equal(validateRecipeResponse(mixedFormatterRecipe).ok, false);
-  assert.match(
-    validateRecipeResponse(mixedFormatterRecipe).errors?.[0] ?? "",
-    /Choose either Oxfmt or Prettier, not both/,
-  );
 });
 
 test("shared recipe validation rejects malformed AI items and unknown properties", () => {
@@ -697,10 +683,11 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
   const classicToolIds = listIntegrationOptions("classic").map(({ id }) => id);
   const response = catalogResponse(composeRecipe({ profile: "minimal" }));
 
-  assert.ok(modernToolIds.includes("oxfmt"));
+  assert.ok(modernToolIds.includes("stylelint"));
   assert.equal(modernToolIds.includes("eslint-react"), false);
   assert.ok(classicToolIds.includes("eslint-react"));
-  assert.equal(classicToolIds.includes("oxfmt"), false);
+  assert.ok(classicToolIds.includes("prettier"));
+  assert.equal(modernToolIds.includes("prettier"), false);
   assert.ok(modernToolIds.includes("knip"));
   assert.ok(classicToolIds.includes("knip"));
   assert.ok(listIntegrationOptions("minimal").some(({ id }) => id === "knip"));
@@ -737,7 +724,7 @@ test("shared composition operation responses expose catalog, recipe, and explana
   const recipeResponse = composeRecipeResponse({
     profile: "modern",
     packageManager: "pnpm",
-    tools: ["Oxfmt", "Stylelint"],
+    tools: ["Stylelint"],
     aiArtifacts: [{ id: "Frontend engineering" }],
   });
 
@@ -753,7 +740,7 @@ test("shared composition operation responses expose catalog, recipe, and explana
     listIntegrationsResponse({ profile: "classic" }).integrations.map(({ id }) => id),
     listIntegrationOptions("classic").map(({ id }) => id),
   );
-  assert.equal(describeIntegrationResponse("Oxfmt").id, "oxfmt");
+  assert.equal(describeIntegrationResponse("Stylelint").id, "stylelint");
   assert.equal(
     listAiArtifactsResponse().artifacts.some(({ id }) => id === "skill-frontend-engineering"),
     true,
@@ -762,7 +749,7 @@ test("shared composition operation responses expose catalog, recipe, and explana
     listAiArtifactsResponse().artifacts[0].description,
     /Calavera compatibility: >=2\.2\.0 <3/,
   );
-  assert.deepEqual(recipeResponse.recipe.integrations, ["oxfmt", "stylelint"]);
+  assert.deepEqual(recipeResponse.recipe.integrations, ["stylelint"]);
   assert.equal(validateRecipeResponse(recipeResponse.recipe).ok, true);
   assert.equal(
     explainRecipeResponse(recipeResponse.recipe).aiArtifacts[0].id,
@@ -778,7 +765,7 @@ test("CLI parser accepts scripted rich composer options", () => {
     "--package-manager",
     "pnpm",
     "--integration",
-    "Oxfmt,Stylelint",
+    "Prettier,Stylelint",
     "--tool",
     "React Doctor",
     "--ai-artifact",
@@ -792,7 +779,7 @@ test("CLI parser accepts scripted rich composer options", () => {
   assert.equal(options.command, "init");
   assert.equal(options.profile, "modern");
   assert.equal(options.packageManager, "pnpm");
-  assert.deepEqual(options.integrations, ["Oxfmt", "Stylelint", "React Doctor"]);
+  assert.deepEqual(options.integrations, ["Prettier", "Stylelint", "React Doctor"]);
   assert.deepEqual(options.aiArtifacts, [
     { id: "skill-frontend-engineering" },
     { id: "hook-block-dangerous-commands", target: "codex" },
@@ -1228,14 +1215,14 @@ test("CLI rich composer writes a schema-valid config without applying by default
       apply: false,
       profile: "modern",
       packageManager: "pnpm",
-      integrations: ["Oxfmt", "Stylelint"],
+      integrations: ["Stylelint"],
       aiArtifacts: [{ id: "Frontend engineering" }],
     });
     const writtenConfig = JSON.parse(await readFile("calavera.config.json", "utf8"));
 
     assert.equal(result.validation.ok, true);
     assert.deepEqual(writtenConfig, result.recipe);
-    assert.deepEqual(writtenConfig.integrations, ["oxfmt", "stylelint"]);
+    assert.deepEqual(writtenConfig.integrations, ["stylelint"]);
     assert.deepEqual(writtenConfig.ai, [{ id: "skill-frontend-engineering" }]);
     assertValid(ajv.compile(schema), writtenConfig);
     await assertPathMissing("package.json", "config-only compose must not create package.json");
@@ -1374,13 +1361,13 @@ test("standard MCP compose_recipe returns structured schema-valid content", asyn
       arguments: {
         profile: "modern",
         packageManager: "pnpm",
-        tools: ["Oxfmt", "Stylelint"],
+        tools: ["Stylelint"],
         aiArtifacts: [{ id: "Frontend engineering" }],
       },
     });
     const recipe = result.structuredContent.recipe;
 
-    assert.deepEqual(recipe.integrations, ["oxfmt", "stylelint"]);
+    assert.deepEqual(recipe.integrations, ["stylelint"]);
     assert.deepEqual(recipe.ai, [{ id: "skill-frontend-engineering" }]);
     assertValid(ajv.compile(schema), recipe);
   } finally {
@@ -1660,7 +1647,6 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(fallbackGuidance, /reports `-32000`/);
     assert.match(fallbackGuidance, /treat the outcome as unknown instead of failed/);
     assert.match(fallbackGuidance, /\.calavera\/state\.json/);
-    assert.match(fallbackGuidance, /Choose either Oxfmt or Prettier/);
     assert.match(mcpGuidance, /create-project-calavera-mcp/);
     assert.match(mcpGuidance, /"command": "pnpm"/);
     assert.match(
@@ -1709,7 +1695,6 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(mcpGuidance, /inspect_project/);
     assert.match(mcpGuidance, /omitted\s+script explanations/);
     assert.match(mcpGuidance, /ownership notes/);
-    assert.match(mcpGuidance, /Do not combine Oxfmt and Prettier/);
     assert.match(mcpGuidance, /bun is unable to write files to tempdir: PermissionDenied/);
     assert.match(mcpGuidance, /TMPDIR/);
     assert.match(mcpGuidance, /BUN_INSTALL_CACHE_DIR/);
@@ -1725,7 +1710,6 @@ test("agent bootstrap preserves existing AGENTS.md and writes fallback guidance"
     assert.match(skill, /devEngines\.packageManager/);
     assert.match(skill, /inspect_project/);
     assert.match(skill, /omitted script explanations/);
-    assert.match(skill, /Choose either Oxfmt or Prettier/);
     assert.match(
       skill,
       /npx --package create-project-calavera@<version> create-project-calavera-mcp/,
@@ -2351,33 +2335,10 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
   }
 });
 
-test("apply dry runs reject mixed formatter integrations", async () => {
-  const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-dry-run-formatter-conflict-"));
-
-  try {
-    process.chdir(projectDirectory);
-    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
-
-    await assert.rejects(
-      () =>
-        applyRecipeObject(buildRecipe("modern", ["oxfmt", "prettier"], "npm"), {
-          dryRun: true,
-          json: true,
-          noInstall: true,
-          assumeYes: true,
-        }),
-      /Choose either Oxfmt or Prettier, not both/,
-    );
-  } finally {
-    process.chdir(originalDirectory);
-  }
-});
-
 test("apply uses direct tool scripts without the run-if-files helper", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-direct-scripts-"));
-  const recipe = buildRecipe("modern", ["typescript", "oxfmt", "stylelint"], "npm");
+  const recipe = buildRecipe("classic", ["typescript", "prettier", "stylelint"], "npm");
 
   try {
     process.chdir(projectDirectory);
@@ -2404,8 +2365,8 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     const packageFile = JSON.parse(await readFile("package.json", "utf8"));
     assert.equal(packageFile.scripts.lint, 'stylelint "**/*.{css,scss}"');
     assert.equal(packageFile.scripts["lint:fix"], 'stylelint "**/*.{css,scss}" --fix');
-    assert.equal(packageFile.scripts.format, "oxfmt --write .");
-    assert.equal(packageFile.scripts["format:check"], "oxfmt --check .");
+    assert.equal(packageFile.scripts.format, "prettier --write .");
+    assert.equal(packageFile.scripts["format:check"], "prettier --check .");
     assert.equal(packageFile.scripts.typecheck, "tsc --noEmit");
     assert.doesNotMatch(JSON.stringify(packageFile.scripts), /run-if-files/);
     const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
@@ -2737,43 +2698,6 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
   }
 });
 
-test("HTML validation does not disable Oxfmt HTML formatting", async () => {
-  const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-html-oxfmt-"));
-  const recipe = buildRecipe("minimal", ["oxfmt", "html-validate"], "npm");
-
-  try {
-    process.chdir(projectDirectory);
-    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
-
-    const dryRun = await applyRecipeObject(recipe, {
-      dryRun: true,
-      json: true,
-      noInstall: true,
-      assumeYes: true,
-    });
-    assert.equal(
-      dryRun.changes.some(({ path }) => path === ".oxfmtrc.json"),
-      false,
-    );
-
-    await applyRecipeObject(recipe, {
-      json: true,
-      noInstall: true,
-      assumeYes: true,
-    });
-
-    const packageFile = JSON.parse(await readFile("package.json", "utf8"));
-    assert.equal(packageFile.scripts.format, "oxfmt --write .");
-    assert.equal(packageFile.scripts["format:check"], "oxfmt --check .");
-    assert.equal(packageFile.scripts["lint:html"], 'html-validate "**/*.html"');
-    await assertPathMissing(".oxfmtrc.json");
-  } finally {
-    process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
-  }
-});
-
 test("Varlock scaffolds project-owned environment files across CLI, MCP, doctor, and clean", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-varlock-"));
@@ -2925,7 +2849,7 @@ test("doctor does not expect the removed run-if-files helper", async () => {
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     await writeFile(
       "calavera.config.json",
-      `${JSON.stringify(buildRecipe("modern", ["typescript", "oxfmt"], "npm"), null, 2)}\n`,
+      `${JSON.stringify(buildRecipe("modern", ["typescript"], "npm"), null, 2)}\n`,
     );
 
     const { stdout } = await execFileAsync(
@@ -2955,7 +2879,7 @@ test("clean treats a matching managed run-if-files helper as stale", async () =>
     await mkdir(".calavera");
     await writeFile(
       "calavera.config.json",
-      `${JSON.stringify(buildRecipe("modern", ["oxfmt"], "npm"), null, 2)}\n`,
+      `${JSON.stringify(buildRecipe("modern", ["stylelint"], "npm"), null, 2)}\n`,
     );
     await writeFile(helperPath, helperContents);
     await writeFile(
@@ -2964,7 +2888,7 @@ test("clean treats a matching managed run-if-files helper as stale", async () =>
         {
           version: 1,
           profile: "modern",
-          integrations: ["oxfmt"],
+          integrations: ["stylelint"],
           files: [helperPath],
           managedFiles: [{ path: helperPath, hash: textHash(helperContents) }],
           aiArtifacts: [],
@@ -3153,7 +3077,7 @@ test("apply uses project devEngines package manager over an implicit npm recipe 
       )}\n`,
     );
 
-    const result = await applyRecipeObject(buildRecipe("modern", ["oxfmt"], "npm"), {
+    const result = await applyRecipeObject(buildRecipe("modern", ["stylelint"], "npm"), {
       dryRun: true,
       json: true,
       noInstall: true,

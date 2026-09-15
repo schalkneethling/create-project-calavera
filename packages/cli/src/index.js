@@ -623,7 +623,6 @@ function buildScripts(recipe, integrations, packageManager) {
   const has = (id) => integrations.some((integration) => integration.id === id);
   const usesESLint = has("eslint");
   const usesStylelint = has("stylelint");
-  const usesOxfmt = has("oxfmt");
   const usesPrettier = has("prettier");
   const usesReactDoctor = has("react-doctor");
   const usesTypeScript = has("typescript");
@@ -666,9 +665,7 @@ function buildScripts(recipe, integrations, packageManager) {
   }
 
   if (recipe.scripts?.format) {
-    if (usesOxfmt) {
-      scripts.format = "oxfmt --write .";
-    } else if (usesPrettier) {
+    if (usesPrettier) {
       scripts.format = "prettier --write .";
     } else {
       omittedScripts.push({
@@ -679,9 +676,7 @@ function buildScripts(recipe, integrations, packageManager) {
   }
 
   if (recipe.scripts?.["format:check"]) {
-    if (usesOxfmt) {
-      scripts["format:check"] = "oxfmt --check .";
-    } else if (usesPrettier) {
+    if (usesPrettier) {
       scripts["format:check"] = "prettier --check .";
     } else {
       omittedScripts.push({
@@ -774,7 +769,6 @@ function createAgentBootstrapGuidanceBody() {
 - Inspect existing project tooling before composing a recipe and raise likely config conflicts early.
 - If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use \`dry_run_apply\` to show concrete impact when adoption still looks possible.
 - Start with \`inspect_project\`, \`list_profiles\`, \`list_integrations\`, and \`list_ai_artifacts\`; use \`describe_integration\` when the user asks for more information or an option needs explanation.
-- Choose either Oxfmt or Prettier for formatting; do not select both in the same recipe.
 - Compose recipes with \`compose_recipe\`, validate them with \`validate_recipe\`, and explain the selected integrations with \`explain_recipe\`.
 - Always present \`dry_run_apply\` output to the user before changing files.
 - Call \`apply_recipe\` only after the user explicitly approves the dry-run result.
@@ -986,11 +980,6 @@ If the MCP transport closes or reports \`-32000\` during or immediately after
 \`apply_recipe\`, treat the apply outcome as unknown instead of failed. Inspect
 \`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package
 metadata before retrying the apply.
-
-## Formatter choice
-
-Choose one formatter per project. Do not combine Oxfmt and Prettier in one
-recipe; they would compete for the same formatting scripts and config ownership.
 
 Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
 

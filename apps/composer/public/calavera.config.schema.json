@@ -292,7 +292,6 @@
         "varlock",
         "github-repository-controls",
         "react-doctor",
-        "oxfmt",
         "eslint",
         "typescript-eslint",
         "eslint-config-prettier",

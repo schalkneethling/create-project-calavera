@@ -10,7 +10,6 @@ const fallbackIntegrationIds = new Set([
   "editorconfig",
   "typescript",
   "react-doctor",
-  "oxfmt",
   "eslint",
   "typescript-eslint",
   "eslint-config-prettier",

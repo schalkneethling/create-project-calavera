@@ -6,7 +6,6 @@
   "integrations": [
     "editorconfig",
     "typescript",
-    "oxfmt",
     "stylelint",
     "stylelint-standard",
     "stylelint-order",

@@ -15,7 +15,7 @@ Use Calavera to compose and apply project tooling through its MCP tools whenever
    If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use `dry_run_apply` to show concrete impact when adoption still looks possible.
 4. Use AskUserTool or the agent client's equivalent when available to clarify profile preferences, framework needs, conflict decisions, and apply approval. If no such tool exists, ask the user directly.
 5. List choices with `list_profiles`, `list_integrations`, and `list_ai_artifacts`. Use `describe_integration` when the user asks for more information or when you need to compare options.
-6. Choose either Oxfmt or Prettier for formatting, never both.
+6. In a `vp`-managed project, formatting comes from `vp fmt`; otherwise choose Prettier for formatting.
 7. Once the profile and requirements are clear, compose the recipe with `compose_recipe`.
 8. Validate and explain it with `validate_recipe` and `explain_recipe`.
 9. Present `dry_run_apply` output to the user before changing files, including inspection findings, omitted script explanations, ownership notes, and planned file changes.

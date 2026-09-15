@@ -25,7 +25,8 @@ export const profileCatalog = [
   {
     id: "modern",
     label: "modern",
-    description: "Newer, faster JavaScript, TypeScript, CSS linting, and formatting defaults.",
+    description:
+      "CSS linting and TypeScript configuration defaults; JavaScript and TypeScript checks come from Vite+.",
   },
   {
     id: "classic",
@@ -184,14 +185,7 @@ export const recipeToolInputDescriptions = Object.freeze({
 
 /** @type {Record<string, string[]>} */
 export const profileDefaults = {
-  modern: [
-    "editorconfig",
-    "typescript",
-    "oxfmt",
-    "stylelint",
-    "stylelint-standard",
-    "stylelint-baseline",
-  ],
+  modern: ["editorconfig", "typescript", "stylelint", "stylelint-standard", "stylelint-baseline"],
   classic: [
     "editorconfig",
     "typescript",
@@ -210,7 +204,6 @@ const profileIds = profileCatalog.map(({ id }) => id);
 const packageManagerIds = packageManagerCatalog.map(({ id }) => id);
 
 const profileSpecificIntegrations = {
-  oxfmt: ["modern"],
   "react-doctor": ["modern", "classic"],
   eslint: ["classic"],
   "typescript-eslint": ["classic"],
@@ -245,18 +238,6 @@ function normalizedToken(value) {
 
 function integrationProfiles(id) {
   return profileSpecificIntegrations[id] ?? profileIds;
-}
-
-function assertNoFormatterConflict(integrationIds) {
-  const resolvedIntegrationIds = new Set(
-    resolveRecipeIntegrations({ integrations: integrationIds }).map(({ id }) => id),
-  );
-
-  if (resolvedIntegrationIds.has("oxfmt") && resolvedIntegrationIds.has("prettier")) {
-    throw new Error(
-      "Choose either Oxfmt or Prettier, not both. Calavera should not install two formatters for the same project.",
-    );
-  }
 }
 
 function integrationIdForInput(value, integrationOptions = integrationCatalog) {
@@ -440,8 +421,6 @@ export function validateRecipeCompositionInput({
       `Invalid tools for the ${profile} profile: ${invalidIntegrationIds.join(", ")}. Use tool IDs or labels from list_integrations. Allowed IDs: ${allowedIntegrationIds.join(", ")}.`,
     );
   }
-
-  assertNoFormatterConflict(integrationIds);
 
   const normalizedOptions = normalizeIntegrationOptions(integrationOptions, integrationIds);
 
@@ -633,8 +612,6 @@ export function validateRecipe(recipe) {
   if (unknownIntegrationIds.length > 0) {
     throw new Error(`Unknown integrations: ${unknownIntegrationIds.join(", ")}.`);
   }
-
-  assertNoFormatterConflict(recipe.integrations);
 
   const normalizedIntegrationOptions = normalizeIntegrationOptions(
     recipe.integrationOptions,
