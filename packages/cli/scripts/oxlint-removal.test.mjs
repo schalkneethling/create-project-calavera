@@ -129,7 +129,7 @@ test("inspect_project treats an existing oxlint.json as a file Calavera does not
     await writeFile("oxlint.json", `${JSON.stringify({ plugins: ["typescript"] }, null, 2)}\n`);
 
     const response = await callMcpTool("inspect_project", {
-      recipe: buildRecipe("classic", ["eslint"], "npm"),
+      recipe: buildRecipe("classic", ["stylelint"], "npm"),
     });
 
     assert.equal(

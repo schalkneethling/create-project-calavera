@@ -137,18 +137,14 @@ a type-check script; JavaScript and TypeScript type checking comes from
   linting comes from `vp lint`, formatting from `vp fmt`, and type checking from
   `vp check`; Calavera does not scaffold a linter, formatter, or TypeScript
   configuration for that language pair.
-- **Classic**: ESLint flat config, Prettier, Stylelint
+- **Classic**: Prettier, Stylelint
 - **Minimal**: EditorConfig only
 
 ## Integration Catalog
 
 Calavera includes curated integration packs grouped by outcome:
 
-- React best practices
-- Imports and modules
-- Promise safety
-- Node package rules
-- Test rules
+- React Doctor
 - Unused files, dependencies, and exports
 - HTML validation
 - CSS Baseline
@@ -157,10 +153,11 @@ Calavera includes curated integration packs grouped by outcome:
 - Environment variable schema and validation with [Varlock](https://varlock.dev)
 - GitHub repository governance, security settings, and drift checks
 
-React best-practice checks can include React Doctor, a deterministic scanner for
-React codebases that complements linting with security, performance,
-correctness, accessibility, bundle-size, and architecture diagnostics. JSX-A11y
-linting also appears with the React checks because it targets JSX markup.
+React Doctor is a deterministic scanner for React codebases that complements
+`vp lint` with security, performance, correctness, accessibility, bundle-size,
+and architecture diagnostics. The curated JavaScript and TypeScript rule packs
+that once accompanied it are gone; a Vite+ project enables Oxlint plugins in the
+`lint` block of `vite.config.ts`.
 
 The optional Knip integration adds unused-file, dependency, and export analysis
 to the generated `quality` script. Calavera writes a minimal `knip.json` that

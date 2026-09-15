@@ -465,13 +465,13 @@ test("shared composition normalizes explicit tool labels and package managers", 
   const input = validateRecipeCompositionInput({
     profile: "classic",
     packageManager: "pnpm",
-    tools: ["EditorConfig", "ESLint flat config", "Prettier"],
+    tools: ["EditorConfig", "Stylelint", "Prettier"],
   });
 
   assert.deepEqual(input, {
     profile: "classic",
     packageManager: "pnpm",
-    tools: ["editorconfig", "eslint", "prettier"],
+    tools: ["editorconfig", "stylelint", "prettier"],
     aiArtifacts: undefined,
     integrationOptions: undefined,
   });
@@ -510,17 +510,12 @@ test("shared composition normalizes Stylelint Baseline options", () => {
 });
 
 test("shared composition resolves tool labels within the active profile", () => {
-  assert.deepEqual(normalizeIntegrationInputs(["JSX-A11y"], "classic"), ["eslint-jsx-a11y"]);
-  assert.deepEqual(normalizeIntegrationInputs(["JSX-A11y"], "modern"), ["JSX-A11y"]);
-});
-
-test("JSX accessibility integrations are grouped with React options", () => {
-  const classicJsxA11y = listIntegrationOptions("classic").find(
-    ({ id }) => id === "eslint-jsx-a11y",
-  );
-
-  assert.equal(classicJsxA11y?.label, "JSX-A11y");
-  assert.equal(classicJsxA11y?.group, "React best practices");
+  assert.deepEqual(normalizeIntegrationInputs(["Tailwind class sorting"], "classic"), [
+    "prettier-tailwind",
+  ]);
+  assert.deepEqual(normalizeIntegrationInputs(["Tailwind class sorting"], "modern"), [
+    "Tailwind class sorting",
+  ]);
 });
 
 test("project-local command guidance covers every package manager", () => {
@@ -684,8 +679,8 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
   const response = catalogResponse(composeRecipe({ profile: "minimal" }));
 
   assert.ok(modernToolIds.includes("stylelint"));
-  assert.equal(modernToolIds.includes("eslint-react"), false);
-  assert.ok(classicToolIds.includes("eslint-react"));
+  assert.equal(modernToolIds.includes("prettier-tailwind"), false);
+  assert.ok(classicToolIds.includes("prettier-tailwind"));
   assert.ok(classicToolIds.includes("prettier"));
   assert.equal(modernToolIds.includes("prettier"), false);
   assert.ok(modernToolIds.includes("knip"));
@@ -708,15 +703,18 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
 
 test("shared explanation helpers include selected and included integration reasons", () => {
   const explanation = explainRecipeIntegrations(
-    buildRecipe("classic", ["eslint-react", "stylelint-standard"]),
+    buildRecipe("classic", ["prettier-tailwind", "stylelint-standard"]),
   );
 
   assert.deepEqual(
     explanation.map(({ id }) => id),
-    ["eslint", "eslint-react", "stylelint", "stylelint-standard"],
+    ["stylelint", "stylelint-standard", "prettier", "prettier-tailwind"],
   );
-  assert.match(explanation.find(({ id }) => id === "eslint").reason, /requires it/);
-  assert.match(explanation.find(({ id }) => id === "eslint-react").reason, /Explicitly selected/);
+  assert.match(explanation.find(({ id }) => id === "prettier").reason, /requires it/);
+  assert.match(
+    explanation.find(({ id }) => id === "prettier-tailwind").reason,
+    /Explicitly selected/,
+  );
 });
 
 test("shared composition operation responses expose catalog, recipe, and explanation data", () => {
@@ -1437,7 +1435,7 @@ test("project inspection reports package manager, files, and conflict hints", as
         {
           packageManager: "pnpm@11.3.0",
           scripts: {
-            lint: "eslint .",
+            lint: 'stylelint "**/*.css"',
           },
         },
         null,
@@ -1445,7 +1443,7 @@ test("project inspection reports package manager, files, and conflict hints", as
       )}\n`,
     );
     await writeFile("pnpm-lock.yaml", "");
-    await writeFile("eslint.config.js", "export default [];\n");
+    await writeFile(".prettierrc.json", "{}\n");
     await writeFile(".editorconfig", "local edits\n");
 
     const recipe = buildRecipe("modern", ["editorconfig", "stylelint"], "npm");
@@ -1453,7 +1451,7 @@ test("project inspection reports package manager, files, and conflict hints", as
 
     assert.equal(inspection.packageManager, "pnpm");
     assert.equal(inspection.files.includes("package.json"), true);
-    assert.equal(inspection.files.includes("eslint.config.js"), true);
+    assert.equal(inspection.files.includes(".prettierrc.json"), true);
     assert.equal(
       inspection.findings.some(
         ({ kind, message }) => kind === "package-manager" && message.includes("pnpm"),
@@ -2374,27 +2372,6 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     await assertPathMissing(".calavera/run-if-files.mjs");
   } finally {
     process.chdir(originalDirectory);
-  }
-});
-
-test("generated ESLint configuration requires curly braces", async () => {
-  const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-eslint-curly-"));
-
-  try {
-    process.chdir(projectDirectory);
-    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
-
-    await applyRecipeObject(buildRecipe("classic", ["eslint"], "npm"), {
-      json: true,
-      noInstall: true,
-      assumeYes: true,
-    });
-
-    assert.match(await readFile("eslint.config.js", "utf8"), /curly: \["error", "all"\]/);
-  } finally {
-    process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
