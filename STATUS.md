@@ -15,7 +15,7 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## In progress
 
-- Stacked removal pull requests, merged bottom-up with the Changesets release last: CAL-013 (#453, PR #461, base main), CAL-014 (#454, branch `cal-014-454-remove-typescript-config`, base CAL-013), CAL-015 (#455, branch `cal-015-455-remove-eslint`, base CAL-014), then CAL-016 on top. Each carries its ADR, docs, Changeset (major), red tests, and removal as separate commits, verified on Node 24.
+- Stacked removal pull requests, merged bottom-up with the Changesets release last: CAL-013 (#453, PR #461, base main), CAL-014 (#454, branch `cal-014-454-remove-typescript-config`, base CAL-013), CAL-015 (#455, PR #468, base CAL-014), CAL-016 (#456, branch `cal-016-456-remove-prettier`, base CAL-015). The stack is complete: after CAL-016 the catalog holds fourteen entries, Modern and Classic have identical defaults, and the availability map holds only React Doctor. Each carries its ADR, docs, Changeset (major), red tests, and removal as separate commits, verified on Node 24.
 
 ## Blocked
 
