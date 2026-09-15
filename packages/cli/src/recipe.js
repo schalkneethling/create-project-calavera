@@ -187,11 +187,6 @@ export const profileDefaults = {
   modern: [
     "editorconfig",
     "typescript",
-    "oxlint",
-    "oxlint-eslint",
-    "oxlint-typescript",
-    "oxlint-unicorn",
-    "oxlint-oxc",
     "oxfmt",
     "stylelint",
     "stylelint-standard",
@@ -215,21 +210,6 @@ const profileIds = profileCatalog.map(({ id }) => id);
 const packageManagerIds = packageManagerCatalog.map(({ id }) => id);
 
 const profileSpecificIntegrations = {
-  oxlint: ["modern"],
-  "oxlint-eslint": ["modern"],
-  "oxlint-typescript": ["modern"],
-  "oxlint-unicorn": ["modern"],
-  "oxlint-oxc": ["modern"],
-  "oxlint-import": ["modern"],
-  "oxlint-react": ["modern"],
-  "oxlint-jsx-a11y": ["modern"],
-  "oxlint-node": ["modern"],
-  "oxlint-promise": ["modern"],
-  "oxlint-vitest": ["modern"],
-  "oxlint-jest": ["modern"],
-  "oxlint-nextjs": ["modern"],
-  "oxlint-vue": ["modern"],
-  "oxlint-jsdoc": ["modern"],
   oxfmt: ["modern"],
   "react-doctor": ["modern", "classic"],
   eslint: ["classic"],

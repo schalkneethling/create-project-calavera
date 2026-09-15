@@ -14,7 +14,7 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## In progress
 
-- none
+- CAL-012 (#452): Oxlint removal on branch `cal-012-452-remove-oxlint`; ADR-0002, docs, Changeset (major), red tests, and the removal are committed and pushed. Full CLI suite 180 pass on Node 24; lint, format, typecheck, knip, skills lint, and release contracts clean. Awaiting pull request.
 
 ## Blocked
 

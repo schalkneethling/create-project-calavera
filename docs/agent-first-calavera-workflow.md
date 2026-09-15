@@ -193,7 +193,7 @@ npm create project-calavera apply
 For scripted composition, pass ids or labels:
 
 ```bash
-npm create project-calavera init -- --profile modern --package-manager pnpm --tool oxlint --tool stylelint
+npm create project-calavera init -- --profile modern --package-manager pnpm --tool stylelint-order
 ```
 
 `init` is the recipe composer. `--init` is the agent bootstrap flag. The names

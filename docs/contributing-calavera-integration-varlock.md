@@ -49,9 +49,8 @@ enough or whether the integration needs a small behavior hook.
 Metadata is enough for integrations that only add packages or plugin settings to
 an existing generated config. A Stylelint plugin, for example, can often declare
 its package dependency, parent `stylelint` integration, plugin name, and rules in
-the catalog. An Oxlint plugin can often declare the plugin name and included
-parent integration. In those cases, the existing config builders can consume the
-catalog entry directly.
+the catalog, and the existing config builders can consume the catalog entry
+directly.
 
 Custom behavior is needed when the integration crosses out of pure metadata. Use
 Varlock as the example: it needed a package script, a starter `.env.schema`, a
@@ -72,7 +71,7 @@ The matching recipe entry a project developer would write is intentionally small
   "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
   "profile": "modern",
   "packageManager": "pnpm",
-  "integrations": ["editorconfig", "typescript", "oxlint", "varlock"],
+  "integrations": ["editorconfig", "typescript", "stylelint", "varlock"],
   "scripts": {
     "lint": true,
     "format:check": true,
@@ -215,15 +214,15 @@ generates and owns, but not `.env.schema` or `.gitignore`:
 {
   "version": 1,
   "profile": "modern",
-  "integrations": ["editorconfig", "typescript", "oxlint", "varlock"],
-  "files": [".editorconfig", "oxlint.json", "tsconfig.json"],
+  "integrations": ["editorconfig", "typescript", "stylelint", "varlock"],
+  "files": [".editorconfig", ".stylelintrc.json", "tsconfig.json"],
   "managedFiles": [
     {
       "path": ".editorconfig",
       "hash": "..."
     },
     {
-      "path": "oxlint.json",
+      "path": ".stylelintrc.json",
       "hash": "..."
     },
     {
@@ -268,8 +267,8 @@ A useful dry-run result for a fresh project would therefore include changes like
   "command": "apply",
   "dryRun": true,
   "packageManager": "pnpm",
-  "dependencies": ["typescript", "@types/node", "oxlint", "varlock"],
-  "integrations": ["editorconfig", "typescript", "oxlint", "varlock"],
+  "dependencies": ["typescript", "@types/node", "stylelint", "varlock"],
+  "integrations": ["editorconfig", "typescript", "stylelint", "varlock"],
   "changes": [
     {
       "type": "update",
@@ -282,7 +281,7 @@ A useful dry-run result for a fresh project would therefore include changes like
     },
     {
       "type": "write",
-      "path": "oxlint.json"
+      "path": ".stylelintrc.json"
     },
     {
       "type": "write",
@@ -313,7 +312,7 @@ The corresponding human output should follow the current dry-run printer:
 Would update package.json
 Would add scripts: lint, format:check, typecheck, env:load, quality
 Would write .editorconfig
-Would write oxlint.json
+Would write .stylelintrc.json
 Would write tsconfig.json
 Would scaffold .env.schema
 Would update .gitignore

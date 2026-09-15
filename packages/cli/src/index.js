@@ -621,7 +621,6 @@ function buildScripts(recipe, integrations, packageManager) {
   const supportedPackageManager = assertSupportedPackageManager(packageManager);
   /** @param {string} id */
   const has = (id) => integrations.some((integration) => integration.id === id);
-  const usesOxlint = has("oxlint");
   const usesESLint = has("eslint");
   const usesStylelint = has("stylelint");
   const usesOxfmt = has("oxfmt");
@@ -634,13 +633,11 @@ function buildScripts(recipe, integrations, packageManager) {
   const usesGithubRepositoryControls = has(GITHUB_REPOSITORY_CONTROLS_ID);
 
   const lintParts = [
-    usesOxlint ? "oxlint ." : null,
     usesESLint ? "eslint ." : null,
     usesStylelint ? 'stylelint "**/*.{css,scss}"' : null,
   ].filter(Boolean);
 
   const lintFixParts = [
-    usesOxlint ? "oxlint --fix ." : null,
     usesESLint ? "eslint --fix ." : null,
     usesStylelint ? 'stylelint "**/*.{css,scss}" --fix' : null,
   ].filter(Boolean);
@@ -995,7 +992,7 @@ metadata before retrying the apply.
 Choose one formatter per project. Do not combine Oxfmt and Prettier in one
 recipe; they would compete for the same formatting scripts and config ownership.
 
-Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`oxlint.json\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
+Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
 
 If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
 
@@ -1007,23 +1004,6 @@ Suggested first prompt:
 
 > ${AGENT_BOOTSTRAP_NEXT_PROMPT}
 `;
-}
-
-/**
- * @param {Integration[]} integrations
- * @returns {{ plugins: string[], rules: Record<string, unknown> }}
- */
-function createOxlintConfig(integrations) {
-  const pluginNames = integrations
-    .filter((integration) => integration.platform === "oxlint-plugin")
-    .map((integration) => integration.plugin);
-
-  return {
-    plugins: unique(pluginNames),
-    rules: {
-      curly: ["error", "all"],
-    },
-  };
 }
 
 /**
@@ -1466,13 +1446,6 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
     plans.push({ path: ".editorconfig", contents: createEditorConfig() });
   }
 
-  if (integrations.some((integration) => integration.id === "oxlint")) {
-    plans.push({
-      path: "oxlint.json",
-      contents: `${JSON.stringify(createOxlintConfig(integrations), null, 2)}\n`,
-    });
-  }
-
   if (integrations.some((integration) => integration.id === "eslint")) {
     plans.push({ path: "eslint.config.js", contents: createESLintConfig(integrations) });
   }
@@ -1750,34 +1723,6 @@ export async function inspectProject(recipe, options = {}) {
     }
   }
 
-  if (
-    integrationIds.has("oxlint") &&
-    files.includes("eslint.config.js") &&
-    !integrationIds.has("eslint")
-  ) {
-    findings.push({
-      severity: "warning",
-      kind: "equivalent-tooling",
-      path: "eslint.config.js",
-      message:
-        "eslint.config.js exists while Oxlint is selected; decide whether this project should migrate linting or keep the existing ESLint setup.",
-    });
-  }
-
-  if (
-    integrationIds.has("eslint") &&
-    files.includes("oxlint.json") &&
-    !integrationIds.has("oxlint")
-  ) {
-    findings.push({
-      severity: "warning",
-      kind: "equivalent-tooling",
-      path: "oxlint.json",
-      message:
-        "oxlint.json exists while ESLint is selected; decide whether this project should migrate linting or keep the existing Oxlint setup.",
-    });
-  }
-
   return {
     packageManager,
     files,
@@ -1875,19 +1820,6 @@ export async function applyRecipeObject(recipe, options = {}) {
       await writeManagedFile(
         ".editorconfig",
         createEditorConfig(),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
-  if (integrations.some((integration) => integration.id === "oxlint")) {
-    managedFiles.push(
-      await writeManagedJSONFile(
-        "oxlint.json",
-        createOxlintConfig(integrations),
         applyOptions.dryRun,
         changes,
         previousState,
@@ -2821,7 +2753,6 @@ async function doctor(options) {
       integrations.some((integration) => integration.id === "editorconfig")
         ? ".editorconfig"
         : null,
-      integrations.some((integration) => integration.id === "oxlint") ? "oxlint.json" : null,
       integrations.some((integration) => integration.id === "eslint") ? "eslint.config.js" : null,
       integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
       integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,
@@ -2889,7 +2820,6 @@ async function doctor(options) {
 function expectedManagedFiles(integrations) {
   return [
     integrations.some((integration) => integration.id === "editorconfig") ? ".editorconfig" : null,
-    integrations.some((integration) => integration.id === "oxlint") ? "oxlint.json" : null,
     integrations.some((integration) => integration.id === "eslint") ? "eslint.config.js" : null,
     integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
     integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,

@@ -4,12 +4,6 @@
   "integrations": [
     "editorconfig",
     "typescript",
-    "oxlint",
-    "oxlint-eslint",
-    "oxlint-typescript",
-    "oxlint-unicorn",
-    "oxlint-oxc",
-    "oxlint-jsdoc",
     "oxfmt",
     "stylelint",
     "stylelint-standard",
@@ -17,5 +11,5 @@
     "stylelint-baseline",
     "css-property-type-validator"
   ],
-  "files": [".editorconfig", "oxlint.json", ".stylelintrc.json", "tsconfig.json"]
+  "files": [".editorconfig", ".stylelintrc.json", "tsconfig.json"]
 }
