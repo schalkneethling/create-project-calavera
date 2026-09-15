@@ -619,7 +619,6 @@ function buildScripts(recipe, integrations, packageManager) {
   const supportedPackageManager = assertSupportedPackageManager(packageManager);
   /** @param {string} id */
   const has = (id) => integrations.some((integration) => integration.id === id);
-  const usesESLint = has("eslint");
   const usesStylelint = has("stylelint");
   const usesPrettier = has("prettier");
   const usesReactDoctor = has("react-doctor");
@@ -628,15 +627,9 @@ function buildScripts(recipe, integrations, packageManager) {
   const usesVarlock = has("varlock");
   const usesGithubRepositoryControls = has(GITHUB_REPOSITORY_CONTROLS_ID);
 
-  const lintParts = [
-    usesESLint ? "eslint ." : null,
-    usesStylelint ? 'stylelint "**/*.{css,scss}"' : null,
-  ].filter(Boolean);
+  const lintParts = [usesStylelint ? 'stylelint "**/*.{css,scss}"' : null].filter(Boolean);
 
-  const lintFixParts = [
-    usesESLint ? "eslint --fix ." : null,
-    usesStylelint ? 'stylelint "**/*.{css,scss}" --fix' : null,
-  ].filter(Boolean);
+  const lintFixParts = [usesStylelint ? 'stylelint "**/*.{css,scss}" --fix' : null].filter(Boolean);
 
   /** @type {Record<string, string>} */
   const scripts = {};
@@ -968,7 +961,7 @@ If the MCP transport closes or reports \`-32000\` during or immediately after
 \`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package
 metadata before retrying the apply.
 
-Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`.prettierrc.json\`, and \`.stylelintrc.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
+Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`.prettierrc.json\`, and \`.stylelintrc.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
 
 If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
 
@@ -979,70 +972,6 @@ Then run \`${commands.applyDryRun}\` and ask for approval before running \`${com
 Suggested first prompt:
 
 > ${AGENT_BOOTSTRAP_NEXT_PROMPT}
-`;
-}
-
-/**
- * @param {Integration[]} integrations
- * @returns {string}
- */
-function createESLintConfig(integrations) {
-  const useTypeScript = integrations.some((integration) => integration.id === "typescript-eslint");
-  const usePrettier = integrations.some(
-    (integration) => integration.id === "eslint-config-prettier",
-  );
-
-  const imports = [
-    'import js from "@eslint/js";',
-    'import globals from "globals";',
-    useTypeScript ? 'import tseslint from "typescript-eslint";' : null,
-    usePrettier ? 'import eslintConfigPrettier from "eslint-config-prettier";' : null,
-  ].filter(Boolean);
-
-  const configs = [
-    "js.configs.recommended",
-    useTypeScript ? "...tseslint.configs.strictTypeChecked" : null,
-    useTypeScript ? "...tseslint.configs.stylisticTypeChecked" : null,
-    usePrettier ? "eslintConfigPrettier" : null,
-  ].filter(Boolean);
-
-  const baseConfig = `{
-    languageOptions: {
-      globals: {
-        ...globals.browser,
-        ...globals.nodeBuiltin,
-      },${
-        useTypeScript
-          ? `
-      parserOptions: {
-        projectService: true,
-        tsconfigRootDir: import.meta.dirname,
-      },`
-          : ""
-      }
-    },
-    rules: {
-      curly: ["error", "all"],
-      "no-console": ["error", { allow: ["clear", "info"] }],
-    },
-  }`;
-
-  if (useTypeScript) {
-    return `${imports.join("\n")}
-
-export default tseslint.config(
-  ${configs.join(",\n  ")},
-  ${baseConfig},
-);
-`;
-  }
-
-  return `${imports.join("\n")}
-
-export default [
-  ${configs.join(",\n  ")},
-  ${baseConfig},
-];
 `;
 }
 
@@ -1397,10 +1326,6 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
 
   if (integrations.some((integration) => integration.id === "editorconfig")) {
     plans.push({ path: ".editorconfig", contents: createEditorConfig() });
-  }
-
-  if (integrations.some((integration) => integration.id === "eslint")) {
-    plans.push({ path: "eslint.config.js", contents: createESLintConfig(integrations) });
   }
 
   if (integrations.some((integration) => integration.id === "prettier")) {
@@ -1765,19 +1690,6 @@ export async function applyRecipeObject(recipe, options = {}) {
       await writeManagedFile(
         ".editorconfig",
         createEditorConfig(),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
-  if (integrations.some((integration) => integration.id === "eslint")) {
-    managedFiles.push(
-      await writeManagedFile(
-        "eslint.config.js",
-        createESLintConfig(integrations),
         applyOptions.dryRun,
         changes,
         previousState,
@@ -2685,7 +2597,6 @@ async function doctor(options) {
       integrations.some((integration) => integration.id === "editorconfig")
         ? ".editorconfig"
         : null,
-      integrations.some((integration) => integration.id === "eslint") ? "eslint.config.js" : null,
       integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
       integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,
       integrations.some((integration) => integration.id === "stylelint")
@@ -2751,7 +2662,6 @@ async function doctor(options) {
 function expectedManagedFiles(integrations) {
   return [
     integrations.some((integration) => integration.id === "editorconfig") ? ".editorconfig" : null,
-    integrations.some((integration) => integration.id === "eslint") ? "eslint.config.js" : null,
     integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
     integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,
     integrations.some((integration) => integration.id === "stylelint") ? ".stylelintrc.json" : null,
