@@ -128,7 +128,6 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string[]} [includes]
  * @property {{ extends?: string[], rules?: Record<string, unknown> }} [htmlValidate]
  * @property {{ extends?: string[], plugins?: string[], rules?: Record<string, unknown> }} [stylelint]
- * @property {{ plugins?: string[] }} [prettier]
  *
  * @typedef {object} Recipe
  * @property {string} [$schema]
@@ -620,7 +619,6 @@ function buildScripts(recipe, integrations, packageManager) {
   /** @param {string} id */
   const has = (id) => integrations.some((integration) => integration.id === id);
   const usesStylelint = has("stylelint");
-  const usesPrettier = has("prettier");
   const usesReactDoctor = has("react-doctor");
   const usesKnip = has("knip");
   const usesHtmlValidate = has("html-validate");
@@ -654,28 +652,6 @@ function buildScripts(recipe, integrations, packageManager) {
     });
   }
 
-  if (recipe.scripts?.format) {
-    if (usesPrettier) {
-      scripts.format = "prettier --write .";
-    } else {
-      omittedScripts.push({
-        script: "format",
-        reason: "format was requested but no formatter integration is selected.",
-      });
-    }
-  }
-
-  if (recipe.scripts?.["format:check"]) {
-    if (usesPrettier) {
-      scripts["format:check"] = "prettier --check .";
-    } else {
-      omittedScripts.push({
-        script: "format:check",
-        reason: "format:check was requested but no formatter integration is selected.",
-      });
-    }
-  }
-
   if (usesReactDoctor) {
     scripts["react:doctor"] = "react-doctor --offline";
     scripts["react:doctor:diff"] = "react-doctor --offline --diff";
@@ -702,7 +678,6 @@ function buildScripts(recipe, integrations, packageManager) {
     const qualityScripts = [
       "lint",
       usesHtmlValidate ? "lint:html" : null,
-      "format:check",
       usesKnip ? "knip" : null,
       usesReactDoctor ? "react:doctor" : null,
       usesVarlock ? "env:load" : null,
@@ -961,7 +936,7 @@ If the MCP transport closes or reports \`-32000\` during or immediately after
 \`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package
 metadata before retrying the apply.
 
-Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`.prettierrc.json\`, and \`.stylelintrc.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
+Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, and \`.stylelintrc.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
 
 If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
 
@@ -1018,18 +993,6 @@ function createStylelintConfig(integrations, integrationOptions = {}) {
   }
 
   return config;
-}
-
-/**
- * @param {Integration[]} integrations
- * @returns {{ plugins?: string[] }}
- */
-function createPrettierConfig(integrations) {
-  const plugins = unique(
-    integrations.flatMap((integration) => integration.prettier?.plugins ?? []),
-  );
-
-  return plugins.length > 0 ? { plugins } : {};
 }
 
 /**
@@ -1328,17 +1291,6 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
     plans.push({ path: ".editorconfig", contents: createEditorConfig() });
   }
 
-  if (integrations.some((integration) => integration.id === "prettier")) {
-    plans.push({
-      path: ".prettierrc.json",
-      contents: `${JSON.stringify(createPrettierConfig(integrations), null, 2)}\n`,
-    });
-    plans.push({
-      path: ".prettierignore",
-      contents: "node_modules\npackage-lock.json\npnpm-lock.yaml\nyarn.lock\nbun.lockb\n",
-    });
-  }
-
   if (integrations.some((integration) => integration.id === "stylelint")) {
     plans.push({
       path: ".stylelintrc.json",
@@ -1547,14 +1499,7 @@ export async function inspectProject(recipe, options = {}) {
   }
 
   const packageScripts = packageJSON.scripts ?? {};
-  for (const scriptName of [
-    "lint",
-    "lint:fix",
-    "format",
-    "format:check",
-    "repo:controls:check",
-    "repo:controls:apply",
-  ]) {
+  for (const scriptName of ["lint", "lint:fix", "repo:controls:check", "repo:controls:apply"]) {
     const managedByRecipe = scriptName.startsWith("repo:controls:")
       ? integrationIds.has(GITHUB_REPOSITORY_CONTROLS_ID)
       : recipe?.scripts?.[scriptName];
@@ -1690,29 +1635,6 @@ export async function applyRecipeObject(recipe, options = {}) {
       await writeManagedFile(
         ".editorconfig",
         createEditorConfig(),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
-  if (integrations.some((integration) => integration.id === "prettier")) {
-    managedFiles.push(
-      await writeManagedJSONFile(
-        ".prettierrc.json",
-        createPrettierConfig(integrations),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-    managedFiles.push(
-      await writeManagedFile(
-        ".prettierignore",
-        "node_modules\npackage-lock.json\npnpm-lock.yaml\nyarn.lock\nbun.lockb\n",
         applyOptions.dryRun,
         changes,
         previousState,
@@ -2597,8 +2519,6 @@ async function doctor(options) {
       integrations.some((integration) => integration.id === "editorconfig")
         ? ".editorconfig"
         : null,
-      integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
-      integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,
       integrations.some((integration) => integration.id === "stylelint")
         ? ".stylelintrc.json"
         : null,
@@ -2662,8 +2582,6 @@ async function doctor(options) {
 function expectedManagedFiles(integrations) {
   return [
     integrations.some((integration) => integration.id === "editorconfig") ? ".editorconfig" : null,
-    integrations.some((integration) => integration.id === "prettier") ? ".prettierrc.json" : null,
-    integrations.some((integration) => integration.id === "prettier") ? ".prettierignore" : null,
     integrations.some((integration) => integration.id === "stylelint") ? ".stylelintrc.json" : null,
     integrations.some((integration) => integration.id === "html-validate")
       ? ".htmlvalidate.json"

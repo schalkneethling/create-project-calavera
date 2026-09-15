@@ -186,7 +186,7 @@ test("inspect_project reports no ESLint finding for an existing eslint.config.js
     await writeFile("eslint.config.js", "export default [];\n");
 
     const response = await callMcpTool("inspect_project", {
-      recipe: buildRecipe("classic", ["prettier", "stylelint"], "npm"),
+      recipe: buildRecipe("classic", ["editorconfig", "stylelint"], "npm"),
     });
 
     assert.equal(

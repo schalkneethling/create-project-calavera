@@ -32,7 +32,7 @@ export const profileCatalog = [
     id: "classic",
     label: "classic",
     description:
-      "CSS linting and formatting defaults; Calavera does not configure JavaScript or TypeScript checks, which come from Vite+.",
+      "CSS linting defaults; Calavera does not configure JavaScript or TypeScript checks, which come from Vite+.",
   },
   {
     id: "minimal",
@@ -187,7 +187,7 @@ export const recipeToolInputDescriptions = Object.freeze({
 /** @type {Record<string, string[]>} */
 export const profileDefaults = {
   modern: ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
-  classic: ["editorconfig", "prettier", "stylelint", "stylelint-standard", "stylelint-baseline"],
+  classic: ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
   minimal: ["editorconfig"],
 };
 
@@ -196,17 +196,11 @@ const packageManagerIds = packageManagerCatalog.map(({ id }) => id);
 
 const profileSpecificIntegrations = {
   "react-doctor": ["modern", "classic"],
-  prettier: ["classic"],
-  "prettier-tailwind": ["classic"],
-  "prettier-svelte": ["classic"],
-  "prettier-astro": ["classic"],
 };
 
 export const defaultScriptFlags = {
   lint: true,
   "lint:fix": true,
-  format: true,
-  "format:check": true,
   quality: true,
 };
 
