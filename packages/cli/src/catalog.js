@@ -8,14 +8,6 @@ export const integrationCatalog = [
     dependencies: [],
   },
   {
-    id: "typescript",
-    label: "TypeScript type checking",
-    group: "Type checking",
-    platform: "typescript",
-    status: "recommended",
-    dependencies: ["typescript", "@types/node"],
-  },
-  {
     id: "knip",
     label: "Knip",
     group: "Unused code",
@@ -77,8 +69,9 @@ export const integrationCatalog = [
     group: "Classic JS/TS linting",
     platform: "eslint-plugin",
     status: "recommended",
-    dependencies: ["typescript-eslint"],
-    includes: ["eslint", "typescript"],
+    // CAL-015 removes this entry; until then it installs typescript itself to parse syntax.
+    dependencies: ["typescript-eslint", "typescript"],
+    includes: ["eslint"],
   },
   {
     id: "eslint-config-prettier",

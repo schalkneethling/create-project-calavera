@@ -148,7 +148,7 @@ const rootProperties = [
 const requiredProperties = ["version", "profile", "packageManager", "integrations", "scripts"];
 const profiles = ["modern", "classic", "minimal"];
 const packageManagers = ["npm", "pnpm", "yarn", "bun"];
-const scriptFlags = ["lint", "lint:fix", "format", "format:check", "typecheck", "quality"];
+const scriptFlags = ["lint", "lint:fix", "format", "format:check", "quality"];
 
 async function readProjectFile(path) {
   return readFile(new URL(`../${path}`, import.meta.url), "utf8");
@@ -465,13 +465,13 @@ test("shared composition normalizes explicit tool labels and package managers", 
   const input = validateRecipeCompositionInput({
     profile: "classic",
     packageManager: "pnpm",
-    tools: ["TypeScript type checking", "ESLint flat config", "Prettier"],
+    tools: ["EditorConfig", "ESLint flat config", "Prettier"],
   });
 
   assert.deepEqual(input, {
     profile: "classic",
     packageManager: "pnpm",
-    tools: ["typescript", "eslint", "prettier"],
+    tools: ["editorconfig", "eslint", "prettier"],
     aiArtifacts: undefined,
     integrationOptions: undefined,
   });
@@ -792,9 +792,9 @@ test("CLI parser accepts scripted rich composer options", () => {
       "--reown-managed-file",
       ".stylelintrc.json",
       "--reown-managed-files",
-      ".prettierrc.json,tsconfig.json",
+      ".prettierrc.json,knip.json",
     ]).reownManagedFiles,
-    [".stylelintrc.json", ".prettierrc.json", "tsconfig.json"],
+    [".stylelintrc.json", ".prettierrc.json", "knip.json"],
   );
 
   assert.deepEqual(
@@ -2297,7 +2297,6 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
         scripts: {
           lint: true,
           format: true,
-          typecheck: true,
           quality: true,
         },
       },
@@ -2325,7 +2324,7 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
       true,
     );
     assert.equal(
-      packageChange?.omittedScripts?.some(({ script }) => script === "typecheck"),
+      packageChange?.omittedScripts?.some(({ script }) => script === "lint"),
       true,
     );
     assert.equal(editorConfigChange?.ownership, "calavera");
@@ -2338,7 +2337,7 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
 test("apply uses direct tool scripts without the run-if-files helper", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-direct-scripts-"));
-  const recipe = buildRecipe("classic", ["typescript", "prettier", "stylelint"], "npm");
+  const recipe = buildRecipe("classic", ["prettier", "stylelint"], "npm");
 
   try {
     process.chdir(projectDirectory);
@@ -2367,7 +2366,6 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     assert.equal(packageFile.scripts["lint:fix"], 'stylelint "**/*.{css,scss}" --fix');
     assert.equal(packageFile.scripts.format, "prettier --write .");
     assert.equal(packageFile.scripts["format:check"], "prettier --check .");
-    assert.equal(packageFile.scripts.typecheck, "tsc --noEmit");
     assert.doesNotMatch(JSON.stringify(packageFile.scripts), /run-if-files/);
     const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist/**"), true);
@@ -2849,7 +2847,7 @@ test("doctor does not expect the removed run-if-files helper", async () => {
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     await writeFile(
       "calavera.config.json",
-      `${JSON.stringify(buildRecipe("modern", ["typescript"], "npm"), null, 2)}\n`,
+      `${JSON.stringify(buildRecipe("modern", ["editorconfig"], "npm"), null, 2)}\n`,
     );
 
     const { stdout } = await execFileAsync(
@@ -3029,7 +3027,6 @@ test("apply dry-run human output distinguishes owned writes and omitted scripts"
           scripts: {
             lint: true,
             format: true,
-            typecheck: true,
             quality: true,
           },
         },
