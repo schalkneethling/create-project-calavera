@@ -27,7 +27,7 @@ This removal has a direct profile consequence, stated here rather than left impl
 
 ## Consequences
 
-A `calavera.config.json` that names `typescript`, or that sets `scripts.typecheck`, fails validation with the same unknown-id and unknown-property errors any other unrecognized recipe content produces. The schema property removal for `scripts.typecheck` is a breaking change to the recipe schema and is recorded in the Changeset for this release, alongside the enum-value removal for the `typescript` id.
+A `calavera.config.json` that names `typescript` fails validation as an unknown id. One that still sets `scripts.typecheck` validates, because the recipe schema accepts any boolean script flag, but the flag is ignored and no `typecheck` script is generated; the changelog says so, since a silent behavior change is the more important thing to tell a project owner, and the removal of the documented property is still a breaking change to the recipe schema. The schema property removal for`scripts.typecheck`is a breaking change to the recipe schema and is recorded in the Changeset for this release, alongside the enum-value removal for the`typescript` id.
 
 Calavera's own repository keeps its own root `tsconfig.json` and `typecheck` script as its own tooling, unrelated to the catalog entry this ADR removes; those type-check Calavera's source, not a project Calavera scaffolds.
 

@@ -15,7 +15,7 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## In progress
 
-- CAL-013 (#453): Oxfmt removal on branch `cal-013-453-remove-oxfmt`, cut from the docs branch that marks ADR-0002 accepted. ADR-0003, docs, Changeset (major), red tests, and the removal are committed and pushed. Full CLI suite 183 pass on Node 24; all gates clean. Awaiting pull request.
+- Stacked removal pull requests, merged bottom-up with the Changesets release last: CAL-013 (#453, PR #461, base main), CAL-014 (#454, branch `cal-014-454-remove-typescript-config`, base CAL-013), then CAL-015 and CAL-016 on top. Each carries its ADR, docs, Changeset (major), red tests, and removal as separate commits, verified on Node 24.
 
 ## Blocked
 
@@ -46,5 +46,5 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## Next session starts with
 
-- After CAL-013 merges: CAL-014 to CAL-016 (#454 to #456), one PR each with an ADR; then CAL-011 (profiles collapse on a `vp` project). React Doctor follow-up: re-express its two scripts as `vp run` tasks.
+- Merge the stack bottom-up (CAL-013, CAL-014, CAL-015, CAL-016), then the Version Packages release for 3.0.0; then CAL-011 (profiles collapse on a `vp` project). React Doctor follow-up: re-express its two scripts as `vp run` tasks.
 - A Version Packages pull request for 3.0.0 will open from the CAL-012 Changeset; hold it until CAL-013 to CAL-016 have merged so the major ships once. The five follow-up issues named in ADR-0001 are open: #429 to #433. The unparseable-manifest MCP-level test waits on #429.
