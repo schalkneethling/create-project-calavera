@@ -64,14 +64,6 @@ export const integrationCatalog = [
     dependencies: ["react-doctor"],
   },
   {
-    id: "oxfmt",
-    label: "Oxfmt",
-    group: "Formatting",
-    platform: "oxfmt",
-    status: "experimental",
-    dependencies: ["oxfmt"],
-  },
-  {
     id: "eslint",
     label: "ESLint flat config",
     group: "Classic JS/TS linting",
