@@ -82,18 +82,29 @@ test("list_profiles keeps classic without any ESLint default", async () => {
       assert.equal(profileDefaults[profileId].includes(removedId), false);
     }
   }
+
+  const classicProfile = response.profiles.find(({ id }) => id === "classic");
+
+  assert.doesNotMatch(
+    classicProfile.description,
+    /JavaScript.*lint|TypeScript.*lint/i,
+    `The classic profile description still claims JavaScript or TypeScript linting: ${classicProfile.description}`,
+  );
 });
 
-test("compose_recipe rejects the eslint id as unknown", async () => {
-  await assert.rejects(
-    () =>
-      callMcpTool("compose_recipe", {
-        profile: "classic",
-        packageManager: "npm",
-        tools: ["eslint"],
-      }),
-    /eslint/,
-  );
+test("compose_recipe rejects every removed id as unknown", async () => {
+  for (const removedId of removedIds) {
+    await assert.rejects(
+      () =>
+        callMcpTool("compose_recipe", {
+          profile: "classic",
+          packageManager: "npm",
+          tools: [removedId],
+        }),
+      (error) => error instanceof Error && error.message.includes(removedId),
+      `compose_recipe must reject ${removedId} and name it in the error message.`,
+    );
+  }
 });
 
 test("validate_recipe rejects a recipe that requests eslint-react", async () => {

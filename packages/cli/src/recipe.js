@@ -31,7 +31,8 @@ export const profileCatalog = [
   {
     id: "classic",
     label: "classic",
-    description: "Widely used JavaScript, TypeScript, CSS linting, and formatting defaults.",
+    description:
+      "CSS linting and formatting defaults; Calavera does not configure JavaScript or TypeScript checks, which come from Vite+.",
   },
   {
     id: "minimal",
