@@ -56,10 +56,6 @@ If MCP tools are not exposed, agents should configure or repair MCP setup first;
 they should not inspect npm cache internals or import Calavera source files from
 package cache paths as a substitute for MCP setup.
 
-Choose one formatter for the project. Calavera rejects recipes that include both
-Oxfmt and Prettier because they would compete for the same formatting scripts
-and config ownership.
-
 If the agent finds likely conflicts, it should pause and list whether each one
 is a hard stop or a migration decision the user can still approve. A dry run is
 the best next step when adoption is still possible and the user wants to see the
@@ -136,9 +132,9 @@ environment of choice.
 
 ## Profiles
 
-- **Modern**: Oxfmt, Stylelint, TypeScript. In a `vp`-managed project,
-  JavaScript and TypeScript linting comes from `vp lint`; Calavera does not
-  scaffold a linter for that language pair.
+- **Modern**: Stylelint, TypeScript. In a `vp`-managed project, JavaScript and
+  TypeScript linting comes from `vp lint` and formatting comes from `vp fmt`;
+  Calavera does not scaffold a linter or formatter for that language pair.
 - **Classic**: ESLint flat config, Prettier, Stylelint, TypeScript
 - **Minimal**: EditorConfig only
 
@@ -185,10 +181,11 @@ Validate's accessibility rules, so Calavera does not add a redundant separate
 accessibility integration.
 
 HTML Validate follows HTML semantics and Calavera deliberately leaves its
-doctype and void-element style rules at their honest defaults. Oxfmt 0.59.0
-cannot currently be configured to preserve an uppercase `<!DOCTYPE html>` or
-omit the slash it adds to void elements such as `<meta />`. Calavera does not
-blanket-exclude HTML from Oxfmt or weaken HTML Validate to hide this conflict.
+doctype and void-element style rules at their honest defaults. Oxfmt, the
+formatter `vp fmt` is built on, cannot currently be configured to preserve an
+uppercase `<!DOCTYPE html>` or omit the slash it adds to void elements such as
+`<meta />`. Calavera does not blanket-exclude HTML from `vp fmt` or weaken HTML
+Validate to hide this conflict.
 Projects selecting both tools should review the formatter/validator interaction
 until [Oxc issue #24645](https://github.com/oxc-project/oxc/issues/24645) is
 resolved. See the [HTML Validate preset documentation](https://html-validate.org/rules/presets.html)
