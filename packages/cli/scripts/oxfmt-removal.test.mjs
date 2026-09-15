@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtempDisposable, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -76,10 +76,12 @@ test("validate_recipe rejects a recipe that requests oxfmt", async () => {
 
 test("a modern profile dry run writes no oxfmt formatting script", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-oxfmt-removal-dry-run-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-oxfmt-removal-dry-run-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
     const recipe = buildRecipe("modern", [...profileDefaults.modern], "npm");
@@ -109,10 +111,12 @@ test("a modern profile dry run writes no oxfmt formatting script", async () => {
 
 test("inspect_project findings never mention Oxfmt", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-oxfmt-removal-inspect-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-oxfmt-removal-inspect-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile(
       "package.json",
       `${JSON.stringify({ scripts: { format: "oxfmt --write ." } }, null, 2)}\n`,

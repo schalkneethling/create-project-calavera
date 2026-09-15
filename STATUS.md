@@ -15,7 +15,7 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## In progress
 
-- CAL-013 (#453): Oxfmt removal on branch `cal-013-453-remove-oxfmt`, cut from the docs branch that marks ADR-0002 accepted. ADR-0003, docs, Changeset (major), red tests, and the removal are committed and pushed. Full CLI suite 183 pass on Node 24; all gates clean. Awaiting pull request.
+- CAL-013 (#453): Oxfmt removal on branch `cal-013-453-remove-oxfmt`, cut from the docs branch that marks ADR-0002 accepted. ADR-0003, docs, Changeset (major), red tests, and the removal are committed and pushed. Full CLI suite 183 pass on Node 24; all gates clean. Pull request #461 open, awaiting review.
 
 ## Blocked
 

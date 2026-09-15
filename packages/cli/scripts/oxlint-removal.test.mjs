@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdtempDisposable, readFile, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -79,10 +79,12 @@ test("validate_recipe rejects a recipe that requests oxlint-react", async () => 
 
 test("a modern profile dry run plans no oxlint.json and writes no oxlint script", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-oxlint-removal-dry-run-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-oxlint-removal-dry-run-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
     const recipe = buildRecipe("modern", [...profileDefaults.modern], "npm");
@@ -117,10 +119,12 @@ test("a modern profile dry run plans no oxlint.json and writes no oxlint script"
 
 test("inspect_project treats an existing oxlint.json as a file Calavera does not know", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-oxlint-removal-inspect-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-oxlint-removal-inspect-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     await writeFile("oxlint.json", `${JSON.stringify({ plugins: ["typescript"] }, null, 2)}\n`);
 
