@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtempDisposable, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -107,10 +107,12 @@ test("validate_recipe rejects a recipe that requests prettier-tailwind", async (
 
 test("a classic profile dry run plans no Prettier configuration and no format scripts", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-prettier-removal-dry-run-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-prettier-removal-dry-run-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
     const recipe = buildRecipe("classic", [...profileDefaults.classic], "npm");
@@ -166,10 +168,12 @@ test("a classic profile dry run plans no Prettier configuration and no format sc
 
 test("inspect_project reports no Prettier finding for an existing .prettierrc.json", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-prettier-removal-inspect-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-prettier-removal-inspect-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     await writeFile(".prettierrc.json", "{}\n");
     await writeFile(".prettierignore", "node_modules\n");
@@ -203,10 +207,10 @@ test("inspect_project reports no Prettier finding for an existing .prettierrc.js
 
 test("a recipe that still sets scripts.format produces no format script", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-format-flag-"));
+  await using projectDirectory = await mkdtempDisposable(join(tmpdir(), "calavera-format-flag-"));
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
     const recipe = {
