@@ -14,8 +14,6 @@
   "scripts": {
     "lint": true,
     "lint:fix": true,
-    "format": true,
-    "format:check": true,
     "quality": true
   }
 }

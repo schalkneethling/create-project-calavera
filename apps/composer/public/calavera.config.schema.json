@@ -64,17 +64,9 @@
           "type": "boolean",
           "description": "Generate a lint fix script when linting integrations are selected."
         },
-        "format": {
-          "type": "boolean",
-          "description": "Generate a format script when formatting integrations are selected."
-        },
-        "format:check": {
-          "type": "boolean",
-          "description": "Generate a format check script when formatting integrations are selected."
-        },
         "quality": {
           "type": "boolean",
-          "description": "Generate a combined quality script from the available lint, format, Knip, and React Doctor scripts."
+          "description": "Generate a combined quality script from the available lint, Knip, and React Doctor scripts."
         }
       }
     },
@@ -294,11 +286,7 @@
         "stylelint-scss",
         "stylelint-stylistic",
         "stylelint-logical-css",
-        "css-property-type-validator",
-        "prettier",
-        "prettier-tailwind",
-        "prettier-svelte",
-        "prettier-astro"
+        "css-property-type-validator"
       ]
     },
     "aiItem": {

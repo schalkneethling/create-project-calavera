@@ -92,7 +92,7 @@ test("a recipe that still sets scripts.typecheck produces no typecheck script", 
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
     const recipe = {
-      ...buildRecipe("classic", ["prettier", "stylelint"], "npm"),
+      ...buildRecipe("classic", ["editorconfig", "stylelint"], "npm"),
       scripts: { format: true, typecheck: true, quality: true },
     };
 

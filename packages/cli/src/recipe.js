@@ -186,7 +186,7 @@ export const recipeToolInputDescriptions = Object.freeze({
 /** @type {Record<string, string[]>} */
 export const profileDefaults = {
   modern: ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
-  classic: ["editorconfig", "prettier", "stylelint", "stylelint-standard", "stylelint-baseline"],
+  classic: ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
   minimal: ["editorconfig"],
 };
 
@@ -195,17 +195,11 @@ const packageManagerIds = packageManagerCatalog.map(({ id }) => id);
 
 const profileSpecificIntegrations = {
   "react-doctor": ["modern", "classic"],
-  prettier: ["classic"],
-  "prettier-tailwind": ["classic"],
-  "prettier-svelte": ["classic"],
-  "prettier-astro": ["classic"],
 };
 
 export const defaultScriptFlags = {
   lint: true,
   "lint:fix": true,
-  format: true,
-  "format:check": true,
   quality: true,
 };
 

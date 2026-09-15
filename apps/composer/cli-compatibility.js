@@ -16,10 +16,6 @@ const fallbackIntegrationIds = new Set([
   "stylelint-scss",
   "stylelint-stylistic",
   "css-property-type-validator",
-  "prettier",
-  "prettier-tailwind",
-  "prettier-svelte",
-  "prettier-astro",
 ]);
 
 function parseVersion(version) {

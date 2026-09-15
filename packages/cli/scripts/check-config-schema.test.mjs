@@ -148,7 +148,7 @@ const rootProperties = [
 const requiredProperties = ["version", "profile", "packageManager", "integrations", "scripts"];
 const profiles = ["modern", "classic", "minimal"];
 const packageManagers = ["npm", "pnpm", "yarn", "bun"];
-const scriptFlags = ["lint", "lint:fix", "format", "format:check", "quality"];
+const scriptFlags = ["lint", "lint:fix", "quality"];
 
 async function readProjectFile(path) {
   return readFile(new URL(`../${path}`, import.meta.url), "utf8");
@@ -465,13 +465,13 @@ test("shared composition normalizes explicit tool labels and package managers", 
   const input = validateRecipeCompositionInput({
     profile: "classic",
     packageManager: "pnpm",
-    tools: ["EditorConfig", "Stylelint", "Prettier"],
+    tools: ["EditorConfig", "Stylelint", "CSS Baseline"],
   });
 
   assert.deepEqual(input, {
     profile: "classic",
     packageManager: "pnpm",
-    tools: ["editorconfig", "stylelint", "prettier"],
+    tools: ["editorconfig", "stylelint", "stylelint-baseline"],
     aiArtifacts: undefined,
     integrationOptions: undefined,
   });
@@ -510,12 +510,8 @@ test("shared composition normalizes Stylelint Baseline options", () => {
 });
 
 test("shared composition resolves tool labels within the active profile", () => {
-  assert.deepEqual(normalizeIntegrationInputs(["Tailwind class sorting"], "classic"), [
-    "prettier-tailwind",
-  ]);
-  assert.deepEqual(normalizeIntegrationInputs(["Tailwind class sorting"], "modern"), [
-    "Tailwind class sorting",
-  ]);
+  assert.deepEqual(normalizeIntegrationInputs(["React Doctor"], "classic"), ["react-doctor"]);
+  assert.deepEqual(normalizeIntegrationInputs(["React Doctor"], "minimal"), ["React Doctor"]);
 });
 
 test("project-local command guidance covers every package manager", () => {
@@ -679,10 +675,12 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
   const response = catalogResponse(composeRecipe({ profile: "minimal" }));
 
   assert.ok(modernToolIds.includes("stylelint"));
-  assert.equal(modernToolIds.includes("prettier-tailwind"), false);
-  assert.ok(classicToolIds.includes("prettier-tailwind"));
-  assert.ok(classicToolIds.includes("prettier"));
-  assert.equal(modernToolIds.includes("prettier"), false);
+  assert.ok(modernToolIds.includes("react-doctor"));
+  assert.ok(classicToolIds.includes("react-doctor"));
+  assert.equal(
+    listIntegrationOptions("minimal").some(({ id }) => id === "react-doctor"),
+    false,
+  );
   assert.ok(modernToolIds.includes("knip"));
   assert.ok(classicToolIds.includes("knip"));
   assert.ok(listIntegrationOptions("minimal").some(({ id }) => id === "knip"));
@@ -703,16 +701,16 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
 
 test("shared explanation helpers include selected and included integration reasons", () => {
   const explanation = explainRecipeIntegrations(
-    buildRecipe("classic", ["prettier-tailwind", "stylelint-standard"]),
+    buildRecipe("classic", ["stylelint-order", "stylelint-standard"]),
   );
 
   assert.deepEqual(
     explanation.map(({ id }) => id),
-    ["stylelint", "stylelint-standard", "prettier", "prettier-tailwind"],
+    ["stylelint", "stylelint-standard", "stylelint-order"],
   );
-  assert.match(explanation.find(({ id }) => id === "prettier").reason, /requires it/);
+  assert.match(explanation.find(({ id }) => id === "stylelint").reason, /requires it/);
   assert.match(
-    explanation.find(({ id }) => id === "prettier-tailwind").reason,
+    explanation.find(({ id }) => id === "stylelint-order").reason,
     /Explicitly selected/,
   );
 });
@@ -763,7 +761,7 @@ test("CLI parser accepts scripted rich composer options", () => {
     "--package-manager",
     "pnpm",
     "--integration",
-    "Prettier,Stylelint",
+    "EditorConfig,Stylelint",
     "--tool",
     "React Doctor",
     "--ai-artifact",
@@ -777,7 +775,7 @@ test("CLI parser accepts scripted rich composer options", () => {
   assert.equal(options.command, "init");
   assert.equal(options.profile, "modern");
   assert.equal(options.packageManager, "pnpm");
-  assert.deepEqual(options.integrations, ["Prettier", "Stylelint", "React Doctor"]);
+  assert.deepEqual(options.integrations, ["EditorConfig", "Stylelint", "React Doctor"]);
   assert.deepEqual(options.aiArtifacts, [
     { id: "skill-frontend-engineering" },
     { id: "hook-block-dangerous-commands", target: "codex" },
@@ -790,9 +788,9 @@ test("CLI parser accepts scripted rich composer options", () => {
       "--reown-managed-file",
       ".stylelintrc.json",
       "--reown-managed-files",
-      ".prettierrc.json,knip.json",
+      ".editorconfig,knip.json",
     ]).reownManagedFiles,
-    [".stylelintrc.json", ".prettierrc.json", "knip.json"],
+    [".stylelintrc.json", ".editorconfig", "knip.json"],
   );
 
   assert.deepEqual(
@@ -1443,7 +1441,7 @@ test("project inspection reports package manager, files, and conflict hints", as
       )}\n`,
     );
     await writeFile("pnpm-lock.yaml", "");
-    await writeFile(".prettierrc.json", "{}\n");
+    await writeFile("knip.json", "{}\n");
     await writeFile(".editorconfig", "local edits\n");
 
     const recipe = buildRecipe("modern", ["editorconfig", "stylelint"], "npm");
@@ -1451,7 +1449,7 @@ test("project inspection reports package manager, files, and conflict hints", as
 
     assert.equal(inspection.packageManager, "pnpm");
     assert.equal(inspection.files.includes("package.json"), true);
-    assert.equal(inspection.files.includes(".prettierrc.json"), true);
+    assert.equal(inspection.files.includes("knip.json"), true);
     assert.equal(
       inspection.findings.some(
         ({ kind, message }) => kind === "package-manager" && message.includes("pnpm"),
@@ -2294,7 +2292,6 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
         ...buildRecipe("minimal", ["editorconfig"], "npm"),
         scripts: {
           lint: true,
-          format: true,
           quality: true,
         },
       },
@@ -2316,13 +2313,13 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
     assert.equal(
       packageChange?.omittedScripts?.some(
         ({ script, reason }) =>
-          script === "format" &&
-          reason === "format was requested but no formatter integration is selected.",
+          script === "lint" &&
+          reason === "lint was requested but no linting integration is selected.",
       ),
       true,
     );
     assert.equal(
-      packageChange?.omittedScripts?.some(({ script }) => script === "lint"),
+      packageChange?.omittedScripts?.some(({ script }) => script === "quality"),
       true,
     );
     assert.equal(editorConfigChange?.ownership, "calavera");
@@ -2335,7 +2332,7 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
 test("apply uses direct tool scripts without the run-if-files helper", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-direct-scripts-"));
-  const recipe = buildRecipe("classic", ["prettier", "stylelint"], "npm");
+  const recipe = buildRecipe("classic", ["stylelint"], "npm");
 
   try {
     process.chdir(projectDirectory);
@@ -2362,8 +2359,6 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     const packageFile = JSON.parse(await readFile("package.json", "utf8"));
     assert.equal(packageFile.scripts.lint, 'stylelint "**/*.{css,scss}"');
     assert.equal(packageFile.scripts["lint:fix"], 'stylelint "**/*.{css,scss}" --fix');
-    assert.equal(packageFile.scripts.format, "prettier --write .");
-    assert.equal(packageFile.scripts["format:check"], "prettier --check .");
     assert.doesNotMatch(JSON.stringify(packageFile.scripts), /run-if-files/);
     const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist/**"), true);
@@ -2427,25 +2422,6 @@ test("apply carries recipe Baseline options into the generated Stylelint rule", 
     ]);
   } finally {
     process.chdir(originalDirectory);
-  }
-});
-
-test("apply writes selected Prettier plugins into configuration", async () => {
-  const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-prettier-plugins-"));
-  try {
-    process.chdir(projectDirectory);
-    await writeFile("package.json", JSON.stringify({ scripts: {} }));
-    await applyRecipeObject(
-      buildRecipe("classic", ["prettier-tailwind", "prettier-astro"], "npm"),
-      { json: true, noInstall: true, assumeYes: true },
-    );
-    assert.deepEqual(JSON.parse(await readFile(".prettierrc.json", "utf8")), {
-      plugins: ["prettier-plugin-tailwindcss", "prettier-plugin-astro"],
-    });
-  } finally {
-    process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
   }
 });
 
@@ -3003,7 +2979,6 @@ test("apply dry-run human output distinguishes owned writes and omitted scripts"
           ...buildRecipe("minimal", ["editorconfig"], "npm"),
           scripts: {
             lint: true,
-            format: true,
             quality: true,
           },
         },
@@ -3020,7 +2995,7 @@ test("apply dry-run human output distinguishes owned writes and omitted scripts"
     assert.match(stdout, /Would write and own \.editorconfig/);
     assert.match(
       stdout,
-      /Would omit script format: format was requested but no formatter integration is selected\./,
+      /Would omit script lint: lint was requested but no linting integration is selected\./,
     );
   } finally {
     process.chdir(originalDirectory);

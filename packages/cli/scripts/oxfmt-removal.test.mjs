@@ -150,7 +150,7 @@ test("inspect_project findings never mention Oxfmt", async () => {
     );
 
     const response = await callMcpTool("inspect_project", {
-      recipe: buildRecipe("classic", ["prettier"], "npm"),
+      recipe: buildRecipe("classic", ["stylelint"], "npm"),
     });
 
     assert.equal(
