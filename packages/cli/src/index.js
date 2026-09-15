@@ -204,8 +204,6 @@ const AGENT_BOOTSTRAP_SKILL_RECIPE = {
 const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/", import.meta.url));
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
-const SCRIPT_SOURCE_EXTENSIONS = ["js", "jsx", "ts", "tsx", "mjs", "cjs"];
-const TSC_INCLUDE_PATTERNS = SCRIPT_SOURCE_EXTENSIONS.map((extension) => `src/**/*.${extension}`);
 const HTML_VALIDATE_IGNORE = "node_modules/\ndist/\ncoverage/\n";
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
@@ -625,7 +623,6 @@ function buildScripts(recipe, integrations, packageManager) {
   const usesStylelint = has("stylelint");
   const usesPrettier = has("prettier");
   const usesReactDoctor = has("react-doctor");
-  const usesTypeScript = has("typescript");
   const usesKnip = has("knip");
   const usesHtmlValidate = has("html-validate");
   const usesVarlock = has("varlock");
@@ -686,15 +683,6 @@ function buildScripts(recipe, integrations, packageManager) {
     }
   }
 
-  if (recipe.scripts?.typecheck && usesTypeScript) {
-    scripts.typecheck = "tsc --noEmit";
-  } else if (recipe.scripts?.typecheck) {
-    omittedScripts.push({
-      script: "typecheck",
-      reason: "typecheck was requested but the TypeScript integration is not selected.",
-    });
-  }
-
   if (usesReactDoctor) {
     scripts["react:doctor"] = "react-doctor --offline";
     scripts["react:doctor:diff"] = "react-doctor --offline --diff";
@@ -722,7 +710,6 @@ function buildScripts(recipe, integrations, packageManager) {
       "lint",
       usesHtmlValidate ? "lint:html" : null,
       "format:check",
-      usesTypeScript && recipe.scripts?.typecheck ? "typecheck" : null,
       usesKnip ? "knip" : null,
       usesReactDoctor ? "react:doctor" : null,
       usesVarlock ? "env:load" : null,
@@ -981,7 +968,7 @@ If the MCP transport closes or reports \`-32000\` during or immediately after
 \`calavera.config.json\`, \`.calavera/state.json\`, generated files, and package
 metadata before retrying the apply.
 
-Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`.prettierrc.json\`, \`.stylelintrc.json\`, and \`tsconfig.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
+Before composing a recipe, call \`inspect_project\` or inspect the project for existing tooling files such as \`package.json\`, \`calavera.config.json\`, \`.editorconfig\`, \`eslint.config.js\`, \`.prettierrc.json\`, and \`.stylelintrc.json\`. Mention likely conflicts or local conventions before proposing changes. If conflicts exist, say whether they are hard stops or migration decisions, then use \`dry_run_apply\` to show the impact when adoption is still possible.
 
 If the MCP server cannot be registered, use the hosted Web UI to compose and download a recipe:
 
@@ -1127,29 +1114,6 @@ function createHtmlValidateConfig(integrations) {
       {},
       ...integrations.map((integration) => integration.htmlValidate?.rules ?? {}),
     ),
-  };
-}
-
-function createTSConfig() {
-  return {
-    compilerOptions: {
-      allowJs: true,
-      esModuleInterop: true,
-      forceConsistentCasingInFileNames: true,
-      isolatedModules: true,
-      module: "ESNext",
-      moduleResolution: "bundler",
-      noEmit: true,
-      noUncheckedIndexedAccess: true,
-      resolveJsonModule: true,
-      skipLibCheck: true,
-      strict: true,
-      target: "ESNext",
-      types: ["node"],
-      verbatimModuleSyntax: true,
-    },
-    include: TSC_INCLUDE_PATTERNS,
-    exclude: ["node_modules"],
   };
 }
 
@@ -1479,13 +1443,6 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
     });
   }
 
-  if (integrations.some((integration) => integration.id === "typescript")) {
-    plans.push({
-      path: "tsconfig.json",
-      contents: `${JSON.stringify(createTSConfig(), null, 2)}\n`,
-    });
-  }
-
   if (integrations.some((integration) => integration.id === GITHUB_REPOSITORY_CONTROLS_ID)) {
     plans.push(
       ...githubRepositoryControlManagedFiles(integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID]),
@@ -1670,7 +1627,6 @@ export async function inspectProject(recipe, options = {}) {
     "lint:fix",
     "format",
     "format:check",
-    "typecheck",
     "repo:controls:check",
     "repo:controls:apply",
   ]) {
@@ -1907,19 +1863,6 @@ export async function applyRecipeObject(recipe, options = {}) {
       await writeManagedJSONFile(
         "knip.json",
         createKnipConfig(),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
-  if (integrations.some((integration) => integration.id === "typescript")) {
-    managedFiles.push(
-      await writeManagedJSONFile(
-        "tsconfig.json",
-        createTSConfig(),
         applyOptions.dryRun,
         changes,
         previousState,
@@ -2758,7 +2701,6 @@ async function doctor(options) {
         ? "react-doctor.config.json"
         : null,
       integrations.some((integration) => integration.id === "knip") ? "knip.json" : null,
-      integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
     ].filter(isNotEmptyString);
 
     for (const file of expectedFiles) {
@@ -2823,7 +2765,6 @@ function expectedManagedFiles(integrations) {
       ? "react-doctor.config.json"
       : null,
     integrations.some((integration) => integration.id === "knip") ? "knip.json" : null,
-    integrations.some((integration) => integration.id === "typescript") ? "tsconfig.json" : null,
   ].filter(isNotEmptyString);
 }
 

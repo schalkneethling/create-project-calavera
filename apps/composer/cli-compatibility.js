@@ -8,7 +8,6 @@ export const CLI_VERSION_PATTERN =
 
 const fallbackIntegrationIds = new Set([
   "editorconfig",
-  "typescript",
   "react-doctor",
   "eslint",
   "typescript-eslint",

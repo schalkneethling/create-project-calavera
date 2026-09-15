@@ -184,10 +184,9 @@ export const recipeToolInputDescriptions = Object.freeze({
 
 /** @type {Record<string, string[]>} */
 export const profileDefaults = {
-  modern: ["editorconfig", "typescript", "stylelint", "stylelint-standard", "stylelint-baseline"],
+  modern: ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
   classic: [
     "editorconfig",
-    "typescript",
     "eslint",
     "typescript-eslint",
     "eslint-config-prettier",
@@ -227,7 +226,6 @@ export const defaultScriptFlags = {
   "lint:fix": true,
   format: true,
   "format:check": true,
-  typecheck: true,
   quality: true,
 };
 
@@ -725,7 +723,7 @@ export function catalogResponse(currentConfiguration) {
     toolInput: {
       accepts:
         "Use either an integration id or its label in the compose_recipe tools array. Matching is case-insensitive.",
-      examples: ["typescript", "Stylelint", "JSX-A11y"],
+      examples: ["editorconfig", "Stylelint", "JSX-A11y"],
     },
     defaults: profileDefaults,
     currentConfiguration,

@@ -72,13 +72,9 @@
           "type": "boolean",
           "description": "Generate a format check script when formatting integrations are selected."
         },
-        "typecheck": {
-          "type": "boolean",
-          "description": "Generate a TypeScript typecheck script when the TypeScript integration is selected."
-        },
         "quality": {
           "type": "boolean",
-          "description": "Generate a combined quality script from the available lint, format, typecheck, Knip, and React Doctor scripts."
+          "description": "Generate a combined quality script from the available lint, format, Knip, and React Doctor scripts."
         }
       }
     },
@@ -286,7 +282,6 @@
       "type": "string",
       "enum": [
         "editorconfig",
-        "typescript",
         "knip",
         "html-validate",
         "varlock",

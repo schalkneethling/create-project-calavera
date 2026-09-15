@@ -19,7 +19,6 @@ export const integrationConfigFiles = Object.freeze({
   prettier: [".prettierrc.json", ".prettierignore"],
   "react-doctor": ["react-doctor.config.json"],
   stylelint: [".stylelintrc.json"],
-  typescript: ["tsconfig.json"],
 });
 
 export const projectInspectionFiles = Object.freeze([
