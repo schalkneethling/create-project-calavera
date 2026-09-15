@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import baselineData from "../data/baseline.json" with { type: "json" };
+import packageJson from "../package.json" with { type: "json" };
 import { BASELINE_SNAPSHOT_DATE, BASELINE_SNAPSHOT_YEAR } from "../scripts/snapshot.mjs";
 import {
   baselineConfiguration,
@@ -17,8 +18,10 @@ import {
 import { isCssSpecificationUrl } from "../src/specification-url.js";
 
 test("generated Baseline data records pinned sources and CSS features", () => {
-  assert.equal(baselineMetadata.sources.webFeatures, "3.37.0");
-  assert.equal(baselineMetadata.sources.baselineBrowserMapping, "2.11.9");
+  assert.deepEqual(baselineMetadata.sources, {
+    webFeatures: packageJson.dependencies["web-features"],
+    baselineBrowserMapping: packageJson.dependencies["baseline-browser-mapping"],
+  });
   assert.equal(baselineMetadata.generatedAt, `${BASELINE_SNAPSHOT_DATE}T00:00:00.000Z`);
   assert.equal(baselineMetadata.currentYear, BASELINE_SNAPSHOT_YEAR);
   assert.ok(baselineMetadata.featureCount > 100);
