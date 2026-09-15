@@ -1,6 +1,0 @@
----
-"create-project-calavera": major
-"@schalkneethling/calavera-skill-calavera": patch
----
-
-Remove the JavaScript and TypeScript ESLint flat config integration (`eslint`) and the eleven entries that include it (`typescript-eslint`, `eslint-config-prettier`, `eslint-react`, `eslint-jsx-a11y`, `eslint-import`, `eslint-n`, `eslint-promise`, `eslint-unicorn`, `eslint-sonarjs`, `eslint-vitest`, `eslint-jest`). Calavera no longer writes `eslint.config.js` or adds `eslint` to the `lint` and `lint:fix` scripts; on a Vite+ project, `vp lint` and `vp check` provide JavaScript and TypeScript linting. Nine of the removed plugin entries (`eslint-react`, `eslint-jsx-a11y`, `eslint-import`, `eslint-n`, `eslint-promise`, `eslint-unicorn`, `eslint-sonarjs`, `eslint-vitest`, `eslint-jest`) installed a dependency but never entered the generated configuration; projects that selected them can remove that dependency. A `calavera.config.json` that names any removed id now fails validation as an unknown id. This removal is the JavaScript ESLint host only; the CSS lint host css-evolve needs (`@eslint/css`) is unaffected. See [ADR-0005](../docs/adr/0005-remove-eslint-flat-config.md) and the catalog audit for the evidence.
