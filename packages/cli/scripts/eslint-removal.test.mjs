@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtempDisposable, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -113,10 +113,12 @@ test("validate_recipe rejects a recipe that requests eslint-react", async () => 
 
 test("a classic profile dry run plans no eslint.config.js and a lint script without eslint", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-eslint-removal-dry-run-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-eslint-removal-dry-run-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
     const recipe = buildRecipe("classic", [...profileDefaults.classic], "npm");
@@ -163,10 +165,12 @@ test("a classic profile dry run plans no eslint.config.js and a lint script with
 
 test("inspect_project reports no ESLint finding for an existing eslint.config.js", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-eslint-removal-inspect-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-eslint-removal-inspect-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     await writeFile("eslint.config.js", "export default [];\n");
 
