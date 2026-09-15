@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { mkdtempDisposable, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -83,10 +83,12 @@ test("validate_recipe rejects a recipe that requests typescript", async () => {
 
 test("a recipe that still sets scripts.typecheck produces no typecheck script", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-typecheck-flag-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-typecheck-flag-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
     const recipe = {
@@ -132,10 +134,12 @@ test("a recipe that still sets scripts.typecheck produces no typecheck script", 
 
 test("a modern profile dry run plans no tsconfig.json and no typecheck script", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-typescript-removal-dry-run-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-typescript-removal-dry-run-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
     const recipe = buildRecipe("modern", [...profileDefaults.modern], "npm");
@@ -180,10 +184,12 @@ test("a modern profile dry run plans no tsconfig.json and no typecheck script", 
 
 test("inspect_project reports no TypeScript finding for an existing tsconfig.json", async () => {
   const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-typescript-removal-inspect-"));
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-typescript-removal-inspect-"),
+  );
 
   try {
-    process.chdir(projectDirectory);
+    process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     await writeFile("tsconfig.json", `${JSON.stringify({ compilerOptions: {} }, null, 2)}\n`);
 
