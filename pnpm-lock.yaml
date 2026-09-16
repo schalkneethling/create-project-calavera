@@ -161,8 +161,8 @@ importers:
         specifier: 2.11.23
         version: 2.11.23
       web-features:
-        specifier: 3.37.0
-        version: 3.37.0
+        specifier: 3.38.0
+        version: 3.38.0
 
   packages/cli:
     dependencies:
@@ -2928,8 +2928,8 @@ packages:
     resolution: {integrity: sha512-3hu+tD8YzSLGuFYtPRb48vdhKMi0KQV5sn+uWr8+7dMEq/2G/dtLrdDinkLjqq5TIbIBjYJ4Ax/n3YiaW7QM8A==}
     engines: {node: 20 || >=22}
 
-  web-features@3.37.0:
-    resolution: {integrity: sha512-47x5zchtpsvvH/EEQ0h3d3E9kZyFxFyk6LkmYHXDZjLF0RAa3OV2s8dMRqphp/PTxxrd/iZwz37dte6xWgV7mQ==}
+  web-features@3.38.0:
+    resolution: {integrity: sha512-FfexTigrIL9tVr/JgX9kBlzIlMfBG4eD38crZQiJPIo46PJ3Qj8RVUM7zmpsozooq2ImHM7xiUY6gIv5mo/7rQ==}
 
   which-command@0.1.0:
     resolution: {integrity: sha512-XZyoF5/5hZtXitIwzrU4NKK+Wtbb9aB9CezUEw2Q0wlYK8NUYQxC1rRXgNueYLtBAJwXIb+/tFVk4dozciNJMA==}
@@ -5492,7 +5492,7 @@ snapshots:
 
   walk-up-path@4.0.0: {}
 
-  web-features@3.37.0: {}
+  web-features@3.38.0: {}
 
   which-command@0.1.0: {}
 
