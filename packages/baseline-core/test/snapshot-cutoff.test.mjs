@@ -68,6 +68,22 @@ test("latest release date ignores empty and unknown release dates", () => {
   assert.equal(latestReleaseDate([]), null);
 });
 
+test("latest release date ignores an impossible calendar date that would otherwise sort as the maximum", () => {
+  assert.equal(
+    latestReleaseDate([
+      {
+        date: "2026-02-01",
+        browsers: [{ browser: "chrome", version: "1", release_date: "2026-02-30" }],
+      },
+      {
+        date: "2024-01-01",
+        browsers: [{ browser: "firefox", version: "1", release_date: "2024-01-09" }],
+      },
+    ]),
+    "2024-01-09",
+  );
+});
+
 test("scripts/snapshot.mjs matches the template the generator writes", () => {
   assert.equal(readFileSync(snapshotPath, "utf8"), renderSnapshotModule(BASELINE_SNAPSHOT_DATE));
 });

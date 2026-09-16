@@ -1,11 +1,16 @@
 const DATE_PATTERN = /^\d{4}-\d{2}-\d{2}$/;
 const PACKAGE_NAME = "@schalkneethling/calavera-baseline-core";
 
+function isCalendarDate(value) {
+  const parsed = new Date(`${value}T00:00:00.000Z`);
+  return !Number.isNaN(parsed.getTime()) && parsed.toISOString().slice(0, 10) === value;
+}
+
 export function latestReleaseDate(events) {
   return (
     events
       .flatMap(({ browsers }) => browsers.map(({ release_date: releaseDate }) => releaseDate))
-      .filter((releaseDate) => DATE_PATTERN.test(releaseDate ?? ""))
+      .filter((releaseDate) => DATE_PATTERN.test(releaseDate ?? "") && isCalendarDate(releaseDate))
       .sort()
       .at(-1) ?? null
   );
@@ -16,8 +21,7 @@ export function validateCutoff(value, { today, latestReleaseDate: latest }) {
     throw new Error(`Cutoff ${value} is not a YYYY-MM-DD date.`);
   }
 
-  const parsed = new Date(`${value}T00:00:00.000Z`);
-  if (Number.isNaN(parsed.getTime()) || parsed.toISOString().slice(0, 10) !== value) {
+  if (!isCalendarDate(value)) {
     throw new Error(`Cutoff ${value} is not a calendar date.`);
   }
 

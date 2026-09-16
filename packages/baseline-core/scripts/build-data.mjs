@@ -143,6 +143,7 @@ async function promptForCutoff(context) {
       validateCutoff(answer, context);
       return answer;
     } catch (error) {
+      // eslint-disable-next-line no-console -- reports the rejected answer before re-asking
       console.error(error.message);
     }
   }
