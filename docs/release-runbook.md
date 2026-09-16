@@ -60,7 +60,9 @@ pnpm install --frozen-lockfile
 pnpm release:prepare
 ```
 
-This single command runs the full local rehearsal (`release:rehearse`), the workflow audit
+This single command runs the Baseline data check (`baseline:check`) first, which fails on a stale
+snapshot cutoff or stale generated data and otherwise prints one line with the cutoff and source
+versions, then the full local rehearsal (`release:rehearse`), the workflow audit
 (`workflow:check`), and confirms Changesets has no packages left to version. It then compares the
 local workspace against the npm registry and prints a plan, for example:
 

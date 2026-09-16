@@ -225,12 +225,15 @@ function assertCandidateUnchanged(sha) {
   }
 }
 
+export const releaseGates = [
+  ["pnpm", ["install", "--frozen-lockfile"]],
+  ["pnpm", ["baseline:check"]],
+  ["pnpm", ["release:rehearse"]],
+  ["pnpm", ["workflow:check"]],
+];
+
 function runGates(sha) {
-  for (const [command, args] of [
-    ["pnpm", ["install", "--frozen-lockfile"]],
-    ["pnpm", ["release:rehearse"]],
-    ["pnpm", ["workflow:check"]],
-  ]) {
+  for (const [command, args] of releaseGates) {
     run(command, args);
     assertCandidateUnchanged(sha);
   }
