@@ -20,7 +20,7 @@
     "format:all:check": "oxfmt --check .",
     "format:check": "oxfmt --check .",
     "schema:check": "pnpm --filter create-project-calavera schema:check",
-    "test": "pnpm --recursive --if-present test",
+    "test": "node --test scripts/lint-tooling.test.mjs && pnpm --recursive --if-present test",
     "typecheck": "tsc --noEmit",
     "publish:check": "pnpm --filter create-project-calavera publish:check && pnpm --filter @schalkneethling/calavera-baseline-core exec publint && pnpm --filter @schalkneethling/calavera-artifact-core exec publint && pnpm --filter './packages/artifacts/*' --recursive exec publint",
     "baseline:check": "pnpm --filter @schalkneethling/calavera-baseline-core check:data",
