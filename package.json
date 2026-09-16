@@ -42,7 +42,7 @@
     "ajv": "8.20.0",
     "eslint": "^10.10.0",
     "fledgling": "1.2.1",
-    "globals": "^17.6.0",
+    "globals": "^17.12.0",
     "html-validate": "^11.15.0",
     "knip": "^6.35.1",
     "oxfmt": "^0.67.0",

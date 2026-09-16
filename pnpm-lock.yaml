@@ -36,8 +36,8 @@ importers:
         specifier: 1.2.1
         version: 1.2.1(@gunshi/plugin-i18n@0.36.0)
       globals:
-        specifier: ^17.6.0
-        version: 17.7.0
+        specifier: ^17.12.0
+        version: 17.12.0
       html-validate:
         specifier: ^11.15.0
         version: 11.15.0
@@ -1854,8 +1854,8 @@ packages:
     resolution: {integrity: sha512-awConJSVCHVGND6x3tmMaKcQvwXLhjdkmomy2W+Goaui8YPgYgXJZewhg3fWC+DlfqqQuWg8AwqjGTD2nAPVWg==}
     engines: {node: '>=6'}
 
-  globals@17.7.0:
-    resolution: {integrity: sha512-Czmyns5dUsq4seFBR/Kdydhmo8y9kC79hiSkPn0YcGtNnYWnrgt0vjrSjx9tspoDGWm2CMarffRuLjM4xUz8xg==}
+  globals@17.12.0:
+    resolution: {integrity: sha512-cezEd/DTyyht9cvSSURyygXPfy04GtWO/5e6ZPvH7fCtjKz9PYOmuawphw1Ctd1f6C+5JypXfGD7ahNMXvevBA==}
     engines: {node: '>=18'}
 
   globby@16.2.4:
@@ -4394,7 +4394,7 @@ snapshots:
       kind-of: 6.0.3
       which: 1.3.1
 
-  globals@17.7.0: {}
+  globals@17.12.0: {}
 
   globby@16.2.4:
     dependencies:
