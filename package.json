@@ -23,6 +23,7 @@
     "test": "pnpm --recursive --if-present test",
     "typecheck": "tsc --noEmit",
     "publish:check": "pnpm --filter create-project-calavera publish:check && pnpm --filter @schalkneethling/calavera-baseline-core exec publint && pnpm --filter @schalkneethling/calavera-artifact-core exec publint && pnpm --filter './packages/artifacts/*' --recursive exec publint",
+    "baseline:check": "pnpm --filter @schalkneethling/calavera-baseline-core check:data",
     "release:status": "changeset status",
     "release:version": "node scripts/release-version.mjs",
     "release:prepare": "node scripts/release-orchestrator.mjs prepare",

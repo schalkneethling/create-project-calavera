@@ -18,7 +18,8 @@
   },
   "scripts": {
     "build:data": "node scripts/build-data.mjs",
-    "test": "node scripts/build-data.mjs --check && node --test test/*.test.mjs"
+    "check:data": "node scripts/build-data.mjs --check",
+    "test": "pnpm check:data && node --test test/*.test.mjs"
   },
   "dependencies": {
     "baseline-browser-mapping": "2.11.23",

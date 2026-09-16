@@ -188,3 +188,12 @@ test("--check never prompts when stdin is not a terminal", () => {
   const result = runBuildData("--check");
   assert.equal(result.status, 0, result.stderr || result.stdout);
 });
+
+test("--check reports the current data state in exactly one stdout line", () => {
+  const result = runBuildData("--check");
+  assert.equal(result.status, 0, result.stderr || result.stdout);
+  assert.equal(
+    result.stdout,
+    `Baseline data current: cutoff ${BASELINE_SNAPSHOT_DATE}, web-features ${packageJson.dependencies["web-features"]}, baseline-browser-mapping ${packageJson.dependencies["baseline-browser-mapping"]}.\n`,
+  );
+});
