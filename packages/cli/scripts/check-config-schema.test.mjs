@@ -368,9 +368,9 @@ test("bundled skills expose complete OpenAI interface metadata", async () => {
     const skill = await readFile(join(payloadPath, "SKILL.md"), "utf8");
     const metadata = await readFile(join(payloadPath, "agents/openai.yaml"), "utf8");
     const declaredSkillName = skill.match(/^name: ([a-z0-9-]+)$/m)?.[1];
-    const displayName = metadata.match(/^  display_name: "([^"\n]+)"$/m)?.[1];
-    const shortDescription = metadata.match(/^  short_description: "([^"\n]+)"$/m)?.[1];
-    const defaultPrompt = metadata.match(/^  default_prompt: "([^"\n]+)"$/m)?.[1];
+    const displayName = metadata.match(/^ {2}display_name: "([^"\n]+)"$/m)?.[1];
+    const shortDescription = metadata.match(/^ {2}short_description: "([^"\n]+)"$/m)?.[1];
+    const defaultPrompt = metadata.match(/^ {2}default_prompt: "([^"\n]+)"$/m)?.[1];
 
     await prettier.format(metadata, { parser: "yaml" });
     assert.ok(declaredSkillName, `${skillName} must declare a skill name`);
@@ -387,7 +387,7 @@ test("bundled skills expose complete OpenAI interface metadata", async () => {
     displayNames.add(displayName);
 
     if (skillName === "code-review") {
-      assert.match(metadata, /^policy:\n  allow_implicit_invocation: false$/m);
+      assert.match(metadata, /^policy:\n {2}allow_implicit_invocation: false$/m);
     } else {
       assert.doesNotMatch(metadata, /^policy:/m);
     }

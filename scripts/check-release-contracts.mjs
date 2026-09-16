@@ -16,7 +16,7 @@ const workflowJob = (workflow, jobName) => {
   const start = lines.findIndex((line) => line === `  ${jobName}:`);
   assert.notEqual(start, -1, `workflow must define jobs.${jobName}`);
   const nextJob = lines.findIndex(
-    (line, index) => index > start && /^  [a-zA-Z0-9_-]+:$/.test(line),
+    (line, index) => index > start && /^ {2}[a-zA-Z0-9_-]+:$/.test(line),
   );
   return lines.slice(start, nextJob === -1 ? undefined : nextJob).join("\n");
 };
