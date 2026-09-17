@@ -48,7 +48,7 @@ Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint
 
 ## Next session starts with
 
-- Review and merge #472 so `pnpm release:prepare` passes again; the Baseline Explorer needs a separate static deployment for the browser-data change. A local Playwright run needs `pnpm --filter @calavera/baseline-explorer exec playwright install chromium` once. Merge order: #473 first, then #474.
-- Review and merge #446 (pull request CI); once it is on `main`, make the `Check` status required on `main` and shrink the validation guidance in PR.md to "CI must be green". Its run goes green only after #473 merges.
+- Review and merge #473 so `pnpm release:prepare` passes again; the Baseline Explorer needs a separate static deployment for the browser-data change. A local Playwright run needs `pnpm --filter @calavera/baseline-explorer exec playwright install chromium` once. Merge order: #473 first, then #474.
+- Review and merge #474 (pull request CI); once it is on `main`, make the `Check` status required on `main` and shrink the validation guidance in PR.md to "CI must be green". Its run goes green only after #473 merges.
 - Merge the stack bottom-up (CAL-013, CAL-014, CAL-015, CAL-016), then the Version Packages release for 3.0.0; then CAL-011 (profiles collapse on a `vp` project). React Doctor follow-up: re-express its two scripts as `vp run` tasks.
 - A Version Packages pull request for 3.0.0 will open from the CAL-012 Changeset; hold it until CAL-013 to CAL-016 have merged so the major ships once. The five follow-up issues named in ADR-0001 are open: #429 to #433. The unparseable-manifest MCP-level test waits on #429.
