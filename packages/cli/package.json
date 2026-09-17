@@ -47,7 +47,7 @@
     "publish:check": "publint"
   },
   "dependencies": {
-    "@clack/prompts": "^1.8.0",
+    "@clack/prompts": "^1.8.1",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "@schalkneethling/calavera-artifact-core": "workspace:^",
     "@schalkneethling/calavera-baseline-core": "workspace:^",
