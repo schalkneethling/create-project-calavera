@@ -22,7 +22,7 @@
     "test": "pnpm check:data && node --test test/*.test.mjs"
   },
   "dependencies": {
-    "baseline-browser-mapping": "2.11.23",
+    "baseline-browser-mapping": "2.11.24",
     "web-features": "3.38.0"
   }
 }
