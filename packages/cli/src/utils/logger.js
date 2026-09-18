@@ -1,3 +1,4 @@
+/* eslint-disable no-console -- this module is the console wrapper the rest of the CLI logs through */
 import { styledValues } from "./text.js";
 
 export const logger = {
