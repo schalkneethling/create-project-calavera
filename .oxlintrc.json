@@ -1,0 +1,7 @@
+{
+  "plugins": ["eslint", "typescript", "unicorn", "oxc"],
+  "rules": {
+    "no-console": ["error", { "allow": ["clear", "info"] }],
+    "no-regex-spaces": "error"
+  }
+}
