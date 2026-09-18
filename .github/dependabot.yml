@@ -11,6 +11,13 @@ updates:
       semver-patch-days: 2
       include:
         - "*"
+    # Bumped by .github/workflows/baseline-data-refresh.yml, which also
+    # regenerates packages/baseline-core/data/baseline.json, the snapshot
+    # cutoff, and the Changeset in the same pull request. A Dependabot bump
+    # moves the pin on its own and leaves the generated data behind.
+    ignore:
+      - dependency-name: "baseline-browser-mapping"
+      - dependency-name: "web-features"
 
   - package-ecosystem: "github-actions"
     directory: "/"

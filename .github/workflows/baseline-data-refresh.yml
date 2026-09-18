@@ -1,0 +1,95 @@
+name: Refresh Baseline data
+
+on:
+  schedule:
+    - cron: "37 4 * * 2"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
+
+jobs:
+  refresh:
+    name: Refresh Baseline data
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      pull-requests: write
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - name: Setup pnpm
+        uses: pnpm/setup@703c52620218391530e48b9e8870d5c0082e1b9b # v2.1.0
+        with:
+          runtime: node@24
+          install: false
+          cache: false
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Bump the Baseline data sources
+        # pnpm update rewrites the pins in packages/baseline-core/package.json
+        # without adding a range, and updates pnpm-lock.yaml in the same run. When
+        # minimumReleaseAge in pnpm-workspace.yaml still withholds the latest
+        # version, update leaves the pin where it is and exits 0, so a release
+        # published in the last day simply waits for the next run.
+        run: pnpm --filter @schalkneethling/calavera-baseline-core update baseline-browser-mapping@latest web-features@latest
+      - name: Refresh the generated data
+        id: refresh
+        working-directory: packages/baseline-core
+        run: |
+          set -euo pipefail
+          if check_output="$(node scripts/build-data.mjs --check 2>&1)"; then
+            printf '%s\n' "$check_output"
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          printf '%s\n' "$check_output"
+          # --check raises the stale cutoff before the stale data and exits 1
+          # either way, so the two are told apart by the one phrase only
+          # staleCutoffMessages in scripts/snapshot-cutoff.mjs produces.
+          if printf '%s' "$check_output" | grep -q "Baseline snapshot cutoff"; then
+            # The mapping carries a browser release later than the snapshot
+            # cutoff, so the cutoff advances to today. validateCutoff rejects
+            # today when a release in the mapping is dated after it, which
+            # fails this step with that reason rather than writing an
+            # impossible cutoff.
+            node scripts/build-data.mjs --changeset --cutoff "$(date -u +%F)" | tee "$RUNNER_TEMP/baseline-refresh-summary.txt"
+          else
+            # Only the pinned versions moved. Leaving --cutoff off keeps the
+            # cutoff where it is, so a weekly run does not advance it on its own.
+            node scripts/build-data.mjs --changeset | tee "$RUNNER_TEMP/baseline-refresh-summary.txt"
+          fi
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+      - name: Compose the pull request body
+        if: steps.refresh.outputs.changed == 'true'
+        run: |
+          set -euo pipefail
+          {
+            echo "The scheduled refresh moved the pinned Baseline data sources in \`packages/baseline-core\` and regenerated the data built from them."
+            echo
+            echo '```'
+            cat "$RUNNER_TEMP/baseline-refresh-summary.txt"
+            echo '```'
+            echo
+            echo "Dependabot ignores both packages, so this workflow is the only path by which they move."
+            echo
+            echo "The \`Check\` workflow must be green before this merges. Because this pull request was opened with \`GITHUB_TOKEN\`, GitHub holds its \`pull_request\` workflow runs until a user with write access approves them: open the Checks tab and select Approve workflows to run."
+          } > "$RUNNER_TEMP/baseline-refresh-body.md"
+      - name: Open or update the refresh pull request
+        if: steps.refresh.outputs.changed == 'true'
+        uses: peter-evans/create-pull-request@5f6978faf089d4d20b00c7766989d076bb2fc7f1 # v8.1.1
+        with:
+          token: ${{ secrets.GITHUB_TOKEN }}
+          base: main
+          branch: baseline-data-refresh
+          delete-branch: true
+          sign-commits: true
+          commit-message: "chore(baseline-core): refresh Baseline data sources"
+          title: "chore(baseline-core): refresh Baseline data sources"
+          body-path: ${{ runner.temp }}/baseline-refresh-body.md
