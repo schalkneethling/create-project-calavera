@@ -37,6 +37,11 @@ test("the root lint script fails the build on a rule violation", async () => {
     const oxlintCommand = command.split("&&", 1)[0].trim();
     assert.match(oxlintCommand, /^oxlint\b/);
     assert.match(oxlintCommand, /--deny-warnings/);
+    assert.doesNotMatch(
+      oxlintCommand,
+      /(?:^|\s)(?:-c|--config)(?:=|\s)/,
+      `${oxlintCommand} must rely on the discovered .oxlintrc.json, not an explicit configuration path.`,
+    );
   }
 });
 
