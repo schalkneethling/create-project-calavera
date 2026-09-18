@@ -33,8 +33,11 @@ test("oxlint reads a configuration file it discovers on its own", async () => {
 test("the root lint script fails the build on a rule violation", async () => {
   const { scripts } = await readJson("package.json");
 
-  assert.match(scripts.lint, /--deny-warnings/);
-  assert.match(scripts["lint:fix"], /--deny-warnings/);
+  for (const command of [scripts.lint, scripts["lint:fix"]]) {
+    const oxlintCommand = command.split("&&", 1)[0].trim();
+    assert.match(oxlintCommand, /^oxlint\b/);
+    assert.match(oxlintCommand, /--deny-warnings/);
+  }
 });
 
 test("ESLint is gone from the repository's own tooling", async () => {
