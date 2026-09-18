@@ -79,7 +79,7 @@ jobs:
             echo
             echo "Dependabot ignores both packages, so this workflow is the only path by which they move."
             echo
-            echo "The \`Check\` workflow must be green before this merges. A pull request opened with \`GITHUB_TOKEN\` does not start \`pull_request\` workflows, so close this pull request and reopen it once to start \`Check\`."
+            echo "The \`Check\` workflow must be green before this merges. Because this pull request was opened with \`GITHUB_TOKEN\`, GitHub holds its \`pull_request\` workflow runs until a user with write access approves them: open the Checks tab and select Approve workflows to run."
           } > "$RUNNER_TEMP/baseline-refresh-body.md"
       - name: Open or update the refresh pull request
         if: steps.refresh.outputs.changed == 'true'
