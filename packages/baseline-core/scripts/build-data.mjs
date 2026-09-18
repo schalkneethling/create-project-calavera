@@ -253,6 +253,10 @@ if (options.check) {
   if (current !== serialize(buildDataset(BASELINE_SNAPSHOT_DATE))) {
     throw new Error("Generated Baseline data is stale. Run pnpm build:data in baseline-core.");
   }
+
+  console.info(
+    `Baseline data current: cutoff ${BASELINE_SNAPSHOT_DATE}, web-features ${sources.webFeatures}, baseline-browser-mapping ${sources.baselineBrowserMapping}.`,
+  );
 } else {
   try {
     await generate();

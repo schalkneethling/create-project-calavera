@@ -15,6 +15,7 @@ import {
   packagesFromReleaseNotes,
   parseOptions,
   releaseChannel,
+  releaseGates,
   releaseTag,
   validateReleaseMetadata,
   verifyPublishedPackages,
@@ -222,6 +223,23 @@ test("verifyPublishedPackages rejects a missing or incorrect dist-tag for the pa
           : { status: 0, stdout: "{}", stderr: "" },
     }),
     /pkg-a latest does not point to 1\.0\.0/,
+  );
+});
+
+test("release gates check the Baseline data first, right after the frozen install", async () => {
+  assert.deepEqual(
+    releaseGates.map(([command, args]) => [command, ...args].join(" ")),
+    [
+      "pnpm install --frozen-lockfile",
+      "pnpm baseline:check",
+      "pnpm release:rehearse",
+      "pnpm workflow:check",
+    ],
+  );
+  const { scripts } = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  assert.equal(
+    scripts["baseline:check"],
+    "pnpm --filter @schalkneethling/calavera-baseline-core check:data",
   );
 });
 
