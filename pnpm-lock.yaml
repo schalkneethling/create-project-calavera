@@ -27,8 +27,8 @@ importers:
         specifier: 8.20.0
         version: 8.20.0
       fledgling:
-        specifier: 1.2.1
-        version: 1.2.1(@gunshi/plugin-i18n@0.36.0)
+        specifier: 1.3.1
+        version: 1.3.1(@gunshi/plugin-i18n@0.36.0)
       html-validate:
         specifier: ^11.15.0
         version: 11.15.0
@@ -274,16 +274,8 @@ packages:
     resolution: {integrity: sha512-q/ThtP9gcnEP6xlv7LrY26C2mHqdGBti/MmOVngt/M/oIGYkssmQGxPK9WzBNt2juVcH/vml2WQ+ra8LXYOTaA==}
     engines: {node: ^22.11 || ^24 || >=26}
 
-  '@clack/core@1.5.0':
-    resolution: {integrity: sha512-zNikCcd8BbcEvzzG1sbXFrRHFk5kHPrpwZwksPvf9qyQO1Teb7JaXaOAxXZei9nZLDW0gaZawiuTCji88bTBhw==}
-    engines: {node: '>= 20.12.0'}
-
   '@clack/core@1.5.1':
     resolution: {integrity: sha512-iHTrHA8MtVuLl2TfZySmcKv1qO2PoyC9Z7pfSDozEuV5vtY3/wcOPKJXlqJ5Oq2Cx5DDGQGAMVx6HZfRRoVEbQ==}
-    engines: {node: '>= 20.12.0'}
-
-  '@clack/prompts@1.8.0':
-    resolution: {integrity: sha512-PXzLZ8N34rxmuo4dJg3xtOXhcBse94qGjDqsteoEYrFrrZ5FSjIGwMAuOcv64ln8rHVBBD06XeVGr+/JX+plcA==}
     engines: {node: '>= 20.12.0'}
 
   '@clack/prompts@1.8.1':
@@ -1646,8 +1638,8 @@ packages:
   flatted@3.4.4:
     resolution: {integrity: sha512-5+ybhBZANEJxaH3X5evAFatUxLfEHSr7n6kYJ+1Qd0mUqr4eu9gIf6GDbWHf8RJijHrjjO8G+la14SlL2SeS1Q==}
 
-  fledgling@1.2.1:
-    resolution: {integrity: sha512-2QTrlnTu5mWEgg8TcCUXw5ZmuuwbchbfD90mo9f9KRxVUNCEVBYOUumitdiWPygntzGt7CQ0SlDARvWIHxNxmg==}
+  fledgling@1.3.1:
+    resolution: {integrity: sha512-O/Um9yKBcxpDhPlgSqbIkcmS5DTZBCUJjHv2x4qU4EuEyIwmh/2F3PzQq+g8php42qpxqLcQZyqOnvR3QerQig==}
     engines: {node: '>=18'}
     hasBin: true
 
@@ -2905,20 +2897,8 @@ snapshots:
       '@changesets/types': 7.0.0
       human-id: 4.2.1
 
-  '@clack/core@1.5.0':
-    dependencies:
-      fast-wrap-ansi: 0.2.2
-      sisteransi: 1.0.5
-
   '@clack/core@1.5.1':
     dependencies:
-      fast-wrap-ansi: 0.2.2
-      sisteransi: 1.0.5
-
-  '@clack/prompts@1.8.0':
-    dependencies:
-      '@clack/core': 1.5.0
-      fast-string-width: 3.0.2
       fast-wrap-ansi: 0.2.2
       sisteransi: 1.0.5
 
@@ -3954,9 +3934,9 @@ snapshots:
 
   flatted@3.4.4: {}
 
-  fledgling@1.2.1(@gunshi/plugin-i18n@0.36.0):
+  fledgling@1.3.1(@gunshi/plugin-i18n@0.36.0):
     dependencies:
-      '@clack/prompts': 1.8.0
+      '@clack/prompts': 1.8.1
       '@gunshi/plugin-completion': 0.36.0(@gunshi/plugin-i18n@0.36.0)
       gunshi: 0.36.0
       picocolors: 1.1.1
