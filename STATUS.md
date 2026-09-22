@@ -1,16 +1,16 @@
 # STATUS
 
-Updated: 2026-09-18
+Updated: 2026-09-22
 
 ## Current phase and checkpoint
 
 Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint 0 is in progress: the CQ2 ADR is accepted and the reduced audit worksheet (CAL-001, #448) is complete and approved, but the CQ1 ADR (CAL-003) is outstanding. CQ1 is resolved in the sequencing map text (Calavera provides no JS or TS toolchain to any project) and no ADR file records it yet; the brief's Checkpoint 0 names that ADR as a criterion.
 
-The removal stack (CAL-012 to CAL-016), the Baseline data work (#473, #477), pull request CI (#474), and the repository linting fold (#484) are all on `main`. The Version Packages pull request (#494) for the 3.0.0 release is open.
+The removal stack (CAL-012 to CAL-016), the Baseline data work (#473, #477), pull request CI (#474), the repository linting fold (#484), and the Baseline refresh workflow (#497) are all on `main`; the refresh workflow has run green twice, and #490 is closed. The Version Packages pull request (#494) for the 3.0.0 release is open.
 
 ## Completed this session
 
-- Maintenance outside Increment 1 (#497, branch `baseline-refresh-workflow-497`, pull request open): Dependabot bumped `baseline-browser-mapping` or `web-features` and left the generated Baseline data behind twice in three days (web-features 3.38.0, fixed in #473; baseline-browser-mapping 2.11.24, still failing `Check` in #490), each time needing the same correction by hand. That correction is now a workflow. `.github/dependabot.yml` ignores both packages in the npm ecosystem, and `.github/workflows/baseline-data-refresh.yml` ("Refresh Baseline data", weekly on Tuesday plus `workflow_dispatch`) bumps them with `pnpm update`, which keeps the exact pins and respects `minimumReleaseAge`, then runs `build-data.mjs --check` and acts on what it reports: nothing when the data is current, `--changeset --cutoff <today>` when the cutoff is stale, `--changeset` alone when only the versions moved, so a weekly run never advances the cutoff for its own sake. One pull request from the fixed branch `baseline-data-refresh`, opened by `peter-evans/create-pull-request` with `GITHUB_TOKEN`, carries the bump, the regenerated data, the snapshot cutoff, and the Changeset together. Known limitation: GitHub holds the `pull_request` workflow runs of a pull request opened with `GITHUB_TOKEN` (changelog of 2026-06-11) until a user with write access approves them, so `Check` runs on the refresh pull request only after Approve workflows to run is selected on its Checks tab. The refresh pull request body says so. The alternative workarounds (a fine-grained personal access token or a GitHub App token) need a secret this session did not create. No tests: the wiring is verified by hand at change time. `pnpm workflow:check` (zizmor 1.25.2, offline) reports no findings, and `pnpm exec oxfmt --check` accepts both files.
+- Maintenance outside Increment 1 (#507, branch `remove-release-minting-507`, pull request open): Dependabot's fledgling bump (#504) failed `Check` on a version literal in `scripts/check-release-contracts.mjs`. The literal served the release orchestrator's automated bootstrap path, which ran Fledgling and then a draft-publish-verify ceremony that no test could exercise because minting a name on npm is irreversible. `pnpm release:prepare` now plans the registry first and, before any gate, fails with the exact `pnpm exec fledgling add` dry-run and apply commands when a package name does not exist on npm; the operator mints by hand and reruns. A prerelease as the first real version of a minted package is refused. Trusted-publisher verification runs in prepare for each package the release will publish, so every release now needs npm 11.15.0+ logged in with 2FA. `--bootstrap` and the bootstrap ceremony are removed; unknown orchestrator flags are rejected. The contract check asserts only that the fledgling pin is exact. ADR-0008 records the decision; patch Changeset for the release-with-confidence skill. Red tests, removal, and docs landed as separate commits. `pnpm check` exits 0.
 
 ## In progress
 
@@ -39,11 +39,11 @@ The removal stack (CAL-012 to CAL-016), the Baseline data work (#473, #477), pul
 
 ## Decisions taken this session (with ADR link)
 
-- No ADR. #497 records the trade-off it accepts: the two Baseline data sources leave Dependabot's cooldown and grouping and follow the refresh workflow's weekly cadence instead, with `minimumReleaseAge` in `pnpm-workspace.yaml` still governing what pnpm selects.
+- Package minting removed from the release orchestrator: `docs/adr/0008-remove-package-minting-from-release-orchestrator.md` (Accepted 2026-09-22). Whether a Fledgling major bump deserves its own hard gate is left open.
 
 ## Next session starts with
 
-- Review and merge #497, then trigger `Refresh Baseline data` once with `workflow_dispatch` and close #490 when the refresh pull request supersedes it. Confirm on that run that Dependabot opens nothing further for `baseline-browser-mapping` or `web-features`, and that `Check` runs on the refresh pull request after its held run is approved with Approve workflows to run.
+- Review and merge the #507 pull request. Then rebase Dependabot #504 (`@dependabot rebase`), confirm `Check` passes on the exact-pin assertion, and merge it. #502, #503, #505, and #506 are unaffected by #507.
 - Merge #494 (Version Packages) for the 3.0.0 release, then CAL-011 (profiles collapse on a `vp` project). React Doctor follow-up: re-express its two scripts as `vp run` tasks.
 - Make the `Check` status required on `main` and shrink the validation guidance in PR.md to "CI must be green".
 - Write the CQ1 ADR (CAL-003) so Checkpoint 0 can pass.
