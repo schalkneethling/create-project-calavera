@@ -11,6 +11,8 @@ const repository = "schalkneethling/create-project-calavera";
 const baseBranch = "main";
 const workflow = "publish.yml";
 const publishEnvironment = "publish";
+const placeholderVersion = "0.0.0";
+const usage = "Usage: release-orchestrator.mjs <prepare|publish> [--tag <tag>] [--yes]";
 
 export class ReleaseError extends Error {}
 
@@ -197,6 +199,10 @@ export async function registryPlan(packages) {
   return planned;
 }
 
+async function planPublicPackages() {
+  return registryPlan(await discoverPublicPackages());
+}
+
 function assertCleanCandidate() {
   const branch = capture("git", ["branch", "--show-current"]);
   if (branch !== baseBranch) {
@@ -273,7 +279,7 @@ async function confirm(expected, assumeYes) {
   if (answer !== expected) throw new ReleaseError("Release transition cancelled.");
 }
 
-function fledglingArgs(packageNames, dryRun) {
+export function fledglingArgs(packageNames, dryRun) {
   return [
     "exec",
     "fledgling",
@@ -289,10 +295,12 @@ function fledglingArgs(packageNames, dryRun) {
     "--permissions",
     "publish",
     "--placeholder-version",
-    "0.0.0",
-    "--tag",
-    "bootstrap",
+    placeholderVersion,
   ];
+}
+
+export function fledglingCommand(packageNames, dryRun) {
+  return commandText("pnpm", fledglingArgs(packageNames, dryRun));
 }
 
 export function hasExpectedTrust(response) {
@@ -309,7 +317,13 @@ export function hasExpectedTrust(response) {
 }
 
 function verifyTrust(packageName) {
-  const response = captureJson("npm", ["trust", "list", packageName, "--json"]);
+  const { stdout } = runQuiet("npm", ["trust", "list", packageName, "--json"]);
+  let response;
+  try {
+    response = JSON.parse(stdout);
+  } catch {
+    throw new ReleaseError(`npm trust list ${packageName} --json returned malformed JSON.`);
+  }
   if (!hasExpectedTrust(response)) {
     throw new ReleaseError(
       `Trusted publisher for ${packageName} does not match the required GitHub workflow, repository, environment, and publish permission.`,
@@ -317,102 +331,46 @@ function verifyTrust(packageName) {
   }
 }
 
-async function bootstrapNewPackages(plan, options) {
-  const newPackages = plan.packages.filter(({ packageExists }) => !packageExists);
-  if (newPackages.length === 0) return { plan, bootstrapped: false };
-
-  const npmVersion = capture("npm", ["--version"]).split(".").map(Number);
-  if (npmVersion[0] < 11 || (npmVersion[0] === 11 && npmVersion[1] < 15)) {
-    throw new ReleaseError("Fledgling requires npm 11.15.0 or newer.");
-  }
-  const names = newPackages.map(({ name }) => name);
-  run("pnpm", fledglingArgs(names, true));
-  if (!options.bootstrap) {
-    throw new ReleaseError(
-      `New package names require a reviewed bootstrap. Re-run pnpm release:prepare -- --bootstrap after reviewing the Fledgling plan.`,
-    );
-  }
-  if (newPackages.some(({ version }) => semver.prerelease(version) !== null)) {
-    throw new ReleaseError(
-      "Bootstrap new package names before prerelease versioning so a real stable initial version can replace npm's mandatory latest placeholder.",
-    );
-  }
-  const otherMissing = plan.packages.filter(
-    ({ published, packageExists }) => !published && packageExists,
+function assertPackagesMinted(packages) {
+  const names = packages.filter(({ packageExists }) => !packageExists).map(({ name }) => name);
+  if (names.length === 0) return;
+  throw new ReleaseError(
+    [
+      `New package names must be minted on npm by hand before a release: ${names.join(", ")}.`,
+      "Review the Fledgling plan, then apply it (Fledgling requires npm 11.15.0 or newer):",
+      "",
+      `  ${fledglingCommand(names, true)}`,
+      `  ${fledglingCommand(names, false)}`,
+      "",
+      `The first release of each minted package must be a stable version so it replaces the ${placeholderVersion} placeholder on latest.`,
+      "Then rerun pnpm release:prepare.",
+    ].join("\n"),
   );
-  if (otherMissing.length > 0) {
-    throw new ReleaseError(
-      "Refusing package bootstrap while existing packages also have unpublished versions.",
-    );
-  }
+}
 
-  await confirm(`bootstrap ${names.join(",")}`, options.yes);
-  run("pnpm", fledglingArgs(names, false));
-  for (const name of names) verifyTrust(name);
-
-  const tag = `packages-bootstrap-${plan.sha.slice(0, 12)}`;
-  let metadata = releaseMetadata(tag);
-  if (!metadata) {
-    ({ metadata } = createDraft(plan, tag, true));
-  } else {
-    validateReleaseMetadata(metadata, {
-      tag,
-      sha: plan.sha,
-      prerelease: true,
-    });
-  }
-  if (!metadata.isDraft) {
-    throw new ReleaseError(
-      `Bootstrap release ${tag} already exists, but the package names still appear absent.`,
-    );
-  }
-
-  run("gh", ["release", "edit", tag, "--repo", repository, "--draft=false", "--prerelease=true"]);
-  const workflowRun = await waitForRun(tag, plan.sha);
-  console.info(`Watching bootstrap publication ${workflowRun.url}`);
-  run("gh", [
-    "run",
-    "watch",
-    String(workflowRun.databaseId),
-    "--repo",
-    repository,
-    "--exit-status",
-    "--interval",
-    "10",
-  ]);
-  await verifyPublishedPackages(plan, workflowRun.databaseId);
-
-  for (const pkg of newPackages) {
-    run("npm", ["dist-tag", "rm", pkg.name, "bootstrap"]);
-    const tags = captureJson("npm", ["view", pkg.name, "dist-tags", "--json"]);
-    if (tags.latest !== pkg.version || tags.bootstrap) {
-      throw new ReleaseError(`Bootstrap tags for ${pkg.name} were not finalized safely.`);
-    }
-  }
-
-  assertCandidateUnchanged(plan.sha);
-  runGates(plan.sha);
-  const refreshed = {
-    sha: plan.sha,
-    packages: await registryPlan(await discoverPublicPackages()),
-  };
-  printPlan(refreshed);
-  return { plan: refreshed, bootstrapped: true };
+function assertStableAfterPlaceholder(packages) {
+  const prereleases = packages.filter(
+    ({ published, tagsBefore, version }) =>
+      !published &&
+      tagsBefore?.latest === placeholderVersion &&
+      semver.prerelease(version) !== null,
+  );
+  if (prereleases.length === 0) return;
+  throw new ReleaseError(
+    `${prereleases.map(({ name, version }) => `${name}@${version}`).join(", ")} would be the first real release of a minted package. It must be stable so it replaces the ${placeholderVersion} placeholder on latest. Version it as a stable release outside Changesets prerelease mode, then rerun pnpm release:prepare.`,
+  );
 }
 
 export async function prepareRelease(options = {}) {
-  const sha = assertCleanCandidate();
-  runGates(sha);
-  const packages = await registryPlan(await discoverPublicPackages());
-  let plan = { sha, packages };
+  const sha = (options.assertCleanCandidate ?? assertCleanCandidate)();
+  const packages = await (options.planPackages ?? planPublicPackages)();
+  assertPackagesMinted(packages);
+  assertStableAfterPlaceholder(packages);
+  for (const { name } of packages) (options.verifyTrust ?? verifyTrust)(name);
+  (options.runGates ?? runGates)(sha);
+  const plan = { sha, packages };
   printPlan(plan);
-  const bootstrap = await bootstrapNewPackages(plan, options);
-  plan = bootstrap.plan;
-  if (
-    !options.allowPublished &&
-    !bootstrap.bootstrapped &&
-    plan.packages.every(({ published }) => published)
-  ) {
+  if (!options.allowPublished && packages.every(({ published }) => published)) {
     throw new ReleaseError("Every local public package version is already published.");
   }
   return plan;
@@ -445,9 +403,9 @@ function releaseMetadata(tag) {
   }
 }
 
-function createDraft(plan, tag, prereleaseOverride) {
+function createDraft(plan, tag) {
   const candidates = plan.packages.filter(({ published }) => !published);
-  const prerelease = prereleaseOverride ?? candidates.some(({ channel }) => channel === "next");
+  const prerelease = candidates.some(({ channel }) => channel === "next");
   const notes = [
     "Packages:",
     ...candidates.map(({ name, version }) => `- ${name}@${version}`),
@@ -754,17 +712,23 @@ export async function publishRelease(options = {}) {
 }
 
 export function parseOptions(args) {
-  const options = {
-    yes: args.includes("--yes"),
-    bootstrap: args.includes("--bootstrap"),
-  };
-  const tagIndex = args.indexOf("--tag");
-  if (tagIndex !== -1) {
-    const tag = args[tagIndex + 1];
-    if (!tag || tag.startsWith("--")) {
-      throw new ReleaseError("--tag requires a following value.");
+  const options = { yes: false };
+  for (let index = 0; index < args.length; index += 1) {
+    const arg = args[index];
+    // pnpm passes the `--` separator from `pnpm release:publish -- --yes` through to the script.
+    if (arg === "--") continue;
+    if (arg === "--yes") {
+      options.yes = true;
+    } else if (arg === "--tag") {
+      const tag = args[index + 1];
+      if (!tag || tag.startsWith("--")) {
+        throw new ReleaseError("--tag requires a following value.");
+      }
+      options.tag = tag;
+      index += 1;
+    } else {
+      throw new ReleaseError(`Unknown option ${arg}. ${usage}`);
     }
-    options.tag = tag;
   }
   return options;
 }
@@ -774,9 +738,7 @@ export async function main(args = process.argv.slice(2)) {
   const options = parseOptions(rest);
   if (command === "prepare") return prepareRelease(options);
   if (command === "publish") return publishRelease(options);
-  throw new ReleaseError(
-    "Usage: release-orchestrator.mjs <prepare|publish> [--bootstrap] [--tag <tag>] [--yes]",
-  );
+  throw new ReleaseError(usage);
 }
 
 if (process.argv[1] && resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {

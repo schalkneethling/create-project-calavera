@@ -88,10 +88,14 @@ assert.equal(
   "node scripts/release-orchestrator.mjs publish",
 );
 assert.match(rootPackage.scripts["release:contracts"], /release-orchestrator\.test\.mjs/);
-assert.equal(rootPackage.devDependencies.fledgling, "1.2.1");
+assert.match(
+  rootPackage.devDependencies.fledgling,
+  /^\d+\.\d+\.\d+$/,
+  "the fledgling devDependency must be exact so pnpm exec fledgling runs a reviewed binary",
+);
 assert(
   knip.ignoreDependencies.includes("fledgling"),
-  "Knip must account for Fledgling's subprocess-only CLI invocation",
+  "Knip must account for Fledgling, which operators run by hand through pnpm exec",
 );
 assert.deepEqual(rootPackage.fledgling, {
   provider: "github",
