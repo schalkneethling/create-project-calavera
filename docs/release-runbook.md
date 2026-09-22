@@ -19,7 +19,9 @@ release.
   After that, `uvx zizmor` is available offline for every subsequent `workflow:check` run. You do not
   need a separate `uv sync` step: the rehearsal's SkillSpector scan runs through `uv run --frozen`,
   which synchronizes its own environment from the locked dependencies automatically.
-- npm CLI 11.15.0+ if the release includes a brand-new package name (see "New packages" below).
+- npm CLI 11.15.0+, logged in to npm with two-factor authentication enabled. `release:prepare`
+  verifies the trusted publisher of every package it will publish with `npm trust list`, and minting
+  a brand-new package name uses the same login (see "New packages (minting)" below).
 - You do not need a local npm token. Publishing happens inside the protected `publish` GitHub
   environment through npm trusted publishing, not from your machine.
 
@@ -60,11 +62,16 @@ pnpm install --frozen-lockfile
 pnpm release:prepare
 ```
 
-This single command runs the Baseline data check (`baseline:check`) first, which fails on a stale
-snapshot cutoff or stale generated data and otherwise prints one line with the cutoff and source
-versions, then the full local rehearsal (`release:rehearse`), the workflow audit
-(`workflow:check`), and confirms Changesets has no packages left to version. It then compares the
-local workspace against the npm registry and prints a plan, for example:
+This single command first plans the public workspace against the npm registry. If the version PR
+introduces a package name that has never existed on npm, it stops immediately, before the Baseline
+data check, the local rehearsal, or the workflow audit run, and prints the exact commands to mint it.
+See "New packages (minting)" below instead of continuing to step 5.
+
+Once every planned package already exists on npm, `release:prepare` verifies the trusted publisher of
+each package that is not yet published, then runs the Baseline data check (`baseline:check`), which fails on a stale snapshot cutoff or stale generated data and otherwise
+prints one line with the cutoff and source versions, then the full local rehearsal
+(`release:rehearse`), the workflow audit (`workflow:check`), and confirms Changesets has no packages
+left to version. It then prints the plan, for example:
 
 ```text
 Release candidate: b6f8d23...
@@ -75,8 +82,7 @@ Packages already published:
 - @schalkneethling/calavera-agent-technical-devils-advocate@0.2.1
 ```
 
-Compare the "absent from npm" list against the merged PR body before continuing. If it names a
-package that has never existed on npm, stop here and follow "New packages" below instead of step 5.
+Compare the "absent from npm" list against the merged PR body before continuing.
 
 ## 5. Publish
 
@@ -144,20 +150,33 @@ Compare each package's dist-tags against the channel the step 4 plan printed for
 
 Unrelated packages and channels should be unchanged either way.
 
-## New packages (bootstrap)
+## New packages (minting)
 
-If step 4 stops because the version PR introduces a package name that has never been published, rerun
-with `--bootstrap`:
+If step 4 stops because the version PR introduces a package name that has never been published,
+`release:prepare` prints the package names and the exact Fledgling commands to run by hand, for
+example:
 
-```bash
-pnpm release:prepare -- --bootstrap
+```text
+New package names must be minted on npm by hand before a release: @schalkneethling/calavera-new.
+Review the Fledgling plan, then apply it (Fledgling requires npm 11.15.0 or newer):
+
+  pnpm exec fledgling add @schalkneethling/calavera-new --dry-run --repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --permissions publish --placeholder-version 0.0.0
+  pnpm exec fledgling add @schalkneethling/calavera-new --yes --repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --permissions publish --placeholder-version 0.0.0
+
+The first release of each minted package must be a stable version so it replaces the 0.0.0 placeholder on latest.
+Then rerun pnpm release:prepare.
 ```
 
-This uses the pinned Fledgling dependency to claim the new package name(s), configure npm trusted
-publishing for them, publish the real first stable version through the same OIDC workflow, remove the
-temporary bootstrap tag, and then restart the gates automatically. It refuses to run alongside any
-other package that is also unpublished, so bootstrap new names on their own before mixing them into an
-ordinary release. Once bootstrap finishes, continue with step 5 as normal.
+Run the `--dry-run` command first and review its plan. Only once you have reviewed it, run the `--yes`
+form. This claims the package name on npm, publishes a `0.0.0` placeholder onto the default `latest`
+dist-tag, and configures npm trusted publishing for it through the same GitHub workflow, repository,
+environment, and publish permission every other package uses. There is no `bootstrap` tag left to
+clean up afterward, because the placeholder is published straight to `latest`.
+
+Rerun `pnpm release:prepare` once minting is done. Because the placeholder now sits on `latest`, the
+version PR for a newly minted package must set a stable version, not a prerelease — `release:prepare`
+refuses a prerelease version for a package whose `latest` dist-tag is still the `0.0.0` placeholder.
+Once the plan accepts it, continue with step 5 as normal.
 
 ## If something fails
 

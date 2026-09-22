@@ -300,18 +300,19 @@ pnpm release:prepare
 pnpm release:publish
 ```
 
-`release:prepare` synchronizes and identifies the exact candidate, runs the frozen install and all
-local gates, calculates the complete public workspace inventory, and distinguishes exact npm 404s
-from registry failures. It is read-only unless a newly introduced npm package requires the explicit
-`--bootstrap` transition:
-
-```bash
-pnpm release:prepare -- --bootstrap
-```
-
-That transition uses the pinned Fledgling dependency to claim only the reviewed package names and
-configure trusted publishing, publishes the real initial stable packages through the existing OIDC
-workflow, removes the temporary bootstrap tag, and restarts the gates.
+`release:prepare` is read-only. It plans the public workspace against the npm registry first. If any
+planned package name does not exist on npm yet, it stops there, before running any local gate, and
+prints the exact `pnpm exec fledgling add ... --dry-run` and `... --yes` commands for that name, built
+from one shared argument builder so the two never drift apart. Minting a name is a deliberate,
+irreversible, public action, so it is never automated: review the dry-run plan, then run the `--yes`
+form by hand using the pinned Fledgling devDependency, which claims the name, publishes a `0.0.0`
+placeholder onto npm's default `latest` dist-tag, and configures trusted publishing for the same
+GitHub workflow, repository, environment, and publish permission every other package uses. Rerun
+`pnpm release:prepare` afterward. Because the placeholder sits on `latest`, the first release of a
+minted package must be stable; `release:prepare` refuses a prerelease version while the placeholder is
+still current. Once every planned package exists on npm, `release:prepare` runs the frozen install and
+all local gates, calculates the complete public workspace inventory, and distinguishes exact npm 404s
+from registry failures.
 
 `release:publish` reruns preparation, creates or verifies a draft release for the exact commit,
 pauses once for publication approval, watches the matching workflow run, verifies provenance and
