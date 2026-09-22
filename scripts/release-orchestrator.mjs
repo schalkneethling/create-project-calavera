@@ -366,7 +366,9 @@ export async function prepareRelease(options = {}) {
   const packages = await (options.planPackages ?? planPublicPackages)();
   assertPackagesMinted(packages);
   assertStableAfterPlaceholder(packages);
-  for (const { name } of packages) (options.verifyTrust ?? verifyTrust)(name);
+  for (const { name, published } of packages) {
+    if (!published) (options.verifyTrust ?? verifyTrust)(name);
+  }
   (options.runGates ?? runGates)(sha);
   const plan = { sha, packages };
   printPlan(plan);

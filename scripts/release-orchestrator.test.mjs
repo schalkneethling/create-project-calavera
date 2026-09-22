@@ -169,7 +169,7 @@ test("prepareRelease refuses a prerelease as the first real version of a minted 
   assert.deepEqual(events, []);
 });
 
-test("prepareRelease verifies trusted publishing for every package before the gates", async () => {
+test("prepareRelease verifies trusted publishing for each unpublished package before the gates", async () => {
   const events = [];
   const packages = [
     packagePlan({}),
@@ -190,7 +190,6 @@ test("prepareRelease verifies trusted publishing for every package before the ga
   assert.deepEqual(events, [
     "trust create-project-calavera",
     "trust @schalkneethling/calavera-new",
-    "trust @schalkneethling/calavera-artifact-core",
     `gates ${candidateSha}`,
   ]);
 });
