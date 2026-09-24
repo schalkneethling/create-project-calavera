@@ -98,9 +98,11 @@ bump.
 rehearsal, and the workflow audit, not after them. An operator sees the exact Fledgling commands
 immediately instead of waiting for the full gate sequence to learn the same thing indirectly.
 
-The release orchestrator no longer contains a code path that cannot be exercised. Every branch in
-`prepareRelease` now runs on every invocation and is covered by `scripts/release-orchestrator.test.mjs`
-without mocking around an irreversible registry mutation.
+The release orchestrator no longer contains a code path that cannot be exercised. `prepareRelease`
+has two outcomes: the minting failure, which exits before the gates, and the normal path, which runs
+them. `scripts/release-orchestrator.test.mjs` covers both in separate scenarios, along with the
+prerelease refusal and the trust check order, without mocking around an irreversible registry
+mutation.
 
 A Dependabot Fledgling bump now passes `scripts/check-release-contracts.mjs` and is reviewed on its own
 pull request, the same as any other dependency bump, instead of failing the `Check` workflow on a

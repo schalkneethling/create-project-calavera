@@ -71,7 +71,9 @@ Once every planned package already exists on npm, `release:prepare` verifies the
 each package that is not yet published, then runs the Baseline data check (`baseline:check`), which fails on a stale snapshot cutoff or stale generated data and otherwise
 prints one line with the cutoff and source versions, then the full local rehearsal
 (`release:rehearse`), the workflow audit (`workflow:check`), and confirms Changesets has no packages
-left to version. It then prints the plan, for example:
+left to version. It then prints the plan. "Packages absent from npm" lists versions that are not on
+npm yet; the package names themselves already exist, because the minting check ran first. For
+example:
 
 ```text
 Release candidate: b6f8d23...

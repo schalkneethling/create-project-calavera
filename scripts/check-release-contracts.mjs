@@ -90,7 +90,7 @@ assert.equal(
 assert.match(rootPackage.scripts["release:contracts"], /release-orchestrator\.test\.mjs/);
 assert.match(
   rootPackage.devDependencies.fledgling,
-  /^\d+\.\d+\.\d+$/,
+  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,
   "the fledgling devDependency must be exact so pnpm exec fledgling runs a reviewed binary",
 );
 assert(
