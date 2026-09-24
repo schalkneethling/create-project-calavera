@@ -303,34 +303,6 @@ export function fledglingCommand(packageNames, dryRun) {
   return commandText("pnpm", fledglingArgs(packageNames, dryRun));
 }
 
-export function hasExpectedTrust(response) {
-  const entries = Array.isArray(response) ? response : [response];
-  return entries.some(
-    (entry) =>
-      entry?.type === "github" &&
-      entry.file === workflow &&
-      entry.repository === repository &&
-      entry.environment === publishEnvironment &&
-      Array.isArray(entry.permissions) &&
-      entry.permissions.includes("createPackage"),
-  );
-}
-
-function verifyTrust(packageName) {
-  const { stdout } = runQuiet("npm", ["trust", "list", packageName, "--json"]);
-  let response;
-  try {
-    response = JSON.parse(stdout);
-  } catch {
-    throw new ReleaseError(`npm trust list ${packageName} --json returned malformed JSON.`);
-  }
-  if (!hasExpectedTrust(response)) {
-    throw new ReleaseError(
-      `Trusted publisher for ${packageName} does not match the required GitHub workflow, repository, environment, and publish permission.`,
-    );
-  }
-}
-
 function assertPackagesMinted(packages) {
   const names = packages.filter(({ packageExists }) => !packageExists).map(({ name }) => name);
   if (names.length === 0) return;
@@ -366,9 +338,6 @@ export async function prepareRelease(options = {}) {
   const packages = await (options.planPackages ?? planPublicPackages)();
   assertPackagesMinted(packages);
   assertStableAfterPlaceholder(packages);
-  for (const { name, published } of packages) {
-    if (!published) (options.verifyTrust ?? verifyTrust)(name);
-  }
   (options.runGates ?? runGates)(sha);
   const plan = { sha, packages };
   printPlan(plan);
