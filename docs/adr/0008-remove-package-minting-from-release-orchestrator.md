@@ -1,6 +1,6 @@
 # ADR-0008: Remove Package Minting from the Release Orchestrator
 
-- **Status:** Accepted (2026-09-22, Schalk Neethling)
+- **Status:** Accepted (2026-09-22, Schalk Neethling); amended 2026-09-24 (#509)
 - **Date:** 2026-09-22
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/507
 - **Decides:** removal of automated npm package minting from `scripts/release-orchestrator.mjs`.
@@ -79,12 +79,17 @@ Because the placeholder lands on `latest`, the first real release of a minted pa
 still the `0.0.0` placeholder, with a message distinct from the minting failure, so an operator cannot
 accidentally leave a placeholder on the channel real users resolve.
 
-`verifyTrust` is unchanged in what it checks, a structured `npm trust list` response against the
-expected GitHub workflow, repository, environment, and `createPackage` permission, but it now runs on
-every `prepareRelease` for each package the release will publish, not only for packages Fledgling
-just minted. Packages already on npm at their local version are skipped: trust drift there says
-nothing about the release at hand, and checking it would block a release of the other packages. It is
-the check that matters for OIDC publishing regardless of how a package's name was claimed.
+The orchestrator does not verify trusted publishers. The original text of this decision moved
+`verifyTrust`, a structured `npm trust list` check, from the minting path into every
+`prepareRelease`. The first release after it merged showed that the check cannot run there: npm's
+`otplease` helper (`lib/utils/auth.js` in npm 11.18) rethrows the `EOTP` error whenever `stdin` or
+`stdout` is not a terminal, and the orchestrator must pipe `stdout` to read the `--json` response, so
+npm never reaches its web-auth or one-time-password prompt. The old bootstrap path had the same
+defect and was never exercised. Amendment #509 removes the check rather than threading an `--otp`
+option through `prepare` and `publish`: `npm publish` through OIDC already fails on a missing
+trusted publisher, `release:publish` watches that run, and `verifyPublishedPackages` checks
+provenance. After minting, the operator confirms trust by hand with `npm trust list <name>` in a
+terminal, where npm can prompt.
 
 `scripts/check-release-contracts.mjs:91` now asserts only that the `fledgling` devDependency spec is
 exact (no `^` or `~` prefix), not that it equals a specific number. Fledgling stays an exact-pinned
@@ -101,7 +106,7 @@ immediately instead of waiting for the full gate sequence to learn the same thin
 The release orchestrator no longer contains a code path that cannot be exercised. `prepareRelease`
 has two outcomes: the minting failure, which exits before the gates, and the normal path, which runs
 them. `scripts/release-orchestrator.test.mjs` covers both in separate scenarios, along with the
-prerelease refusal and the trust check order, without mocking around an irreversible registry
+prerelease refusal, without mocking around an irreversible registry
 mutation.
 
 A Dependabot Fledgling bump now passes `scripts/check-release-contracts.mjs` and is reviewed on its own
@@ -113,10 +118,9 @@ in the orchestrator creates a draft release, watches a workflow run, or removes 
 operator's behalf for that event; the operator uses the ordinary `pnpm release:prepare` /
 `pnpm release:publish` flow once the name exists, exactly as for any already-published package.
 
-Every `pnpm release:prepare` and `pnpm release:publish` now runs `npm trust list`, which needs npm
-11.15.0 or newer and an npm login with two-factor authentication enabled on the operator's machine.
-Before this decision only the minting path needed them. No npm token is involved; publishing still
-happens through OIDC inside the `publish` environment.
+An npm login with two-factor authentication, and npm 11.15.0 or newer, are needed only to mint a new
+name and to confirm its trusted publisher afterward. An ordinary release needs neither. No npm token
+is involved; publishing still happens through OIDC inside the `publish` environment.
 
 `docs/release-runbook.md` and `references/release-gates.md` in the release-with-confidence skill
 payload describe the new flow. `references/fledgling.md` already framed Fledgling as an optional,

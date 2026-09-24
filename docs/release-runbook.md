@@ -19,9 +19,8 @@ release.
   After that, `uvx zizmor` is available offline for every subsequent `workflow:check` run. You do not
   need a separate `uv sync` step: the rehearsal's SkillSpector scan runs through `uv run --frozen`,
   which synchronizes its own environment from the locked dependencies automatically.
-- npm CLI 11.15.0+, logged in to npm with two-factor authentication enabled. `release:prepare`
-  verifies the trusted publisher of every package it will publish with `npm trust list`, and minting
-  a brand-new package name uses the same login (see "New packages (minting)" below).
+- npm CLI 11.15.0+, logged in to npm with two-factor authentication enabled, only if the release
+  includes a brand-new package name (see "New packages (minting)" below).
 - You do not need a local npm token. Publishing happens inside the protected `publish` GitHub
   environment through npm trusted publishing, not from your machine.
 
@@ -67,8 +66,8 @@ introduces a package name that has never existed on npm, it stops immediately, b
 data check, the local rehearsal, or the workflow audit run, and prints the exact commands to mint it.
 See "New packages (minting)" below instead of continuing to step 5.
 
-Once every planned package already exists on npm, `release:prepare` verifies the trusted publisher of
-each package that is not yet published, then runs the Baseline data check (`baseline:check`), which fails on a stale snapshot cutoff or stale generated data and otherwise
+Once every planned package already exists on npm, `release:prepare` runs the Baseline data check
+(`baseline:check`), which fails on a stale snapshot cutoff or stale generated data and otherwise
 prints one line with the cutoff and source versions, then the full local rehearsal
 (`release:rehearse`), the workflow audit (`workflow:check`), and confirms Changesets has no packages
 left to version. It then prints the plan. "Packages absent from npm" lists versions that are not on
@@ -175,7 +174,15 @@ dist-tag, and configures npm trusted publishing for it through the same GitHub w
 environment, and publish permission every other package uses. There is no `bootstrap` tag left to
 clean up afterward, because the placeholder is published straight to `latest`.
 
-Rerun `pnpm release:prepare` once minting is done. Because the placeholder now sits on `latest`, the
+Confirm the trusted publisher by hand in a terminal, where npm can prompt for the one-time password
+it requires:
+
+```bash
+npm trust list @schalkneethling/calavera-new --json
+```
+
+The response must contain a `github` entry for `publish.yml`, this repository, the `publish`
+environment, and the `createPackage` permission. Rerun `pnpm release:prepare` once minting is done. Because the placeholder now sits on `latest`, the
 version PR for a newly minted package must set a stable version, not a prerelease — `release:prepare`
 refuses a prerelease version for a package whose `latest` dist-tag is still the `0.0.0` placeholder.
 Once the plan accepts it, continue with step 5 as normal.
