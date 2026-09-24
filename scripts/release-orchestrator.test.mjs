@@ -278,6 +278,7 @@ test("npm view retries only explicit 404 responses, waiting the given backoff be
     async delay(milliseconds) {
       delays.push(milliseconds);
     },
+    report() {},
     viewNpm() {
       calls += 1;
       return calls < 3
@@ -318,6 +319,7 @@ test("npm view retry exhausts its bounded backoff with actionable guidance", asy
       async delay(milliseconds) {
         delays.push(milliseconds);
       },
+      report() {},
       viewNpm: () => ({ status: 1, stdout: "", stderr: "npm error code E404" }),
     }),
     /re-run pnpm release:publish/,
