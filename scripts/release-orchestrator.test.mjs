@@ -10,7 +10,6 @@ import {
   discoverPublicPackages,
   fledglingArgs,
   fledglingCommand,
-  hasExpectedTrust,
   hasPendingVersionBumps,
   isExplicitRegistryNotFound,
   npmViewWithRetry,
@@ -101,9 +100,6 @@ function prepareWith(packages, events) {
   return prepareRelease({
     assertCleanCandidate: () => candidateSha,
     planPackages: async () => packages,
-    verifyTrust(name) {
-      events.push(`trust ${name}`);
-    },
     runGates(sha) {
       events.push(`gates ${sha}`);
     },
@@ -169,7 +165,7 @@ test("prepareRelease refuses a prerelease as the first real version of a minted 
   assert.deepEqual(events, []);
 });
 
-test("prepareRelease verifies trusted publishing for each unpublished package before the gates", async () => {
+test("prepareRelease runs the gates once the plan passes the minting and placeholder checks", async () => {
   const events = [];
   const packages = [
     packagePlan({}),
@@ -187,11 +183,7 @@ test("prepareRelease verifies trusted publishing for each unpublished package be
   ];
   const plan = await prepareWith(packages, events);
   assert.deepEqual(plan, { sha: candidateSha, packages });
-  assert.deepEqual(events, [
-    "trust create-project-calavera",
-    "trust @schalkneethling/calavera-new",
-    `gates ${candidateSha}`,
-  ]);
+  assert.deepEqual(events, [`gates ${candidateSha}`]);
 });
 
 async function contractFixture(fledglingSpec) {
@@ -246,30 +238,6 @@ test("release contracts accept any exact Fledgling pin and reject anything else"
     assert.notEqual(result.status, 0, `${spec} must fail`);
     assert.match(result.stderr, /must be exact so pnpm exec fledgling runs a reviewed binary/);
   }
-});
-
-test("trusted publisher verification uses npm's structured response", () => {
-  assert.equal(
-    hasExpectedTrust({
-      id: "publisher-id",
-      type: "github",
-      file: "publish.yml",
-      repository: "schalkneethling/create-project-calavera",
-      environment: "publish",
-      permissions: ["createPackage"],
-    }),
-    true,
-  );
-  assert.equal(
-    hasExpectedTrust({
-      type: "github",
-      file: "publish.yml",
-      repository: "schalkneethling/create-project-calavera",
-      environment: "publish",
-      permissions: ["createStagedPackage"],
-    }),
-    false,
-  );
 });
 
 test("release workflow polling waits asynchronously within a configurable budget", async () => {
