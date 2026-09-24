@@ -6,6 +6,6 @@
   "displayName": "Refined plan mode",
   "payload": "payload/refined-plan-mode",
   "compatibility": {
-    "calavera": ">=2.2.0 <3"
+    "calavera": ">=2.2.0"
   }
 }

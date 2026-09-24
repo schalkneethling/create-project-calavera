@@ -47,7 +47,7 @@ The state file remains the authority for installed hashes and overwrite protecti
 - Ordinary `apply` and top-level `update` install exact locked versions.
 - Only the explicit artifact update workflow advances versions.
 - `latest` is the default channel; `next` requires explicit selection.
-- Resolution rejects a manifest whose Calavera compatibility range excludes the running CLI.
+- Resolution rejects a manifest whose Calavera compatibility range excludes the running CLI. The range is a lower bound only: it names the first CLI that can install the artifact, and the hosted Composer uses the same range to withhold an artifact until that CLI is published. It carries no upper bound, because a CLI major does not change the manifest contract; a change to that contract bumps `schemaVersion`. `packages/artifact-core/test/compatibility.test.mjs` fails when any range is invalid or excludes the workspace CLI version.
 - Integrity, identity, manifest, and payload checks complete before any project files or lock entries change.
 - Lock and state writes are atomic. A failed multi-artifact operation leaves the previous project records intact.
 - Existing local-edit protection applies to every package-backed installation.

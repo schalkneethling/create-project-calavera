@@ -6,6 +6,6 @@
   "displayName": "npm publishing best practices",
   "payload": "payload/npm-publishing-best-practices",
   "compatibility": {
-    "calavera": ">=2.2.0 <3"
+    "calavera": ">=2.2.0"
   }
 }

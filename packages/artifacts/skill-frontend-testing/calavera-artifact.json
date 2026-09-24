@@ -6,6 +6,6 @@
   "displayName": "Frontend testing",
   "payload": "payload/frontend-testing",
   "compatibility": {
-    "calavera": ">=2.2.0 <3"
+    "calavera": ">=2.2.0"
   }
 }
