@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { access, mkdir, mkdtemp, readFile, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -8,12 +8,16 @@ import { fileURLToPath } from "node:url";
 
 import {
   discoverPublicPackages,
+  fledglingArgs,
+  fledglingCommand,
   hasExpectedTrust,
   hasPendingVersionBumps,
   isExplicitRegistryNotFound,
   npmViewWithRetry,
   packagesFromReleaseNotes,
   parseOptions,
+  prepareRelease,
+  ReleaseError,
   releaseChannel,
   releaseGates,
   releaseTag,
@@ -51,11 +55,197 @@ test("release channels and tags are derived from exact versions", () => {
 test("release options require an explicit tag value", () => {
   assert.deepEqual(parseOptions(["--tag", "v2.4.0-next.1", "--yes"]), {
     yes: true,
-    bootstrap: false,
     tag: "v2.4.0-next.1",
   });
   assert.throws(() => parseOptions(["--tag"]), /requires a following value/);
   assert.throws(() => parseOptions(["--tag", "--yes"]), /requires a following value/);
+});
+
+test("release options accept pnpm's argument separator and reject unknown flags", () => {
+  assert.deepEqual(parseOptions(["--", "--yes"]), { yes: true });
+  assert.throws(() => parseOptions(["--bootstrap"]), /Unknown option --bootstrap/);
+  assert.throws(() => parseOptions(["--yes", "extra"]), /Unknown option extra/);
+});
+
+test("the Fledgling command is printed in dry-run and apply forms from one argument builder", () => {
+  const names = ["@schalkneethling/calavera-new", "calavera-other"];
+  const shared =
+    "--repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --permissions publish --placeholder-version 0.0.0";
+  assert.equal(
+    fledglingCommand(names, true),
+    `pnpm exec fledgling add @schalkneethling/calavera-new calavera-other --dry-run ${shared}`,
+  );
+  assert.equal(
+    fledglingCommand(names, false),
+    `pnpm exec fledgling add @schalkneethling/calavera-new calavera-other --yes ${shared}`,
+  );
+  assert.equal(fledglingArgs(names, true).includes("--tag"), false);
+});
+
+const candidateSha = "a".repeat(40);
+
+function packagePlan(overrides) {
+  return {
+    name: "create-project-calavera",
+    version: "2.4.0",
+    path: "packages/cli",
+    channel: "latest",
+    published: false,
+    packageExists: true,
+    tagsBefore: { latest: "2.3.0" },
+    ...overrides,
+  };
+}
+
+function prepareWith(packages, events) {
+  return prepareRelease({
+    assertCleanCandidate: () => candidateSha,
+    planPackages: async () => packages,
+    verifyTrust(name) {
+      events.push(`trust ${name}`);
+    },
+    runGates(sha) {
+      events.push(`gates ${sha}`);
+    },
+  });
+}
+
+test("prepareRelease stops before the gates with the Fledgling commands when a name is not minted", async () => {
+  const events = [];
+  const unminted = ["@schalkneethling/calavera-new", "calavera-other"];
+  await assert.rejects(
+    prepareWith(
+      [
+        packagePlan({}),
+        ...unminted.map((name) =>
+          packagePlan({ name, version: "1.0.0", packageExists: false, tagsBefore: {} }),
+        ),
+      ],
+      events,
+    ),
+    (error) => {
+      assert.ok(error instanceof ReleaseError);
+      assert.match(error.message, /@schalkneethling\/calavera-new, calavera-other/);
+      assert.match(error.message, /minted on npm by hand/);
+      assert.ok(error.message.includes(`\n  ${fledglingCommand(unminted, true)}\n`));
+      assert.ok(error.message.includes(`\n  ${fledglingCommand(unminted, false)}\n`));
+      assert.ok(
+        error.message.indexOf("--dry-run") < error.message.indexOf("--yes"),
+        "the dry-run plan must be printed before the apply command",
+      );
+      assert.match(error.message, /npm 11\.15\.0 or newer/);
+      assert.match(error.message, /rerun pnpm release:prepare/);
+      return true;
+    },
+  );
+  assert.deepEqual(events, []);
+});
+
+test("prepareRelease refuses a prerelease as the first real version of a minted package", async () => {
+  const events = [];
+  await assert.rejects(
+    prepareWith(
+      [
+        packagePlan({
+          name: "@schalkneethling/calavera-new",
+          version: "1.0.0-next.0",
+          channel: "next",
+          tagsBefore: { latest: "0.0.0" },
+        }),
+      ],
+      events,
+    ),
+    (error) => {
+      assert.ok(error instanceof ReleaseError);
+      assert.match(error.message, /@schalkneethling\/calavera-new@1\.0\.0-next\.0/);
+      assert.match(
+        error.message,
+        /must be stable so it replaces the 0\.0\.0 placeholder on latest/,
+      );
+      assert.doesNotMatch(error.message, /fledgling add/);
+      return true;
+    },
+  );
+  assert.deepEqual(events, []);
+});
+
+test("prepareRelease verifies trusted publishing for each unpublished package before the gates", async () => {
+  const events = [];
+  const packages = [
+    packagePlan({}),
+    packagePlan({
+      name: "@schalkneethling/calavera-new",
+      version: "1.0.0",
+      tagsBefore: { latest: "0.0.0" },
+    }),
+    packagePlan({
+      name: "@schalkneethling/calavera-artifact-core",
+      version: "0.3.0",
+      published: true,
+      tagsBefore: undefined,
+    }),
+  ];
+  const plan = await prepareWith(packages, events);
+  assert.deepEqual(plan, { sha: candidateSha, packages });
+  assert.deepEqual(events, [
+    "trust create-project-calavera",
+    "trust @schalkneethling/calavera-new",
+    `gates ${candidateSha}`,
+  ]);
+});
+
+async function contractFixture(fledglingSpec) {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-release-contracts-"));
+  for (const path of [
+    "knip.json",
+    "pnpm-workspace.yaml",
+    ".changeset/config.json",
+    ".github/workflows/publish.yml",
+    ".github/workflows/release-pr.yml",
+    ".github/workflows/menu-bar-release.yml",
+  ]) {
+    await cp(join(root, path), join(directory, path));
+  }
+  for (const parent of ["apps", "packages", "packages/artifacts"]) {
+    for (const entry of await readdir(join(root, parent), { withFileTypes: true })) {
+      const manifest = join(parent, entry.name, "package.json");
+      if (!entry.isDirectory()) continue;
+      await mkdir(join(directory, parent, entry.name), { recursive: true });
+      try {
+        await cp(join(root, manifest), join(directory, manifest));
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+      }
+    }
+  }
+  const rootPackage = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  rootPackage.devDependencies.fledgling = fledglingSpec;
+  await writeFile(join(directory, "package.json"), `${JSON.stringify(rootPackage, null, 2)}\n`);
+  return directory;
+}
+
+async function runContracts(fledglingSpec) {
+  const directory = await contractFixture(fledglingSpec);
+  try {
+    return spawnSync(process.execPath, [join(root, "scripts", "check-release-contracts.mjs")], {
+      cwd: directory,
+      encoding: "utf8",
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+}
+
+test("release contracts accept any exact Fledgling pin and reject anything else", async () => {
+  for (const spec of ["1.2.1", "1.3.1", "2.0.0-beta.1"]) {
+    const result = await runContracts(spec);
+    assert.equal(result.status, 0, `${spec} must pass:\n${result.stderr}`);
+  }
+  for (const spec of ["^1.2.1", "~1.2.1", "v1.2.1", "01.2.1", "1.2"]) {
+    const result = await runContracts(spec);
+    assert.notEqual(result.status, 0, `${spec} must fail`);
+    assert.match(result.stderr, /must be exact so pnpm exec fledgling runs a reviewed binary/);
+  }
 });
 
 test("trusted publisher verification uses npm's structured response", () => {

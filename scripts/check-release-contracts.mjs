@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import semver from "semver";
+
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const changesets = await readJson(".changeset/config.json");
 const publishWorkflow = await readFile(".github/workflows/publish.yml", "utf8");
@@ -88,10 +90,14 @@ assert.equal(
   "node scripts/release-orchestrator.mjs publish",
 );
 assert.match(rootPackage.scripts["release:contracts"], /release-orchestrator\.test\.mjs/);
-assert.equal(rootPackage.devDependencies.fledgling, "1.2.1");
+assert.equal(
+  semver.valid(rootPackage.devDependencies.fledgling),
+  rootPackage.devDependencies.fledgling,
+  "the fledgling devDependency must be exact so pnpm exec fledgling runs a reviewed binary",
+);
 assert(
   knip.ignoreDependencies.includes("fledgling"),
-  "Knip must account for Fledgling's subprocess-only CLI invocation",
+  "Knip must account for Fledgling, which operators run by hand through pnpm exec",
 );
 assert.deepEqual(rootPackage.fledgling, {
   provider: "github",
