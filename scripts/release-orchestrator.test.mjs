@@ -236,14 +236,16 @@ async function runContracts(fledglingSpec) {
   }
 }
 
-test("release contracts accept any exact Fledgling pin and reject a range", async () => {
-  for (const spec of ["1.2.1", "1.3.1"]) {
+test("release contracts accept any exact Fledgling pin and reject anything else", async () => {
+  for (const spec of ["1.2.1", "1.3.1", "2.0.0-beta.1"]) {
     const result = await runContracts(spec);
     assert.equal(result.status, 0, `${spec} must pass:\n${result.stderr}`);
   }
-  const range = await runContracts("^1.2.1");
-  assert.notEqual(range.status, 0);
-  assert.match(range.stderr, /must be exact so pnpm exec fledgling runs a reviewed binary/);
+  for (const spec of ["^1.2.1", "~1.2.1", "v1.2.1", "01.2.1", "1.2"]) {
+    const result = await runContracts(spec);
+    assert.notEqual(result.status, 0, `${spec} must fail`);
+    assert.match(result.stderr, /must be exact so pnpm exec fledgling runs a reviewed binary/);
+  }
 });
 
 test("trusted publisher verification uses npm's structured response", () => {

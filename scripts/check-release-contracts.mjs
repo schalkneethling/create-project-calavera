@@ -2,6 +2,8 @@ import assert from "node:assert/strict";
 import { readFile, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
+import semver from "semver";
+
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const changesets = await readJson(".changeset/config.json");
 const publishWorkflow = await readFile(".github/workflows/publish.yml", "utf8");
@@ -88,9 +90,9 @@ assert.equal(
   "node scripts/release-orchestrator.mjs publish",
 );
 assert.match(rootPackage.scripts["release:contracts"], /release-orchestrator\.test\.mjs/);
-assert.match(
+assert.equal(
+  semver.valid(rootPackage.devDependencies.fledgling),
   rootPackage.devDependencies.fledgling,
-  /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/,
   "the fledgling devDependency must be exact so pnpm exec fledgling runs a reviewed binary",
 );
 assert(
