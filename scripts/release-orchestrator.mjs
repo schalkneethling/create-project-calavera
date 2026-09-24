@@ -374,6 +374,26 @@ function releaseMetadata(tag) {
   }
 }
 
+// `gh release list --json` does not expose the target commit; the REST objects carry
+// `target_commitish` and `draft`. The candidate is the tip of main, so its release is recent.
+function listReleases() {
+  return captureJson("gh", ["api", `repos/${repository}/releases?per_page=100`]);
+}
+
+// createDraft always targets the full sha, so an exact match finds every release this
+// orchestrator made for the commit.
+function publishedReleaseTagForCommit(releases, sha) {
+  const tags = releases
+    .filter((release) => !release.draft && release.target_commitish === sha)
+    .map((release) => release.tag_name);
+  if (tags.length > 1) {
+    throw new ReleaseError(
+      `Published releases ${tags.join(", ")} all target ${sha}. Delete the release that should not exist, or rerun with --tag <tag> to choose one.`,
+    );
+  }
+  return tags[0];
+}
+
 function createDraft(plan, tag) {
   const candidates = plan.packages.filter(({ published }) => !published);
   const prerelease = candidates.some(({ channel }) => channel === "next");
@@ -608,11 +628,16 @@ async function smokePublishedArtifacts(plan) {
 export async function publishRelease(options = {}) {
   const plan = await prepareRelease({ ...options, allowPublished: true });
   const candidates = plan.packages.filter(({ published }) => !published);
+  // Resolve the release already published for this commit before deriving a tag from the
+  // candidates: while npm propagates, the candidates are a shrinking subset that can yield a
+  // different tag on every rerun.
   const tag =
-    options.tag ?? releaseTag(candidates.length > 0 ? candidates : plan.packages, plan.sha);
-  let metadata = releaseMetadata(tag);
+    options.tag ??
+    publishedReleaseTagForCommit((options.listReleases ?? listReleases)(), plan.sha) ??
+    releaseTag(candidates.length > 0 ? candidates : plan.packages, plan.sha);
+  let metadata = (options.readRelease ?? releaseMetadata)(tag);
   const prerelease =
-    candidates.length === 0 && metadata
+    metadata && (candidates.length === 0 || !metadata.isDraft)
       ? metadata.isPrerelease
       : candidates.some(({ channel }) => channel === "next");
   if (!metadata) {
@@ -625,11 +650,6 @@ export async function publishRelease(options = {}) {
     });
   }
   if (!metadata.isDraft) {
-    if (candidates.length > 0) {
-      throw new ReleaseError(
-        `Release ${tag} is already published, but expected versions remain absent from npm.`,
-      );
-    }
     const releasedPackages = packagesFromReleaseNotes(plan, metadata.body ?? "");
     if (releasedPackages.length === 0) {
       throw new ReleaseError(
@@ -639,14 +659,24 @@ export async function publishRelease(options = {}) {
     const releasedIdentities = new Set(
       releasedPackages.map(({ name, version }) => `${name}@${version}`),
     );
+    // A candidate the release lists may still be propagating; verification retries it.
+    // A candidate the release does not list was never part of this release.
+    const unreleased = candidates
+      .map(({ name, version }) => `${name}@${version}`)
+      .filter((identity) => !releasedIdentities.has(identity));
+    if (unreleased.length > 0) {
+      throw new ReleaseError(
+        `Release ${tag} is already published, but its inventory does not list ${unreleased.join(", ")}, which remain absent from npm.`,
+      );
+    }
     const verificationPlan = {
       ...plan,
       packages: plan.packages.map((pkg) =>
         releasedIdentities.has(`${pkg.name}@${pkg.version}`) ? { ...pkg, published: false } : pkg,
       ),
     };
-    const workflowRun = await waitForRun(tag, plan.sha);
-    await verifyPublishedPackages(verificationPlan, workflowRun.databaseId);
+    const workflowRun = await waitForRun(tag, plan.sha, options);
+    await verifyPublishedPackages(verificationPlan, workflowRun.databaseId, options);
     await smokePublishedArtifacts(verificationPlan);
     console.info(`Release ${tag} and its package inventory are already published and verified.`);
     return plan;
@@ -664,7 +694,7 @@ export async function publishRelease(options = {}) {
     ...(prerelease ? ["--prerelease=true"] : ["--latest"]),
   ]);
 
-  const workflowRun = await waitForRun(tag, plan.sha);
+  const workflowRun = await waitForRun(tag, plan.sha, options);
   console.info(`Watching ${workflowRun.url}`);
   run("gh", [
     "run",
@@ -676,7 +706,7 @@ export async function publishRelease(options = {}) {
     "--interval",
     "10",
   ]);
-  await verifyPublishedPackages(plan, workflowRun.databaseId);
+  await verifyPublishedPackages(plan, workflowRun.databaseId, options);
   await smokePublishedArtifacts(plan);
   assertCandidateUnchanged(plan.sha);
   console.info(`Release ${tag} is published and verified.`);

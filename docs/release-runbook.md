@@ -112,7 +112,10 @@ Typing the exact phrase is the one human approval in the whole flow. After that,
    artifact package changed, installs it into a disposable fixture project.
 
 Use `--yes` only once you have already reviewed the draft yourself and want to skip the interactive
-prompt (for example, scripted re-runs after a transient failure):
+prompt (for example, scripted re-runs after a transient failure). A rerun reuses the published
+release that already targets the candidate commit, even while npm is still propagating some of its
+packages, so it cannot create a second release for that commit; `--yes` is therefore safe for a rerun
+after a transient failure:
 
 ```bash
 pnpm release:publish -- --yes
