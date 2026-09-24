@@ -625,6 +625,20 @@ async function smokePublishedArtifacts(plan) {
   }
 }
 
+function watchRun(workflowRun) {
+  console.info(`Watching ${workflowRun.url}`);
+  run("gh", [
+    "run",
+    "watch",
+    String(workflowRun.databaseId),
+    "--repo",
+    repository,
+    "--exit-status",
+    "--interval",
+    "10",
+  ]);
+}
+
 export async function publishRelease(options = {}) {
   const plan = await prepareRelease({ ...options, allowPublished: true });
   const candidates = plan.packages.filter(({ published }) => !published);
@@ -675,7 +689,9 @@ export async function publishRelease(options = {}) {
         releasedIdentities.has(`${pkg.name}@${pkg.version}`) ? { ...pkg, published: false } : pkg,
       ),
     };
+    // waitForRun returns the run as soon as it exists; a rerun can find it still in progress.
     const workflowRun = await waitForRun(tag, plan.sha, options);
+    (options.watchRun ?? watchRun)(workflowRun);
     await verifyPublishedPackages(verificationPlan, workflowRun.databaseId, options);
     await smokePublishedArtifacts(verificationPlan);
     console.info(`Release ${tag} and its package inventory are already published and verified.`);
@@ -695,17 +711,7 @@ export async function publishRelease(options = {}) {
   ]);
 
   const workflowRun = await waitForRun(tag, plan.sha, options);
-  console.info(`Watching ${workflowRun.url}`);
-  run("gh", [
-    "run",
-    "watch",
-    String(workflowRun.databaseId),
-    "--repo",
-    repository,
-    "--exit-status",
-    "--interval",
-    "10",
-  ]);
+  (options.watchRun ?? watchRun)(workflowRun);
   await verifyPublishedPackages(plan, workflowRun.databaseId, options);
   await smokePublishedArtifacts(plan);
   assertCandidateUnchanged(plan.sha);

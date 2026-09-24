@@ -210,6 +210,9 @@ function publishWith(packages, overrides) {
       events.push(`read ${tag}`);
       throw new Sentinel(`stopped after resolving ${tag}`);
     },
+    watchRun(workflowRun) {
+      events.push(`watch ${workflowRun.databaseId}`);
+    },
     ...overrides(events),
   });
   return { events, promise };
@@ -248,7 +251,7 @@ test("publishRelease reuses the published release for the candidate commit while
     assert.equal(error.message, "reached verification");
     return true;
   });
-  assert.deepEqual(events, ["read v3.0.0", "runs", "verify"]);
+  assert.deepEqual(events, ["read v3.0.0", "runs", "watch 42", "verify"]);
 });
 
 test("publishRelease still refuses a published release that does not list a package absent from npm", async () => {
