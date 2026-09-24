@@ -1,5 +1,11 @@
 # @schalkneethling/calavera-skill-release-with-confidence
 
+## 0.2.1
+
+### Patch Changes
+
+- 7f0eb16: Update the release-gates reference to describe `pnpm release:prepare` failing before the gates and printing the Fledgling command for a new package name, instead of an automated `--bootstrap` transition.
+
 ## 0.2.0
 
 ### Minor Changes
