@@ -743,7 +743,7 @@ test("shared composition operation responses expose catalog, recipe, and explana
   );
   assert.match(
     listAiArtifactsResponse().artifacts[0].description,
-    /Calavera compatibility: >=2\.2\.0 <3/,
+    /Calavera compatibility: >=2\.2\.0\. /,
   );
   assert.deepEqual(recipeResponse.recipe.integrations, ["stylelint"]);
   assert.equal(validateRecipeResponse(recipeResponse.recipe).ok, true);

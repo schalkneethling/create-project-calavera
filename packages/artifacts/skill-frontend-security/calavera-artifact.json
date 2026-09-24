@@ -6,6 +6,6 @@
   "displayName": "Frontend security",
   "payload": "payload/frontend-security",
   "compatibility": {
-    "calavera": ">=2.2.0 <3"
+    "calavera": ">=2.2.0"
   }
 }

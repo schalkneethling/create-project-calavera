@@ -68,7 +68,7 @@ test("verified extraction checks package identity, manifest compatibility, and p
           offline: false,
         },
         join(destination, "incompatible"),
-        "4.0.0",
+        "2.1.0",
       ),
     /not compatible/,
   );

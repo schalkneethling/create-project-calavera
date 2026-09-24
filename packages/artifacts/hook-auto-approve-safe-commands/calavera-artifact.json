@@ -7,6 +7,6 @@
   "payload": "payload/auto-approve-safe-commands",
   "targets": ["claude-code", "codex", "cursor", "opencode"],
   "compatibility": {
-    "calavera": ">=2.2.0 <3"
+    "calavera": ">=2.2.0"
   }
 }

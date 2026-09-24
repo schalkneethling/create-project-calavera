@@ -6,6 +6,6 @@
   "displayName": "CSS tokens",
   "payload": "payload/css-tokens",
   "compatibility": {
-    "calavera": ">=2.2.0 <3"
+    "calavera": ">=2.2.0"
   }
 }

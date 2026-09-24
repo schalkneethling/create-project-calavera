@@ -6,6 +6,6 @@
   "displayName": "npm trusted publishing GitHub workflow",
   "payload": "payload/npm-trusted-publishing-github-workflow",
   "compatibility": {
-    "calavera": ">=2.2.0 <3"
+    "calavera": ">=2.2.0"
   }
 }

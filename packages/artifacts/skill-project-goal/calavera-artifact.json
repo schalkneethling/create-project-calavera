@@ -6,6 +6,6 @@
   "displayName": "Project goal",
   "payload": "payload/project-goal",
   "compatibility": {
-    "calavera": ">=2.2.0 <3"
+    "calavera": ">=2.2.0"
   }
 }

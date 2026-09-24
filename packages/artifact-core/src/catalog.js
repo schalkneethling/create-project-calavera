@@ -4,7 +4,7 @@ export const DEFAULT_ARTIFACT_TARGET = "claude-code";
 
 const ARTIFACT_SCHEMA =
   "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json";
-const DEFAULT_COMPATIBILITY = ">=2.2.0 <3";
+const DEFAULT_COMPATIBILITY = ">=2.2.0";
 const ARTIFACT_TARGETS = Object.freeze(["claude-code", "codex", "cursor", "opencode"]);
 /** @type {readonly (readonly [string, string, string?])[]} */
 const definitions = Object.freeze([
@@ -20,7 +20,7 @@ const definitions = Object.freeze([
   ["skill-npm-trusted-publishing-github-workflow", "npm trusted publishing GitHub workflow"],
   ["skill-project-goal", "Project goal"],
   ["skill-refined-plan-mode", "Refined plan mode"],
-  ["skill-release-with-confidence", "Release with confidence", ">=2.4.0-next.0 <3"],
+  ["skill-release-with-confidence", "Release with confidence", ">=2.4.0-next.0"],
   ["hook-auto-approve-safe-commands", "Auto-approve safe commands"],
   ["hook-block-dangerous-commands", "Block dangerous commands"],
   ["agent-technical-devils-advocate", "Technical devil's advocate"],

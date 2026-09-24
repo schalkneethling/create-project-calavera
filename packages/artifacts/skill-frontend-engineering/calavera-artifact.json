@@ -6,6 +6,6 @@
   "displayName": "Frontend engineering",
   "payload": "payload/frontend-engineering",
   "compatibility": {
-    "calavera": ">=2.2.0 <3"
+    "calavera": ">=2.2.0"
   }
 }
