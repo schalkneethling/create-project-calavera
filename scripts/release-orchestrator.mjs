@@ -467,6 +467,7 @@ export async function npmViewWithRetry(args, options = {}) {
   const wait = options.delay ?? delay;
   const delays = options.delays ?? NPM_VIEW_RETRY_DELAYS_MS;
   const viewNpm = options.viewNpm ?? defaultViewNpm;
+  const report = options.report ?? console.info;
 
   for (let attempt = 0; ; attempt += 1) {
     const result = viewNpm(args);
@@ -482,6 +483,10 @@ export async function npmViewWithRetry(args, options = {}) {
         `npm view ${args.join(" ")} still reports the version missing after ${delays.length} retries over ~${totalSeconds}s. npm warns a fresh publish "may take a few minutes to become available" — wait a few minutes and re-run pnpm release:publish; already-published packages are skipped.`,
       );
     }
+    const waitSeconds = Math.round(delays[attempt] / 1000);
+    report(
+      `Waiting ${waitSeconds}s for npm view ${args.join(" ")} (attempt ${attempt + 1} of ${delays.length}).`,
+    );
     await wait(delays[attempt]);
   }
 }
