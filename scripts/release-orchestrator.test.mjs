@@ -404,6 +404,7 @@ test("npm view retries only explicit 404 responses, waiting the given backoff be
     async delay(milliseconds) {
       delays.push(milliseconds);
     },
+    report() {},
     viewNpm() {
       calls += 1;
       return calls < 3
@@ -416,19 +417,24 @@ test("npm view retries only explicit 404 responses, waiting the given backoff be
   assert.deepEqual(delays, [10, 20]);
 });
 
-test("npm view retry fails immediately on a non-404 error without waiting", async () => {
+test("npm view retry fails immediately on a non-404 error without waiting or reporting", async () => {
   let waited = false;
+  const reported = [];
   await assert.rejects(
     npmViewWithRetry(["@scope/pkg@1.0.0", "version", "--json"], {
       delays: [10],
       async delay() {
         waited = true;
       },
+      report(line) {
+        reported.push(line);
+      },
       viewNpm: () => ({ status: 1, stdout: "", stderr: "npm error code ENOTFOUND" }),
     }),
     /failed with exit code 1/,
   );
   assert.equal(waited, false);
+  assert.deepEqual(reported, []);
 });
 
 test("npm view retry exhausts its bounded backoff with actionable guidance", async () => {
@@ -439,11 +445,39 @@ test("npm view retry exhausts its bounded backoff with actionable guidance", asy
       async delay(milliseconds) {
         delays.push(milliseconds);
       },
+      report() {},
       viewNpm: () => ({ status: 1, stdout: "", stderr: "npm error code E404" }),
     }),
     /re-run pnpm release:publish/,
   );
   assert.deepEqual(delays, [10, 20]);
+});
+
+test("npm view retry reports progress through an injectable reporter before each wait", async () => {
+  let calls = 0;
+  const reported = [];
+  const result = await npmViewWithRetry(["@scope/pkg@1.0.0", "version", "--json"], {
+    delays: [5000, 10000, 20000],
+    async delay() {
+      // The line for this attempt must already be reported when the wait starts.
+      assert.equal(reported.length, calls);
+    },
+    report(line) {
+      reported.push(line);
+    },
+    viewNpm() {
+      calls += 1;
+      return calls < 3
+        ? { status: 1, stdout: "", stderr: "npm error code E404" }
+        : { status: 0, stdout: '"1.0.0"\n', stderr: "" };
+    },
+  });
+  assert.equal(result, '"1.0.0"');
+  assert.equal(calls, 3);
+  assert.deepEqual(reported, [
+    "Waiting 5s for npm view @scope/pkg@1.0.0 version --json (attempt 1 of 3).",
+    "Waiting 10s for npm view @scope/pkg@1.0.0 version --json (attempt 2 of 3).",
+  ]);
 });
 
 test("verifyPublishedPackages rejects malformed exact-version JSON", async () => {
