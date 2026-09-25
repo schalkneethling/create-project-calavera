@@ -332,7 +332,10 @@ test("npm view retry reports progress through an injectable reporter before each
   const reported = [];
   const result = await npmViewWithRetry(["@scope/pkg@1.0.0", "version", "--json"], {
     delays: [5000, 10000, 20000],
-    async delay() {},
+    async delay() {
+      // The line for this attempt must already be reported when the wait starts.
+      assert.equal(reported.length, calls);
+    },
     report(line) {
       reported.push(line);
     },
