@@ -511,21 +511,37 @@ export async function npmViewWithRetry(args, options = {}) {
   }
 }
 
+// The workflow's Publish package step echoes this exact line for a package it finds already
+// published on npm, instead of publishing it and printing provenance and "+ name@version" lines.
+// A re-run of a partially failed publish workflow skips those packages, so verification must
+// accept this line in their place. check-release-contracts.mjs asserts publish.yml still emits
+// this literal (with the workflow's own shell variable names) so the two cannot drift.
+export function publishSkipLine(name, version) {
+  return `Skipping already published ${name}@${version}.`;
+}
+
 export async function verifyPublishedPackages(plan, runId, options = {}) {
   const candidates = plan.packages.filter(({ published }) => !published);
   const readLog =
     options.readLog ??
     (() => capture("gh", ["run", "view", String(runId), "--repo", repository, "--log"]));
   const log = readLog();
+  const skipped = new Set(
+    candidates
+      .filter((pkg) => log.includes(publishSkipLine(pkg.name, pkg.version)))
+      .map((pkg) => `${pkg.name}@${pkg.version}`),
+  );
+  const expectedPublishCount = candidates.length - skipped.size;
   const provenanceCount = log.match(/Signed provenance statement/g)?.length ?? 0;
-  if (provenanceCount < candidates.length) {
+  if (provenanceCount < expectedPublishCount) {
     throw new ReleaseError(
-      `Publish log contains ${provenanceCount} provenance statements for ${candidates.length} packages.`,
+      `Publish log contains ${provenanceCount} provenance statements for ${expectedPublishCount} packages.`,
     );
   }
   for (const pkg of candidates) {
-    if (!log.includes(`+ ${pkg.name}@${pkg.version}`)) {
-      throw new ReleaseError(`Publish log does not confirm ${pkg.name}@${pkg.version}.`);
+    const identity = `${pkg.name}@${pkg.version}`;
+    if (!skipped.has(identity) && !log.includes(`+ ${identity}`)) {
+      throw new ReleaseError(`Publish log does not confirm ${identity}.`);
     }
     const versionRaw = await npmViewWithRetry(
       [`${pkg.name}@${pkg.version}`, "version", "--json"],
