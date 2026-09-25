@@ -16,6 +16,7 @@ import {
   packagesFromReleaseNotes,
   parseOptions,
   prepareRelease,
+  publishRelease,
   ReleaseError,
   releaseChannel,
   releaseGates,
@@ -184,6 +185,131 @@ test("prepareRelease runs the gates once the plan passes the minting and placeho
   const plan = await prepareWith(packages, events);
   assert.deepEqual(plan, { sha: candidateSha, packages });
   assert.deepEqual(events, [`gates ${candidateSha}`]);
+});
+
+class Sentinel extends Error {}
+
+const v300Plan = [
+  packagePlan({ version: "3.0.0", published: true, tagsBefore: undefined }),
+  packagePlan({
+    name: "@schalkneethling/calavera-skill-calavera",
+    version: "0.2.1",
+    path: "packages/artifacts/skill-calavera",
+    tagsBefore: { latest: "0.2.0" },
+  }),
+];
+
+// Every stub either answers or throws a Sentinel, so these tests never reach gh, npm, or npx.
+function publishWith(packages, overrides) {
+  const events = [];
+  const promise = publishRelease({
+    assertCleanCandidate: () => candidateSha,
+    planPackages: async () => packages,
+    runGates() {},
+    readRelease(tag) {
+      events.push(`read ${tag}`);
+      throw new Sentinel(`stopped after resolving ${tag}`);
+    },
+    watchRun(workflowRun) {
+      events.push(`watch ${workflowRun.databaseId}`);
+    },
+    ...overrides(events),
+  });
+  return { events, promise };
+}
+
+test("publishRelease reuses the published release for the candidate commit while a package is still propagating", async () => {
+  const { events, promise } = publishWith(v300Plan, (events) => ({
+    listReleases: () => [
+      { tag_name: "packages-aaaaaaaaaaaa", target_commitish: candidateSha, draft: true },
+      { tag_name: "v3.0.0", target_commitish: candidateSha, draft: false },
+      { tag_name: "v2.6.0", target_commitish: "b".repeat(40), draft: false },
+    ],
+    readRelease(tag) {
+      events.push(`read ${tag}`);
+      if (tag !== "v3.0.0") throw new Sentinel(`unexpected release lookup for ${tag}`);
+      return {
+        url: "https://github.com/schalkneethling/create-project-calavera/releases/tag/v3.0.0",
+        tagName: "v3.0.0",
+        targetCommitish: candidateSha,
+        isDraft: false,
+        isPrerelease: false,
+        body: "Packages:\n- create-project-calavera@3.0.0\n- @schalkneethling/calavera-skill-calavera@0.2.1",
+      };
+    },
+    getRuns() {
+      events.push("runs");
+      return [{ headSha: candidateSha, headBranch: "v3.0.0", databaseId: 42 }];
+    },
+    readLog() {
+      events.push("verify");
+      throw new Sentinel("reached verification");
+    },
+  }));
+  await assert.rejects(promise, (error) => {
+    assert.ok(error instanceof Sentinel, error.message);
+    assert.equal(error.message, "reached verification");
+    return true;
+  });
+  assert.deepEqual(events, ["read v3.0.0", "runs", "watch 42", "verify"]);
+});
+
+test("publishRelease still refuses a published release that does not list a package absent from npm", async () => {
+  const { promise } = publishWith(v300Plan, () => ({
+    listReleases: () => [{ tag_name: "v3.0.0", target_commitish: candidateSha, draft: false }],
+    readRelease: () => ({
+      tagName: "v3.0.0",
+      targetCommitish: candidateSha,
+      isDraft: false,
+      isPrerelease: false,
+      body: "Packages:\n- create-project-calavera@3.0.0",
+    }),
+  }));
+  await assert.rejects(promise, (error) => {
+    assert.ok(error instanceof ReleaseError, error.message);
+    assert.match(error.message, /Release v3\.0\.0 is already published/);
+    assert.match(error.message, /@schalkneethling\/calavera-skill-calavera@0\.2\.1/);
+    return true;
+  });
+});
+
+test("publishRelease derives the tag from the candidates when no published release targets the commit", async () => {
+  const { events, promise } = publishWith(v300Plan, () => ({
+    listReleases: () => [
+      { tag_name: "v3.0.0", target_commitish: candidateSha, draft: true },
+      { tag_name: "v2.6.0", target_commitish: "b".repeat(40), draft: false },
+    ],
+  }));
+  await assert.rejects(promise, Sentinel);
+  assert.deepEqual(events, [`read packages-${candidateSha.slice(0, 12)}`]);
+});
+
+test("publishRelease stops when more than one published release targets the commit", async () => {
+  const { events, promise } = publishWith(v300Plan, () => ({
+    listReleases: () => [
+      { tag_name: "packages-aaaaaaaaaaaa", target_commitish: candidateSha, draft: false },
+      { tag_name: "v3.0.0", target_commitish: candidateSha, draft: false },
+    ],
+  }));
+  await assert.rejects(promise, (error) => {
+    assert.ok(error instanceof ReleaseError, error.message);
+    assert.match(error.message, /packages-aaaaaaaaaaaa, v3\.0\.0/);
+    assert.ok(error.message.includes(candidateSha));
+    return true;
+  });
+  assert.deepEqual(events, []);
+});
+
+test("publishRelease lets an explicit --tag win over the release found for the commit", async () => {
+  const { events, promise } = publishWith(v300Plan, (events) => ({
+    tag: "v3.0.1",
+    listReleases() {
+      events.push("list");
+      return [{ tag_name: "v3.0.0", target_commitish: candidateSha, draft: false }];
+    },
+  }));
+  await assert.rejects(promise, Sentinel);
+  assert.deepEqual(events, ["read v3.0.1"]);
 });
 
 async function contractFixture(fledglingSpec) {
