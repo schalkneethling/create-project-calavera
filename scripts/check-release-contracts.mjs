@@ -77,7 +77,7 @@ for (const application of [
     `${application} must remain outside npm Changesets`,
   );
 }
-assert.match(rootPackage.scripts["release:fixture"], /targeted update preserves other artifacts/);
+assert.match(rootPackage.scripts["release:fixture"], /scripts\/release-integration\.test\.mjs/);
 assert.match(rootPackage.scripts["release:rehearse"], /@calavera\/baseline-explorer build/);
 assert.match(rootPackage.scripts["release:rehearse"], /@calavera\/menu-bar build:web/);
 assert.equal(rootPackage.scripts["release:version"], "node scripts/release-version.mjs");
