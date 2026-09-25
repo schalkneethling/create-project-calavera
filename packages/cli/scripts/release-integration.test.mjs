@@ -65,6 +65,13 @@ async function resolvePackedArtifact(request) {
   const artifact = artifactForId(request.id);
   const packed = packedArtifacts.get(request.id);
   assert.ok(artifact && packed, `No packed workspace artifact for ${request.id}`);
+  // The real resolver requests artifact.packageName from npm, so a package.json whose name drifts
+  // from the catalog would fail there; the fixture must not paper over that.
+  assert.equal(
+    packed.packageName,
+    artifact.packageName,
+    `${request.id} package.json name must match the catalog package name`,
+  );
   return {
     artifact,
     packageName: packed.packageName,
