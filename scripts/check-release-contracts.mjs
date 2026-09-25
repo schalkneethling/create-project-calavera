@@ -4,6 +4,8 @@ import { join } from "node:path";
 
 import semver from "semver";
 
+import { publishSkipLine } from "./release-orchestrator.mjs";
+
 const readJson = async (path) => JSON.parse(await readFile(path, "utf8"));
 const changesets = await readJson(".changeset/config.json");
 const publishWorkflow = await readFile(".github/workflows/publish.yml", "utf8");
@@ -153,7 +155,11 @@ assert.match(publishJob, /^ {6}id-token: write$/m);
 assert.match(publishJob, /node-version: 24\.8\.0/);
 assert.match(publishJob, /npm publish .*--access public.*--tag "\$dist_tag"/);
 assert.doesNotMatch(publishJob, /NODE_AUTH_TOKEN|NPM_TOKEN/);
-assert.match(publishWorkflow, /Skipping already published/);
+assert.equal(
+  publishWorkflow.includes(`echo "${publishSkipLine("${package_name}", "${package_version}")}"`),
+  true,
+  "publish workflow must emit the exact skip line verifyPublishedPackages expects",
+);
 assert.match(menuWorkflow, /tags: \["menu-bar-v\*"\]/);
 assert.match(menuWorkflow, /--target universal-apple-darwin/);
 assert.match(menuWorkflow, /environment: publish/);
