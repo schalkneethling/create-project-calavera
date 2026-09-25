@@ -520,6 +520,13 @@ export function publishSkipLine(name, version) {
   return `Skipping already published ${name}@${version}.`;
 }
 
+// gh run view --log prefixes every line with the job, the step, and a timestamp, and the message
+// ends the line. Anchoring at the line end keeps "+ pkg@1.0.0" from matching "+ pkg@1.0.0-beta.1"
+// and keeps a skip line from matching when other text follows it.
+function logHasLine(log, text) {
+  return new RegExp(`(^|\\s)${RegExp.escape(text)}$`, "m").test(log);
+}
+
 export async function verifyPublishedPackages(plan, runId, options = {}) {
   const candidates = plan.packages.filter(({ published }) => !published);
   const readLog =
@@ -528,7 +535,7 @@ export async function verifyPublishedPackages(plan, runId, options = {}) {
   const log = readLog();
   const skipped = new Set(
     candidates
-      .filter((pkg) => log.includes(publishSkipLine(pkg.name, pkg.version)))
+      .filter((pkg) => logHasLine(log, publishSkipLine(pkg.name, pkg.version)))
       .map((pkg) => `${pkg.name}@${pkg.version}`),
   );
   const expectedPublishCount = candidates.length - skipped.size;
@@ -540,7 +547,7 @@ export async function verifyPublishedPackages(plan, runId, options = {}) {
   }
   for (const pkg of candidates) {
     const identity = `${pkg.name}@${pkg.version}`;
-    if (!skipped.has(identity) && !log.includes(`+ ${identity}`)) {
+    if (!skipped.has(identity) && !logHasLine(log, `+ ${identity}`)) {
       throw new ReleaseError(`Publish log does not confirm ${identity}.`);
     }
     const versionRaw = await npmViewWithRetry(

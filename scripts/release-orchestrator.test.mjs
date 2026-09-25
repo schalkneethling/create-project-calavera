@@ -575,6 +575,30 @@ test("verifyPublishedPackages accepts a skip line as confirmation and still chec
   assert.deepEqual(viewCalls, ["pkg-a@1.0.0", "pkg-a", "pkg-b@2.0.0", "pkg-b"]);
 });
 
+test("verifyPublishedPackages matches publish and skip lines only at the end of a log line", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  const viewNpm = () => {
+    throw new Error("npm must not be consulted before the log confirms the package");
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement\n+ pkg-a@1.0.0-beta.1",
+      viewNpm,
+    }),
+    /does not confirm pkg-a@1\.0\.0/,
+  );
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () =>
+        `Signed provenance statement\n${publishSkipLine("pkg-a", "1.0.0")} (not skipped)`,
+      viewNpm,
+    }),
+    /does not confirm pkg-a@1\.0\.0/,
+  );
+});
+
 test("verifyPublishedPackages still requires the publish line or skip line for every candidate", async () => {
   const plan = {
     packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
