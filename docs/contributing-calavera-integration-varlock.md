@@ -69,7 +69,7 @@ The matching recipe entry a project developer would write is intentionally small
 ```json
 {
   "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
-  "profile": "modern",
+  "profile": "default",
   "packageManager": "pnpm",
   "integrations": ["editorconfig", "knip", "stylelint", "varlock"],
   "scripts": {
@@ -212,7 +212,7 @@ generates and owns, but not `.env.schema` or `.gitignore`:
 ```json
 {
   "version": 1,
-  "profile": "modern",
+  "profile": "default",
   "integrations": ["editorconfig", "knip", "stylelint", "varlock"],
   "files": [".editorconfig", ".stylelintrc.json", "knip.json"],
   "managedFiles": [
@@ -403,7 +403,7 @@ names depend on the test harness, but the assertions should stay this concrete:
 test("varlock scaffolds project-owned files without tracking them as managed", async () => {
   const project = await createFixtureProject({
     "calavera.config.json": JSON.stringify({
-      profile: "modern",
+      profile: "default",
       packageManager: "pnpm",
       integrations: ["editorconfig", "varlock"],
       scripts: { quality: true },
@@ -424,7 +424,7 @@ test("varlock scaffolds project-owned files without tracking them as managed", a
 test("varlock apply is idempotent around project-owned files", async () => {
   const project = await createFixtureProject({
     "calavera.config.json": JSON.stringify({
-      profile: "modern",
+      profile: "default",
       packageManager: "pnpm",
       integrations: ["varlock"],
     }),

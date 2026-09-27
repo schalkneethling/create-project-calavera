@@ -34,43 +34,43 @@ test("list_integrations reports no Oxfmt integration and no Oxfmt platform", asy
   );
 });
 
-test("list_profiles keeps the modern profile without any Oxfmt default", async () => {
+test("list_profiles keeps the default profile without any Oxfmt default", async () => {
   const response = await callMcpTool("list_profiles");
-  const modern = response.profiles.find(({ id }) => id === "modern");
+  const defaultProfile = response.profiles.find(({ id }) => id === "default");
 
-  assert.ok(modern, "The modern profile must still be listed.");
+  assert.ok(defaultProfile, "The default profile must still be listed.");
   assert.equal(
-    hasOxfmtId(modern.defaultIntegrations),
+    hasOxfmtId(defaultProfile.defaultIntegrations),
     false,
-    `Oxfmt ids still default for modern: ${modern.defaultIntegrations.join(", ")}`,
+    `Oxfmt ids still default for the default profile: ${defaultProfile.defaultIntegrations.join(", ")}`,
   );
-  assert.equal(hasOxfmtId(profileDefaults.modern), false);
+  assert.equal(hasOxfmtId(profileDefaults.default), false);
   assert.doesNotMatch(
-    modern.description,
+    defaultProfile.description,
     /format/i,
-    `The modern profile description must not claim formatting: ${modern.description}`,
+    `The default profile description must not claim formatting: ${defaultProfile.description}`,
   );
   assert.doesNotMatch(
-    modern.description,
+    defaultProfile.description,
     /JavaScript.*lint|TypeScript.*lint/i,
-    `The modern profile description must not claim JavaScript or TypeScript linting: ${modern.description}`,
+    `The default profile description must not claim JavaScript or TypeScript linting: ${defaultProfile.description}`,
   );
 });
 
-test("catalogResponse keeps the modern profile description free of formatting and JS/TS linting claims", () => {
-  const response = catalogResponse(composeRecipe({ profile: "modern" }));
-  const modern = response.profiles.find(({ id }) => id === "modern");
+test("catalogResponse keeps the default profile description free of formatting and JS/TS linting claims", () => {
+  const response = catalogResponse(composeRecipe({ profile: "default" }));
+  const defaultProfile = response.profiles.find(({ id }) => id === "default");
 
-  assert.ok(modern, "The modern profile must still be listed in catalogResponse.");
+  assert.ok(defaultProfile, "The default profile must still be listed in catalogResponse.");
   assert.doesNotMatch(
-    modern.description,
+    defaultProfile.description,
     /format/i,
-    `The modern profile description must not claim formatting: ${modern.description}`,
+    `The default profile description must not claim formatting: ${defaultProfile.description}`,
   );
   assert.doesNotMatch(
-    modern.description,
+    defaultProfile.description,
     /JavaScript.*lint|TypeScript.*lint/i,
-    `The modern profile description must not claim JavaScript or TypeScript linting: ${modern.description}`,
+    `The default profile description must not claim JavaScript or TypeScript linting: ${defaultProfile.description}`,
   );
 });
 
@@ -78,7 +78,7 @@ test("compose_recipe rejects the oxfmt id as unknown", async () => {
   await assert.rejects(
     () =>
       callMcpTool("compose_recipe", {
-        profile: "modern",
+        profile: "default",
         packageManager: "npm",
         tools: ["oxfmt"],
       }),
@@ -89,7 +89,7 @@ test("compose_recipe rejects the oxfmt id as unknown", async () => {
 test("validate_recipe rejects a recipe that requests oxfmt", async () => {
   const recipe = {
     version: 1,
-    profile: "modern",
+    profile: "default",
     packageManager: "npm",
     integrations: ["oxfmt"],
     scripts: { format: true },
@@ -101,7 +101,7 @@ test("validate_recipe rejects a recipe that requests oxfmt", async () => {
   assert.match(response.error ?? response.message ?? JSON.stringify(response), /oxfmt/);
 });
 
-test("a modern profile dry run writes no oxfmt formatting script", async () => {
+test("a default profile dry run writes no oxfmt formatting script", async () => {
   const originalDirectory = process.cwd();
   await using projectDirectory = await mkdtempDisposable(
     join(tmpdir(), "calavera-oxfmt-removal-dry-run-"),
@@ -111,7 +111,7 @@ test("a modern profile dry run writes no oxfmt formatting script", async () => {
     process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
-    const recipe = buildRecipe("modern", [...profileDefaults.modern], "npm");
+    const recipe = buildRecipe("default", [...profileDefaults.default], "npm");
     const result = await applyRecipeObject(recipe, {
       dryRun: true,
       json: true,
@@ -150,7 +150,7 @@ test("inspect_project findings never mention Oxfmt", async () => {
     );
 
     const response = await callMcpTool("inspect_project", {
-      recipe: buildRecipe("classic", ["stylelint"], "npm"),
+      recipe: buildRecipe("default", ["stylelint"], "npm"),
     });
 
     assert.equal(

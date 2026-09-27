@@ -15,8 +15,7 @@ Calavera helps web developers compose, apply, inspect, and refresh repeatable pr
 ## Core Goals
 
 1. Provide clear tooling profiles.
-   - `modern` should favor newer, fast tools such as Oxlint, Oxfmt, Stylelint, and TypeScript.
-   - `classic` should favor widely adopted ESLint, Prettier, Stylelint, and TypeScript workflows.
+   - `default` should provide what Vite+ does not, currently EditorConfig and Stylelint, and leave JavaScript and TypeScript linting, formatting, type-checking, and testing to Vite+.
    - `minimal` should stay intentionally small, currently focused on EditorConfig.
 
 2. Make tooling configuration repeatable.

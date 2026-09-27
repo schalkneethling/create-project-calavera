@@ -51,7 +51,7 @@
         <p class="eyebrow">Calavera</p>
         <h1>Compose a tooling recipe for any project.</h1>
         <p>
-          Choose a modern or classic workflow, add integration packs, then save a
+          Choose a profile, add integration packs, then save a
           <code>calavera.config.json</code> for the CLI to apply.
         </p>
       </section>
@@ -60,13 +60,9 @@
         <form class="panel" id="composer">
           <fieldset>
             <legend>Profile</legend>
-            <label for="profile-modern">
-              <input id="profile-modern" type="radio" name="profile" value="modern" checked />
-              Modern: Stylelint
-            </label>
-            <label for="profile-classic">
-              <input id="profile-classic" type="radio" name="profile" value="classic" />
-              Classic: Stylelint
+            <label for="profile-default">
+              <input id="profile-default" type="radio" name="profile" value="default" checked />
+              Default: EditorConfig and Stylelint
             </label>
             <label for="profile-minimal">
               <input id="profile-minimal" type="radio" name="profile" value="minimal" />

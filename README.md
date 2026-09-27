@@ -133,13 +133,21 @@ a type-check script; JavaScript and TypeScript type checking comes from
 
 ## Profiles
 
-- **Modern**: Stylelint. In a `vp`-managed project, JavaScript and TypeScript
-  linting comes from `vp lint`, formatting from `vp fmt`, and type checking from
-  `vp check`; Calavera does not scaffold a linter, formatter, or TypeScript
-  configuration for that language pair.
-- **Classic**: Stylelint. Identical to Modern in what it scaffolds; the two
-  profiles are collapsed in a later change.
-- **Minimal**: EditorConfig only
+- **Default** (`default`): EditorConfig and Stylelint. In a `vp`-managed
+  project, JavaScript and TypeScript linting comes from `vp lint`, formatting
+  from `vp fmt`, and type checking from `vp check`; Calavera does not scaffold a
+  linter, formatter, or TypeScript configuration for that language pair.
+- **Minimal** (`minimal`): EditorConfig only
+
+The Modern and Classic profiles were removed once their defaults became
+identical ([ADR-0011](docs/adr/0011-collapse-profiles-to-minimal-and-default.md)).
+A `calavera.config.json` that names `modern` or `classic` fails validation with
+a message naming `default` as the replacement.
+
+`explain_recipe`, `compose_recipe`, and `dry_run_apply` report whether the
+project is managed by Vite+. For a `vp`-managed project they state that
+JavaScript and TypeScript linting, formatting, type-checking, and testing are
+provided by Vite+, not by Calavera.
 
 ## Integration Catalog
 
@@ -258,7 +266,7 @@ Run `init` without selection flags for guided prompts that present the available
 options. Use selection flags only for scripted or CI flows:
 
 ```bash
-npm create project-calavera init -- --profile modern --package-manager pnpm --tool stylelint-order
+npm create project-calavera init -- --profile default --package-manager pnpm --tool stylelint-order
 ```
 
 Wrap labels that contain spaces in quotes, for example
@@ -424,7 +432,8 @@ in this order:
 10. `apply_recipe`
 
 `dry_run_apply` returns structured JSON with the package manager, integrations,
-dependency packages, project inspection findings, omitted script explanations,
+dependency packages, the Vite+ detection report, project inspection findings,
+omitted script explanations,
 file ownership/action notes, and AI artifact changes that would be made. Agents
 should present that dry-run summary to the user first. `apply_recipe` is
 intentionally the approval boundary: call it only after the user explicitly
@@ -433,7 +442,7 @@ approves the proposed recipe and dry-run result.
 ## Common Flags
 
 - `--config calavera.config.json`
-- `--profile modern|classic|minimal`
+- `--profile default|minimal`
 - `--package-manager npm|pnpm|yarn|bun`
 - `--integration <id-or-label>` or `--tool <id-or-label>` for scripted
   composition; quote labels with spaces, or use ids/slugs in scripts and CI

@@ -59,10 +59,10 @@ test("list_integrations reports no Prettier integration and no Prettier plugin e
   );
 });
 
-test("list_profiles keeps classic without any Prettier default", async () => {
+test("list_profiles offers no Prettier default in any profile", async () => {
   const response = await callMcpTool("list_profiles");
 
-  for (const profileId of ["modern", "classic", "minimal"]) {
+  for (const profileId of ["default", "minimal"]) {
     const profile = response.profiles.find(({ id }) => id === profileId);
 
     assert.ok(profile, `The ${profileId} profile must still be listed.`);
@@ -82,7 +82,7 @@ test("compose_recipe rejects the prettier id as unknown", async () => {
   await assert.rejects(
     () =>
       callMcpTool("compose_recipe", {
-        profile: "classic",
+        profile: "default",
         packageManager: "npm",
         tools: ["prettier"],
       }),
@@ -93,7 +93,7 @@ test("compose_recipe rejects the prettier id as unknown", async () => {
 test("validate_recipe rejects a recipe that requests prettier-tailwind", async () => {
   const recipe = {
     version: 1,
-    profile: "classic",
+    profile: "default",
     packageManager: "npm",
     integrations: ["prettier-tailwind"],
     scripts: { quality: true },
@@ -105,7 +105,7 @@ test("validate_recipe rejects a recipe that requests prettier-tailwind", async (
   assert.match(response.error ?? response.message ?? JSON.stringify(response), /prettier-tailwind/);
 });
 
-test("a classic profile dry run plans no Prettier configuration and no format scripts", async () => {
+test("a default profile dry run plans no Prettier configuration and no format scripts", async () => {
   const originalDirectory = process.cwd();
   await using projectDirectory = await mkdtempDisposable(
     join(tmpdir(), "calavera-prettier-removal-dry-run-"),
@@ -115,7 +115,7 @@ test("a classic profile dry run plans no Prettier configuration and no format sc
     process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
-    const recipe = buildRecipe("classic", [...profileDefaults.classic], "npm");
+    const recipe = buildRecipe("default", [...profileDefaults.default], "npm");
     const result = await applyRecipeObject(recipe, {
       dryRun: true,
       json: true,
@@ -179,7 +179,7 @@ test("inspect_project reports no Prettier finding for an existing .prettierrc.js
     await writeFile(".prettierignore", "node_modules\n");
 
     const response = await callMcpTool("inspect_project", {
-      recipe: buildRecipe("classic", ["editorconfig", "stylelint"], "npm"),
+      recipe: buildRecipe("default", ["editorconfig", "stylelint"], "npm"),
     });
 
     assert.equal(
@@ -214,7 +214,7 @@ test("a recipe that still sets scripts.format produces no format script", async 
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
     const recipe = {
-      ...buildRecipe("classic", ["editorconfig", "stylelint"], "npm"),
+      ...buildRecipe("default", ["editorconfig", "stylelint"], "npm"),
       scripts: { lint: true, format: true, "format:check": true, quality: true },
     };
 

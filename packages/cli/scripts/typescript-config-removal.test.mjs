@@ -38,10 +38,10 @@ test("list_integrations reports no TypeScript configuration integration", async 
   );
 });
 
-test("list_profiles keeps modern and classic without a TypeScript configuration default", async () => {
+test("list_profiles keeps the default profile without a TypeScript configuration default", async () => {
   const response = await callMcpTool("list_profiles");
 
-  for (const profileId of ["modern", "classic"]) {
+  for (const profileId of ["default"]) {
     const profile = response.profiles.find(({ id }) => id === profileId);
 
     assert.ok(profile, `The ${profileId} profile must still be listed.`);
@@ -58,7 +58,7 @@ test("compose_recipe rejects the typescript id as unknown", async () => {
   await assert.rejects(
     () =>
       callMcpTool("compose_recipe", {
-        profile: "modern",
+        profile: "default",
         packageManager: "npm",
         tools: ["typescript"],
       }),
@@ -69,7 +69,7 @@ test("compose_recipe rejects the typescript id as unknown", async () => {
 test("validate_recipe rejects a recipe that requests typescript", async () => {
   const recipe = {
     version: 1,
-    profile: "modern",
+    profile: "default",
     packageManager: "npm",
     integrations: ["typescript"],
     scripts: { quality: true },
@@ -92,7 +92,7 @@ test("a recipe that still sets scripts.typecheck produces no typecheck script", 
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
     const recipe = {
-      ...buildRecipe("classic", ["editorconfig", "stylelint"], "npm"),
+      ...buildRecipe("default", ["editorconfig", "stylelint"], "npm"),
       scripts: { format: true, typecheck: true, quality: true },
     };
 
@@ -132,7 +132,7 @@ test("a recipe that still sets scripts.typecheck produces no typecheck script", 
   }
 });
 
-test("a modern profile dry run plans no tsconfig.json and no typecheck script", async () => {
+test("a default profile dry run plans no tsconfig.json and no typecheck script", async () => {
   const originalDirectory = process.cwd();
   await using projectDirectory = await mkdtempDisposable(
     join(tmpdir(), "calavera-typescript-removal-dry-run-"),
@@ -142,7 +142,7 @@ test("a modern profile dry run plans no tsconfig.json and no typecheck script", 
     process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
-    const recipe = buildRecipe("modern", [...profileDefaults.modern], "npm");
+    const recipe = buildRecipe("default", [...profileDefaults.default], "npm");
     const result = await applyRecipeObject(recipe, {
       dryRun: true,
       json: true,
@@ -194,7 +194,7 @@ test("inspect_project reports no TypeScript finding for an existing tsconfig.jso
     await writeFile("tsconfig.json", `${JSON.stringify({ compilerOptions: {} }, null, 2)}\n`);
 
     const response = await callMcpTool("inspect_project", {
-      recipe: buildRecipe("modern", [...profileDefaults.modern], "npm"),
+      recipe: buildRecipe("default", [...profileDefaults.default], "npm"),
     });
 
     assert.equal(

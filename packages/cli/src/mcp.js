@@ -14,7 +14,7 @@ import {
   searchBaselineFeatures,
 } from "@schalkneethling/calavera-baseline-core";
 
-import { applyRecipeObject, inspectProject } from "./index.js";
+import { applyRecipeObject, inspectProject, reportVitePlus } from "./index.js";
 import {
   composeRecipeResponse,
   describeIntegrationResponse,
@@ -309,8 +309,9 @@ function recommendBaselineTargetTool(args) {
 /**
  * @param {Record<string, unknown>} args
  */
-function composeRecipeTool(args) {
-  return composeRecipeResponse(args);
+async function composeRecipeTool(args) {
+  const response = composeRecipeResponse(args);
+  return { ...response, vitePlus: await reportVitePlus() };
 }
 
 /**
@@ -323,8 +324,9 @@ function validateRecipeTool(recipe) {
 /**
  * @param {Record<string, unknown>} args
  */
-function explainRecipeTool(args) {
-  return explainRecipeResponse(args.recipe);
+async function explainRecipeTool(args) {
+  const explanation = explainRecipeResponse(args.recipe);
+  return { ...explanation, vitePlus: await reportVitePlus() };
 }
 
 /**
