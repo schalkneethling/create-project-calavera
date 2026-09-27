@@ -1,60 +1,17 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtempDisposable, readdir, realpath, stat, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { detectVitePlus } from "../src/vite-plus-detection.js";
-
-/**
- * Builds a fixture tree in a fresh temporary directory.
- *
- * @param {string} label
- * @param {Record<string, string>} files
- * @returns {Promise<string>} the canonical absolute path of the fixture root
- */
-/**
- * Builds a fixture in a disposable temporary directory. `root` is the resolved
- * path, so absolute manifest paths compare equal on platforms where the
- * temporary root is a symlink. Use with `await using` so the directory is
- * removed when the test scope ends.
- *
- * @param {string} label
- * @param {Record<string, string>} files
- */
-async function createFixture(label, files) {
-  const directory = await mkdtempDisposable(join(tmpdir(), `calavera-vite-plus-${label}-`));
-  const root = await realpath(directory.path);
-
-  for (const [relativePath, contents] of Object.entries(files)) {
-    const target = join(root, relativePath);
-    await mkdir(dirname(target), { recursive: true });
-    await writeFile(target, contents);
-  }
-
-  return {
-    root,
-    [Symbol.asyncDispose]: () => directory[Symbol.asyncDispose](),
-  };
-}
-
-/** @param {unknown} value */
-function json(value) {
-  return `${JSON.stringify(value, null, 2)}\n`;
-}
-
-const vitePlusConfig = `import { defineConfig } from "vite-plus";
-
-export default defineConfig({
-  lint: { options: { typeAware: true } },
-  fmt: {},
-});
-`;
-
-const plainViteConfig = `import { defineConfig } from "vite";
-
-export default defineConfig({});
-`;
+import {
+  createFixture,
+  json,
+  libraryManifest,
+  plainViteConfig,
+  plainViteManifest,
+  vitePlusConfig,
+} from "./vite-plus-fixtures.mjs";
 
 const pnpmWorkspaceCatalog = `catalog:
   vite: npm:@voidzero-dev/vite-plus-core@0.3.1
@@ -68,23 +25,6 @@ catalog:
   vite: npm:@voidzero-dev/vite-plus-core@0.3.1
   vite-plus: 0.3.1
 `;
-
-const libraryManifest = {
-  name: "gen-library",
-  version: "0.0.0",
-  type: "module",
-  scripts: { dev: "vp dev", build: "vp build", check: "vp check" },
-  devDependencies: { typescript: "^7.0.2", "vite-plus": "^0.2.4" },
-  overrides: { vite: "npm:@voidzero-dev/vite-plus-core@0.3.1" },
-};
-
-const plainViteManifest = {
-  name: "plain-vite",
-  version: "0.0.0",
-  type: "module",
-  scripts: { dev: "vite", build: "vite build", preview: "vite preview" },
-  devDependencies: { typescript: "~6.0.2", vite: "^7.2.0" },
-};
 
 const monorepoRootManifest = {
   name: "gen-monorepo",
