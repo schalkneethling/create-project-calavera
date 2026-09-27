@@ -29,7 +29,7 @@ Today, `--init` is parsed in `packages/cli/src/index.js` as a boolean that selec
 
 **Target directory.** In 0.2.8, `vp create` chooses the target directory itself: it prompts with "Target directory:" in interactive mode, derives a default from the package name otherwise, and accepts `--directory`, including `.`. A target is available when it does not exist or contains nothing but `.git`. When it is not available, the non-interactive path exits 1 with `Target directory "<path>" is not empty`, and the interactive path offers "Cancel operation" or "Remove existing files and continue", the second of which deletes everything in the target except `.git`.
 
-**Cancellation exits zero.** In 0.2.8, `cancelAndExit` defaults its exit code to `0`, and every cancelled prompt in `vp create` calls it. A user who presses Control+C at the template picker, or answers "Cancel operation", leaves a process that exited zero and wrote nothing.
+**Cancellation exits zero.** In 0.2.8, `cancelAndExit` defaults its exit code to `0`, and every canceled prompt in `vp create` calls it. A user who presses Control+C at the template picker, or answers "Cancel operation", leaves a process that exited zero and wrote nothing.
 
 ## Decision
 
@@ -63,9 +63,9 @@ Success is both of these, checked in order after the child exits:
 1. The exit code is `0`.
 2. `detectVitePlus` on the scaffolded directory returns `status: "managed"`.
 
-The scaffolded directory is located without re-modeling Vite+'s target question. When the forwarded arguments contain `--directory <path>`, that path, resolved against the working directory, is the target. Otherwise the target is the working directory when a `package.json` now exists there, or the single top-level directory that did not exist before the spawn and now contains a `package.json`. No candidate, or more than one, is a hard stop that lists what was found.
+The scaffolded directory is located without re-modeling Vite+'s target question. When the forwarded arguments contain `--directory <path>`, that path, resolved against the working directory, is the target. Otherwise the target is the working directory when a `package.json` now exists there, or the single top-level directory whose `package.json` was absent before the spawn and now exists, which covers both a directory Vite+ created and a pre-existing empty directory it scaffolded into. No candidate, or more than one, is a hard stop that lists what was found.
 
-Any other outcome is a hard stop. The message names the exit code (or the terminating signal, when the child was killed and the code is `null`), the directory that was inspected, and the detection result: the `status` and the finding `kind` ADR-0001 defines (`vite-plus-unmanaged`, `vite-plus-signal-conflict`, or `vite-plus-detection-unknown`), with the finding message. After a hard stop Calavera writes nothing, does not continue into `--init`, and does not remove what Vite+ wrote; the message says that the directory may hold a partial scaffold that belongs to Vite+. Both conditions are required because neither is sufficient alone: the 0.2.8 source shows that a cancelled `vp create` exits zero having written nothing, and a template that is not a Vite+ template can exit zero having written a project Vite+ does not manage.
+Any other outcome is a hard stop. The message names the exit code (or the terminating signal, when the child was killed and the code is `null`), the directory that was inspected, and the detection result: the `status` and the finding `kind` ADR-0001 defines (`vite-plus-unmanaged`, `vite-plus-signal-conflict`, or `vite-plus-detection-unknown`), with the finding message. After a hard stop Calavera writes nothing, does not continue into `--init`, and does not remove what Vite+ wrote; the message says that the directory may hold a partial scaffold that belongs to Vite+. Both conditions are required because neither is sufficient alone: the 0.2.8 source shows that a canceled `vp create` exits zero having written nothing, and a template that is not a Vite+ template can exit zero having written a project Vite+ does not manage.
 
 ### 4. Where the confirmation sits
 
@@ -114,7 +114,7 @@ The next step is one implementation issue, opened with `gh issue create --templa
 - On an exit of zero with an `unmanaged` or `unknown` result it hard-stops naming the detection finding.
 - A directory that already has a manifest is refused with a pointer to the normal flow.
 
-The same issue carries the checks this decision adds: each of the four runners completes `vp create` with no `vp` on the parent `PATH`; a forwarded `--no-interactive` without `--yes` is refused before spawning; tokens after `--new` reach the child unchanged, including `--`; a cancelled scaffold that exits zero is a hard stop; and after success the `--init` bootstrap runs in the scaffolded directory. Tests spawn a stub in place of the runner so that they need neither network access nor vite-plus, and one manual probe against a real vite-plus release records the version it used.
+The same issue carries the checks this decision adds: each of the four runners completes `vp create` with no `vp` on the parent `PATH`; a forwarded `--no-interactive` without `--yes` is refused before spawning; tokens after `--new` reach the child unchanged, including `--`; a canceled scaffold that exits zero is a hard stop; and after success the `--init` bootstrap runs in the scaffolded directory. Tests spawn a stub in place of the runner so that they need neither network access nor vite-plus, and one manual probe against a real vite-plus release records the version it used.
 
 The C8 tests are unchanged and must still pass. Only the CLI writes into projects: the spawn is started by the CLI after an explicit confirmation, and the `--init` step is existing CLI code. `dry_run_apply` remains the recipe approval boundary. Local-edit preservation, the rule that artifacts are not recorded in `package.json`, and conflict surfacing are not touched, because nothing in `--new` goes through the apply pipeline.
 
@@ -132,7 +132,7 @@ The documentation that describes `vp create` as a separate first step, `docs/age
 
 **Putting a bin directory on the child's `PATH`, or setting `VP_CLI_BIN`.** Rejected under Decision 1: the first reimplements what a runner does, and the second depends on an undocumented internal name.
 
-**An exit-code-only success check.** Rejected because a cancelled `vp create` exits zero in 0.2.8, and because a non-Vite+ template can succeed without producing a `managed` project, which Calavera would then treat as one.
+**An exit-code-only success check.** Rejected because a canceled `vp create` exits zero in 0.2.8, and because a non-Vite+ template can succeed without producing a `managed` project, which Calavera would then treat as one.
 
 **Refusing any non-empty working directory.** Rejected under Decision 6: it breaks the ordinary use of `vp create` from a parent folder and duplicates the target check Vite+ owns.
 
