@@ -1,7 +1,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
@@ -119,8 +119,25 @@ async function installInFixture(name, ids) {
         entry.payloadHash,
         `${id} locked payload hash`,
       );
-      for (const path of aiArtifactOutputPaths({ type: entry.type, path: entry.destination })) {
-        assert.ok(await stat(path), `${id} installed ${path}`);
+      // Installation copies the payload verbatim for the default target: a skill directory as is,
+      // a hook as hook.mjs plus its settings fragment, an agent as one file. Compare every installed
+      // output against the package-store payload, not just its existence.
+      const storePayload = join(".calavera", "packages", id, entry.version, artifact.payload);
+      const outputs = aiArtifactOutputPaths({ type: entry.type, path: entry.destination });
+      const expected =
+        entry.type === "hook"
+          ? [
+              [outputs[0], join(storePayload, "hook.mjs")],
+              [outputs[1], join(storePayload, "settings-fragment.json")],
+            ]
+          : [[outputs[0], storePayload]];
+      assert.equal(expected.length, outputs.length, `${id} covers every installed output`);
+      for (const [installed, source] of expected) {
+        assert.equal(
+          await hashArtifactPayload(installed),
+          await hashArtifactPayload(source),
+          `${id} installed ${installed} matches its payload`,
+        );
       }
     }
   } finally {
