@@ -17,6 +17,7 @@ import {
   parseOptions,
   prepareRelease,
   publishRelease,
+  publishSkipLine,
   ReleaseError,
   releaseChannel,
   releaseGates,
@@ -541,6 +542,96 @@ test("verifyPublishedPackages rejects a missing or incorrect dist-tag for the pa
           : { status: 0, stdout: "{}", stderr: "" },
     }),
     /pkg-a latest does not point to 1\.0\.0/,
+  );
+});
+
+test("publishSkipLine renders the exact text the publish workflow echoes", () => {
+  assert.equal(publishSkipLine("pkg-a", "1.0.0"), "Skipping already published pkg-a@1.0.0.");
+});
+
+test("verifyPublishedPackages accepts a skip line as confirmation and still checks npm for it", async () => {
+  const plan = {
+    packages: [
+      { name: "pkg-a", version: "1.0.0", channel: "latest", published: false },
+      { name: "pkg-b", version: "2.0.0", channel: "latest", published: false },
+    ],
+  };
+  const versions = { "pkg-a": "1.0.0", "pkg-b": "2.0.0" };
+  const viewCalls = [];
+  await verifyPublishedPackages(plan, 42, {
+    readLog: () =>
+      ["Signed provenance statement", "+ pkg-a@1.0.0", publishSkipLine("pkg-b", "2.0.0")].join(
+        "\n",
+      ),
+    viewNpm(args) {
+      viewCalls.push(args[0]);
+      if (args[1] === "version") {
+        const name = args[0].split("@").slice(0, -1).join("@");
+        return { status: 0, stdout: JSON.stringify(versions[name]), stderr: "" };
+      }
+      return { status: 0, stdout: JSON.stringify({ latest: versions[args[0]] }), stderr: "" };
+    },
+  });
+  assert.deepEqual(viewCalls, ["pkg-a@1.0.0", "pkg-a", "pkg-b@2.0.0", "pkg-b"]);
+});
+
+test("verifyPublishedPackages matches publish and skip lines only at the end of a log line", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  const viewNpm = () => {
+    throw new Error("npm must not be consulted before the log confirms the package");
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement\n+ pkg-a@1.0.0-beta.1",
+      viewNpm,
+    }),
+    /does not confirm pkg-a@1\.0\.0/,
+  );
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () =>
+        `Signed provenance statement\n${publishSkipLine("pkg-a", "1.0.0")} (not skipped)`,
+      viewNpm,
+    }),
+    /does not confirm pkg-a@1\.0\.0/,
+  );
+});
+
+test("verifyPublishedPackages still requires the publish line or skip line for every candidate", async () => {
+  const plan = {
+    packages: [{ name: "pkg-a", version: "1.0.0", channel: "latest", published: false }],
+  };
+  let viewCalls = 0;
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => "Signed provenance statement",
+      viewNpm: () => {
+        viewCalls += 1;
+        return { status: 0, stdout: "{}", stderr: "" };
+      },
+    }),
+    /Publish log does not confirm pkg-a@1\.0\.0/,
+  );
+  assert.equal(viewCalls, 0);
+});
+
+test("verifyPublishedPackages counts only the packages expected to actually publish for provenance", async () => {
+  const plan = {
+    packages: [
+      { name: "pkg-a", version: "1.0.0", channel: "latest", published: false },
+      { name: "pkg-b", version: "2.0.0", channel: "latest", published: false },
+    ],
+  };
+  await assert.rejects(
+    verifyPublishedPackages(plan, 42, {
+      readLog: () => publishSkipLine("pkg-b", "2.0.0"),
+      viewNpm: () => {
+        throw new Error("npm view must not run before the provenance count is satisfied");
+      },
+    }),
+    /Publish log contains 0 provenance statements for 1 packages\./,
   );
 });
 
