@@ -70,7 +70,10 @@ Once every planned package already exists on npm, `release:prepare` runs the Bas
 (`baseline:check`), which fails on a stale snapshot cutoff or stale generated data and otherwise
 prints one line with the cutoff and source versions, then the full local rehearsal
 (`release:rehearse`), the workflow audit (`workflow:check`), and confirms Changesets has no packages
-left to version. It then prints the plan. "Packages absent from npm" lists versions that are not on
+left to version. The rehearsal includes `release:fixture`, which packs every workspace artifact with
+`pnpm pack` and installs each one through the real `artifacts install` path with the workspace CLI
+version, so a manifest or compatibility range that would break consumers fails before anything is
+published. It then prints the plan. "Packages absent from npm" lists versions that are not on
 npm yet; the package names themselves already exist, because the minting check ran first. For
 example:
 
