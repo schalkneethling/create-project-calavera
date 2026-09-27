@@ -66,7 +66,7 @@ Recorded here so the audit has a baseline and so an agent does not rediscover it
 
 ## 4. Open Questions (spikes, each ends in an ADR)
 
-**CQ1. Non-`vp` projects.** Resolved by Increment 1 (see `docs/cross-repo/sequencing-map.md` Section 0): Calavera provides no JS or TS toolchain to any project; a project that has not adopted Vite+ runs `vp create` or `vp migrate` first. Original question kept for the record: After delegation, what does Calavera offer a project that has not adopted Vite+: the Minimal profile plus the kept integrations and a recommendation to run `vp create` or `vp migrate`, or a reduced Classic path? Default proposal: the former; maintaining two toolchain worlds is the failure mode C1 exists to prevent. Blocks Phase 1.
+**CQ1. Non-`vp` projects.** Resolved by Increment 1 (see `docs/cross-repo/sequencing-map.md` Section 0): Calavera provides no JS or TS toolchain to any project; a project that has not adopted Vite+ runs `vp create` or `vp migrate` first. Original question kept for the record: After delegation, what does Calavera offer a project that has not adopted Vite+: the Minimal profile plus the kept integrations and a recommendation to run `vp create` or `vp migrate`, or a reduced Classic path? Default proposal: the former; maintaining two toolchain worlds is the failure mode C1 exists to prevent. Blocks Phase 1. Recorded in `docs/adr/0009-no-js-ts-toolchain-for-any-project.md`.
 
 **CQ2. Vite+ detection signal.** Which of these, in what precedence, marks a project as `vp`-managed: a `vite-plus` dependency, a `vp`-written toolchain pin, `vp` commands in `package.json` scripts, a Vite+ configuration file. Must be a pure function of the project directory with a documented result in `inspect_project`. Blocks Phase 1.
 
