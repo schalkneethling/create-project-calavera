@@ -9,9 +9,12 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+
 import { integrationCatalog } from "../src/catalog.js";
 import { parseArgs } from "../src/index.js";
-import { callMcpTool } from "../src/mcp.js";
+import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import {
   buildRecipe,
   composeRecipe,
@@ -40,6 +43,27 @@ const unmanagedLines = [
   "Vite+ detection: unmanaged. No vite-plus dependency was found in this manifest or any ancestor manifest.",
   "Calavera provides no JavaScript or TypeScript toolchain; run vp create or vp migrate to adopt Vite+.",
 ];
+
+/**
+ * Calls a tool through the registered MCP server, so the tool's input schema
+ * runs, unlike callMcpTool, which invokes the handler directly.
+ *
+ * @param {string} name
+ * @param {Record<string, unknown>} args
+ */
+async function callRegisteredTool(name, args) {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createMcpServer();
+  const client = new Client({ name: "calavera-profile-test-client", version: "1.0.0" });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    return await client.callTool({ name, arguments: args });
+  } finally {
+    await client.close();
+    await server.close();
+  }
+}
 
 /** @param {string} removedId */
 function removedProfileMessage(removedId) {
@@ -138,7 +162,20 @@ test("MCP validate_recipe and compose_recipe reject the removed profile ids", as
 
     assert.equal(validation.ok, false);
     assert.match(validation.errors.join("\n"), removedProfileMessage(removedId));
-    await assert.rejects(() => callMcpTool("compose_recipe", { profile: removedId }));
+    await assert.rejects(
+      () => callMcpTool("compose_recipe", { profile: removedId }),
+      removedProfileMessage(removedId),
+    );
+    // Through the registered tool the input schema runs first and the server answers with an
+    // error result; it must carry the same message.
+    for (const name of ["compose_recipe", "list_integrations"]) {
+      const result = await callRegisteredTool(name, { profile: removedId });
+      assert.equal(result.isError, true, `${name} accepted ${removedId}`);
+      assert.match(
+        result.content.map(({ text }) => text).join("\n"),
+        removedProfileMessage(removedId),
+      );
+    }
   }
 });
 

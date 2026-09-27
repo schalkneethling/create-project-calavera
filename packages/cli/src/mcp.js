@@ -23,6 +23,7 @@ import {
   listIntegrationsResponse,
   listProfilesResponse,
   packageManagerIdsForRecipe,
+  assertKnownProfile,
   profileIdsForRecipe,
   recipeToolDescriptions,
   recipeToolInputDescriptions,
@@ -43,6 +44,19 @@ const SERVER_INSTRUCTIONS =
   "Compose Calavera recipes for the current project. Start with inspect_project, list_profiles, list_integrations, describe_integration when details are needed, and list_ai_artifacts to discover valid IDs, then call compose_recipe, validate_recipe, explain_recipe, and dry_run_apply. Present the dry-run summary to the user and call apply_recipe only after explicit approval.";
 
 const profileIds = profileIdsForRecipe();
+// A removed profile id fails the enum like any other value; the error map hands back the same
+// message validateRecipe gives, naming the replacement, so an MCP client sees it too (ADR-0011).
+const profileSchema = z.enum(profileIds, {
+  error: (issue) => {
+    if (typeof issue.input !== "string") return undefined;
+    try {
+      assertKnownProfile(issue.input);
+    } catch (error) {
+      return error instanceof Error ? error.message : undefined;
+    }
+    return undefined;
+  },
+});
 const packageManagerIds = packageManagerIdsForRecipe();
 const recipeSchema = z.record(z.string(), z.unknown()).describe("A Calavera recipe object.");
 const reownManagedFilesSchema = z
@@ -89,7 +103,7 @@ const toolConfigs = {
   list_integrations: {
     description: recipeToolDescriptions.list_integrations,
     inputSchema: {
-      profile: z.enum(profileIds).optional().describe(recipeToolInputDescriptions.profileFilter),
+      profile: profileSchema.optional().describe(recipeToolInputDescriptions.profileFilter),
     },
     annotations: toolAnnotations.read,
   },
@@ -139,7 +153,7 @@ const toolConfigs = {
   compose_recipe: {
     description: recipeToolDescriptions.compose_recipe,
     inputSchema: {
-      profile: z.enum(profileIds).describe(recipeToolInputDescriptions.profile),
+      profile: profileSchema.describe(recipeToolInputDescriptions.profile),
       packageManager: z
         .enum(packageManagerIds)
         .default("npm")
