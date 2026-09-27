@@ -23,6 +23,7 @@ Issues:
 - CAL-01x Determinant, first slice: catalog `protected-branch-guard` and `agent-red-test-verification` (and `deterministic-pnpm-install` if the existing artifact path carries it without a schema change) as artifacts from their current scripts. If metadata cannot express a gate, it is a request, not a blocker.
 - CAL-01y Bootstrap readiness check on a scratch `vp create` project; friction becomes issues.
 - Decision #442 `--new` delegates project scaffolding to `vp create`: Calavera confirms, spawns `vp create` with inherited stdio, waits for exit, and continues only when the exit code is zero and ADR-0001 detection reports `managed`. ADR first, then one implementation issue. Placed after CAL-01y so the bootstrap check supplies the friction evidence.
+  - ADR (proposed): `docs/adr/0010-new-delegates-scaffolding-to-vp-create.md`.
 - Determinant: one tracking issue listing the remaining gates with the adoption trigger for each. No brief.
 
 Explicitly not now: the Baseline engine API and Lightning CSS mapping (built when CSSE-015 needs them), #357 release verification extraction (before css-evolve's first publish), Playwright, a `gate` integration kind, packaging all Determinant gates, `dual-schema-validation` (when the `Diagnostic` schema exists), the css-evolve integration (when there is a css-evolve to install).
