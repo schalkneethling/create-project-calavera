@@ -445,7 +445,9 @@ in this order:
 `dry_run_apply` returns structured JSON with the package manager, integrations,
 dependency packages, the Vite+ detection report, project inspection findings,
 omitted script explanations,
-file ownership/action notes, and AI artifact changes that would be made. Agents
+file ownership/action notes, and AI artifact changes that would be made. On a
+project where the recipe was already applied and nothing has changed since,
+every change has `type: "unchanged"`. Agents
 should present that dry-run summary to the user first. `apply_recipe` is
 intentionally the approval boundary: call it only after the user explicitly
 approves the proposed recipe and dry-run result.
