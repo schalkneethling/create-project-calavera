@@ -2584,7 +2584,11 @@ export async function newProject(options, runtime = {}) {
 
   if (exit.exitCode !== 0) {
     throw new Error(
-      `vp create ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+. If Vite+ refused to start, check the Node.js version: Vite+ 1.0.0 requires Node.js ${VITE_PLUS_NODE_FLOOR}, and this is Node.js ${process.version}.`,
+      `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+. If Vite+ refused to start, check the Node.js version: Vite+ 1.0.0 requires Node.js ${VITE_PLUS_NODE_FLOOR}, and this is Node.js ${process.version}.${
+        runnerCommand.command === "yarn"
+          ? " If yarn itself failed, note that yarn dlx needs Yarn 2 or later."
+          : ""
+      }`,
     );
   }
 
