@@ -158,14 +158,12 @@ test("a default recipe is refused below the CLI release that accepts it", () => 
     () => assertRecipeProfileSupported({ profile: "default" }, profileCatalog, "3.0.0"),
     /The published Calavera CLI v3\.0\.0 does not support: default/,
   );
-  assert.deepEqual(
-    assertRecipeProfileSupported({ profile: "default" }, profileCatalog, "4.0.0"),
-    { profile: "default" },
-  );
-  assert.deepEqual(
-    assertRecipeProfileSupported({ profile: "minimal" }, profileCatalog, "3.0.0"),
-    { profile: "minimal" },
-  );
+  assert.deepEqual(assertRecipeProfileSupported({ profile: "default" }, profileCatalog, "4.0.0"), {
+    profile: "default",
+  });
+  assert.deepEqual(assertRecipeProfileSupported({ profile: "minimal" }, profileCatalog, "3.0.0"), {
+    profile: "minimal",
+  });
 });
 
 test("release-with-confidence remains hidden until CLI 2.4.0 is published", () => {
