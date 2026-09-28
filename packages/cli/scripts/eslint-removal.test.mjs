@@ -8,21 +8,7 @@ import { integrationCatalog } from "../src/catalog.js";
 import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe, profileDefaults } from "../src/recipe.js";
-
-const removedIds = [
-  "eslint",
-  "typescript-eslint",
-  "eslint-config-prettier",
-  "eslint-react",
-  "eslint-jsx-a11y",
-  "eslint-import",
-  "eslint-n",
-  "eslint-promise",
-  "eslint-unicorn",
-  "eslint-sonarjs",
-  "eslint-vitest",
-  "eslint-jest",
-];
+import { removedEslintIds as removedIds } from "./removed-toolchain-ids.mjs";
 
 test("list_integrations reports no ESLint integration and no ESLint plugin entry", async () => {
   const response = await callMcpTool("list_integrations");
