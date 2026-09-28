@@ -44,6 +44,8 @@ export const integrationCatalog = [
     group: "Repository governance",
     platform: "github",
     status: "optional",
+    // GitHub reads .github/ only at the repository root (#550).
+    appliesAt: "repository-root",
     minimumCliVersion: "2.5.0",
     dependencies: [],
   },

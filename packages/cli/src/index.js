@@ -25,6 +25,7 @@ import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   githubRepositoryControlManagedFiles,
 } from "./github-repository-controls.js";
+import { assertRootOnlyIntegrationsAtRepositoryRoot } from "./repository-root.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
 
 import {
@@ -1702,6 +1703,7 @@ export async function applyRecipeObject(recipe, options = {}) {
   );
   const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = resolveApplyPackageManager(recipe, applyOptions, detectedPackageJSON);
+  assertRootOnlyIntegrationsAtRepositoryRoot(integrations, process.cwd(), packageManager);
   const packageJSON = await ensurePackageJSON(
     packageManager,
     applyOptions.dryRun,

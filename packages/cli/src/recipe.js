@@ -308,12 +308,22 @@ export function projectLocalCommandSteps(packageManager = "npm") {
   ];
 }
 
+/**
+ * The sentence the catalog description and `explain_recipe` add for an
+ * integration that applies only at the repository root.
+ *
+ * @param {{ appliesAt?: string }} integration
+ */
+function repositoryRootNote(integration) {
+  return integration.appliesAt === "repository-root" ? " Applies at the repository root." : "";
+}
+
 export function listIntegrationOptions(profile) {
   return integrationCatalog
     .map((integration) => ({
       ...integration,
       profiles: integrationProfiles(integration.id),
-      description: `${integration.label}. Category: ${integration.group}. Status: ${integration.status}.`,
+      description: `${integration.label}. Category: ${integration.group}. Status: ${integration.status}.${repositoryRootNote(integration)}`,
     }))
     .filter((integration) => !profile || integration.profiles.includes(profile));
 }
@@ -550,12 +560,12 @@ export function explainRecipeIntegrations(recipe) {
     }
   }
 
-  return resolveRecipeIntegrations(recipe).map(({ id, label, group, status }) => ({
-    id,
-    label,
-    group,
-    status,
-    reason: reasons.get(id) ?? "Selected by the composed recipe.",
+  return resolveRecipeIntegrations(recipe).map((integration) => ({
+    id: integration.id,
+    label: integration.label,
+    group: integration.group,
+    status: integration.status,
+    reason: `${reasons.get(integration.id) ?? "Selected by the composed recipe."}${repositoryRootNote(integration)}`,
   }));
 }
 

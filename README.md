@@ -223,7 +223,9 @@ for a contributor walkthrough based on Theo Ephraim's Varlock integration.
 The optional `github-repository-controls` integration generates a committed desired-state policy,
 Dependabot configuration, a portable Node.js administration script, and setup documentation. A
 recipe must identify the expected repository so the generated script can refuse to operate against
-the wrong remote:
+the wrong remote. The integration applies at the repository root, because GitHub reads `.github/`
+only there: in a monorepo, a dry run or apply from a workspace member that selects it stops with a
+hard stop that names the repository root, before any file is planned or written.
 
 ```json
 {
