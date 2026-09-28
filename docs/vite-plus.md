@@ -17,15 +17,35 @@ adopted Vite+ (ADR-0009, Decision).
 
 ## What Vite+ provides and what Calavera adds
 
-| Vite+ (`vp --help`, `vp create --help`, vite-plus 1.0.0)       | Calavera adds on top                                                                                                                                                                                                                                                                                                                |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `vp create`: create a new project from a template              | The integration catalog's fourteen entries: EditorConfig, Stylelint, Stylelint standard config, CSS property ordering, CSS Baseline, SCSS support, Stylelint stylistic rules, Logical CSS, CSS property type validation, Knip, HTML Validate, Varlock, GitHub repository controls, and React Doctor (`packages/cli/src/catalog.js`) |
-| `vp migrate`: migrate an existing project to Vite+             | AI artifacts: skills, hooks, and subagents under `.agents/`, versioned as npm packages and tracked for updates (`docs/evolution-brief.md` Section 3, C3)                                                                                                                                                                            |
-| `vp lint`: lint code                                           | MCP registration: a project-local server for Claude Code, Codex, Cursor, or OpenCode, so an agent composes and applies a recipe without leaving the editor (`docs/evolution-brief.md` Section 3, C3)                                                                                                                                |
-| `vp fmt`/`vp format`: format code                              | GitHub repository governance: a desired-state policy, Dependabot configuration, and drift checks (`github-repository-controls` in `packages/cli/src/catalog.js`)                                                                                                                                                                    |
-| `vp check`: run format, lint, and type checks                  | The apply pipeline's safety properties and release verification (`docs/evolution-brief.md` Section 3, C3)                                                                                                                                                                                                                           |
-| `vp test`: run tests                                           | The Baseline engine and the CSS verification lane, kept until Oxlint's CSS language plugin ships (`docs/evolution-brief.md` Section 3, C3)                                                                                                                                                                                          |
-| `vp build`/`vp pack`: build for production, or build a library | (no paired addition)                                                                                                                                                                                                                                                                                                                |
+Vite+ provides the toolchain (`vp --help` and `vp create --help`, vite-plus
+1.0.0):
+
+- `vp create`: create a new project from a template.
+- `vp migrate`: migrate an existing project to Vite+.
+- `vp lint`, `vp fmt` (`vp format`), `vp check`: lint, format, and run format,
+  lint, and type checks.
+- `vp test`: run tests.
+- `vp build` and `vp pack`: build for production, or build a library.
+
+Calavera adds, on top of that toolchain:
+
+- The integration catalog's fourteen entries: EditorConfig, Stylelint,
+  Stylelint standard config, CSS property ordering, CSS Baseline, SCSS support,
+  Stylelint stylistic rules, Logical CSS, CSS property type validation, Knip,
+  HTML Validate, Varlock, GitHub repository controls, and React Doctor
+  (`packages/cli/src/catalog.js`).
+- AI artifacts: skills, hooks, and subagents under `.agents/`, versioned as npm
+  packages and tracked for updates (`docs/evolution-brief.md` Section 3, C3).
+- MCP registration: a project-local server for Claude Code, Codex, Cursor, or
+  OpenCode, so an agent composes and applies a recipe without leaving the
+  editor (`docs/evolution-brief.md` Section 3, C3).
+- GitHub repository governance: a desired-state policy, Dependabot
+  configuration, and drift checks (`github-repository-controls` in
+  `packages/cli/src/catalog.js`).
+- The apply pipeline's safety properties and release verification
+  (`docs/evolution-brief.md` Section 3, C3).
+- The Baseline engine and the CSS verification lane, kept until Oxlint's CSS
+  language plugin ships (`docs/evolution-brief.md` Section 3, C3).
 
 ## How Calavera knows a project is managed by Vite+
 
@@ -72,9 +92,6 @@ offer to clear a non-empty target directory, that Calavera's dry run does not
 preview what Vite+ writes, and that `--init` runs automatically afterward
 (ADR-0010, Decision 4). Vite+ owns every question it asks and every file it
 writes; Calavera only orchestrates the hand-off (ADR-0010, Decides).
-
-`--new` lands with issue #532, still open at the time of writing. Until then,
-the two-step flow in the next section works today.
 
 ## Add Calavera to an existing Vite+ project
 
@@ -140,4 +157,3 @@ instead." (ADR-0011, Decision; `packages/cli/src/recipe.js`,
 - [#433](https://github.com/schalkneethling/create-project-calavera/issues/433): regenerate the `vp` detection fixtures against a newer vite-plus release.
 - [#431](https://github.com/schalkneethling/create-project-calavera/issues/431): `doctor` warns when a recipe still carries a JavaScript or TypeScript toolchain integration in a `vp`-managed project.
 - [#430](https://github.com/schalkneethling/create-project-calavera/issues/430): offer create-here, apply-at-ancestor, or abandon when the inspected directory has no manifest of its own.
-- [#442](https://github.com/schalkneethling/create-project-calavera/issues/442): the `--new` decision this page documents, implemented by [#532](https://github.com/schalkneethling/create-project-calavera/issues/532).
