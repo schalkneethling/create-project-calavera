@@ -1,6 +1,6 @@
 # ADR-0006: Remove Prettier
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-15, merged in #469)
 - **Date:** 2026-09-15
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/456
 - **Decides:** removal of the Prettier integration and the entries that include it (`prettier-tailwind`, `prettier-svelte`, `prettier-astro`) under C1, applying the `remove` classification recorded for the "Classic profile: Prettier" row of `docs/catalog-audit.md`. `eslint-config-prettier` is removed separately, by CAL-015.

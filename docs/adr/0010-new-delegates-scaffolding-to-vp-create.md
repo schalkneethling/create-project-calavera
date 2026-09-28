@@ -1,6 +1,6 @@
 # ADR-0010: `--new` Delegates Project Scaffolding to `vp create`
 
-- **Status:** Proposed (2026-09-27)
+- **Status:** Accepted (2026-09-28, merged in #531)
 - **Date:** 2026-09-27
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/442
 - **Decides:** how Calavera starts a project that does not exist yet. `--new` confirms, spawns `vp create` through a package-manager runner with inherited stdio, and continues into what `--init` does today only when the child exits zero and ADR-0001 detection reports `managed` on the scaffolded directory. Calavera writes no JavaScript or TypeScript scaffolding itself, and nothing in C8 changes.

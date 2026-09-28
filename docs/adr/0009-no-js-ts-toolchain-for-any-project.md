@@ -1,6 +1,6 @@
 # ADR-0009: Calavera Provides No JavaScript or TypeScript Toolchain to Any Project
 
-- **Status:** Proposed (2026-09-27)
+- **Status:** Accepted (2026-09-28, merged in #530)
 - **Date:** 2026-09-27
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/528
 - **Decides:** CQ1 (`docs/evolution-brief.md` Section 4), non-`vp` projects. Records, with the audit evidence, that Calavera offers no JavaScript or TypeScript toolchain integration to any project, `vp`-managed or not, and that a project which has not adopted Vite+ runs `vp create` or `vp migrate` first.
