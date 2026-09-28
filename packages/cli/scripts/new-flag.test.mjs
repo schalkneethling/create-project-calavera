@@ -396,7 +396,8 @@ test("--new hard-stops on a non-zero exit, names the cause, and writes nothing f
   assert.equal(result.code, 1);
   assert.match(result.stderr, /exited with code 1/);
   assert.match(result.stderr, /partial scaffold that belongs to Vite\+/);
-  assert.match(result.stderr, /\^22\.18\.0 \|\| \^24\.11\.0 \|\| >=26\.0\.0/);
+  // This Node.js meets the Vite+ floor, so the hard stop does not mention it.
+  assert.doesNotMatch(result.stderr, /below that floor/);
   assert.deepEqual(await readdir(join(workspace.work, "partial")), ["package.json"]);
   assert.equal(await readFile(join(workspace.work, "partial/package.json"), "utf8"), "{");
 });
