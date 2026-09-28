@@ -1,12 +1,12 @@
 # STATUS
 
-Updated: 2026-09-27
+Updated: 2026-09-28
 
 ## Current phase and checkpoint
 
 Increment 1 (sequencing map Section 0). Last checkpoint passed: none. Checkpoint 0 is in progress: the CQ2 ADR is accepted and the reduced audit worksheet (CAL-001, #448) is complete and approved, but the CQ1 ADR (CAL-003) is outstanding. CQ1 is resolved in the sequencing map text (Calavera provides no JS or TS toolchain to any project) and no ADR file records it yet; the brief's Checkpoint 0 names that ADR as a criterion.
 
-The removal stack (CAL-012 to CAL-016) shipped as create-project-calavera 3.0.0 on 2026-09-24. The Baseline data work, pull request CI, the repository linting fold, and the Baseline refresh workflow are all on `main`. Both release-day pull requests and every follow-up are merged; no pull request is open.
+The removal stack (CAL-012 to CAL-016) shipped as create-project-calavera 3.0.0 on 2026-09-24. The Baseline data work, pull request CI, the repository linting fold, and the Baseline refresh workflow are all on `main`. Both release-day pull requests and every follow-up are merged; no release-related pull request remains open. The stack toward the release that starts a project with `--new` is open: #530 (CQ1 ADR-0009, CAL-003), #531 (ADR-0010, `--new` delegates to `vp create`), and #535 (CAL-011, profiles collapse), with #535 to merge last before the Version Packages release because Composer has no profile version gate (#533).
 
 ## Completed this session
 
@@ -50,8 +50,8 @@ The removal stack (CAL-012 to CAL-016) shipped as create-project-calavera 3.0.0 
 
 ## Next session starts with
 
-- Write the CQ1 ADR (CAL-003) so Checkpoint 0 can pass. Open its issue first; none exists.
-- Open and do CAL-011 (profiles collapse, reading `vitePlus.status` at compose and dry-run time). It is the first change that makes the vp claim positive rather than negative. React Doctor follow-up: re-express its two scripts as `vp run` tasks.
+- Review #530, #531, and #535; accept ADR-0009, ADR-0010, and ADR-0011 at review. Merge #535 last, immediately before the Version Packages release.
+- Implement `--new` (#532) once ADR-0010 is accepted, then the dogfood run from a packed build in an empty directory. React Doctor follow-up: re-express its two scripts as `vp run` tasks.
 - Then #433 with a real `vp create` fixture and an end-to-end test of `inspect_project`, `compose_recipe`, `dry_run_apply`, `apply_recipe` against it; that is the evidence H0 needs.
 - Make the `Check` status required on `main` and shrink the validation guidance in PR.md to "CI must be green".
 - #525 (Composer recipe seam) when Composer is next touched. The other follow-up issues named in ADR-0001 are open: #429 to #432. The unparseable-manifest MCP-level test waits on #429.
