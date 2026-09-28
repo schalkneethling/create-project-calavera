@@ -27,11 +27,13 @@ export const profileCatalog = [
     label: "default",
     description:
       "CSS linting defaults; Calavera does not configure JavaScript or TypeScript checks, which come from Vite+.",
+    minimumCliVersion: "4.0.0",
   },
   {
     id: "minimal",
     label: "minimal",
     description: "Only basic editor consistency settings.",
+    minimumCliVersion: "2.2.0",
   },
 ];
 

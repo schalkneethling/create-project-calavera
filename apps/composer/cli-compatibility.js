@@ -162,6 +162,32 @@ export function assertRecipeArtifactsSupported(recipe, artifacts, cliVersion) {
   return recipe;
 }
 
+export function filterProfilesForCli(profiles, cliVersion) {
+  return profiles.filter((profile) => {
+    if (typeof profile.minimumCliVersion !== "string") {
+      throw new Error(
+        `Profile ${profile.id} must declare minimumCliVersion before the hosted Composer can offer it.`,
+      );
+    }
+    return versionMeetsMinimum(cliVersion, profile.minimumCliVersion);
+  });
+}
+
+export function assertRecipeProfileSupported(recipe, profiles, cliVersion) {
+  const supportedIds = new Set(filterProfilesForCli(profiles, cliVersion).map(({ id }) => id));
+  const unsupportedIds = supportedIds.has(recipe.profile) ? [] : [recipe.profile];
+
+  if (unsupportedIds.length > 0) {
+    throw new Error(
+      `The published Calavera CLI v${cliVersion} does not support: ${unsupportedIds.join(
+        ", ",
+      )}. Wait for the required CLI release before downloading this recipe.`,
+    );
+  }
+
+  return recipe;
+}
+
 export async function loadPublishedCliCompatibility(fetchLatest = globalThis.fetch) {
   try {
     const response = await fetchLatest(NPM_LATEST_CLI_URL, {

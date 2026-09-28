@@ -47,6 +47,8 @@ The CSS lane entry the audit folded the two Stylelint rows into is now the defau
 
 Removal tests from ADR-0002 through ADR-0006 that used `modern` or `classic` as a profile literal now use `default`; their assertions are unchanged.
 
+The hosted Composer gate named as an open question below now exists: `profileCatalog` carries a `minimumCliVersion` per profile (`4.0.0` for `default`, `2.2.0` for `minimal`), and `apps/composer/cli-compatibility.js` filters profiles and refuses to download a recipe naming an unsupported one the same way it already does for integrations and artifacts, so `default` stays hidden and unselectable in the hosted Composer until npm's published CLI reaches `4.0.0`.
+
 ## Alternatives considered
 
 **Keep `modern` as the surviving id and remove only `classic`.** Rejected: "modern" named a toolchain choice, Oxlint and Oxfmt, that no longer exists in Calavera, and keeping the id would advertise a distinction the profile does not make. It would also leave Classic users with a rename while Modern users kept theirs, for two profiles that were already identical.
@@ -56,7 +58,3 @@ Removal tests from ADR-0002 through ADR-0006 that used `modern` or `classic` as 
 **Select different defaults for a managed and an unmanaged project.** Rejected: CQ1 already decided that neither receives a JavaScript or TypeScript toolchain, and the issue scopes behavior on an unmanaged project to reporting. Varying the profile by detection verdict would make a checked-in recipe mean different things in different directories.
 
 **Report detection only through `inspect_project`.** Rejected: that is where it was, and nothing downstream read it. The brief places the statement in `explain_recipe` and `dry_run_apply` because those are the outputs an agent shows the user before approval.
-
-## Open questions
-
-The hosted Composer composes recipes for the CLI version published on npm, and its compatibility gate, `apps/composer/cli-compatibility.js`, filters integrations and artifacts by version but not profiles. If Composer is deployed before the major CLI release carrying this change, it would offer `default` to a published CLI that accepts only `modern`, `classic`, and `minimal`. Deploying Composer with the CLI release avoids this; whether profiles need the same version gate as integrations is left to a follow-up issue.
