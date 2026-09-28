@@ -4,13 +4,16 @@ import test from "node:test";
 import Ajv from "ajv";
 import { integrationCatalog } from "../../../packages/cli/src/catalog.js";
 import { aiArtifactCatalog } from "../../../packages/cli/src/ai/catalog.js";
+import { profileCatalog } from "../../../packages/cli/src/recipe.js";
 import {
   artifactResponseForCli,
   assertRecipeArtifactsSupported,
   assertRecipeIntegrationsSupported,
+  assertRecipeProfileSupported,
   CLI_VERSION_PATTERN,
   filterArtifactsForCli,
   filterIntegrationsForCli,
+  filterProfilesForCli,
   integrationResponseForCli,
   isFallbackCliIntegration,
   loadPublishedCliCompatibility,
@@ -132,6 +135,36 @@ test("WebMCP catalog responses and recipes use the same published CLI boundary",
       "2.4.0",
     ),
     { ai: [{ id: "skill-release-with-confidence" }] },
+  );
+});
+
+test("every profile declares its minimum CLI version", () => {
+  for (const profile of profileCatalog) {
+    assert.equal(typeof profile.minimumCliVersion, "string", profile.id);
+    assert.match(profile.minimumCliVersion, CLI_VERSION_PATTERN, profile.id);
+  }
+});
+
+test("v3.0.0 compatibility excludes the default profile until v4.0.0 is published", () => {
+  const v300Ids = filterProfilesForCli(profileCatalog, "3.0.0").map(({ id }) => id);
+  const v400Ids = filterProfilesForCli(profileCatalog, "4.0.0").map(({ id }) => id);
+
+  assert.deepEqual(v300Ids, ["minimal"]);
+  assert.deepEqual(v400Ids, ["default", "minimal"]);
+});
+
+test("a default recipe is refused below the CLI release that accepts it", () => {
+  assert.throws(
+    () => assertRecipeProfileSupported({ profile: "default" }, profileCatalog, "3.0.0"),
+    /The published Calavera CLI v3\.0\.0 does not support: default/,
+  );
+  assert.deepEqual(
+    assertRecipeProfileSupported({ profile: "default" }, profileCatalog, "4.0.0"),
+    { profile: "default" },
+  );
+  assert.deepEqual(
+    assertRecipeProfileSupported({ profile: "minimal" }, profileCatalog, "3.0.0"),
+    { profile: "minimal" },
   );
 });
 
