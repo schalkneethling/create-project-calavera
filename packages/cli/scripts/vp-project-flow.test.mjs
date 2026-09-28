@@ -287,18 +287,15 @@ test("vp create monorepo member packages/utils: dry_run_apply and apply_recipe r
   assert.deepEqual(await snapshotTree(fixture.root), before, "the refusal changed a file");
 });
 
-// H0 asks that the second dry run report no drift. Today it replans every
-// write and warns about the files and scripts Calavera itself recorded, so
-// this stays a todo until #548 lands; it runs and reports, and must not be
-// weakened to pass.
-test(
-  "vp create library: a second dry run after apply reports no changes and no drift",
-  { todo: "https://github.com/schalkneethling/create-project-calavera/issues/548" },
-  async () => {
-    await using fixture = await copyReleaseFixture("library");
-    const { recipe } = await runFlow(cases[0], fixture.root);
+// H0 and #548: once the recipe is applied, a second dry run reports every
+// planned write and script update as unchanged, and warns about none of the
+// files or scripts Calavera itself recorded.
+for (const flowCase of cases) {
+  test(`vp create ${flowCase.name}: a second dry run after apply reports no changes and no drift`, async () => {
+    await using fixture = await copyRepositoryFixture(flowCase.fixture);
+    const { recipe } = await runFlow(flowCase, fixture.root);
 
-    const secondDryRun = await inDirectory(fixture.root, () =>
+    const secondDryRun = await inDirectory(join(fixture.root, flowCase.directory), () =>
       callMcpTool("dry_run_apply", { recipe }),
     );
 
@@ -310,5 +307,5 @@ test(
       secondDryRun.result.projectInspection.findings.filter(({ severity }) => severity !== "info"),
       [],
     );
-  },
-);
+  });
+}
