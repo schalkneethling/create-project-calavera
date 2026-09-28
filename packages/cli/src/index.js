@@ -1,8 +1,8 @@
 #!/usr/bin/env node
 // @ts-check
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, readFile, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, relative, resolve } from "node:path";
+import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { dirname, join, relative, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs as parseNodeArgs } from "node:util";
 
@@ -107,6 +107,8 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {"latest" | "next"} [artifactTag]
  * @property {boolean} [artifactAll]
  * @property {boolean} [checkUpdates]
+ * @property {boolean} [init]
+ * @property {string[]} [newArgs] Tokens after `--new`, forwarded verbatim to `vp create`.
  *
  * @typedef {object} PackageManagerCommands
  * @property {[string, string[]]} init
@@ -188,8 +190,16 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string} nextPrompt
  * @property {{ harness: McpHarness, action: "manual" | "write" | "update" | "skip", path?: string, reason?: string }} mcp
  *
+ * @typedef {object} NewResult
+ * @property {"new"} command
+ * @property {boolean} dryRun
+ * @property {boolean} confirmed
+ * @property {string[]} confirmation
+ * @property {string} [target]
+ * @property {AgentInitResult} [bootstrap]
+ *
  * @typedef {{ command: `artifacts ${string}`, [key: string]: unknown }} ArtifactCommandResult
- * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | ArtifactCommandResult} CommandResult
+ * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | ArtifactCommandResult} CommandResult
  */
 
 const CONFIG_FILE = "calavera.config.json";
@@ -370,7 +380,11 @@ function assertSupportedMcpHarness(harness) {
  * @returns {CliOptions}
  */
 export function parseArgs(rawArgs) {
-  const args = rawArgs.filter((arg) => arg.trim() !== "--");
+  // `--new` ends Calavera's own arguments (ADR-0010). The split happens before
+  // `--` tokens are removed, so a `--` meant for `vp create` survives.
+  const newIndex = rawArgs.findIndex((arg) => arg.trim() === "--new");
+  const ownArgs = newIndex === -1 ? rawArgs : rawArgs.slice(0, newIndex);
+  const args = ownArgs.filter((arg) => arg.trim() !== "--");
   const { values, positionals } = parseNodeArgs({
     args,
     options: cliParseOptions,
@@ -384,7 +398,13 @@ export function parseArgs(rawArgs) {
   assertKnownValue("tag", artifactTag, ["latest", "next"]);
   /** @type {CliOptions} */
   const parsed = {
-    command: values.help ? "help" : values.init ? "agent-init" : (positionals[0] ?? "init"),
+    command: values.help
+      ? "help"
+      : newIndex !== -1
+        ? "new"
+        : values.init
+          ? "agent-init"
+          : (positionals[0] ?? "init"),
     config: optionalStringValue(values.config) ?? CONFIG_FILE,
     dryRun: values["dry-run"] === true,
     json: values.json === true,
@@ -409,7 +429,12 @@ export function parseArgs(rawArgs) {
     artifactTag: /** @type {"latest" | "next"} */ (artifactTag),
     artifactAll: values.all === true,
     checkUpdates: values["check-updates"] === true,
+    init: values.init === true,
   };
+
+  if (newIndex !== -1) {
+    parsed.newArgs = rawArgs.slice(newIndex + 1);
+  }
 
   if (profile !== undefined) {
     assertKnownProfile(profile);
@@ -751,34 +776,61 @@ ${AGENT_BOOTSTRAP_SECTION_END}
 }
 
 /**
+ * Runs one bin of a package through the package manager's runner. The runner
+ * names both the package and the bin, because a runner given only the name of
+ * a package with several bins cannot tell which one to run.
+ *
+ * @param {PackageManager} packageManager
+ * @param {string} packageSpecifier
+ * @param {string} bin
+ * @returns {{ command: string, args: string[] }}
+ */
+function createPackageRunnerCommand(packageManager, packageSpecifier, bin) {
+  switch (packageManager) {
+    case "pnpm":
+      return { command: "pnpm", args: ["dlx", "--package", packageSpecifier, bin] };
+    case "yarn":
+      return { command: "yarn", args: ["dlx", "--package", packageSpecifier, bin] };
+    case "bun":
+      return { command: "bunx", args: ["--package", packageSpecifier, bin] };
+    default:
+      return { command: "npx", args: ["--package", packageSpecifier, bin] };
+  }
+}
+
+/**
  * @param {PackageManager} packageManager
  * @returns {{ command: string, args: string[] }}
  */
 function createMcpLaunchCommand(packageManager) {
-  const packageSpecifier = `create-project-calavera@${packageJson.version}`;
+  return createPackageRunnerCommand(
+    packageManager,
+    `create-project-calavera@${packageJson.version}`,
+    "create-project-calavera-mcp",
+  );
+}
 
-  switch (packageManager) {
-    case "pnpm":
-      return {
-        command: "pnpm",
-        args: ["dlx", "--package", packageSpecifier, "create-project-calavera-mcp"],
-      };
-    case "yarn":
-      return {
-        command: "yarn",
-        args: ["dlx", "--package", packageSpecifier, "create-project-calavera-mcp"],
-      };
-    case "bun":
-      return {
-        command: "bunx",
-        args: ["--package", packageSpecifier, "create-project-calavera-mcp"],
-      };
-    default:
-      return {
-        command: "npx",
-        args: ["--package", packageSpecifier, "create-project-calavera-mcp"],
-      };
-  }
+/**
+ * The command `--new` spawns, per ADR-0010 Decision 1.
+ *
+ * @param {PackageManager} packageManager
+ * @param {string[]} forwardedArgs
+ * @returns {{ command: string, args: string[] }}
+ */
+export function createVpCreateCommand(packageManager, forwardedArgs) {
+  const runner = createPackageRunnerCommand(packageManager, "vite-plus", "vp");
+
+  return { command: runner.command, args: [...runner.args, "create", ...forwardedArgs] };
+}
+
+/**
+ * Quotes a token for display when a shell would otherwise split or expand it.
+ *
+ * @param {string} token
+ * @returns {string}
+ */
+function quoteShellToken(token) {
+  return /^[\w@%+=:,./^~-]+$/.test(token) ? token : `'${token.replaceAll("'", `'\\''`)}'`;
 }
 
 /**
@@ -786,7 +838,7 @@ function createMcpLaunchCommand(packageManager) {
  * @returns {string}
  */
 function formatShellCommand(launchCommand) {
-  return [launchCommand.command, ...launchCommand.args].join(" ");
+  return [launchCommand.command, ...launchCommand.args].map(quoteShellToken).join(" ");
 }
 
 function createMcpManualCommandReference() {
@@ -2297,6 +2349,301 @@ export async function agentBootstrap(options = {}) {
   };
 }
 
+// Stated, not checked: the CLI does not depend on a semver range parser.
+const VITE_PLUS_NODE_FLOOR = "^22.18.0 || ^24.11.0 || >=26.0.0";
+const NEW_HARD_STOP_SUFFIX =
+  "Calavera wrote nothing further, removed nothing, and did not run the --init bootstrap.";
+
+/**
+ * @typedef {{ command: string, args: string[], cwd: string }} RunnerInvocation
+ * @typedef {{ exitCode: number | null, signal: string | null }} RunnerExit
+ * @typedef {object} NewProjectRuntime
+ * @property {(invocation: RunnerInvocation) => Promise<RunnerExit>} [spawnRunner]
+ */
+
+/**
+ * Spawns the runner with inherited stdio, so Vite+ asks its own questions.
+ *
+ * @param {RunnerInvocation} invocation
+ * @returns {Promise<RunnerExit>}
+ */
+async function spawnInheritedRunner({ command, args, cwd }) {
+  const result = await execa(command, args, { cwd, stdio: "inherit", reject: false });
+
+  if (result.exitCode === undefined && result.signal === undefined) {
+    throw new Error(
+      `--new could not start ${command}: ${result.shortMessage ?? result.code ?? "unknown error"}. Calavera wrote nothing.`,
+      { cause: result.cause ?? result },
+    );
+  }
+
+  return { exitCode: result.exitCode ?? null, signal: result.signal ?? null };
+}
+
+/**
+ * The `--directory` value `vp create` receives, if any. Tokens after a `--`
+ * belong to the template and are not read.
+ *
+ * @param {string[]} forwardedArgs
+ * @returns {string | undefined}
+ */
+function forwardedDirectory(forwardedArgs) {
+  const separatorIndex = forwardedArgs.indexOf("--");
+  const vpCreateArgs =
+    separatorIndex === -1 ? forwardedArgs : forwardedArgs.slice(0, separatorIndex);
+
+  for (const [index, arg] of vpCreateArgs.entries()) {
+    if (arg === "--directory") {
+      return vpCreateArgs[index + 1];
+    }
+
+    if (arg.startsWith("--directory=")) {
+      return arg.slice("--directory=".length);
+    }
+  }
+
+  return undefined;
+}
+
+/**
+ * @param {string} path
+ * @returns {Promise<string | undefined>}
+ */
+async function readFileIfPresent(path) {
+  try {
+    return await readFile(path, "utf8");
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Records the `package.json` of a directory and of each of its top-level
+ * directories: its contents, or `undefined` when absent or unreadable.
+ *
+ * @param {string} cwd
+ * @returns {Promise<Map<string, string | undefined>>}
+ */
+async function snapshotManifests(cwd) {
+  const entries = await readdir(cwd, { withFileTypes: true });
+  const directories = [
+    cwd,
+    ...entries.filter((entry) => entry.isDirectory()).map((entry) => join(cwd, entry.name)),
+  ];
+  /** @type {Map<string, string | undefined>} */
+  const snapshot = new Map();
+
+  for (const directory of directories) {
+    snapshot.set(directory, await readFileIfPresent(join(directory, "package.json")));
+  }
+
+  return snapshot;
+}
+
+/**
+ * Locates the directory `vp create` scaffolded, per ADR-0010 Decision 3.
+ *
+ * @param {string} cwd
+ * @param {Map<string, string | undefined>} before
+ * @returns {Promise<string[]>}
+ */
+async function scaffoldCandidates(cwd, before) {
+  const after = await snapshotManifests(cwd);
+
+  if (before.get(cwd) === undefined && after.get(cwd) !== undefined) {
+    return [cwd];
+  }
+
+  return [...after]
+    .filter(
+      ([directory, contents]) =>
+        directory !== cwd && contents !== undefined && contents !== before.get(directory),
+    )
+    .map(([directory]) => directory);
+}
+
+/**
+ * @param {RunnerExit} exit
+ * @returns {string}
+ */
+function describeRunnerExit(exit) {
+  return exit.exitCode === null
+    ? `was terminated by signal ${exit.signal ?? "unknown"}`
+    : `exited with code ${exit.exitCode}`;
+}
+
+/**
+ * @param {string} runner
+ * @param {string} cwd
+ * @param {VitePlusDetection} cwdDetection
+ * @returns {string[]}
+ */
+function newProjectConfirmation(runner, cwd, cwdDetection) {
+  return [
+    "Calavera will run Vite+ to scaffold a new project:",
+    `  Command: ${runner}`,
+    `  Working directory: ${cwd}`,
+    "- The runner may download vite-plus before it starts.",
+    "- Vite+ asks its own questions (template, target directory, package manager, and the rest) unless the forwarded flags answer them. Calavera does not answer them.",
+    "- Vite+ installs the project's dependencies. This needs network access, can take minutes, and cannot be skipped.",
+    "- If the target directory Vite+ is given is not empty, Vite+ may offer to remove its contents. That choice is Vite+'s.",
+    "- Calavera's dry run does not preview what Vite+ writes, and Calavera does not undo it if the scaffold fails.",
+    `- Vite+ 1.0.0 requires Node.js ${VITE_PLUS_NODE_FLOOR}. This is Node.js ${process.version}.`,
+    ...(cwdDetection.ancestor
+      ? [
+          `- The new project will sit inside another project: ${cwdDetection.ancestor.manifestPath} is ${cwdDetection.ancestor.status}.`,
+        ]
+      : []),
+    "- After a successful scaffold, Calavera runs the --init agent bootstrap in the new directory.",
+  ];
+}
+
+/**
+ * @param {CliOptions} options
+ * @returns {string[]}
+ */
+function nonInteractiveReasons(options) {
+  return [
+    ...(process.stdin.isTTY ? [] : ["stdin is not a terminal"]),
+    ...(process.env.CI ? ["CI is set"] : []),
+    ...((options.newArgs ?? []).includes("--no-interactive")
+      ? ["--no-interactive was forwarded to vp create"]
+      : []),
+  ];
+}
+
+/**
+ * `--new`: confirms, spawns `vp create` through a package-manager runner,
+ * verifies that the scaffold is managed by Vite+, and runs the `--init`
+ * bootstrap in it, as decided by ADR-0010.
+ *
+ * @param {CliOptions} options
+ * @param {NewProjectRuntime} [runtime]
+ * @returns {Promise<NewResult>}
+ */
+export async function newProject(options, runtime = {}) {
+  const cwd = process.cwd();
+  const forwardedArgs = options.newArgs ?? [];
+
+  if (existsSync(join(cwd, "package.json"))) {
+    throw new Error(
+      [
+        `--new refused: ${join(cwd, "package.json")} exists, so a project already exists here. --new only starts a project that does not exist yet. Run the agent bootstrap in this directory instead:`,
+        ...supportedPackageManagers.map(
+          (packageManager) => `  ${projectLocalCommandCatalog[packageManager].agentBootstrap}`,
+        ),
+      ].join("\n"),
+    );
+  }
+
+  if (options.init) {
+    throw new Error(
+      "--new and --init cannot be combined: --new already runs the --init bootstrap after Vite+ scaffolds the project. Remove --init.",
+    );
+  }
+
+  if (options.json) {
+    throw new Error(
+      "--new cannot be combined with --json: Vite+ writes its prompts and progress to the same output, which would corrupt the JSON result. Remove --json.",
+    );
+  }
+
+  const runnerCommand = createVpCreateCommand(options.packageManager ?? "npm", forwardedArgs);
+  const runner = formatShellCommand(runnerCommand);
+  const confirmation = newProjectConfirmation(runner, cwd, await detectVitePlus(cwd));
+
+  if (options.dryRun) {
+    return { command: "new", dryRun: true, confirmed: false, confirmation };
+  }
+
+  if (!options.assumeYes) {
+    const reasons = nonInteractiveReasons(options);
+
+    if (reasons.length > 0) {
+      throw new Error(
+        `--new refused: Calavera cannot ask for confirmation because ${reasons.join(", ")}. Preview the command with --dry-run, then confirm it by passing --yes before --new.`,
+      );
+    }
+
+    note(confirmation.join("\n"), "Before Calavera runs vp create");
+    const confirmed = await confirm({ message: "Run vp create now?", initialValue: false });
+
+    exitIfCancel(confirmed);
+
+    if (confirmed !== true) {
+      return { command: "new", dryRun: false, confirmed: false, confirmation };
+    }
+  } else {
+    for (const line of confirmation) {
+      logger.info(line);
+    }
+  }
+
+  const before = await snapshotManifests(cwd);
+  const exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({ ...runnerCommand, cwd });
+
+  if (exit.exitCode !== 0) {
+    throw new Error(
+      `vp create ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+. If Vite+ refused to start, check the Node.js version: Vite+ 1.0.0 requires Node.js ${VITE_PLUS_NODE_FLOOR}, and this is Node.js ${process.version}.`,
+    );
+  }
+
+  const directory = forwardedDirectory(forwardedArgs);
+  const candidates =
+    directory === undefined ? await scaffoldCandidates(cwd, before) : [resolve(cwd, directory)];
+  const [target] = candidates;
+
+  if (target === undefined) {
+    throw new Error(
+      `vp create exited with code 0, but no new or changed package.json was found in ${cwd} or its top-level directories, so the scaffold was canceled or wrote no project. ${NEW_HARD_STOP_SUFFIX}`,
+    );
+  }
+
+  if (candidates.length > 1) {
+    throw new Error(
+      `vp create exited with code 0, but more than one directory gained a new or changed package.json: ${candidates.join(", ")}. Calavera cannot tell which one Vite+ scaffolded. ${NEW_HARD_STOP_SUFFIX} Run the --init bootstrap in the scaffolded directory.`,
+    );
+  }
+
+  const detection = await detectVitePlus(target);
+
+  if (detection.status !== "managed") {
+    const findings = vitePlusFindings(detection)
+      .map((finding) => `${finding.kind}: ${finding.message}`)
+      .join(" ");
+
+    throw new Error(
+      `vp create exited with code 0, but Vite+ detection on ${target} reports status ${detection.status}. ${findings} ${NEW_HARD_STOP_SUFFIX} ${target} may hold a partial scaffold that belongs to Vite+.`,
+    );
+  }
+
+  process.chdir(target);
+
+  try {
+    // The runner's package manager only fetched vite-plus; the bootstrap
+    // detects the project's package manager from the scaffolded manifest.
+    const bootstrap = await agentBootstrap({
+      ...options,
+      command: "agent-init",
+      packageManager: undefined,
+    });
+
+    return { command: "new", dryRun: false, confirmed: true, confirmation, target, bootstrap };
+  } catch (error) {
+    const packageManager =
+      (await readPackageJSONIfPresent().then(detectPackageManager, () => undefined)) ?? "npm";
+
+    throw new Error(
+      `Vite+ scaffolded ${target}, but the Calavera agent bootstrap failed: ${
+        error instanceof Error ? error.message : String(error)
+      }. The scaffold is left in place. Run the bootstrap in that directory: cd ${quoteShellToken(target)} && ${projectLocalCommandCatalog[packageManager].agentBootstrap}`,
+      { cause: error },
+    );
+  } finally {
+    process.chdir(cwd);
+  }
+}
+
 /**
  * @param {unknown} value
  * @returns {never | void}
@@ -2873,7 +3220,9 @@ Commands:
 
 Options:
   --init               Bootstrap agent guidance, MCP notes, and the Calavera skill
-  --dry-run            Preview writes without changing files
+  --new [args]         Scaffold a new project with vp create, then run --init there
+                      Every token after --new goes to vp create unchanged
+  --dry-run           Preview writes without changing files
   --apply              Preview and optionally apply after composing a recipe
   --config <path>      Recipe path, defaults to calavera.config.json
   --package-manager    npm, pnpm, yarn, or bun
@@ -2966,6 +3315,26 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       }
     }
 
+    return;
+  }
+
+  if (result.command === "new") {
+    if (result.dryRun) {
+      logger.info("Calavera --new dry run. Nothing was run and no files were changed.");
+
+      for (const line of result.confirmation) {
+        logger.info(line);
+      }
+      return;
+    }
+
+    if (!result.bootstrap) {
+      logger.info("Canceled. vp create was not run and no files were changed.");
+      return;
+    }
+
+    logger.success(`Vite+ scaffolded ${result.target}. Vite+ detection: managed.`);
+    printResult(result.bootstrap);
     return;
   }
 
@@ -3126,6 +3495,11 @@ async function main() {
 
   if (options.command === "agent-init" || options.command === "bootstrap") {
     printResult(await agentBootstrap(options), options.json);
+    return;
+  }
+
+  if (options.command === "new") {
+    printResult(await newProject(options));
     return;
   }
 
