@@ -251,7 +251,7 @@ for (const flowCase of cases) {
     const findings = secondDryRun.result.projectInspection.findings;
 
     // No content drift: nothing conflicts with or re-owns a managed file, and
-    // the plan is exactly the one the user approved.
+    // the plan is exactly the one the user approved, each change now unchanged.
     assert.deepEqual(
       findings.filter(
         ({ severity, kind }) =>
@@ -259,7 +259,10 @@ for (const flowCase of cases) {
       ),
       [],
     );
-    assert.deepEqual(secondDryRun.result.changes, changes);
+    assert.deepEqual(
+      secondDryRun.result.changes,
+      changes.map((change) => ({ ...change, type: "unchanged" })),
+    );
     assert.deepEqual(secondDryRun.result.vitePlus.lines, managedLines);
   });
 }
