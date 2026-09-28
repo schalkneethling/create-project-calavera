@@ -2349,8 +2349,20 @@ export async function agentBootstrap(options = {}) {
   };
 }
 
-// Stated, not checked: the CLI does not depend on a semver range parser.
 const VITE_PLUS_NODE_FLOOR = "^22.18.0 || ^24.11.0 || >=26.0.0";
+
+/**
+ * Whether a Node.js version satisfies the Vite+ 1.0.0 floor. The three ranges
+ * are compared by hand because the CLI does not depend on a semver parser.
+ *
+ * @param {string} version `process.version`, with or without the leading `v`.
+ * @returns {boolean}
+ */
+export function nodeMeetsVitePlusFloor(version) {
+  const [major = 0, minor = 0] = version.replace(/^v/, "").split(".").map(Number);
+
+  return (major === 22 && minor >= 18) || (major === 24 && minor >= 11) || major >= 26;
+}
 const NEW_HARD_STOP_SUFFIX =
   "Calavera wrote nothing further, removed nothing, and did not run the --init bootstrap.";
 
@@ -2488,7 +2500,9 @@ function newProjectConfirmation(runner, cwd, cwdDetection) {
     "- Vite+ installs the project's dependencies. This needs network access, can take minutes, and cannot be skipped.",
     "- If the target directory Vite+ is given is not empty, Vite+ may offer to remove its contents. That choice is Vite+'s.",
     "- Calavera's dry run does not preview what Vite+ writes, and Calavera does not undo it if the scaffold fails.",
-    `- Vite+ 1.0.0 requires Node.js ${VITE_PLUS_NODE_FLOOR}. This is Node.js ${process.version}.`,
+    `- Vite+ 1.0.0 requires Node.js ${VITE_PLUS_NODE_FLOOR}. This is Node.js ${process.version}${
+      nodeMeetsVitePlusFloor(process.version) ? "" : ", which is below that floor"
+    }.`,
     ...(cwdDetection.ancestor
       ? [
           `- The new project will sit inside another project: ${cwdDetection.ancestor.manifestPath} is ${cwdDetection.ancestor.status}.`,
@@ -2584,7 +2598,11 @@ export async function newProject(options, runtime = {}) {
 
   if (exit.exitCode !== 0) {
     throw new Error(
-      `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+. If Vite+ refused to start, check the Node.js version: Vite+ 1.0.0 requires Node.js ${VITE_PLUS_NODE_FLOOR}, and this is Node.js ${process.version}.${
+      `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
+        nodeMeetsVitePlusFloor(process.version)
+          ? ""
+          : ` Vite+ 1.0.0 requires Node.js ${VITE_PLUS_NODE_FLOOR}, and this is Node.js ${process.version}, which is below that floor.`
+      }${
         runnerCommand.command === "yarn"
           ? " If yarn itself failed, note that yarn dlx needs Yarn 2 or later."
           : ""
@@ -3225,8 +3243,8 @@ Commands:
 Options:
   --init               Bootstrap agent guidance, MCP notes, and the Calavera skill
   --new [args]         Scaffold a new project with vp create, then run --init there
-                      Every token after --new goes to vp create unchanged
-  --dry-run           Preview writes without changing files
+                       Every token after --new goes to vp create unchanged
+  --dry-run            Preview writes without changing files
   --apply              Preview and optionally apply after composing a recipe
   --config <path>      Recipe path, defaults to calavera.config.json
   --package-manager    npm, pnpm, yarn, or bun

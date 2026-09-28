@@ -8,7 +8,12 @@ import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { createVpCreateCommand, newProject, parseArgs } from "../src/index.js";
+import {
+  createVpCreateCommand,
+  newProject,
+  nodeMeetsVitePlusFloor,
+  parseArgs,
+} from "../src/index.js";
 import { detectVitePlus } from "../src/vite-plus-detection.js";
 import { createFixture, json, libraryManifest } from "./vite-plus-fixtures.mjs";
 
@@ -156,6 +161,15 @@ async function exists(path) {
     return false;
   }
 }
+
+test("the Vite+ Node.js floor accepts each range and rejects the versions below them", () => {
+  for (const version of ["v22.18.0", "v22.30.1", "v24.11.0", "v24.21.0", "v26.0.0", "27.1.0"]) {
+    assert.equal(nodeMeetsVitePlusFloor(version), true, version);
+  }
+  for (const version of ["v20.19.0", "v22.17.9", "v23.11.0", "v24.10.9", "v25.0.0"]) {
+    assert.equal(nodeMeetsVitePlusFloor(version), false, version);
+  }
+});
 
 test("createVpCreateCommand names the vite-plus package and the vp bin for each runner", () => {
   const forwarded = ["vite:library", "--", "--template", "react-ts"];
