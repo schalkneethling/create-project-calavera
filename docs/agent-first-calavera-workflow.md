@@ -280,6 +280,10 @@ cd <created-project>
 npm create project-calavera -- --init
 ```
 
+See [`docs/vite-plus.md`](./vite-plus.md) for the `--new` command that starts
+this same pair of steps in one confirmation, and for what Calavera adds to a
+`vp create` project.
+
 Other scaffold or existing project:
 
 ```bash

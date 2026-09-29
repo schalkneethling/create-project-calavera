@@ -10,6 +10,10 @@ JavaScript, TypeScript, and library projects, and it works as a complement to
 framework scaffolding tools like Vite+ and `vp create`, giving any project a
 consistent, repeatable setup through a single recipe file.
 
+See [`docs/vite-plus.md`](docs/vite-plus.md) for the litmus test and a full
+statement of what Calavera adds to a `vp create` project and what it leaves to
+Vite+.
+
 ## MCP-First Agent Flow
 
 Use Calavera after a project already exists, whether it came from `vp create`,
