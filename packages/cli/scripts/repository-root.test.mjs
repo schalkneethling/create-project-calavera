@@ -3,7 +3,15 @@
 // member is refused with a hard stop, before any file is planned or written.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtempDisposable, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtempDisposable,
+  readFile,
+  readdir,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, relative } from "node:path";
 import test from "node:test";
@@ -90,7 +98,7 @@ function refusal(member, root) {
   const escape = (/** @type {string} */ value) => value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
   return new RegExp(
     escape(
-      `github-repository-controls applies at the repository root, not in a workspace member. This project is ${member}; the repository root is ${root}. Run Calavera there (cd ${root} && npm create project-calavera apply -- --dry-run), or remove github-repository-controls from this recipe.`,
+      `github-repository-controls applies at the repository root, not in a workspace member. This project is ${member}; the repository root is ${root}. Apply a recipe that selects github-repository-controls from the repository root (cd ${root} && npm create project-calavera apply -- --dry-run, adding --config <path> when the recipe is saved elsewhere), or remove github-repository-controls from this recipe.`,
     ),
   );
 }
@@ -120,6 +128,34 @@ test("findRepositoryRoot returns undefined when no ancestor has a .git entry", a
 
   assert.equal(findRepositoryRoot(member), undefined);
 });
+
+test("findRepositoryRoot treats a file on the path as no .git entry", async () => {
+  await using repository = await createRepository();
+  const file = join(repository.root, "not-a-directory");
+  await writeFile(file, "");
+
+  assert.equal(findRepositoryRoot(join(file, "nested")), repository.root);
+});
+
+test(
+  "findRepositoryRoot propagates file system errors other than a missing entry",
+  { skip: process.platform === "win32" || process.getuid?.() === 0 },
+  async () => {
+    await using repository = await createRepository();
+    const sealed = join(repository.root, "sealed");
+    await mkdir(sealed);
+    await chmod(sealed, 0o000);
+
+    try {
+      assert.throws(
+        () => findRepositoryRoot(sealed),
+        (/** @type {NodeJS.ErrnoException} */ error) => error.code === "EACCES",
+      );
+    } finally {
+      await chmod(sealed, 0o755);
+    }
+  },
+);
 
 test("dry_run_apply and apply_recipe from a workspace member refuse github-repository-controls and write nothing", async () => {
   await using repository = await createRepository();
@@ -153,7 +189,7 @@ test("the refusal names the recipe package manager's command", async () => {
   await inDirectory(repository.member, async () => {
     await assert.rejects(
       callMcpTool("dry_run_apply", { recipe }),
-      /Run Calavera there \(cd .+ && pnpm dlx create-project-calavera apply --dry-run\)/,
+      /from the repository root \(cd .+ && pnpm dlx create-project-calavera apply --dry-run, adding --config <path>/,
     );
   });
 });

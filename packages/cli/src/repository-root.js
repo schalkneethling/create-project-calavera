@@ -1,9 +1,29 @@
 // @ts-check
-import { existsSync } from "node:fs";
+import { statSync } from "node:fs";
 import { dirname, join, resolve } from "node:path";
 
 import { integrationCatalog } from "./catalog.js";
 import { projectLocalCommandCatalog } from "./recipe.js";
+
+/**
+ * Whether `directory` contains a `.git` entry. Only a missing entry counts as
+ * absence; any other file system error (permissions, I/O) propagates, so a
+ * repository root is never mistaken for a plain directory silently.
+ *
+ * @param {string} directory
+ */
+function hasGitEntry(directory) {
+  try {
+    statSync(join(directory, ".git"));
+    return true;
+  } catch (error) {
+    const { code } = /** @type {NodeJS.ErrnoException} */ (error);
+    if (code === "ENOENT" || code === "ENOTDIR") {
+      return false;
+    }
+    throw error;
+  }
+}
 
 /**
  * Nearest directory at or above `directory` that contains a `.git` entry: a
@@ -17,7 +37,7 @@ export function findRepositoryRoot(directory) {
   let current = resolve(directory);
 
   while (true) {
-    if (existsSync(join(current, ".git"))) {
+    if (hasGitEntry(current)) {
       return current;
     }
 
@@ -62,6 +82,6 @@ export function assertRootOnlyIntegrationsAtRepositoryRoot(
 
   const command = projectLocalCommandCatalog[packageManager].applyDryRun;
   throw new Error(
-    `${rootOnly.id} applies at the repository root, not in a workspace member. This project is ${project}; the repository root is ${root}. Run Calavera there (cd ${root} && ${command}), or remove ${rootOnly.id} from this recipe.`,
+    `${rootOnly.id} applies at the repository root, not in a workspace member. This project is ${project}; the repository root is ${root}. Apply a recipe that selects ${rootOnly.id} from the repository root (cd ${root} && ${command}, adding --config <path> when the recipe is saved elsewhere), or remove ${rootOnly.id} from this recipe.`,
   );
 }
