@@ -4,7 +4,7 @@
 // vite-plus 1.0.0. Each case applies to a temporary copy of the committed
 // fixture, never to the fixture itself.
 import assert from "node:assert/strict";
-import { readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir } from "node:fs/promises";
 import { join, relative } from "node:path";
 import test from "node:test";
 
@@ -18,7 +18,20 @@ const managedLines = [
   "JavaScript and TypeScript linting, formatting, type-checking, and testing are provided by Vite+, not by Calavera.",
 ];
 
-const flowIntegrations = ["editorconfig", "knip", "github-repository-controls"];
+const rootIntegrations = ["editorconfig", "knip", "github-repository-controls"];
+// github-repository-controls is root-only (#550); a workspace member applies
+// the per-package integrations, and the refusal is asserted separately.
+const memberIntegrations = ["editorconfig", "knip"];
+const plannedPathFor = {
+  editorconfig: ".editorconfig",
+  knip: "knip.json",
+  "github-repository-controls": ".github/repository-controls.json",
+};
+const integrationLabels = {
+  editorconfig: "EditorConfig",
+  knip: "Knip",
+  "github-repository-controls": "repository controls",
+};
 
 // Configuration files of the JavaScript and TypeScript toolchain Vite+ owns.
 const toolchainFile =
@@ -30,10 +43,27 @@ const toolchainDependency =
   /^(eslint|@eslint\/|typescript-eslint|prettier|oxlint|oxfmt|typescript$|@typescript\/|vitest|jest|mocha|@biomejs\/)/;
 
 const cases = [
-  { name: "library", fixture: "library", directory: "." },
-  { name: "monorepo root", fixture: "monorepo", directory: "." },
-  { name: "monorepo member packages/utils", fixture: "monorepo", directory: "packages/utils" },
+  { name: "library", fixture: "library", directory: ".", integrations: rootIntegrations },
+  { name: "monorepo root", fixture: "monorepo", directory: ".", integrations: rootIntegrations },
+  {
+    name: "monorepo member packages/utils",
+    fixture: "monorepo",
+    directory: "packages/utils",
+    integrations: memberIntegrations,
+  },
 ];
+
+/**
+ * Copies a release fixture and marks its root as the git repository root, as
+ * the fixtures were generated with `--no-git`.
+ *
+ * @param {"library" | "monorepo"} name
+ */
+async function copyRepositoryFixture(name) {
+  const fixture = await copyReleaseFixture(name);
+  await mkdir(join(fixture.root, ".git"));
+  return fixture;
+}
 
 /**
  * Runs `callback` with the process working directory set to `directory`, as
@@ -89,10 +119,10 @@ function plannedScripts(changes) {
  * Drives the flow up to and including apply_recipe, asserting each step, and
  * returns what the second dry run needs.
  *
- * @param {{ fixture: "library" | "monorepo", directory: string }} flowCase
+ * @param {{ fixture: "library" | "monorepo", directory: string, integrations: string[] }} flowCase
  * @param {string} root
  */
-async function runFlow({ directory }, root) {
+async function runFlow({ directory, integrations }, root) {
   const project = join(root, directory);
   const before = await snapshotTree(root);
   const manifestPath = join(directory, "package.json");
@@ -110,7 +140,7 @@ async function runFlow({ directory }, root) {
     const listed = await callMcpTool("list_integrations", { profile: "default" });
     const offered = listed.integrations.map(({ id }) => id);
     assert.deepEqual(offered.filter(isRemovedToolchainId), []);
-    for (const id of flowIntegrations) {
+    for (const id of integrations) {
       assert.ok(offered.includes(id), `${id} is not offered to the default profile`);
     }
 
@@ -124,8 +154,14 @@ async function runFlow({ directory }, root) {
     const { recipe } = await callMcpTool("compose_recipe", {
       profile: "default",
       packageManager: "pnpm",
-      tools: [...new Set([...composed.recipe.integrations, ...flowIntegrations])],
-      integrationOptions: { "github-repository-controls": { repository: "example/vp-project" } },
+      tools: [...new Set([...composed.recipe.integrations, ...integrations])],
+      ...(integrations.includes("github-repository-controls")
+        ? {
+            integrationOptions: {
+              "github-repository-controls": { repository: "example/vp-project" },
+            },
+          }
+        : {}),
     });
     assert.deepEqual(recipe.integrations.filter(isRemovedToolchainId), []);
 
@@ -137,7 +173,7 @@ async function runFlow({ directory }, root) {
     assert.equal(dryRun.result.dryRun, true);
     assert.deepEqual(dryRun.result.vitePlus.lines, managedLines);
     assert.ok(writes.length > 0, "the dry run plans no managed file");
-    for (const path of [".editorconfig", "knip.json", ".github/repository-controls.json"]) {
+    for (const path of integrations.map((id) => plannedPathFor[id])) {
       assert.ok(writes.includes(path), `the dry run does not plan ${path}`);
     }
     assert.deepEqual(
@@ -202,8 +238,11 @@ async function runFlow({ directory }, root) {
 }
 
 for (const flowCase of cases) {
-  test(`vp create ${flowCase.name}: the agent-first flow installs repository controls, EditorConfig, and Knip, and offers no JS or TS toolchain`, async () => {
-    await using fixture = await copyReleaseFixture(flowCase.fixture);
+  const installed = new Intl.ListFormat("en", { type: "conjunction" }).format(
+    flowCase.integrations.map((id) => integrationLabels[id]),
+  );
+  test(`vp create ${flowCase.name}: the agent-first flow installs ${installed}, and offers no JS or TS toolchain`, async () => {
+    await using fixture = await copyRepositoryFixture(flowCase.fixture);
     const { recipe, changes } = await runFlow(flowCase, fixture.root);
 
     const secondDryRun = await inDirectory(join(fixture.root, flowCase.directory), () =>
@@ -224,6 +263,29 @@ for (const flowCase of cases) {
     assert.deepEqual(secondDryRun.result.vitePlus.lines, managedLines);
   });
 }
+
+test("vp create monorepo member packages/utils: dry_run_apply and apply_recipe refuse github-repository-controls, name the repository root, and write nothing", async () => {
+  await using fixture = await copyRepositoryFixture("monorepo");
+  const member = join(fixture.root, "packages/utils");
+  const before = await snapshotTree(fixture.root);
+
+  await inDirectory(member, async () => {
+    const { recipe } = await callMcpTool("compose_recipe", {
+      profile: "default",
+      packageManager: "pnpm",
+      tools: rootIntegrations,
+      integrationOptions: { "github-repository-controls": { repository: "example/vp-project" } },
+    });
+    const refusal = `github-repository-controls applies at the repository root, not in a workspace member. This project is ${member}; the repository root is ${fixture.root}.`;
+    const refuses = (/** @type {unknown} */ error) =>
+      error instanceof Error && error.message.startsWith(refusal);
+
+    await assert.rejects(callMcpTool("dry_run_apply", { recipe }), refuses);
+    await assert.rejects(callMcpTool("apply_recipe", { recipe, noInstall: true }), refuses);
+  });
+
+  assert.deepEqual(await snapshotTree(fixture.root), before, "the refusal changed a file");
+});
 
 // H0 asks that the second dry run report no drift. Today it replans every
 // write and warns about the files and scripts Calavera itself recorded, so
