@@ -2,7 +2,9 @@
 
 Calavera starts after a project folder exists. Create the app with Vite, Vite+,
 another scaffold, or no scaffold at all, then use Calavera to compose, review,
-and apply project tooling through a recipe.
+and apply project tooling through a recipe. To start a new Vite+ project, `--new`
+hands scaffolding to `vp create` and then bootstraps the result; see
+[Start A New Vite+ Project With `--new`](#start-a-new-vite-project-with---new).
 
 Calavera deliberately does not own application scaffolding. It owns
 `calavera.config.json`, generated tooling config, package scripts, AI artifacts,
@@ -173,6 +175,72 @@ changes and list each conflict as either a hard stop or a migration decision the
 user can still approve. When adoption still looks possible, use `dry_run_apply`
 to show the concrete impact before asking whether to continue.
 
+## Start A New Vite+ Project With `--new`
+
+When the project does not exist yet, `--new` runs `vp create` and then runs the
+`--init` bootstrap in the directory Vite+ scaffolded. Run it from the parent
+folder:
+
+```bash
+npm create project-calavera -- --new
+```
+
+Vite+ owns every question and every file the scaffold writes. Calavera starts
+`vp create` with the terminal attached, so Vite+ asks its own questions
+(template, target directory, package manager, and the rest), and Calavera does
+not answer them. Vite+ also installs the project's dependencies; that step needs
+network access and cannot be skipped.
+
+`--new` ends Calavera's own flags. Every token after it goes to `vp create`
+unchanged, including a `--` that introduces template options, so Calavera flags
+such as `--yes`, `--dry-run`, `--package-manager`, `--agents-md`, and
+`--mcp-harness` go before `--new`. `npm create` still needs its `--` separator
+before Calavera flags:
+
+```bash
+npm create project-calavera -- --new vite:library --no-interactive --package-manager pnpm
+```
+
+The pnpm, Yarn, and Bun launchers take `--new` directly, for example
+`pnpm dlx create-project-calavera --new vite:library`.
+
+Before it starts `vp create`, Calavera shows the exact command and working
+directory, states what Vite+ may do, and asks for confirmation. The answer
+defaults to no. When Calavera cannot ask, because stdin is not a terminal, `CI`
+is set, or `--no-interactive` is forwarded to `vp create` as in the example
+above, it refuses to start `vp create` until you confirm with `--yes` before
+`--new`:
+
+```bash
+npm create project-calavera -- --yes --new vite:library --no-interactive --package-manager pnpm
+```
+
+`--dry-run` before `--new` prints the confirmation text and the command, and
+runs nothing. Calavera's dry run cannot preview what Vite+ writes.
+
+Calavera runs `vp create` through the package runner for the `--package-manager`
+given before `--new`, or npm when none is given: `npx --package vite-plus vp create`,
+`pnpm dlx --package vite-plus vp create`, `yarn dlx --package vite-plus vp create`
+(Yarn 2 or later), or `bunx --package vite-plus vp create`. The `--package-manager`
+forwarded after `--new` is the project's package manager, which Vite+ uses. Vite+
+1.0.0 requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`.
+
+Calavera continues into the bootstrap only when `vp create` exits with code 0
+and Vite+ detection reports `managed` for the scaffolded directory. That
+directory is the forwarded `--directory`, or otherwise the one directory whose
+`package.json` is new or changed. Any other outcome, including a canceled
+scaffold, stops with the exit code, the directory, and the detection finding.
+After a stop, Calavera writes nothing more and removes nothing; the directory may
+hold a partial scaffold that belongs to Vite+.
+
+`--new` refuses to run where a `package.json` already exists, because a project
+already exists there; use `--init` instead. It also refuses `--init` and `--json`
+alongside it.
+
+The separate flow stays available for other scaffolds and existing projects:
+run `vp create` or any other scaffold yourself, change into the project, and run
+`npm create project-calavera -- --init`.
+
 ## Rich CLI Flow
 
 Use the interactive CLI when you want to choose the profile, integrations,
@@ -272,7 +340,13 @@ cd my-app
 npm create project-calavera -- --init
 ```
 
-New Vite+ project:
+New Vite+ project in one command, from the parent folder:
+
+```bash
+npm create project-calavera -- --new
+```
+
+New Vite+ project in two steps:
 
 ```bash
 vp create

@@ -17,7 +17,12 @@ Vite+.
 ## MCP-First Agent Flow
 
 Use Calavera after a project already exists, whether it came from `vp create`,
-Vite, another scaffold tool, or a manually maintained repository:
+Vite, another scaffold tool, or a manually maintained repository. To start a new
+Vite+ project and bootstrap it in one command, run
+`npm create project-calavera -- --new` from the parent folder instead of steps 1
+and 2. Vite+ asks its own questions and writes the scaffold; see
+[`--new`](docs/agent-first-calavera-workflow.md#start-a-new-vite-project-with---new)
+for details.
 
 1. Open the project directory.
 2. Run `npm create project-calavera -- --init`.
