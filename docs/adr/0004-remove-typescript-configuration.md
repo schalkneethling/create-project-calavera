@@ -1,6 +1,6 @@
 # ADR-0004: Remove the TypeScript Configuration Component
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-15, merged in #467)
 - **Date:** 2026-09-15
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/454
 - **Decides:** removal of the TypeScript configuration component under C1, applying the `remove` classification recorded for both the "Modern profile: TypeScript config" and "Classic profile: TypeScript config" rows of `docs/catalog-audit.md`, one catalog entry the ADR and its removal issue cover together.

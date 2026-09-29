@@ -1,6 +1,6 @@
 # ADR-0003: Remove Oxfmt
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-15, merged in #461)
 - **Date:** 2026-09-15
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/453
 - **Decides:** removal of the Oxfmt integration under C1, applying the `remove` classification recorded for the "Modern profile: Oxfmt" row of `docs/catalog-audit.md`.

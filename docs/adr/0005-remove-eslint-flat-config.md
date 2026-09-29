@@ -1,6 +1,6 @@
 # ADR-0005: Remove ESLint Flat Config
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-09-15, merged in #468)
 - **Date:** 2026-09-15
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/455
 - **Decides:** removal of the JavaScript and TypeScript ESLint flat config component and the eleven entries that include it under C1, applying the `remove` classification recorded for the "Classic profile: ESLint flat config" row and the five rule pack rows of `docs/catalog-audit.md`.
