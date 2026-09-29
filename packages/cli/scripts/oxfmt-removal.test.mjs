@@ -8,9 +8,10 @@ import { integrationCatalog } from "../src/catalog.js";
 import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe, catalogResponse, composeRecipe, profileDefaults } from "../src/recipe.js";
+import { isOxfmtId } from "./removed-toolchain-ids.mjs";
 
 function hasOxfmtId(ids) {
-  return ids.some((id) => id.startsWith("oxfmt"));
+  return ids.some(isOxfmtId);
 }
 
 test("list_integrations reports no Oxfmt integration and no Oxfmt platform", async () => {
@@ -25,7 +26,7 @@ test("list_integrations reports no Oxfmt integration and no Oxfmt platform", asy
   assert.equal(
     integrationCatalog.some(
       ({ id, platform, dependencies, includes }) =>
-        id.startsWith("oxfmt") ||
+        isOxfmtId(id) ||
         platform === "oxfmt" ||
         (dependencies ?? []).includes("oxfmt") ||
         (includes ?? []).includes("oxfmt"),

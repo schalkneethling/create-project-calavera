@@ -8,34 +8,18 @@ import {
   createTemporaryFixture,
   json,
   libraryManifest,
+  monorepoRootManifest,
   plainViteConfig,
   plainViteManifest,
+  pnpmWorkspaceCatalog,
   vitePlusConfig,
 } from "./vite-plus-fixtures.mjs";
-
-const pnpmWorkspaceCatalog = `catalog:
-  vite: npm:@voidzero-dev/vite-plus-core@0.3.1
-  vite-plus: 0.3.1
-overrides:
-  vite@*: "catalog:"
-`;
 
 const yarnrcCatalog = `nodeLinker: node-modules
 catalog:
   vite: npm:@voidzero-dev/vite-plus-core@0.3.1
   vite-plus: 0.3.1
 `;
-
-const monorepoRootManifest = {
-  name: "gen-monorepo",
-  version: "0.0.0",
-  private: true,
-  workspaces: ["packages/*", "apps/*", "tools/*"],
-  type: "module",
-  scripts: { ready: "vp check && vp run -r test", dev: "vp run website#dev" },
-  devDependencies: { "vite-plus": "0.3.1" },
-  overrides: { vite: "npm:@voidzero-dev/vite-plus-core@0.3.1" },
-};
 
 /**
  * Lists every entry under a directory with its modification time, so that a

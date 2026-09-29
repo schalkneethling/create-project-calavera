@@ -8,13 +8,14 @@ import { integrationCatalog } from "../src/catalog.js";
 import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe, profileDefaults } from "../src/recipe.js";
+import { isOxlintId } from "./removed-toolchain-ids.mjs";
 
 async function assertPathMissing(path) {
   await assert.rejects(() => stat(path), /ENOENT/, `${path} should not exist`);
 }
 
 function hasOxlintId(ids) {
-  return ids.some((id) => id.startsWith("oxlint"));
+  return ids.some(isOxlintId);
 }
 
 test("list_integrations reports no Oxlint integration and no Oxlint plugin platform", async () => {
@@ -29,9 +30,7 @@ test("list_integrations reports no Oxlint integration and no Oxlint plugin platf
   assert.equal(
     integrationCatalog.some(
       ({ id, platform, includes }) =>
-        id.startsWith("oxlint") ||
-        platform === "oxlint-plugin" ||
-        (includes ?? []).includes("oxlint"),
+        isOxlintId(id) || platform === "oxlint-plugin" || (includes ?? []).includes("oxlint"),
     ),
     false,
   );

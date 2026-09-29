@@ -8,8 +8,7 @@ import { integrationCatalog } from "../src/catalog.js";
 import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe, profileDefaults } from "../src/recipe.js";
-
-const removedIds = ["prettier", "prettier-tailwind", "prettier-svelte", "prettier-astro"];
+import { removedPrettierIds as removedIds } from "./removed-toolchain-ids.mjs";
 
 test("list_integrations reports no Prettier integration and no Prettier plugin entry", async () => {
   const response = await callMcpTool("list_integrations");
