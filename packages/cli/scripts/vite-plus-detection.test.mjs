@@ -5,7 +5,7 @@ import test from "node:test";
 
 import { detectVitePlus } from "../src/vite-plus-detection.js";
 import {
-  createFixture,
+  createTemporaryFixture,
   json,
   libraryManifest,
   plainViteConfig,
@@ -79,7 +79,7 @@ async function hasAncestorManifest(directory) {
 }
 
 test("vp create vite:library", async () => {
-  await using fixture = await createFixture("library", {
+  await using fixture = await createTemporaryFixture("library", {
     "package.json": json(libraryManifest),
     "vite.config.ts": vitePlusConfig,
   });
@@ -94,7 +94,7 @@ test("vp create vite:library", async () => {
 });
 
 test("vp create vite:monorepo root", async () => {
-  await using fixture = await createFixture("monorepo-root", {
+  await using fixture = await createTemporaryFixture("monorepo-root", {
     "package.json": json(monorepoRootManifest),
     "vite.config.ts": vitePlusConfig,
   });
@@ -109,7 +109,7 @@ test("vp create vite:monorepo root", async () => {
 });
 
 test("monorepo workspace member with a local declaration", async () => {
-  await using fixture = await createFixture("member-local", {
+  await using fixture = await createTemporaryFixture("member-local", {
     "package.json": json(monorepoRootManifest),
     "vite.config.ts": vitePlusConfig,
     "apps/website/package.json": json({
@@ -132,7 +132,7 @@ test("monorepo workspace member with a local declaration", async () => {
 });
 
 test("monorepo workspace member without a local declaration", async () => {
-  await using fixture = await createFixture("member-inherited", {
+  await using fixture = await createTemporaryFixture("member-inherited", {
     "package.json": json(monorepoRootManifest),
     "apps/site/package.json": json({
       name: "site",
@@ -153,7 +153,7 @@ test("monorepo workspace member without a local declaration", async () => {
 });
 
 test("vp migrate output with a stale lockfile", async () => {
-  await using fixture = await createFixture("migrated", {
+  await using fixture = await createTemporaryFixture("migrated", {
     "package.json": json({
       name: "migrated",
       version: "0.0.0",
@@ -177,7 +177,7 @@ test("vp migrate output with a stale lockfile", async () => {
 });
 
 test("plain create-vite project", async () => {
-  await using fixture = await createFixture("plain-vite", {
+  await using fixture = await createTemporaryFixture("plain-vite", {
     "package.json": json(plainViteManifest),
   });
   const root = fixture.root;
@@ -189,7 +189,7 @@ test("plain create-vite project", async () => {
 });
 
 test("plain Vite with a hand-written configuration", async () => {
-  await using fixture = await createFixture("plain-vite-config", {
+  await using fixture = await createTemporaryFixture("plain-vite-config", {
     "package.json": json(plainViteManifest),
     "vite.config.ts": plainViteConfig,
   });
@@ -202,7 +202,7 @@ test("plain Vite with a hand-written configuration", async () => {
 });
 
 test("vite-plus as a peerDependency only", async () => {
-  await using fixture = await createFixture("peer-only", {
+  await using fixture = await createTemporaryFixture("peer-only", {
     "package.json": json({
       name: "vite-plus-plugin",
       version: "0.0.0",
@@ -219,7 +219,7 @@ test("vite-plus as a peerDependency only", async () => {
 });
 
 test("vp named only in prose", async () => {
-  await using fixture = await createFixture("prose-only", {
+  await using fixture = await createTemporaryFixture("prose-only", {
     "package.json": json(plainViteManifest),
     "AGENTS.md": "# Agents\n\nRun `vp check` before every commit.\n",
     "README.md": "# Project\n\nThis project uses `vp build` one day.\n",
@@ -233,7 +233,7 @@ test("vp named only in prose", async () => {
 });
 
 test("scripts call vp, dependency absent", async () => {
-  await using fixture = await createFixture("scripts-only", {
+  await using fixture = await createTemporaryFixture("scripts-only", {
     "package.json": json({
       name: "scripts-only",
       version: "0.0.0",
@@ -251,7 +251,7 @@ test("scripts call vp, dependency absent", async () => {
 });
 
 test("pin present, dependency absent", async () => {
-  await using fixture = await createFixture("pin-only", {
+  await using fixture = await createTemporaryFixture("pin-only", {
     "package.json": json({
       name: "pin-only",
       version: "0.0.0",
@@ -269,7 +269,7 @@ test("pin present, dependency absent", async () => {
 });
 
 test("vp create vite:library with Yarn", async () => {
-  await using fixture = await createFixture("yarn-library", {
+  await using fixture = await createTemporaryFixture("yarn-library", {
     "package.json": json({
       name: "gen-library",
       version: "0.0.0",
@@ -292,7 +292,7 @@ test("vp create vite:library with Yarn", async () => {
 });
 
 test("vp create vite:library with Bun", async () => {
-  await using fixture = await createFixture("bun-library", {
+  await using fixture = await createTemporaryFixture("bun-library", {
     "package.json": json({
       name: "gen-library",
       version: "0.0.0",
@@ -318,7 +318,7 @@ test("vp create vite:library with Bun", async () => {
 });
 
 test("no package.json, no ancestor manifest", async (t) => {
-  await using fixture = await createFixture("no-ancestor", {});
+  await using fixture = await createTemporaryFixture("no-ancestor", {});
   const root = fixture.root;
 
   if (await hasAncestorManifest(dirname(root))) {
@@ -335,7 +335,7 @@ test("no package.json, no ancestor manifest", async (t) => {
 });
 
 test("no package.json, managed ancestor", async () => {
-  await using fixture = await createFixture("managed-ancestor", {
+  await using fixture = await createTemporaryFixture("managed-ancestor", {
     "package.json": json(libraryManifest),
     "vite.config.ts": vitePlusConfig,
   });
@@ -351,7 +351,7 @@ test("no package.json, managed ancestor", async () => {
 });
 
 test("no package.json, unmanaged ancestor", async () => {
-  await using fixture = await createFixture("unmanaged-ancestor", {
+  await using fixture = await createTemporaryFixture("unmanaged-ancestor", {
     "package.json": json(plainViteManifest),
   });
   const root = fixture.root;
@@ -366,7 +366,7 @@ test("no package.json, unmanaged ancestor", async () => {
 });
 
 test("unparseable package.json", async () => {
-  await using fixture = await createFixture("unparseable", {
+  await using fixture = await createTemporaryFixture("unparseable", {
     "package.json": "{",
   });
   const root = fixture.root;
@@ -380,7 +380,7 @@ test("unparseable package.json", async () => {
 });
 
 test("package.json that parses to an array", async () => {
-  await using fixture = await createFixture("array-manifest", {
+  await using fixture = await createTemporaryFixture("array-manifest", {
     "package.json": "[]",
   });
   const root = fixture.root;
@@ -394,7 +394,7 @@ test("package.json that parses to an array", async () => {
 });
 
 test("detection does not search ancestors for a configuration file", async () => {
-  await using fixture = await createFixture("config-not-inherited", {
+  await using fixture = await createTemporaryFixture("config-not-inherited", {
     "package.json": json(monorepoRootManifest),
     "vite.config.ts": vitePlusConfig,
     "apps/api/package.json": json({
@@ -414,7 +414,7 @@ test("detection does not search ancestors for a configuration file", async () =>
 });
 
 test("detection writes nothing into the inspected tree", async () => {
-  await using fixture = await createFixture("purity", {
+  await using fixture = await createTemporaryFixture("purity", {
     "package.json": json(libraryManifest),
     "vite.config.ts": vitePlusConfig,
     "pnpm-workspace.yaml": pnpmWorkspaceCatalog,

@@ -15,7 +15,7 @@ import {
   parseArgs,
 } from "../src/index.js";
 import { detectVitePlus } from "../src/vite-plus-detection.js";
-import { createFixture, json, libraryManifest } from "./vite-plus-fixtures.mjs";
+import { createTemporaryFixture, json, libraryManifest } from "./vite-plus-fixtures.mjs";
 
 const binPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const fixturesUrl = pathToFileURL(
@@ -75,13 +75,14 @@ if (process.env.STUB_EXTRA) {
 `;
 
 /**
- * Creates a workspace with a `bin` directory holding the runner stub under
- * every runner name, and a separate `work` directory to run the CLI from.
+ * A temporary directory, removed on dispose through createTemporaryFixture,
+ * holding a `work` project directory, a `bin` directory with the stub runners
+ * first on PATH, and the runner log.
  *
  * @param {string} label
  */
-async function createWorkspace(label) {
-  const fixture = await createFixture(`new-${label}`, {});
+async function createTemporaryWorkspace(label) {
+  const fixture = await createTemporaryFixture(`new-${label}`, {});
   const bin = join(fixture.root, "bin");
   const work = join(fixture.root, "work");
   const log = join(fixture.root, "runner.log");
@@ -220,7 +221,7 @@ test("parseArgs ends Calavera's own arguments at --new and keeps every later tok
 });
 
 test("--new refuses a directory that already has a package.json and points at --init", async () => {
-  await using workspace = await createWorkspace("manifest");
+  await using workspace = await createTemporaryWorkspace("manifest");
   await writeFile(join(workspace.work, "package.json"), "{}\n");
 
   const result = await runCli(workspace, ["--yes", "--new", "vite:library"], {
@@ -237,7 +238,7 @@ test("--new refuses a directory that already has a package.json and points at --
 });
 
 test("--new refuses an unreadable package.json before anything else", async () => {
-  await using workspace = await createWorkspace("unreadable-manifest");
+  await using workspace = await createTemporaryWorkspace("unreadable-manifest");
   const manifestPath = join(workspace.work, "package.json");
   await writeFile(manifestPath, "{}\n");
   await chmod(manifestPath, 0o000);
@@ -251,7 +252,7 @@ test("--new refuses an unreadable package.json before anything else", async () =
 });
 
 test("--new refuses --init and --json", async () => {
-  await using workspace = await createWorkspace("contradictions");
+  await using workspace = await createTemporaryWorkspace("contradictions");
 
   const withInit = await runCli(workspace, ["--yes", "--init", "--new", "vite:library"]);
   const withJson = await runCli(workspace, ["--yes", "--json", "--new", "vite:library"]);
@@ -264,7 +265,7 @@ test("--new refuses --init and --json", async () => {
 });
 
 test("--new refuses to spawn without confirmation when stdin is not a terminal", async () => {
-  await using workspace = await createWorkspace("no-confirmation");
+  await using workspace = await createTemporaryWorkspace("no-confirmation");
 
   const result = await runCli(workspace, ["--new", "vite:library"], { STUB_MODE: "scaffold" });
 
@@ -275,7 +276,7 @@ test("--new refuses to spawn without confirmation when stdin is not a terminal",
 });
 
 test("--new refuses a forwarded --no-interactive without --yes before spawning", async () => {
-  await using workspace = await createWorkspace("no-interactive");
+  await using workspace = await createTemporaryWorkspace("no-interactive");
 
   const result = await runCli(workspace, ["--new", "vite:library", "--no-interactive"], {
     STUB_MODE: "scaffold",
@@ -289,7 +290,7 @@ test("--new refuses a forwarded --no-interactive without --yes before spawning",
 });
 
 test("--new --dry-run prints the confirmation and the command and spawns nothing", async () => {
-  await using workspace = await createWorkspace("dry-run");
+  await using workspace = await createTemporaryWorkspace("dry-run");
   await writeFile(join(workspace.root, "package.json"), json(libraryManifest));
 
   const result = await runCli(workspace, [
@@ -321,7 +322,7 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
 });
 
 test("--new --yes scaffolds through the runner, verifies managed, and runs the bootstrap", async () => {
-  await using workspace = await createWorkspace("success");
+  await using workspace = await createTemporaryWorkspace("success");
 
   const result = await runCli(workspace, ["--yes", "--new", "vite:library", "--no-interactive"], {
     STUB_MODE: "scaffold",
@@ -351,7 +352,7 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
 });
 
 test("--new forwards every token after it unchanged, including -- and what follows", async () => {
-  await using workspace = await createWorkspace("forwarding");
+  await using workspace = await createTemporaryWorkspace("forwarding");
   const forwarded = [
     "vite:library",
     "--no-interactive",
@@ -386,7 +387,7 @@ test("--new forwards every token after it unchanged, including -- and what follo
 });
 
 test("--new hard-stops on a non-zero exit, names the cause, and writes nothing further", async () => {
-  await using workspace = await createWorkspace("non-zero");
+  await using workspace = await createTemporaryWorkspace("non-zero");
 
   const result = await runCli(workspace, ["--yes", "--new", "vite:library"], {
     STUB_MODE: "fail",
@@ -403,7 +404,7 @@ test("--new hard-stops on a non-zero exit, names the cause, and writes nothing f
 });
 
 test("--new hard-stops when the scaffold is unmanaged and names the finding", async () => {
-  await using workspace = await createWorkspace("unmanaged");
+  await using workspace = await createTemporaryWorkspace("unmanaged");
 
   const result = await runCli(workspace, ["--yes", "--new", "vite"], {
     STUB_MODE: "unmanaged",
@@ -420,7 +421,7 @@ test("--new hard-stops when the scaffold is unmanaged and names the finding", as
 });
 
 test("--new hard-stops when detection on the scaffold is unknown and names the finding", async () => {
-  await using workspace = await createWorkspace("unknown");
+  await using workspace = await createTemporaryWorkspace("unknown");
 
   const result = await runCli(workspace, ["--yes", "--new", "vite"], {
     STUB_MODE: "unknown",
@@ -434,7 +435,7 @@ test("--new hard-stops when detection on the scaffold is unknown and names the f
 });
 
 test("--new hard-stops when a canceled scaffold exits zero having written nothing", async () => {
-  await using workspace = await createWorkspace("canceled");
+  await using workspace = await createTemporaryWorkspace("canceled");
 
   const result = await runCli(workspace, ["--yes", "--new"], { STUB_MODE: "nothing" });
 
@@ -445,7 +446,7 @@ test("--new hard-stops when a canceled scaffold exits zero having written nothin
 });
 
 test("--new hard-stops and lists the candidates when several directories gained a manifest", async () => {
-  await using workspace = await createWorkspace("ambiguous");
+  await using workspace = await createTemporaryWorkspace("ambiguous");
 
   const result = await runCli(workspace, ["--yes", "--new", "vite:library"], {
     STUB_MODE: "scaffold",
@@ -461,7 +462,7 @@ test("--new hard-stops and lists the candidates when several directories gained 
 });
 
 test("--new lets a forwarded --directory decide the target", async () => {
-  await using workspace = await createWorkspace("directory");
+  await using workspace = await createTemporaryWorkspace("directory");
 
   const result = await runCli(workspace, ["--yes", "--new", "vite:library", "--directory=chosen"], {
     STUB_MODE: "scaffold",
@@ -475,7 +476,7 @@ test("--new lets a forwarded --directory decide the target", async () => {
 });
 
 test("--new finds a pre-existing non-empty target whose manifest Vite+ replaced", async () => {
-  await using workspace = await createWorkspace("replaced");
+  await using workspace = await createTemporaryWorkspace("replaced");
   const existing = join(workspace.work, "existing");
   await mkdir(existing);
   await writeFile(join(existing, "package.json"), json({ name: "old" }));
@@ -494,7 +495,7 @@ test("--new finds a pre-existing non-empty target whose manifest Vite+ replaced"
 });
 
 test("--new names the terminating signal when the runner is killed", async () => {
-  await using workspace = await createWorkspace("signal");
+  await using workspace = await createTemporaryWorkspace("signal");
   const previousCwd = process.cwd();
   /** @type {Array<{ command: string, args: string[], cwd: string }>} */
   const spawned = [];

@@ -23,7 +23,7 @@ import {
   validateRecipe,
 } from "../src/recipe.js";
 import {
-  createFixture,
+  createTemporaryFixture,
   json,
   libraryManifest,
   plainViteManifest,
@@ -93,14 +93,14 @@ async function inDirectory(directory, callback) {
 }
 
 async function managedFixture() {
-  return createFixture("profiles-managed", {
+  return createTemporaryFixture("profiles-managed", {
     "package.json": json(libraryManifest),
     "vite.config.ts": vitePlusConfig,
   });
 }
 
 async function unmanagedFixture() {
-  return createFixture("profiles-unmanaged", {
+  return createTemporaryFixture("profiles-unmanaged", {
     "package.json": json(plainViteManifest),
   });
 }
@@ -248,7 +248,7 @@ test("dry_run_apply reports a plain Vite project as unmanaged", async () => {
 });
 
 test("dry_run_apply reports a signal conflict on an unmanaged project that calls vp", async () => {
-  await using fixture = await createFixture("profiles-conflict", {
+  await using fixture = await createTemporaryFixture("profiles-conflict", {
     "package.json": json({ name: "conflict", scripts: { build: "vp build" } }),
   });
   const response = await inDirectory(fixture.root, () =>
@@ -265,7 +265,7 @@ test("dry_run_apply reports a signal conflict on an unmanaged project that calls
 });
 
 test("explain_recipe reports an unreadable project manifest as unknown", async () => {
-  await using fixture = await createFixture("profiles-unknown", { "package.json": "{" });
+  await using fixture = await createTemporaryFixture("profiles-unknown", { "package.json": "{" });
   const response = await inDirectory(fixture.root, () =>
     callMcpTool("explain_recipe", { recipe: composeRecipe({ profile: "minimal" }) }),
   );

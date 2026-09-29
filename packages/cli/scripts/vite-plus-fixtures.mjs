@@ -5,15 +5,14 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 
 /**
- * Builds a fixture in a disposable temporary directory. `root` is the resolved
- * path, so absolute manifest paths compare equal on platforms where the
- * temporary root is a symlink. Use with `await using` so the directory is
- * removed when the test scope ends.
+ * Writes `files` into a fresh directory under the OS temp dir. The directory
+ * is removed when the returned fixture is disposed, so call sites use
+ * `await using`.
  *
  * @param {string} label
  * @param {Record<string, string>} files
  */
-export async function createFixture(label, files) {
+export async function createTemporaryFixture(label, files) {
   const directory = await mkdtempDisposable(join(tmpdir(), `calavera-vite-plus-${label}-`));
   const root = await realpath(directory.path);
 
