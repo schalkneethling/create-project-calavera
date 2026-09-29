@@ -1,6 +1,6 @@
 # ADR-0011: Collapse Profiles to Minimal and Default
 
-- **Status:** Proposed (2026-09-27)
+- **Status:** Accepted (2026-09-29, merged in #535)
 - **Date:** 2026-09-27
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/529
 - **Decides:** removal of the `modern` and `classic` profile ids under C1, their replacement by one profile with the id `default` beside `minimal`, and the reporting of the ADR-0001 Vite+ detection result in `explain_recipe`, `compose_recipe`, and `dry_run_apply`. This is CAL-011, the collapse that ADR-0002 through ADR-0006 each deferred.
