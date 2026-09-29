@@ -12,6 +12,7 @@ import {
   packageManagerIdsForRecipe,
   projectLocalCommandNotes,
   projectLocalCommandSteps,
+  profileCatalog,
   profileDefaults,
   profileIdsForRecipe,
   recipeToolDescriptions,
@@ -31,8 +32,10 @@ import {
   artifactResponseForCli,
   assertRecipeArtifactsSupported,
   assertRecipeIntegrationsSupported,
+  assertRecipeProfileSupported,
   filterArtifactsForCli,
   filterIntegrationsForCli,
+  filterProfilesForCli,
   integrationResponseForCli,
   loadPublishedCliCompatibility,
   SAFE_CLI_FALLBACK_VERSION,
@@ -85,8 +88,13 @@ function visibleAiArtifacts() {
   return filterArtifactsForCli(allAiArtifactOptions, cliCompatibility.version);
 }
 
+function visibleProfiles() {
+  return filterProfilesForCli(profileCatalog, cliCompatibility.version);
+}
+
 function assertPublishedCliCompatibility(recipeInput) {
   const validatedRecipe = validateRecipe(recipeInput);
+  assertRecipeProfileSupported(validatedRecipe, profileCatalog, cliCompatibility.version);
   assertRecipeIntegrationsSupported(
     validatedRecipe,
     listIntegrationOptions(),
@@ -104,8 +112,12 @@ function renderCliCompatibility() {
   const availableIntegrations = filterIntegrationsForCli(allIntegrations, cliCompatibility.version);
   const hiddenIntegrationCount = allIntegrations.length - availableIntegrations.length;
   const hiddenArtifactCount = allAiArtifactOptions.length - visibleAiArtifacts().length;
+  const hiddenProfileCount = profileCatalog.length - visibleProfiles().length;
   const source = cliCompatibility.source === "npm" ? "npm latest" : "safe fallback";
   const hidden = [
+    hiddenProfileCount > 0
+      ? `${hiddenProfileCount} profile${hiddenProfileCount === 1 ? "" : "s"}`
+      : undefined,
     hiddenIntegrationCount > 0
       ? `${hiddenIntegrationCount} integration${hiddenIntegrationCount === 1 ? "" : "s"}`
       : undefined,
@@ -119,7 +131,25 @@ function renderCliCompatibility() {
   }`;
 }
 
+function syncProfileAvailability() {
+  const supportedIds = new Set(visibleProfiles().map(({ id }) => id));
+
+  for (const radio of form.querySelectorAll('[name="profile"]')) {
+    const supported = supportedIds.has(radio.value);
+    radio.disabled = !supported;
+    radio.closest("label").hidden = !supported;
+  }
+
+  if (!supportedIds.has(selectedProfile())) {
+    const firstSupportedId = profiles.find((id) => supportedIds.has(id));
+    if (firstSupportedId) {
+      form.querySelector(`[name="profile"][value="${firstSupportedId}"]`).checked = true;
+    }
+  }
+}
+
 function renderIntegrations() {
+  syncProfileAvailability();
   integrations.replaceChildren();
   renderCliCompatibility();
 
@@ -312,9 +342,8 @@ function render() {
 }
 
 function setDefaults() {
-  const profile = selectedProfile();
-
   renderIntegrations();
+  const profile = selectedProfile();
   selectIntegrations(profileDefaults[profile]);
   syncAiTargetStates();
   syncIntegrationOptions();

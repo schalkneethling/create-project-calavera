@@ -126,7 +126,7 @@ Defer these until after the merge:
 {
   "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
   "version": 1,
-  "profile": "modern",
+  "profile": "default",
   "packageManager": "pnpm",
   "integrations": [],
   "ai": [

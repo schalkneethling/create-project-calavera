@@ -21,7 +21,7 @@
     "profile": {
       "description": "The base tooling profile used to compose the recipe.",
       "type": "string",
-      "enum": ["modern", "classic", "minimal"]
+      "enum": ["default", "minimal"]
     },
     "packageManager": {
       "description": "The package manager used for dependency installation and generated scripts.",

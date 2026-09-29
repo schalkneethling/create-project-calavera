@@ -23,21 +23,17 @@ export const CONFIG_SCHEMA_URL = "https://calavera.schalkneethling.com/calavera.
 
 export const profileCatalog = [
   {
-    id: "modern",
-    label: "modern",
+    id: "default",
+    label: "default",
     description:
       "CSS linting defaults; Calavera does not configure JavaScript or TypeScript checks, which come from Vite+.",
-  },
-  {
-    id: "classic",
-    label: "classic",
-    description:
-      "CSS linting defaults; Calavera does not configure JavaScript or TypeScript checks, which come from Vite+.",
+    minimumCliVersion: "4.0.0",
   },
   {
     id: "minimal",
     label: "minimal",
     description: "Only basic editor consistency settings.",
+    minimumCliVersion: "2.2.0",
   },
 ];
 
@@ -151,7 +147,7 @@ export const recipeToolDescriptions = Object.freeze({
   explain_recipe:
     "Explain the integrations selected by a Calavera recipe, including profile defaults and automatically included parent integrations.",
   dry_run_apply:
-    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe.",
+    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe. Reports whether the project is managed by Vite+ and, when it is, what Vite+ provides instead of Calavera.",
   apply_recipe:
     "Apply an approved Calavera recipe in the current project. Call only after presenting dry_run_apply output and receiving explicit user approval.",
   download_recipe:
@@ -186,8 +182,7 @@ export const recipeToolInputDescriptions = Object.freeze({
 
 /** @type {Record<string, string[]>} */
 export const profileDefaults = {
-  modern: ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
-  classic: ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
+  default: ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
   minimal: ["editorconfig"],
 };
 
@@ -195,8 +190,31 @@ const profileIds = profileCatalog.map(({ id }) => id);
 const packageManagerIds = packageManagerCatalog.map(({ id }) => id);
 
 const profileSpecificIntegrations = {
-  "react-doctor": ["modern", "classic"],
+  "react-doctor": ["default"],
 };
+
+/**
+ * Profile ids removed by ADR-0011, kept only so that validation can name the
+ * replacement. None of them is accepted anywhere.
+ */
+const removedProfileReplacements = {
+  modern: "default",
+  classic: "default",
+};
+
+/**
+ * @param {unknown} profile
+ * @returns {asserts profile is string}
+ */
+export function assertKnownProfile(profile) {
+  if (typeof profile === "string" && Object.hasOwn(removedProfileReplacements, profile)) {
+    throw new Error(
+      `Invalid profile: ${profile}. Allowed values: ${profileIds.join(", ")}. The ${profile} profile was removed; use ${removedProfileReplacements[profile]} instead.`,
+    );
+  }
+
+  assertKnownValue("profile", profile, profileIds);
+}
 
 export const defaultScriptFlags = {
   lint: true,
@@ -379,7 +397,7 @@ export function validateRecipeCompositionInput({
   aiArtifacts,
   integrationOptions,
 } = {}) {
-  assertKnownValue("profile", profile, profileIds);
+  assertKnownProfile(profile);
   assertKnownValue("packageManager", packageManager, packageManagerIds);
 
   const allowedIntegrationIds = listIntegrationOptions(profile).map(({ id }) => id);
@@ -564,7 +582,7 @@ export function validateRecipe(recipe) {
     throw new Error("Recipe version must be 1.");
   }
 
-  assertKnownValue("profile", recipe.profile, profileIds);
+  assertKnownProfile(recipe.profile);
   assertKnownValue("packageManager", recipe.packageManager, packageManagerIds);
   assertStringArray("integrations", recipe.integrations);
   if (!isPlainObject(recipe.scripts)) {

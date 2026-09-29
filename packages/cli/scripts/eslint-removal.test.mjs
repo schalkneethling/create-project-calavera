@@ -65,10 +65,10 @@ test("list_integrations reports no ESLint integration and no ESLint plugin entry
   );
 });
 
-test("list_profiles keeps classic without any ESLint default", async () => {
+test("list_profiles offers no ESLint default in any profile", async () => {
   const response = await callMcpTool("list_profiles");
 
-  for (const profileId of ["modern", "classic", "minimal"]) {
+  for (const profileId of ["default", "minimal"]) {
     const profile = response.profiles.find(({ id }) => id === profileId);
 
     assert.ok(profile, `The ${profileId} profile must still be listed.`);
@@ -83,12 +83,12 @@ test("list_profiles keeps classic without any ESLint default", async () => {
     }
   }
 
-  const classicProfile = response.profiles.find(({ id }) => id === "classic");
+  const defaultProfile = response.profiles.find(({ id }) => id === "default");
 
   assert.doesNotMatch(
-    classicProfile.description,
+    defaultProfile.description,
     /JavaScript.*lint|TypeScript.*lint/i,
-    `The classic profile description still claims JavaScript or TypeScript linting: ${classicProfile.description}`,
+    `The default profile description still claims JavaScript or TypeScript linting: ${defaultProfile.description}`,
   );
 });
 
@@ -97,7 +97,7 @@ test("compose_recipe rejects every removed id as unknown", async () => {
     await assert.rejects(
       () =>
         callMcpTool("compose_recipe", {
-          profile: "classic",
+          profile: "default",
           packageManager: "npm",
           tools: [removedId],
         }),
@@ -110,7 +110,7 @@ test("compose_recipe rejects every removed id as unknown", async () => {
 test("validate_recipe rejects a recipe that requests eslint-react", async () => {
   const recipe = {
     version: 1,
-    profile: "classic",
+    profile: "default",
     packageManager: "npm",
     integrations: ["eslint-react"],
     scripts: { quality: true },
@@ -122,7 +122,7 @@ test("validate_recipe rejects a recipe that requests eslint-react", async () => 
   assert.match(response.error ?? response.message ?? JSON.stringify(response), /eslint-react/);
 });
 
-test("a classic profile dry run plans no eslint.config.js and a lint script without eslint", async () => {
+test("a default profile dry run plans no eslint.config.js and a lint script without eslint", async () => {
   const originalDirectory = process.cwd();
   await using projectDirectory = await mkdtempDisposable(
     join(tmpdir(), "calavera-eslint-removal-dry-run-"),
@@ -132,7 +132,7 @@ test("a classic profile dry run plans no eslint.config.js and a lint script with
     process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
-    const recipe = buildRecipe("classic", [...profileDefaults.classic], "npm");
+    const recipe = buildRecipe("default", [...profileDefaults.default], "npm");
     const result = await applyRecipeObject(recipe, {
       dryRun: true,
       json: true,
@@ -186,7 +186,7 @@ test("inspect_project reports no ESLint finding for an existing eslint.config.js
     await writeFile("eslint.config.js", "export default [];\n");
 
     const response = await callMcpTool("inspect_project", {
-      recipe: buildRecipe("classic", ["editorconfig", "stylelint"], "npm"),
+      recipe: buildRecipe("default", ["editorconfig", "stylelint"], "npm"),
     });
 
     assert.equal(

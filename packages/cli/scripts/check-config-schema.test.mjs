@@ -146,7 +146,7 @@ const rootProperties = [
   "ai",
 ];
 const requiredProperties = ["version", "profile", "packageManager", "integrations", "scripts"];
-const profiles = ["modern", "classic", "minimal"];
+const profiles = ["default", "minimal"];
 const packageManagers = ["npm", "pnpm", "yarn", "bun"];
 const scriptFlags = ["lint", "lint:fix", "quality"];
 
@@ -193,18 +193,18 @@ test("published config schema is valid JSON Schema and validates the example con
   const validate = ajv.compile(schema);
 
   assertValid(validate, config);
-  assertValid(validate, buildRecipe("modern", ["editorconfig"], "pnpm"));
+  assertValid(validate, buildRecipe("default", ["editorconfig"], "pnpm"));
   assertValid(validate, buildRecipe("minimal", ["html-validate"], "pnpm"));
   assertValid(validate, buildRecipe("minimal", ["varlock"], "pnpm"));
   assertValid(
     validate,
-    buildRecipe("modern", ["stylelint-baseline"], "pnpm", [], {
+    buildRecipe("default", ["stylelint-baseline"], "pnpm", [], {
       "stylelint-baseline": { available: 2025, severity: "warning" },
     }),
   );
   assertValid(
     validate,
-    buildRecipe("modern", ["editorconfig"], "pnpm", [
+    buildRecipe("default", ["editorconfig"], "pnpm", [
       { type: "skill", src: "skills/frontend-engineering" },
       { type: "hook", src: "hooks/block-dangerous-commands", target: DEFAULT_AI_TARGET },
       { type: "agent", src: "agents/technical-devils-advocate.md", target: "codex" },
@@ -225,7 +225,7 @@ test("config schema integration enum stays in catalog order", () => {
 
 test("config schema rejects invalid or detached Stylelint Baseline options", () => {
   const validate = ajv.compile(schema);
-  const valid = buildRecipe("modern", ["stylelint-baseline"], "npm", [], {
+  const valid = buildRecipe("default", ["stylelint-baseline"], "npm", [], {
     "stylelint-baseline": { available: "newly", severity: "error" },
   });
 
@@ -451,25 +451,25 @@ test("checked-in example config uses known boolean script flags", () => {
 });
 
 test("generated recipes reference the published schema URL", () => {
-  const recipe = buildRecipe("modern", ["editorconfig"], "pnpm");
+  const recipe = buildRecipe("default", ["editorconfig"], "pnpm");
 
   assert.equal(recipe.$schema, schemaUrl);
 });
 
 test("shared composition uses profile defaults when tools are omitted", () => {
   assert.deepEqual(composeRecipe({ profile: "minimal" }), buildRecipe("minimal", ["editorconfig"]));
-  assert.deepEqual(composeRecipe({ profile: "modern" }).integrations, profileDefaults.modern);
+  assert.deepEqual(composeRecipe({ profile: "default" }).integrations, profileDefaults.default);
 });
 
 test("shared composition normalizes explicit tool labels and package managers", () => {
   const input = validateRecipeCompositionInput({
-    profile: "classic",
+    profile: "default",
     packageManager: "pnpm",
     tools: ["EditorConfig", "Stylelint", "CSS Baseline"],
   });
 
   assert.deepEqual(input, {
-    profile: "classic",
+    profile: "default",
     packageManager: "pnpm",
     tools: ["editorconfig", "stylelint", "stylelint-baseline"],
     aiArtifacts: undefined,
@@ -479,7 +479,7 @@ test("shared composition normalizes explicit tool labels and package managers", 
 
 test("shared composition normalizes Stylelint Baseline options", () => {
   const recipe = composeRecipe({
-    profile: "modern",
+    profile: "default",
     tools: ["stylelint-baseline"],
     integrationOptions: {
       "stylelint-baseline": { available: "2025", severity: "error" },
@@ -492,7 +492,7 @@ test("shared composition normalizes Stylelint Baseline options", () => {
   assert.throws(
     () =>
       composeRecipe({
-        profile: "modern",
+        profile: "default",
         tools: ["stylelint"],
         integrationOptions: {
           "stylelint-baseline": { available: 2025, severity: "warning" },
@@ -502,7 +502,7 @@ test("shared composition normalizes Stylelint Baseline options", () => {
   );
   assert.throws(
     () =>
-      buildRecipe("modern", ["stylelint-baseline"], "npm", [], {
+      buildRecipe("default", ["stylelint-baseline"], "npm", [], {
         "stylelint-baseline": { available: 2025, severity: "notice" },
       }),
     /warning or error/,
@@ -510,7 +510,7 @@ test("shared composition normalizes Stylelint Baseline options", () => {
 });
 
 test("shared composition resolves tool labels within the active profile", () => {
-  assert.deepEqual(normalizeIntegrationInputs(["React Doctor"], "classic"), ["react-doctor"]);
+  assert.deepEqual(normalizeIntegrationInputs(["React Doctor"], "default"), ["react-doctor"]);
   assert.deepEqual(normalizeIntegrationInputs(["React Doctor"], "minimal"), ["React Doctor"]);
 });
 
@@ -544,7 +544,7 @@ test("shared composition copies profile defaults before returning recipes", () =
   recipe.integrations.push("mutated");
 
   assert.deepEqual(profileDefaults.minimal, ["editorconfig"]);
-  assert.notEqual(composeRecipe({ profile: "modern" }).integrations, profileDefaults.modern);
+  assert.notEqual(composeRecipe({ profile: "default" }).integrations, profileDefaults.default);
 });
 
 test("shared composition normalizes AI artifact inputs into recipe items", () => {
@@ -608,7 +608,7 @@ test("package-backed artifact resolution trims targets and keeps catalog destina
 test("shared composition output validates against the published schema", () => {
   const validate = ajv.compile(schema);
   const recipe = composeRecipe({
-    profile: "modern",
+    profile: "default",
     packageManager: "bun",
     tools: ["React Doctor", "Stylelint"],
     aiArtifacts: [{ id: "skill-frontend-engineering" }],
@@ -670,19 +670,16 @@ test("shared recipe validation rejects unsafe AI types, sources, and targets", (
 });
 
 test("shared catalog helpers expose WebMCP-ready profile scoped options", () => {
-  const modernToolIds = listIntegrationOptions("modern").map(({ id }) => id);
-  const classicToolIds = listIntegrationOptions("classic").map(({ id }) => id);
+  const defaultToolIds = listIntegrationOptions("default").map(({ id }) => id);
   const response = catalogResponse(composeRecipe({ profile: "minimal" }));
 
-  assert.ok(modernToolIds.includes("stylelint"));
-  assert.ok(modernToolIds.includes("react-doctor"));
-  assert.ok(classicToolIds.includes("react-doctor"));
+  assert.ok(defaultToolIds.includes("stylelint"));
+  assert.ok(defaultToolIds.includes("react-doctor"));
   assert.equal(
     listIntegrationOptions("minimal").some(({ id }) => id === "react-doctor"),
     false,
   );
-  assert.ok(modernToolIds.includes("knip"));
-  assert.ok(classicToolIds.includes("knip"));
+  assert.ok(defaultToolIds.includes("knip"));
   assert.ok(listIntegrationOptions("minimal").some(({ id }) => id === "knip"));
   const htmlValidate = listIntegrationOptions("minimal").find(({ id }) => id === "html-validate");
   assert.equal(htmlValidate?.group, "HTML");
@@ -701,7 +698,7 @@ test("shared catalog helpers expose WebMCP-ready profile scoped options", () => 
 
 test("shared explanation helpers include selected and included integration reasons", () => {
   const explanation = explainRecipeIntegrations(
-    buildRecipe("classic", ["stylelint-order", "stylelint-standard"]),
+    buildRecipe("default", ["stylelint-order", "stylelint-standard"]),
   );
 
   assert.deepEqual(
@@ -718,7 +715,7 @@ test("shared explanation helpers include selected and included integration reaso
 test("shared composition operation responses expose catalog, recipe, and explanation data", () => {
   const profilesResponse = listProfilesResponse();
   const recipeResponse = composeRecipeResponse({
-    profile: "modern",
+    profile: "default",
     packageManager: "pnpm",
     tools: ["Stylelint"],
     aiArtifacts: [{ id: "Frontend engineering" }],
@@ -729,12 +726,12 @@ test("shared composition operation responses expose catalog, recipe, and explana
     profiles,
   );
   assert.notEqual(
-    profilesResponse.profiles.find(({ id }) => id === "modern").defaultIntegrations,
-    profileDefaults.modern,
+    profilesResponse.profiles.find(({ id }) => id === "default").defaultIntegrations,
+    profileDefaults.default,
   );
   assert.deepEqual(
-    listIntegrationsResponse({ profile: "classic" }).integrations.map(({ id }) => id),
-    listIntegrationOptions("classic").map(({ id }) => id),
+    listIntegrationsResponse({ profile: "default" }).integrations.map(({ id }) => id),
+    listIntegrationOptions("default").map(({ id }) => id),
   );
   assert.equal(describeIntegrationResponse("Stylelint").id, "stylelint");
   assert.equal(
@@ -757,7 +754,7 @@ test("CLI parser accepts scripted rich composer options", () => {
   const options = parseArgs([
     "init",
     "--profile",
-    "modern",
+    "default",
     "--package-manager",
     "pnpm",
     "--integration",
@@ -773,7 +770,7 @@ test("CLI parser accepts scripted rich composer options", () => {
   ]);
 
   assert.equal(options.command, "init");
-  assert.equal(options.profile, "modern");
+  assert.equal(options.profile, "default");
   assert.equal(options.packageManager, "pnpm");
   assert.deepEqual(options.integrations, ["EditorConfig", "Stylelint", "React Doctor"]);
   assert.deepEqual(options.aiArtifacts, [
@@ -1209,7 +1206,7 @@ test("CLI rich composer writes a schema-valid config without applying by default
       noInstall: true,
       assumeYes: true,
       apply: false,
-      profile: "modern",
+      profile: "default",
       packageManager: "pnpm",
       integrations: ["Stylelint"],
       aiArtifacts: [{ id: "Frontend engineering" }],
@@ -1355,7 +1352,7 @@ test("standard MCP compose_recipe returns structured schema-valid content", asyn
     const result = await client.callTool({
       name: "compose_recipe",
       arguments: {
-        profile: "modern",
+        profile: "default",
         packageManager: "pnpm",
         tools: ["Stylelint"],
         aiArtifacts: [{ id: "Frontend engineering" }],
@@ -1444,7 +1441,7 @@ test("project inspection reports package manager, files, and conflict hints", as
     await writeFile("knip.json", "{}\n");
     await writeFile(".editorconfig", "local edits\n");
 
-    const recipe = buildRecipe("modern", ["editorconfig", "stylelint"], "npm");
+    const recipe = buildRecipe("default", ["editorconfig", "stylelint"], "npm");
     const inspection = await inspectProject(recipe);
 
     assert.equal(inspection.packageManager, "pnpm");
@@ -2146,7 +2143,7 @@ test("apply dry runs allow formatting-only drift in managed JSON files", async (
     process.chdir(projectDirectory);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
-    const recipe = buildRecipe("modern", ["stylelint"], "npm");
+    const recipe = buildRecipe("default", ["stylelint"], "npm");
     await applyRecipeObject(recipe, {
       json: true,
       noInstall: true,
@@ -2196,7 +2193,7 @@ test("apply can re-own approved managed file drift before writing recipe updates
     process.chdir(projectDirectory);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
-    const initialRecipe = buildRecipe("modern", ["stylelint"], "npm");
+    const initialRecipe = buildRecipe("default", ["stylelint"], "npm");
     await applyRecipeObject(initialRecipe, {
       json: true,
       noInstall: true,
@@ -2211,7 +2208,7 @@ test("apply can re-own approved managed file drift before writing recipe updates
     await writeFile(".stylelintrc.json", formattedStylelintConfig);
 
     const nextRecipe = buildRecipe(
-      "modern",
+      "default",
       ["stylelint", "stylelint-standard", "stylelint-order", "stylelint-baseline"],
       "npm",
     );
@@ -2332,7 +2329,7 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
 test("apply uses direct tool scripts without the run-if-files helper", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-direct-scripts-"));
-  const recipe = buildRecipe("classic", ["stylelint"], "npm");
+  const recipe = buildRecipe("default", ["stylelint"], "npm");
 
   try {
     process.chdir(projectDirectory);
@@ -2373,7 +2370,7 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
 test("apply composes logical CSS Stylelint plugin metadata", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-stylelint-logical-css-"));
-  const recipe = buildRecipe("modern", ["stylelint-logical-css"], "npm");
+  const recipe = buildRecipe("default", ["stylelint-logical-css"], "npm");
 
   try {
     process.chdir(projectDirectory);
@@ -2402,7 +2399,7 @@ test("apply composes logical CSS Stylelint plugin metadata", async () => {
 test("apply carries recipe Baseline options into the generated Stylelint rule", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-stylelint-baseline-options-"));
-  const recipe = buildRecipe("modern", ["stylelint-baseline"], "npm", [], {
+  const recipe = buildRecipe("default", ["stylelint-baseline"], "npm", [], {
     "stylelint-baseline": { available: 2025, severity: "error" },
   });
 
@@ -2800,7 +2797,7 @@ test("doctor does not expect the removed run-if-files helper", async () => {
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     await writeFile(
       "calavera.config.json",
-      `${JSON.stringify(buildRecipe("modern", ["editorconfig"], "npm"), null, 2)}\n`,
+      `${JSON.stringify(buildRecipe("default", ["editorconfig"], "npm"), null, 2)}\n`,
     );
 
     const { stdout } = await execFileAsync(
@@ -2830,7 +2827,7 @@ test("clean treats a matching managed run-if-files helper as stale", async () =>
     await mkdir(".calavera");
     await writeFile(
       "calavera.config.json",
-      `${JSON.stringify(buildRecipe("modern", ["stylelint"], "npm"), null, 2)}\n`,
+      `${JSON.stringify(buildRecipe("default", ["stylelint"], "npm"), null, 2)}\n`,
     );
     await writeFile(helperPath, helperContents);
     await writeFile(
@@ -2838,7 +2835,7 @@ test("clean treats a matching managed run-if-files helper as stale", async () =>
       `${JSON.stringify(
         {
           version: 1,
-          profile: "modern",
+          profile: "default",
           integrations: ["stylelint"],
           files: [helperPath],
           managedFiles: [{ path: helperPath, hash: textHash(helperContents) }],
@@ -3026,7 +3023,7 @@ test("apply uses project devEngines package manager over an implicit npm recipe 
       )}\n`,
     );
 
-    const result = await applyRecipeObject(buildRecipe("modern", ["stylelint"], "npm"), {
+    const result = await applyRecipeObject(buildRecipe("default", ["stylelint"], "npm"), {
       dryRun: true,
       json: true,
       noInstall: true,
@@ -3262,7 +3259,7 @@ test("MCP AI-only apply preserves existing managed tooling state", async () => {
       `${JSON.stringify(
         {
           version: 1,
-          profile: "modern",
+          profile: "default",
           integrations: ["stylelint"],
           files: [".stylelintrc.json"],
           managedFiles: [{ path: ".stylelintrc.json", hash: textHash(stylelintConfig) }],
@@ -3284,7 +3281,7 @@ test("MCP AI-only apply preserves existing managed tooling state", async () => {
     await assert.rejects(readFile("calavera.config.json", "utf8"), { code: "ENOENT" });
 
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
-    assert.equal(state.profile, "modern");
+    assert.equal(state.profile, "default");
     assert.deepEqual(state.integrations, ["stylelint"]);
     assert.deepEqual(state.files, [".stylelintrc.json"]);
     assert.deepEqual(state.managedFiles, [
@@ -3478,7 +3475,7 @@ test("JSON apply installs dependencies without writing spinner UI to stdout", as
       return originalStdoutWrite.call(this, chunk, ...args);
     };
 
-    const result = await applyRecipeObject(buildRecipe("modern", ["stylelint"], "npm"), {
+    const result = await applyRecipeObject(buildRecipe("default", ["stylelint"], "npm"), {
       json: true,
       assumeYes: true,
     });
@@ -3544,7 +3541,7 @@ test("shared assertion helpers reject unexpected value shapes", () => {
   assert.doesNotThrow(() => assertObjectArray("objects", [{ id: "one" }]));
   assert.doesNotThrow(() => assertObjectArray("objects", []));
   assert.doesNotThrow(() => assertPlainObject("object", { id: "one" }));
-  assert.doesNotThrow(() => assertKnownValue("profile", "modern", profiles));
+  assert.doesNotThrow(() => assertKnownValue("profile", "default", profiles));
 
   assert.throws(() => assertString("name", 1), /name must be a string/);
   assert.throws(() => assertStringArray("items", "one"), /items must be an array of strings/);

@@ -37,24 +37,24 @@ test("list_integrations reports no Oxlint integration and no Oxlint plugin platf
   );
 });
 
-test("list_profiles keeps the modern profile without any Oxlint default", async () => {
+test("list_profiles keeps the default profile without any Oxlint default", async () => {
   const response = await callMcpTool("list_profiles");
-  const modern = response.profiles.find(({ id }) => id === "modern");
+  const defaultProfile = response.profiles.find(({ id }) => id === "default");
 
-  assert.ok(modern, "The modern profile must still be listed.");
+  assert.ok(defaultProfile, "The default profile must still be listed.");
   assert.equal(
-    hasOxlintId(modern.defaultIntegrations),
+    hasOxlintId(defaultProfile.defaultIntegrations),
     false,
-    `Oxlint ids still default for modern: ${modern.defaultIntegrations.join(", ")}`,
+    `Oxlint ids still default for the default profile: ${defaultProfile.defaultIntegrations.join(", ")}`,
   );
-  assert.equal(hasOxlintId(profileDefaults.modern), false);
+  assert.equal(hasOxlintId(profileDefaults.default), false);
 });
 
 test("compose_recipe rejects the oxlint id as unknown", async () => {
   await assert.rejects(
     () =>
       callMcpTool("compose_recipe", {
-        profile: "modern",
+        profile: "default",
         packageManager: "npm",
         tools: ["oxlint"],
       }),
@@ -65,7 +65,7 @@ test("compose_recipe rejects the oxlint id as unknown", async () => {
 test("validate_recipe rejects a recipe that requests oxlint-react", async () => {
   const recipe = {
     version: 1,
-    profile: "modern",
+    profile: "default",
     packageManager: "npm",
     integrations: ["oxlint-react"],
     scripts: { lint: true },
@@ -77,7 +77,7 @@ test("validate_recipe rejects a recipe that requests oxlint-react", async () => 
   assert.match(response.error ?? response.message ?? JSON.stringify(response), /oxlint-react/);
 });
 
-test("a modern profile dry run plans no oxlint.json and writes no oxlint script", async () => {
+test("a default profile dry run plans no oxlint.json and writes no oxlint script", async () => {
   const originalDirectory = process.cwd();
   await using projectDirectory = await mkdtempDisposable(
     join(tmpdir(), "calavera-oxlint-removal-dry-run-"),
@@ -87,7 +87,7 @@ test("a modern profile dry run plans no oxlint.json and writes no oxlint script"
     process.chdir(projectDirectory.path);
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
 
-    const recipe = buildRecipe("modern", [...profileDefaults.modern], "npm");
+    const recipe = buildRecipe("default", [...profileDefaults.default], "npm");
     const result = await applyRecipeObject(recipe, {
       dryRun: true,
       json: true,
@@ -129,7 +129,7 @@ test("inspect_project treats an existing oxlint.json as a file Calavera does not
     await writeFile("oxlint.json", `${JSON.stringify({ plugins: ["typescript"] }, null, 2)}\n`);
 
     const response = await callMcpTool("inspect_project", {
-      recipe: buildRecipe("classic", ["stylelint"], "npm"),
+      recipe: buildRecipe("default", ["stylelint"], "npm"),
     });
 
     assert.equal(

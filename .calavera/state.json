@@ -1,6 +1,6 @@
 {
   "version": 1,
-  "profile": "modern",
+  "profile": "default",
   "integrations": [
     "editorconfig",
     "stylelint",

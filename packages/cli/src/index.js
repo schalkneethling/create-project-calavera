@@ -47,6 +47,7 @@ import {
   projectInspectionFiles,
 } from "./project-inspection.js";
 import {
+  assertKnownProfile,
   composeRecipe,
   explainRecipeResponse,
   listAiArtifactOptions,
@@ -141,7 +142,8 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  *
  * @typedef {{ script: string, reason: string }} ScriptOmission
  * @typedef {{ severity: "info" | "warning" | "error", kind: string, message: string, path?: string }} ProjectInspectionFinding
- * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus?: VitePlusDetection }} ProjectInspection
+ * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus: VitePlusDetection }} ProjectInspection
+ * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[] }} ProjectInspectionOptions
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[] }} ScriptPlan
  * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean }} Change
@@ -153,6 +155,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string[]} dependencies
  * @property {string[]} integrations
  * @property {ProjectInspection} projectInspection
+ * @property {VitePlusReport} vitePlus
  * @property {Change[]} changes
  * @property {string[]} pointers
  *
@@ -409,7 +412,7 @@ export function parseArgs(rawArgs) {
   };
 
   if (profile !== undefined) {
-    assertKnownValue("profile", profile, supportedProfiles);
+    assertKnownProfile(profile);
     parsed.profile = profile;
   }
 
@@ -1443,6 +1446,73 @@ function vitePlusFindings(detection) {
   ];
 }
 
+const VITE_PLUS_PROVIDES_STATEMENT =
+  "JavaScript and TypeScript linting, formatting, type-checking, and testing are provided by Vite+, not by Calavera.";
+const VITE_PLUS_UNMANAGED_STATEMENT =
+  "Calavera provides no JavaScript or TypeScript toolchain; run vp create or vp migrate to adopt Vite+.";
+
+/**
+ * Builds the Vite+ report that `explain_recipe`, `compose_recipe`, and
+ * `dry_run_apply` carry, per ADR-0011. The first line states the ADR-0001
+ * detection status; a managed project also gets the statement of what Vite+
+ * provides instead of Calavera.
+ *
+ * @param {VitePlusDetection} detection
+ * @returns {VitePlusReport}
+ */
+export function vitePlusReport(detection) {
+  const signalConflict = detection.status === "unmanaged" && detection.corroborating.length > 0;
+
+  if (detection.status === "managed") {
+    return {
+      status: detection.status,
+      signalConflict,
+      lines: [
+        `Vite+ detection: managed. This project is vp-managed (${detection.signal} signal at ${detection.manifestPath}).`,
+        VITE_PLUS_PROVIDES_STATEMENT,
+      ],
+    };
+  }
+
+  if (detection.status === "unmanaged") {
+    return {
+      status: detection.status,
+      signalConflict,
+      lines: [
+        "Vite+ detection: unmanaged. No vite-plus dependency was found in this manifest or any ancestor manifest.",
+        ...(signalConflict
+          ? [
+              `Vite+ signal conflict: found ${detection.corroborating.join(", ")} without a vite-plus dependency; confirm whether the vite-plus dependency was removed intentionally.`,
+            ]
+          : []),
+        VITE_PLUS_UNMANAGED_STATEMENT,
+      ],
+    };
+  }
+
+  const ancestorSuffix = detection.ancestor
+    ? ` The nearest ancestor manifest, ${detection.ancestor.manifestPath}, is ${detection.ancestor.status}.`
+    : "";
+
+  return {
+    status: detection.status,
+    signalConflict,
+    lines: [
+      `Vite+ detection: unknown. package.json could not be read, so Vite+ management could not be determined.${ancestorSuffix}`,
+    ],
+  };
+}
+
+/**
+ * Detects Vite+ management for the current working directory and returns the
+ * ADR-0011 report.
+ *
+ * @returns {Promise<VitePlusReport>}
+ */
+export async function reportVitePlus() {
+  return vitePlusReport(await detectVitePlus(process.cwd()));
+}
+
 /**
  * @param {Recipe} [recipe]
  * @param {ProjectInspectionOptions} [options]
@@ -1759,6 +1829,7 @@ export async function applyRecipeObject(recipe, options = {}) {
     dependencies: dependencyList,
     integrations: integrations.map((integration) => integration.id),
     projectInspection,
+    vitePlus: vitePlusReport(projectInspection.vitePlus),
     changes: [...changes, ...aiResult.changes],
     pointers: [...aiResult.pointers, ...(usesVarlock ? [VARLOCK_POINTER] : [])],
   };
@@ -2286,7 +2357,7 @@ async function promptForProfile(options) {
     }));
 
   exitIfCancel(selected);
-  return typeof selected === "string" ? selected : "modern";
+  return typeof selected === "string" ? selected : "default";
 }
 
 /**
@@ -2322,7 +2393,7 @@ async function promptForPackageManager(options, detectedPackageManager) {
  * @returns {Promise<string[]>}
  */
 async function promptForIntegrations(options, profile) {
-  const defaults = profileDefaults[profile] ?? profileDefaults.modern ?? [];
+  const defaults = profileDefaults[profile] ?? profileDefaults.default ?? [];
 
   if (options.integrations.length > 0) {
     return options.integrations;
@@ -2806,7 +2877,7 @@ Options:
   --apply              Preview and optionally apply after composing a recipe
   --config <path>      Recipe path, defaults to calavera.config.json
   --package-manager    npm, pnpm, yarn, or bun
-  --profile            modern, classic, or minimal
+  --profile            default or minimal
   --tool <id>          Add an integration by id or label; repeatable
   --ai-artifact <id>   Add a bundled AI artifact; repeatable
   --tag <channel>      Artifact release channel: latest (default) or next
@@ -2982,6 +3053,10 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.info(`Dev dependencies: ${result.dependencies.join(", ")}`);
     } else {
       logger.info("Dev dependencies: none");
+    }
+
+    for (const line of result.vitePlus.lines) {
+      logger.info(line);
     }
 
     for (const finding of result.projectInspection.findings) {
