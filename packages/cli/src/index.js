@@ -1219,6 +1219,41 @@ async function assertSafeManagedFileWrite(path, contents, previousState, reownMa
 }
 
 /**
+ * A managed file is unchanged when its contents on disk are exactly the
+ * planned contents and Calavera state records that same hash for it.
+ *
+ * @param {string} path
+ * @param {string} contents
+ * @param {CalaveraState} previousState
+ * @returns {Promise<boolean>}
+ */
+async function managedFileUnchanged(path, contents, previousState) {
+  if (!(await fileExists(path))) {
+    return false;
+  }
+
+  const installedHash = textHash(await readFile(path, "utf8"));
+
+  return (
+    installedHash === textHash(contents) &&
+    managedFileStateForPath(previousState, path)?.hash === installedHash
+  );
+}
+
+/**
+ * @param {string} path
+ * @param {unknown} value
+ * @returns {Promise<boolean>}
+ */
+async function jsonFileUnchanged(path, value) {
+  if (!(await fileExists(path))) {
+    return false;
+  }
+
+  return (await readFile(path, "utf8")) === `${JSON.stringify(value, null, 2)}\n`;
+}
+
+/**
  * @param {{ path: string, contents: string }[]} filePlans
  * @param {CalaveraState} previousState
  * @param {Set<string>} reownManagedFiles
@@ -1285,14 +1320,20 @@ function jsonContentsMatch(path, installedContents, targetContents) {
  * @returns {Promise<ManagedFileState>}
  */
 async function writeManagedFile(path, contents, dryRun, changes, previousState, reownManagedFiles) {
-  changes.push({ type: "write", path, action: "write", ownership: "calavera" });
+  const unchanged = await managedFileUnchanged(path, contents, previousState);
+  changes.push({
+    type: unchanged ? "unchanged" : "write",
+    path,
+    action: "write",
+    ownership: "calavera",
+  });
 
   const managedFile = {
     path,
     hash: textHash(contents),
   };
 
-  if (dryRun) {
+  if (dryRun || unchanged) {
     return managedFile;
   }
 
@@ -1391,6 +1432,20 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
  */
 async function projectFileExists(path) {
   return fileExists(resolve(path));
+}
+
+/**
+ * Whether Calavera state records `path` with the hash of its contents on
+ * disk, which makes it Calavera's own file rather than an existing config.
+ *
+ * @param {string} path
+ * @param {CalaveraState} previousState
+ * @returns {Promise<boolean>}
+ */
+async function managedFileMatchesState(path, previousState) {
+  const stateFile = managedFileStateForPath(previousState, path);
+
+  return stateFile !== undefined && stateFile.hash === textHash(await readFile(path, "utf8"));
 }
 
 /**
@@ -1622,11 +1677,22 @@ export async function inspectProject(recipe, options = {}) {
   }
 
   const packageScripts = packageJSON.scripts ?? {};
+  const plannedScripts =
+    recipe && (await fileExists(STATE_FILE))
+      ? buildScripts(recipe, integrations, resolveApplyPackageManager(recipe, {}, packageJSON))
+          .scripts
+      : {};
   for (const scriptName of ["lint", "lint:fix", "repo:controls:check", "repo:controls:apply"]) {
     const managedByRecipe = scriptName.startsWith("repo:controls:")
       ? integrationIds.has(GITHUB_REPOSITORY_CONTROLS_ID)
       : recipe?.scripts?.[scriptName];
-    if (managedByRecipe && typeof packageScripts[scriptName] === "string") {
+    // After an apply, a script that already has the value this recipe sets
+    // is Calavera's own and is not replaced.
+    if (
+      managedByRecipe &&
+      typeof packageScripts[scriptName] === "string" &&
+      packageScripts[scriptName] !== plannedScripts[scriptName]
+    ) {
       findings.push({
         severity: "warning",
         kind: "existing-package-script",
@@ -1650,7 +1716,7 @@ export async function inspectProject(recipe, options = {}) {
     }
 
     for (const path of paths) {
-      if (files.includes(path)) {
+      if (files.includes(path) && !(await managedFileMatchesState(path, previousState))) {
         findings.push({
           severity: "warning",
           kind: "existing-config",
@@ -1696,6 +1762,9 @@ export async function applyRecipeObject(recipe, options = {}) {
     ...options,
   };
   const previousState = await readStateIfPresent();
+  // Only a project Calavera already applied to can have a config or scripts
+  // that are unchanged; on a first apply the whole plan is new.
+  const previouslyApplied = await fileExists(STATE_FILE);
   const reownManagedFiles = normalizeManagedFilePathSet(applyOptions.reownManagedFiles ?? []);
   const integrations = resolveRecipeIntegrations(recipe);
   const dependencyList = unique(
@@ -1731,21 +1800,26 @@ export async function applyRecipeObject(recipe, options = {}) {
 
   if (applyOptions.writeConfig) {
     const configPath = resolve(applyOptions.config ?? "calavera.config.json");
+    const configUnchanged = previouslyApplied && (await jsonFileUnchanged(configPath, recipe));
     changes.push({
-      type: "write",
+      type: configUnchanged ? "unchanged" : "write",
       path: relative(process.cwd(), configPath),
       action: "write",
       ownership: "project",
     });
-    await writeJSON(configPath, recipe, applyOptions.dryRun);
+    await writeJSON(configPath, recipe, applyOptions.dryRun || configUnchanged);
   }
 
+  const packageJSONUnchanged =
+    previouslyApplied &&
+    !removedDefaultTestScript &&
+    Object.entries(scripts).every(([name, script]) => packageJSON.scripts?.[name] === script);
   packageJSON.scripts = {
     ...packageJSON.scripts,
     ...scripts,
   };
   changes.push({
-    type: "update",
+    type: packageJSONUnchanged ? "unchanged" : "update",
     path: "package.json",
     action: "update",
     ownership: "project",
@@ -1848,7 +1922,7 @@ export async function applyRecipeObject(recipe, options = {}) {
 
   await applyVarlockProjectFiles(varlockFilePlans, applyOptions.dryRun, changes);
 
-  if (!applyOptions.dryRun) {
+  if (!applyOptions.dryRun && !packageJSONUnchanged) {
     await writeJSON("package.json", packageJSON, false);
   }
 
@@ -2721,7 +2795,9 @@ function formatRecipeSummary(recipe, explanation) {
  * @returns {string}
  */
 function formatApplySummary(result) {
-  const changedPaths = result.changes.map((change) => change.path);
+  const changedPaths = result.changes
+    .filter(({ type }) => type !== "unchanged")
+    .map((change) => change.path);
 
   return [
     `${style("bold", "Package manager")}: ${result.packageManager}`,
@@ -3491,6 +3567,18 @@ function printResult(result, asJSON = false, commandDryRun = false) {
         }
       }
 
+      if (change.type === "unchanged") {
+        logger.info(`Unchanged ${change.path}`);
+
+        if (change.scripts && change.scripts.length > 0) {
+          logger.info(`Scripts already set: ${change.scripts.join(", ")}`);
+        }
+
+        for (const omittedScript of change.omittedScripts ?? []) {
+          logger.info(`Would omit script ${omittedScript.script}: ${omittedScript.reason}`);
+        }
+      }
+
       if (change.type === "update") {
         logger.info(`Would update ${change.path}`);
 
@@ -3506,6 +3594,10 @@ function printResult(result, asJSON = false, commandDryRun = false) {
           logger.info(`Would omit script ${omittedScript.script}: ${omittedScript.reason}`);
         }
       }
+    }
+
+    if (result.changes.length > 0 && result.changes.every(({ type }) => type === "unchanged")) {
+      logger.info("Nothing to change: the project already matches this recipe.");
     }
 
     for (const pointer of result.pointers ?? []) {
