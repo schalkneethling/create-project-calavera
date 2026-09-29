@@ -475,6 +475,53 @@ test("--new lets a forwarded --directory decide the target", async () => {
   assert.equal(await exists(join(workspace.work, "other/.calavera")), false);
 });
 
+test("--new hard-stops when a canceled scaffold leaves a forwarded --directory without a manifest", async () => {
+  await using workspace = await createTemporaryWorkspace("directory-canceled");
+
+  const result = await runCli(workspace, ["--yes", "--new", "vite:library", "--directory=chosen"], {
+    STUB_MODE: "nothing",
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(
+    result.stderr,
+    /no new or changed package\.json was found in the forwarded --directory .*chosen/,
+  );
+  assert.deepEqual(await readdir(workspace.work), []);
+});
+
+test("--new does not bootstrap a pre-existing project at a forwarded --directory that Vite+ left untouched", async () => {
+  await using workspace = await createTemporaryWorkspace("directory-untouched");
+  const chosen = join(workspace.work, "chosen");
+  await mkdir(chosen);
+  await writeFile(join(chosen, "package.json"), json(libraryManifest));
+
+  const result = await runCli(workspace, ["--yes", "--new", "vite:library", "--directory=chosen"], {
+    STUB_MODE: "nothing",
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(
+    result.stderr,
+    /no new or changed package\.json was found in the forwarded --directory/,
+  );
+  assert.equal(await exists(join(chosen, ".calavera")), false);
+  assert.deepEqual(await readdir(chosen), ["package.json"]);
+});
+
+test("--new accepts a forwarded --directory that is nested more than one level deep", async () => {
+  await using workspace = await createTemporaryWorkspace("directory-nested");
+
+  const result = await runCli(
+    workspace,
+    ["--yes", "--new", "vite:library", "--directory", "apps/chosen"],
+    { STUB_MODE: "scaffold", STUB_TARGET: "apps/chosen" },
+  );
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(await exists(join(workspace.work, "apps/chosen/.calavera/state.json")));
+});
+
 test("--new finds a pre-existing non-empty target whose manifest Vite+ replaced", async () => {
   await using workspace = await createTemporaryWorkspace("replaced");
   const existing = join(workspace.work, "existing");

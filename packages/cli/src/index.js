@@ -2593,7 +2593,16 @@ export async function newProject(options, runtime = {}) {
     }
   }
 
-  const before = await snapshotManifests(cwd);
+  // A forwarded --directory names the target, but it is still verified the
+  // same way: its package.json must be new or changed by the spawn, so a
+  // canceled scaffold cannot hand the bootstrap a project Vite+ never touched.
+  const directory = forwardedDirectory(forwardedArgs);
+  const forwardedTarget = directory === undefined ? undefined : resolve(cwd, directory);
+  const forwardedManifestBefore =
+    forwardedTarget === undefined
+      ? undefined
+      : await readFileIfPresent(join(forwardedTarget, "package.json"));
+  const before = forwardedTarget === undefined ? await snapshotManifests(cwd) : new Map();
   const exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({ ...runnerCommand, cwd });
 
   if (exit.exitCode !== 0) {
@@ -2610,14 +2619,25 @@ export async function newProject(options, runtime = {}) {
     );
   }
 
-  const directory = forwardedDirectory(forwardedArgs);
-  const candidates =
-    directory === undefined ? await scaffoldCandidates(cwd, before) : [resolve(cwd, directory)];
+  let candidates;
+  if (forwardedTarget === undefined) {
+    candidates = await scaffoldCandidates(cwd, before);
+  } else {
+    const manifestAfter = await readFileIfPresent(join(forwardedTarget, "package.json"));
+    candidates =
+      manifestAfter !== undefined && manifestAfter !== forwardedManifestBefore
+        ? [forwardedTarget]
+        : [];
+  }
   const [target] = candidates;
 
   if (target === undefined) {
+    const searched =
+      forwardedTarget === undefined
+        ? `${cwd} or its top-level directories`
+        : `the forwarded --directory ${forwardedTarget}`;
     throw new Error(
-      `vp create exited with code 0, but no new or changed package.json was found in ${cwd} or its top-level directories, so the scaffold was canceled or wrote no project. ${NEW_HARD_STOP_SUFFIX}`,
+      `vp create exited with code 0, but no new or changed package.json was found in ${searched}, so the scaffold was canceled or wrote no project. ${NEW_HARD_STOP_SUFFIX}`,
     );
   }
 
