@@ -323,7 +323,7 @@ export function listIntegrationOptions(profile) {
     .map((integration) => ({
       ...integration,
       profiles: integrationProfiles(integration.id),
-      description: `${integration.label}. Category: ${integration.group}. Status: ${integration.status}.${repositoryRootNote(integration)}`,
+      description: `${integration.summary} ${integration.label}. Category: ${integration.group}. Status: ${integration.status}.${repositoryRootNote(integration)}`,
     }))
     .filter((integration) => !profile || integration.profiles.includes(profile));
 }

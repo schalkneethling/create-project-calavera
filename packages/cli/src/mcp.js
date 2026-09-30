@@ -71,6 +71,31 @@ const baselineTargetSchema = z
   .union([z.enum(["widely", "newly"]), z.number().int()])
   .describe(recipeToolInputDescriptions.baselineTarget);
 
+// Shared output shape for a catalog integration as returned by list_integrations and
+// describe_integration. Fields beyond this shape (for example the per-platform stylelint or
+// htmlValidate config blocks carried on some catalog entries) are still returned to the client;
+// zod's default object parsing only validates and strips fields it does not know about, it does
+// not reject them.
+const integrationOutputShape = {
+  id: z.string().describe("Stable integration ID used in recipes."),
+  label: z.string().describe("Human-readable integration name."),
+  summary: z.string().describe("One-sentence plain-language summary of what the tool does."),
+  homepage: z.string().describe("The https URL to the tool's own site or repository."),
+  group: z.string().describe("Catalog group the integration belongs to."),
+  platform: z.string().describe("Tool family the integration's generation code keys off."),
+  status: z
+    .string()
+    .describe(
+      "Whether the integration is recommended, optional, experimental, or framework-specific.",
+    ),
+  dependencies: z.array(z.string()).describe("Development packages installed for the integration."),
+  profiles: z.array(z.string()).describe("Profiles the integration is available in."),
+  description: z.string().describe("Generated description prefixed with the integration summary."),
+  minimumCliVersion: z.string().optional(),
+  appliesAt: z.string().optional(),
+  includes: z.array(z.string()).optional(),
+};
+
 const toolAnnotations = {
   read: {
     readOnlyHint: true,
@@ -86,6 +111,16 @@ const toolAnnotations = {
   },
 };
 
+/**
+ * @typedef {{
+ *   description: string,
+ *   inputSchema: Record<string, z.ZodTypeAny>,
+ *   outputSchema?: Record<string, z.ZodTypeAny>,
+ *   annotations: typeof toolAnnotations.read | typeof toolAnnotations.apply,
+ * }} ToolConfig
+ */
+
+/** @type {Record<string, ToolConfig>} */
 const toolConfigs = {
   list_profiles: {
     description: recipeToolDescriptions.list_profiles,
@@ -105,6 +140,10 @@ const toolConfigs = {
     inputSchema: {
       profile: profileSchema.optional().describe(recipeToolInputDescriptions.profileFilter),
     },
+    outputSchema: {
+      profile: z.string().nullable(),
+      integrations: z.array(z.object(integrationOutputShape)),
+    },
     annotations: toolAnnotations.read,
   },
   describe_integration: {
@@ -112,6 +151,7 @@ const toolConfigs = {
     inputSchema: {
       id: z.string().describe(recipeToolInputDescriptions.integrationId),
     },
+    outputSchema: integrationOutputShape,
     annotations: toolAnnotations.read,
   },
   list_ai_artifacts: {
