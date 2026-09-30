@@ -18,6 +18,14 @@ updates:
     ignore:
       - dependency-name: "baseline-browser-mapping"
       - dependency-name: "web-features"
+    # Tauri releases @tauri-apps/cli, @tauri-apps/api, and its plugins in
+    # lockstep. Separate pull requests each add the same lockfile entries, and
+    # the rebase of the second one duplicates the key, which pnpm rejects
+    # (#565). One pull request per Tauri release resolves the lockfile once.
+    groups:
+      tauri:
+        patterns:
+          - "@tauri-apps/*"
 
   - package-ecosystem: "github-actions"
     directory: "/"
