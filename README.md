@@ -42,6 +42,12 @@ Your project needs a recipe before Calavera changes anything.
 `--init` prints the same block without the `cd` line; `--init --json` returns it
 as a `nextSteps` array.
 
+If you composed a recipe first, pass it with `--config` before `--new`:
+`npm create project-calavera -- --config ~/Downloads/calavera.config.json --new`.
+Calavera validates the recipe before `vp create` runs, copies it into the
+scaffolded project as `calavera.config.json`, and prints the preview and apply
+commands for it. It does not apply the recipe.
+
 1. Open the project directory.
 2. Run `npm create project-calavera -- --init`.
 3. Choose exactly one project-local MCP host when prompted: Claude Code, Codex,
