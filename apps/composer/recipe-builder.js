@@ -6,7 +6,6 @@ import {
   listIntegrationOptions,
   normalizeAiTarget,
   profileCatalog,
-  projectLocalCommandNotes,
   projectLocalCommandSteps,
   validateRecipe,
 } from "../../packages/cli/src/recipe.js";
@@ -138,8 +137,5 @@ export function assertPublishedCliCompatibility(recipeInput, cliVersion) {
  * @param {string} [packageManager]
  */
 export function composerNextCommands(packageManager) {
-  return {
-    note: projectLocalCommandNotes.projectDirectory,
-    steps: projectLocalCommandSteps(packageManager || "npm"),
-  };
+  return projectLocalCommandSteps(packageManager || "npm");
 }
