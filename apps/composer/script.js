@@ -1,5 +1,4 @@
 import {
-  buildRecipe,
   composeRecipeResponse,
   describeIntegrationResponse,
   explainRecipeResponse,
@@ -8,19 +7,14 @@ import {
   listIntegrationOptions,
   listIntegrationsResponse,
   listProfilesResponse,
-  normalizeAiTarget,
   packageManagerIdsForRecipe,
-  projectLocalCommandNotes,
-  projectLocalCommandSteps,
   profileCatalog,
   profileDefaults,
   profileIdsForRecipe,
   recipeToolDescriptions,
   recipeToolInputDescriptions,
-  validateRecipe,
   validateRecipeResponse,
 } from "../../packages/cli/src/recipe.js";
-import { DEFAULT_AI_TARGET } from "../../packages/cli/src/ai/catalog.js";
 import {
   baselineMetadata,
   describeBaselineTarget,
@@ -30,9 +24,6 @@ import {
 } from "../../packages/baseline-core/src/index.js";
 import {
   artifactResponseForCli,
-  assertRecipeArtifactsSupported,
-  assertRecipeIntegrationsSupported,
-  assertRecipeProfileSupported,
   filterArtifactsForCli,
   filterIntegrationsForCli,
   filterProfilesForCli,
@@ -40,6 +31,12 @@ import {
   loadPublishedCliCompatibility,
   SAFE_CLI_FALLBACK_VERSION,
 } from "./cli-compatibility.js";
+import {
+  assertPublishedCliCompatibility,
+  commaSeparatedValues,
+  composerNextCommands,
+  composerRecipe,
+} from "./recipe-builder.js";
 import { releaseEnvironmentInputSchema } from "./repository-controls-input-schema.js";
 
 const form = document.querySelector("#composer");
@@ -90,21 +87,6 @@ function visibleAiArtifacts() {
 
 function visibleProfiles() {
   return filterProfilesForCli(profileCatalog, cliCompatibility.version);
-}
-
-function assertPublishedCliCompatibility(recipeInput) {
-  const validatedRecipe = validateRecipe(recipeInput);
-  assertRecipeProfileSupported(validatedRecipe, profileCatalog, cliCompatibility.version);
-  assertRecipeIntegrationsSupported(
-    validatedRecipe,
-    listIntegrationOptions(),
-    cliCompatibility.version,
-  );
-  return assertRecipeArtifactsSupported(
-    validatedRecipe,
-    allAiArtifactOptions,
-    cliCompatibility.version,
-  );
 }
 
 function renderCliCompatibility() {
@@ -245,79 +227,39 @@ function syncIntegrationOptions() {
   );
 }
 
-function commaSeparatedValues(value) {
-  return String(value ?? "")
-    .split(",")
-    .map((item) => item.trim())
-    .filter(Boolean);
-}
-
-function selectedAiItems() {
-  return [...form.querySelectorAll('[name="aiArtifact"]:checked')].map((checkbox, index) => {
-    const artifact = allAiArtifactOptions.find(({ id }) => id === checkbox.value);
-    const item = { id: artifact.id };
-
-    if (artifact.defaultTarget) {
-      const targetInput = form.querySelector(`[data-ai-target="${artifact.id}"]`);
-      item.target =
-        normalizeAiTarget(targetInput?.value ?? DEFAULT_AI_TARGET, index) || DEFAULT_AI_TARGET;
-    }
-
-    return item;
+function selectedAiArtifacts() {
+  return [...form.querySelectorAll('[name="aiArtifact"]:checked')].map((checkbox) => {
+    const targetInput = form.querySelector(`[data-ai-target="${checkbox.value}"]`);
+    return targetInput ? { id: checkbox.value, target: targetInput.value } : { id: checkbox.value };
   });
 }
 
 function recipe() {
   const data = new FormData(form);
-  const packageManager = data.get("packageManager");
 
-  const hasBaseline = data.getAll("integration").includes("stylelint-baseline");
-  const hasRepositoryControls = data.getAll("integration").includes("github-repository-controls");
-  const integrationOptions =
-    hasBaseline || hasRepositoryControls
-      ? {
-          ...(hasBaseline
-            ? {
-                "stylelint-baseline": {
-                  available: /^\d{4}$/.test(String(data.get("baselineAvailable")))
-                    ? Number(data.get("baselineAvailable"))
-                    : data.get("baselineAvailable"),
-                  severity: data.get("baselineSeverity"),
-                },
-              }
-            : {}),
-          ...(hasRepositoryControls
-            ? {
-                "github-repository-controls": {
-                  repository: data.get("repositoryControlsRepository"),
-                  requiredChecks: commaSeparatedValues(
-                    data.get("repositoryControlsRequiredChecks"),
-                  ),
-                },
-              }
-            : {}),
-        }
-      : undefined;
-
-  return buildRecipe(
-    String(data.get("profile") ?? ""),
-    data.getAll("integration").map(String),
-    packageManager ? String(packageManager) : undefined,
-    selectedAiItems(),
-    integrationOptions,
-  );
-}
-
-function selectedPackageManager() {
-  const packageManager = new FormData(form).get("packageManager");
-  return packageManager ? String(packageManager) : "npm";
+  return composerRecipe({
+    profile: String(data.get("profile") ?? ""),
+    packageManager: data.get("packageManager") ? String(data.get("packageManager")) : undefined,
+    integrations: data.getAll("integration").map(String),
+    aiArtifacts: selectedAiArtifacts(),
+    baseline: {
+      available: data.get("baselineAvailable"),
+      severity: data.get("baselineSeverity"),
+    },
+    repositoryControls: {
+      repository: data.get("repositoryControlsRepository"),
+      requiredChecks: commaSeparatedValues(data.get("repositoryControlsRequiredChecks")),
+    },
+  });
 }
 
 function renderNextCommands() {
+  const packageManager = new FormData(form).get("packageManager");
+  const { note, steps } = composerNextCommands(packageManager ? String(packageManager) : undefined);
   nextCommands.replaceChildren();
-  nextCommandsNote.textContent = projectLocalCommandNotes.projectDirectory;
+  nextCommandsNote.textContent = note;
 
-  for (const step of projectLocalCommandSteps(selectedPackageManager())) {
+  for (const step of steps) {
     const item = document.createElement("li");
     const label = document.createElement("strong");
     const description = document.createElement("span");
@@ -392,6 +334,7 @@ function downloadFile(recipeContents = recipe()) {
 function downloadRecipe({ recipe: recipeInput } = {}) {
   const recipeContents = assertPublishedCliCompatibility(
     recipeInput === undefined ? recipe() : recipeInput,
+    cliCompatibility.version,
   );
   downloadFile(recipeContents);
 
@@ -710,7 +653,7 @@ function registerWebMcpTools() {
       },
       execute: async (input) => {
         const response = composeRecipeResponse(input, { browser: true });
-        assertPublishedCliCompatibility(response.recipe);
+        assertPublishedCliCompatibility(response.recipe, cliCompatibility.version);
         return response;
       },
     });
@@ -738,7 +681,10 @@ function registerWebMcpTools() {
         if (!validation.ok) return validation;
 
         try {
-          return { ok: true, recipe: assertPublishedCliCompatibility(input.recipe) };
+          return {
+            ok: true,
+            recipe: assertPublishedCliCompatibility(input.recipe, cliCompatibility.version),
+          };
         } catch (error) {
           return {
             ok: false,
@@ -767,7 +713,9 @@ function registerWebMcpTools() {
         untrustedContentHint: false,
       },
       execute: async (input) =>
-        explainRecipeResponse(assertPublishedCliCompatibility(input.recipe)),
+        explainRecipeResponse(
+          assertPublishedCliCompatibility(input.recipe, cliCompatibility.version),
+        ),
     });
 
     navigator.modelContext.registerTool({
