@@ -208,6 +208,9 @@
           <section class="group" id="css-integrations" aria-labelledby="css-heading">
             <h3 class="group-heading" id="css-heading">CSS</h3>
             <ul class="rows rows-grid" id="css-rows"></ul>
+            <details class="css-overflow" id="css-overflow" hidden>
+              <summary><span id="css-overflow-count"></span></summary>
+            </details>
             <section
               class="options-panel"
               id="baseline-options"
@@ -300,6 +303,14 @@
         >.
       </p>
     </footer>
+
+    <div class="sticky-bar" id="sticky-bar">
+      <div class="sticky-bar-summary">
+        <strong id="sticky-bar-profile"></strong>
+        <span class="hint" id="sticky-bar-counts"></span>
+      </div>
+      <button class="button button-primary" id="save-sticky" type="button">Save recipe</button>
+    </div>
 
     <script type="module" src="./script.js"></script>
   </body>

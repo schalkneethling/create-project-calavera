@@ -44,6 +44,8 @@ import { releaseEnvironmentInputSchema } from "./repository-controls-input-schem
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
 const cssRows = document.querySelector("#css-rows");
+const cssOverflow = document.querySelector("#css-overflow");
+const cssOverflowCount = document.querySelector("#css-overflow-count");
 const aiArtifacts = document.querySelector("#ai-artifacts");
 const artifactTabs = document.querySelector("#artifact-tabs");
 const aiTargetAll = document.querySelector("#ai-target-all");
@@ -58,6 +60,8 @@ const baselineAvailable = document.querySelector("#baseline-available");
 const repositoryControlsOptions = document.querySelector("#repository-controls-options");
 const cliVersionBadge = document.querySelector("#cli-version");
 const cliCompatibilityNote = document.querySelector("#cli-compatibility");
+const stickyBarProfile = document.querySelector("#sticky-bar-profile");
+const stickyBarCounts = document.querySelector("#sticky-bar-counts");
 const profiles = profileIdsForRecipe();
 const packageManagers = packageManagerIdsForRecipe();
 const allAiArtifactOptions = listAiArtifactOptions();
@@ -287,6 +291,26 @@ function isCssIntegration(integration) {
   return integration.platform.startsWith("stylelint");
 }
 
+/** Phone layout (#572) folds CSS rows beyond this count behind a disclosure. */
+const CSS_OVERFLOW_VISIBLE_ROW_COUNT = 5;
+
+/**
+ * Marks CSS rows beyond the first five as foldable and updates the "N more CSS packs"
+ * disclosure. The marking is inert at tiers where the disclosure is hidden by CSS.
+ */
+function renderCssOverflow() {
+  const rows = [...cssRows.children];
+  const overflowRows = rows.slice(CSS_OVERFLOW_VISIBLE_ROW_COUNT);
+
+  for (const row of rows) row.removeAttribute("data-overflow");
+  for (const row of overflowRows) row.setAttribute("data-overflow", "");
+
+  cssOverflow.hidden = overflowRows.length === 0;
+  cssOverflowCount.textContent = `${overflowRows.length} more CSS pack${
+    overflowRows.length === 1 ? "" : "s"
+  }`;
+}
+
 function renderIntegrations() {
   syncProfileAvailability();
   integrations.replaceChildren();
@@ -314,6 +338,7 @@ function renderIntegrations() {
   }
 
   cssRows.closest("section").hidden = cssItemCount === 0;
+  renderCssOverflow();
 }
 
 function artifactTargets(artifactId) {
@@ -415,17 +440,43 @@ function renderAiArtifacts() {
         [`${group} (${items.length})`],
       ),
     );
+    const panel = element(
+      "div",
+      {
+        role: "tabpanel",
+        id: `artifact-panel-${slug}`,
+        "aria-labelledby": `artifact-tab-${slug}`,
+        "data-group": group,
+      },
+      [element("ul", { class: "rows rows-grid" }, items.map(artifactRow))],
+    );
+    const selectedCount = items.filter(({ id }) => selectedIds.has(id)).length;
+
+    // Phone layout (#572): each group also folds behind its own disclosure button. A
+    // plain button, not a native <details>, wraps the panel so the panel's own children
+    // (the checkboxes) stay reliably interactive once the browser makes a closed
+    // <details>'s content inert: at wider tiers the toggle is hidden by CSS and the
+    // tabs above control visibility exactly as before.
     aiArtifacts.append(
-      element(
-        "div",
-        {
-          role: "tabpanel",
-          id: `artifact-panel-${slug}`,
-          "aria-labelledby": `artifact-tab-${slug}`,
-          "data-group": group,
-        },
-        [element("ul", { class: "rows rows-grid" }, items.map(artifactRow))],
-      ),
+      element("div", { class: "artifact-group", "data-group": group }, [
+        element(
+          "button",
+          {
+            type: "button",
+            class: "group-disclosure-toggle",
+            id: `artifact-group-toggle-${slug}`,
+            "aria-expanded": "false",
+            "aria-controls": `artifact-panel-${slug}`,
+          },
+          [
+            element("span", {}, [group]),
+            element("span", { class: "group-disclosure-count", "data-group": group }, [
+              `${selectedCount} of ${items.length}`,
+            ]),
+          ],
+        ),
+        panel,
+      ]),
     );
   }
 
@@ -439,6 +490,25 @@ function renderAiArtifacts() {
 
   const [firstGroup] = groups.keys();
   selectArtifactGroup(groups.has(selectedArtifactGroup) ? selectedArtifactGroup : firstGroup);
+}
+
+/**
+ * Updates each artifact group disclosure's "N of M" count without re-rendering the
+ * groups themselves, so checking a box doesn't rebuild the tabs or lose focus.
+ */
+function updateArtifactGroupCounts() {
+  const selectedIds = new Set(
+    [...form.querySelectorAll('[name="aiArtifact"]:checked')].map(({ value }) => value),
+  );
+
+  for (const [group, items] of groupedByCatalogGroup(visibleAiArtifacts())) {
+    const countElement = aiArtifacts.querySelector(
+      `.group-disclosure-count[data-group="${CSS.escape(group)}"]`,
+    );
+    if (!countElement) continue;
+    const selectedCount = items.filter(({ id }) => selectedIds.has(id)).length;
+    countElement.textContent = `${selectedCount} of ${items.length}`;
+  }
 }
 
 function selectIntegrations(integrationIds) {
@@ -563,6 +633,19 @@ function renderRecipeSummary() {
   );
 }
 
+/** Phone layout (#572): the sticky bottom bar mirrors the recipe summary chips. */
+function renderStickyBar() {
+  const data = new FormData(form);
+  const profile = String(data.get("profile") ?? "");
+  const profileLabel = profile ? `${profile.charAt(0).toUpperCase()}${profile.slice(1)}` : "";
+
+  stickyBarProfile.textContent = `${profileLabel}, ${selectedPackageManager() ?? "npm"}`;
+  stickyBarCounts.textContent = `${counted(data.getAll("integration").length, "pack")}, ${counted(
+    data.getAll("aiArtifact").length,
+    "artifact",
+  )}`;
+}
+
 function render() {
   try {
     output.textContent = JSON.stringify(recipe(), null, 2);
@@ -571,6 +654,8 @@ function render() {
   }
   renderRecipeSummary();
   renderNextCommands();
+  updateArtifactGroupCounts();
+  renderStickyBar();
 }
 
 function setDefaults() {
@@ -1081,6 +1166,12 @@ artifactTabs.addEventListener("keydown", (event) => {
   tabs[nextIndex].focus();
 });
 
+aiArtifacts.addEventListener("click", (event) => {
+  const toggle = event.target.closest(".group-disclosure-toggle");
+  if (!toggle) return;
+  toggle.setAttribute("aria-expanded", String(toggle.getAttribute("aria-expanded") !== "true"));
+});
+
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-copy]");
   if (!button) return;
@@ -1105,13 +1196,20 @@ document.addEventListener("click", (event) => {
   );
 });
 
-document.querySelector("#save").addEventListener("click", () => {
+/**
+ * The desktop panel's Save button and the phone layout's sticky bar Save button both
+ * call this same function (#572).
+ */
+function handleSaveClick() {
   saveFile().catch((error) => {
     if (error.name !== "AbortError") {
       console.info(error);
     }
   });
-});
+}
+
+document.querySelector("#save").addEventListener("click", handleSaveClick);
+document.querySelector("#save-sticky").addEventListener("click", handleSaveClick);
 document.querySelector("#download").addEventListener("click", () => {
   downloadFile();
 });

@@ -37,6 +37,7 @@
   --space-7xl: 4rem;
   --space-8xl: 5rem;
   --target-size: 3rem;
+  --sticky-bar-clearance: 7rem;
 }
 
 * {
@@ -434,6 +435,49 @@ fieldset {
   display: flex;
   flex-direction: column;
   gap: var(--space-xs);
+}
+
+/* Progressive disclosure (phone layout, #572) */
+
+.css-overflow {
+  background: var(--cream);
+  border: 0.0625rem solid rgb(38 50 77 / 22%);
+  border-radius: var(--border-radius-default);
+}
+
+.css-overflow summary {
+  align-items: center;
+  block-size: var(--target-size);
+  color: var(--teal-deep);
+  cursor: pointer;
+  display: flex;
+  font-weight: 700;
+  list-style: none;
+  padding-inline: var(--space-xl);
+}
+
+.css-overflow summary::-webkit-details-marker {
+  display: none;
+}
+
+.group-disclosure-toggle {
+  align-items: center;
+  background: var(--cream);
+  block-size: var(--target-size);
+  border: 0.0625rem solid rgb(38 50 77 / 22%);
+  border-radius: var(--border-radius-default);
+  color: var(--teal-deep);
+  cursor: pointer;
+  display: flex;
+  font-weight: 700;
+  inline-size: 100%;
+  justify-content: space-between;
+  padding-inline: var(--space-xl);
+}
+
+.group-disclosure-count {
+  color: var(--muted);
+  font-weight: 400;
 }
 
 /* Selectable rows */
@@ -852,6 +896,72 @@ fieldset {
   .recipe-body {
     gap: var(--space-4xl);
   }
+
+  /*
+   * A margin, not padding, so the footer's own box ends before the reserved gap: the
+   * fixed sticky bar overlays that gap instead of the footer's content.
+   */
+  .site-footer {
+    margin-block-end: var(--sticky-bar-clearance);
+  }
+
+  /* CSS group: fold rows beyond the first five behind the "N more CSS packs" disclosure. */
+  #css-rows .row[data-overflow] {
+    display: none;
+  }
+
+  #css-integrations:has(.css-overflow[open]) #css-rows .row[data-overflow] {
+    display: block;
+  }
+
+  /* AI artifacts: tabs give way to one disclosure per group. */
+  .artifact-toolbar .tabs {
+    display: none;
+  }
+
+  #ai-artifacts {
+    display: flex;
+    flex-direction: column;
+    gap: var(--space-xs);
+  }
+
+  /*
+   * Every panel starts folded regardless of script.js's tab-exclusivity [hidden], and
+   * only the panel whose own toggle is expanded is shown; !important is needed to beat
+   * the global [hidden] rule for the two groups the tabs would otherwise keep hidden.
+   */
+  .artifact-group [role="tabpanel"] {
+    display: none;
+  }
+
+  .artifact-group:has(.group-disclosure-toggle[aria-expanded="true"]) [role="tabpanel"] {
+    display: block !important;
+  }
+
+  .sticky-bar {
+    align-items: center;
+    background: rgb(255 250 240 / 96%);
+    border-block-start: 0.125rem solid var(--outline);
+    display: flex;
+    gap: var(--space-md);
+    inset-block-end: 0;
+    inset-inline: 0;
+    padding-block: var(--space-md) var(--space-xl);
+    padding-inline: var(--space-xl);
+    position: fixed;
+  }
+
+  .sticky-bar .button {
+    flex-shrink: 0;
+  }
+
+  .sticky-bar-summary {
+    display: flex;
+    flex-direction: column;
+    flex-grow: 1;
+    gap: var(--space-xxs);
+    min-inline-size: 0;
+  }
 }
 
 /* Medium and large viewports */
@@ -875,6 +985,19 @@ fieldset {
 
   .recipe {
     padding: var(--space-4xl);
+  }
+
+  .css-overflow {
+    display: none;
+  }
+
+  /* Tabs, not the toggle button, control which group is visible at this tier. */
+  .group-disclosure-toggle {
+    display: none;
+  }
+
+  .sticky-bar {
+    display: none;
   }
 }
 
