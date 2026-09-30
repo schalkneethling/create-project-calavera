@@ -24,6 +24,24 @@ and 2. Vite+ asks its own questions and writes the scaffold; see
 [`--new`](docs/agent-first-calavera-workflow.md#start-a-new-vite-project-with---new)
 for details.
 
+After `--new` or `--init`, Calavera prints the next steps. The project needs a
+recipe before Calavera changes anything, so the block offers the agent prompt or
+the hosted Composer, with the save location and the commands for the project's
+package manager. After `--new`, from the parent folder, it reads:
+
+```text
+Your project needs a recipe before Calavera changes anything.
+  Either: open /home/me/code/my-app in your agent and use the prompt above.
+  Or: compose one at https://calavera.schalkneethling.com/ and save
+      calavera.config.json into /home/me/code/my-app, then:
+        cd /home/me/code/my-app
+        npm create project-calavera apply -- --dry-run
+        npm create project-calavera apply
+```
+
+`--init` prints the same block without the `cd` line; `--init --json` returns it
+as a `nextSteps` array.
+
 1. Open the project directory.
 2. Run `npm create project-calavera -- --init`.
 3. Choose exactly one project-local MCP host when prompted: Claude Code, Codex,
