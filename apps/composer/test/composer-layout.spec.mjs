@@ -64,6 +64,20 @@ test("clicking a row checkbox toggles the selection without toggling its details
   await expect(details).toHaveAttribute("open");
 });
 
+test("integration rows expand to the catalog summary and homepage", async ({ page }) => {
+  await openComposer(page);
+  const row = page.locator(".row", { has: page.locator('[name="integration"][value="varlock"]') });
+
+  await row.locator("summary").click();
+  await expect(row.locator("details")).toHaveAttribute("open");
+  await expect(row.getByRole("checkbox", { name: "Varlock" })).not.toBeChecked();
+  await expect(row.getByText(/declarative schema/)).toBeVisible();
+  await expect(row.getByRole("link", { name: "varlock.dev" })).toHaveAttribute(
+    "href",
+    "https://varlock.dev",
+  );
+});
+
 test("switching artifact tabs keeps selections", async ({ page }) => {
   await openComposer(page);
   await page.getByRole("checkbox", { name: "Calavera" }).check();
