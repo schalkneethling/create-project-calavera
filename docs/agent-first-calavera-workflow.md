@@ -233,6 +233,28 @@ scaffold, stops with the exit code, the directory, and the detection finding.
 After a stop, Calavera writes nothing more and removes nothing; the directory may
 hold a partial scaffold that belongs to Vite+.
 
+After the bootstrap, Calavera prints the next steps. A new project has no recipe
+yet, and Calavera changes nothing until it has one, so the block names both ways
+to get one: the agent prompt printed above it, or the hosted Composer. For a
+project scaffolded into `/home/me/code/my-lib` whose `package.json` names pnpm,
+the block reads:
+
+```text
+Your project needs a recipe before Calavera changes anything.
+  Either: open /home/me/code/my-lib in your agent and use the prompt above.
+  Or: compose one at https://calavera.schalkneethling.com/ and save
+      calavera.config.json into /home/me/code/my-lib, then:
+        cd /home/me/code/my-lib
+        pnpm dlx create-project-calavera apply --dry-run
+        pnpm dlx create-project-calavera apply
+```
+
+The commands match the scaffolded project's package manager. `--init` prints
+the same block without the `cd` line, and `--init --json` returns the same lines
+as a `nextSteps` array. When the project already has `calavera.config.json`, the
+block names that file and the preview and apply commands instead. The dry run and
+every stop print no block.
+
 `--new` refuses to run where a `package.json` already exists, because a project
 already exists there; use `--init` instead. It also refuses `--init` and `--json`
 alongside it.

@@ -186,9 +186,11 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {object} AgentInitResult
  * @property {"agent-init"} command
  * @property {boolean} dryRun
+ * @property {PackageManager} packageManager
  * @property {Change[]} changes
  * @property {string[]} pointers
  * @property {string} nextPrompt
+ * @property {string[]} nextSteps
  * @property {{ harness: McpHarness, action: "manual" | "write" | "update" | "skip", path?: string, reason?: string }} mcp
  *
  * @typedef {object} NewResult
@@ -204,6 +206,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  */
 
 const CONFIG_FILE = "calavera.config.json";
+const COMPOSER_URL = "https://calavera.schalkneethling.com/";
 const STATE_FILE = ".calavera/state.json";
 const AGENT_BOOTSTRAP_GUIDANCE_FILE = "AGENTS.md";
 const AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE = "AGENTS.calavera.md";
@@ -2421,8 +2424,48 @@ export async function agentBootstrap(options = {}) {
       ...(mcp.action === "manual" ? [`MCP setup notes: ${AGENT_BOOTSTRAP_MCP_FILE}`] : []),
     ],
     nextPrompt: AGENT_BOOTSTRAP_NEXT_PROMPT,
+    nextSteps: recipeNextSteps(process.cwd(), packageManager, { changeDirectory: false }),
+    packageManager,
     mcp,
   };
+}
+
+/**
+ * The action block printed after the bootstrap: a project needs a recipe
+ * before Calavera changes anything, so it names both ways to get one and the
+ * commands that preview and apply it. When the project already has a recipe,
+ * it names that file instead. `changeDirectory` adds a `cd` line for `--new`,
+ * which leaves the user in the parent directory.
+ *
+ * @param {string} target Absolute project directory.
+ * @param {PackageManager} packageManager
+ * @param {{ changeDirectory: boolean }} options
+ * @returns {string[]}
+ */
+function recipeNextSteps(target, packageManager, { changeDirectory }) {
+  const commands = projectLocalCommandCatalog[packageManager];
+  const run = [
+    ...(changeDirectory ? [`cd ${quoteShellToken(target)}`] : []),
+    commands.applyDryRun,
+    commands.applyRecipe,
+  ];
+  const recipePath = join(target, CONFIG_FILE);
+
+  if (existsSync(recipePath)) {
+    return [
+      `Your project has a recipe at ${recipePath}. Calavera has not applied it.`,
+      "  Preview it, then apply it after you approve the preview:",
+      ...run.map((line) => `    ${line}`),
+    ];
+  }
+
+  return [
+    "Your project needs a recipe before Calavera changes anything.",
+    `  Either: open ${target} in your agent and use the prompt above.`,
+    `  Or: compose one at ${COMPOSER_URL} and save`,
+    `      ${CONFIG_FILE} into ${target}, then:`,
+    ...run.map((line) => `        ${line}`),
+  ];
 }
 
 const VITE_PLUS_NODE_FLOOR = "^22.18.0 || ^24.11.0 || >=26.0.0";
@@ -2745,8 +2788,16 @@ export async function newProject(options, runtime = {}) {
       command: "agent-init",
       packageManager: undefined,
     });
+    const nextSteps = recipeNextSteps(target, bootstrap.packageManager, { changeDirectory: true });
 
-    return { command: "new", dryRun: false, confirmed: true, confirmation, target, bootstrap };
+    return {
+      command: "new",
+      dryRun: false,
+      confirmed: true,
+      confirmation,
+      target,
+      bootstrap: { ...bootstrap, nextSteps },
+    };
   } catch (error) {
     const packageManager =
       (await readPackageJSONIfPresent().then(detectPackageManager, () => undefined)) ?? "npm";
@@ -3498,6 +3549,10 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     );
     logger.info("Review the files above to confirm what Calavera changed or skipped.");
     logger.info(`Next prompt: ${result.nextPrompt}`);
+
+    for (const line of result.nextSteps) {
+      logger.info(line);
+    }
     return;
   }
 

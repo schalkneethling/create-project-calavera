@@ -51,9 +51,13 @@ function writeProject(directory, manifest, withConfig) {
   if (withConfig) writeFileSync(join(directory, "vite.config.ts"), vitePlusConfig);
 }
 
+const scaffoldManifest = process.env.STUB_PACKAGE_MANAGER
+  ? { ...libraryManifest, packageManager: process.env.STUB_PACKAGE_MANAGER }
+  : libraryManifest;
+
 switch (process.env.STUB_MODE) {
   case "scaffold":
-    writeProject(target, json(libraryManifest), true);
+    writeProject(target, json(scaffoldManifest), true);
     break;
   case "unmanaged":
     writeProject(target, json(plainViteManifest), false);
@@ -161,6 +165,27 @@ async function exists(path) {
   } catch {
     return false;
   }
+}
+
+const RECIPE_BLOCK_HEADING = "Your project needs a recipe before Calavera changes anything.";
+
+/**
+ * The next-steps block --new prints after a successful scaffold and bootstrap.
+ *
+ * @param {string} target
+ * @param {{ cd: string, applyDryRun: string, applyRecipe: string }} commands
+ * @returns {string}
+ */
+function recipeBlock(target, { cd, applyDryRun, applyRecipe }) {
+  return [
+    RECIPE_BLOCK_HEADING,
+    `  Either: open ${target} in your agent and use the prompt above.`,
+    "  Or: compose one at https://calavera.schalkneethling.com/ and save",
+    `      calavera.config.json into ${target}, then:`,
+    `        ${cd}`,
+    `        ${applyDryRun}`,
+    `        ${applyRecipe}`,
+  ].join("\n");
 }
 
 test("the Vite+ Node.js floor accepts each range and rejects the versions below them", () => {
@@ -317,6 +342,7 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
   assert.match(result.stdout, /\^22\.18\.0 \|\| \^24\.11\.0 \|\| >=26\.0\.0/);
   assert.match(result.stdout, new RegExp(`${join(workspace.root, "package.json")} is managed`));
   assert.match(result.stdout, /--init/);
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.deepEqual(await readInvocations(workspace.log), []);
   assert.deepEqual(await readdir(workspace.work), []);
 });
@@ -349,6 +375,40 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
   assert.equal(await exists(join(workspace.work, ".calavera")), false);
   assert.match(result.stdout, /Calavera agent bootstrap complete/);
   assert.match(result.stdout, /Next prompt: /);
+  assert.ok(
+    result.stdout.includes(
+      recipeBlock(target, {
+        cd: `cd ${target}`,
+        applyDryRun: "npm create project-calavera apply -- --dry-run",
+        applyRecipe: "npm create project-calavera apply",
+      }),
+    ),
+    result.stdout,
+  );
+  assert.ok(result.stdout.indexOf("Next prompt: ") < result.stdout.indexOf(RECIPE_BLOCK_HEADING));
+});
+
+test("--new names the scaffolded project's package manager and quotes the target in the next steps", async () => {
+  await using workspace = await createTemporaryWorkspace("next-steps-pnpm");
+
+  const result = await runCli(
+    workspace,
+    ["--yes", "--package-manager", "npm", "--new", "vite:library", "--directory", "my lib"],
+    { STUB_MODE: "scaffold", STUB_PACKAGE_MANAGER: "pnpm@10.0.0" },
+  );
+  const target = join(workspace.work, "my lib");
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    result.stdout.includes(
+      recipeBlock(target, {
+        cd: `cd '${target}'`,
+        applyDryRun: "pnpm dlx create-project-calavera apply --dry-run",
+        applyRecipe: "pnpm dlx create-project-calavera apply",
+      }),
+    ),
+    result.stdout,
+  );
 });
 
 test("--new forwards every token after it unchanged, including -- and what follows", async () => {
@@ -396,6 +456,7 @@ test("--new hard-stops on a non-zero exit, names the cause, and writes nothing f
 
   assert.equal(result.code, 1);
   assert.match(result.stderr, /exited with code 1/);
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.match(result.stderr, /partial scaffold that belongs to Vite\+/);
   // This Node.js meets the Vite+ floor, so the hard stop does not mention it.
   assert.doesNotMatch(result.stderr, /below that floor/);
@@ -415,6 +476,7 @@ test("--new hard-stops when the scaffold is unmanaged and names the finding", as
   assert.match(result.stderr, /exited with code 0/);
   assert.match(result.stderr, new RegExp(join(workspace.work, "plain")));
   assert.match(result.stderr, /status unmanaged/);
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.match(result.stderr, /vite-plus-unmanaged/);
   assert.match(result.stderr, /partial scaffold that belongs to Vite\+/);
   assert.deepEqual((await readdir(join(workspace.work, "plain"))).sort(), ["package.json"]);
@@ -430,6 +492,7 @@ test("--new hard-stops when detection on the scaffold is unknown and names the f
 
   assert.equal(result.code, 1);
   assert.match(result.stderr, /status unknown/);
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.match(result.stderr, /vite-plus-detection-unknown/);
   assert.equal(await exists(join(workspace.work, "broken/.calavera")), false);
 });
@@ -442,6 +505,7 @@ test("--new hard-stops when a canceled scaffold exits zero having written nothin
   assert.equal(result.code, 1);
   assert.match(result.stderr, /exited with code 0/);
   assert.match(result.stderr, /no new or changed package\.json/);
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.deepEqual(await readdir(workspace.work), []);
 });
 
@@ -457,6 +521,7 @@ test("--new hard-stops and lists the candidates when several directories gained 
   assert.equal(result.code, 1);
   assert.match(result.stderr, new RegExp(join(workspace.work, "first")));
   assert.match(result.stderr, new RegExp(join(workspace.work, "second")));
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.equal(await exists(join(workspace.work, "first/.calavera")), false);
   assert.equal(await exists(join(workspace.work, "second/.calavera")), false);
 });
