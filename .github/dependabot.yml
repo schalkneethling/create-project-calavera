@@ -35,3 +35,11 @@ updates:
       default-days: 7
       include:
         - "*"
+    # codeql.yml uses github/codeql-action/init and github/codeql-action/analyze,
+    # which must run the same version: analyze refuses a configuration written by
+    # a different init version. Separate pull requests each bump one of them and
+    # both fail CodeQL (#583, #584). One pull request moves them together.
+    groups:
+      codeql-action:
+        patterns:
+          - "github/codeql-action*"
