@@ -1,0 +1,78 @@
+{
+  "default-profile": {
+    "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
+    "version": 1,
+    "profile": "default",
+    "packageManager": "npm",
+    "integrations": ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline"],
+    "scripts": {
+      "lint": true,
+      "lint:fix": true,
+      "quality": true
+    },
+    "integrationOptions": {
+      "stylelint-baseline": {
+        "available": "widely",
+        "severity": "warning"
+      }
+    }
+  },
+  "minimal-with-options-and-artifacts": {
+    "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
+    "version": 1,
+    "profile": "minimal",
+    "packageManager": "pnpm",
+    "integrations": ["editorconfig", "stylelint-baseline", "github-repository-controls"],
+    "scripts": {
+      "lint": true,
+      "lint:fix": true,
+      "quality": true
+    },
+    "ai": [
+      {
+        "id": "skill-calavera"
+      },
+      {
+        "id": "hook-block-dangerous-commands",
+        "target": "codex"
+      },
+      {
+        "id": "agent-technical-devils-advocate",
+        "target": "claude-code"
+      }
+    ],
+    "integrationOptions": {
+      "stylelint-baseline": {
+        "available": 2024,
+        "severity": "error"
+      },
+      "github-repository-controls": {
+        "repository": "octocat/example",
+        "defaultBranch": "main",
+        "requiredChecks": ["quality", "build"],
+        "mergeMethods": ["squash"],
+        "wiki": false,
+        "projects": false,
+        "autoMerge": true,
+        "deleteBranchOnMerge": true,
+        "updateBranch": true,
+        "dependabotEcosystems": ["npm", "github-actions"],
+        "codeqlLanguages": ["actions", "javascript-typescript"],
+        "codeqlQuerySuite": "extended",
+        "releaseEnvironment": null
+      }
+    }
+  },
+  "minimal-bare": {
+    "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
+    "version": 1,
+    "profile": "minimal",
+    "packageManager": "npm",
+    "integrations": [],
+    "scripts": {
+      "lint": true,
+      "lint:fix": true,
+      "quality": true
+    }
+  }
+}
