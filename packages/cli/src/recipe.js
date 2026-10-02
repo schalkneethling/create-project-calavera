@@ -323,7 +323,7 @@ export function listIntegrationOptions(profile) {
     .map((integration) => ({
       ...integration,
       profiles: integrationProfiles(integration.id),
-      description: `${integration.label}. Category: ${integration.group}. Status: ${integration.status}.${repositoryRootNote(integration)}`,
+      description: `${integration.summary} ${integration.label}. Category: ${integration.group}. Status: ${integration.status}.${repositoryRootNote(integration)}`,
     }))
     .filter((integration) => !profile || integration.profiles.includes(profile));
 }
@@ -563,6 +563,8 @@ export function explainRecipeIntegrations(recipe) {
   return resolveRecipeIntegrations(recipe).map((integration) => ({
     id: integration.id,
     label: integration.label,
+    summary: integration.summary,
+    homepage: integration.homepage,
     group: integration.group,
     status: integration.status,
     reason: `${reasons.get(integration.id) ?? "Selected by the composed recipe."}${repositoryRootNote(integration)}`,
