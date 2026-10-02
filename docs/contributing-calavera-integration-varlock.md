@@ -24,6 +24,8 @@ For Varlock, the catalog entry introduced a small optional integration:
 {
   id: "varlock",
   label: "Varlock",
+  summary: "Varlock manages environment variables through a declarative schema so AI agents and tools see requirements without accessing secret values.",
+  homepage: "https://varlock.dev",
   group: "Environment variables",
   platform: "varlock",
   status: "optional",
@@ -36,6 +38,12 @@ That one entry establishes the contract Calavera needs:
 - `id`: the stable recipe value project developers add to
   `calavera.config.json`.
 - `label`: the human-readable name shown in prompts and the composer.
+- `summary`: one plain sentence, under 140 characters and ending with a
+  period, describing what the tool does. Write it from the tool's own site or
+  repository, not from memory.
+- `homepage`: an `https:` URL to the tool's own site or repository. For an
+  integration with no upstream tool, such as `github-repository-controls`,
+  link the Calavera documentation or source that describes it.
 - `group`: where the integration belongs in the catalog.
 - `platform`: the tool family custom generation code can key off.
 - `status`: whether the integration is recommended, optional, experimental, or
