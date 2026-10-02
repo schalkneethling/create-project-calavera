@@ -255,6 +255,34 @@ as a `nextSteps` array. When the project already has `calavera.config.json`, the
 block names that file and the preview and apply commands instead. The dry run and
 every stop print no block.
 
+When you composed a recipe before the project existed, hand it to `--new` with
+`--config` before `--new`, like `--yes` and `--dry-run`:
+
+```bash
+npm create project-calavera -- --config ~/Downloads/calavera.config.json --new vite:library
+```
+
+Calavera reads and validates the recipe before it starts `vp create`. A missing
+file or an invalid recipe is refused, and nothing runs or is written. After
+`vp create` exits with code 0 and Vite+ detection reports `managed`, Calavera
+copies the file byte for byte to `calavera.config.json` in the scaffolded
+directory, runs the bootstrap, and prints `Copied <source> to <target>/calavera.config.json.`
+The next-steps block then names the copied file:
+
+```text
+Your project has a recipe at /home/me/code/my-lib/calavera.config.json. Calavera has not applied it.
+  Preview it, then apply it after you approve the preview:
+    cd /home/me/code/my-lib
+    pnpm dlx create-project-calavera apply --dry-run
+    pnpm dlx create-project-calavera apply
+```
+
+Calavera copies the recipe; it never applies it. A canceled, failed, or
+unmanaged scaffold copies nothing. Calavera does not replace a
+`calavera.config.json` that is already in the scaffolded directory; it stops
+instead. `--dry-run` validates the recipe and names the planned copy in the
+confirmation text.
+
 `--new` refuses to run where a `package.json` already exists, because a project
 already exists there; use `--init` instead. It also refuses `--init` and `--json`
 alongside it.

@@ -110,6 +110,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {boolean} [checkUpdates]
  * @property {boolean} [init]
  * @property {string[]} [newArgs] Tokens after `--new`, forwarded verbatim to `vp create`.
+ * @property {string} [newConfig] Recipe path given with `--config` before `--new`, copied into the scaffold.
  *
  * @typedef {object} PackageManagerCommands
  * @property {[string, string[]]} init
@@ -200,6 +201,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string[]} confirmation
  * @property {string} [target]
  * @property {AgentInitResult} [bootstrap]
+ * @property {{ source: string, path: string }} [recipe] The recipe `--config` copied into the scaffold.
  *
  * @typedef {{ command: `artifacts ${string}`, [key: string]: unknown }} ArtifactCommandResult
  * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | ArtifactCommandResult} CommandResult
@@ -273,7 +275,7 @@ const recipePackageManagers = packageManagerIdsForRecipe();
 const args = process.argv.slice(2);
 /** @type {import("node:util").ParseArgsOptionsConfig} */
 const cliParseOptions = {
-  config: { type: "string", default: CONFIG_FILE },
+  config: { type: "string" },
   apply: { type: "boolean" },
   "dry-run": { type: "boolean" },
   help: { type: "boolean", short: "h" },
@@ -438,6 +440,12 @@ export function parseArgs(rawArgs) {
 
   if (newIndex !== -1) {
     parsed.newArgs = rawArgs.slice(newIndex + 1);
+
+    const newConfig = optionalStringValue(values.config);
+
+    if (newConfig !== undefined) {
+      parsed.newConfig = newConfig;
+    }
   }
 
   if (profile !== undefined) {
@@ -2604,12 +2612,51 @@ function describeRunnerExit(exit) {
 }
 
 /**
+ * Reads and validates the recipe given with `--config` before `--new`, so a
+ * bad recipe is refused before `vp create` runs. The bytes read are the bytes
+ * later copied, so the copy matches what was validated.
+ *
+ * @param {string} source Absolute recipe path.
+ * @returns {Promise<{ source: string, bytes: Buffer }>}
+ */
+async function readNewProjectRecipe(source) {
+  let bytes;
+
+  try {
+    bytes = await readFile(source);
+  } catch (error) {
+    throw new Error(
+      `--new refused: the recipe given with --config, ${source}, could not be read: ${
+        error instanceof Error ? error.message : String(error)
+      }. Nothing was run and no files were changed.`,
+      { cause: error },
+    );
+  }
+
+  try {
+    validateRecipe(JSON.parse(bytes.toString("utf8")));
+  } catch (error) {
+    throw new Error(
+      `--new refused: ${source}, given with --config, is not a valid recipe: ${(error instanceof
+      Error
+        ? error.message
+        : String(error)
+      ).replace(/\.$/, "")}. Nothing was run and no files were changed.`,
+      { cause: error },
+    );
+  }
+
+  return { source, bytes };
+}
+
+/**
  * @param {string} runner
  * @param {string} cwd
  * @param {VitePlusDetection} cwdDetection
+ * @param {string} [recipeSource] Absolute path of the recipe `--config` copies.
  * @returns {string[]}
  */
-function newProjectConfirmation(runner, cwd, cwdDetection) {
+function newProjectConfirmation(runner, cwd, cwdDetection, recipeSource) {
   return [
     "Calavera will run Vite+ to scaffold a new project:",
     `  Command: ${runner}`,
@@ -2627,6 +2674,11 @@ function newProjectConfirmation(runner, cwd, cwdDetection) {
           `- The new project will sit inside another project: ${cwdDetection.ancestor.manifestPath} is ${cwdDetection.ancestor.status}.`,
         ]
       : []),
+    ...(recipeSource === undefined
+      ? []
+      : [
+          `- After Vite+ detection reports the scaffold as managed, Calavera copies ${recipeSource} into it as ${CONFIG_FILE}. Calavera does not apply the recipe.`,
+        ]),
     "- After a successful scaffold, Calavera runs the --init agent bootstrap in the new directory.",
   ];
 }
@@ -2683,7 +2735,16 @@ export async function newProject(options, runtime = {}) {
 
   const runnerCommand = createVpCreateCommand(options.packageManager ?? "npm", forwardedArgs);
   const runner = formatShellCommand(runnerCommand);
-  const confirmation = newProjectConfirmation(runner, cwd, await detectVitePlus(cwd));
+  const recipe =
+    options.newConfig === undefined
+      ? undefined
+      : await readNewProjectRecipe(resolve(cwd, options.newConfig));
+  const confirmation = newProjectConfirmation(
+    runner,
+    cwd,
+    await detectVitePlus(cwd),
+    recipe?.source,
+  );
 
   if (options.dryRun) {
     return { command: "new", dryRun: true, confirmed: false, confirmation };
@@ -2778,6 +2839,26 @@ export async function newProject(options, runtime = {}) {
     );
   }
 
+  const recipePath = join(target, CONFIG_FILE);
+
+  if (recipe) {
+    try {
+      // `wx` refuses to replace a recipe that is already in the target.
+      await writeFile(recipePath, recipe.bytes, { flag: "wx" });
+    } catch (error) {
+      throw new Error(
+        `Vite+ scaffolded ${target}, but Calavera could not copy ${recipe.source} to ${recipePath}: ${
+          error instanceof Error && "code" in error && error.code === "EEXIST"
+            ? `${recipePath} already exists`
+            : error instanceof Error
+              ? error.message
+              : String(error)
+        }. ${NEW_HARD_STOP_SUFFIX}`,
+        { cause: error },
+      );
+    }
+  }
+
   process.chdir(target);
 
   try {
@@ -2797,6 +2878,7 @@ export async function newProject(options, runtime = {}) {
       confirmation,
       target,
       bootstrap: { ...bootstrap, nextSteps },
+      ...(recipe ? { recipe: { source: recipe.source, path: recipePath } } : {}),
     };
   } catch (error) {
     const packageManager =
@@ -2805,7 +2887,9 @@ export async function newProject(options, runtime = {}) {
     throw new Error(
       `Vite+ scaffolded ${target}, but the Calavera agent bootstrap failed: ${
         error instanceof Error ? error.message : String(error)
-      }. The scaffold is left in place. Run the bootstrap in that directory: cd ${quoteShellToken(target)} && ${projectLocalCommandCatalog[packageManager].agentBootstrap}`,
+      }. The scaffold is left in place${
+        recipe ? `, and the recipe was copied to ${recipePath} and not applied` : ""
+      }. Run the bootstrap in that directory: cd ${quoteShellToken(target)} && ${projectLocalCommandCatalog[packageManager].agentBootstrap}`,
       { cause: error },
     );
   } finally {
@@ -3396,6 +3480,7 @@ Options:
   --dry-run            Preview writes without changing files
   --apply              Preview and optionally apply after composing a recipe
   --config <path>      Recipe path, defaults to calavera.config.json
+                       Before --new: copy this recipe into the new project
   --package-manager    npm, pnpm, yarn, or bun
   --profile            default or minimal
   --tool <id>          Add an integration by id or label; repeatable
@@ -3505,6 +3590,11 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     }
 
     logger.success(`Vite+ scaffolded ${result.target}. Vite+ detection: managed.`);
+
+    if (result.recipe) {
+      logger.success(`Copied ${result.recipe.source} to ${result.recipe.path}.`);
+    }
+
     printResult(result.bootstrap);
     return;
   }

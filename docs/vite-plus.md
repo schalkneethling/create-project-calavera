@@ -93,6 +93,12 @@ preview what Vite+ writes, and that `--init` runs automatically afterward
 (ADR-0010, Decision 4). Vite+ owns every question it asks and every file it
 writes; Calavera only orchestrates the hand-off (ADR-0010, Decides).
 
+If you composed a recipe first, pass it with `--config` before `--new`:
+`npm create project-calavera -- --config ~/Downloads/calavera.config.json --new`.
+Calavera validates the recipe before `vp create` runs, copies it into the
+scaffolded project as `calavera.config.json`, and prints the preview and apply
+commands for it. It does not apply the recipe.
+
 ## Add Calavera to an existing Vite+ project
 
 Scaffold with `vp create`, then bootstrap Calavera from the new project root
