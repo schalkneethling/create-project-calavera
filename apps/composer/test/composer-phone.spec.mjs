@@ -89,7 +89,13 @@ test("each AI artifact group folds behind its own disclosure and tracks its sele
   const skillsToggle = skills.locator(".group-disclosure-toggle");
   const hooksToggle = hooks.locator(".group-disclosure-toggle");
   const skillsPanel = skills.locator('[role="tabpanel"]');
+  const stickyCounts = page.locator("#sticky-bar-counts");
 
+  const profile = await page.locator('[name="profile"]:checked').inputValue();
+  await expect(page.locator("#sticky-bar-profile")).toHaveText(
+    `${profile.charAt(0).toUpperCase()}${profile.slice(1)}, npm`,
+  );
+  await expect(stickyCounts).toHaveText(/, 0 artifacts$/);
   await expect(skillsToggle).toHaveAttribute("aria-expanded", "false");
   await expect(hooksToggle).toHaveAttribute("aria-expanded", "false");
   await expect(skillsPanel).toBeHidden();
@@ -102,6 +108,7 @@ test("each AI artifact group folds behind its own disclosure and tracks its sele
 
   await skillsPanel.getByRole("checkbox", { name: "Calavera" }).check();
   await expect(skills.locator(".group-disclosure-count")).toHaveText(/^1 of \d+$/);
+  await expect(stickyCounts).toHaveText(/, 1 artifact$/);
 
   await skillsToggle.click();
   await expect(skillsToggle).toHaveAttribute("aria-expanded", "false");
