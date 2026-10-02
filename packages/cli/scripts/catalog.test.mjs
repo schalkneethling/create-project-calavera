@@ -6,7 +6,12 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { integrationCatalog } from "../src/catalog.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
-import { listIntegrationOptions } from "../src/recipe.js";
+import {
+  buildRecipe,
+  explainRecipeIntegrations,
+  listIntegrationOptions,
+  profileDefaults,
+} from "../src/recipe.js";
 
 const SUMMARY_MAX_LENGTH = 140;
 
@@ -57,6 +62,17 @@ test("describe_integration for varlock returns summary and homepage", async () =
   assert.equal(new URL(/** @type {string} */ (response.homepage)).protocol, "https:");
 });
 
+test("explain_recipe returns summary and homepage for each integration", () => {
+  const explanation = explainRecipeIntegrations(buildRecipe("default", profileDefaults.default));
+
+  assert.ok(explanation.length > 0);
+  for (const integration of explanation) {
+    const entry = integrationCatalog.find(({ id }) => id === integration.id);
+    assert.equal(integration.summary, entry?.summary);
+    assert.equal(integration.homepage, entry?.homepage);
+  }
+});
+
 test("standard MCP list_integrations and describe_integration satisfy their declared output schemas", async () => {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
   const server = createMcpServer();
@@ -66,6 +82,10 @@ test("standard MCP list_integrations and describe_integration satisfy their decl
   await client.connect(clientTransport);
 
   try {
+    // The client caches each tool's advertised output schema on listTools and validates
+    // structuredContent against it; without this call the advertised schema goes untested.
+    await client.listTools();
+
     const listResult = await client.callTool({ name: "list_integrations", arguments: {} });
     const integrations = listResult.structuredContent?.integrations;
 
@@ -87,6 +107,12 @@ test("standard MCP list_integrations and describe_integration satisfy their decl
     assert.equal(described?.id, "varlock");
     assert.ok(described?.summary.length > 0);
     assert.equal(new URL(described?.homepage).protocol, "https:");
+
+    // Entries with platform config blocks (stylelint, htmlValidate) must pass the advertised schema.
+    for (const { id } of integrationCatalog) {
+      const result = await client.callTool({ name: "describe_integration", arguments: { id } });
+      assert.equal(result.structuredContent?.id, id);
+    }
   } finally {
     await client.close();
     await server.close();

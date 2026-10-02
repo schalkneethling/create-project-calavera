@@ -563,6 +563,8 @@ export function explainRecipeIntegrations(recipe) {
   return resolveRecipeIntegrations(recipe).map((integration) => ({
     id: integration.id,
     label: integration.label,
+    summary: integration.summary,
+    homepage: integration.homepage,
     group: integration.group,
     status: integration.status,
     reason: `${reasons.get(integration.id) ?? "Selected by the composed recipe."}${repositoryRootNote(integration)}`,
