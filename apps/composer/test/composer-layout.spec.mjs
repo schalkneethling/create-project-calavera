@@ -179,9 +179,10 @@ test("the JSON output for a fixed selection equals the pinned recipe", async ({ 
   await page.getByRole("tab", { name: /Agents/ }).click();
   await page.getByRole("checkbox", { name: "Technical devil's advocate" }).check();
 
-  await expect(page.locator("#output")).toHaveText(
-    JSON.stringify(fixtures["page-selection"], null, 2),
-  );
+  // toHaveText normalizes whitespace; compare the raw text so indentation and line breaks count.
+  await expect
+    .poll(() => page.locator("#output").textContent())
+    .toBe(JSON.stringify(fixtures["page-selection"], null, 2));
   await expect(page.locator("#recipe-summary li")).toHaveText([
     "Minimal profile",
     "pnpm",
