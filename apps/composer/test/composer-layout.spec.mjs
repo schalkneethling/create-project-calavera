@@ -121,6 +121,43 @@ test("Install into sets the target of every selected artifact", async ({ page })
   ]);
 });
 
+test("re-selecting an artifact keeps its own target over Install into", async ({ page }) => {
+  await openComposer(page);
+  await page.getByRole("tab", { name: /Hooks/ }).click();
+  const row = artifactRow(page, "hook-block-dangerous-commands");
+  const checkbox = row.getByRole("checkbox", { name: "Block dangerous commands" });
+  const target = row.locator('[data-ai-target="hook-block-dangerous-commands"]');
+
+  await checkbox.check();
+  await row.locator("summary").click();
+  await target.selectOption("codex");
+  await checkbox.uncheck();
+  await checkbox.check();
+
+  await expect(target).toHaveValue("codex");
+  expect((await recipeOutput(page)).ai).toEqual([
+    { id: "hook-block-dangerous-commands", target: "codex" },
+  ]);
+});
+
+test("Copy without the Clipboard API leaves the button unchanged and throws nothing", async ({
+  page,
+}) => {
+  /** @type {Error[]} */
+  const pageErrors = [];
+  page.on("pageerror", (error) => pageErrors.push(error));
+  await page.addInitScript(() => {
+    Object.defineProperty(navigator, "clipboard", { value: undefined });
+  });
+  await openComposer(page);
+
+  const copy = page.locator("[data-copy]").first();
+  await copy.click();
+
+  await expect(copy).toHaveText("Copy");
+  expect(pageErrors).toEqual([]);
+});
+
 test("the JSON output for a fixed selection equals the pinned recipe", async ({ page }) => {
   await openComposer(page);
   await page.getByRole("radio", { name: "Minimal" }).check();

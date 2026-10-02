@@ -85,6 +85,8 @@ let cliCompatibility = {
   source: "fallback",
 };
 let selectedArtifactGroup;
+// Artifacts whose own target select the user changed; re-selecting one keeps that target.
+const targetOverrides = new Set();
 
 for (
   let year = baselineMetadata.currentYear;
@@ -462,7 +464,10 @@ function syncAiTargetStates() {
 function applyTargetToSelectedArtifacts(target) {
   for (const checkbox of form.querySelectorAll('[name="aiArtifact"]:checked')) {
     const select = form.querySelector(`[data-ai-target="${checkbox.value}"]`);
-    if (select && artifactTargets(checkbox.value).includes(target)) select.value = target;
+    if (select && artifactTargets(checkbox.value).includes(target)) {
+      select.value = target;
+      targetOverrides.delete(checkbox.value);
+    }
   }
 }
 
@@ -1036,7 +1041,13 @@ form.addEventListener("change", (event) => {
   }
   if (event.target === aiTargetAll) {
     applyTargetToSelectedArtifacts(aiTargetAll.value);
-  } else if (event.target.name === "aiArtifact" && event.target.checked) {
+  } else if (event.target.dataset.aiTarget) {
+    targetOverrides.add(event.target.dataset.aiTarget);
+  } else if (
+    event.target.name === "aiArtifact" &&
+    event.target.checked &&
+    !targetOverrides.has(event.target.value)
+  ) {
     const select = form.querySelector(`[data-ai-target="${event.target.value}"]`);
     if (select && artifactTargets(event.target.value).includes(aiTargetAll.value)) {
       select.value = aiTargetAll.value;
@@ -1073,6 +1084,12 @@ artifactTabs.addEventListener("keydown", (event) => {
 document.addEventListener("click", (event) => {
   const button = event.target.closest("[data-copy]");
   if (!button) return;
+
+  // navigator.clipboard is undefined outside secure contexts.
+  if (!navigator.clipboard?.writeText) {
+    console.info("Copying the command failed: the Clipboard API is not available.");
+    return;
+  }
 
   const command = button.closest(".command").querySelector("code").textContent;
   navigator.clipboard.writeText(command).then(
