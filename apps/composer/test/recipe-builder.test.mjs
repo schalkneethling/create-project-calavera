@@ -114,10 +114,6 @@ test("the published CLI guard takes the CLI version as an argument", () => {
 });
 
 test("next commands follow the package manager and default to npm", () => {
-  assert.deepEqual(composerNextCommands("pnpm").steps, projectLocalCommandSteps("pnpm"));
-  assert.deepEqual(composerNextCommands(undefined).steps, projectLocalCommandSteps("npm"));
-  assert.equal(
-    composerNextCommands("npm").note,
-    "Run these commands from the project folder where you saved calavera.config.json.",
-  );
+  assert.deepEqual(composerNextCommands("pnpm"), projectLocalCommandSteps("pnpm"));
+  assert.deepEqual(composerNextCommands(undefined), projectLocalCommandSteps("npm"));
 });

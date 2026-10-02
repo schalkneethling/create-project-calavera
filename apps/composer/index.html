@@ -39,128 +39,267 @@
     <link rel="apple-touch-icon" sizes="180x180" href="/apple-touch-icon.png" />
     <meta name="apple-mobile-web-app-title" content="Calavera" />
     <link rel="manifest" href="/site.webmanifest" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link
+      rel="stylesheet"
+      href="https://fonts.googleapis.com/css2?family=Atkinson+Hyperlegible:wght@400;700&family=JetBrains+Mono:wght@400;600&family=Kablammo&display=swap"
+    />
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <main class="shell">
+    <header class="site-header">
+      <div class="site-header-brand">
+        <p class="wordmark">Calavera</p>
+        <nav aria-label="Project">
+          <ul class="site-nav">
+            <li>
+              <a href="https://github.com/schalkneethling/create-project-calavera#readme">Docs</a>
+            </li>
+            <li><a href="https://github.com/schalkneethling/create-project-calavera">GitHub</a></li>
+            <li><a href="https://www.npmjs.com/package/create-project-calavera">npm</a></li>
+          </ul>
+        </nav>
+      </div>
+      <p class="version-badge" id="cli-version" role="status"></p>
+    </header>
+
+    <main>
       <aside class="webmcp-banner" id="webmcp-banner" hidden>
         WebMCP available: agents can compose and download recipes from this page.
       </aside>
 
-      <section class="intro">
-        <p class="eyebrow">Calavera</p>
-        <h1>Compose a tooling recipe for any project.</h1>
-        <p>
-          Choose a profile, add integration packs, then save a
-          <code>calavera.config.json</code> for the CLI to apply.
+      <div class="intro">
+        <h1>Compose a tooling recipe.</h1>
+        <p class="lead">
+          Calavera runs after <code>vp create</code>: Baseline targets, CSS verification, HTML and
+          accessibility checks, and agent artifacts. Vite+ owns the JavaScript and TypeScript
+          toolchain.
         </p>
+      </div>
+
+      <section class="new-project" id="new-project" aria-labelledby="new-project-heading" hidden>
+        <div class="new-project-text">
+          <div class="heading-with-chip">
+            <h2 id="new-project-heading">Starting from nothing?</h2>
+            <span class="chip chip-framework">New in 4.0</span>
+          </div>
+          <p class="hint">
+            One command scaffolds with Vite+ and sets up Calavera in the new folder. Every project
+            then needs a recipe: <a href="#composer">compose one below</a> and save it into the
+            project.
+          </p>
+        </div>
+        <div class="command">
+          <code>npm create project-calavera -- --new</code>
+          <button type="button" data-copy aria-label="Copy the new project command">Copy</button>
+        </div>
       </section>
 
-      <section class="workspace" aria-label="Recipe composer">
-        <form class="panel" id="composer">
-          <fieldset>
-            <legend>Profile</legend>
-            <label for="profile-default">
-              <input id="profile-default" type="radio" name="profile" value="default" checked />
-              Default: EditorConfig and Stylelint
-            </label>
-            <label for="profile-minimal">
-              <input id="profile-minimal" type="radio" name="profile" value="minimal" />
-              Minimal: EditorConfig only
-            </label>
-          </fieldset>
-
-          <label class="field" for="package-manager">
-            Package manager
-            <select id="package-manager" name="packageManager">
-              <option value="npm">npm</option>
-              <option value="pnpm">pnpm</option>
-              <option value="yarn">yarn</option>
-              <option value="bun">bun</option>
-            </select>
-          </label>
-
-          <fieldset>
-            <legend>Integration packs</legend>
-            <p class="compatibility-note" id="cli-compatibility" role="status"></p>
-            <div id="integrations" class="integrations"></div>
-            <section id="baseline-options" class="integration-options" hidden>
-              <h2>Stylelint Baseline target</h2>
-              <div class="option-grid">
-                <label for="baseline-available">
-                  Availability
-                  <select id="baseline-available" name="baselineAvailable">
-                    <option value="widely">Widely available</option>
-                    <option value="newly">Newly available</option>
-                  </select>
+      <!-- [html-validate-disable-next wcag/h32: the Composer form is never submitted; Save and Download act on the composed recipe] -->
+      <form class="composer" id="composer">
+        <fieldset class="step">
+          <legend>
+            <span class="step-number">1</span>
+            <h2 class="section-title">Project</h2>
+          </legend>
+          <div class="step-columns">
+            <fieldset class="group">
+              <legend class="group-heading">Profile</legend>
+              <div class="segmented">
+                <label>
+                  <input id="profile-default" type="radio" name="profile" value="default" checked />
+                  Default
                 </label>
-                <label for="baseline-severity">
-                  Severity
-                  <select id="baseline-severity" name="baselineSeverity">
-                    <option value="warning">Warning</option>
-                    <option value="error">Error</option>
-                  </select>
+                <label>
+                  <input id="profile-minimal" type="radio" name="profile" value="minimal" />
+                  Minimal
                 </label>
               </div>
-              <p>
-                Need help choosing? Use the
-                <a href="https://baseline.calavera.schalkneethling.com/">Baseline Target Explorer</a
-                >.
+              <p class="hint">
+                Default starts with EditorConfig and Stylelint. Minimal starts with EditorConfig
+                only.
               </p>
-            </section>
-            <section id="repository-controls-options" class="integration-options" hidden>
-              <h2>GitHub repository controls</h2>
-              <div class="option-grid">
-                <label for="repository-controls-repository">
-                  Repository (owner/name)
+            </fieldset>
+            <fieldset class="group">
+              <legend class="group-heading">Package manager</legend>
+              <div class="segmented">
+                <label>
                   <input
-                    id="repository-controls-repository"
-                    name="repositoryControlsRepository"
-                    placeholder="octocat/example"
-                    autocomplete="off"
+                    id="package-manager-npm"
+                    type="radio"
+                    name="packageManager"
+                    value="npm"
+                    checked
                   />
+                  npm
                 </label>
-                <label for="repository-controls-required-checks">
-                  Required checks (comma-separated)
+                <label>
                   <input
-                    id="repository-controls-required-checks"
-                    name="repositoryControlsRequiredChecks"
-                    placeholder="quality"
-                    autocomplete="off"
+                    id="package-manager-pnpm"
+                    type="radio"
+                    name="packageManager"
+                    value="pnpm"
                   />
+                  pnpm
+                </label>
+                <label>
+                  <input
+                    id="package-manager-yarn"
+                    type="radio"
+                    name="packageManager"
+                    value="yarn"
+                  />
+                  yarn
+                </label>
+                <label>
+                  <input id="package-manager-bun" type="radio" name="packageManager" value="bun" />
+                  bun
                 </label>
               </div>
-              <p>
+              <p class="hint">The commands at the bottom follow this choice.</p>
+            </fieldset>
+          </div>
+        </fieldset>
+
+        <fieldset class="step">
+          <legend>
+            <span class="step-number">2</span>
+            <h2 class="section-title">Integration packs</h2>
+          </legend>
+          <p class="hint" id="cli-compatibility" hidden></p>
+          <div class="integration-groups" id="integrations"></div>
+          <section
+            class="options-panel"
+            id="repository-controls-options"
+            aria-labelledby="repository-controls-heading"
+            hidden
+          >
+            <div class="options-panel-text">
+              <h3 id="repository-controls-heading">GitHub repository controls</h3>
+              <p class="hint">
                 Calavera generates local desired-state tooling only. Applying remote GitHub changes
                 remains a separate, confirmed command.
               </p>
-            </section>
-          </fieldset>
-
-          <fieldset>
-            <legend>AI artifacts</legend>
-            <div id="ai-artifacts" class="integrations ai-artifacts"></div>
-          </fieldset>
-        </form>
-
-        <aside class="panel preview">
-          <div class="actions">
-            <button id="save" type="button">Save file</button>
-            <button id="download" type="button">Download JSON</button>
-          </div>
-          <p>
-            Save or download <code>calavera.config.json</code>, then run the matching commands from
-            your project folder.
-          </p>
-          <section class="next-commands" aria-labelledby="next-commands-heading">
-            <h2 id="next-commands-heading">Next commands</h2>
-            <p id="next-commands-note" class="next-commands-note"></p>
-            <ol id="next-commands"></ol>
+            </div>
+            <div class="field">
+              <label for="repository-controls-repository">Repository (owner/name)</label>
+              <input
+                id="repository-controls-repository"
+                type="text"
+                name="repositoryControlsRepository"
+                placeholder="octocat/example"
+                autocomplete="off"
+              />
+            </div>
+            <div class="field">
+              <label for="repository-controls-required-checks"
+                >Required checks (comma-separated)</label
+              >
+              <input
+                id="repository-controls-required-checks"
+                type="text"
+                name="repositoryControlsRequiredChecks"
+                placeholder="quality"
+                autocomplete="off"
+              />
+            </div>
           </section>
-          <pre><code id="output"></code></pre>
-        </aside>
+          <section class="group" id="css-integrations" aria-labelledby="css-heading">
+            <h3 class="group-heading" id="css-heading">CSS</h3>
+            <ul class="rows rows-grid" id="css-rows"></ul>
+            <section
+              class="options-panel"
+              id="baseline-options"
+              aria-labelledby="baseline-heading"
+              hidden
+            >
+              <div class="options-panel-text">
+                <h4 id="baseline-heading">Baseline target</h4>
+                <p class="hint">
+                  Which CSS features Stylelint accepts.
+                  <a href="https://baseline.calavera.schalkneethling.com/">Explore targets</a>
+                </p>
+              </div>
+              <div class="field">
+                <label for="baseline-available">Availability</label>
+                <select id="baseline-available" name="baselineAvailable">
+                  <option value="widely">Widely available</option>
+                  <option value="newly">Newly available</option>
+                </select>
+              </div>
+              <div class="field">
+                <label for="baseline-severity">Severity</label>
+                <select id="baseline-severity" name="baselineSeverity">
+                  <option value="warning">Warning</option>
+                  <option value="error">Error</option>
+                </select>
+              </div>
+            </section>
+          </section>
+        </fieldset>
+
+        <fieldset class="step">
+          <legend>
+            <span class="step-number">3</span>
+            <h2 class="section-title">AI artifacts</h2>
+          </legend>
+          <div class="artifact-toolbar">
+            <div class="tabs" id="artifact-tabs" role="tablist" aria-label="Artifact types"></div>
+            <div class="inline-field">
+              <label for="ai-target-all">Install into</label>
+              <select id="ai-target-all"></select>
+            </div>
+          </div>
+          <div id="ai-artifacts"></div>
+          <p class="hint">
+            Every artifact is packaged and versioned, and installing it pins the version in
+            <code>.calavera/artifacts.lock.json</code>. Details for each are in
+            <a
+              href="https://github.com/schalkneethling/create-project-calavera/tree/main/packages/artifacts"
+              >the catalog</a
+            >.
+          </p>
+        </fieldset>
+      </form>
+
+      <section class="recipe" aria-labelledby="recipe-heading">
+        <div class="recipe-header">
+          <div class="recipe-title">
+            <h2 class="section-title" id="recipe-heading">Your recipe</h2>
+            <ul class="chips" id="recipe-summary" aria-label="Recipe summary"></ul>
+          </div>
+          <div class="actions">
+            <button class="button button-secondary" id="download" type="button">
+              Download JSON
+            </button>
+            <button class="button button-primary" id="save" type="button">
+              Save calavera.config.json
+            </button>
+          </div>
+        </div>
+        <div class="recipe-body">
+          <section class="next-commands" aria-labelledby="next-commands-heading">
+            <h3 class="group-heading" id="next-commands-heading">Then, in your project folder</h3>
+            <ol class="command-steps" id="next-commands"></ol>
+            <div class="command-step" id="optional-command"></div>
+          </section>
+          <section class="recipe-output" aria-labelledby="output-heading">
+            <h3 class="group-heading" id="output-heading">calavera.config.json</h3>
+            <pre><code id="output"></code></pre>
+          </section>
+        </div>
       </section>
     </main>
+
+    <footer class="site-footer">
+      <p>
+        Made with love and digital robots by
+        <a href="https://schalkneethling.com/">Schalk Neethling</a>.
+        <a href="https://github.com/schalkneethling/create-project-calavera">Contribute on GitHub</a
+        >.
+      </p>
+    </footer>
 
     <script type="module" src="./script.js"></script>
   </body>

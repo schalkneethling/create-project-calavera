@@ -15,6 +15,7 @@ import {
   recipeToolInputDescriptions,
   validateRecipeResponse,
 } from "../../packages/cli/src/recipe.js";
+import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../../packages/cli/src/ai/catalog.js";
 import {
   baselineMetadata,
   describeBaselineTarget,
@@ -30,6 +31,7 @@ import {
   integrationResponseForCli,
   loadPublishedCliCompatibility,
   SAFE_CLI_FALLBACK_VERSION,
+  versionSatisfiesCompatibility,
 } from "./cli-compatibility.js";
 import {
   assertPublishedCliCompatibility,
@@ -41,22 +43,50 @@ import { releaseEnvironmentInputSchema } from "./repository-controls-input-schem
 
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
+const cssRows = document.querySelector("#css-rows");
 const aiArtifacts = document.querySelector("#ai-artifacts");
+const artifactTabs = document.querySelector("#artifact-tabs");
+const aiTargetAll = document.querySelector("#ai-target-all");
 const output = document.querySelector("#output");
+const recipeSummary = document.querySelector("#recipe-summary");
 const nextCommands = document.querySelector("#next-commands");
-const nextCommandsNote = document.querySelector("#next-commands-note");
+const optionalCommand = document.querySelector("#optional-command");
 const webMcpBanner = document.querySelector("#webmcp-banner");
+const newProject = document.querySelector("#new-project");
 const baselineOptions = document.querySelector("#baseline-options");
 const baselineAvailable = document.querySelector("#baseline-available");
 const repositoryControlsOptions = document.querySelector("#repository-controls-options");
+const cliVersionBadge = document.querySelector("#cli-version");
 const cliCompatibilityNote = document.querySelector("#cli-compatibility");
 const profiles = profileIdsForRecipe();
 const packageManagers = packageManagerIdsForRecipe();
 const allAiArtifactOptions = listAiArtifactOptions();
+const NEW_PROJECT_CLI_RANGE = ">=4.0.0";
+const statusLabels = {
+  recommended: "Recommended",
+  optional: "Optional",
+  "framework-specific": "Framework",
+  experimental: "Experimental",
+};
+const statusChipClasses = {
+  recommended: "chip-recommended",
+  optional: "chip-optional",
+  "framework-specific": "chip-framework",
+  experimental: "chip-experimental",
+};
+const targetLabels = {
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+};
 let cliCompatibility = {
   version: SAFE_CLI_FALLBACK_VERSION,
   source: "fallback",
 };
+let selectedArtifactGroup;
+// Artifacts whose own target select the user changed; re-selecting one keeps that target.
+const targetOverrides = new Set();
 
 for (
   let year = baselineMetadata.currentYear;
@@ -69,8 +99,79 @@ for (
   baselineAvailable.append(option);
 }
 
+/**
+ * Creates an element with attributes and children. Text children are set as text, never as HTML.
+ *
+ * @param {string} tagName
+ * @param {Record<string, string | boolean | undefined>} [attributes]
+ * @param {(Node | string)[]} [children]
+ */
+function element(tagName, attributes = {}, children = []) {
+  const node = document.createElement(tagName);
+  for (const [name, value] of Object.entries(attributes)) {
+    if (value === undefined || value === false) continue;
+    node.setAttribute(name, value === true ? "" : value);
+  }
+  node.append(...children);
+  return node;
+}
+
+function chevron() {
+  const svg = document.createElementNS("http://www.w3.org/2000/svg", "svg");
+  svg.setAttribute("class", "chevron");
+  svg.setAttribute("viewBox", "0 0 20 20");
+  svg.setAttribute("aria-hidden", "true");
+  const path = document.createElementNS("http://www.w3.org/2000/svg", "path");
+  path.setAttribute("d", "M5 8l5 5 5-5");
+  svg.append(path);
+  return svg;
+}
+
+/**
+ * A selectable row: the checkbox and its label select the item; the disclosure beside them only
+ * shows or hides the details, so the two never toggle each other.
+ *
+ * @param {{ name: string, id: string, label: string, chip?: HTMLElement, details?: Node[] }} row
+ */
+function selectableRow({ name, id, label, chip, details }) {
+  const inputId = `${name}-${id}`;
+  const row = element("li", { class: "row" }, [
+    element("div", { class: "row-head" }, [
+      element("input", { id: inputId, type: "checkbox", name, value: id }),
+      element("label", { for: inputId }, [label]),
+      ...(chip ? [chip] : []),
+    ]),
+  ]);
+
+  if (details && details.length > 0) {
+    row.append(
+      element("details", {}, [
+        element("summary", {}, [
+          element("span", { class: "visually-hidden" }, [`Details for ${label}`]),
+          chevron(),
+        ]),
+        element("div", { class: "row-details" }, details),
+      ]),
+    );
+  }
+
+  return row;
+}
+
+/** @param {string} url */
+function linkText(url) {
+  const { hostname, pathname } = new URL(url);
+  const host = hostname.replace(/^www\./, "");
+  return pathname === "/" ? host : `${host}${pathname.replace(/\/$/, "")}`;
+}
+
 function selectedProfile() {
   return new FormData(form).get("profile");
+}
+
+function selectedPackageManager() {
+  const packageManager = new FormData(form).get("packageManager");
+  return packageManager ? String(packageManager) : undefined;
 }
 
 function visibleCatalog(profile = selectedProfile()) {
@@ -95,7 +196,6 @@ function renderCliCompatibility() {
   const hiddenIntegrationCount = allIntegrations.length - availableIntegrations.length;
   const hiddenArtifactCount = allAiArtifactOptions.length - visibleAiArtifacts().length;
   const hiddenProfileCount = profileCatalog.length - visibleProfiles().length;
-  const source = cliCompatibility.source === "npm" ? "npm latest" : "safe fallback";
   const hidden = [
     hiddenProfileCount > 0
       ? `${hiddenProfileCount} profile${hiddenProfileCount === 1 ? "" : "s"}`
@@ -108,9 +208,17 @@ function renderCliCompatibility() {
       : undefined,
   ].filter(Boolean);
 
-  cliCompatibilityNote.textContent = `Showing catalog choices supported by create-project-calavera v${cliCompatibility.version} (${source}).${
-    hidden.length > 0 ? ` ${hidden.join(" and ")} waiting for a newer CLI release.` : ""
-  }`;
+  cliVersionBadge.textContent =
+    cliCompatibility.source === "npm"
+      ? `create-project-calavera ${cliCompatibility.version} on npm`
+      : `create-project-calavera ${cliCompatibility.version}, safe fallback`;
+  cliCompatibilityNote.hidden = hidden.length === 0;
+  cliCompatibilityNote.textContent =
+    hidden.length > 0 ? `${hidden.join(" and ")} waiting for a newer CLI release.` : "";
+  newProject.hidden = !versionSatisfiesCompatibility(
+    cliCompatibility.version,
+    NEW_PROJECT_CLI_RANGE,
+  );
 }
 
 function syncProfileAvailability() {
@@ -130,76 +238,207 @@ function syncProfileAvailability() {
   }
 }
 
+/** @param {ReturnType<typeof listIntegrationOptions>[number]} integration */
+function integrationRow(integration) {
+  const details = [];
+  if (integration.summary) details.push(element("p", {}, [integration.summary]));
+  if (integration.homepage) {
+    details.push(element("a", { href: integration.homepage }, [linkText(integration.homepage)]));
+  }
+
+  return selectableRow({
+    name: "integration",
+    id: integration.id,
+    label: integration.label,
+    chip: element(
+      "span",
+      { class: `chip ${statusChipClasses[integration.status] ?? "chip-optional"}` },
+      [statusLabels[integration.status] ?? integration.status],
+    ),
+    details,
+  });
+}
+
+/**
+ * Groups catalog entries by their `group`, in the order each group first appears. This is the
+ * order the Composer has always listed, and so recorded, integrations and AI artifacts in.
+ *
+ * @template {{ group: string }} T
+ * @param {T[]} items
+ * @returns {Map<string, T[]>}
+ */
+function groupedByCatalogGroup(items) {
+  return items.reduce((grouped, item) => {
+    grouped.set(item.group, [...(grouped.get(item.group) ?? []), item]);
+    return grouped;
+  }, new Map());
+}
+
+const integrationOrder = [...groupedByCatalogGroup(listIntegrationOptions()).values()]
+  .flat()
+  .map(({ id }) => id);
+
+/**
+ * Stylelint-based integrations share the CSS section; every other catalog group gets its own.
+ *
+ * @param {ReturnType<typeof listIntegrationOptions>[number]} integration
+ */
+function isCssIntegration(integration) {
+  return integration.platform.startsWith("stylelint");
+}
+
 function renderIntegrations() {
   syncProfileAvailability();
   integrations.replaceChildren();
+  cssRows.replaceChildren();
   renderCliCompatibility();
 
-  const groups = visibleCatalog().reduce((grouped, item) => {
-    grouped.set(item.group, [...(grouped.get(item.group) ?? []), item]);
-    return grouped;
-  }, new Map());
+  const groups = groupedByCatalogGroup(visibleCatalog());
+  let cssItemCount = 0;
 
   for (const [group, items] of groups) {
-    const section = document.createElement("section");
-    section.className = "integration-group";
-    section.innerHTML = `<h2>${group}</h2>`;
-
-    for (const { id, label, status } of items) {
-      const option = document.createElement("label");
-      option.htmlFor = `integration-${id}`;
-      option.innerHTML = `
-        <input id="integration-${id}" type="checkbox" name="integration" value="${id}" />
-        <span>${label}</span>
-        <small>${status}</small>
-      `;
-      section.append(option);
+    if (items.every(isCssIntegration)) {
+      cssRows.append(...items.map(integrationRow));
+      cssItemCount += items.length;
+      continue;
     }
 
+    const section = element("section", { class: "group" }, [
+      element("h3", { class: "group-heading" }, [group]),
+      element("ul", { class: "rows" }, items.map(integrationRow)),
+    ]);
+    if (items.some(({ appliesAt }) => appliesAt === "repository-root")) {
+      section.append(element("p", { class: "hint" }, ["Applies at the repository root."]));
+    }
     integrations.append(section);
+  }
+
+  cssRows.closest("section").hidden = cssItemCount === 0;
+}
+
+function artifactTargets(artifactId) {
+  return aiArtifactCatalog.find(({ id }) => id === artifactId)?.targets ?? [];
+}
+
+/** @param {string[]} targets */
+function targetOptions(targets) {
+  return targets.map((target) =>
+    element("option", { value: target, selected: target === aiTargetAll.value || undefined }, [
+      targetLabels[target] ?? target,
+    ]),
+  );
+}
+
+/** @param {ReturnType<typeof listAiArtifactOptions>[number]} artifact */
+function artifactRow(artifact) {
+  const npmUrl = `https://www.npmjs.com/package/${artifact.packageName}`;
+  const details = [
+    element("dl", { class: "facts" }, [
+      element("div", {}, [element("dt", {}, ["Type"]), element("dd", {}, [artifact.type])]),
+      element("div", {}, [
+        element("dt", {}, ["Package"]),
+        element("dd", {}, [element("a", { href: npmUrl }, [artifact.packageName])]),
+      ]),
+    ]),
+  ];
+
+  if (artifact.defaultTarget) {
+    details.push(
+      element("div", { class: "inline-field" }, [
+        element("label", { for: `ai-target-${artifact.id}` }, [`Install ${artifact.label} into`]),
+        element(
+          "select",
+          { id: `ai-target-${artifact.id}`, "data-ai-target": artifact.id, disabled: true },
+          targetOptions(artifactTargets(artifact.id)),
+        ),
+      ]),
+    );
+  }
+
+  return selectableRow({ name: "aiArtifact", id: artifact.id, label: artifact.label, details });
+}
+
+/** @param {string} group */
+function selectArtifactGroup(group) {
+  selectedArtifactGroup = group;
+  for (const tab of artifactTabs.querySelectorAll('[role="tab"]')) {
+    const selected = tab.dataset.group === group;
+    tab.setAttribute("aria-selected", String(selected));
+    tab.tabIndex = selected ? 0 : -1;
+  }
+  for (const panel of aiArtifacts.querySelectorAll('[role="tabpanel"]')) {
+    panel.hidden = panel.dataset.group !== group;
   }
 }
 
-function renderAiArtifacts() {
-  aiArtifacts.replaceChildren();
+function renderAiTargetAll() {
+  const targets = [...new Set(visibleAiArtifacts().flatMap(({ id }) => artifactTargets(id)))];
+  const current = aiTargetAll.value || DEFAULT_AI_TARGET;
+  aiTargetAll.replaceChildren(
+    ...targets.map((target) =>
+      element("option", { value: target }, [targetLabels[target] ?? target]),
+    ),
+  );
+  aiTargetAll.value = targets.includes(current) ? current : (targets[0] ?? "");
+  aiTargetAll.closest(".inline-field").hidden = targets.length === 0;
+}
 
-  const groups = visibleAiArtifacts().reduce((grouped, item) => {
-    grouped.set(item.group, [...(grouped.get(item.group) ?? []), item]);
-    return grouped;
-  }, new Map());
+function renderAiArtifacts() {
+  const selectedIds = new Set(
+    [...form.querySelectorAll('[name="aiArtifact"]:checked')].map(({ value }) => value),
+  );
+  const targets = new Map(
+    [...form.querySelectorAll("[data-ai-target]")].map((select) => [
+      select.dataset.aiTarget,
+      select.value,
+    ]),
+  );
+  renderAiTargetAll();
+  aiArtifacts.replaceChildren();
+  artifactTabs.replaceChildren();
+
+  const groups = groupedByCatalogGroup(visibleAiArtifacts());
 
   for (const [group, items] of groups) {
-    const section = document.createElement("section");
-    section.className = "integration-group";
-    section.innerHTML = `<h2>${group}</h2>`;
-
-    for (const artifact of items) {
-      const option = document.createElement("div");
-      option.className = "artifact-option";
-      option.innerHTML = `
-        <label for="ai-artifact-${artifact.id}">
-          <input id="ai-artifact-${artifact.id}" type="checkbox" name="aiArtifact" value="${artifact.id}" />
-          <span>${artifact.label}</span>
-          <small>${artifact.status} · explicitly resolved · Calavera ${artifact.compatibility.calavera}</small>
-        </label>
-      `;
-
-      if (artifact.defaultTarget) {
-        const targetField = document.createElement("label");
-        targetField.className = "artifact-target";
-        targetField.htmlFor = `ai-target-${artifact.id}`;
-        targetField.innerHTML = `
-          Target for ${artifact.label}
-          <input id="ai-target-${artifact.id}" type="text" value="${artifact.defaultTarget}" data-ai-target="${artifact.id}" disabled />
-        `;
-        option.append(targetField);
-      }
-
-      section.append(option);
-    }
-
-    aiArtifacts.append(section);
+    const slug = group.toLowerCase().replace(/[^a-z0-9]+/g, "-");
+    artifactTabs.append(
+      element(
+        "button",
+        {
+          type: "button",
+          class: "tab",
+          role: "tab",
+          id: `artifact-tab-${slug}`,
+          "aria-controls": `artifact-panel-${slug}`,
+          "data-group": group,
+        },
+        [`${group} (${items.length})`],
+      ),
+    );
+    aiArtifacts.append(
+      element(
+        "div",
+        {
+          role: "tabpanel",
+          id: `artifact-panel-${slug}`,
+          "aria-labelledby": `artifact-tab-${slug}`,
+          "data-group": group,
+        },
+        [element("ul", { class: "rows rows-grid" }, items.map(artifactRow))],
+      ),
+    );
   }
+
+  for (const checkbox of form.querySelectorAll('[name="aiArtifact"]')) {
+    checkbox.checked = selectedIds.has(checkbox.value);
+  }
+  for (const select of form.querySelectorAll("[data-ai-target]")) {
+    const target = targets.get(select.dataset.aiTarget);
+    if (target) select.value = target;
+  }
+
+  const [firstGroup] = groups.keys();
+  selectArtifactGroup(groups.has(selectedArtifactGroup) ? selectedArtifactGroup : firstGroup);
 }
 
 function selectIntegrations(integrationIds) {
@@ -214,6 +453,21 @@ function syncAiTargetStates() {
       `[name="aiArtifact"][value="${targetInput.dataset.aiTarget}"]`,
     );
     targetInput.disabled = !checkbox?.checked;
+  }
+}
+
+/**
+ * Sets the target of every selected artifact that installs through a target adapter.
+ *
+ * @param {string} target
+ */
+function applyTargetToSelectedArtifacts(target) {
+  for (const checkbox of form.querySelectorAll('[name="aiArtifact"]:checked')) {
+    const select = form.querySelector(`[data-ai-target="${checkbox.value}"]`);
+    if (select && artifactTargets(checkbox.value).includes(target)) {
+      select.value = target;
+      targetOverrides.delete(checkbox.value);
+    }
   }
 }
 
@@ -240,7 +494,7 @@ function recipe() {
   return composerRecipe({
     profile: String(data.get("profile") ?? ""),
     packageManager: data.get("packageManager") ? String(data.get("packageManager")) : undefined,
-    integrations: data.getAll("integration").map(String),
+    integrations: integrationOrder.filter((id) => data.getAll("integration").includes(id)),
     aiArtifacts: selectedAiArtifacts(),
     baseline: {
       available: data.get("baselineAvailable"),
@@ -253,25 +507,60 @@ function recipe() {
   });
 }
 
+/**
+ * @param {{ label: string, command: string }} step
+ * @param {string} copyLabel
+ */
+function commandStep({ label, command }, copyLabel) {
+  return [
+    element("span", { class: "hint" }, [label]),
+    element("div", { class: "command" }, [
+      element("code", {}, [command]),
+      element("button", { type: "button", "data-copy": true, "aria-label": copyLabel }, ["Copy"]),
+    ]),
+  ];
+}
+
 function renderNextCommands() {
-  const packageManager = new FormData(form).get("packageManager");
-  const { note, steps } = composerNextCommands(packageManager ? String(packageManager) : undefined);
-  nextCommands.replaceChildren();
-  nextCommandsNote.textContent = note;
+  const steps = composerNextCommands(selectedPackageManager());
+  const step = (id) => steps.find((candidate) => candidate.id === id);
 
-  for (const step of steps) {
-    const item = document.createElement("li");
-    const label = document.createElement("strong");
-    const description = document.createElement("span");
-    const command = document.createElement("code");
+  nextCommands.replaceChildren(
+    element(
+      "li",
+      { class: "command-step" },
+      commandStep(step("applyDryRun"), "Copy the dry run command"),
+    ),
+    element(
+      "li",
+      { class: "command-step" },
+      commandStep(step("applyRecipe"), "Copy the apply command"),
+    ),
+  );
+  optionalCommand.replaceChildren(
+    ...commandStep(step("agentBootstrap"), "Copy the agent bootstrap command"),
+  );
+}
 
-    label.textContent = step.label;
-    description.textContent = step.description;
-    command.textContent = step.command;
+/**
+ * @param {number} count
+ * @param {string} noun
+ */
+function counted(count, noun) {
+  return `${count} ${noun}${count === 1 ? "" : "s"}`;
+}
 
-    item.append(label, description, command);
-    nextCommands.append(item);
-  }
+function renderRecipeSummary() {
+  const data = new FormData(form);
+  const profile = String(data.get("profile") ?? "");
+  recipeSummary.replaceChildren(
+    ...[
+      `${profile.charAt(0).toUpperCase()}${profile.slice(1)} profile`,
+      selectedPackageManager() ?? "npm",
+      counted(data.getAll("integration").length, "integration"),
+      counted(data.getAll("aiArtifact").length, "artifact"),
+    ].map((text) => element("li", { class: "chip chip-summary" }, [text])),
+  );
 }
 
 function render() {
@@ -280,6 +569,7 @@ function render() {
   } catch (error) {
     output.textContent = error instanceof Error ? error.message : String(error);
   }
+  renderRecipeSummary();
   renderNextCommands();
 }
 
@@ -747,11 +1037,72 @@ function registerWebMcpTools() {
 form.addEventListener("change", (event) => {
   if (event.target.name === "profile") {
     setDefaults();
-  } else {
-    syncAiTargetStates();
-    syncIntegrationOptions();
-    render();
+    return;
   }
+  if (event.target === aiTargetAll) {
+    applyTargetToSelectedArtifacts(aiTargetAll.value);
+  } else if (event.target.dataset.aiTarget) {
+    targetOverrides.add(event.target.dataset.aiTarget);
+  } else if (
+    event.target.name === "aiArtifact" &&
+    event.target.checked &&
+    !targetOverrides.has(event.target.value)
+  ) {
+    const select = form.querySelector(`[data-ai-target="${event.target.value}"]`);
+    if (select && artifactTargets(event.target.value).includes(aiTargetAll.value)) {
+      select.value = aiTargetAll.value;
+    }
+  }
+  syncAiTargetStates();
+  syncIntegrationOptions();
+  render();
+});
+
+artifactTabs.addEventListener("click", (event) => {
+  const tab = event.target.closest('[role="tab"]');
+  if (tab) selectArtifactGroup(tab.dataset.group);
+});
+
+artifactTabs.addEventListener("keydown", (event) => {
+  const tabs = [...artifactTabs.querySelectorAll('[role="tab"]')];
+  const currentIndex = tabs.indexOf(event.target);
+  if (currentIndex === -1) return;
+
+  const nextIndex = {
+    ArrowLeft: (currentIndex - 1 + tabs.length) % tabs.length,
+    ArrowRight: (currentIndex + 1) % tabs.length,
+    Home: 0,
+    End: tabs.length - 1,
+  }[event.key];
+  if (nextIndex === undefined) return;
+
+  event.preventDefault();
+  selectArtifactGroup(tabs[nextIndex].dataset.group);
+  tabs[nextIndex].focus();
+});
+
+document.addEventListener("click", (event) => {
+  const button = event.target.closest("[data-copy]");
+  if (!button) return;
+
+  // navigator.clipboard is undefined outside secure contexts.
+  if (!navigator.clipboard?.writeText) {
+    console.info("Copying the command failed: the Clipboard API is not available.");
+    return;
+  }
+
+  const command = button.closest(".command").querySelector("code").textContent;
+  navigator.clipboard.writeText(command).then(
+    () => {
+      button.textContent = "Copied";
+      setTimeout(() => {
+        button.textContent = "Copy";
+      }, 1500);
+    },
+    (error) => {
+      console.info("Copying the command failed.", error);
+    },
+  );
 });
 
 document.querySelector("#save").addEventListener("click", () => {
@@ -776,6 +1127,7 @@ loadPublishedCliCompatibility().then((compatibility) => {
   renderAiArtifacts();
   const supportedIds = supportedIntegrationIds();
   selectIntegrations(selectedIds.filter((id) => supportedIds.has(id)));
+  syncAiTargetStates();
   syncIntegrationOptions();
   render();
 });
