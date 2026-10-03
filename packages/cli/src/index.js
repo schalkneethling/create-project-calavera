@@ -20,7 +20,7 @@ import {
 } from "@clack/prompts";
 import { execa } from "execa";
 import packageJson from "../package.json" with { type: "json" };
-import { lockedArtifactSources, runArtifactCommand } from "./artifact-lifecycle.js";
+import { prepareArtifactSources, runArtifactCommand } from "./artifact-lifecycle.js";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   githubRepositoryControlManagedFiles,
@@ -162,6 +162,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {VitePlusReport} vitePlus
  * @property {Change[]} changes
  * @property {string[]} pointers
+ * @property {ArtifactLockEntry[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock.
  *
  * @typedef {object} CleanResult
  * @property {"clean"} command
@@ -204,6 +205,8 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {{ source: string, path: string }} [recipe] The recipe `--config` copied into the scaffold.
  *
  * @typedef {{ command: `artifacts ${string}`, [key: string]: unknown }} ArtifactCommandResult
+ * @typedef {import("./artifact-lifecycle.js").ArtifactLockEntry} ArtifactLockEntry
+ * @typedef {import("./artifact-lifecycle.js").ArtifactServices} ArtifactServices
  * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | ArtifactCommandResult} CommandResult
  */
 
@@ -1759,9 +1762,10 @@ export async function applyRecipe(options) {
 /**
  * @param {Recipe} recipe
  * @param {Partial<CliOptions>} options
+ * @param {ArtifactServices} [artifactServices] Registry access for artifacts that are not yet locked.
  * @returns {Promise<ApplyResult>}
  */
-export async function applyRecipeObject(recipe, options = {}) {
+export async function applyRecipeObject(recipe, options = {}, artifactServices = {}) {
   validateRecipe(recipe);
 
   const applyOptions = {
@@ -1806,8 +1810,27 @@ export async function applyRecipeObject(recipe, options = {}) {
 
   await assertSafeManagedFileWrites(managedFilePlans, previousState, reownManagedFiles);
 
-  const artifactSources = await lockedArtifactSources(recipe, applyOptions.dryRun);
-  const aiResult = await buildAiApplyResult(recipe, applyOptions, previousState, artifactSources);
+  // Before an auto-install commits, check every selected artifact against the project, so a
+  // conflict with an already-locked artifact stops apply before the install changes anything.
+  const artifactPlan = await prepareArtifactSources(
+    recipe,
+    applyOptions.dryRun,
+    artifactServices,
+    (sources) => buildAiApplyResult(recipe, { dryRun: true }, previousState, sources),
+  );
+  const aiResult = await buildAiApplyResult(
+    recipe,
+    applyOptions,
+    previousState,
+    artifactPlan.sources,
+  ).finally(artifactPlan.dispose);
+  // A dry run plans the auto-installed outputs in both results; apply writes them during the
+  // install, so only the install reports them.
+  const autoInstalledPaths = new Set(artifactPlan.changes.map(({ path }) => path));
+  const aiChanges = [
+    ...artifactPlan.changes,
+    ...aiResult.changes.filter(({ path }) => !autoInstalledPaths.has(path)),
+  ];
 
   if (applyOptions.writeConfig) {
     const configPath = resolve(applyOptions.config ?? "calavera.config.json");
@@ -1969,8 +1992,9 @@ export async function applyRecipeObject(recipe, options = {}) {
     integrations: integrations.map((integration) => integration.id),
     projectInspection,
     vitePlus: vitePlusReport(projectInspection.vitePlus),
-    changes: [...changes, ...aiResult.changes],
+    changes: [...changes, ...aiChanges],
     pointers: [...aiResult.pointers, ...(usesVarlock ? [VARLOCK_POINTER] : [])],
+    autoInstalledArtifacts: artifactPlan.installed,
   };
 }
 
@@ -2938,6 +2962,11 @@ function formatApplySummary(result) {
     `${style("bold", "Package manager")}: ${result.packageManager}`,
     `${style("bold", "Integrations")}: ${result.integrations.join(", ") || "none"}`,
     `${style("bold", "Dev dependencies")}: ${result.dependencies.join(", ") || "none"}`,
+    `${style("bold", "Artifacts to lock")}: ${
+      result.autoInstalledArtifacts
+        .map(({ id, package: packageName, version }) => `${id} (${packageName}@${version})`)
+        .join(", ") || "none"
+    }`,
     `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
   ].join("\n");
 }
@@ -3697,6 +3726,12 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.info(`Inspection ${finding.severity}: ${finding.message}`);
     }
 
+    for (const artifact of result.autoInstalledArtifacts) {
+      logger.info(
+        `Would resolve and lock artifact ${artifact.id} at ${artifact.package}@${artifact.version}`,
+      );
+    }
+
     for (const change of result.changes) {
       if (change.type === "write") {
         if (change.category === "ai") {
@@ -3741,7 +3776,11 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       }
     }
 
-    if (result.changes.length > 0 && result.changes.every(({ type }) => type === "unchanged")) {
+    if (
+      result.changes.length > 0 &&
+      result.changes.every(({ type }) => type === "unchanged") &&
+      result.autoInstalledArtifacts.length === 0
+    ) {
       logger.info("Nothing to change: the project already matches this recipe.");
     }
 
@@ -3755,6 +3794,12 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   logger.success(`Calavera ${result.command} complete.`);
 
   if (result.command === "apply") {
+    for (const artifact of result.autoInstalledArtifacts) {
+      logger.info(
+        `Resolved and locked artifact ${artifact.id} at ${artifact.package}@${artifact.version}`,
+      );
+    }
+
     for (const pointer of result.pointers) {
       logger.info(pointer);
     }

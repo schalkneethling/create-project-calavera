@@ -10,6 +10,7 @@ import { promisify } from "node:util";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
+import { resolveArtifactPackage as resolvePackedArtifact } from "../fixtures/packed-registry/registry.mjs";
 import cliPackageJson from "../package.json" with { type: "json" };
 
 import {
@@ -20,9 +21,14 @@ import { aiArtifactOutputPaths } from "../src/ai/artifacts.js";
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { callMcpTool } from "../src/mcp.js";
 import { aiArtifactRecipeItems, buildRecipe, validateRecipe } from "../src/recipe.js";
+import { snapshotDirectory } from "./project-snapshot.mjs";
 
 const execFileAsync = promisify(execFile);
 const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.meta.url));
+const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
+const packedRegistryPreload = fileURLToPath(
+  new URL("../fixtures/packed-registry/register.mjs", import.meta.url),
+);
 
 /** @type {string} */
 let workRoot;
@@ -61,32 +67,47 @@ async function packArtifact(directory) {
 }
 
 /**
- * Stands in for the npm registry only: it answers with the packed workspace tarball. The real
- * extractArtifactPackage then verifies integrity, package identity, the manifest, compatibility
- * with the workspace CLI version, and the payload.
- * @param {{ id: string, tag?: "latest" | "next", version?: string, cache: string }} request
+ * Asserts that the project in the current directory locks exactly `ids` at their packed versions and
+ * that every installed output matches its package-store payload.
+ *
+ * @param {string[]} ids
  */
-async function resolvePackedArtifact(request) {
-  const artifact = artifactForId(request.id);
-  const packed = packedArtifacts.get(request.id);
-  assert.ok(artifact && packed, `No packed workspace artifact for ${request.id}`);
-  // The real resolver requests artifact.packageName from npm, so a package.json whose name drifts
-  // from the catalog would fail there; the fixture must not paper over that.
-  assert.equal(
-    packed.packageName,
-    artifact.packageName,
-    `${request.id} package.json name must match the catalog package name`,
-  );
-  return {
-    artifact,
-    packageName: packed.packageName,
-    version: request.version ?? packed.version,
-    resolved: packed.path,
-    integrity: packed.integrity,
-    tag: request.tag ?? "latest",
-    cache: request.cache,
-    offline: false,
-  };
+async function assertInstalledFromPack(ids) {
+  const lock = JSON.parse(await readFile(".calavera/artifacts.lock.json", "utf8"));
+  assert.deepEqual(lock.artifacts.map(({ id }) => id).sort(), [...ids].sort());
+  for (const id of ids) {
+    const packed = packedArtifacts.get(id);
+    const artifact = artifactForId(id);
+    const entry = lock.artifacts.find((candidate) => candidate.id === id);
+    assert.equal(entry.package, packed.packageName, id);
+    assert.equal(entry.version, packed.version, id);
+    assert.equal(entry.integrity, packed.integrity, id);
+    assert.equal(
+      await hashArtifactPayload(join(".calavera", "packages", id, entry.version, artifact.payload)),
+      entry.payloadHash,
+      `${id} locked payload hash`,
+    );
+    // Installation copies the payload verbatim for the default target: a skill directory as is,
+    // a hook as hook.mjs plus its settings fragment, an agent as one file. Compare every installed
+    // output against the package-store payload, not just its existence.
+    const storePayload = join(".calavera", "packages", id, entry.version, artifact.payload);
+    const outputs = aiArtifactOutputPaths({ type: entry.type, path: entry.destination });
+    const expected =
+      entry.type === "hook"
+        ? [
+            [outputs[0], join(storePayload, "hook.mjs")],
+            [outputs[1], join(storePayload, "settings-fragment.json")],
+          ]
+        : [[outputs[0], storePayload]];
+    assert.equal(expected.length, outputs.length, `${id} covers every installed output`);
+    for (const [installed, source] of expected) {
+      assert.equal(
+        await hashArtifactPayload(installed),
+        await hashArtifactPayload(source),
+        `${id} installed ${installed} matches its payload`,
+      );
+    }
+  }
 }
 
 /** @param {string} name @param {string[]} ids */
@@ -108,43 +129,7 @@ async function installInFixture(name, ids) {
       { resolve: resolvePackedArtifact },
     );
 
-    const lock = JSON.parse(await readFile(".calavera/artifacts.lock.json", "utf8"));
-    assert.deepEqual(lock.artifacts.map(({ id }) => id).sort(), [...ids].sort());
-    for (const id of ids) {
-      const packed = packedArtifacts.get(id);
-      const artifact = artifactForId(id);
-      const entry = lock.artifacts.find((candidate) => candidate.id === id);
-      assert.equal(entry.package, packed.packageName, id);
-      assert.equal(entry.version, packed.version, id);
-      assert.equal(entry.integrity, packed.integrity, id);
-      assert.equal(
-        await hashArtifactPayload(
-          join(".calavera", "packages", id, entry.version, artifact.payload),
-        ),
-        entry.payloadHash,
-        `${id} locked payload hash`,
-      );
-      // Installation copies the payload verbatim for the default target: a skill directory as is,
-      // a hook as hook.mjs plus its settings fragment, an agent as one file. Compare every installed
-      // output against the package-store payload, not just its existence.
-      const storePayload = join(".calavera", "packages", id, entry.version, artifact.payload);
-      const outputs = aiArtifactOutputPaths({ type: entry.type, path: entry.destination });
-      const expected =
-        entry.type === "hook"
-          ? [
-              [outputs[0], join(storePayload, "hook.mjs")],
-              [outputs[1], join(storePayload, "settings-fragment.json")],
-            ]
-          : [[outputs[0], storePayload]];
-      assert.equal(expected.length, outputs.length, `${id} covers every installed output`);
-      for (const [installed, source] of expected) {
-        assert.equal(
-          await hashArtifactPayload(installed),
-          await hashArtifactPayload(source),
-          `${id} installed ${installed} matches its payload`,
-        );
-      }
-    }
+    await assertInstalledFromPack(ids);
   } finally {
     process.chdir(originalDirectory);
   }
@@ -154,9 +139,11 @@ before(async () => {
   workRoot = await mkdtemp(join(tmpdir(), "calavera-release-integration-"));
   const packed = await Promise.all((await artifactDirectories()).map(packArtifact));
   for (const { id, ...details } of packed) packedArtifacts.set(id, details);
+  process.env.CALAVERA_PACKED_ARTIFACTS = JSON.stringify(Object.fromEntries(packedArtifacts));
 });
 
 after(async () => {
+  delete process.env.CALAVERA_PACKED_ARTIFACTS;
   if (workRoot) await rm(workRoot, { recursive: true, force: true });
 });
 
@@ -205,4 +192,151 @@ test(`a Composer-built recipe passes the CLI ${cliPackageJson.version} guard, va
   } finally {
     process.chdir(originalDirectory);
   }
+});
+
+/** The same Composer-built recipe the hosted Composer produces with artifacts selected. */
+function composerRecipeWithArtifacts() {
+  return composerRecipe({
+    profile: "minimal",
+    packageManager: "npm",
+    integrations: ["editorconfig", "html-validate"],
+    aiArtifacts: [
+      { id: "skill-release-with-confidence" },
+      { id: "hook-block-dangerous-commands", target: "codex" },
+    ],
+  });
+}
+
+/** @param {string} name */
+async function freshProject(name) {
+  const projectDirectory = join(workRoot, "projects", name);
+  await mkdir(projectDirectory, { recursive: true });
+  await writeFile(
+    join(projectDirectory, "package.json"),
+    `${JSON.stringify({ name, private: true, scripts: {} }, null, 2)}\n`,
+  );
+  return projectDirectory;
+}
+
+/** @param {string} value */
+function escapeRegExp(value) {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+test("a first apply of a Composer-built recipe with artifacts installs them through the CLI", async () => {
+  const recipe = composerRecipeWithArtifacts();
+  const ids = recipe.ai.map(({ id }) => id);
+  const projectDirectory = await freshProject("composer-first-apply-cli");
+  await writeFile(
+    join(projectDirectory, "calavera.config.json"),
+    `${JSON.stringify(recipe, null, 2)}\n`,
+  );
+  const before = await snapshotDirectory(projectDirectory);
+  /** @param {string[]} args */
+  const runCli = (args) =>
+    execFileAsync(process.execPath, ["--import", packedRegistryPreload, cliPath, ...args], {
+      cwd: projectDirectory,
+      env: { ...process.env, NO_COLOR: "1" },
+    });
+
+  const preview = await runCli(["apply", "--dry-run"]);
+  for (const id of ids) {
+    const packed = packedArtifacts.get(id);
+    assert.ok(packed);
+    assert.match(
+      preview.stdout,
+      new RegExp(
+        `Would resolve and lock artifact ${id} at ${escapeRegExp(`${packed.packageName}@${packed.version}`)}`,
+      ),
+    );
+  }
+  assert.deepEqual(await snapshotDirectory(projectDirectory), before, "the dry run wrote files");
+
+  const applied = await runCli(["apply", "--yes", "--no-install"]);
+  for (const id of ids) {
+    assert.match(applied.stdout, new RegExp(`Resolved and locked artifact ${id} at `));
+  }
+  const originalDirectory = process.cwd();
+  try {
+    process.chdir(projectDirectory);
+    await assertInstalledFromPack(ids);
+    const packageJson = JSON.parse(await readFile("package.json", "utf8"));
+    assert.equal(packageJson.dependencies, undefined);
+    assert.equal(packageJson.devDependencies, undefined);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("a first apply of a Composer-built recipe with artifacts installs them through the MCP tools", async () => {
+  const recipe = composerRecipeWithArtifacts();
+  const ids = recipe.ai.map(({ id }) => id);
+  const projectDirectory = await freshProject("composer-first-apply-mcp");
+  const originalDirectory = process.cwd();
+  try {
+    process.chdir(projectDirectory);
+    const before = await snapshotDirectory();
+
+    const preview = await callMcpTool(
+      "dry_run_apply",
+      { recipe },
+      { resolve: resolvePackedArtifact },
+    );
+    assert.deepEqual(
+      preview.result.autoInstalledArtifacts.map(({ id, version }) => ({ id, version })),
+      ids.map((id) => ({ id, version: packedArtifacts.get(id)?.version })),
+    );
+    assert.deepEqual(await snapshotDirectory(), before, "dry_run_apply wrote files");
+
+    const applied = await callMcpTool(
+      "apply_recipe",
+      { recipe, noInstall: true },
+      { resolve: resolvePackedArtifact },
+    );
+    assert.deepEqual(
+      applied.result.autoInstalledArtifacts.map(({ id }) => id),
+      ids,
+    );
+    await assertInstalledFromPack(ids);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("init --apply lists the artifacts it would lock in its approval summary", async () => {
+  const id = "skill-release-with-confidence";
+  const packed = packedArtifacts.get(id);
+  assert.ok(packed);
+  const projectDirectory = await freshProject("init-apply-summary");
+  const before = await snapshotDirectory(projectDirectory);
+
+  const { stdout } = await execFileAsync(
+    process.execPath,
+    [
+      "--import",
+      packedRegistryPreload,
+      cliPath,
+      "init",
+      "--apply",
+      "--dry-run",
+      "--yes",
+      "--profile",
+      "minimal",
+      "--package-manager",
+      "npm",
+      "--ai-artifact",
+      id,
+    ],
+    { cwd: projectDirectory, env: { ...process.env, NO_COLOR: "1" } },
+  );
+
+  // The summary is drawn in a box that wraps long lines; compare its text without the frame.
+  const summary = stdout.replace(/[│├╮╯─◇]/g, " ").replace(/\s+/g, " ");
+  assert.match(
+    summary,
+    new RegExp(
+      `Artifacts to lock: ${id} \\(${escapeRegExp(`${packed.packageName}@${packed.version}`)}\\)`,
+    ),
+  );
+  assert.deepEqual(await snapshotDirectory(projectDirectory), before, "init --dry-run wrote files");
 });

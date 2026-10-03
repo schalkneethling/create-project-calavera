@@ -36,6 +36,7 @@ import { assertWorkspacePath } from "./utils/fs.js";
 /**
  * @typedef {import("./index.js").PackageManager} PackageManager
  * @typedef {import("./index.js").Recipe} Recipe
+ * @typedef {import("./artifact-lifecycle.js").ArtifactServices} ArtifactServices
  */
 
 const SERVER_NAME = "create-project-calavera";
@@ -384,32 +385,38 @@ async function explainRecipeTool(args) {
 
 /**
  * @param {Record<string, unknown>} args
+ * @param {ArtifactServices} artifactServices
  */
-async function dryRunApplyTool(args) {
+async function dryRunApplyTool(args, artifactServices) {
   const recipe = assertRecipeInput(args.recipe);
   const writeConfig = args.writeConfig !== false;
 
   return {
     approvalBoundary:
       "Review this dry-run result with the user before calling apply_recipe. No files were changed.",
-    result: await applyRecipeObject(recipe, {
-      dryRun: true,
-      json: true,
-      noInstall: true,
-      assumeYes: true,
-      packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
-      reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
-      config: await projectConfigPath(args.config),
-      writeConfig,
-    }),
+    result: await applyRecipeObject(
+      recipe,
+      {
+        dryRun: true,
+        json: true,
+        noInstall: true,
+        assumeYes: true,
+        packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
+        reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
+        config: await projectConfigPath(args.config),
+        writeConfig,
+      },
+      artifactServices,
+    ),
   };
 }
 
 /**
  * @param {Record<string, unknown>} args
+ * @param {ArtifactServices} artifactServices
  * @returns {Promise<Record<string, unknown>>}
  */
-async function applyRecipeTool(args) {
+async function applyRecipeTool(args, artifactServices) {
   const recipe = assertRecipeInput(args.recipe);
   const config = await projectConfigPath(args.config);
   const writeConfig = args.writeConfig !== false;
@@ -418,16 +425,20 @@ async function applyRecipeTool(args) {
     approvalBoundary:
       "apply_recipe is intended for use only after explicit user approval of dry_run_apply output.",
     configWritten: writeConfig ? config : null,
-    result: await applyRecipeObject(recipe, {
-      dryRun: false,
-      json: true,
-      noInstall: Boolean(args.noInstall),
-      assumeYes: true,
-      packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
-      reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
-      config,
-      writeConfig,
-    }),
+    result: await applyRecipeObject(
+      recipe,
+      {
+        dryRun: false,
+        json: true,
+        noInstall: Boolean(args.noInstall),
+        assumeYes: true,
+        packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
+        reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
+        config,
+        writeConfig,
+      },
+      artifactServices,
+    ),
   };
 }
 
@@ -449,9 +460,10 @@ function toolResult(payload) {
 /**
  * @param {string} name
  * @param {Record<string, unknown>} [input]
+ * @param {ArtifactServices} [artifactServices] Registry access for artifacts that are not yet locked.
  * @returns {Promise<Record<string, unknown>>}
  */
-export async function callMcpTool(name, input = {}) {
+export async function callMcpTool(name, input = {}, artifactServices = {}) {
   const args = assertToolInput(input, name);
 
   switch (name) {
@@ -480,9 +492,9 @@ export async function callMcpTool(name, input = {}) {
     case "explain_recipe":
       return explainRecipeTool(args);
     case "dry_run_apply":
-      return dryRunApplyTool(args);
+      return dryRunApplyTool(args, artifactServices);
     case "apply_recipe":
-      return applyRecipeTool(args);
+      return applyRecipeTool(args, artifactServices);
     default:
       throw new Error(`Unknown tool: ${name}.`);
   }
