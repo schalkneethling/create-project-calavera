@@ -1,53 +1,17 @@
 # Pull request guidance
 
-Pull requests should be small enough that a reviewer can understand the whole
-change without switching into scanning mode. Review quality matters more than
-maximizing the amount of work included in one PR.
+Read this document when scoping an issue, planning a task, or starting a new implementation.
 
-## Before starting work
+This guidance is written around the idea of a pull request, as this is a common workflow. However, the essence captured here applies more broadly to how work is done, with the overall goal of improving the quality of the project as a whole.
 
-- Read this document when scoping an issue, planning a task, or starting a new
-  implementation.
-- Identify the smallest coherent change that answers one primary review
-  question.
-- Split work along independently mergeable behavior boundaries, not arbitrary
-  file or line counts.
-- Install the GitHub stacked pull request extension with `gh extension install github/gh-stack`, then use GitHub stacked pull requests to enable the above when a session will span multiple pull requests (`gh stack`).
-- Sequence dependent PRs so each merge leaves `main` working, testable, and not
-  misleading.
-- Write or refine issues around those same reviewable slices. Avoid acceptance
-  criteria that quietly combine policy, schema, generation, remote writes, and
-  UI work when those can land safely in sequence.
-- Start the PR description with a review question. Make it specific enough
-  to focus the review on the proposed solution or decision. Then explain what changed, why, and how you validated it. Include relevant commands, results, and any limitations. Prefer concise, useful evidence over a prescribed reporting format.
-
-## Keep the diff focused
-
-- Do not bundle opportunistic refactors, formatting churn, dependency updates,
-  or unrelated cleanup.
-- Include the tests and operational documentation needed to validate and use
-  the change.
-- Make the purpose of every changed file clear from the PR description.
-- Prefer a follow-up issue over expanding the current PR beyond its review
-  question.
-
-## Reassess during implementation
-
-Stop and re-scope when:
-
-- the implementation grows beyond the original acceptance criteria;
-- the PR starts answering multiple independent review questions;
-- the description needs several unrelated sections to explain the change;
-- reviewing the diff requires holding multiple workflows in mind; or
-- a safe, independently testable seam becomes apparent.
-
-If splitting would leave a PR broken, misleading, or impossible to validate,
-keep the necessary pieces together and explain that constraint in the PR.
-
-## Before requesting review
-
-- Confirm the diff still matches the issue and stated review question.
-- Remove unrelated changes and generated noise.
-- Validate the change in proportion to its risk.
-- Summarize what changed, how it was tested, and what was deliberately deferred.
+- Every pull request needs an associated issue, and each issue needs testable acceptance criteria. Acceptance criteria do not have to be exhaustive, but they need to make it clear what is and is not expected. The exception is a trivial change, such as a typo fix or minor maintenance, that has no effect on behavior. When in doubt, propose creating an issue.
+- Prefer vertical slices unless the associated issue is specifically scoped differently.
+- Use GitHub's stacked pull requests when working on a change set a reviewer cannot reasonably review in a single sitting. Refer to the official GitHub documentation on using `gh stack` if you are unsure about this feature.
+- If splitting would leave a PR broken, misleading, or impossible to validate, keep the necessary pieces together and explain that constraint in the PR.
+- Before requesting adversarial review, ensure all relevant tests, linting, type checks, and builds are run and pass. Run them again after addressing review findings and before opening the pull request.
+- Before opening a pull request, ask a local subagent for an adversarial review of the code. Ensure the subagent has the needed context to enable an effective review. Context should include the issue, the acceptance criteria, and the diff to review.
+- Unless the issue calls for a different focus, the review covers regressions, accessibility, security, missing tests, and scope creep, omitting any that clearly do not apply.
+- Review findings are considered by the agent coordinating the work, and valid findings are delegated back to the agent that implemented the change to address.
+- Review findings deemed invalid must be reported in the PR description along with the reasoning for why they were marked as such.
+- Start the PR description by answering what this pull request does and which issue or issues it fixes using the "Fixes #xxx" syntax. Make it specific enough to focus the review on the proposed solution or decision. Then explain what changed, why it changed, and how you validated it. Include relevant commands, results, and any limitations. Prefer concise, useful evidence over a prescribed reporting format.
 - Create follow-up issues for deferred work that might otherwise be forgotten.
