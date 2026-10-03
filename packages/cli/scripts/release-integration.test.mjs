@@ -6,7 +6,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, before, test } from "node:test";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { promisify, stripVTControlCharacters } from "node:util";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
@@ -330,8 +330,11 @@ test("init --apply lists the artifacts it would lock in its approval summary", a
     { cwd: projectDirectory, env: { ...process.env, NO_COLOR: "1" } },
   );
 
-  // The summary is drawn in a box that wraps long lines; compare its text without the frame.
-  const summary = stdout.replace(/[│├╮╯─◇]/g, " ").replace(/\s+/g, " ");
+  // The summary is drawn in a box that wraps long lines; compare its text without the frame. A
+  // FORCE_COLOR in the caller's environment overrides NO_COLOR, so strip escape sequences too.
+  const summary = stripVTControlCharacters(stdout)
+    .replace(/[│├╮╯─◇]/g, " ")
+    .replace(/\s+/g, " ");
   assert.match(
     summary,
     new RegExp(
