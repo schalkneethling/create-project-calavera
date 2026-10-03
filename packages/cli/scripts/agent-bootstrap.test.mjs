@@ -1,10 +1,38 @@
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { execFile } from "node:child_process";
+import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { agentBootstrap, parseArgs } from "../src/index.js";
+
+const binPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
+
+/**
+ * Runs the real CLI in a directory.
+ *
+ * @param {string} cwd
+ * @param {string[]} args
+ * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ */
+function runCli(cwd, args) {
+  return new Promise((resolvePromise) => {
+    execFile(
+      process.execPath,
+      [binPath, ...args],
+      { cwd, env: { ...process.env, NO_COLOR: "1" } },
+      (error, stdout, stderr) => {
+        resolvePromise({
+          code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
+          stdout,
+          stderr,
+        });
+      },
+    );
+  });
+}
 
 async function withTempProject(run) {
   const previousCwd = process.cwd();
@@ -117,5 +145,67 @@ test("agent bootstrap does not duplicate an existing Calavera guidance section",
           change.reason?.includes("already up to date"),
       ),
     );
+  });
+});
+
+test("--init prints the recipe next steps without a cd line", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+    await writeFile("package.json", JSON.stringify({ name: "demo", packageManager: "yarn@4.0.0" }));
+
+    const result = await runCli(directory, ["--init", "--mcp-harness", "skip"]);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.ok(
+      result.stdout.includes(
+        [
+          "Your project needs a recipe before Calavera changes anything.",
+          `  Either: open ${directory} in your agent and use the prompt above.`,
+          "  Or: compose one at https://calavera.schalkneethling.com/ and save",
+          `      calavera.config.json into ${directory}, then:`,
+          "        yarn dlx create-project-calavera apply --dry-run",
+          "        yarn dlx create-project-calavera apply",
+        ].join("\n"),
+      ),
+      result.stdout,
+    );
+    assert.doesNotMatch(result.stdout, /^\s*cd /m);
+  });
+});
+
+test("--init --json carries the recipe next steps as nextSteps", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+
+    const result = await runCli(directory, ["--init", "--json"]);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(parsed.nextSteps, [
+      "Your project needs a recipe before Calavera changes anything.",
+      `  Either: open ${directory} in your agent and use the prompt above.`,
+      "  Or: compose one at https://calavera.schalkneethling.com/ and save",
+      `      calavera.config.json into ${directory}, then:`,
+      "        npm create project-calavera apply -- --dry-run",
+      "        npm create project-calavera apply",
+    ]);
+  });
+});
+
+test("--init names an existing recipe instead of asking for one", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+    await writeFile("calavera.config.json", "{}\n");
+
+    const result = await runCli(directory, ["--init", "--json"]);
+    const parsed = JSON.parse(result.stdout);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.deepEqual(parsed.nextSteps, [
+      `Your project has a recipe at ${join(directory, "calavera.config.json")}. Calavera has not applied it.`,
+      "  Preview it, then apply it after you approve the preview:",
+      "    npm create project-calavera apply -- --dry-run",
+      "    npm create project-calavera apply",
+    ]);
   });
 });

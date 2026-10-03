@@ -15,7 +15,12 @@ import {
   parseArgs,
 } from "../src/index.js";
 import { detectVitePlus } from "../src/vite-plus-detection.js";
-import { createTemporaryFixture, json, libraryManifest } from "./vite-plus-fixtures.mjs";
+import {
+  createTemporaryFixture,
+  json,
+  libraryManifest,
+  vitePlusConfig,
+} from "./vite-plus-fixtures.mjs";
 
 const binPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const fixturesUrl = pathToFileURL(
@@ -51,9 +56,13 @@ function writeProject(directory, manifest, withConfig) {
   if (withConfig) writeFileSync(join(directory, "vite.config.ts"), vitePlusConfig);
 }
 
+const scaffoldManifest = process.env.STUB_PACKAGE_MANAGER
+  ? { ...libraryManifest, packageManager: process.env.STUB_PACKAGE_MANAGER }
+  : libraryManifest;
+
 switch (process.env.STUB_MODE) {
   case "scaffold":
-    writeProject(target, json(libraryManifest), true);
+    writeProject(target, json(scaffoldManifest), true);
     break;
   case "unmanaged":
     writeProject(target, json(plainViteManifest), false);
@@ -161,6 +170,27 @@ async function exists(path) {
   } catch {
     return false;
   }
+}
+
+const RECIPE_BLOCK_HEADING = "Your project needs a recipe before Calavera changes anything.";
+
+/**
+ * The next-steps block --new prints after a successful scaffold and bootstrap.
+ *
+ * @param {string} target
+ * @param {{ cd: string, applyDryRun: string, applyRecipe: string }} commands
+ * @returns {string}
+ */
+function recipeBlock(target, { cd, applyDryRun, applyRecipe }) {
+  return [
+    RECIPE_BLOCK_HEADING,
+    `  Either: open ${target} in your agent and use the prompt above.`,
+    "  Or: compose one at https://calavera.schalkneethling.com/ and save",
+    `      calavera.config.json into ${target}, then:`,
+    `        ${cd}`,
+    `        ${applyDryRun}`,
+    `        ${applyRecipe}`,
+  ].join("\n");
 }
 
 test("the Vite+ Node.js floor accepts each range and rejects the versions below them", () => {
@@ -317,6 +347,7 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
   assert.match(result.stdout, /\^22\.18\.0 \|\| \^24\.11\.0 \|\| >=26\.0\.0/);
   assert.match(result.stdout, new RegExp(`${join(workspace.root, "package.json")} is managed`));
   assert.match(result.stdout, /--init/);
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.deepEqual(await readInvocations(workspace.log), []);
   assert.deepEqual(await readdir(workspace.work), []);
 });
@@ -349,6 +380,40 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
   assert.equal(await exists(join(workspace.work, ".calavera")), false);
   assert.match(result.stdout, /Calavera agent bootstrap complete/);
   assert.match(result.stdout, /Next prompt: /);
+  assert.ok(
+    result.stdout.includes(
+      recipeBlock(target, {
+        cd: `cd ${target}`,
+        applyDryRun: "npm create project-calavera apply -- --dry-run",
+        applyRecipe: "npm create project-calavera apply",
+      }),
+    ),
+    result.stdout,
+  );
+  assert.ok(result.stdout.indexOf("Next prompt: ") < result.stdout.indexOf(RECIPE_BLOCK_HEADING));
+});
+
+test("--new names the scaffolded project's package manager and quotes the target in the next steps", async () => {
+  await using workspace = await createTemporaryWorkspace("next-steps-pnpm");
+
+  const result = await runCli(
+    workspace,
+    ["--yes", "--package-manager", "npm", "--new", "vite:library", "--directory", "my lib"],
+    { STUB_MODE: "scaffold", STUB_PACKAGE_MANAGER: "pnpm@10.0.0" },
+  );
+  const target = join(workspace.work, "my lib");
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    result.stdout.includes(
+      recipeBlock(target, {
+        cd: `cd '${target}'`,
+        applyDryRun: "pnpm dlx create-project-calavera apply --dry-run",
+        applyRecipe: "pnpm dlx create-project-calavera apply",
+      }),
+    ),
+    result.stdout,
+  );
 });
 
 test("--new forwards every token after it unchanged, including -- and what follows", async () => {
@@ -396,6 +461,7 @@ test("--new hard-stops on a non-zero exit, names the cause, and writes nothing f
 
   assert.equal(result.code, 1);
   assert.match(result.stderr, /exited with code 1/);
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.match(result.stderr, /partial scaffold that belongs to Vite\+/);
   // This Node.js meets the Vite+ floor, so the hard stop does not mention it.
   assert.doesNotMatch(result.stderr, /below that floor/);
@@ -415,6 +481,7 @@ test("--new hard-stops when the scaffold is unmanaged and names the finding", as
   assert.match(result.stderr, /exited with code 0/);
   assert.match(result.stderr, new RegExp(join(workspace.work, "plain")));
   assert.match(result.stderr, /status unmanaged/);
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.match(result.stderr, /vite-plus-unmanaged/);
   assert.match(result.stderr, /partial scaffold that belongs to Vite\+/);
   assert.deepEqual((await readdir(join(workspace.work, "plain"))).sort(), ["package.json"]);
@@ -430,6 +497,7 @@ test("--new hard-stops when detection on the scaffold is unknown and names the f
 
   assert.equal(result.code, 1);
   assert.match(result.stderr, /status unknown/);
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.match(result.stderr, /vite-plus-detection-unknown/);
   assert.equal(await exists(join(workspace.work, "broken/.calavera")), false);
 });
@@ -442,6 +510,7 @@ test("--new hard-stops when a canceled scaffold exits zero having written nothin
   assert.equal(result.code, 1);
   assert.match(result.stderr, /exited with code 0/);
   assert.match(result.stderr, /no new or changed package\.json/);
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.deepEqual(await readdir(workspace.work), []);
 });
 
@@ -457,6 +526,7 @@ test("--new hard-stops and lists the candidates when several directories gained 
   assert.equal(result.code, 1);
   assert.match(result.stderr, new RegExp(join(workspace.work, "first")));
   assert.match(result.stderr, new RegExp(join(workspace.work, "second")));
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.equal(await exists(join(workspace.work, "first/.calavera")), false);
   assert.equal(await exists(join(workspace.work, "second/.calavera")), false);
 });
@@ -575,4 +645,188 @@ test("--new names the terminating signal when the runner is killed", async () =>
       cwd: workspace.work,
     },
   ]);
+});
+
+// A valid recipe with deliberately unusual formatting, so a copy that
+// re-serializes the JSON instead of copying the bytes fails the comparison.
+const recipeSource =
+  '{ "version": 1,\n    "profile": "default", "packageManager": "pnpm",\n  "integrations": [], "scripts": {} }\n';
+
+test("parseArgs keeps --config given before --new and forwards one given after it", () => {
+  assert.equal(
+    parseArgs(["--yes", "--config", "recipe.json", "--new", "vite"]).newConfig,
+    "recipe.json",
+  );
+
+  const after = parseArgs(["--yes", "--new", "vite", "--config", "recipe.json"]);
+
+  assert.equal(after.newConfig, undefined);
+  assert.deepEqual(after.newArgs, ["vite", "--config", "recipe.json"]);
+  assert.equal(parseArgs(["--new"]).newConfig, undefined);
+  assert.equal(parseArgs(["apply"]).config, "calavera.config.json");
+  assert.equal(parseArgs(["apply", "--config", "other.json"]).config, "other.json");
+});
+
+test("--new --config refuses a missing recipe before spawning and writes nothing", async () => {
+  await using workspace = await createTemporaryWorkspace("config-missing");
+  const recipePath = join(workspace.root, "missing.json");
+
+  const result = await runCli(workspace, ["--yes", "--config", recipePath, "--new", "vite"], {
+    STUB_MODE: "scaffold",
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /--new refused/);
+  assert.ok(result.stderr.includes(recipePath), result.stderr);
+  assert.match(result.stderr, /ENOENT/);
+  assert.deepEqual(await readInvocations(workspace.log), []);
+  assert.deepEqual(await readdir(workspace.work), []);
+});
+
+test("--new --config refuses malformed JSON and an invalid recipe before spawning", async () => {
+  await using workspace = await createTemporaryWorkspace("config-invalid");
+  const malformed = join(workspace.root, "malformed.json");
+  const invalid = join(workspace.root, "invalid.json");
+  await writeFile(malformed, "{ not json");
+  await writeFile(invalid, json({ version: 1, profile: "no-such-profile" }));
+
+  for (const [recipePath, cause] of [
+    [malformed, /JSON/],
+    [invalid, /profile/i],
+  ]) {
+    const result = await runCli(workspace, ["--yes", "--config", recipePath, "--new", "vite"], {
+      STUB_MODE: "scaffold",
+    });
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /--new refused/);
+    assert.match(result.stderr, /not a valid recipe/);
+    assert.ok(result.stderr.includes(recipePath), result.stderr);
+    assert.match(result.stderr, cause);
+  }
+
+  assert.deepEqual(await readInvocations(workspace.log), []);
+  assert.deepEqual(await readdir(workspace.work), []);
+});
+
+test("--new --config --dry-run validates the recipe and names the planned copy", async () => {
+  await using workspace = await createTemporaryWorkspace("config-dry-run");
+  const recipePath = join(workspace.root, "recipe.json");
+  await writeFile(recipePath, recipeSource);
+
+  const result = await runCli(workspace, ["--dry-run", "--config", recipePath, "--new", "vite"]);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    result.stdout.includes(
+      `- After Vite+ detection reports the scaffold as managed, Calavera copies ${recipePath} into it as calavera.config.json. Calavera does not apply the recipe.`,
+    ),
+    result.stdout,
+  );
+  assert.deepEqual(await readInvocations(workspace.log), []);
+  assert.deepEqual(await readdir(workspace.work), []);
+
+  const invalidPath = join(workspace.root, "invalid.json");
+  await writeFile(invalidPath, json({ version: 2 }));
+  const invalid = await runCli(workspace, ["--dry-run", "--config", invalidPath, "--new", "vite"]);
+
+  assert.equal(invalid.code, 1);
+  assert.match(invalid.stderr, /not a valid recipe/);
+});
+
+test("--new --config copies the recipe byte for byte after the managed check and names it", async () => {
+  await using workspace = await createTemporaryWorkspace("config-copy");
+  const recipePath = join(workspace.root, "recipe.json");
+  await writeFile(recipePath, recipeSource);
+
+  const result = await runCli(
+    workspace,
+    ["--yes", "--config", recipePath, "--new", "vite:library", "--directory", "my-lib"],
+    { STUB_MODE: "scaffold" },
+  );
+  const target = join(workspace.work, "my-lib");
+  const copied = join(target, "calavera.config.json");
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(await readFile(copied, "utf8"), recipeSource);
+  assert.equal(await readFile(join(target, "package.json"), "utf8"), json(libraryManifest));
+  assert.equal(await readFile(join(target, "vite.config.ts"), "utf8"), vitePlusConfig);
+  // Vite+ wrote package.json and vite.config.ts; the bootstrap wrote the
+  // agent files; the recipe copy is the only other addition.
+  assert.deepEqual((await readdir(target)).sort(), [
+    ".agents",
+    ".calavera",
+    ".coderabbit.yaml",
+    "AGENTS.md",
+    "calavera.config.json",
+    "package.json",
+    "vite.config.ts",
+  ]);
+  assert.ok(result.stdout.includes(`Copied ${recipePath} to ${copied}.`), result.stdout);
+  assert.ok(
+    result.stdout.includes(
+      [
+        `Your project has a recipe at ${copied}. Calavera has not applied it.`,
+        "  Preview it, then apply it after you approve the preview:",
+        `    cd ${target}`,
+        "    npm create project-calavera apply -- --dry-run",
+        "    npm create project-calavera apply",
+      ].join("\n"),
+    ),
+    result.stdout,
+  );
+  assert.doesNotMatch(result.stdout, /needs a recipe/);
+  // Copied, never applied: no managed tooling files appear.
+  assert.equal(await exists(join(target, ".editorconfig")), false);
+  assert.equal(await readFile(recipePath, "utf8"), recipeSource);
+});
+
+test("--new --config copies nothing when the scaffold is canceled, fails, or is unmanaged", async () => {
+  await using workspace = await createTemporaryWorkspace("config-no-copy");
+  const recipePath = join(workspace.root, "recipe.json");
+  await writeFile(recipePath, recipeSource);
+
+  const canceled = await runCli(workspace, ["--yes", "--config", recipePath, "--new", "vite"], {
+    STUB_MODE: "nothing",
+  });
+
+  assert.equal(canceled.code, 1);
+  assert.deepEqual(await readdir(workspace.work), []);
+
+  const failed = await runCli(workspace, ["--yes", "--config", recipePath, "--new", "vite"], {
+    STUB_MODE: "fail",
+    STUB_TARGET: "partial",
+  });
+
+  assert.equal(failed.code, 1);
+  assert.deepEqual(await readdir(workspace.work), ["partial"]);
+  assert.deepEqual(await readdir(join(workspace.work, "partial")), ["package.json"]);
+
+  const unmanaged = await runCli(workspace, ["--yes", "--config", recipePath, "--new", "vite"], {
+    STUB_MODE: "unmanaged",
+    STUB_TARGET: "plain",
+  });
+
+  assert.equal(unmanaged.code, 1);
+  assert.deepEqual(await readdir(join(workspace.work, "plain")), ["package.json"]);
+});
+
+test("--new --config does not overwrite a calavera.config.json already in the target", async () => {
+  await using workspace = await createTemporaryWorkspace("config-existing");
+  const recipePath = join(workspace.root, "recipe.json");
+  const existing = join(workspace.work, "existing");
+  await writeFile(recipePath, recipeSource);
+  await mkdir(existing);
+  await writeFile(join(existing, "calavera.config.json"), "keep\n");
+
+  const result = await runCli(
+    workspace,
+    ["--yes", "--config", recipePath, "--new", "vite", "--directory", "existing"],
+    { STUB_MODE: "scaffold" },
+  );
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /already exists/);
+  assert.equal(await readFile(join(existing, "calavera.config.json"), "utf8"), "keep\n");
+  assert.equal(await exists(join(existing, ".calavera")), false);
 });

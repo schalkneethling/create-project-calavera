@@ -12,9 +12,14 @@ import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
 import cliPackageJson from "../package.json" with { type: "json" };
 
+import {
+  assertPublishedCliCompatibility,
+  composerRecipe,
+} from "../../../apps/composer/recipe-builder.js";
 import { aiArtifactOutputPaths } from "../src/ai/artifacts.js";
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
-import { aiArtifactRecipeItems, buildRecipe } from "../src/recipe.js";
+import { callMcpTool } from "../src/mcp.js";
+import { aiArtifactRecipeItems, buildRecipe, validateRecipe } from "../src/recipe.js";
 
 const execFileAsync = promisify(execFile);
 const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.meta.url));
@@ -164,4 +169,40 @@ test(`every workspace artifact installs from its packed tarball with CLI ${cliPa
 
 test("all workspace artifacts install together into one project", async () => {
   await installInFixture("all-artifacts", [...packedArtifacts.keys()]);
+});
+
+test(`a Composer-built recipe passes the CLI ${cliPackageJson.version} guard, validation, and dry run`, async () => {
+  const recipe = composerRecipe({
+    profile: "minimal",
+    packageManager: "npm",
+    integrations: ["editorconfig", "html-validate"],
+    aiArtifacts: [
+      { id: "skill-release-with-confidence" },
+      { id: "hook-block-dangerous-commands", target: "codex" },
+    ],
+  });
+  assertPublishedCliCompatibility(recipe, cliPackageJson.version);
+  assert.throws(
+    () => assertPublishedCliCompatibility(recipe, "2.3.0"),
+    /does not support these AI artifacts: skill-release-with-confidence\./,
+  );
+
+  const projectDirectory = join(workRoot, "projects", "composer-recipe");
+  await mkdir(projectDirectory, { recursive: true });
+  const originalDirectory = process.cwd();
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+    await runArtifactCommand(
+      { config: "calavera.config.json", dryRun: false, artifactAction: "install" },
+      { resolve: resolvePackedArtifact },
+    );
+
+    validateRecipe(JSON.parse(await readFile("calavera.config.json", "utf8")));
+    const response = await callMcpTool("dry_run_apply", { recipe });
+    assert.equal(response.result.dryRun, true);
+    assert.ok(response.result.changes.length > 0, "the dry run plans no changes");
+  } finally {
+    process.chdir(originalDirectory);
+  }
 });

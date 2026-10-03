@@ -2,6 +2,9 @@ export const integrationCatalog = [
   {
     id: "editorconfig",
     label: "EditorConfig",
+    summary:
+      "EditorConfig defines a standard configuration file so editors and IDEs apply the same indentation, charset, and line-ending rules.",
+    homepage: "https://editorconfig.org",
     group: "Project consistency",
     platform: "generic",
     status: "recommended",
@@ -10,6 +13,9 @@ export const integrationCatalog = [
   {
     id: "knip",
     label: "Knip",
+    summary:
+      "Knip finds and helps remove unused dependencies, exports, and files in JavaScript and TypeScript projects.",
+    homepage: "https://knip.dev",
     group: "Unused code",
     platform: "knip",
     status: "optional",
@@ -19,6 +25,9 @@ export const integrationCatalog = [
   {
     id: "html-validate",
     label: "HTML Validate",
+    summary:
+      "HTML Validate is an offline HTML5 validator and linter that checks markup validity without uploading code to an external service.",
+    homepage: "https://html-validate.org",
     group: "HTML",
     platform: "html-validate",
     status: "optional",
@@ -32,6 +41,9 @@ export const integrationCatalog = [
   {
     id: "varlock",
     label: "Varlock",
+    summary:
+      "Varlock manages environment variables through a declarative schema so AI agents and tools see requirements without accessing secret values.",
+    homepage: "https://varlock.dev",
     group: "Environment variables",
     platform: "varlock",
     status: "optional",
@@ -41,6 +53,10 @@ export const integrationCatalog = [
   {
     id: "github-repository-controls",
     label: "GitHub repository controls",
+    summary:
+      "Generates a version-controlled GitHub repository policy and an administration script to manage and audit repository settings.",
+    homepage:
+      "https://github.com/schalkneethling/create-project-calavera#github-repository-controls",
     group: "Repository governance",
     platform: "github",
     status: "optional",
@@ -52,6 +68,9 @@ export const integrationCatalog = [
   {
     id: "react-doctor",
     label: "React Doctor",
+    summary:
+      "React Doctor deterministically scans a React codebase for issues in state, effects, performance, security, accessibility, and architecture.",
+    homepage: "https://github.com/millionco/react-doctor#readme",
     group: "React best practices",
     platform: "react-doctor",
     status: "framework-specific",
@@ -60,6 +79,8 @@ export const integrationCatalog = [
   {
     id: "stylelint",
     label: "Stylelint",
+    summary: "Stylelint is a CSS linter that catches errors and enforces coding conventions.",
+    homepage: "https://stylelint.io",
     group: "CSS linting",
     platform: "stylelint",
     status: "recommended",
@@ -68,6 +89,9 @@ export const integrationCatalog = [
   {
     id: "stylelint-standard",
     label: "Stylelint standard config",
+    summary:
+      "stylelint-config-standard is a shareable Stylelint configuration that enforces modern, standard CSS conventions.",
+    homepage: "https://github.com/stylelint/stylelint-config-standard",
     group: "CSS linting",
     platform: "stylelint-config",
     status: "recommended",
@@ -80,6 +104,9 @@ export const integrationCatalog = [
   {
     id: "stylelint-order",
     label: "CSS property ordering",
+    summary:
+      "stylelint-order adds Stylelint rules that enforce a consistent order for CSS properties and other declaration content.",
+    homepage: "https://github.com/hudochenkov/stylelint-order",
     group: "CSS property ordering",
     platform: "stylelint-plugin",
     status: "optional",
@@ -95,6 +122,9 @@ export const integrationCatalog = [
   {
     id: "stylelint-baseline",
     label: "CSS Baseline",
+    summary:
+      "stylelint-plugin-use-baseline flags CSS features in Stylelint that lack the configured level of Baseline browser support.",
+    homepage: "https://github.com/ryo-manba/stylelint-plugin-use-baseline#readme",
     group: "CSS Baseline",
     platform: "stylelint-plugin",
     status: "recommended",
@@ -110,6 +140,9 @@ export const integrationCatalog = [
   {
     id: "stylelint-scss",
     label: "SCSS support",
+    summary:
+      "stylelint-scss adds SCSS-specific linting rules to Stylelint for Sass syntax beyond plain CSS.",
+    homepage: "https://github.com/stylelint-scss/stylelint-scss#readme",
     group: "CSS linting",
     platform: "stylelint-plugin",
     status: "framework-specific",
@@ -123,6 +156,9 @@ export const integrationCatalog = [
   {
     id: "stylelint-stylistic",
     label: "Stylelint stylistic rules",
+    summary:
+      "@stylistic/stylelint-config restores the stylistic formatting rules that Stylelint removed from its standard configuration.",
+    homepage: "https://github.com/stylelint-stylistic/stylelint-config#readme",
     group: "CSS linting",
     platform: "stylelint-config",
     status: "optional",
@@ -135,6 +171,9 @@ export const integrationCatalog = [
   {
     id: "stylelint-logical-css",
     label: "Logical CSS",
+    summary:
+      "stylelint-plugin-logical-css enforces logical CSS properties, values, and units so layouts adapt to writing mode and text direction.",
+    homepage: "https://github.com/yuschick/stylelint-plugin-logical-css",
     group: "CSS logical properties",
     platform: "stylelint-plugin",
     status: "optional",
@@ -149,6 +188,9 @@ export const integrationCatalog = [
   {
     id: "css-property-type-validator",
     label: "CSS property type validation",
+    summary:
+      "Validates CSS custom property @property registrations and their usage within Stylelint, flagging type mismatches and unresolved references.",
+    homepage: "https://github.com/schalkneethling/css-property-type-validator#readme",
     group: "CSS property type validation",
     platform: "stylelint-plugin",
     status: "experimental",
