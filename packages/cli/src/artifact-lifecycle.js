@@ -469,7 +469,6 @@ async function installArtifacts(options, updating, registry) {
  */
 async function stageArtifactInstall(recipe, selections, plan, registry) {
   const { lockedById, advanceIds, artifactTag, dryRun } = plan;
-  const cache = resolve(dryRun ? join(tmpdir(), "calavera-artifact-cache") : CACHE_PATH);
   const stagingRoot = dryRun
     ? await mkdtemp(join(tmpdir(), "calavera-artifact-stage-"))
     : resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
@@ -482,6 +481,8 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
 
   await rm(stagingRoot, { recursive: true, force: true });
   await mkdir(stagingRoot, { recursive: true });
+  // A dry run keeps its registry cache inside the staging directory, so `dispose` removes both.
+  const cache = dryRun ? join(stagingRoot, "cache") : resolve(CACHE_PATH);
 
   try {
     for (const selection of selections) {
