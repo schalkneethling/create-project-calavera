@@ -1,6 +1,6 @@
 // Shared ADR-0001 fixtures for the Vite+ detection tests and for the tests
 // that drive detection through the MCP tools and the CLI.
-import { cp, mkdir, mkdtempDisposable, realpath, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtempDisposable, readFile, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -58,6 +58,68 @@ export async function copyReleaseFixture(name) {
     root,
     [Symbol.asyncDispose]: () => directory[Symbol.asyncDispose](),
   };
+}
+
+/**
+ * Writes a stand-in for the vite-plus package at `node_modules/vite-plus` under
+ * `directory`, shaped like vite-plus 1.0.0 where apply relies on it: the
+ * manifest exports `./package.json` and declares the `vp` bin as `./bin/vp`.
+ * The bin records its argv and working directory as one JSON line in
+ * `logPath`, then exits with `exitCode`, so a test can assert what apply ran
+ * with no network access and no real install. A failing bin also writes a
+ * line to standard output, which apply captures. `manifest` replaces the
+ * manifest's text, to give it a shape apply has to refuse.
+ *
+ * @param {string} directory
+ * @param {{ logPath: string, exitCode?: number, manifest?: string }} options
+ */
+export async function writeVitePlusStub(directory, { logPath, exitCode = 0, manifest }) {
+  const packageDirectory = join(directory, "node_modules/vite-plus");
+  await mkdir(join(packageDirectory, "bin"), { recursive: true });
+  await writeFile(
+    join(packageDirectory, "package.json"),
+    manifest ??
+      json({
+        name: "vite-plus",
+        version: vitePlusFixtureRelease,
+        bin: { vp: "./bin/vp", vpr: "./bin/vpr" },
+        exports: { "./package.json": "./package.json" },
+      }),
+  );
+  await writeFile(
+    join(packageDirectory, "bin/vp"),
+    `#!/usr/bin/env node
+const { appendFileSync } = require("node:fs");
+appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");
+if (${exitCode} !== 0) {
+  console.log("vp stub: ERR_STUB_INSTALL the install failed");
+  console.error("vp stub: the install failed");
+}
+process.exit(${exitCode});
+`,
+  );
+}
+
+/**
+ * The invocations a stub recorded, one per line of `logPath`; none when the
+ * stub never ran.
+ *
+ * @param {string} logPath
+ * @returns {Promise<Array<{ argv: string[], cwd: string }>>}
+ */
+export async function readStubInvocations(logPath) {
+  let contents;
+
+  try {
+    contents = await readFile(logPath, "utf8");
+  } catch {
+    return [];
+  }
+
+  return contents
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line));
 }
 
 /** @param {unknown} value */
