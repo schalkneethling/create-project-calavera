@@ -82,9 +82,16 @@ export async function runArtifactCommand(options, services = {}) {
  * @param {boolean} dryRun
  * @param {ArtifactServices} [services]
  * @param {(sources: Map<string, string>) => Promise<unknown>} [preflight] Checks the complete set of sources before the install commits.
+ * @param {ArtifactLockEntry[]} [approved] Entries a dry run reported; an unlocked selection listed here installs at exactly that version and tag instead of resolving its tag again.
  * @returns {Promise<{ sources: Map<string, string>, installed: ArtifactLockEntry[], changes: AiChange[], dispose: () => Promise<void> }>}
  */
-export async function prepareArtifactSources(recipe, dryRun, services = {}, preflight) {
+export async function prepareArtifactSources(
+  recipe,
+  dryRun,
+  services = {},
+  preflight,
+  approved = [],
+) {
   await recoverArtifactTransaction({ readOnly: dryRun });
   const selections = normalizePackageSelections(recipe.ai);
   const lock = await readLock();
@@ -112,6 +119,7 @@ export async function prepareArtifactSources(recipe, dryRun, services = {}, pref
     dryRun,
     artifactRegistry(services),
     preflight && ((stagedSources) => preflight(new Map([...lockedSources, ...stagedSources]))),
+    new Map(approved.map((entry) => [entry.id, entry])),
   );
   try {
     // A dry run leaves the lock untouched, so the staged install supplies the unlocked sources.
@@ -140,8 +148,9 @@ export async function prepareArtifactSources(recipe, dryRun, services = {}, pref
  * @param {boolean} dryRun
  * @param {ArtifactRegistry} registry
  * @param {((sources: Map<string, string>) => Promise<unknown>) | undefined} preflight
+ * @param {Map<string, ArtifactLockEntry>} approvedById Selections to install at an approved version.
  */
-async function installUnlockedArtifacts(unlocked, lock, dryRun, registry, preflight) {
+async function installUnlockedArtifacts(unlocked, lock, dryRun, registry, preflight, approvedById) {
   const createdDirectories = [".calavera", ".calavera/cache", CACHE_PATH, TRANSACTION_ROOT];
   // The transaction creates the parent directories of the outputs it moves into place, and a
   // rollback restores files only, so remove the parents this attempt created, deepest first.
@@ -165,7 +174,7 @@ async function installUnlockedArtifacts(unlocked, lock, dryRun, registry, prefli
       { ai: unlocked },
       unlocked,
       {
-        lockedById: new Map(),
+        lockedById: approvedById,
         advanceIds: new Set(),
         dryRun,
         keptEntries: lock.artifacts,

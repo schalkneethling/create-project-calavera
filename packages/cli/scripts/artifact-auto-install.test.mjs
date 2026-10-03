@@ -241,6 +241,31 @@ test("auto-install keeps locked artifacts at their exact locked versions", async
   });
 });
 
+test("apply installs the artifact versions an approved dry run reported, even after the tag moves", async () => {
+  await inProject(async () => {
+    const releases = new Map([["skill-project-goal", "0.1.0"]]);
+    const registry = stubRegistry(releases);
+    const recipe = recipeWith(["skill-project-goal"]);
+    const preview = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+
+    releases.set("skill-project-goal", "0.2.0");
+    registry.requests.length = 0;
+    const result = await applyRecipeObject(
+      recipe,
+      { ...applyOptions, approvedArtifacts: preview.autoInstalledArtifacts },
+      registry,
+    );
+
+    assert.deepEqual(idsAndVersions(result.autoInstalledArtifacts), [
+      { id: "skill-project-goal", version: "0.1.0" },
+    ]);
+    assert.deepEqual(idsAndVersions((await readLock()).artifacts), [
+      { id: "skill-project-goal", version: "0.1.0" },
+    ]);
+    assert.deepEqual(registry.requests, [{ id: "skill-project-goal", version: "0.1.0" }]);
+  });
+});
+
 test("an untracked file at an artifact destination stops apply and dry run without changes", async () => {
   await inProject(async () => {
     const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));

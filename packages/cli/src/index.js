@@ -96,6 +96,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {boolean} assumeYes
  * @property {boolean} apply
  * @property {boolean} [writeConfig]
+ * @property {ArtifactLockEntry[]} [approvedArtifacts] Artifacts a dry run reported it would lock; apply installs them at exactly those versions.
  * @property {PackageManager} [packageManager]
  * @property {"append" | "fallback"} [agentsMd]
  * @property {McpHarness} [mcpHarness]
@@ -1817,6 +1818,7 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     applyOptions.dryRun,
     artifactServices,
     (sources) => buildAiApplyResult(recipe, { dryRun: true }, previousState, sources),
+    applyOptions.approvedArtifacts,
   );
   const aiResult = await buildAiApplyResult(
     recipe,
@@ -3160,11 +3162,14 @@ export async function initRecipe(options) {
     exitIfCancel(shouldApply);
 
     if (shouldApply && !options.dryRun) {
+      // Install the artifact versions the approved dry run showed, not whatever the tag
+      // resolves to now.
       applyResult = await applyRecipeObject(recipe, {
         ...options,
         dryRun: false,
         assumeYes: true,
         packageManager,
+        approvedArtifacts: applyDryRun.autoInstalledArtifacts,
       });
     }
   }
