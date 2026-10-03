@@ -82,7 +82,8 @@ MCP server registrations launch `create-project-calavera-mcp` directly and
 should not add `--help`.
 
 Agents should treat `dry_run_apply` as the approval boundary. They should show
-the package manager, integrations, dependency packages, inspection findings,
+the package manager, integrations, dependency packages and their install
+command, inspection findings,
 omitted script explanations, ownership notes, file changes, and AI artifact
 changes before calling `apply_recipe`.
 If MCP tools are not exposed, agents should configure or repair MCP setup first;
@@ -467,7 +468,8 @@ in this order:
 10. `apply_recipe`
 
 `dry_run_apply` returns structured JSON with the package manager, integrations,
-dependency packages, the Vite+ detection report, project inspection findings,
+dependency packages, the command that installs them, the Vite+ detection
+report, project inspection findings,
 omitted script explanations,
 file ownership/action notes, and AI artifact changes that would be made. On a
 project where the recipe was already applied and nothing has changed since,
@@ -480,7 +482,8 @@ approves the proposed recipe and dry-run result.
 
 - `--config calavera.config.json`
 - `--profile default|minimal`
-- `--package-manager npm|pnpm|yarn|bun`
+- `--package-manager npm|pnpm|yarn|bun`; in a Vite+-managed project it does not
+  change the dev dependency install command, `vp add -D`
 - `--integration <id-or-label>` or `--tool <id-or-label>` for scripted
   composition; quote labels with spaces, or use ids/slugs in scripts and CI
 - `--ai-artifact <id-or-label-or-source>`; use `<artifact>@<target>` for hook
@@ -501,6 +504,15 @@ Calavera keeps generated package scripts as ordinary tool commands. It can add
 tooling, configuration, dependencies, and package scripts, but delta execution
 belongs to tool-native options, project-specific scripts, Vite+/`vp`, or CI
 workflow logic rather than a Calavera changed-file wrapper.
+
+In a project Vite+ manages, `apply` installs the recipe's development
+dependencies with `vp add -D <packages>`, using the project's own vite-plus, so
+Vite+ runs the package manager version the project pins. There,
+`--package-manager` and the MCP `packageManager` input do not change the
+install command. Other projects keep their package manager's command, such as
+`pnpm add --save-dev`. `apply --dry-run` names the command and how apply runs
+it. See [`docs/vite-plus.md`](docs/vite-plus.md) and
+[ADR-0012](docs/adr/0012-vp-add-installs-dev-dependencies-in-managed-projects.md).
 
 See [`docs/vite-plus-and-delta-mode.md`](docs/vite-plus-and-delta-mode.md) for
 the Vite+ design boundary and delta workflow guidance.

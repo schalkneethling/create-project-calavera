@@ -143,6 +143,51 @@ the two lines above; when the verdict is unknown because `package.json` could
 not be read, the report names the nearest ancestor manifest and its verdict
 when one exists (ADR-0011, Decision).
 
+## How apply installs development dependencies
+
+In a project detection reports as managed, `apply` installs the recipe's
+development dependencies with Vite+, by running `vp add -D <packages>`. Vite+
+then runs the package manager and the version the project pins, for example
+in `devEngines.packageManager`, which is the one `vp create` installed
+`node_modules` with. Calavera does not choose a package manager there, so
+`--package-manager` and the MCP `packageManager` input do not change the
+install command (ADR-0012, Decision 1). A directory without a `package.json`
+of its own inside a Vite+ workspace, such as a new workspace member, also
+installs through Vite+, although detection reports it as unknown.
+
+Calavera runs the `vp` bin of the vite-plus package the project itself
+resolves, found the way Node.js finds any dependency: in the project's own
+`node_modules`, then in each ancestor's, so a workspace member uses the
+vite-plus installed at the workspace root. It starts that bin with the running
+Node.js, so it does not need `vp` on `PATH` and never runs a globally
+installed `vp` of another version (ADR-0012, Decision 2). Calavera decides the
+install command and locates the bin before `apply` writes anything, including
+a new `package.json`. If the project's vite-plus is not installed, or cannot
+be used, `apply` stops at that point; install the project's dependencies, or
+run `apply --no-install` and add the development dependencies yourself.
+
+The dry run makes the same decision. `apply --dry-run` prints, for example,
+`Dev dependency install command: vp add -D knip`, followed by the exact
+command apply runs, or by the reason apply would stop. `dry_run_apply` and
+`apply --dry-run --json` report these as `installCommand` and `installNotes`
+(ADR-0012, Decision 3). A project detection reports as unmanaged, or as
+unknown outside a Vite+ workspace, keeps its package manager's own command,
+such as `pnpm add --save-dev knip`.
+
+If the install fails, `apply` has already written the recipe's files,
+`package.json` scripts, configuration, and `.calavera/state.json`. The error
+lists what was written, gives the exact install command, which runs without
+`vp` on `PATH`, says how it failed, and shows the last lines of its output. To
+finish the install, run that command in the project directory (ADR-0012,
+Decision 4).
+
+In a directory without a `package.json` of its own, `apply` creates one with
+the package manager's `init` command, and the dry run names that command. A
+directory like this was not scaffolded by `vp create`, which always writes a
+`package.json`, and `init` writes only that file, without linking
+`node_modules`. The development dependency install that follows still goes
+through `vp add -D` (ADR-0012, Decision 1).
+
 ## Profiles
 
 Calavera offers two profiles. `default` composes `editorconfig`, `stylelint`,

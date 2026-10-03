@@ -170,7 +170,8 @@ export const recipeToolInputDescriptions = Object.freeze({
   baselineLimit: "Maximum number of Baseline feature search results.",
   baselineFeatures: "One or more Baseline feature IDs used to calculate a recommendation.",
   recipe: "A Calavera recipe object.",
-  packageManagerOverride: "Optional package manager override.",
+  packageManagerOverride:
+    "Optional package manager override. In a Vite+-managed project it does not change the dev dependency install command, vp add -D, because Vite+ installs with the package manager the project pins.",
   config: "Recipe file path to write before applying.",
   writeConfig: "Write the approved recipe to the config path before applying.",
   noInstall: "Skip package manager dependency installation.",
