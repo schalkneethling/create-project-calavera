@@ -524,6 +524,10 @@ test("a failed rollback reports both the install failure and the rollback failur
         assert.equal(error.cause, error.errors[0]);
         assert.match(error.message, /ENOSPC/);
         assert.match(error.message, /Rollback failure: EBUSY/);
+        assert.match(
+          error.message,
+          /Run create-project-calavera apply or any create-project-calavera artifacts command to retry the rollback\./,
+        );
         return true;
       },
     );

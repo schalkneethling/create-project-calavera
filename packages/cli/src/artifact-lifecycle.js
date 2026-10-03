@@ -198,7 +198,7 @@ async function installUnlockedArtifacts(unlocked, lock, dryRun, registry, prefli
           recoveryError instanceof Error ? recoveryError.message : String(recoveryError);
         throw new AggregateError(
           [error, recoveryError],
-          `Could not install the unlocked artifacts this recipe selects (${ids}), and rolling back the partly committed install also failed, so the project may be partly changed. ${reason} Rollback failure: ${recoveryReason} Run any create-project-calavera command to retry the rollback.`,
+          `Could not install the unlocked artifacts this recipe selects (${ids}), and rolling back the partly committed install also failed, so the project may be partly changed. ${reason} Rollback failure: ${recoveryReason} Run create-project-calavera apply or any create-project-calavera artifacts command to retry the rollback.`,
           { cause: error },
         );
       }
