@@ -2,9 +2,10 @@
 // @ts-check
 import { existsSync, realpathSync } from "node:fs";
 import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import { createRequire } from "node:module";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs as parseNodeArgs } from "node:util";
+import { parseArgs as parseNodeArgs, stripVTControlCharacters } from "node:util";
 
 import {
   cancel,
@@ -158,6 +159,8 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {boolean} dryRun
  * @property {PackageManager} packageManager
  * @property {string[]} dependencies
+ * @property {string | null} installCommand The command that installs `dependencies`, `vp add -D` in a Vite+-managed project (ADR-0012); null when the recipe has none, or when apply skips the install.
+ * @property {string[]} installNotes How apply runs the install command, and what stops it, for the approval boundary.
  * @property {string[]} integrations
  * @property {ProjectInspection} projectInspection
  * @property {VitePlusReport} vitePlus
@@ -267,6 +270,252 @@ const packageManagerCommands = {
     run: (script) => `bun run ${script}`,
   },
 };
+
+/**
+ * Whether apply installs development dependencies through Vite+: the project
+ * is managed, or it has no manifest of its own and the nearest ancestor that
+ * decides is managed, as in a new workspace member of a Vite+ workspace. The
+ * second case keeps ADR-0001's `unknown` verdict for reporting, and only
+ * keeps the install away from the package manager on `PATH` (ADR-0012,
+ * Decision 1).
+ *
+ * @param {VitePlusDetection} detection
+ */
+function installsThroughVitePlus(detection) {
+  return (
+    detection.status === "managed" ||
+    (detection.status === "unknown" && detection.ancestor?.status === "managed")
+  );
+}
+
+/**
+ * The command that installs a recipe's development dependencies. When Vite+
+ * manages the project, Vite+ installs them with `vp add -D`, so they are
+ * installed with the package manager and version the project pins, and the
+ * package manager Calavera resolved plays no part; every other project keeps
+ * its package manager's own command (ADR-0012).
+ *
+ * @param {PackageManager} packageManager
+ * @param {VitePlusDetection} detection
+ * @param {string[]} dependencies
+ * @returns {[string, string[]]}
+ */
+export function devDependencyInstallCommand(packageManager, detection, dependencies) {
+  return installsThroughVitePlus(detection)
+    ? ["vp", ["add", "-D", ...dependencies]]
+    : packageManagerCommands[packageManager].installDev(dependencies);
+}
+
+/**
+ * A command as it can be pasted into a shell. Arguments that are not plain
+ * words are quoted: in single quotes on POSIX shells, where a backslash is
+ * not a plain word character, and in cmd-style double quotes on Windows,
+ * where it is a path separator, so a Node.js path under `Program Files` stays
+ * one argument (ADR-0012, Open questions).
+ *
+ * @param {[string, string[]]} command
+ * @param {NodeJS.Platform} [platform]
+ */
+export function formatCommand([command, commandArgs], platform = process.platform) {
+  const plainWord = platform === "win32" ? /^[\w@%+=:,./\\-]+$/ : /^[\w@%+=:,./-]+$/;
+
+  return [command, ...commandArgs]
+    .map((part) => {
+      if (plainWord.test(part)) {
+        return part;
+      }
+
+      return platform === "win32"
+        ? `"${part.replaceAll('"', '\\"')}"`
+        : `'${part.replaceAll("'", "'\\''")}'`;
+    })
+    .join(" ");
+}
+
+const FAILURE_OUTPUT_LINES = 10;
+const FAILURE_OUTPUT_LINE_LENGTH = 300;
+
+/**
+ * How a spawned command failed, so a Calavera error is diagnosable without
+ * its `cause`: the exit code, the signal, or why it could not start, and the
+ * last lines of the standard output Calavera captured, at most
+ * FAILURE_OUTPUT_LINES lines of at most FAILURE_OUTPUT_LINE_LENGTH characters
+ * each. Standard error is inherited, so the terminal already shows it. The
+ * output is not redacted; redaction is tracked in #619.
+ *
+ * @param {unknown} error
+ */
+export function describeCommandFailure(error) {
+  const failure = isPlainObject(error) ? error : {};
+  let outcome;
+
+  if (typeof failure.exitCode === "number") {
+    outcome = `It exited with code ${failure.exitCode}.`;
+  } else if (typeof failure.signal === "string") {
+    outcome = `It was terminated by signal ${failure.signal}.`;
+  } else {
+    const reason = isNotEmptyString(failure.code)
+      ? failure.code
+      : error instanceof Error
+        ? error.message
+        : String(error);
+    outcome = `It could not start: ${reason}.`;
+  }
+
+  const output =
+    typeof failure.stdout === "string"
+      ? stripVTControlCharacters(failure.stdout)
+          .trim()
+          .split("\n")
+          .slice(-FAILURE_OUTPUT_LINES)
+          .map((line) =>
+            line.length > FAILURE_OUTPUT_LINE_LENGTH
+              ? `${line.slice(0, FAILURE_OUTPUT_LINE_LENGTH)}… [line truncated]`
+              : line,
+          )
+          .join("\n")
+      : "";
+
+  return output ? `${outcome}\nIts last output:\n${output}` : outcome;
+}
+
+/**
+ * Locates the `vp` bin of the vite-plus package the project itself resolves,
+ * the way Node.js resolves any dependency: from the project directory's own
+ * `node_modules`, then each ancestor's, so a workspace member finds a
+ * vite-plus installed at the workspace root. The bin is started with the
+ * running Node.js, so neither `PATH` nor a Windows `.cmd` shim is involved,
+ * and a globally installed `vp` of another version is never used
+ * (ADR-0012, Decision 2). Each way this can fail has its own message.
+ *
+ * @param {string} projectDirectory
+ * @returns {Promise<string>}
+ */
+async function resolveProjectVpBin(projectDirectory) {
+  let manifestPath;
+
+  try {
+    manifestPath = createRequire(join(projectDirectory, "package.json")).resolve(
+      "vite-plus/package.json",
+    );
+  } catch (error) {
+    const code = isPlainObject(error) ? error.code : undefined;
+
+    if (code === "MODULE_NOT_FOUND") {
+      throw new Error(
+        `vite-plus is not installed: no node_modules/vite-plus was found in ${projectDirectory} or any ancestor directory`,
+        { cause: error },
+      );
+    }
+
+    if (code === "ERR_PACKAGE_PATH_NOT_EXPORTED") {
+      throw new Error(
+        "the installed vite-plus does not export ./package.json, so its vp bin cannot be located",
+        { cause: error },
+      );
+    }
+
+    throw new Error(
+      `vite-plus could not be resolved from ${projectDirectory} (${error instanceof Error ? error.message : String(error)})`,
+      { cause: error },
+    );
+  }
+
+  let manifest;
+
+  try {
+    manifest = await readJSON(manifestPath);
+  } catch (error) {
+    throw new Error(`${manifestPath} could not be read`, { cause: error });
+  }
+
+  const bins = isPlainObject(manifest) ? manifest.bin : undefined;
+  const bin = isPlainObject(bins) ? bins.vp : undefined;
+
+  if (!isNotEmptyString(bin)) {
+    throw new Error(`${manifestPath} does not declare a vp bin in its bin field`);
+  }
+
+  const packageDirectory = dirname(manifestPath);
+  const binPath = resolve(packageDirectory, bin);
+  const fromPackage = relative(packageDirectory, binPath);
+
+  if (
+    fromPackage === "" ||
+    fromPackage === ".." ||
+    fromPackage.startsWith(`..${sep}`) ||
+    isAbsolute(fromPackage)
+  ) {
+    throw new Error(`${manifestPath} declares a vp bin outside the vite-plus package: ${bin}`);
+  }
+
+  if (!(await fileExists(binPath))) {
+    throw new Error(
+      `${manifestPath} declares the vp bin ${bin}, but ${binPath} does not exist, so the vite-plus installation is incomplete`,
+    );
+  }
+
+  return binPath;
+}
+
+/**
+ * The install apply runs, decided once from one detection made before
+ * anything is written, so a dry run and the apply that follows it always name
+ * the same command. `spawn` is what apply starts: for `vp`, the project's own
+ * vp bin started with the running Node.js; for any other command, that
+ * command from `PATH`, as before. When the project's vite-plus cannot be
+ * located, `spawn` is undefined and `problem` says why.
+ *
+ * @param {PackageManager} packageManager
+ * @param {VitePlusDetection} detection
+ * @param {string[]} dependencies
+ * @param {string} projectDirectory
+ * @param {{ explicitPackageManager: boolean }} options
+ */
+async function planDevDependencyInstall(
+  packageManager,
+  detection,
+  dependencies,
+  projectDirectory,
+  { explicitPackageManager },
+) {
+  const command = devDependencyInstallCommand(packageManager, detection, dependencies);
+  /** @type {string[]} */
+  const notes = [];
+
+  if (command[0] !== "vp") {
+    return { command, spawn: command, problem: undefined, notes };
+  }
+
+  if (explicitPackageManager) {
+    notes.push(
+      `The package manager given to Calavera (${packageManager}) does not change this command: Vite+ installs with the package manager the project pins.`,
+    );
+  }
+
+  if (detection.status === "unknown") {
+    notes.push(
+      `This directory has no package.json; apply creates one with ${formatCommand(packageManagerCommands[packageManager].init)}.`,
+    );
+  }
+
+  try {
+    const vpBin = await resolveProjectVpBin(projectDirectory);
+    /** @type {[string, string[]]} */
+    const spawn = [process.execPath, [vpBin, ...command[1]]];
+    notes.push(
+      `Vite+ runs this with the package manager the project pins; apply runs it as: ${formatCommand(spawn)}`,
+    );
+    return { command, spawn, problem: undefined, notes };
+  } catch (error) {
+    const problem = new Error(
+      `Vite+ manages this project, so Calavera installs development dependencies with the project's own vp add, but ${error instanceof Error ? error.message : String(error)}. Install the project's dependencies, then run apply again; or run apply with --no-install and add these development dependencies yourself: ${dependencies.join(", ")}. Calavera stopped before writing anything.`,
+      { cause: error },
+    );
+    notes.push(`Apply with the install stops before writing anything: ${problem.message}`);
+    return { command, spawn: undefined, problem, notes };
+  }
+}
 
 /** @type {PackageManager[]} */
 const supportedPackageManagers = /** @type {PackageManager[]} */ (
@@ -645,7 +894,18 @@ async function ensurePackageJSON(packageManager, dryRun, assumeYes, json) {
     const [command, commandArgs] = packageManagerCommands[supportedPackageManager].init;
     const spin = json ? null : spinner();
     spin?.start("Creating package.json...");
-    await execa(command, commandArgs, { stderr: "inherit" });
+
+    try {
+      await execa(command, commandArgs, { stderr: "inherit" });
+    } catch (error) {
+      // A spinner left running keeps its timer alive, and the process never exits.
+      spin?.error("Could not create package.json");
+      throw new Error(
+        `Calavera could not create package.json with ${formatCommand([command, commandArgs])}, so it stopped before applying the recipe. ${describeCommandFailure(error)}`,
+        { cause: error },
+      );
+    }
+
     spin?.stop("Created package.json");
   }
 
@@ -1789,6 +2049,24 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
   const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = resolveApplyPackageManager(recipe, applyOptions, detectedPackageJSON);
   assertRootOnlyIntegrationsAtRepositoryRoot(integrations, process.cwd(), packageManager);
+  // The install is planned before anything is written, including package.json,
+  // from one detection, so the dry run and the apply that follows it name the
+  // same command, and a project whose vite-plus cannot be located stops here.
+  const installPlan =
+    dependencyList.length > 0 && !(applyOptions.noInstall && !applyOptions.dryRun)
+      ? await planDevDependencyInstall(
+          packageManager,
+          await detectVitePlus(process.cwd()),
+          dependencyList,
+          process.cwd(),
+          { explicitPackageManager: applyOptions.packageManager !== undefined },
+        )
+      : undefined;
+
+  if (installPlan?.problem && !applyOptions.dryRun) {
+    throw installPlan.problem;
+  }
+
   const packageJSON = await ensurePackageJSON(
     packageManager,
     applyOptions.dryRun,
@@ -1977,12 +2255,34 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     );
   }
 
-  if (dependencyList.length > 0 && !applyOptions.noInstall && !applyOptions.dryRun) {
-    const [command, commandArgs] =
-      packageManagerCommands[packageManager].installDev(dependencyList);
+  if (installPlan?.spawn && !applyOptions.dryRun) {
+    const [command, commandArgs] = installPlan.spawn;
     const spin = applyOptions.json ? null : spinner();
     spin?.start("Installing development dependencies...");
-    await execa(command, commandArgs, { stderr: "inherit" });
+
+    try {
+      await execa(command, commandArgs, { stderr: "inherit" });
+    } catch (error) {
+      // A spinner left running keeps its timer alive, and the process never exits.
+      spin?.error("Could not install development dependencies");
+      const written = unique([
+        ...[...changes, ...aiChanges]
+          .filter(({ type }) => type !== "unchanged")
+          .map(({ path }) => path),
+        STATE_FILE,
+      ]);
+      throw new Error(
+        [
+          "Calavera applied the recipe's files, package.json scripts, configuration, and state, but could not install the recipe's development dependencies, so the tools those scripts run are not installed yet.",
+          `Already written: ${written.join(", ")}.`,
+          `Install command: ${formatCommand(installPlan.spawn)}`,
+          describeCommandFailure(error),
+          `To finish the install, run the install command in ${process.cwd()}.`,
+        ].join("\n"),
+        { cause: error },
+      );
+    }
+
     spin?.stop("Dependencies installed");
   }
 
@@ -1991,6 +2291,8 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     dryRun: applyOptions.dryRun,
     packageManager,
     dependencies: dependencyList,
+    installCommand: installPlan ? formatCommand(installPlan.command) : null,
+    installNotes: installPlan?.notes ?? [],
     integrations: integrations.map((integration) => integration.id),
     projectInspection,
     vitePlus: vitePlusReport(projectInspection.vitePlus),
@@ -3719,6 +4021,13 @@ function printResult(result, asJSON = false, commandDryRun = false) {
 
     if (result.dependencies.length > 0) {
       logger.info(`Dev dependencies: ${result.dependencies.join(", ")}`);
+      if (result.installCommand) {
+        logger.info(`Dev dependency install command: ${result.installCommand}`);
+      }
+
+      for (const note of result.installNotes) {
+        logger.info(note);
+      }
     } else {
       logger.info("Dev dependencies: none");
     }

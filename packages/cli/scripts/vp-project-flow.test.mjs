@@ -11,7 +11,12 @@ import test from "node:test";
 import { callMcpTool } from "../src/mcp.js";
 import { textHash } from "../src/utils/hash.js";
 import { isRemovedToolchainId } from "./removed-toolchain-ids.mjs";
-import { copyReleaseFixture } from "./vite-plus-fixtures.mjs";
+import {
+  copyReleaseFixture,
+  createTemporaryFixture,
+  readStubInvocations,
+  writeVitePlusStub,
+} from "./vite-plus-fixtures.mjs";
 
 const managedLines = [
   "Vite+ detection: managed. This project is vp-managed (vite-plus-dependency signal at package.json).",
@@ -310,5 +315,50 @@ for (const flowCase of cases) {
       secondDryRun.result.projectInspection.findings.filter(({ severity }) => severity !== "info"),
       [],
     );
+  });
+}
+
+// #618 and ADR-0012: in a vp create project, apply_recipe installs the
+// recipe's development dependencies with the project's own vp add -D, which
+// runs the package manager the project pins. A stand-in vite-plus at the
+// fixture root records the call, so the case stays offline; the monorepo
+// member finds it at the workspace root, as Node.js resolution would.
+for (const flowCase of cases) {
+  test(`vp create ${flowCase.name}: apply_recipe installs the dev dependencies with the project's vp add -D`, async () => {
+    await using fixture = await copyRepositoryFixture(flowCase.fixture);
+    await using logs = await createTemporaryFixture("vp-flow-install", {});
+    const logPath = join(logs.root, "vp.log");
+    const project = join(fixture.root, flowCase.directory);
+    await writeVitePlusStub(fixture.root, { logPath });
+
+    const dependencies = await inDirectory(project, async () => {
+      const { recipe } = await callMcpTool("compose_recipe", {
+        profile: "default",
+        packageManager: "pnpm",
+        tools: flowCase.integrations,
+        ...(flowCase.integrations.includes("github-repository-controls")
+          ? {
+              integrationOptions: {
+                "github-repository-controls": { repository: "example/vp-project" },
+              },
+            }
+          : {}),
+      });
+      const dryRun = await callMcpTool("dry_run_apply", { recipe });
+      const installCommand = `vp add -D ${dryRun.result.dependencies.join(" ")}`;
+
+      assert.ok(dryRun.result.dependencies.length > 0, "the recipe installs no dependency");
+      assert.equal(dryRun.result.installCommand, installCommand);
+      assert.deepEqual(await readStubInvocations(logPath), [], "the dry run ran vp");
+
+      const applied = await callMcpTool("apply_recipe", { recipe });
+      assert.equal(applied.result.installCommand, installCommand);
+
+      return dryRun.result.dependencies;
+    });
+
+    assert.deepEqual(await readStubInvocations(logPath), [
+      { argv: ["add", "-D", ...dependencies], cwd: project },
+    ]);
   });
 }
