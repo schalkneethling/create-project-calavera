@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // @ts-check
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
@@ -565,14 +564,18 @@ export async function runMcpEntrypoint(options = {}) {
   }
 }
 
+// Running this module directly, as local development does, skips the bin's
+// Node.js version check. Package-manager bins are symlinks, so compare realpaths.
 function isDirectEntryPoint() {
   if (!process.argv[1]) {
     return false;
   }
 
-  // Package-manager bins are symlinks. Compare realpaths so npx/npm exec/global
-  // installs still start the MCP server instead of silently exiting.
-  return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  try {
+    return realpathSync(process.argv[1]) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
 }
 
 if (isDirectEntryPoint()) {

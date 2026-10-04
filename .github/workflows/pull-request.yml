@@ -37,3 +37,26 @@ jobs:
         run: pnpm --filter @calavera/baseline-explorer exec playwright install --with-deps chromium
       - name: Check
         run: pnpm check
+  cli-node-floor:
+    name: CLI smoke test on the lowest supported Node.js
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup pnpm
+        uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        with:
+          # The lowest Node.js that packages/cli/package.json engines.node allows.
+          # The full suite runs in the check job only: its tests use `await using`.
+          runtime: node@22.18.0
+          install: false
+          cache: false
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Smoke test the CLI bins
+        run: pnpm --filter create-project-calavera smoke:node-floor
+        env:
+          CALAVERA_EXPECTED_NODE: "22.18.0"
