@@ -1,5 +1,11 @@
 # create-project-calavera
 
+## 4.0.2
+
+### Patch Changes
+
+- cc7ba77: In a project Vite+ manages, `apply` and `apply_recipe` now install the recipe's development dependencies with `vp add -D <packages>`, run through the project's own vite-plus with the running Node.js, so Vite+ uses the package manager and version the project pins, for example in `devEngines.packageManager`, and `vp` does not have to be on `PATH`. Previously, apply ran the package manager on `PATH`, which failed in projects created with `--new` whenever that version differed from the one `vp create` pinned, for example with `ERR_PNPM_UNEXPECTED_STORE`. A directory without a `package.json` of its own inside a Vite+ workspace installs through Vite+ too. There, `--package-manager` and the MCP `packageManager` input no longer change the install command. Projects Vite+ does not manage keep their package manager's command. Apply decides the install command before it writes anything, and the dry run makes the same decision: `apply --dry-run` prints the command and the exact command line apply runs, and `apply --dry-run --json` and `dry_run_apply` report them in the new `installCommand` and `installNotes` result fields. When the project's vite-plus is not installed or cannot be used, the dry run says so, and apply stops before writing anything with an error that names the reason and suggests installing the project's dependencies or using `--no-install`. When the install fails, the CLI no longer hangs with the spinner running: it stops the spinner, exits with a non-zero code, and prints an error that lists the files apply already wrote, gives the exact install command to run to finish, says how it failed, and shows the last lines of its output. A failed `package.json` creation stops its spinner and exits the same way.
+
 ## 4.0.1
 
 ### Patch Changes
