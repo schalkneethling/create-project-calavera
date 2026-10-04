@@ -1,4 +1,3 @@
-#!/usr/bin/env node
 // @ts-check
 import { existsSync, realpathSync } from "node:fs";
 import { glob, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
@@ -3128,20 +3127,6 @@ function recipeNextSteps(target, packageManager, { changeDirectory }) {
   ];
 }
 
-const VITE_PLUS_NODE_FLOOR = "^22.18.0 || ^24.11.0 || >=26.0.0";
-
-/**
- * Whether a Node.js version satisfies the Vite+ 1.0.0 floor. The three ranges
- * are compared by hand because the CLI does not depend on a semver parser.
- *
- * @param {string} version `process.version`, with or without the leading `v`.
- * @returns {boolean}
- */
-export function nodeMeetsVitePlusFloor(version) {
-  const [major = 0, minor = 0] = version.replace(/^v/, "").split(".").map(Number);
-
-  return (major === 22 && minor >= 18) || (major === 24 && minor >= 11) || major >= 26;
-}
 const NEW_HARD_STOP_SUFFIX =
   "Calavera wrote nothing further, removed nothing, and did not run the --init bootstrap.";
 
@@ -3318,9 +3303,6 @@ function newProjectConfirmation(runner, cwd, cwdDetection, recipeSource) {
     "- Vite+ installs the project's dependencies. This needs network access, can take minutes, and cannot be skipped.",
     "- If the target directory Vite+ is given is not empty, Vite+ may offer to remove its contents. That choice is Vite+'s.",
     "- Calavera's dry run does not preview what Vite+ writes, and Calavera does not undo it if the scaffold fails.",
-    `- Vite+ 1.0.0 requires Node.js ${VITE_PLUS_NODE_FLOOR}. This is Node.js ${process.version}${
-      nodeMeetsVitePlusFloor(process.version) ? "" : ", which is below that floor"
-    }.`,
     ...(cwdDetection.ancestor
       ? [
           `- The new project will sit inside another project: ${cwdDetection.ancestor.manifestPath} is ${cwdDetection.ancestor.status}.`,
@@ -3440,10 +3422,6 @@ export async function newProject(options, runtime = {}) {
   if (exit.exitCode !== 0) {
     throw new Error(
       `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
-        nodeMeetsVitePlusFloor(process.version)
-          ? ""
-          : ` Vite+ 1.0.0 requires Node.js ${VITE_PLUS_NODE_FLOOR}, and this is Node.js ${process.version}, which is below that floor.`
-      }${
         runnerCommand.command === "yarn"
           ? " If yarn itself failed, note that yarn dlx needs Yarn 2 or later."
           : ""
@@ -4511,6 +4489,26 @@ async function main() {
   process.exitCode = 1;
 }
 
+/**
+ * Runs the CLI with the process arguments. `bin/create-project-calavera.js`
+ * calls it once the Node.js version check passes.
+ */
+export async function runCli() {
+  try {
+    await main();
+  } catch (error) {
+    if (error instanceof FileWriteError) {
+      logger.error(error.message);
+      logger.error(error.cause);
+    } else {
+      logger.error(error);
+    }
+    process.exitCode = 1;
+  }
+}
+
+// Running this module directly, as the tests and local development do, skips
+// the bin's Node.js version check.
 function isDirectEntryPoint() {
   if (!process.argv[1]) {
     return false;
@@ -4524,13 +4522,5 @@ function isDirectEntryPoint() {
 }
 
 if (isDirectEntryPoint()) {
-  main().catch((error) => {
-    if (error instanceof FileWriteError) {
-      logger.error(error.message);
-      logger.error(error.cause);
-    } else {
-      logger.error(error);
-    }
-    process.exitCode = 1;
-  });
+  await runCli();
 }
