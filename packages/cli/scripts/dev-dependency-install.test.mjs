@@ -426,6 +426,16 @@ const unusableVitePlus = [
     message:
       /node_modules\/vite-plus\/package\.json declares a vp bin outside the vite-plus package: \.\.\/\.\.\/outside\.js\./,
   },
+  {
+    name: "declares a vp bin that does not exist",
+    manifest: json({
+      name: "vite-plus",
+      bin: { vp: "./bin/missing" },
+      exports: { "./package.json": "./package.json" },
+    }),
+    message:
+      /node_modules\/vite-plus\/package\.json declares the vp bin \.\/bin\/missing, but .*node_modules\/vite-plus\/bin\/missing does not exist, so the vite-plus installation is incomplete\./,
+  },
 ];
 
 for (const variant of unusableVitePlus) {

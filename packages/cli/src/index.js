@@ -449,6 +449,12 @@ async function resolveProjectVpBin(projectDirectory) {
     throw new Error(`${manifestPath} declares a vp bin outside the vite-plus package: ${bin}`);
   }
 
+  if (!(await fileExists(binPath))) {
+    throw new Error(
+      `${manifestPath} declares the vp bin ${bin}, but ${binPath} does not exist, so the vite-plus installation is incomplete`,
+    );
+  }
+
   return binPath;
 }
 
