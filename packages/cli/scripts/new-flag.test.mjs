@@ -8,12 +8,7 @@ import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import {
-  createVpCreateCommand,
-  newProject,
-  nodeMeetsVitePlusFloor,
-  parseArgs,
-} from "../src/index.js";
+import { createVpCreateCommand, newProject, parseArgs } from "../src/index.js";
 import { detectVitePlus } from "../src/vite-plus-detection.js";
 import {
   createTemporaryFixture,
@@ -193,15 +188,6 @@ function recipeBlock(target, { cd, applyDryRun, applyRecipe }) {
   ].join("\n");
 }
 
-test("the Vite+ Node.js floor accepts each range and rejects the versions below them", () => {
-  for (const version of ["v22.18.0", "v22.30.1", "v24.11.0", "v24.21.0", "v26.0.0", "27.1.0"]) {
-    assert.equal(nodeMeetsVitePlusFloor(version), true, version);
-  }
-  for (const version of ["v20.19.0", "v22.17.9", "v23.11.0", "v24.10.9", "v25.0.0"]) {
-    assert.equal(nodeMeetsVitePlusFloor(version), false, version);
-  }
-});
-
 test("createVpCreateCommand names the vite-plus package and the vp bin for each runner", () => {
   const forwarded = ["vite:library", "--", "--template", "react-ts"];
 
@@ -344,7 +330,8 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
   assert.match(result.stdout, /cannot be skipped/);
   assert.match(result.stdout, /may offer to remove/);
   assert.match(result.stdout, /does not undo/);
-  assert.match(result.stdout, /\^22\.18\.0 \|\| \^24\.11\.0 \|\| >=26\.0\.0/);
+  // The bin refuses an unsupported Node.js before --new runs (#626).
+  assert.doesNotMatch(result.stdout, /requires Node\.js/);
   assert.match(result.stdout, new RegExp(`${join(workspace.root, "package.json")} is managed`));
   assert.match(result.stdout, /--init/);
   assert.doesNotMatch(result.stdout, /needs a recipe/);
@@ -463,8 +450,6 @@ test("--new hard-stops on a non-zero exit, names the cause, and writes nothing f
   assert.match(result.stderr, /exited with code 1/);
   assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.match(result.stderr, /partial scaffold that belongs to Vite\+/);
-  // This Node.js meets the Vite+ floor, so the hard stop does not mention it.
-  assert.doesNotMatch(result.stderr, /below that floor/);
   assert.deepEqual(await readdir(join(workspace.work, "partial")), ["package.json"]);
   assert.equal(await readFile(join(workspace.work, "partial/package.json"), "utf8"), "{");
 });

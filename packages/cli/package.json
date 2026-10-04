@@ -26,10 +26,11 @@
     "directory": "packages/cli"
   },
   "bin": {
-    "create-project-calavera": "src/index.js",
-    "create-project-calavera-mcp": "src/mcp.js"
+    "create-project-calavera": "bin/create-project-calavera.js",
+    "create-project-calavera-mcp": "bin/create-project-calavera-mcp.js"
   },
   "files": [
+    "bin",
     "src",
     "schemas",
     "README.md",
@@ -44,6 +45,7 @@
   "scripts": {
     "schema:check": "node --test scripts/check-config-schema.test.mjs scripts/check-artifact-contracts.test.mjs",
     "test": "node --test scripts/*.test.mjs",
+    "smoke:node-floor": "node scripts/node-floor-smoke.mjs",
     "publish:check": "publint"
   },
   "dependencies": {
@@ -55,5 +57,8 @@
     "prettier": "^3.9.9",
     "yaml": "^2.9.1",
     "zod": "^4.6.5"
+  },
+  "engines": {
+    "node": "^22.18.0 || ^24.11.0 || >=26.0.0"
   }
 }
