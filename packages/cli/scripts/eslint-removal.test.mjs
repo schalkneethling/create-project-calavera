@@ -108,7 +108,7 @@ test("validate_recipe rejects a recipe that requests eslint-react", async () => 
   assert.match(response.error ?? response.message ?? JSON.stringify(response), /eslint-react/);
 });
 
-test("a default profile dry run plans no eslint.config.js and a lint script without eslint", async () => {
+test("a default profile dry run plans no eslint.config.js and a lint:styles script without eslint", async () => {
   const originalDirectory = process.cwd();
   await using projectDirectory = await mkdtempDisposable(
     join(tmpdir(), "calavera-eslint-removal-dry-run-"),
@@ -142,15 +142,15 @@ test("a default profile dry run plans no eslint.config.js and a lint script with
     );
     assert.ok(packageChange, "The dry run must still plan a package.json update.");
     assert.ok(
-      (packageChange.scripts ?? []).includes("lint"),
-      `A lint script must still be planned: ${JSON.stringify(packageChange.scripts)}`,
+      (packageChange.scripts ?? []).includes("lint:styles"),
+      `A lint:styles script must still be planned: ${JSON.stringify(packageChange.scripts)}`,
     );
 
     await applyRecipeObject(recipe, { json: true, noInstall: true, assumeYes: true });
 
     const packageFile = JSON.parse(await readFile("package.json", "utf8"));
-    assert.doesNotMatch(packageFile.scripts.lint, /eslint/);
-    assert.doesNotMatch(packageFile.scripts["lint:fix"], /eslint/);
+    assert.doesNotMatch(packageFile.scripts["lint:styles"], /eslint/);
+    assert.doesNotMatch(packageFile.scripts["lint:styles:fix"], /eslint/);
     assert.doesNotMatch(JSON.stringify(packageFile), /eslint/);
 
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));

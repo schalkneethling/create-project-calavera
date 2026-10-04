@@ -58,15 +58,15 @@
       "properties": {
         "lint": {
           "type": "boolean",
-          "description": "Generate a lint script when linting integrations are selected."
+          "description": "Generate the lint:styles script when a CSS linting integration is selected."
         },
         "lint:fix": {
           "type": "boolean",
-          "description": "Generate a lint fix script when linting integrations are selected."
+          "description": "Generate the lint:styles:fix script when a fix-capable CSS linting integration is selected."
         },
         "quality": {
           "type": "boolean",
-          "description": "Generate a combined quality script from the available lint, Knip, and React Doctor scripts."
+          "description": "Generate a combined quality script from the generated lint:styles, lint:html, Knip, React Doctor, and env:load scripts. In a Vite+-managed project, it runs vp check and the Vite+ tests first."
         }
       }
     },

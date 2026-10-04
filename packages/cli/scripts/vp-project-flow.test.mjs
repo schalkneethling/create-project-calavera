@@ -41,20 +41,89 @@ const integrationLabels = {
 // Configuration files of the JavaScript and TypeScript toolchain Vite+ owns.
 const toolchainFile =
   /(^|\/)(\.?eslint|\.?prettier|\.?oxlint|\.?oxfmt|tsconfig|jsconfig|vitest\.|jest\.|\.mocharc|biome\.)/i;
-// Commands of that toolchain, and vp itself, which a Calavera script must not call.
-const toolchainCommand = /\b(eslint|prettier|oxlint|oxfmt|tsc|vitest|jest|mocha|biome|vp)\b/;
+// Commands of that toolchain, which a Calavera script must not call.
+const toolchainCommand = /\b(eslint|prettier|oxlint|oxfmt|tsc|vitest|jest|mocha|biome)\b/;
+// ADR-0013: no Calavera script duplicates a vp command. Only the quality
+// aggregate calls vp, and only these steps: vp check, and the Vite+ test step.
+const qualityVpSteps = new Set(["vp check", "vp test --passWithNoTests", "vp run -r test"]);
+// A command that runs Vite+ or the Vite CLI it wraps: vp, the vpr alias for
+// vp run (the vite-plus 1.0.0 manifest declares bin vp and vpr), and vite,
+// whose build, dev, and preview commands vp also provides.
+const vitePlusCommand = /(^|\s|[;|&(])(vp|vpr|vite)(\s|$)/;
+
+/**
+ * Asserts that a script Calavera wrote calls no JS or TS toolchain command and
+ * duplicates no vp command: a script other than quality calls vp, vpr, or vite
+ * nowhere, and quality calls vp only for its allowed steps.
+ *
+ * @param {string} name
+ * @param {string} script
+ */
+function assertNoDuplicateVpCommand(name, script) {
+  assert.doesNotMatch(script, toolchainCommand, name);
+
+  for (const step of script.split("&&").map((segment) => segment.trim())) {
+    if (vitePlusCommand.test(step)) {
+      assert.ok(
+        name === "quality" && qualityVpSteps.has(step),
+        `${name} duplicates a vp command: ${step}`,
+      );
+    }
+  }
+}
+
+test("assertNoDuplicateVpCommand rejects vp, vpr, and vite duplicates and accepts the quality steps", () => {
+  for (const [name, script] of [
+    ["check", "vp check"],
+    ["lint", "vp lint"],
+    ["test", "vpr test"],
+    ["build", "vite build"],
+    ["dev", "vite dev"],
+    ["preview", "vite preview"],
+    ["test", "vite test"],
+    ["quality", "vp check && vp lint && npm run knip"],
+    ["quality", "vite build && npm run knip"],
+    ["quality", "vpr test && npm run knip"],
+  ]) {
+    assert.throws(() => assertNoDuplicateVpCommand(name, script), assert.AssertionError, script);
+  }
+
+  for (const [name, script] of [
+    ["quality", "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip"],
+    ["quality", "vp check && vp run -r test && pnpm lint:styles"],
+    ["lint:styles", 'stylelint "**/*.{css,scss}"'],
+    ["knip", "knip"],
+  ]) {
+    assertNoDuplicateVpCommand(name, script);
+  }
+});
 // Dependencies of that toolchain, which a Calavera recipe must not install.
 const toolchainDependency =
   /^(eslint|@eslint\/|typescript-eslint|prettier|oxlint|oxfmt|typescript$|@typescript\/|vitest|jest|mocha|@biomejs\/)/;
 
+// The quality script each case gets (ADR-0013): a workspace root runs every
+// member's test script, as the template's own ready script does.
 const cases = [
-  { name: "library", fixture: "library", directory: ".", integrations: rootIntegrations },
-  { name: "monorepo root", fixture: "monorepo", directory: ".", integrations: rootIntegrations },
+  {
+    name: "library",
+    fixture: "library",
+    directory: ".",
+    integrations: rootIntegrations,
+    quality: "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip",
+  },
+  {
+    name: "monorepo root",
+    fixture: "monorepo",
+    directory: ".",
+    integrations: rootIntegrations,
+    quality: "vp check && vp run -r test && pnpm lint:styles && pnpm knip",
+  },
   {
     name: "monorepo member packages/utils",
     fixture: "monorepo",
     directory: "packages/utils",
     integrations: memberIntegrations,
+    quality: "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip",
   },
 ];
 
@@ -124,10 +193,10 @@ function plannedScripts(changes) {
  * Drives the flow up to and including apply_recipe, asserting each step, and
  * returns what the second dry run needs.
  *
- * @param {{ fixture: "library" | "monorepo", directory: string, integrations: string[] }} flowCase
+ * @param {{ fixture: "library" | "monorepo", directory: string, integrations: string[], quality: string }} flowCase
  * @param {string} root
  */
-async function runFlow({ directory, integrations }, root) {
+async function runFlow({ directory, integrations, quality }, root) {
   const project = join(root, directory);
   const before = await snapshotTree(root);
   const manifestPath = join(directory, "package.json");
@@ -217,8 +286,9 @@ async function runFlow({ directory, integrations }, root) {
     const manifestAfter = JSON.parse(await readFile("package.json", "utf8"));
     for (const name of scripts) {
       assert.equal(typeof manifestAfter.scripts[name], "string", `${name} was not written`);
-      assert.doesNotMatch(manifestAfter.scripts[name], toolchainCommand, name);
+      assertNoDuplicateVpCommand(name, manifestAfter.scripts[name]);
     }
+    assert.equal(manifestAfter.scripts.quality, quality);
     assert.deepEqual(
       Object.fromEntries(
         Object.keys(fixtureScripts).map((name) => [name, manifestAfter.scripts[name]]),

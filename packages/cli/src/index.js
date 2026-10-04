@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // @ts-check
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
+import { glob, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import { createRequire } from "node:module";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,6 +20,7 @@ import {
   text,
 } from "@clack/prompts";
 import { execa } from "execa";
+import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
 import { prepareArtifactSources, runArtifactCommand } from "./artifact-lifecycle.js";
 import {
@@ -123,6 +124,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {Record<string, string | boolean>} [scripts]
  * @property {string} [packageManager]
  * @property {{ packageManager?: { name?: string } | Array<{ name?: string }> }} [devEngines]
+ * @property {unknown[] | { packages?: unknown }} [workspaces]
  *
  * @typedef {object} Integration
  * @property {string} id
@@ -147,12 +149,14 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {unknown} [ai]
  *
  * @typedef {{ script: string, reason: string }} ScriptOmission
+ * @typedef {{ step: string, reason: string }} QualityStepOmission
  * @typedef {{ severity: "info" | "warning" | "error", kind: string, message: string, path?: string }} ProjectInspectionFinding
  * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus: VitePlusDetection }} ProjectInspection
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[] }} ProjectInspectionOptions
- * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[] }} ScriptPlan
- * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean }} Change
+ * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[] }} ScriptPlan
+ * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
+ * @typedef {{ from: string, to: string }} ScriptRename
  *
  * @typedef {object} ApplyResult
  * @property {"apply"} command
@@ -272,20 +276,257 @@ const packageManagerCommands = {
 };
 
 /**
- * Whether apply installs development dependencies through Vite+: the project
- * is managed, or it has no manifest of its own and the nearest ancestor that
- * decides is managed, as in a new workspace member of a Vite+ workspace. The
- * second case keeps ADR-0001's `unknown` verdict for reporting, and only
- * keeps the install away from the package manager on `PATH` (ADR-0012,
- * Decision 1).
+ * Whether apply delegates to Vite+, both for the development dependency
+ * install (ADR-0012) and for the checks the generated `quality` script runs
+ * (ADR-0013): the project is managed, or it has no manifest of its own and the
+ * nearest ancestor that decides is managed, as in a new workspace member of a
+ * Vite+ workspace. The second case keeps ADR-0001's `unknown` verdict for
+ * reporting, and only keeps the install away from the package manager on
+ * `PATH` (ADR-0012, Decision 1).
  *
  * @param {VitePlusDetection} detection
  */
-function installsThroughVitePlus(detection) {
+function delegatesToVitePlus(detection) {
   return (
     detection.status === "managed" ||
     (detection.status === "unknown" && detection.ancestor?.status === "managed")
   );
+}
+
+/**
+ * The member globs of the workspace whose root is `directory`, as the package
+ * manager in use reads them, or nothing when `directory` is not a workspace
+ * root. pnpm reads only `packages` in `pnpm-workspace.yaml`, and warns that it
+ * does not support the `package.json` field. npm, Yarn, and Bun read
+ * `workspaces` in `package.json`, as an array or as an object whose `packages`
+ * is an array. An empty list does not make a workspace root, nor does a
+ * `pnpm-workspace.yaml` that only holds catalogs, as `vp create vite:library`
+ * writes. A missing or unparseable `pnpm-workspace.yaml` counts as absent, as
+ * a missing file does in Vite+ detection (ADR-0013, Decision 4).
+ *
+ * @param {string} directory
+ * @param {PackageJSON | undefined} packageJSON
+ * @param {PackageManager} packageManager
+ * @returns {Promise<string[] | undefined>}
+ */
+async function workspacePackagePatterns(directory, packageJSON, packageManager) {
+  /** @type {unknown} */
+  let listed;
+
+  if (packageManager === "pnpm") {
+    try {
+      listed = parseYAML(await readFile(join(directory, "pnpm-workspace.yaml"), "utf8"))?.packages;
+    } catch {
+      return undefined;
+    }
+  } else {
+    const workspaces = packageJSON?.workspaces;
+    listed = Array.isArray(workspaces) ? workspaces : workspaces?.packages;
+  }
+
+  const patterns = Array.isArray(listed)
+    ? listed.filter((pattern) => typeof pattern === "string" && pattern.trim() !== "")
+    : [];
+  return patterns.length > 0 ? patterns : undefined;
+}
+
+/**
+ * Whether the workspace root or any member defines a `test` script, which is
+ * what `vp run -r test` needs: it selects every package, including the root,
+ * runs each one's `test` script, and fails with `Task "test" not found` when
+ * none has one. Members are found as npm's `@npmcli/map-workspaces` and pnpm
+ * find them: each pattern names directories holding a `package.json`; a
+ * pattern starting with an odd number of `!` excludes directories, and a
+ * leading `./` or `/` is ignored. `node_modules` is never searched. Unlike npm,
+ * an exclusion applies whatever its position in the list.
+ *
+ * @param {string} directory
+ * @param {PackageJSON | undefined} packageJSON
+ * @param {string[]} patterns
+ */
+async function workspaceDefinesTestScript(directory, packageJSON, patterns) {
+  if (typeof packageJSON?.scripts?.test === "string") {
+    return true;
+  }
+
+  /** @type {string[]} */
+  const included = [];
+  /** @type {string[]} */
+  const excluded = ["**/node_modules/**"];
+
+  for (const pattern of patterns) {
+    const negation = pattern.match(/^!+/)?.[0] ?? "";
+    const cleaned = pattern
+      .slice(negation.length)
+      .replace(/^\.?\/+/, "")
+      .replace(/\/+$/, "");
+    (negation.length % 2 === 1 ? excluded : included).push(cleaned);
+  }
+
+  for await (const manifestPath of glob(
+    included.map((pattern) => `${pattern}/package.json`),
+    { cwd: directory, exclude: excluded },
+  )) {
+    try {
+      const manifest = JSON.parse(await readFile(join(directory, manifestPath), "utf8"));
+      if (typeof manifest?.scripts?.test === "string") {
+        return true;
+      }
+    } catch {
+      // An unreadable member manifest defines no script vp run can run.
+    }
+  }
+
+  return false;
+}
+
+/**
+ * The Vite+ commands the generated `quality` script runs before Calavera's
+ * own scripts when apply delegates to Vite+, `vp check` and then the tests,
+ * with any Vite+ step left out and why. A workspace root runs every package's
+ * `test` script with `vp run -r test`, the form the `vp create vite:monorepo`
+ * template uses, and leaves the step out when no package defines `test`; any
+ * other project runs `vp test --passWithNoTests`, so a project without test
+ * files passes. A project apply does not delegate to Vite+ gets none
+ * (ADR-0013).
+ *
+ * @param {VitePlusDetection} detection
+ * @param {string} directory
+ * @param {PackageJSON | undefined} packageJSON
+ * @param {PackageManager} packageManager
+ * @returns {Promise<{ steps: string[], omittedSteps: QualityStepOmission[] }>}
+ */
+async function vitePlusQualitySteps(detection, directory, packageJSON, packageManager) {
+  if (!delegatesToVitePlus(detection)) {
+    return { steps: [], omittedSteps: [] };
+  }
+
+  const patterns = await workspacePackagePatterns(directory, packageJSON, packageManager);
+
+  if (!patterns) {
+    return { steps: ["vp check", "vp test --passWithNoTests"], omittedSteps: [] };
+  }
+
+  if (await workspaceDefinesTestScript(directory, packageJSON, patterns)) {
+    return { steps: ["vp check", "vp run -r test"], omittedSteps: [] };
+  }
+
+  return {
+    steps: ["vp check"],
+    omittedSteps: [
+      {
+        step: "vp run -r test",
+        reason:
+          'neither the workspace root nor any workspace member defines a test script, so vp run -r test would fail with Task "test" not found.',
+      },
+    ],
+  };
+}
+
+/**
+ * The commands Calavera put in the Stylelint scripts before 3.0.0, when the
+ * recipe could also select Oxlint (removed in 48fb31e, CAL-012) and ESLint
+ * (removed in d0a69be, CAL-015). Parts were joined with ` && ` in this order.
+ * Releases 1.0.1 to 2.0.6 wrapped each part in the run-if-files helper, which
+ * dd40dc3 stopped generating; 2.1.0 to 2.6.0 wrote the parts bare. The current
+ * value, Stylelint alone, is the one `buildScripts` plans.
+ */
+const historicalLintParts = {
+  lint: ["oxlint .", "eslint .", 'stylelint "**/*.{css,scss}"'],
+  "lint:fix": ["oxlint --fix .", "eslint --fix .", 'stylelint "**/*.{css,scss}" --fix'],
+};
+const historicalLintPartLabels = ["JavaScript/TypeScript", "JavaScript/TypeScript", "CSS"];
+const historicalLintPartExtensions = ["js,jsx,ts,tsx,mjs,cjs", "js,jsx,ts,tsx,mjs,cjs", "css,scss"];
+const stylelintPartIndex = 2;
+
+/**
+ * The values an earlier release wrote for `script` that apply may rename:
+ * each ordered selection of the historical parts that includes the Stylelint
+ * part, bare and wrapped in run-if-files. A selection without Stylelint, such
+ * as `eslint .`, is not renamed even though a release could have written it,
+ * because a user's own script can hold the same value, and renaming it would
+ * replace that script with Stylelint (ADR-0013, Decision 6).
+ *
+ * @param {"lint" | "lint:fix"} script
+ */
+function historicalLintValues(script) {
+  const parts = historicalLintParts[script];
+  /** @type {Set<string>} */
+  const values = new Set();
+
+  for (let selection = 1; selection < 2 ** parts.length; selection += 1) {
+    const indexes = parts.map((_, index) => index).filter((index) => selection & (1 << index));
+    if (!indexes.includes(stylelintPartIndex)) {
+      continue;
+    }
+    values.add(indexes.map((index) => parts[index]).join(" && "));
+    values.add(
+      indexes
+        .map(
+          (index) =>
+            `node .calavera/run-if-files.mjs "${historicalLintPartLabels[index]}" "${historicalLintPartExtensions[index]}" -- ${parts[index]}`,
+        )
+        .join(" && "),
+    );
+  }
+
+  return values;
+}
+
+/**
+ * Generated scripts whose name changed. Before ADR-0013, Calavera wrote the
+ * Stylelint scripts as `lint` and `lint:fix`, and the recipe flags that
+ * request them still carry those names. `inQuality` marks the script the old
+ * `quality` script ran.
+ *
+ * @type {ReadonlyArray<ScriptRename & { from: "lint" | "lint:fix", inQuality: boolean }>}
+ */
+const renamedPackageScripts = Object.freeze([
+  { from: "lint", to: "lint:styles", inQuality: true },
+  { from: "lint:fix", to: "lint:styles:fix", inQuality: false },
+]);
+
+/**
+ * How apply treats scripts under a name Calavera no longer uses, in a project
+ * it applied to before. An old script is Calavera's when its value is exactly
+ * the value planned under the new name or one an earlier release wrote
+ * (`historicalLintValues`). Calavera's script is renamed, keeping its position,
+ * unless the new name already holds a different value, which is the user's:
+ * then nothing is renamed or overwritten (`blocked`). Any other old value is
+ * the user's and is kept (`kept`). Only names the plan writes are considered
+ * (ADR-0013, Decision 6).
+ *
+ * @param {Record<string, string | boolean>} packageScripts
+ * @param {Record<string, string>} plannedScripts
+ */
+function planScriptRenames(packageScripts, plannedScripts) {
+  /** @type {ScriptRename[]} */
+  const renamed = [];
+  /** @type {Array<ScriptRename & { inQuality: boolean }>} */
+  const kept = [];
+  /** @type {ScriptRename[]} */
+  const blocked = [];
+
+  for (const { from, to, inQuality } of renamedPackageScripts) {
+    const value = packageScripts[from];
+
+    if (typeof plannedScripts[to] !== "string" || typeof value !== "string") {
+      continue;
+    }
+
+    if (value !== plannedScripts[to] && !historicalLintValues(from).has(value)) {
+      kept.push({ from, to, inQuality });
+    } else if (
+      typeof packageScripts[to] === "string" &&
+      packageScripts[to] !== plannedScripts[to]
+    ) {
+      blocked.push({ from, to });
+    } else {
+      renamed.push({ from, to });
+    }
+  }
+
+  return { renamed, kept, blocked };
 }
 
 /**
@@ -301,7 +542,7 @@ function installsThroughVitePlus(detection) {
  * @returns {[string, string[]]}
  */
 export function devDependencyInstallCommand(packageManager, detection, dependencies) {
-  return installsThroughVitePlus(detection)
+  return delegatesToVitePlus(detection)
     ? ["vp", ["add", "-D", ...dependencies]]
     : packageManagerCommands[packageManager].installDev(dependencies);
 }
@@ -916,9 +1157,10 @@ async function ensurePackageJSON(packageManager, dryRun, assumeYes, json) {
  * @param {Recipe} recipe
  * @param {Integration[]} integrations
  * @param {PackageManager} packageManager
+ * @param {{ steps: string[], omittedSteps: QualityStepOmission[] }} vitePlusQuality the Vite+ commands `quality` runs first, and those left out, from `vitePlusQualitySteps`
  * @returns {ScriptPlan}
  */
-function buildScripts(recipe, integrations, packageManager) {
+function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   const supportedPackageManager = assertSupportedPackageManager(packageManager);
   /** @param {string} id */
   const has = (id) => integrations.some((integration) => integration.id === id);
@@ -937,22 +1179,26 @@ function buildScripts(recipe, integrations, packageManager) {
   const scripts = {};
   /** @type {ScriptOmission[]} */
   const omittedScripts = [];
+  /** @type {QualityStepOmission[]} */
+  const omittedQualitySteps = [];
 
   if (recipe.scripts?.lint && lintParts.length > 0) {
-    scripts.lint = lintParts.join(" && ");
+    scripts["lint:styles"] = lintParts.join(" && ");
   } else if (recipe.scripts?.lint) {
     omittedScripts.push({
-      script: "lint",
-      reason: "lint was requested but no linting integration is selected.",
+      script: "lint:styles",
+      reason:
+        "lint:styles was requested by the recipe's lint flag, but no CSS linting integration is selected.",
     });
   }
 
   if (recipe.scripts?.["lint:fix"] && lintFixParts.length > 0) {
-    scripts["lint:fix"] = lintFixParts.join(" && ");
+    scripts["lint:styles:fix"] = lintFixParts.join(" && ");
   } else if (recipe.scripts?.["lint:fix"]) {
     omittedScripts.push({
-      script: "lint:fix",
-      reason: "lint:fix was requested but no fix-capable linting integration is selected.",
+      script: "lint:styles:fix",
+      reason:
+        "lint:styles:fix was requested by the recipe's lint:fix flag, but no fix-capable CSS linting integration is selected.",
     });
   }
 
@@ -980,7 +1226,7 @@ function buildScripts(recipe, integrations, packageManager) {
 
   if (recipe.scripts?.quality) {
     const qualityScripts = [
-      "lint",
+      "lint:styles",
       usesHtmlValidate ? "lint:html" : null,
       usesKnip ? "knip" : null,
       usesReactDoctor ? "react:doctor" : null,
@@ -989,10 +1235,16 @@ function buildScripts(recipe, integrations, packageManager) {
       .filter(isNotEmptyString)
       .filter((script) => Boolean(scripts[script]));
 
+    // Without a Calavera script to aggregate, quality would only repeat Vite+
+    // commands, so it is omitted as before (ADR-0013).
     if (qualityScripts.length > 0) {
-      scripts.quality = qualityScripts
-        .map((script) => packageManagerCommands[supportedPackageManager].run(script))
-        .join(" && ");
+      scripts.quality = [
+        ...vitePlusQuality.steps,
+        ...qualityScripts.map((script) =>
+          packageManagerCommands[supportedPackageManager].run(script),
+        ),
+      ].join(" && ");
+      omittedQualitySteps.push(...vitePlusQuality.omittedSteps);
     } else {
       omittedScripts.push({
         script: "quality",
@@ -1001,7 +1253,7 @@ function buildScripts(recipe, integrations, packageManager) {
     }
   }
 
-  return { scripts, omittedScripts };
+  return { scripts, omittedScripts, omittedQualitySteps };
 }
 
 function createEditorConfig() {
@@ -1952,19 +2204,35 @@ export async function inspectProject(recipe, options = {}) {
   }
 
   const packageScripts = packageJSON.scripts ?? {};
+  // Only the values of the scripts compared below are read from this plan, and
+  // none of them depends on the Vite+ steps of quality, so none are planned.
   const plannedScripts =
     recipe && (await fileExists(STATE_FILE))
-      ? buildScripts(recipe, integrations, resolveApplyPackageManager(recipe, {}, packageJSON))
-          .scripts
+      ? buildScripts(recipe, integrations, resolveApplyPackageManager(recipe, {}, packageJSON), {
+          steps: [],
+          omittedSteps: [],
+        }).scripts
       : {};
-  for (const scriptName of ["lint", "lint:fix", "repo:controls:check", "repo:controls:apply"]) {
+  // plannedScripts is empty before the first apply, so nothing is renamed then.
+  const scriptRenames = planScriptRenames(packageScripts, plannedScripts);
+  const blockedNames = new Set(scriptRenames.blocked.map(({ to }) => to));
+  for (const scriptName of [
+    "lint:styles",
+    "lint:styles:fix",
+    "repo:controls:check",
+    "repo:controls:apply",
+  ]) {
+    // The recipe flag that requests a Stylelint script keeps the old name.
+    const flag = renamedPackageScripts.find(({ to }) => to === scriptName)?.from;
     const managedByRecipe = scriptName.startsWith("repo:controls:")
       ? integrationIds.has(GITHUB_REPOSITORY_CONTROLS_ID)
-      : recipe?.scripts?.[scriptName];
+      : flag && recipe?.scripts?.[flag];
     // After an apply, a script that already has the value this recipe sets
-    // is Calavera's own and is not replaced.
+    // is Calavera's own and is not replaced. A blocked rename is reported
+    // below, and apply does not replace that script either.
     if (
       managedByRecipe &&
+      !blockedNames.has(scriptName) &&
       typeof packageScripts[scriptName] === "string" &&
       packageScripts[scriptName] !== plannedScripts[scriptName]
     ) {
@@ -1975,6 +2243,28 @@ export async function inspectProject(recipe, options = {}) {
         message: `package.json already defines "${scriptName}"; Calavera will replace that script if this recipe is applied.`,
       });
     }
+  }
+
+  // ADR-0013, Decision 6: a script under a name Calavera no longer uses.
+  for (const { from, to, inQuality } of scriptRenames.kept) {
+    findings.push({
+      severity: "warning",
+      kind: "legacy-package-script",
+      path: "package.json",
+      message: `package.json defines "${from}", the name Calavera used for this recipe's Stylelint script before it became "${to}". Its value matches no value Calavera wrote for "${from}", so Calavera keeps "${from}" as your own script and writes "${to}" beside it.${
+        inQuality && typeof plannedScripts.quality === "string"
+          ? ` The generated quality script now runs "${to}" instead of "${from}", so your "${from}" no longer runs as part of quality.`
+          : ""
+      }`,
+    });
+  }
+  for (const { from, to } of scriptRenames.blocked) {
+    findings.push({
+      severity: "warning",
+      kind: "legacy-package-script-conflict",
+      path: "package.json",
+      message: `package.json defines "${from}" with a value Calavera wrote, and "${to}" with a value of your own. Calavera does not rename "${from}" to "${to}", because that would overwrite your "${to}"; it keeps both scripts as they are. Until then, the generated quality script runs your "${to}". Rename or remove your "${to}" and apply again to complete the rename.`,
+    });
   }
 
   for (const filePlan of plannedManagedFiles(integrations, recipe?.integrationOptions)) {
@@ -2049,14 +2339,22 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
   const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = resolveApplyPackageManager(recipe, applyOptions, detectedPackageJSON);
   assertRootOnlyIntegrationsAtRepositoryRoot(integrations, process.cwd(), packageManager);
-  // The install is planned before anything is written, including package.json,
-  // from one detection, so the dry run and the apply that follows it name the
-  // same command, and a project whose vite-plus cannot be located stops here.
+  // The install and the quality script are planned before anything is
+  // written, including package.json, from one detection, so the dry run and
+  // the apply that follows it name the same command and write the same
+  // script, and a project whose vite-plus cannot be located stops here.
+  const vitePlusDetection = await detectVitePlus(process.cwd());
+  const vitePlusQuality = await vitePlusQualitySteps(
+    vitePlusDetection,
+    process.cwd(),
+    detectedPackageJSON,
+    packageManager,
+  );
   const installPlan =
     dependencyList.length > 0 && !(applyOptions.noInstall && !applyOptions.dryRun)
       ? await planDevDependencyInstall(
           packageManager,
-          await detectVitePlus(process.cwd()),
+          vitePlusDetection,
           dependencyList,
           process.cwd(),
           { explicitPackageManager: applyOptions.packageManager !== undefined },
@@ -2076,8 +2374,8 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
   const projectInspection = await inspectProject(recipe, {
     reownManagedFiles: applyOptions.reownManagedFiles,
   });
-  const scriptPlan = buildScripts(recipe, integrations, packageManager);
-  const { scripts, omittedScripts } = scriptPlan;
+  const scriptPlan = buildScripts(recipe, integrations, packageManager, vitePlusQuality);
+  const { scripts, omittedScripts, omittedQualitySteps } = scriptPlan;
   /** @type {Change[]} */
   const changes = [];
   /** @type {ManagedFileState[]} */
@@ -2124,9 +2422,33 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     await writeJSON(configPath, recipe, applyOptions.dryRun || configUnchanged);
   }
 
+  // ADR-0013, Decision 6: only after an earlier apply is a script under its
+  // old name Calavera's to rename. A rename that would overwrite the user's
+  // script under the new name does not happen, and that script is not written.
+  const { renamed: renamedScripts, blocked: blockedRenames } = previouslyApplied
+    ? planScriptRenames(packageJSON.scripts ?? {}, scripts)
+    : { renamed: [], blocked: [] };
+  for (const { from, to } of blockedRenames) {
+    delete scripts[to];
+    omittedScripts.push({
+      script: to,
+      reason: `package.json defines ${to} with a value of your own, and ${from} still has the value Calavera wrote, so Calavera keeps both instead of renaming ${from}; the generated quality script runs your ${to}.`,
+    });
+  }
+  if (renamedScripts.length > 0) {
+    // The renamed script keeps the position the old name had.
+    const newNames = new Map(renamedScripts.map(({ from, to }) => [from, to]));
+    packageJSON.scripts = Object.fromEntries(
+      Object.entries(packageJSON.scripts ?? {}).map(([name, value]) => {
+        const newName = newNames.get(name);
+        return newName ? [newName, scripts[newName] ?? value] : [name, value];
+      }),
+    );
+  }
   const packageJSONUnchanged =
     previouslyApplied &&
     !removedDefaultTestScript &&
+    renamedScripts.length === 0 &&
     Object.entries(scripts).every(([name, script]) => packageJSON.scripts?.[name] === script);
   packageJSON.scripts = {
     ...packageJSON.scripts,
@@ -2140,6 +2462,8 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     scripts: Object.keys(scripts),
     omittedScripts,
     removedDefaultTestScript,
+    ...(renamedScripts.length > 0 ? { renamedScripts } : {}),
+    ...(omittedQualitySteps.length > 0 ? { omittedQualitySteps } : {}),
   });
 
   if (integrations.some((integration) => integration.id === "editorconfig")) {
@@ -4071,6 +4395,10 @@ function printResult(result, asJSON = false, commandDryRun = false) {
         for (const omittedScript of change.omittedScripts ?? []) {
           logger.info(`Would omit script ${omittedScript.script}: ${omittedScript.reason}`);
         }
+
+        for (const { step, reason } of change.omittedQualitySteps ?? []) {
+          logger.info(`Would omit ${step} from script quality: ${reason}`);
+        }
       }
 
       if (change.type === "update") {
@@ -4084,8 +4412,16 @@ function printResult(result, asJSON = false, commandDryRun = false) {
           logger.info("Would remove the default npm test placeholder script");
         }
 
+        for (const { from, to } of change.renamedScripts ?? []) {
+          logger.info(`Would rename script ${from} to ${to}`);
+        }
+
         for (const omittedScript of change.omittedScripts ?? []) {
           logger.info(`Would omit script ${omittedScript.script}: ${omittedScript.reason}`);
+        }
+
+        for (const { step, reason } of change.omittedQualitySteps ?? []) {
+          logger.info(`Would omit ${step} from script quality: ${reason}`);
         }
       }
     }
