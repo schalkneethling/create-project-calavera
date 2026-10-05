@@ -1,5 +1,19 @@
 # create-project-calavera
 
+## 4.1.0
+
+### Minor Changes
+
+- 6d0aa9a: `create-project-calavera` now declares the Node.js versions it supports in `engines.node`: `^22.18.0 || ^24.11.0 || >=26.0.0`, the same range Vite+ 1.0.0 requires and `--new` already relies on. On a Node.js version outside that range, `create-project-calavera` and `create-project-calavera-mcp` print one line that names the required range and exit with a non-zero code. This refuses Node.js 22.0 to 22.17, 23, 24.0 to 24.10, and 25, some of which ran the CLI before, for example `--help` on Node.js 22.16. Older versions, such as Node.js 20, previously crashed while loading the CLI with an error that did not name the cause. Prereleases, such as nightlies and release candidates, of a supported line are accepted.
+
+  The package's bin entries now point at `bin/create-project-calavera.js` and `bin/create-project-calavera-mcp.js`, which check the version before they load the CLI; the commands keep their names. The `--new` confirmation no longer lists the Vite+ Node.js requirement, and its hard stop no longer explains a Node.js below that requirement, because the bin now refuses such a Node.js before `--new` runs.
+
+  In the package's `src/index.js` module export, `nodeMeetsVitePlusFloor` is removed, and `runCli`, which runs the CLI with the process arguments, is added.
+
+- 0f154b8: In a project Vite+ manages, the generated `quality` script now runs `vp check` and `vp test --passWithNoTests` before Calavera's own scripts, for example `vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip`. At a workspace root, the test step is `vp run -r test`, which runs the `test` script of the root and of each member; for pnpm that is a directory whose `pnpm-workspace.yaml` lists `packages`, and for npm, Yarn, and Bun one whose `package.json` lists `workspaces`. When no package in the workspace defines a `test` script, `quality` leaves that step out, and the dry run reports it as `Would omit vp run -r test from script quality: ...`, carried in the new `omittedQualitySteps` field of the `package.json` change. Projects Vite+ does not manage keep a `quality` script without `vp`, and no other generated script calls `vp`.
+
+  The Stylelint scripts are renamed from `lint` and `lint:fix` to `lint:styles` and `lint:styles:fix`, leaving `lint:css` to css-evolve; the recipe flags `lint` and `lint:fix` keep their names. In a project Calavera applied to before, the next apply renames a `lint` or `lint:fix` script whose value is exactly one Calavera wrote, in this release or an earlier one, including the Oxlint, ESLint, and run-if-files values of releases before 3.0.0 that also ran Stylelint, and keeps its position. `apply --dry-run` shows it, for example `Would rename script lint to lint:styles`, and `dry_run_apply` and `apply --dry-run --json` carry the new `renamedScripts` field on the `package.json` change. Any other `lint` or `lint:fix` is kept as your own, with a `legacy-package-script` warning that says your `lint` no longer runs as part of `quality`. When you already have your own `lint:styles` or `lint:styles:fix`, apply renames nothing, overwrites nothing, and warns with `legacy-package-script-conflict`; `quality` then runs your own `lint:styles`. Update anything that runs `lint` or `lint:fix`, such as a CI workflow, to `lint:styles` or `vp lint`. See [ADR-0013](../docs/adr/0013-quality-runs-vite-plus-checks.md).
+
 ## 4.0.2
 
 ### Patch Changes
