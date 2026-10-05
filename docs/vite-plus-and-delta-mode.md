@@ -25,9 +25,13 @@ advisory:
 
 Generated package scripts should stay ordinary package-manager scripts. Calavera
 should not replace them with `vp` commands or assume that a Vite+ project wants a
-different lint, format, or typecheck command. If Vite+-specific behavior becomes
-useful later, it should be modeled as an explicit catalog integration so the CLI
-and composer can expose it consistently.
+different lint, format, or typecheck command. The one exception is the
+aggregate `quality` script: in a Vite+-managed project it runs `vp check` and
+the Vite+ test step before Calavera's own scripts, and no other generated script
+calls `vp` ([ADR-0013](adr/0013-quality-runs-vite-plus-checks.md)). If
+Vite+-specific behavior becomes useful later, it should be modeled as an
+explicit catalog integration so the CLI and composer can expose it
+consistently.
 
 ## Delta Workflows
 

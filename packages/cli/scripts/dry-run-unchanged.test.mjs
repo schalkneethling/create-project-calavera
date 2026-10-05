@@ -104,7 +104,7 @@ test("the CLI dry run names each unchanged file and says there is nothing to cha
 
     assert.match(stdout, /Unchanged \.editorconfig/);
     assert.match(stdout, /Unchanged package\.json/);
-    assert.match(stdout, /Scripts already set: lint, lint:fix, knip/);
+    assert.match(stdout, /Scripts already set: lint:styles, lint:styles:fix, knip/);
     assert.match(stdout, /Nothing to change: the project already matches this recipe\./);
     assert.doesNotMatch(stdout, /Would (write|update)/);
   });
@@ -165,8 +165,8 @@ test("a recorded script the user changed keeps the existing-package-script warni
   await inProject(async () => {
     await applyRecipeObject(recipe, applyOptions);
     const packageJSON = JSON.parse(await readFile("package.json", "utf8"));
-    const lint = packageJSON.scripts.lint;
-    packageJSON.scripts.lint = "stylelint src";
+    const lint = packageJSON.scripts["lint:styles"];
+    packageJSON.scripts["lint:styles"] = "stylelint src";
     await writeFile("package.json", `${JSON.stringify(packageJSON, null, 2)}\n`);
 
     const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true });
@@ -180,13 +180,13 @@ test("a recorded script the user changed keeps the existing-package-script warni
         {
           kind: "existing-package-script",
           message:
-            'package.json already defines "lint"; Calavera will replace that script if this recipe is applied.',
+            'package.json already defines "lint:styles"; Calavera will replace that script if this recipe is applied.',
         },
       ],
     );
     assert.equal(dryRun.changes.find(({ path }) => path === "package.json")?.type, "update");
 
     await applyRecipeObject(recipe, applyOptions);
-    assert.equal(JSON.parse(await readFile("package.json", "utf8")).scripts.lint, lint);
+    assert.equal(JSON.parse(await readFile("package.json", "utf8")).scripts["lint:styles"], lint);
   });
 });

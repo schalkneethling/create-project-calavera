@@ -518,6 +518,21 @@ install command. Other projects keep their package manager's command, such as
 it. See [`docs/vite-plus.md`](docs/vite-plus.md) and
 [ADR-0012](docs/adr/0012-vp-add-installs-dev-dependencies-in-managed-projects.md).
 
+In a project Vite+ manages, the generated `quality` script runs `vp check` and
+`vp test --passWithNoTests` before Calavera's own scripts, for example
+`vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip`. At a
+workspace root, the test step is `vp run -r test`, which runs each member's
+`test` script, and leaves the step out when no package defines `test`. Other
+projects keep a `quality` script without `vp`. Calavera writes no script that
+repeats a `vp` command on its own, and does not add Playwright or other test
+suites to `quality`. The Stylelint scripts are `lint:styles` and
+`lint:styles:fix`. In a project that has `.calavera/state.json` from an earlier
+apply, a later apply renames a `lint` or `lint:fix` script whose value is
+exactly one Calavera wrote with Stylelint; it keeps any other value as your own,
+and never overwrites a `lint:styles` of your own. Without that state file,
+`lint` and `lint:fix` are not renamed. See
+[ADR-0013](docs/adr/0013-quality-runs-vite-plus-checks.md).
+
 See [`docs/vite-plus-and-delta-mode.md`](docs/vite-plus-and-delta-mode.md) for
 the Vite+ design boundary and delta workflow guidance.
 

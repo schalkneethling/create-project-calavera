@@ -8,7 +8,7 @@
 // or a stand-in package manager first on PATH, records what apply ran.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, stat, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -371,6 +371,12 @@ test("in a workspace member without its own package.json under a Vite+ workspace
   assert.deepEqual(await readStubInvocations(workspace.vpLog), [
     { argv: ["add", "-D", "knip"], cwd: workspace.project },
   ]);
+  // #622 and ADR-0013: the quality script follows the same decision as the
+  // install, so the new member runs the Vite+ checks.
+  assert.equal(
+    JSON.parse(await readFile(join(workspace.project, "package.json"), "utf8")).scripts.quality,
+    "vp check && vp test --passWithNoTests && pnpm knip",
+  );
 });
 
 test("a Vite+-managed project without vite-plus installed: the dry run reports it, and apply stops before writing anything", async () => {

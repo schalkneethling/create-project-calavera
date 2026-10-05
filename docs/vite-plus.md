@@ -188,6 +188,49 @@ directory like this was not scaffolded by `vp create`, which always writes a
 `node_modules`. The development dependency install that follows still goes
 through `vp add -D` (ADR-0012, Decision 1).
 
+## What the quality script runs
+
+In a project Calavera delegates to Vite+, the same projects whose development
+dependencies `vp add -D` installs, the generated `quality` script runs the
+Vite+ checks first and then Calavera's own scripts, each only when its
+integration is selected, with the package manager's run command
+(ADR-0013, Decision):
+
+```text
+vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm lint:html && pnpm knip && pnpm react:doctor && pnpm env:load
+```
+
+`vp check` runs the format, lint, and type checks once. `vp test` runs the
+tests once rather than in watch mode, and `--passWithNoTests` keeps a project
+without test files, such as a new one, from failing `quality`. At a workspace
+root, the test step is `vp run -r test` instead, the form the
+`vp create vite:monorepo` template uses in its `ready` script: it runs the
+`test` script of the root and of each member, with that member's
+configuration. For pnpm, a workspace root is a directory whose
+`pnpm-workspace.yaml` lists `packages`; for npm, Yarn, and Bun, it is one whose
+`package.json` lists `workspaces`. When neither the root nor any member
+defines a `test` script, `vp run -r test` would fail with
+`Task "test" not found`, so `quality` leaves the step out, and the dry run
+says so, for example
+`Would omit vp run -r test from script quality: neither the workspace root nor any workspace member defines a test script, ...`.
+
+A project Vite+ does not manage keeps a `quality` script without `vp`. No
+other generated script calls `vp`, so Calavera writes no script that repeats a
+`vp` command. Playwright and other test suites are not part of `quality`; add
+them to your own scripts.
+
+The Stylelint scripts are `lint:styles` and `lint:styles:fix`. A project Calavera
+applied to before this change has them as `lint` and `lint:fix`. The next
+apply renames each one whose value is exactly a value Calavera wrote for it
+that runs Stylelint, in this release or an earlier one, and keeps its position
+in `scripts`; the
+dry run shows it, for example `Would rename script lint to lint:styles`. Any
+other `lint` or `lint:fix` is kept as your own, Calavera writes `lint:styles`
+beside it, and the dry run warns that your `lint` no longer runs as part of
+`quality`. When you already have a `lint:styles` of your own, Calavera renames
+nothing and overwrites nothing, the dry run warns about it, and `quality` runs
+your `lint:styles`.
+
 ## Profiles
 
 Calavera offers two profiles. `default` composes `editorconfig`, `stylelint`,

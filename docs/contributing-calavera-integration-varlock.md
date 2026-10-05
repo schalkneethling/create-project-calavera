@@ -77,12 +77,13 @@ The matching recipe entry a project developer would write is intentionally small
 ```json
 {
   "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
+  "version": 1,
   "profile": "default",
   "packageManager": "pnpm",
   "integrations": ["editorconfig", "knip", "stylelint", "varlock"],
   "scripts": {
     "lint": true,
-    "format:check": true,
+    "lint:fix": true,
     "quality": true
   }
 }
@@ -135,17 +136,20 @@ Use the tool's real validation command as the script body. Varlock uses
 `varlock load` because it prints the resolved redacted environment and exits
 non-zero on schema violations.
 
-For a `pnpm` project that already has lint and format scripts, the
+For a `pnpm` project that Vite+ does not manage, with the recipe above, the
 Varlock-specific result should look like this:
 
 ```json
 {
   "scripts": {
     "env:load": "varlock load",
-    "quality": "pnpm lint && pnpm format:check && pnpm env:load"
+    "quality": "pnpm lint:styles && pnpm knip && pnpm env:load"
   }
 }
 ```
+
+In a Vite+-managed project, `quality` runs `vp check` and the Vite+ tests
+before these scripts ([ADR-0013](adr/0013-quality-runs-vite-plus-checks.md)).
 
 The important shape is that Varlock gets its own readable script, and the
 aggregate script invokes it through the selected package manager.
@@ -265,7 +269,11 @@ developers are expected to edit.
 Dry-run output should also describe the intent accurately. The current
 `apply --dry-run --json` payload uses the shared `changes` shape from
 [`packages/cli/src/index.js`](../packages/cli/src/index.js): `type`, `path`, and optional fields such as
-`action`, `ownership`, `scripts`, and `removedDefaultTestScript`.
+`action`, `ownership`, `scripts`, `omittedScripts`, `removedDefaultTestScript`,
+`renamedScripts`, which lists the scripts apply renames, such as `lint` to
+`lint:styles` in a project an earlier release applied to, and
+`omittedQualitySteps`, which lists the Vite+ steps the generated `quality`
+script leaves out and why.
 
 A useful dry-run result for a fresh project would therefore include changes like:
 
@@ -274,25 +282,35 @@ A useful dry-run result for a fresh project would therefore include changes like
   "command": "apply",
   "dryRun": true,
   "packageManager": "pnpm",
-  "dependencies": ["knip", "stylelint", "varlock"],
-  "integrations": ["editorconfig", "knip", "stylelint", "varlock"],
+  "dependencies": ["knip", "varlock", "stylelint"],
+  "integrations": ["editorconfig", "knip", "varlock", "stylelint"],
   "changes": [
     {
       "type": "update",
       "path": "package.json",
-      "scripts": ["lint", "format:check", "knip", "env:load", "quality"]
+      "action": "update",
+      "ownership": "project",
+      "scripts": ["lint:styles", "lint:styles:fix", "knip", "env:load", "quality"],
+      "omittedScripts": [],
+      "removedDefaultTestScript": false
     },
     {
       "type": "write",
-      "path": ".editorconfig"
+      "path": ".editorconfig",
+      "action": "write",
+      "ownership": "calavera"
     },
     {
       "type": "write",
-      "path": ".stylelintrc.json"
+      "path": ".stylelintrc.json",
+      "action": "write",
+      "ownership": "calavera"
     },
     {
       "type": "write",
-      "path": "knip.json"
+      "path": "knip.json",
+      "action": "write",
+      "ownership": "calavera"
     },
     {
       "type": "write",
@@ -317,10 +335,10 @@ The corresponding human output should follow the current dry-run printer:
 
 ```text
 Would update package.json
-Would add scripts: lint, format:check, knip, env:load, quality
-Would write .editorconfig
-Would write .stylelintrc.json
-Would write knip.json
+Would add scripts: lint:styles, lint:styles:fix, knip, env:load, quality
+Would write and own .editorconfig
+Would write and own .stylelintrc.json
+Would write and own knip.json
 Would scaffold .env.schema
 Would update .gitignore
 ```

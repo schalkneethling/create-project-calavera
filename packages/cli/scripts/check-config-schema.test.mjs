@@ -2310,8 +2310,9 @@ test("apply dry runs explain omitted scripts and managed ownership", async () =>
     assert.equal(
       packageChange?.omittedScripts?.some(
         ({ script, reason }) =>
-          script === "lint" &&
-          reason === "lint was requested but no linting integration is selected.",
+          script === "lint:styles" &&
+          reason ===
+            "lint:styles was requested by the recipe's lint flag, but no CSS linting integration is selected.",
       ),
       true,
     );
@@ -2354,8 +2355,8 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     });
 
     const packageFile = JSON.parse(await readFile("package.json", "utf8"));
-    assert.equal(packageFile.scripts.lint, 'stylelint "**/*.{css,scss}"');
-    assert.equal(packageFile.scripts["lint:fix"], 'stylelint "**/*.{css,scss}" --fix');
+    assert.equal(packageFile.scripts["lint:styles"], 'stylelint "**/*.{css,scss}"');
+    assert.equal(packageFile.scripts["lint:styles:fix"], 'stylelint "**/*.{css,scss}" --fix');
     assert.doesNotMatch(JSON.stringify(packageFile.scripts), /run-if-files/);
     const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist/**"), true);
@@ -2992,7 +2993,7 @@ test("apply dry-run human output distinguishes owned writes and omitted scripts"
     assert.match(stdout, /Would write and own \.editorconfig/);
     assert.match(
       stdout,
-      /Would omit script lint: lint was requested but no linting integration is selected\./,
+      /Would omit script lint:styles: lint:styles was requested by the recipe's lint flag, but no CSS linting integration is selected\./,
     );
   } finally {
     process.chdir(originalDirectory);
