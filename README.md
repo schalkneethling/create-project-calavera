@@ -526,9 +526,11 @@ workspace root, the test step is `vp run -r test`, which runs each member's
 projects keep a `quality` script without `vp`. Calavera writes no script that
 repeats a `vp` command on its own, and does not add Playwright or other test
 suites to `quality`. The Stylelint scripts are `lint:styles` and
-`lint:styles:fix`. A later apply renames a `lint` or `lint:fix` script whose
-value is exactly one Calavera wrote; it keeps any other value as your own, and
-never overwrites a `lint:styles` of your own. See
+`lint:styles:fix`. In a project that has `.calavera/state.json` from an earlier
+apply, a later apply renames a `lint` or `lint:fix` script whose value is
+exactly one Calavera wrote with Stylelint; it keeps any other value as your own,
+and never overwrites a `lint:styles` of your own. Without that state file,
+`lint` and `lint:fix` are not renamed. See
 [ADR-0013](docs/adr/0013-quality-runs-vite-plus-checks.md).
 
 See [`docs/vite-plus-and-delta-mode.md`](docs/vite-plus-and-delta-mode.md) for
