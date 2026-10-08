@@ -632,6 +632,60 @@ test("--new names the terminating signal when the runner is killed", async () =>
   ]);
 });
 
+const npxCacheHint = /This applies only if the npm output above shows "npm error code ERESOLVE"/;
+
+/**
+ * @param {string} packageManager
+ * @param {{ exitCode: number | null, signal?: string }} exit
+ * @returns {Promise<string>}
+ */
+async function failedNewMessage(packageManager, exit) {
+  await using workspace = await createTemporaryWorkspace(`hint-${packageManager}`);
+  const previousCwd = process.cwd();
+
+  process.chdir(workspace.work);
+
+  try {
+    const error = await newProject(
+      parseArgs(["--yes", "--package-manager", packageManager, "--new", "vite:library"]),
+      { spawnRunner: async () => exit },
+    ).then(
+      () => assert.fail("expected --new to fail"),
+      (rejection) => rejection,
+    );
+
+    return error.message;
+  } finally {
+    process.chdir(previousCwd);
+  }
+}
+
+test("--new adds the npx stale-cache hint when npm exits non-zero", async () => {
+  const message = await failedNewMessage("npm", { exitCode: 1 });
+
+  assert.match(message, /exited with code 1/);
+  assert.match(message, npxCacheHint);
+  assert.match(message, /"npm cache npx ls"/);
+  assert.match(message, /"npm cache npx rm <key>"/);
+});
+
+test("--new keeps the npx hint and the signal when npm is killed", async () => {
+  const message = await failedNewMessage("npm", { exitCode: null, signal: "SIGTERM" });
+
+  assert.match(message, /terminated by signal SIGTERM/);
+  assert.match(message, npxCacheHint);
+});
+
+for (const packageManager of ["pnpm", "yarn", "bun"]) {
+  test(`--new does not show the npx hint for ${packageManager}`, async () => {
+    const message = await failedNewMessage(packageManager, { exitCode: 1 });
+
+    assert.match(message, /exited with code 1/);
+    assert.doesNotMatch(message, /npm cache npx/);
+    assert.equal(/yarn dlx needs Yarn 2/.test(message), packageManager === "yarn");
+  });
+}
+
 // A valid recipe with deliberately unusual formatting, so a copy that
 // re-serializes the JSON instead of copying the bytes fails the comparison.
 const recipeSource =
