@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { profileDefaults, projectLocalCommandSteps } from "../../../packages/cli/src/recipe.js";
+import {
+  composeRecipeResponse,
+  profileDefaults,
+  projectLocalCommandSteps,
+} from "../../../packages/cli/src/recipe.js";
 import {
   assertPublishedCliCompatibility,
   commaSeparatedValues,
@@ -150,6 +154,22 @@ test("the published CLI guard refuses html-validate options below CLI 4.2.0", ()
       "4.1.0",
     ),
   );
+});
+
+test("WebMCP compose_recipe with quality true records no html-validate option and suits CLI 4.1.0", () => {
+  for (const options of [{ quality: true }, {}]) {
+    const { recipe } = composeRecipeResponse(
+      {
+        profile: "minimal",
+        tools: ["html-validate"],
+        integrationOptions: { "html-validate": options },
+      },
+      { browser: true },
+    );
+
+    assert.equal(recipe.integrationOptions, undefined);
+    assert.deepEqual(assertPublishedCliCompatibility(recipe, "4.1.0"), recipe);
+  }
 });
 
 test("next commands follow the package manager and default to npm", () => {

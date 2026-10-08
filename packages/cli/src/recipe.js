@@ -538,7 +538,11 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
       throw new Error("integrationOptions.html-validate.quality must be a boolean.");
     }
 
-    normalized["html-validate"] = { quality };
+    // Only the non-default choice is recorded, so a recipe that keeps lint:html
+    // in quality stays valid for a CLI release that predates the option.
+    if (!quality) {
+      normalized["html-validate"] = { quality };
+    }
   }
 
   if (Object.hasOwn(integrationOptions, GITHUB_REPOSITORY_CONTROLS_ID)) {

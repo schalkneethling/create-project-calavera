@@ -6,34 +6,44 @@
 // matches and has no option to allow empty input, so a project without static
 // HTML files would fail `lint:html`. HTML Validate's own file expansion decides
 // what matches, so `.htmlvalidateignore` applies here as it does in the CLI.
+// With any option, such as `--stdin` or `--ext`, the arguments are passed to
+// `html-validate` unchanged and the empty-input check is skipped.
 import { spawnSync } from "node:child_process";
 import { createRequire } from "node:module";
 import { dirname, join } from "node:path";
 
 import { CLI } from "html-validate";
 
-const patterns = process.argv.slice(2);
+const args = process.argv.slice(2);
 
-if (patterns.length === 0) {
+if (args.length === 0) {
   process.stderr.write('Pass the HTML files or patterns to validate, for example "**/*.html".\n');
   process.exit(2);
 }
 
-const files = await new CLI().expandFiles(patterns);
+// A lone "-" reads standard input and is a file argument, not an option.
+const hasOption = args.some((arg) => arg.startsWith("-") && arg !== "-");
+const files = hasOption ? [] : await new CLI().expandFiles(args);
 
-if (files.length === 0) {
+if (!hasOption && files.length === 0) {
   process.stdout.write(
-    `No files match ${patterns.join(" ")}, so HTML Validate has nothing to check.\n`,
+    `No files match ${args.join(" ")}, so HTML Validate has nothing to check.\n`,
   );
 } else {
   const require = createRequire(import.meta.url);
   const manifestPath = require.resolve("html-validate/package.json");
   const { bin } = require(manifestPath);
-  const result = spawnSync(
-    process.execPath,
-    [join(dirname(manifestPath), bin["html-validate"]), ...patterns],
-    { stdio: "inherit" },
-  );
+  const binPath = typeof bin === "string" ? bin : bin?.["html-validate"];
+
+  if (typeof binPath !== "string") {
+    throw new Error(
+      `The installed html-validate package names no html-validate binary, so lint:html cannot run it. Check ${manifestPath}.`,
+    );
+  }
+
+  const result = spawnSync(process.execPath, [join(dirname(manifestPath), binPath), ...args], {
+    stdio: "inherit",
+  });
 
   if (result.error) {
     throw new Error(`Could not run html-validate: ${result.error.message}`, {
@@ -41,5 +51,10 @@ if (files.length === 0) {
     });
   }
 
-  process.exitCode = result.status ?? 1;
+  if (result.signal) {
+    process.stderr.write(`html-validate stopped on signal ${result.signal}.\n`);
+    process.exitCode = 1;
+  } else {
+    process.exitCode = result.status ?? 1;
+  }
 }
