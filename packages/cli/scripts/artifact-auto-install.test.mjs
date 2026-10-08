@@ -47,7 +47,7 @@ function recipeWith(ids) {
  * `releases`, and records every resolve request.
  *
  * @param {Map<string, string>} releases
- * @param {{ failFor?: string, error?: Error, registry?: { host: string, source: string }, warnings?: string[] }} [options]
+ * @param {{ failFor?: string, error?: Error, registry?: { origin: string, source: string }, warnings?: string[] }} [options]
  */
 function stubRegistry(releases, options = {}) {
   /** @type {{ id: string, version?: string }[]} */
@@ -173,7 +173,7 @@ test("apply --dry-run reports the registry artifacts resolve from and the npm co
         ["hook-block-dangerous-commands", "0.4.0"],
       ]),
       {
-        registry: { host: "npm.example.com", source: "project .npmrc" },
+        registry: { origin: "https://npm.example.com", source: "project .npmrc" },
         warnings: ["Ignored //npm.example.com/:_authToken in the project .npmrc."],
       },
     );
@@ -181,7 +181,7 @@ test("apply --dry-run reports the registry artifacts resolve from and the npm co
 
     const result = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
     assert.deepEqual(result.artifactRegistries, [
-      { host: "npm.example.com", source: "project .npmrc" },
+      { origin: "https://npm.example.com", source: "project .npmrc" },
     ]);
     assert.deepEqual(result.artifactWarnings, [
       "Ignored //npm.example.com/:_authToken in the project .npmrc.",
