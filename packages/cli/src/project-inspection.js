@@ -13,7 +13,7 @@ export const integrationConfigFiles = Object.freeze({
     "scripts/repository-controls.mjs",
     "docs/repository-controls.md",
   ],
-  "html-validate": [".htmlvalidate.json", ".htmlvalidateignore"],
+  "html-validate": [".htmlvalidate.json", ".htmlvalidateignore", "scripts/lint-html.mjs"],
   knip: ["knip.json"],
   "react-doctor": ["react-doctor.config.json"],
   stylelint: [".stylelintrc.json"],

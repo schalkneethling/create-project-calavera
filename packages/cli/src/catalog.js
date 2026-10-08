@@ -32,6 +32,8 @@ export const integrationCatalog = [
     platform: "html-validate",
     status: "optional",
     minimumCliVersion: "2.3.0",
+    // integrationOptions["html-validate"] arrived later than the integration (#644).
+    optionsMinimumCliVersion: "4.2.0",
     dependencies: ["html-validate"],
     htmlValidate: {
       extends: ["html-validate:recommended", "html-validate:document"],

@@ -91,7 +91,7 @@ test("assertNoDuplicateVpCommand rejects vp, vpr, and vite duplicates and accept
   for (const [name, script] of [
     ["quality", "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip"],
     ["quality", "vp check && vp run -r test && pnpm lint:styles"],
-    ["lint:styles", 'stylelint "**/*.{css,scss}"'],
+    ["lint:styles", 'stylelint "**/*.{css,scss}" --allow-empty-input'],
     ["knip", "knip"],
   ]) {
     assertNoDuplicateVpCommand(name, script);

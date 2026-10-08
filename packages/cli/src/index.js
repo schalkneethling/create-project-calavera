@@ -64,7 +64,13 @@ import {
 } from "./recipe.js";
 import { assertKnownValue } from "./utils/assertions.js";
 import { FileWriteError } from "./utils/file-write-error.js";
-import { assertWorkspacePath, fileExists, readJSON, writeJSON } from "./utils/fs.js";
+import {
+  assertWorkspacePath,
+  fileExists,
+  readBoundedTemplate,
+  readJSON,
+  writeJSON,
+} from "./utils/fs.js";
 import { isNotEmptyString, isPlainObject } from "./utils/guards.js";
 import { textHash } from "./utils/hash.js";
 import { logger } from "./utils/logger.js";
@@ -143,7 +149,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string} [profile]
  * @property {PackageManager} [packageManager]
  * @property {string[]} [integrations]
- * @property {Record<string, unknown>} [integrationOptions]
+ * @property {Record<string, unknown> & { "html-validate"?: { quality: boolean } }} [integrationOptions]
  * @property {Record<string, boolean>} [scripts]
  * @property {unknown} [ai]
  *
@@ -235,6 +241,10 @@ const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/"
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const HTML_VALIDATE_IGNORE = "node_modules/\ndist/\ncoverage/\n";
+// html-validate exits 1 when no file matches, so lint:html runs it through
+// this wrapper, which passes when there is nothing to check (#644).
+const HTML_VALIDATE_WRAPPER_PATH = "scripts/lint-html.mjs";
+const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
 
@@ -1172,9 +1182,14 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   const usesVarlock = has("varlock");
   const usesGithubRepositoryControls = has(GITHUB_REPOSITORY_CONTROLS_ID);
 
-  const lintParts = [usesStylelint ? 'stylelint "**/*.{css,scss}"' : null].filter(Boolean);
+  // --allow-empty-input keeps a project without CSS files passing (#644).
+  const lintParts = [
+    usesStylelint ? 'stylelint "**/*.{css,scss}" --allow-empty-input' : null,
+  ].filter(Boolean);
 
-  const lintFixParts = [usesStylelint ? 'stylelint "**/*.{css,scss}" --fix' : null].filter(Boolean);
+  const lintFixParts = [
+    usesStylelint ? 'stylelint "**/*.{css,scss}" --allow-empty-input --fix' : null,
+  ].filter(Boolean);
 
   /** @type {Record<string, string>} */
   const scripts = {};
@@ -1213,7 +1228,7 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   }
 
   if (usesHtmlValidate) {
-    scripts["lint:html"] = 'html-validate "**/*.html"';
+    scripts["lint:html"] = `node ${HTML_VALIDATE_WRAPPER_PATH} "**/*.html"`;
   }
 
   if (usesVarlock) {
@@ -1226,9 +1241,10 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   }
 
   if (recipe.scripts?.quality) {
+    const htmlInQuality = recipe.integrationOptions?.["html-validate"]?.quality !== false;
     const qualityScripts = [
       "lint:styles",
-      usesHtmlValidate ? "lint:html" : null,
+      usesHtmlValidate && htmlInQuality ? "lint:html" : null,
       usesKnip ? "knip" : null,
       usesReactDoctor ? "react:doctor" : null,
       usesVarlock ? "env:load" : null,
@@ -1246,6 +1262,13 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
         ),
       ].join(" && ");
       omittedQualitySteps.push(...vitePlusQuality.omittedSteps);
+      if (usesHtmlValidate && !htmlInQuality) {
+        omittedQualitySteps.push({
+          step: "lint:html",
+          reason:
+            'the recipe sets integrationOptions["html-validate"].quality to false, so quality does not validate HTML files.',
+        });
+      }
     } else {
       omittedScripts.push({
         script: "quality",
@@ -1255,6 +1278,10 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   }
 
   return { scripts, omittedScripts, omittedQualitySteps };
+}
+
+function createHtmlValidateWrapper() {
+  return readBoundedTemplate(HTML_VALIDATE_WRAPPER_TEMPLATE, "HTML Validate wrapper");
 }
 
 function createEditorConfig() {
@@ -1931,6 +1958,7 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
       contents: `${JSON.stringify(createHtmlValidateConfig(integrations), null, 2)}\n`,
     });
     plans.push({ path: ".htmlvalidateignore", contents: HTML_VALIDATE_IGNORE });
+    plans.push({ path: HTML_VALIDATE_WRAPPER_PATH, contents: createHtmlValidateWrapper() });
   }
 
   if (integrations.some((integration) => integration.id === "react-doctor")) {
@@ -2556,6 +2584,16 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
       await writeManagedFile(
         ".htmlvalidateignore",
         HTML_VALIDATE_IGNORE,
+        applyOptions.dryRun,
+        changes,
+        previousState,
+        reownManagedFiles,
+      ),
+    );
+    managedFiles.push(
+      await writeManagedFile(
+        HTML_VALIDATE_WRAPPER_PATH,
+        createHtmlValidateWrapper(),
         applyOptions.dryRun,
         changes,
         previousState,
@@ -3897,6 +3935,9 @@ async function doctor(options) {
       integrations.some((integration) => integration.id === "html-validate")
         ? ".htmlvalidateignore"
         : null,
+      integrations.some((integration) => integration.id === "html-validate")
+        ? HTML_VALIDATE_WRAPPER_PATH
+        : null,
       integrations.some((integration) => integration.id === "react-doctor")
         ? "react-doctor.config.json"
         : null,
@@ -3957,6 +3998,9 @@ function expectedManagedFiles(integrations) {
       : null,
     integrations.some((integration) => integration.id === "html-validate")
       ? ".htmlvalidateignore"
+      : null,
+    integrations.some((integration) => integration.id === "html-validate")
+      ? HTML_VALIDATE_WRAPPER_PATH
       : null,
     integrations.some((integration) => integration.id === "react-doctor")
       ? "react-doctor.config.json"

@@ -113,6 +113,45 @@ test("the published CLI guard takes the CLI version as an argument", () => {
   assert.throws(() => assertPublishedCliCompatibility({ profile: "minimal" }, "4.0.0"));
 });
 
+test("only leaving lint:html out of quality records an html-validate option", () => {
+  const selection = { profile: "minimal", integrations: ["html-validate"] };
+
+  assert.equal(
+    composerRecipe({ ...selection, htmlValidate: { quality: true } }).integrationOptions,
+    undefined,
+  );
+  assert.equal(composerRecipe(selection).integrationOptions, undefined);
+  assert.deepEqual(
+    composerRecipe({ ...selection, htmlValidate: { quality: false } }).integrationOptions,
+    { "html-validate": { quality: false } },
+  );
+  assert.equal(
+    composerRecipe({ profile: "minimal", integrations: [], htmlValidate: { quality: false } })
+      .integrationOptions,
+    undefined,
+  );
+});
+
+test("the published CLI guard refuses html-validate options below CLI 4.2.0", () => {
+  const recipe = composerRecipe({
+    profile: "minimal",
+    integrations: ["html-validate"],
+    htmlValidate: { quality: false },
+  });
+
+  assert.throws(
+    () => assertPublishedCliCompatibility(recipe, "4.1.0"),
+    /The published Calavera CLI v4\.1\.0 does not support integrationOptions for: html-validate/,
+  );
+  assert.deepEqual(assertPublishedCliCompatibility(recipe, "4.2.0"), recipe);
+  assert.ok(
+    assertPublishedCliCompatibility(
+      composerRecipe({ profile: "minimal", integrations: ["html-validate"] }),
+      "4.1.0",
+    ),
+  );
+});
+
 test("next commands follow the package manager and default to npm", () => {
   assert.deepEqual(composerNextCommands("pnpm"), projectLocalCommandSteps("pnpm"));
   assert.deepEqual(composerNextCommands(undefined), projectLocalCommandSteps("npm"));
