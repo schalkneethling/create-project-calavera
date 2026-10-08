@@ -3,6 +3,10 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import {
+  createRepositoryControlsConfig,
+  normalizeGithubRepositoryControlsOptions,
+} from "../../../packages/cli/src/github-repository-controls.js";
+import {
   composeRecipeResponse,
   profileDefaults,
   projectLocalCommandSteps,
@@ -53,6 +57,37 @@ test("integration options, targets, and artifact order match the pinned recipe b
   });
 
   assert.equal(serialized(recipe), serialized(fixtures["minimal-with-options-and-artifacts"]));
+});
+
+test("an empty required-checks selection is valid and CodeQL results are required by default", () => {
+  const recipe = composerRecipe({
+    profile: "minimal",
+    integrations: ["github-repository-controls"],
+    repositoryControls: { repository: "octocat/example", requiredChecks: [] },
+  });
+
+  const options = recipe.integrationOptions["github-repository-controls"];
+  assert.deepEqual(options.requiredChecks, []);
+  assert.equal(options.requireCodeqlResults, true);
+  assert.deepEqual(commaSeparatedValues(""), []);
+});
+
+test("declining CodeQL results is written into the recipe and drives the generated policy", () => {
+  const recipe = composerRecipe({
+    profile: "minimal",
+    integrations: ["github-repository-controls"],
+    repositoryControls: {
+      repository: "octocat/example",
+      requiredChecks: [],
+      requireCodeqlResults: false,
+    },
+  });
+
+  const options = recipe.integrationOptions["github-repository-controls"];
+  assert.equal(options.requireCodeqlResults, false);
+  const config = createRepositoryControlsConfig(normalizeGithubRepositoryControlsOptions(options));
+  assert.equal(config.mainRuleset.codeScanning, null);
+  assert.deepEqual(config.mainRuleset.requiredChecks, []);
 });
 
 test("an unselected integration drops its options and an empty package manager defaults to npm", () => {
