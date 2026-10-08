@@ -50,16 +50,23 @@ test("a child-process cause shows its redacted command and exit code, not its ou
     { length: 40 },
     (_, index) => `output line ${String(index + 1).padStart(2, "0")}`,
   );
-  const childError = await execa(
-    process.execPath,
-    [
-      "-e",
-      `for (let line = 1; line <= 40; line++) console.log("output line " + String(line).padStart(2, "0")); console.error("${githubToken}"); process.exit(3)`,
-      "--",
-      `--token=${npmToken}`,
-    ],
-    { env: { NPM_TOKEN: envSecret }, reject: false },
-  );
+  // The child runs a script file, not an inline -e script, so that the command line stays
+  // under FAILURE_OUTPUT_LINE_LENGTH even where process.execPath is a long path, as on CI.
+  const directory = await mkdtemp(join(tmpdir(), "calavera-error-chain-child-"));
+  let childError;
+  try {
+    await writeFile(
+      join(directory, "fail.mjs"),
+      `for (let line = 1; line <= 40; line++) console.log("output line " + String(line).padStart(2, "0"));\nconsole.error("${githubToken}");\nprocess.exit(3);\n`,
+    );
+    childError = await execa(process.execPath, ["fail.mjs", `--token=${npmToken}`], {
+      cwd: directory,
+      env: { NPM_TOKEN: envSecret },
+      reject: false,
+    });
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
   assert.equal(childError.exitCode, 3);
   // The wrapper the CLI throws when an install fails.
   const wrapper = new Error(
