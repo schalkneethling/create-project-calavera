@@ -8,7 +8,12 @@ import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
-import { createVpCreateCommand, newProject, parseArgs } from "../src/index.js";
+import {
+  NPX_STALE_CACHE_HINT,
+  createVpCreateCommand,
+  newProject,
+  parseArgs,
+} from "../src/index.js";
 import { detectVitePlus } from "../src/vite-plus-detection.js";
 import {
   createTemporaryFixture,
@@ -632,22 +637,25 @@ test("--new names the terminating signal when the runner is killed", async () =>
   ]);
 });
 
-const npxCacheHint = /This applies only if the npm output above shows "npm error code ERESOLVE"/;
-
 /**
- * @param {string} packageManager
+ * @param {string | undefined} packageManager
  * @param {{ exitCode: number | null, signal?: string }} exit
  * @returns {Promise<string>}
  */
 async function failedNewMessage(packageManager, exit) {
-  await using workspace = await createTemporaryWorkspace(`hint-${packageManager}`);
+  await using workspace = await createTemporaryWorkspace(`hint-${packageManager ?? "default"}`);
   const previousCwd = process.cwd();
 
   process.chdir(workspace.work);
 
   try {
     const error = await newProject(
-      parseArgs(["--yes", "--package-manager", packageManager, "--new", "vite:library"]),
+      parseArgs([
+        "--yes",
+        ...(packageManager === undefined ? [] : ["--package-manager", packageManager]),
+        "--new",
+        "vite:library",
+      ]),
       { spawnRunner: async () => exit },
     ).then(
       () => assert.fail("expected --new to fail"),
@@ -664,16 +672,22 @@ test("--new adds the npx stale-cache hint when npm exits non-zero", async () => 
   const message = await failedNewMessage("npm", { exitCode: 1 });
 
   assert.match(message, /exited with code 1/);
-  assert.match(message, npxCacheHint);
+  assert.ok(message.includes(NPX_STALE_CACHE_HINT));
   assert.match(message, /"npm cache npx ls"/);
   assert.match(message, /"npm cache npx rm <key>"/);
+});
+
+test("--new adds the npx hint on the default package manager", async () => {
+  const message = await failedNewMessage(undefined, { exitCode: 1 });
+
+  assert.ok(message.includes(NPX_STALE_CACHE_HINT));
 });
 
 test("--new keeps the npx hint and the signal when npm is killed", async () => {
   const message = await failedNewMessage("npm", { exitCode: null, signal: "SIGTERM" });
 
   assert.match(message, /terminated by signal SIGTERM/);
-  assert.match(message, npxCacheHint);
+  assert.ok(message.includes(NPX_STALE_CACHE_HINT));
 });
 
 for (const packageManager of ["pnpm", "yarn", "bun"]) {

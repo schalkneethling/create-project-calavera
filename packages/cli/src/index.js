@@ -3183,7 +3183,7 @@ const NEW_HARD_STOP_SUFFIX =
 
 // The runner inherits stdio, so Calavera cannot read the npm error and shows
 // this for every non-zero npx exit. The wording states its own condition.
-const NPX_STALE_CACHE_HINT =
+export const NPX_STALE_CACHE_HINT =
   'This applies only if the npm output above shows "npm error code ERESOLVE" and names a vite-plus version: an older vite-plus in the npx cache can cause that. To fix it, run "npm cache npx ls", find the row that shows vite-plus, run "npm cache npx rm <key>" with the key from that row, then run this command again. If the npm output shows a different error, this does not apply; read the npm or Vite+ output above.';
 
 /**
