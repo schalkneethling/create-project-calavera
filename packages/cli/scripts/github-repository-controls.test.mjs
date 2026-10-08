@@ -1412,3 +1412,69 @@ test("failure output shows each cause once and redacts GitHub tokens", () => {
   );
   assert.equal(describeFailure("plain failure"), "plain failure");
 });
+
+test("CodeQL results are required through the code scanning rule by default, not a status check", () => {
+  const options = normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" });
+  assert.equal(options.requireCodeqlResults, true);
+  assert.deepEqual(options.requiredChecks, []);
+
+  const config = createRepositoryControlsConfig(options);
+  assert.deepEqual(config.mainRuleset.requiredChecks, []);
+  const { rules } = mainRulesetPayload(desiredState(config).mainRuleset);
+  assert.equal(
+    rules.some(({ type }) => type === "required_status_checks"),
+    false,
+  );
+  // "CodeQL" is the tool name the code_scanning rule uses. The check run names of default setup
+  // depend on the analyzed languages, for example "Analyze (actions)", so Calavera generates no
+  // status check context name for CodeQL.
+  assert.deepEqual(rules.find(({ type }) => type === "code_scanning").parameters, {
+    code_scanning_tools: [
+      {
+        tool: "CodeQL",
+        alerts_threshold: "errors_and_warnings",
+        security_alerts_threshold: "medium_or_higher",
+      },
+    ],
+  });
+});
+
+test("declining CodeQL results leaves the code scanning rule unmanaged and keeps other checks", () => {
+  const options = normalizeGithubRepositoryControlsOptions({
+    repository: "octocat/example",
+    requireCodeqlResults: false,
+    requiredChecks: ["Check"],
+  });
+  assert.equal(options.requireCodeqlResults, false);
+
+  const config = createRepositoryControlsConfig(options);
+  assert.equal(config.mainRuleset.codeScanning, null);
+  const { rules } = mainRulesetPayload(desiredState(config).mainRuleset);
+  assert.equal(
+    rules.some(({ type }) => type === "code_scanning"),
+    false,
+  );
+  assert.deepEqual(rules.find(({ type }) => type === "required_status_checks").parameters, {
+    do_not_enforce_on_create: false,
+    required_status_checks: [{ context: "Check" }],
+    strict_required_status_checks_policy: true,
+  });
+
+  const documentation = githubRepositoryControlManagedFiles({
+    repository: "octocat/example",
+    requireCodeqlResults: false,
+  }).find(({ path }) => path === "docs/repository-controls.md").contents;
+  assert.doesNotMatch(documentation, /requires CodeQL results/);
+  assert.match(documentation, /does not require CodeQL results/);
+});
+
+test("requireCodeqlResults must be a boolean", () => {
+  assert.throws(
+    () =>
+      normalizeGithubRepositoryControlsOptions({
+        repository: "octocat/example",
+        requireCodeqlResults: "no",
+      }),
+    /requireCodeqlResults must be a boolean/,
+  );
+});

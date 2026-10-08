@@ -40,7 +40,7 @@ function baselineAvailability(available) {
 /**
  * @param {string[]} integrations
  * @param {{ available: unknown, severity: unknown } | undefined} baseline
- * @param {{ repository: unknown, requiredChecks: string[] } | undefined} repositoryControls
+ * @param {{ repository: unknown, requiredChecks: string[], requireCodeqlResults?: boolean } | undefined} repositoryControls
  */
 function composerIntegrationOptions(integrations, baseline, repositoryControls) {
   const hasBaseline = integrations.includes("stylelint-baseline");
@@ -62,6 +62,7 @@ function composerIntegrationOptions(integrations, baseline, repositoryControls) 
           "github-repository-controls": {
             repository: repositoryControls?.repository,
             requiredChecks: repositoryControls?.requiredChecks ?? [],
+            requireCodeqlResults: repositoryControls?.requireCodeqlResults ?? true,
           },
         }
       : {}),
@@ -97,7 +98,7 @@ function composerAiItems(aiArtifacts) {
  *   integrations?: string[],
  *   aiArtifacts?: { id: string, target?: string }[],
  *   baseline?: { available: unknown, severity: unknown },
- *   repositoryControls?: { repository: unknown, requiredChecks: string[] },
+ *   repositoryControls?: { repository: unknown, requiredChecks: string[], requireCodeqlResults?: boolean },
  * }} selection
  */
 export function composerRecipe({

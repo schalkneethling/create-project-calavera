@@ -192,18 +192,55 @@
                 autocomplete="off"
               />
             </div>
-            <div class="field">
-              <label for="repository-controls-required-checks"
-                >Required checks (comma-separated)</label
-              >
-              <input
-                id="repository-controls-required-checks"
-                type="text"
-                name="repositoryControlsRequiredChecks"
-                placeholder="quality"
-                autocomplete="off"
-              />
-            </div>
+            <fieldset class="options-choices">
+              <legend>Merge requirements</legend>
+              <div class="choice">
+                <input
+                  id="repository-controls-require-codeql"
+                  type="checkbox"
+                  name="repositoryControlsRequireCodeql"
+                  aria-describedby="repository-controls-codeql-hint"
+                  checked
+                />
+                <label class="choice-label" for="repository-controls-require-codeql"
+                  >Require CodeQL results</label
+                >
+                <p class="hint" id="repository-controls-codeql-hint">
+                  Blocks merges until CodeQL has scanned the change and found no errors, warnings,
+                  or medium-or-higher security alerts. Calavera sets this up as a code scanning
+                  rule, so you do not need to enter CodeQL as a status check.
+                </p>
+              </div>
+              <div class="field-stack">
+                <div class="field">
+                  <label for="repository-controls-required-checks"
+                    >Other required checks (optional, comma-separated)</label
+                  >
+                  <input
+                    id="repository-controls-required-checks"
+                    type="text"
+                    name="repositoryControlsRequiredChecks"
+                    aria-describedby="repository-controls-required-checks-hint"
+                    autocomplete="off"
+                  />
+                </div>
+                <p class="hint" id="repository-controls-required-checks-hint">
+                  Leave this empty if you have no continuous integration yet. Empty is valid: no
+                  status checks are required. A name that no check reports blocks every merge, so
+                  add names only after your first run. You can also require checks later in the
+                  repository settings, under Rules. See
+                  <a
+                    href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets"
+                    >Available rules for rulesets</a
+                  >
+                  and
+                  <a
+                    href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository"
+                    >Creating rulesets for a repository</a
+                  >.
+                </p>
+              </div>
+            </fieldset>
           </section>
           <section class="group" id="css-integrations" aria-labelledby="css-heading">
             <h3 class="group-heading" id="css-heading">CSS</h3>

@@ -258,13 +258,23 @@ hard stop that names the repository root, before any file is planned or written.
   "integrationOptions": {
     "github-repository-controls": {
       "repository": "octocat/example",
-      "requiredChecks": ["quality"],
+      "requireCodeqlResults": true,
+      "requiredChecks": [],
       "mergeMethods": ["squash"],
       "codeqlLanguages": ["actions", "javascript-typescript"]
     }
   }
 }
 ```
+
+`requireCodeqlResults` (default `true`) requires CodeQL results through the ruleset's code scanning
+rule, not through a status check name, so you do not enter CodeQL in `requiredChecks`. Set it to
+`false` to leave scanning rules unmanaged. `requiredChecks` (default `[]`) lists additional status
+check names. A required check is the exact name that a check reports on a pull request, usually the
+workflow job name, and a name that no check reports blocks every merge. Leave the list empty for a
+new project and require checks after your first CI run, in the recipe or in the repository settings.
+See GitHub's
+[available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
 
 `calavera apply` only writes local files and package scripts. Run `npm run repo:controls:check` for
 a read-only GitHub drift report, then run `npm run repo:controls:apply` separately after reviewing
