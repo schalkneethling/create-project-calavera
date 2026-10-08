@@ -120,7 +120,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {(script: string) => string} run
  *
  * @typedef {object} PackageJSON
- * @property {Record<string, string | boolean>} [scripts]
+ * @property {Record<string, unknown>} [scripts] Values come from the project's package.json, so any JSON value is possible.
  * @property {string} [packageManager]
  * @property {{ packageManager?: { name?: string } | Array<{ name?: string }> }} [devEngines]
  * @property {unknown[] | { packages?: unknown }} [workspaces]
@@ -155,6 +155,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ reownManagedFiles?: string[] }} ProjectInspectionOptions
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[] }} ScriptPlan
  * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
+ * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
  *
  * @typedef {object} ApplyResult
@@ -168,6 +169,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {ProjectInspection} projectInspection
  * @property {VitePlusReport} vitePlus
  * @property {Change[]} changes
+ * @property {ScriptChange[]} scriptChanges Each package.json script apply adds or changes, with the value it writes, so the approval boundary shows the command; a script that already has that value is not listed. Kept out of the package.json change, which a dry run reports the same before and after apply.
  * @property {string[]} pointers
  * @property {ArtifactLockEntry[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock.
  *
@@ -495,7 +497,7 @@ const renamedPackageScripts = Object.freeze([
  * the user's and is kept (`kept`). Only names the plan writes are considered
  * (ADR-0013, Decision 6).
  *
- * @param {Record<string, string | boolean>} packageScripts
+ * @param {Record<string, unknown>} packageScripts
  * @param {Record<string, string>} plannedScripts
  */
 function planScriptRenames(packageScripts, plannedScripts) {
@@ -1506,8 +1508,10 @@ Use the tools in this order when they are available:
 10. \`apply_recipe\`
 
 \`dry_run_apply\` is the review boundary. Show its inspection findings, omitted
-script explanations, ownership notes, and planned file changes to the user, then
-wait for explicit approval before calling \`apply_recipe\`.
+script explanations, ownership notes, and planned file changes to the user,
+including the command each \`package.json\` script in \`scriptChanges\` will run
+and, for a changed or renamed script, the command it replaces, then wait for
+explicit approval before calling \`apply_recipe\`.
 
 \`apply_recipe.writeConfig: false\` only skips writing \`calavera.config.json\`.
 Do not use it to bypass managed-file conflicts, stale state hashes, or an
@@ -2460,6 +2464,26 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
       reason: `package.json defines ${to} with a value of your own, and ${from} still has the value Calavera wrote, so Calavera keeps both instead of renaming ${from}; the generated quality script runs your ${to}.`,
     });
   }
+  // The values apply writes, against the scripts as they are now. A renamed
+  // script is compared with the value under its old name.
+  const renamedFrom = new Map(renamedScripts.map(({ from, to }) => [to, from]));
+  /** @type {ScriptChange[]} */
+  const scriptChanges = [];
+  for (const [script, value] of Object.entries(scripts)) {
+    const from = renamedFrom.get(script);
+    if (from !== undefined) {
+      scriptChanges.push({
+        script,
+        value,
+        previous: packageJSON.scripts?.[from],
+        renamedFrom: from,
+      });
+    } else if (!Object.hasOwn(packageJSON.scripts ?? {}, script)) {
+      scriptChanges.push({ script, value });
+    } else if (packageJSON.scripts?.[script] !== value) {
+      scriptChanges.push({ script, value, previous: packageJSON.scripts?.[script] });
+    }
+  }
   if (renamedScripts.length > 0) {
     // The renamed script keeps the position the old name had.
     const newNames = new Map(renamedScripts.map(({ from, to }) => [from, to]));
@@ -2646,6 +2670,7 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     projectInspection,
     vitePlus: vitePlusReport(projectInspection.vitePlus),
     changes: [...changes, ...aiChanges],
+    scriptChanges,
     pointers: [...aiResult.pointers, ...(usesVarlock ? [VARLOCK_POINTER] : [])],
     autoInstalledArtifacts: artifactPlan.installed,
   };
@@ -4408,16 +4433,32 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       if (change.type === "update") {
         logger.info(`Would update ${change.path}`);
 
-        if (change.scripts && change.scripts.length > 0) {
-          logger.info(`Would add scripts: ${change.scripts.join(", ")}`);
+        // Only the package.json change carries scripts. A renamed script is
+        // listed here, with renamedScripts on the change carrying the same rename.
+        if (change.scripts) {
+          for (const { script, value, previous, renamedFrom } of result.scriptChanges) {
+            if (renamedFrom !== undefined) {
+              logger.info(
+                `Would rename script ${renamedFrom} to ${script}: ${quoteScriptValue(value)}`,
+              );
+            } else if (previous === undefined) {
+              logger.info(`Would add script ${script}: ${quoteScriptValue(value)}`);
+            } else {
+              logger.info(
+                `Would change script ${script} from ${quoteScriptValue(previous)} to ${quoteScriptValue(value)}`,
+              );
+            }
+          }
+
+          const changedScripts = new Set(result.scriptChanges.map(({ script }) => script));
+          const unchangedScripts = change.scripts.filter((script) => !changedScripts.has(script));
+          if (unchangedScripts.length > 0) {
+            logger.info(`Scripts already set: ${unchangedScripts.join(", ")}`);
+          }
         }
 
         if (change.removedDefaultTestScript) {
           logger.info("Would remove the default npm test placeholder script");
-        }
-
-        for (const { from, to } of change.renamedScripts ?? []) {
-          logger.info(`Would rename script ${from} to ${to}`);
         }
 
         for (const omittedScript of change.omittedScripts ?? []) {
@@ -4458,6 +4499,26 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.info(pointer);
     }
   }
+}
+
+/**
+ * A package.json script value as a single line of terminal output. JSON
+ * quoting escapes quotes, backslashes, and C0 control characters; control and
+ * format characters JSON leaves as they are, such as DEL, C1 controls, and
+ * bidirectional overrides, and the line and paragraph separators, are escaped
+ * as `\uXXXX` too, so a value cannot recolor, reorder, or break the line.
+ * Nothing in the value is expanded.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function quoteScriptValue(value) {
+  return JSON.stringify(value).replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, (character) =>
+    Array.from(
+      { length: character.length },
+      (_, index) => `\\u${character.charCodeAt(index).toString(16).padStart(4, "0")}`,
+    ).join(""),
+  );
 }
 
 async function main() {
