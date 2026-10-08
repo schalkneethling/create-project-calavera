@@ -12,6 +12,7 @@ import {
 import { DEFAULT_AI_TARGET } from "../../packages/cli/src/ai/catalog.js";
 import {
   assertRecipeArtifactsSupported,
+  assertRecipeIntegrationOptionsSupported,
   assertRecipeIntegrationsSupported,
   assertRecipeProfileSupported,
 } from "./cli-compatibility.js";
@@ -41,12 +42,17 @@ function baselineAvailability(available) {
  * @param {string[]} integrations
  * @param {{ available: unknown, severity: unknown } | undefined} baseline
  * @param {{ repository: unknown, requiredChecks: string[] } | undefined} repositoryControls
+ * @param {{ quality: boolean } | undefined} htmlValidate
  */
-function composerIntegrationOptions(integrations, baseline, repositoryControls) {
+function composerIntegrationOptions(integrations, baseline, repositoryControls, htmlValidate) {
   const hasBaseline = integrations.includes("stylelint-baseline");
   const hasRepositoryControls = integrations.includes("github-repository-controls");
+  // Only the non-default choice is recorded, so a recipe that keeps lint:html
+  // in quality stays valid for a CLI release that predates the option.
+  const leavesHtmlOutOfQuality =
+    integrations.includes("html-validate") && htmlValidate?.quality === false;
 
-  if (!hasBaseline && !hasRepositoryControls) return undefined;
+  if (!hasBaseline && !hasRepositoryControls && !leavesHtmlOutOfQuality) return undefined;
 
   return {
     ...(hasBaseline
@@ -57,6 +63,7 @@ function composerIntegrationOptions(integrations, baseline, repositoryControls) 
           },
         }
       : {}),
+    ...(leavesHtmlOutOfQuality ? { "html-validate": { quality: false } } : {}),
     ...(hasRepositoryControls
       ? {
           "github-repository-controls": {
@@ -98,6 +105,7 @@ function composerAiItems(aiArtifacts) {
  *   aiArtifacts?: { id: string, target?: string }[],
  *   baseline?: { available: unknown, severity: unknown },
  *   repositoryControls?: { repository: unknown, requiredChecks: string[] },
+ *   htmlValidate?: { quality: boolean },
  * }} selection
  */
 export function composerRecipe({
@@ -107,19 +115,20 @@ export function composerRecipe({
   aiArtifacts = [],
   baseline,
   repositoryControls,
+  htmlValidate,
 }) {
   return buildRecipe(
     profile,
     integrations,
     packageManager || undefined,
     composerAiItems(aiArtifacts),
-    composerIntegrationOptions(integrations, baseline, repositoryControls),
+    composerIntegrationOptions(integrations, baseline, repositoryControls, htmlValidate),
   );
 }
 
 /**
- * Validates a recipe and refuses any profile, integration, or AI artifact the given published
- * CLI version cannot apply.
+ * Validates a recipe and refuses any profile, integration, integration option, or AI artifact
+ * the given published CLI version cannot apply.
  *
  * @param {unknown} recipeInput
  * @param {string} cliVersion
@@ -128,6 +137,7 @@ export function assertPublishedCliCompatibility(recipeInput, cliVersion) {
   const validatedRecipe = validateRecipe(recipeInput);
   assertRecipeProfileSupported(validatedRecipe, profileCatalog, cliVersion);
   assertRecipeIntegrationsSupported(validatedRecipe, listIntegrationOptions(), cliVersion);
+  assertRecipeIntegrationOptionsSupported(validatedRecipe, listIntegrationOptions(), cliVersion);
   return assertRecipeArtifactsSupported(validatedRecipe, allAiArtifactOptions, cliVersion);
 }
 

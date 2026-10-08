@@ -65,6 +65,24 @@ test("every post-v2.2 integration declares its minimum CLI version", () => {
   }
 });
 
+test("an options minimum CLI version is exact and not below the integration's minimum", () => {
+  const withOptionsMinimum = integrationCatalog.filter(
+    (integration) => integration.optionsMinimumCliVersion !== undefined,
+  );
+
+  assert.ok(withOptionsMinimum.length > 0);
+  for (const integration of withOptionsMinimum) {
+    assert.match(integration.optionsMinimumCliVersion, CLI_VERSION_PATTERN, integration.id);
+    assert.ok(
+      versionMeetsMinimum(
+        integration.optionsMinimumCliVersion,
+        integration.minimumCliVersion ?? SAFE_CLI_FALLBACK_VERSION,
+      ),
+      `${integration.id}: optionsMinimumCliVersion is below minimumCliVersion`,
+    );
+  }
+});
+
 test("v2.2 compatibility excludes post-v2.2 integrations until v2.3 is published", () => {
   const v220Ids = filterIntegrationsForCli(integrationCatalog, "2.2.0").map(({ id }) => id);
   const v230Ids = filterIntegrationsForCli(integrationCatalog, "2.3.0").map(({ id }) => id);

@@ -21,8 +21,10 @@ const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const dryRunOptions = { dryRun: true, json: true, noInstall: true, assumeYes: true };
 const applyOptions = { json: true, noInstall: true, assumeYes: true };
 
-const stylelintLint = 'stylelint "**/*.{css,scss}"';
-const stylelintFix = 'stylelint "**/*.{css,scss}" --fix';
+const stylelintLint = 'stylelint "**/*.{css,scss}" --allow-empty-input';
+const stylelintFix = 'stylelint "**/*.{css,scss}" --allow-empty-input --fix';
+// The Stylelint command releases before #644 wrote, without --allow-empty-input.
+const earlierStylelintLint = 'stylelint "**/*.{css,scss}"';
 
 const managedManifest = (extra = {}) =>
   `${JSON.stringify({ name: "managed", devDependencies: { "vite-plus": "1.0.0" }, ...extra }, null, 2)}\n`;
@@ -488,7 +490,7 @@ test("a project applied before the rename whose lint the user changed keeps it a
 
 test("a lint script in a project Calavera never applied to is not renamed or reported", async () => {
   await using fixture = await createTemporaryFixture("quality-rename-foreign", {
-    "package.json": `${JSON.stringify({ scripts: { lint: stylelintLint } }, null, 2)}\n`,
+    "package.json": `${JSON.stringify({ scripts: { lint: earlierStylelintLint } }, null, 2)}\n`,
   });
 
   await inDirectory(fixture.root, async () => {
@@ -501,7 +503,10 @@ test("a lint script in a project Calavera never applied to is not renamed or rep
     );
 
     await applyRecipeObject(renameRecipe, applyOptions);
-    assert.equal(JSON.parse(await readFile("package.json", "utf8")).scripts.lint, stylelintLint);
+    assert.equal(
+      JSON.parse(await readFile("package.json", "utf8")).scripts.lint,
+      earlierStylelintLint,
+    );
   });
 });
 
@@ -512,7 +517,7 @@ test("a lint and lint:fix an earlier release wrote, with Oxlint, ESLint, or the 
     "package.json": unmanagedManifest,
   });
   await applyAsBeforeTheRename(fixture.root, renameRecipe, {
-    lint: `oxlint . && eslint . && ${stylelintLint}`,
+    lint: `oxlint . && eslint . && ${earlierStylelintLint}`,
     "lint:fix":
       'node .calavera/run-if-files.mjs "JavaScript/TypeScript" "js,jsx,ts,tsx,mjs,cjs" -- oxlint --fix . && node .calavera/run-if-files.mjs "CSS" "css,scss" -- stylelint "**/*.{css,scss}" --fix',
   });

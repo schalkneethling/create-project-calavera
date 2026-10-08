@@ -28,6 +28,7 @@ import {
   filterArtifactsForCli,
   filterIntegrationsForCli,
   filterProfilesForCli,
+  integrationOptionsSupported,
   integrationResponseForCli,
   loadPublishedCliCompatibility,
   SAFE_CLI_FALLBACK_VERSION,
@@ -58,6 +59,7 @@ const newProject = document.querySelector("#new-project");
 const baselineOptions = document.querySelector("#baseline-options");
 const baselineAvailable = document.querySelector("#baseline-available");
 const repositoryControlsOptions = document.querySelector("#repository-controls-options");
+const htmlValidateOptions = document.querySelector("#html-validate-options");
 const cliVersionBadge = document.querySelector("#cli-version");
 const cliCompatibilityNote = document.querySelector("#cli-compatibility");
 const stickyBarProfile = document.querySelector("#sticky-bar-profile");
@@ -135,13 +137,19 @@ function chevron() {
  * A selectable row: the checkbox and its label select the item; the disclosure beside them only
  * shows or hides the details, so the two never toggle each other.
  *
- * @param {{ name: string, id: string, label: string, chip?: HTMLElement, details?: Node[] }} row
+ * @param {{ name: string, id: string, label: string, chip?: HTMLElement, details?: Node[], describedBy?: string }} row
  */
-function selectableRow({ name, id, label, chip, details }) {
+function selectableRow({ name, id, label, chip, details, describedBy }) {
   const inputId = `${name}-${id}`;
   const row = element("li", { class: "row" }, [
     element("div", { class: "row-head" }, [
-      element("input", { id: inputId, type: "checkbox", name, value: id }),
+      element("input", {
+        id: inputId,
+        type: "checkbox",
+        name,
+        value: id,
+        "aria-describedby": describedBy,
+      }),
       element("label", { for: inputId }, [label]),
       ...(chip ? [chip] : []),
     ]),
@@ -242,6 +250,11 @@ function syncProfileAvailability() {
   }
 }
 
+/** The hint in an integration's options panel, which describes its checkbox. */
+const integrationHintIds = {
+  "github-repository-controls": "repository-controls-hint",
+};
+
 /** @param {ReturnType<typeof listIntegrationOptions>[number]} integration */
 function integrationRow(integration) {
   const details = [];
@@ -254,6 +267,7 @@ function integrationRow(integration) {
     name: "integration",
     id: integration.id,
     label: integration.label,
+    describedBy: integrationHintIds[integration.id],
     chip: element(
       "span",
       { class: `chip ${statusChipClasses[integration.status] ?? "chip-optional"}` },
@@ -549,6 +563,11 @@ function syncIntegrationOptions() {
   repositoryControlsOptions.hidden = !form.querySelector(
     '[name="integration"][value="github-repository-controls"]:checked',
   );
+  const htmlValidate = listIntegrationOptions().find(({ id }) => id === "html-validate");
+  htmlValidateOptions.hidden = !(
+    form.querySelector('[name="integration"][value="html-validate"]:checked') &&
+    integrationOptionsSupported(htmlValidate, cliCompatibility.version)
+  );
 }
 
 function selectedAiArtifacts() {
@@ -573,6 +592,11 @@ function recipe() {
     repositoryControls: {
       repository: data.get("repositoryControlsRepository"),
       requiredChecks: commaSeparatedValues(data.get("repositoryControlsRequiredChecks")),
+    },
+    // The panel is hidden when html-validate is not selected or the published CLI predates
+    // the option; either way, quality keeps lint:html and the recipe records no option.
+    htmlValidate: {
+      quality: htmlValidateOptions.hidden || data.get("htmlValidateQuality") === "on",
     },
   });
 }
@@ -966,6 +990,13 @@ function registerWebMcpTools() {
                     oneOf: [{ type: "string", enum: ["widely", "newly"] }, { type: "integer" }],
                   },
                   severity: { type: "string", enum: ["warning", "error"] },
+                },
+              },
+              "html-validate": {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  quality: { type: "boolean" },
                 },
               },
               "github-repository-controls": {

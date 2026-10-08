@@ -21,8 +21,8 @@ const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 // The recipe names npm; every run below passes pnpm explicitly, so the quality
 // value shows that the dry run uses the package manager apply uses.
 const recipe = buildRecipe("default", ["stylelint", "knip"], "npm");
-const lintStyles = 'stylelint "**/*.{css,scss}"';
-const lintStylesFix = 'stylelint "**/*.{css,scss}" --fix';
+const lintStyles = 'stylelint "**/*.{css,scss}" --allow-empty-input';
+const lintStylesFix = 'stylelint "**/*.{css,scss}" --allow-empty-input --fix';
 const quality = "pnpm lint:styles && pnpm knip";
 
 // A user-defined command that names an environment variable. The dry run
@@ -119,9 +119,15 @@ test("the human dry run shows each added and changed script, and names the uncha
     const stdout = await runCli(["apply", "--dry-run", "--package-manager", "pnpm"]);
     const lines = stdout.split("\n");
 
-    assert.ok(lines.includes('Would add script lint:styles: "stylelint \\"**/*.{css,scss}\\""'));
     assert.ok(
-      lines.includes('Would add script lint:styles:fix: "stylelint \\"**/*.{css,scss}\\" --fix"'),
+      lines.includes(
+        'Would add script lint:styles: "stylelint \\"**/*.{css,scss}\\" --allow-empty-input"',
+      ),
+    );
+    assert.ok(
+      lines.includes(
+        'Would add script lint:styles:fix: "stylelint \\"**/*.{css,scss}\\" --allow-empty-input --fix"',
+      ),
     );
     assert.ok(lines.includes(`Would change script quality from "${userQuality}" to "${quality}"`));
     assert.ok(lines.includes("Scripts already set: knip"));
@@ -175,7 +181,7 @@ test("apply_recipe carries the script changes dry_run_apply showed", async () =>
 
 test("a renamed script is one entry with its old name and value, and one human line", async () => {
   // A value an earlier release wrote for lint, which apply renames.
-  const legacyLint = `eslint . && ${lintStyles}`;
+  const legacyLint = 'eslint . && stylelint "**/*.{css,scss}"';
 
   await inProject(async () => {
     await applyRecipeObject(recipe, applyOptions);
@@ -209,11 +215,13 @@ test("a renamed script is one entry with its old name and value, and one human l
     const lines = stdout.split("\n");
 
     assert.ok(
-      lines.includes('Would rename script lint to lint:styles: "stylelint \\"**/*.{css,scss}\\""'),
+      lines.includes(
+        'Would rename script lint to lint:styles: "stylelint \\"**/*.{css,scss}\\" --allow-empty-input"',
+      ),
     );
     assert.ok(
       lines.includes(
-        'Would rename script lint:fix to lint:styles:fix: "stylelint \\"**/*.{css,scss}\\" --fix"',
+        'Would rename script lint:fix to lint:styles:fix: "stylelint \\"**/*.{css,scss}\\" --allow-empty-input --fix"',
       ),
     );
     assert.equal(lines.filter((line) => line.startsWith("Would rename script")).length, 2);

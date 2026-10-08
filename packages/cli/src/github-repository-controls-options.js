@@ -1,6 +1,8 @@
 // @ts-check
 
 export const GITHUB_REPOSITORY_CONTROLS_ID = "github-repository-controls";
+/** Where apply writes the repository-controls administration script. */
+export const REPOSITORY_CONTROLS_SCRIPT_PATH = "scripts/repository-controls.mjs";
 
 const MERGE_METHODS = new Set(["merge", "squash", "rebase"]);
 const CODEQL_LANGUAGES = new Set([
