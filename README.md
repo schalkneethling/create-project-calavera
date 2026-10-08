@@ -222,7 +222,8 @@ accessibility integration.
 wrapper around `html-validate`. `html-validate` exits with an error when no file
 matches and has no option to allow empty input, so the wrapper passes when no
 HTML file matches, and otherwise runs `html-validate` with the same patterns and
-exit code. A real validation error still fails `lint:html`. In the same way,
+exit code. With an option, such as `--stdin` or `--ext`, it runs
+`html-validate` directly. A real validation error still fails `lint:html`. In the same way,
 `lint:styles` and `lint:styles:fix` pass `--allow-empty-input` to Stylelint, so
 `quality` passes in a project without CSS files.
 
@@ -239,6 +240,11 @@ choice, because it lives in the recipe:
   }
 }
 ```
+
+When `lint:html` is the only script `quality` would run, Calavera does not
+generate `quality`. Apply removes a `quality` script whose value an earlier
+release wrote, such as `npm run lint:html`, and keeps any other value as your
+own. The dry run shows both.
 
 Validate the rendered HTML in your tests instead, with the `HtmlValidate` class
 from the [HTML Validate API](https://html-validate.org/dev/using-api.html), and

@@ -177,7 +177,7 @@
           >
             <div class="options-panel-text">
               <h3 id="html-validate-heading">HTML Validate</h3>
-              <p class="hint">
+              <p class="hint" id="html-validate-hint">
                 Without static HTML files, such as when a server renders your HTML, leave
                 <code>lint:html</code> out of <code>quality</code> and validate the rendered HTML in
                 your tests.
@@ -188,9 +188,10 @@
                 id="html-validate-quality"
                 type="checkbox"
                 name="htmlValidateQuality"
+                aria-describedby="html-validate-hint"
                 checked
               />
-              Run lint:html in quality
+              Run <code>lint:html</code> in <code>quality</code>
             </label>
           </section>
           <section
@@ -201,7 +202,7 @@
           >
             <div class="options-panel-text">
               <h3 id="repository-controls-heading">GitHub repository controls</h3>
-              <p class="hint">
+              <p class="hint" id="repository-controls-hint">
                 Calavera generates local desired-state tooling only. Applying remote GitHub changes
                 remains a separate, confirmed command.
               </p>

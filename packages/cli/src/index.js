@@ -25,6 +25,7 @@ import { prepareArtifactSources, runArtifactCommand } from "./artifact-lifecycle
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   githubRepositoryControlManagedFiles,
+  REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls.js";
 import { assertRootOnlyIntegrationsAtRepositoryRoot } from "./repository-root.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
@@ -44,6 +45,7 @@ import {
   optionalStringArray,
 } from "./state.js";
 import {
+  HTML_VALIDATE_WRAPPER_PATH,
   integrationConfigFiles,
   packageManagerLockfiles,
   projectInspectionFiles,
@@ -159,8 +161,8 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus: VitePlusDetection }} ProjectInspection
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[] }} ProjectInspectionOptions
- * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[] }} ScriptPlan
- * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
+ * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], staleQualityValues: string[] }} ScriptPlan staleQualityValues are quality values an earlier release wrote, which apply removes because the plan omits quality
+ * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
  *
@@ -241,9 +243,6 @@ const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/"
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const HTML_VALIDATE_IGNORE = "node_modules/\ndist/\ncoverage/\n";
-// html-validate exits 1 when no file matches, so lint:html runs it through
-// this wrapper, which passes when there is nothing to check (#644).
-const HTML_VALIDATE_WRAPPER_PATH = "scripts/lint-html.mjs";
 const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
@@ -1116,6 +1115,36 @@ function removeDefaultTestScript(packageJSON) {
 }
 
 /**
+ * Removes a `quality` script the plan omits when its value is one an earlier
+ * release wrote (`staleQualityValues`), so it no longer runs what the recipe
+ * leaves out. Any other value is the user's: it is kept, and the quality
+ * omission says so.
+ *
+ * @param {PackageJSON} packageJSON
+ * @param {string[]} staleQualityValues
+ * @param {ScriptOmission[]} omittedScripts
+ * @returns {string | undefined} the removed value
+ */
+function removeStaleQualityScript(packageJSON, staleQualityValues, omittedScripts) {
+  const quality = packageJSON.scripts?.quality;
+
+  if (staleQualityValues.length === 0 || typeof quality !== "string") {
+    return undefined;
+  }
+
+  if (staleQualityValues.includes(quality)) {
+    delete packageJSON.scripts?.quality;
+    return quality;
+  }
+
+  const omission = omittedScripts.find(({ script }) => script === "quality");
+  if (omission) {
+    omission.reason += ` package.json keeps its quality script, ${quoteScriptValue(quality)}, because Calavera did not write that value.`;
+  }
+  return undefined;
+}
+
+/**
  * @param {PackageManager} packageManager
  * @param {boolean} dryRun
  * @param {boolean} assumeYes
@@ -1197,6 +1226,8 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   const omittedScripts = [];
   /** @type {QualityStepOmission[]} */
   const omittedQualitySteps = [];
+  /** @type {string[]} */
+  const staleQualityValues = [];
 
   if (recipe.scripts?.lint && lintParts.length > 0) {
     scripts["lint:styles"] = lintParts.join(" && ");
@@ -1236,8 +1267,8 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   }
 
   if (usesGithubRepositoryControls) {
-    scripts["repo:controls:check"] = "node scripts/repository-controls.mjs";
-    scripts["repo:controls:apply"] = "node scripts/repository-controls.mjs --apply";
+    scripts["repo:controls:check"] = `node ${REPOSITORY_CONTROLS_SCRIPT_PATH}`;
+    scripts["repo:controls:apply"] = `node ${REPOSITORY_CONTROLS_SCRIPT_PATH} --apply`;
   }
 
   if (recipe.scripts?.quality) {
@@ -1252,32 +1283,43 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
       .filter(isNotEmptyString)
       .filter((script) => Boolean(scripts[script]));
 
+    const run = packageManagerCommands[supportedPackageManager].run;
+    const htmlLeftOut = usesHtmlValidate && !htmlInQuality;
+
     // Without a Calavera script to aggregate, quality would only repeat Vite+
     // commands, so it is omitted as before (ADR-0013).
     if (qualityScripts.length > 0) {
-      scripts.quality = [
-        ...vitePlusQuality.steps,
-        ...qualityScripts.map((script) =>
-          packageManagerCommands[supportedPackageManager].run(script),
-        ),
-      ].join(" && ");
+      scripts.quality = [...vitePlusQuality.steps, ...qualityScripts.map(run)].join(" && ");
       omittedQualitySteps.push(...vitePlusQuality.omittedSteps);
-      if (usesHtmlValidate && !htmlInQuality) {
-        omittedQualitySteps.push({
-          step: "lint:html",
-          reason:
-            'the recipe sets integrationOptions["html-validate"].quality to false, so quality does not validate HTML files.',
-        });
-      }
+    } else if (htmlLeftOut) {
+      omittedScripts.push({
+        script: "quality",
+        reason:
+          'quality was requested, but integrationOptions["html-validate"].quality leaves out lint:html, the only generated script quality would run, so Calavera does not generate quality.',
+      });
+      // The values a release before #644 wrote when lint:html was the only
+      // Calavera script in quality: without Vite+ steps, as before ADR-0013
+      // and in an unmanaged project, and with the Vite+ steps planned now.
+      staleQualityValues.push(
+        ...new Set([run("lint:html"), [...vitePlusQuality.steps, run("lint:html")].join(" && ")]),
+      );
     } else {
       omittedScripts.push({
         script: "quality",
         reason: "quality was requested but no generated scripts are available to aggregate.",
       });
     }
+
+    if (htmlLeftOut) {
+      omittedQualitySteps.push({
+        step: "lint:html",
+        reason:
+          'the recipe sets integrationOptions["html-validate"].quality to false, so quality does not validate HTML files.',
+      });
+    }
   }
 
-  return { scripts, omittedScripts, omittedQualitySteps };
+  return { scripts, omittedScripts, omittedQualitySteps, staleQualityValues };
 }
 
 function createHtmlValidateWrapper() {
@@ -2432,12 +2474,17 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     reownManagedFiles: applyOptions.reownManagedFiles,
   });
   const scriptPlan = buildScripts(recipe, integrations, packageManager, vitePlusQuality);
-  const { scripts, omittedScripts, omittedQualitySteps } = scriptPlan;
+  const { scripts, omittedScripts, omittedQualitySteps, staleQualityValues } = scriptPlan;
   /** @type {Change[]} */
   const changes = [];
   /** @type {ManagedFileState[]} */
   const managedFiles = [];
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
+  const removedQualityScript = removeStaleQualityScript(
+    packageJSON,
+    staleQualityValues,
+    omittedScripts,
+  );
   const managedFilePlans = plannedManagedFiles(integrations, recipe.integrationOptions);
   const usesVarlock = integrations.some(({ id }) => id === "varlock");
   const varlockFilePlans = usesVarlock ? await planVarlockProjectFiles() : [];
@@ -2525,6 +2572,7 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
   const packageJSONUnchanged =
     previouslyApplied &&
     !removedDefaultTestScript &&
+    removedQualityScript === undefined &&
     renamedScripts.length === 0 &&
     Object.entries(scripts).every(([name, script]) => packageJSON.scripts?.[name] === script);
   packageJSON.scripts = {
@@ -2539,6 +2587,7 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     scripts: Object.keys(scripts),
     omittedScripts,
     removedDefaultTestScript,
+    ...(removedQualityScript !== undefined ? { removedQualityScript } : {}),
     ...(renamedScripts.length > 0 ? { renamedScripts } : {}),
     ...(omittedQualitySteps.length > 0 ? { omittedQualitySteps } : {}),
   });
@@ -4510,6 +4559,12 @@ function printResult(result, asJSON = false, commandDryRun = false) {
 
         if (change.removedDefaultTestScript) {
           logger.info("Would remove the default npm test placeholder script");
+        }
+
+        if (change.removedQualityScript !== undefined) {
+          logger.info(
+            `Would remove script quality: ${quoteScriptValue(change.removedQualityScript)}`,
+          );
         }
 
         for (const omittedScript of change.omittedScripts ?? []) {

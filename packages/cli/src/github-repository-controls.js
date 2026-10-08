@@ -3,10 +3,15 @@ import { stringify as stringifyYaml } from "yaml";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   normalizeGithubRepositoryControlsOptions,
+  REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls-options.js";
 import { readBoundedTemplate } from "./utils/fs.js";
 
-export { GITHUB_REPOSITORY_CONTROLS_ID, normalizeGithubRepositoryControlsOptions };
+export {
+  GITHUB_REPOSITORY_CONTROLS_ID,
+  normalizeGithubRepositoryControlsOptions,
+  REPOSITORY_CONTROLS_SCRIPT_PATH,
+};
 
 const TEMPLATE_URL = new URL("./templates/repository-controls.mjs", import.meta.url);
 
@@ -88,13 +93,13 @@ Calavera generated a committed desired-state policy for \`${config.repository}\`
 Run the read-only drift check before applying any remote changes:
 
 \`\`\`sh
-node scripts/repository-controls.mjs
+node ${REPOSITORY_CONTROLS_SCRIPT_PATH}
 \`\`\`
 
 Review the reported plan, then apply it interactively:
 
 \`\`\`sh
-node scripts/repository-controls.mjs --apply
+node ${REPOSITORY_CONTROLS_SCRIPT_PATH} --apply
 \`\`\`
 
 For intentional unattended administration, add \`--yes\` to the apply command.
@@ -128,7 +133,7 @@ export function githubRepositoryControlManagedFiles(rawOptions) {
       contents: createDependabotConfig(options.dependabotEcosystems),
     },
     {
-      path: "scripts/repository-controls.mjs",
+      path: REPOSITORY_CONTROLS_SCRIPT_PATH,
       contents: readBoundedTemplate(TEMPLATE_URL, "Repository-controls"),
     },
     {

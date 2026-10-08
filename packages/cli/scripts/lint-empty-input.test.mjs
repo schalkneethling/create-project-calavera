@@ -13,18 +13,17 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { createRequire } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { applyRecipeObject } from "../src/index.js";
 import { buildRecipe, composeRecipe, validateRecipe } from "../src/recipe.js";
+import { packageDirectory } from "./installed-package.mjs";
 
 const execFileAsync = promisify(execFile);
-const require = createRequire(import.meta.url);
 const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const wrapperTemplatePath = fileURLToPath(
   new URL("../src/templates/lint-html.mjs", import.meta.url),
@@ -224,8 +223,126 @@ test("a dry run on a project an earlier release applied shows each changed lint 
   );
 });
 
+const htmlOnlyRecipe = buildRecipe("minimal", ["html-validate"], "npm", [], {
+  "html-validate": { quality: false },
+});
+const htmlLeftOutStep =
+  'Would omit lint:html from script quality: the recipe sets integrationOptions["html-validate"].quality to false, so quality does not validate HTML files.';
+const htmlOnlyQualityOmission =
+  'Would omit script quality: quality was requested, but integrationOptions["html-validate"].quality leaves out lint:html, the only generated script quality would run, so Calavera does not generate quality.';
+
+/** @param {string[]} args */
+async function runCli(args) {
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, ...args], {
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  return stdout.split("\n");
+}
+
+/**
+ * @param {string[]} lines
+ * @param {string} expected
+ */
+function assertLine(lines, expected) {
+  assert.ok(
+    lines.some((line) => line.endsWith(expected)),
+    `missing ${expected}\n${lines.join("\n")}`,
+  );
+}
+
+test("with only lint:html left out, apply removes a quality an earlier release wrote, and a second apply changes nothing", async () => {
+  await inProject(
+    async () => {
+      await writeFile("calavera.config.json", `${JSON.stringify(htmlOnlyRecipe, null, 2)}\n`);
+      const dryRunLines = await runCli(["apply", "--dry-run"]);
+
+      assertLine(dryRunLines, 'Would remove script quality: "npm run lint:html"');
+      assertLine(dryRunLines, htmlOnlyQualityOmission);
+      assertLine(dryRunLines, htmlLeftOutStep);
+      assert.equal((await packageScripts()).quality, "npm run lint:html");
+
+      const applied = await applyRecipeObject(htmlOnlyRecipe, applyOptions);
+      const scripts = await packageScripts();
+      const packageChange = applied.changes.find(({ path }) => path === "package.json");
+
+      assert.equal(Object.hasOwn(scripts, "quality"), false);
+      assert.equal(scripts["lint:html"], lintHtml);
+      assert.equal(packageChange.removedQualityScript, "npm run lint:html");
+      assert.deepEqual(packageChange.omittedQualitySteps, [
+        {
+          step: "lint:html",
+          reason:
+            'the recipe sets integrationOptions["html-validate"].quality to false, so quality does not validate HTML files.',
+        },
+      ]);
+
+      const reapplied = await applyRecipeObject(htmlOnlyRecipe, applyOptions);
+      assert.ok(reapplied.changes.every(({ type }) => type === "unchanged"));
+      assert.equal(Object.hasOwn(await packageScripts(), "quality"), false);
+
+      const secondDryRunLines = await runCli(["apply", "--dry-run"]);
+      assertLine(secondDryRunLines, "Nothing to change: the project already matches this recipe.");
+      assertLine(secondDryRunLines, htmlOnlyQualityOmission);
+      assert.equal(
+        secondDryRunLines.some((line) => line.includes("Would remove script quality")),
+        false,
+      );
+    },
+    {
+      name: "html-only",
+      scripts: { "lint:html": 'html-validate "**/*.html"', quality: "npm run lint:html" },
+    },
+  );
+});
+
+test("with only lint:html left out, apply keeps a quality of the user's own and says so", async () => {
+  const userQuality = "npm run lint:html && npm test";
+
+  await inProject(
+    async () => {
+      await writeFile("calavera.config.json", `${JSON.stringify(htmlOnlyRecipe, null, 2)}\n`);
+      const dryRunLines = await runCli(["apply", "--dry-run"]);
+
+      assertLine(
+        dryRunLines,
+        `${htmlOnlyQualityOmission} package.json keeps its quality script, "${userQuality}", because Calavera did not write that value.`,
+      );
+      assert.equal(
+        dryRunLines.some((line) => line.includes("Would remove script quality")),
+        false,
+      );
+
+      await applyRecipeObject(htmlOnlyRecipe, applyOptions);
+      assert.equal((await packageScripts()).quality, userQuality);
+    },
+    { name: "html-only-user-quality", scripts: { quality: userQuality } },
+  );
+});
+
+test("quality with no generated script to run keeps its earlier reason", async () => {
+  await inProject(async () => {
+    const result = await applyRecipeObject(
+      buildRecipe("minimal", ["editorconfig"], "npm"),
+      applyOptions,
+    );
+    const packageChange = result.changes.find(({ path }) => path === "package.json");
+
+    assert.deepEqual(
+      packageChange.omittedScripts.find(({ script }) => script === "quality"),
+      {
+        script: "quality",
+        reason: "quality was requested but no generated scripts are available to aggregate.",
+      },
+    );
+    assert.equal(packageChange.removedQualityScript, undefined);
+  });
+});
+
 test("the html-validate options accept only a boolean quality field on a selected html-validate", () => {
-  assert.deepEqual(recipeFor({}).integrationOptions, { "html-validate": { quality: true } });
+  // Only the non-default choice is recorded, so a recipe that keeps lint:html
+  // in quality stays valid for a CLI release that predates the option.
+  assert.equal(recipeFor({}).integrationOptions, undefined);
+  assert.equal(recipeFor({ quality: true }).integrationOptions, undefined);
   assert.deepEqual(
     composeRecipe({
       profile: "default",
@@ -251,32 +368,6 @@ test("the html-validate options accept only a boolean quality field on a selecte
     /integrationOptions\.html-validate requires the html-validate integration\./,
   );
 });
-
-/**
- * The directory of an installed package, found by walking up from its entry
- * point, as not every package exports its package.json.
- *
- * @param {string} name
- */
-async function packageDirectory(name) {
-  let directory = dirname(require.resolve(name));
-
-  while (directory !== dirname(directory)) {
-    try {
-      const manifest = JSON.parse(await readFile(join(directory, "package.json"), "utf8"));
-      if (manifest.name === name) {
-        return directory;
-      }
-    } catch (error) {
-      if (error.code !== "ENOENT") {
-        throw error;
-      }
-    }
-    directory = dirname(directory);
-  }
-
-  throw new Error(`Could not find the installed ${name} package.`);
-}
 
 /**
  * Links the workspace's installed packages into `directory`, so the
@@ -332,13 +423,9 @@ const validHtml = `<!DOCTYPE html>
 
 const invalidHtml = validHtml.replace("<p>Valid</p>", "<div></span>");
 
-const posixLinks = {
-  skip: process.platform === "win32" && "links package binaries with POSIX symlinks",
-};
-
 test(
   "quality runs the real Stylelint and HTML Validate: empty input passes, a real error fails",
-  posixLinks,
+  { skip: process.platform === "win32" && "links the Stylelint binary with a POSIX symlink" },
   async () => {
     await inProject(async (directory) => {
       await applyRecipeObject(recipeFor(), applyOptions);
@@ -376,19 +463,3 @@ test(
     });
   },
 );
-
-test("the wrapper refuses to run without a pattern", posixLinks, async () => {
-  await inProject(async (directory) => {
-    await applyRecipeObject(recipeFor(), applyOptions);
-    await linkInstalledTools(directory);
-
-    await assert.rejects(
-      execFileAsync(process.execPath, ["scripts/lint-html.mjs"], { cwd: directory }),
-      (error) => {
-        assert.equal(error.code, 2);
-        assert.match(error.stderr, /Pass the HTML files or patterns to validate/);
-        return true;
-      },
-    );
-  });
-});
