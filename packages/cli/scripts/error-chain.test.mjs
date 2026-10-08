@@ -1,5 +1,6 @@
 // Tests for issue #619: the CLI and the MCP server show an error's cause chain
 // once, with secrets redacted, and distinct failures stay distinguishable.
+// The redaction patterns themselves are tested in redact.test.mjs.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
@@ -14,10 +15,10 @@ import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { execa } from "execa";
 
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
-import { createMcpServer, toolErrorResult } from "../src/mcp.js";
+import { describeCommandFailure } from "../src/index.js";
+import { createMcpServer, runMcpEntrypoint, toolErrorResult } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { errorChain, formatErrorChain } from "../src/utils/error-chain.js";
-import { redactSecrets } from "../src/utils/redact.js";
 import { json, libraryManifest, vitePlusConfig } from "./vite-plus-fixtures.mjs";
 
 const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
@@ -26,9 +27,8 @@ const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.me
 // Fake secrets in the shapes the redaction step recognizes. None is a real credential.
 const npmToken = `npm_${"A1b2C3d4E5".repeat(4).slice(0, 36)}`;
 const githubToken = `ghp_${"Z9y8X7w6V5".repeat(4).slice(0, 36)}`;
-const fineGrainedToken = `github_pat_${"11ABCDEFG0".repeat(3)}_${"q".repeat(40)}`;
 const envSecret = "s3cr3t-value-from-the-environment";
-const secrets = [npmToken, githubToken, fineGrainedToken, envSecret, "hunter2-password"];
+const secrets = [npmToken, githubToken, envSecret];
 
 /** @param {string} text */
 function assertNoSecret(text) {
@@ -45,69 +45,44 @@ function occurrences(text, fragment) {
   return text.split(fragment).length - 1;
 }
 
-test("redactSecrets removes tokens, auth headers, URL user information, and secret environment values", () => {
-  const env = { NPM_TOKEN: envSecret, HOME: "/home/someone", CI: "true" };
-  const text = [
-    `npm error 401 Unauthorized ${npmToken}`,
-    `remote: Invalid credentials ${githubToken} and ${fineGrainedToken}`,
-    `authorization: Bearer ${npmToken}`,
-    "Authorization: Basic dXNlcjpodW50ZXIyLXBhc3N3b3Jk",
-    "Authorization: token abcdef0123456789",
-    "//registry.npmjs.org/:_authToken=abcdef0123456789",
-    "//registry.example/:_password=hunter2-password",
-    "GET https://someone:hunter2-password@registry.example/pkg",
-    `git clone https://x-access-token:${githubToken}@github.com/owner/repo.git`,
-    `NODE_AUTH_TOKEN=${envSecret} npm publish`,
-    `echo ${envSecret}`,
-    "HOME is /home/someone",
-  ].join("\n");
-
-  const redacted = redactSecrets(text, env);
-
-  assertNoSecret(redacted);
-  assert.doesNotMatch(redacted, /dXNlcjpodW50ZXIy|abcdef0123456789/);
-  // What is not secret stays, so the failure is still diagnosable.
-  assert.match(redacted, /npm error 401 Unauthorized/);
-  assert.match(redacted, /https:\/\/\[redacted\]@registry\.example\/pkg/);
-  assert.match(redacted, /github\.com\/owner\/repo\.git/);
-  assert.match(redacted, /^HOME is \/home\/someone$/m);
-  assert.match(redacted, /_authToken=\[redacted\]/);
-  // Redacting again changes nothing.
-  assert.equal(redactSecrets(redacted, env), redacted);
-});
-
-test("redactSecrets keeps short or non-secret environment values", () => {
-  const env = { GITHUB_TOKEN: "", NPM_CONFIG_AUTH: "true", USER: "someone" };
-
-  assert.equal(
-    redactSecrets("true: someone ran it", env),
-    "true: someone ran it",
-    "an empty or short secret value or a variable without a secret name was redacted",
+test("a child-process cause shows its redacted command and exit code, not its output again", async () => {
+  const outputLines = Array.from(
+    { length: 40 },
+    (_, index) => `output line ${String(index + 1).padStart(2, "0")}`,
   );
-});
-
-test("a child-process cause is shown with its command and output redacted", async () => {
   const childError = await execa(
     process.execPath,
     [
       "-e",
-      `console.log("fetching with " + process.env.NPM_TOKEN); console.error("${githubToken}"); process.exit(3)`,
+      `for (let line = 1; line <= 40; line++) console.log("output line " + String(line).padStart(2, "0")); console.error("${githubToken}"); process.exit(3)`,
       "--",
       `--token=${npmToken}`,
     ],
     { env: { NPM_TOKEN: envSecret }, reject: false },
   );
   assert.equal(childError.exitCode, 3);
-  const wrapper = new Error("Calavera could not install the development dependencies.", {
-    cause: childError,
-  });
+  // The wrapper the CLI throws when an install fails.
+  const wrapper = new Error(
+    [
+      "Calavera could not install the development dependencies.",
+      describeCommandFailure(childError),
+    ].join("\n"),
+    { cause: childError },
+  );
 
   const text = formatErrorChain(wrapper, { NPM_TOKEN: envSecret });
 
   assertNoSecret(text);
-  assert.match(text, /^Calavera could not install the development dependencies\.$/m);
-  assert.match(text, /^Caused by: Command failed with exit code 3: /m);
-  assert.match(text, /fetching with \[redacted\]/);
+  assert.match(
+    text,
+    /^Caused by: ExecaError: Command failed with exit code 3: .*'--token=\[redacted\]'$/m,
+  );
+  for (const line of outputLines.slice(0, 30)) {
+    assert.equal(occurrences(text, line), 0, `${line} was shown\n${text}`);
+  }
+  for (const line of outputLines.slice(30)) {
+    assert.equal(occurrences(text, line), 1, `${line} was not shown once\n${text}`);
+  }
 });
 
 test("a cause is shown once: an embedded cause is not repeated, a deferred cause is shown", () => {
@@ -144,6 +119,29 @@ test("a cause is shown once: an embedded cause is not repeated, a deferred cause
   assert.doesNotMatch(formatErrorChain(trimmed, {}), /Caused by/);
 });
 
+test("a cause is left out whole only when its whole message occurs in an earlier one", () => {
+  // "line 3" occurs in "line 31" only as part of a longer word.
+  assert.equal(
+    formatErrorChain(new Error("output: line 31", { cause: new Error("line 3") }), {}),
+    "output: line 31\nCaused by: line 3",
+  );
+  // A one-word cause is shown even when the word occurs in the message.
+  assert.equal(
+    formatErrorChain(new Error("Run npm install first.", { cause: new Error("install") }), {}),
+    "Run npm install first.\nCaused by: install",
+  );
+  // A line of a cause is left out only when it equals a line already shown.
+  assert.equal(
+    formatErrorChain(
+      new Error("Could not fetch.\nline 31", {
+        cause: new Error("request failed\nline 3\nline 31"),
+      }),
+      {},
+    ),
+    "Could not fetch.\nline 31\nCaused by: request failed\n  line 3",
+  );
+});
+
 test("a cause chain shows only the lines a wrapper did not already show, through every level", () => {
   const root = new Error("connect ECONNREFUSED 127.0.0.1:4873");
   const middle = new Error(`registry request failed\n${root.message}`, { cause: root });
@@ -159,7 +157,7 @@ test("a cause chain shows only the lines a wrapper did not already show, through
   assert.equal(
     text,
     [
-      "Install failed, and the rollback also failed. Could not install the artifacts.",
+      "AggregateError: Install failed, and the rollback also failed. Could not install the artifacts.",
       "Caused by: registry request failed",
       "  connect ECONNREFUSED 127.0.0.1:4873",
       "Caused by: EACCES: permission denied, rmdir '.calavera'",
@@ -168,10 +166,48 @@ test("a cause chain shows only the lines a wrapper did not already show, through
   assert.equal(occurrences(text, "ECONNREFUSED"), 1);
 });
 
-test("a cause chain survives a cycle and a non-Error cause", () => {
+test("sibling AggregateError members are each shown once", () => {
+  const aggregate = new AggregateError(
+    [
+      new Error("registry timed out after 30 s"),
+      new Error("registry timed out after 30 s"),
+      new Error("first install\nshared line"),
+      new Error("second install\nshared line"),
+    ],
+    "Two installs failed.",
+  );
+
+  assert.equal(
+    formatErrorChain(aggregate, {}),
+    [
+      "AggregateError: Two installs failed.",
+      "Caused by: registry timed out after 30 s",
+      "Caused by: first install",
+      "  shared line",
+      "Caused by: second install",
+    ].join("\n"),
+  );
+});
+
+test("an error name other than Error prefixes its message, and stands in for an empty one", () => {
+  const error = new TypeError("options.recipe is not a function", {
+    cause: new RangeError("", { cause: new Error("") }),
+  });
+
+  assert.equal(
+    formatErrorChain(error, {}),
+    "TypeError: options.recipe is not a function\nCaused by: RangeError\nCaused by: Error",
+  );
+  assert.equal(formatErrorChain(new Error(""), {}), "Error");
+});
+
+test("a cause chain survives a cycle, a revoked proxy, and causes that are not errors", () => {
   const first = new Error("first");
   const second = new Error("second", { cause: first });
   first.cause = second;
+  const withoutPrototype = Object.create(null);
+  const { proxy, revoke } = Proxy.revocable({}, {});
+  revoke();
 
   assert.equal(formatErrorChain(first, {}), "first\nCaused by: second");
   assert.equal(
@@ -179,6 +215,51 @@ test("a cause chain survives a cycle and a non-Error cause", () => {
     "outer\nCaused by: a plain string cause",
   );
   assert.equal(formatErrorChain("thrown string", {}), "thrown string");
+  assert.equal(
+    formatErrorChain(new Error("outer", { cause: withoutPrototype }), {}),
+    "outer\nCaused by: [object Object]",
+  );
+  assert.equal(
+    formatErrorChain(new Error("outer", { cause: { message: 404, code: "E404" } }), {}),
+    "outer\nCaused by: 404",
+  );
+  assert.deepEqual(errorChain(new Error("outer", { cause: { message: 404, code: "E404" } }), {}), [
+    { name: "Error", message: "outer" },
+    { message: "404", code: "E404" },
+  ]);
+  assert.equal(
+    formatErrorChain(new Error("outer", { cause: proxy }), {}),
+    "outer\nCaused by: [a value that cannot be displayed]",
+  );
+});
+
+test("a cause's name and code are redacted too", () => {
+  const cause = Object.assign(new Error("request failed"), {
+    name: `HttpError ${npmToken}`,
+    code: `E401 ${githubToken}`,
+  });
+
+  const chain = errorChain(new Error("Could not fetch.", { cause }), {});
+
+  assertNoSecret(JSON.stringify(chain));
+  assert.deepEqual(chain[1], {
+    name: "HttpError [redacted]",
+    message: "request failed",
+    code: "E401 [redacted]",
+  });
+});
+
+test("a cause is cut at ten lines of at most 300 characters each", () => {
+  const lines = Array.from({ length: 14 }, (_, index) => `cause line ${index + 1}`);
+  lines[0] = "x".repeat(400);
+
+  const [, cause] = errorChain(new Error("Wrapper.", { cause: new Error(lines.join("\n")) }), {});
+
+  assert.deepEqual(cause.message.split("\n"), [
+    `${"x".repeat(300)}… [line truncated]`,
+    ...lines.slice(1, 10),
+    "… 4 more lines",
+  ]);
 });
 
 /**
@@ -291,10 +372,13 @@ test("a registry failure and a file conflict stay distinguishable after wrapping
 });
 
 test("an MCP tool error carries the redacted cause chain as structured JSON", () => {
-  const cause = Object.assign(new Error(`GET https://registry.example 401 Bearer ${npmToken}`), {
-    code: "E401",
+  const cause = Object.assign(
+    new Error(`GET https://registry.example 401 Bearer ${npmToken} as ${envSecret}`),
+    { code: "E401" },
+  );
+  const result = toolErrorResult(new Error("Could not install the artifacts.", { cause }), {
+    NODE_AUTH_TOKEN: envSecret,
   });
-  const result = toolErrorResult(new Error("Could not install the artifacts.", { cause }));
 
   assert.equal(result.isError, true);
   assert.equal(result.content.length, 1);
@@ -307,12 +391,36 @@ test("an MCP tool error carries the redacted cause chain as structured JSON", ()
       causes: [
         {
           name: "Error",
-          message: "GET https://registry.example 401 Bearer [redacted]",
+          message: "GET https://registry.example 401 Bearer [redacted] as [redacted]",
           code: "E401",
         },
       ],
     },
   });
+});
+
+test("the MCP server redacts a startup error it writes to stderr", async () => {
+  /** @type {string[]} */
+  const stderrWrites = [];
+
+  await runMcpEntrypoint({
+    cwd: "/example/project",
+    env: { GH_TOKEN: envSecret },
+    stderr: {
+      write(chunk) {
+        stderrWrites.push(String(chunk));
+        return true;
+      },
+    },
+    setExitCode() {},
+    async startServer() {
+      throw new Error(`transport failed with ${envSecret} and Bearer ${githubToken}`);
+    },
+  });
+
+  const stderr = stderrWrites.join("");
+  assertNoSecret(stderr);
+  assert.match(stderr, /transport failed with \[redacted\] and Bearer \[redacted\]/);
 });
 
 test("a registered MCP tool that throws answers with an error result, also when it declares an output schema", async () => {
