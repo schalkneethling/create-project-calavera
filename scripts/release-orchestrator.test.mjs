@@ -7,11 +7,14 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import {
+  defaultViewNpm,
   discoverPublicPackages,
   fledglingArgs,
   fledglingCommand,
   hasPendingVersionBumps,
   isExplicitRegistryNotFound,
+  npmViewArgs,
+  npxSmokeArgs,
   npmViewWithRetry,
   packagesFromReleaseNotes,
   parseOptions,
@@ -397,6 +400,38 @@ test("release workflow polling waits asynchronously within a configurable budget
   );
 });
 
+test("npm view arguments revalidate against the registry with --prefer-online", () => {
+  assert.deepEqual(npmViewArgs(["@scope/pkg@1.0.0", "version", "--json"]), [
+    "view",
+    "--prefer-online",
+    "@scope/pkg@1.0.0",
+    "version",
+    "--json",
+  ]);
+});
+
+test("the default npm view runner receives --prefer-online", () => {
+  const calls = [];
+  defaultViewNpm(["@scope/pkg", "dist-tags", "--json"], (command, args) => {
+    calls.push([command, args]);
+    return { status: 0, stdout: "", stderr: "" };
+  });
+  assert.deepEqual(calls, [
+    ["npm", ["view", "--prefer-online", "@scope/pkg", "dist-tags", "--json"]],
+  ]);
+});
+
+test("npx smoke arguments revalidate against the registry with --prefer-online", () => {
+  assert.deepEqual(npxSmokeArgs({ name: "pkg", version: "1.0.0" }, ["bin", "--help"]), [
+    "--yes",
+    "--prefer-online",
+    "--package",
+    "pkg@1.0.0",
+    "bin",
+    "--help",
+  ]);
+});
+
 test("npm view retries only explicit 404 responses, waiting the given backoff between attempts", async () => {
   let calls = 0;
   const delays = [];
@@ -476,8 +511,8 @@ test("npm view retry reports progress through an injectable reporter before each
   assert.equal(result, '"1.0.0"');
   assert.equal(calls, 3);
   assert.deepEqual(reported, [
-    "Waiting 5s for npm view @scope/pkg@1.0.0 version --json (attempt 1 of 3).",
-    "Waiting 10s for npm view @scope/pkg@1.0.0 version --json (attempt 2 of 3).",
+    "Waiting 5s for npm view --prefer-online @scope/pkg@1.0.0 version --json (attempt 1 of 3).",
+    "Waiting 10s for npm view --prefer-online @scope/pkg@1.0.0 version --json (attempt 2 of 3).",
   ]);
 });
 
