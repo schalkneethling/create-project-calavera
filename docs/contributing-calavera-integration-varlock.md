@@ -276,7 +276,9 @@ Dry-run output should also describe the intent accurately. The current
 script leaves out and why. Beside `changes`, the result carries
 `scriptChanges`, which lists each `package.json` script apply would add or
 change with the value apply writes, and for a changed script its current value
-as `previous`. A script that already has the value apply writes is not listed.
+as `previous`. A renamed script also carries `renamedFrom`, its old name, and
+`previous` is the value under that name. A script that already has the value
+apply writes is not listed.
 
 A useful dry-run result for a fresh project would therefore include changes like:
 
