@@ -193,22 +193,26 @@
               />
             </div>
             <fieldset class="options-choices">
-              <legend>Merge requirements</legend>
-              <div class="choice">
-                <input
-                  id="repository-controls-require-codeql"
-                  type="checkbox"
-                  name="repositoryControlsRequireCodeql"
-                  aria-describedby="repository-controls-codeql-hint"
-                  checked
-                />
-                <label class="choice-label" for="repository-controls-require-codeql"
-                  >Require CodeQL results</label
-                >
+              <legend class="group-heading">Merge requirements</legend>
+              <div class="field-stack">
+                <div class="inline-field">
+                  <input
+                    id="repository-controls-require-codeql"
+                    type="checkbox"
+                    name="repositoryControlsRequireCodeql"
+                    aria-describedby="repository-controls-codeql-hint"
+                    checked
+                  />
+                  <label class="check-label" for="repository-controls-require-codeql"
+                    >Require CodeQL results</label
+                  >
+                </div>
                 <p class="hint" id="repository-controls-codeql-hint">
-                  Blocks merges until CodeQL has scanned the change and found no errors, warnings,
-                  or medium-or-higher security alerts. Calavera sets this up as a code scanning
-                  rule, so you do not need to enter CodeQL as a status check.
+                  Blocks merges until CodeQL has scanned the change and found no new alerts at these
+                  levels: errors, warnings, or medium-or-higher security alerts. If CodeQL is not
+                  set up for the repository, merges stay blocked until it is. Calavera sets this up
+                  as a code scanning rule, so you do not need to enter CodeQL as a status check.
+                  Clearing the box leaves scanning unmanaged.
                 </p>
               </div>
               <div class="field-stack">
@@ -227,8 +231,10 @@
                 <p class="hint" id="repository-controls-required-checks-hint">
                   Leave this empty if you have no continuous integration yet. Empty is valid: no
                   status checks are required. A name that no check reports blocks every merge, so
-                  add names only after your first run. You can also require checks later in the
-                  repository settings, under Rules. See
+                  add names only after your first run. To require a check later, add its name here
+                  and re-apply the recipe. Do not add it to the Calavera ruleset in the repository
+                  settings, because the next apply removes it. To require a check outside Calavera,
+                  create a separate ruleset in the repository settings. See
                   <a
                     href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets"
                     >Available rules for rulesets</a

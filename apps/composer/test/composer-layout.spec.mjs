@@ -211,7 +211,7 @@ test("repository controls require CodeQL results by default and accept an empty 
   await expect(codeql).toBeChecked();
   await expect(checks).toHaveValue("");
   await expect(checks).not.toHaveAttribute("placeholder", /.+/);
-  await expect(checks).not.toHaveAttribute("required", /.*/);
+  await expect(checks).not.toHaveAttribute("required");
   await expect(checks).toHaveAccessibleDescription(/Empty is valid: no status checks are required/);
   await expect(codeql).toHaveAccessibleDescription(
     /you do not need to enter CodeQL as a status check/,
@@ -219,7 +219,15 @@ test("repository controls require CodeQL results by default and accept an empty 
 
   let options = (await recipeOutput(page)).integrationOptions["github-repository-controls"];
   expect(options.requiredChecks).toEqual([]);
-  expect(options.requireCodeqlResults).toBe(true);
+  expect(options).not.toHaveProperty("requireCodeqlResults");
+
+  await checks.fill("Check, Build");
+  await checks.blur();
+  options = (await recipeOutput(page)).integrationOptions["github-repository-controls"];
+  expect(options.requiredChecks).toEqual(["Check", "Build"]);
+  expect(options).not.toHaveProperty("requireCodeqlResults");
+  await checks.fill("");
+  await checks.blur();
 
   await codeql.uncheck();
   options = (await recipeOutput(page)).integrationOptions["github-repository-controls"];

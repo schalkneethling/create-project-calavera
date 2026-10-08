@@ -512,7 +512,8 @@ fieldset {
   padding-inline: var(--space-xl) var(--target-size);
 }
 
-.row-head input {
+.row-head input,
+.inline-field input[type="checkbox"] {
   block-size: 1.125rem;
   flex-shrink: 0;
   inline-size: 1.125rem;
@@ -708,7 +709,7 @@ fieldset {
   line-height: 1.75rem;
 }
 
-.options-panel .hint {
+.options-panel-text .hint {
   font-size: 1rem;
 }
 
@@ -719,38 +720,11 @@ fieldset {
   grid-column: 1 / -1;
 }
 
-.options-choices > legend {
-  color: var(--teal-deep);
-  font-size: 0.875rem;
-  font-weight: 700;
-  margin-block-end: var(--space-md);
-  padding-block: 0;
-  padding-inline: 0;
-}
-
-.choice {
+.check-label {
   align-items: center;
-  display: grid;
-  gap: var(--space-xs) var(--space-md);
-  grid-template-columns: auto minmax(0, 1fr);
-}
-
-.choice input {
-  block-size: 1.125rem;
-  inline-size: 1.125rem;
-  margin-block: 0;
-  margin-inline: 0;
-}
-
-.choice-label {
-  color: var(--teal-deep);
   cursor: pointer;
-  font-size: 0.875rem;
-  font-weight: 700;
-}
-
-.choice .hint {
-  grid-column: 2;
+  display: flex;
+  min-block-size: var(--target-size);
 }
 
 .field-stack {

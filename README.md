@@ -269,11 +269,13 @@ hard stop that names the repository root, before any file is planned or written.
 
 `requireCodeqlResults` (default `true`) requires CodeQL results through the ruleset's code scanning
 rule, not through a status check name, so you do not enter CodeQL in `requiredChecks`. Set it to
-`false` to leave scanning rules unmanaged. `requiredChecks` (default `[]`) lists additional status
-check names. A required check is the exact name that a check reports on a pull request, usually the
-workflow job name, and a name that no check reports blocks every merge. Leave the list empty for a
-new project and require checks after your first CI run, in the recipe or in the repository settings.
-See GitHub's
+`false` so that Calavera does not manage the code scanning rule; a rule that already exists stays
+until you delete it in the repository settings under Rules. `requiredChecks` (default `[]`) lists
+additional status check names. A required check is the exact name that a check reports on a pull
+request, usually the workflow job name, and a name that no check reports blocks every merge. Leave
+the list empty for a new project and add names after your first CI run, then re-apply the recipe. A
+check added by hand to the managed ruleset is reported as drift and removed on the next apply;
+require it in a separate ruleset that Calavera does not manage instead. See GitHub's
 [available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
 
 `calavera apply` only writes local files and package scripts. Run `npm run repo:controls:check` for

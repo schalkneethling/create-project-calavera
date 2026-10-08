@@ -259,9 +259,14 @@ test("config schema validates attached GitHub repository-control options", () =>
 
   assertValid(validate, valid);
   assert.equal(
-    valid.integrationOptions["github-repository-controls"].requireCodeqlResults,
+    schema.$defs.githubRepositoryControlsOptions.properties.requireCodeqlResults.default,
     true,
     "CodeQL results are required unless the recipe declines them",
+  );
+  assert.equal(
+    Object.hasOwn(valid.integrationOptions["github-repository-controls"], "requireCodeqlResults"),
+    false,
+    "the default is omitted from a built recipe",
   );
   assertValid(validate, {
     ...valid,

@@ -64,8 +64,28 @@ test("an empty required-checks selection is valid and CodeQL results are require
 
   const options = recipe.integrationOptions["github-repository-controls"];
   assert.deepEqual(options.requiredChecks, []);
-  assert.equal(options.requireCodeqlResults, true);
+  // The default is omitted, so the recipe still works with a published CLI that rejects
+  // unknown option fields.
+  assert.equal(Object.hasOwn(options, "requireCodeqlResults"), false);
   assert.deepEqual(commaSeparatedValues(""), []);
+  const config = createRepositoryControlsConfig(normalizeGithubRepositoryControlsOptions(options));
+  assert.notEqual(config.mainRuleset.codeScanning, null);
+});
+
+test("a non-empty required-checks selection reaches the generated policy next to CodeQL", () => {
+  const recipe = composerRecipe({
+    profile: "minimal",
+    integrations: ["github-repository-controls"],
+    repositoryControls: {
+      repository: "octocat/example",
+      requiredChecks: commaSeparatedValues("Check, Build"),
+    },
+  });
+
+  const options = recipe.integrationOptions["github-repository-controls"];
+  const config = createRepositoryControlsConfig(normalizeGithubRepositoryControlsOptions(options));
+  assert.deepEqual(config.mainRuleset.requiredChecks, ["Check", "Build"]);
+  assert.notEqual(config.mainRuleset.codeScanning, null);
 });
 
 test("declining CodeQL results is written into the recipe and drives the generated policy", () => {

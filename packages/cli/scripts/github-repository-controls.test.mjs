@@ -119,6 +119,9 @@ test("generated repository-control documentation uses portable Node commands", (
   assert.match(documentation, /node scripts\/repository-controls\.mjs --apply/);
   assert.doesNotMatch(documentation, /npm run repo:controls/);
   assert.match(documentation, /add `--yes` to the apply command/);
+  assert.match(documentation, /add its name to `requiredChecks` in the Calavera recipe/);
+  assert.match(documentation, /apply removes them/);
+  assert.match(documentation, /separate ruleset in the repository settings/);
   const defaultSuiteDocs = githubRepositoryControlManagedFiles({
     ...rawOptions,
     codeqlQuerySuite: "default",
@@ -1465,7 +1468,38 @@ test("declining CodeQL results leaves the code scanning rule unmanaged and keeps
     requireCodeqlResults: false,
   }).find(({ path }) => path === "docs/repository-controls.md").contents;
   assert.doesNotMatch(documentation, /requires CodeQL results/);
-  assert.match(documentation, /does not require CodeQL results/);
+  assert.match(documentation, /does not manage the code scanning rule/);
+  assert.match(documentation, /delete it in \*\*Settings → Rules\*\*/);
+});
+
+test("an unmanaged code scanning rule that already exists is no drift and stays in the ruleset", () => {
+  const required = desiredState(
+    createRepositoryControlsConfig(
+      normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    ),
+  );
+  const existing = mainRulesetPayload(required.mainRuleset);
+  const desired = desiredState(
+    createRepositoryControlsConfig(
+      normalizeGithubRepositoryControlsOptions({
+        repository: "octocat/example",
+        requireCodeqlResults: false,
+      }),
+    ),
+  );
+  assert.equal(desired.mainRuleset.codeScanning, null);
+
+  const current = structuredClone(desired);
+  current.security.codeqlSupported = true;
+  current.rulesetsSupported = true;
+  current.mainRuleset = normalizeMainRuleset(existing, false);
+  assert.deepEqual(planRepositoryControlChanges(current, desired), []);
+
+  const updated = mainRulesetPayload(desired.mainRuleset, "active", existing);
+  assert.deepEqual(
+    updated.rules.find(({ type }) => type === "code_scanning"),
+    existing.rules.find(({ type }) => type === "code_scanning"),
+  );
 });
 
 test("requireCodeqlResults must be a boolean", () => {

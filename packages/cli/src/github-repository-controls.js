@@ -110,16 +110,19 @@ Checks verify active branch enforcement, default-branch scope without exclusions
 
 GitHub must support code-scanning merge protection for the repository. A required scan must have results for both the commit and target reference. See [GitHub rules documentation](https://docs.github.com/en/rest/repos/rules).
 `
-    : `The generated policy uses the ${querySuite} query suite and does not require CodeQL results, because the recipe sets \`requireCodeqlResults\` to false. To require them, set \`mainRuleset.codeScanning\` in the committed policy to an object with \`alertsThreshold\` and \`securityAlertsThreshold\`, or re-apply the recipe with \`requireCodeqlResults\` set to true.
+    : `The generated policy uses the ${querySuite} query suite and does not manage the code scanning rule, because the recipe sets \`requireCodeqlResults\` to false. Calavera neither creates, changes, nor removes that rule. A code scanning rule that already exists in the ruleset stays and keeps requiring CodeQL results; to stop requiring them, delete it in **Settings → Rules**. To have Calavera require CodeQL results, set \`requireCodeqlResults\` to true in the recipe and re-apply it.
 
 Checks verify active branch enforcement, default-branch scope without exclusions, and an explicitly empty bypass list. Applying repairs these shared protections and preserves unrelated rules and other scanners. Review the plan before applying.
 `;
-  const requiredChecksDocumentation =
+  const requiredChecksList =
     config.mainRuleset.requiredChecks.length > 0
-      ? `The generated policy requires these status checks: ${config.mainRuleset.requiredChecks.map((check) => `\`${check}\``).join(", ")}. A required check is the exact name that a check reports on a pull request, usually the workflow job name. A name that no check reports blocks every merge.`
-      : `The generated policy requires no status checks, so \`mainRuleset.requiredChecks\` is empty. A required check is the exact name that a check reports on a pull request, usually the workflow job name. Run your continuous integration once, then add the names you see in the pull request checks list to \`mainRuleset.requiredChecks\`, or require them in the repository settings. A name that no check reports blocks every merge. See [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets) and [Creating rulesets for a repository](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository).`;
+      ? `The generated policy requires these status checks: ${config.mainRuleset.requiredChecks.map((check) => `\`${check}\``).join(", ")}.`
+      : `The generated policy requires no status checks, so \`mainRuleset.requiredChecks\` is empty.`;
+  const requiredChecksDocumentation = `${requiredChecksList} A required check is the exact name that a check reports on a pull request, usually the workflow job name. A name that no check reports blocks every merge, so add names only after your first continuous integration run.
+
+To require another check, add its name to \`requiredChecks\` in the Calavera recipe and re-apply the recipe. Do not add checks to the \`${config.mainRuleset.name}\` ruleset in the repository settings: the drift check reports them and apply removes them. To require a check outside Calavera, create a separate ruleset in the repository settings that Calavera does not manage. See [Available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets) and [Creating rulesets for a repository](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository).`;
   const codeqlPartialApply = codeqlRequired
-    ? `If CodeQL default setup does not apply, the ruleset still requires CodeQL results, so it blocks merges until CodeQL default setup is configured and reports results. Set \`mainRuleset.codeScanning\` to null to remove that requirement.
+    ? `If CodeQL default setup does not apply, the ruleset still requires CodeQL results, so it blocks merges until CodeQL default setup is configured and reports results. Set \`mainRuleset.codeScanning\` to null so that Calavera no longer manages the rule. A rule that already exists stays and keeps blocking merges; delete it in **Settings → Rules** to stop requiring CodeQL results.
 `
     : "";
   return `# Repository controls
