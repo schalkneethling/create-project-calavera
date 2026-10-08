@@ -3181,6 +3181,11 @@ function recipeNextSteps(target, packageManager, { changeDirectory }) {
 const NEW_HARD_STOP_SUFFIX =
   "Calavera wrote nothing further, removed nothing, and did not run the --init bootstrap.";
 
+// The runner inherits stdio, so Calavera cannot read the npm error and shows
+// this for every non-zero npx exit. The wording states its own condition.
+export const NPX_STALE_CACHE_HINT =
+  'This applies only if the npm output above shows "npm error code ERESOLVE" and names a vite-plus version: an older vite-plus in the npx cache can cause that. To fix it, run "npm cache npx ls", find the row that shows vite-plus, run "npm cache npx rm <key>" with the key from that row, then run this command again. If the npm output shows a different error, this does not apply; read the npm or Vite+ output above.';
+
 /**
  * @typedef {{ command: string, args: string[], cwd: string }} RunnerInvocation
  * @typedef {{ exitCode: number | null, signal: string | null }} RunnerExit
@@ -3475,7 +3480,9 @@ export async function newProject(options, runtime = {}) {
       `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
         runnerCommand.command === "yarn"
           ? " If yarn itself failed, note that yarn dlx needs Yarn 2 or later."
-          : ""
+          : runnerCommand.command === "npx"
+            ? ` ${NPX_STALE_CACHE_HINT}`
+            : ""
       }`,
     );
   }
