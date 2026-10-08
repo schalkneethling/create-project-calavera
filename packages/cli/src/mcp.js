@@ -91,6 +91,10 @@ const integrationOutputSchema = z.looseObject({
   profiles: z.array(z.string()).describe("Profiles the integration is available in."),
   description: z.string().describe("Generated description prefixed with the integration summary."),
   minimumCliVersion: z.string().optional(),
+  optionsMinimumCliVersion: z
+    .string()
+    .optional()
+    .describe("The first CLI version that accepts this integration's integrationOptions entry."),
   appliesAt: z.string().optional(),
   includes: z.array(z.string()).optional(),
 });

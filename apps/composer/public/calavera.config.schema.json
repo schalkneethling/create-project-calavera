@@ -44,6 +44,9 @@
         "stylelint-baseline": {
           "$ref": "#/$defs/stylelintBaselineOptions"
         },
+        "html-validate": {
+          "$ref": "#/$defs/htmlValidateOptions"
+        },
         "github-repository-controls": {
           "$ref": "#/$defs/githubRepositoryControlsOptions"
         }
@@ -95,6 +98,27 @@
             "type": "array",
             "contains": {
               "const": "stylelint-baseline"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "integrationOptions": {
+            "type": "object",
+            "required": ["html-validate"]
+          }
+        },
+        "required": ["integrationOptions"]
+      },
+      "then": {
+        "properties": {
+          "integrations": {
+            "type": "array",
+            "contains": {
+              "const": "html-validate"
             }
           }
         }
@@ -167,6 +191,17 @@
         "severity": {
           "type": "string",
           "enum": ["warning", "error"]
+        }
+      }
+    },
+    "htmlValidateOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "quality": {
+          "description": "Run lint:html in the generated quality script. Set it to false in a project without static HTML files, such as one whose HTML a server or a Worker renders, and validate the rendered HTML in tests with the HTML Validate API instead. Calavera still generates lint:html.",
+          "type": "boolean",
+          "default": true
         }
       }
     },

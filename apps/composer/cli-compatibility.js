@@ -139,6 +139,34 @@ export function assertRecipeIntegrationsSupported(recipe, integrations, cliVersi
   return recipe;
 }
 
+/**
+ * Whether the CLI accepts the integration's integrationOptions entry. Options
+ * without their own minimum arrived with the integration.
+ */
+export function integrationOptionsSupported(integration, cliVersion) {
+  return (
+    !integration.optionsMinimumCliVersion ||
+    versionMeetsMinimum(cliVersion, integration.optionsMinimumCliVersion)
+  );
+}
+
+export function assertRecipeIntegrationOptionsSupported(recipe, integrations, cliVersion) {
+  const unsupportedIds = Object.keys(recipe.integrationOptions ?? {}).filter((id) => {
+    const integration = integrations.find((candidate) => candidate.id === id);
+    return integration && !integrationOptionsSupported(integration, cliVersion);
+  });
+
+  if (unsupportedIds.length > 0) {
+    throw new Error(
+      `The published Calavera CLI v${cliVersion} does not support integrationOptions for: ${unsupportedIds.join(
+        ", ",
+      )}. Wait for the required CLI release before downloading this recipe.`,
+    );
+  }
+
+  return recipe;
+}
+
 export function assertRecipeArtifactsSupported(recipe, artifacts, cliVersion) {
   const supportedIds = new Set(filterArtifactsForCli(artifacts, cliVersion).map(({ id }) => id));
   const unsupportedIds = (recipe.ai ?? [])

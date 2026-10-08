@@ -171,6 +171,30 @@
           <div class="integration-groups" id="integrations"></div>
           <section
             class="options-panel"
+            id="html-validate-options"
+            aria-labelledby="html-validate-heading"
+            hidden
+          >
+            <div class="options-panel-text">
+              <h3 id="html-validate-heading">HTML Validate</h3>
+              <p class="hint">
+                Without static HTML files, such as when a server renders your HTML, leave
+                <code>lint:html</code> out of <code>quality</code> and validate the rendered HTML in
+                your tests.
+              </p>
+            </div>
+            <label class="inline-field" for="html-validate-quality">
+              <input
+                id="html-validate-quality"
+                type="checkbox"
+                name="htmlValidateQuality"
+                checked
+              />
+              Run lint:html in quality
+            </label>
+          </section>
+          <section
+            class="options-panel"
             id="repository-controls-options"
             aria-labelledby="repository-controls-heading"
             hidden

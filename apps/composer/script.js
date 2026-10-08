@@ -28,6 +28,7 @@ import {
   filterArtifactsForCli,
   filterIntegrationsForCli,
   filterProfilesForCli,
+  integrationOptionsSupported,
   integrationResponseForCli,
   loadPublishedCliCompatibility,
   SAFE_CLI_FALLBACK_VERSION,
@@ -58,6 +59,7 @@ const newProject = document.querySelector("#new-project");
 const baselineOptions = document.querySelector("#baseline-options");
 const baselineAvailable = document.querySelector("#baseline-available");
 const repositoryControlsOptions = document.querySelector("#repository-controls-options");
+const htmlValidateOptions = document.querySelector("#html-validate-options");
 const cliVersionBadge = document.querySelector("#cli-version");
 const cliCompatibilityNote = document.querySelector("#cli-compatibility");
 const stickyBarProfile = document.querySelector("#sticky-bar-profile");
@@ -549,6 +551,11 @@ function syncIntegrationOptions() {
   repositoryControlsOptions.hidden = !form.querySelector(
     '[name="integration"][value="github-repository-controls"]:checked',
   );
+  const htmlValidate = listIntegrationOptions().find(({ id }) => id === "html-validate");
+  htmlValidateOptions.hidden = !(
+    form.querySelector('[name="integration"][value="html-validate"]:checked') &&
+    integrationOptionsSupported(htmlValidate, cliCompatibility.version)
+  );
 }
 
 function selectedAiArtifacts() {
@@ -573,6 +580,10 @@ function recipe() {
     repositoryControls: {
       repository: data.get("repositoryControlsRepository"),
       requiredChecks: commaSeparatedValues(data.get("repositoryControlsRequiredChecks")),
+    },
+    // A hidden panel is one the published CLI cannot apply, so its choice is not recorded.
+    htmlValidate: {
+      quality: htmlValidateOptions.hidden || data.get("htmlValidateQuality") === "on",
     },
   });
 }
@@ -966,6 +977,13 @@ function registerWebMcpTools() {
                     oneOf: [{ type: "string", enum: ["widely", "newly"] }, { type: "integer" }],
                   },
                   severity: { type: "string", enum: ["warning", "error"] },
+                },
+              },
+              "html-validate": {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  quality: { type: "boolean" },
                 },
               },
               "github-repository-controls": {

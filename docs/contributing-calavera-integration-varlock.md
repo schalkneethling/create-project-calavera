@@ -331,8 +331,11 @@ A useful dry-run result for a fresh project would therefore include changes like
     }
   ],
   "scriptChanges": [
-    { "script": "lint:styles", "value": "stylelint \"**/*.{css,scss}\"" },
-    { "script": "lint:styles:fix", "value": "stylelint \"**/*.{css,scss}\" --fix" },
+    { "script": "lint:styles", "value": "stylelint \"**/*.{css,scss}\" --allow-empty-input" },
+    {
+      "script": "lint:styles:fix",
+      "value": "stylelint \"**/*.{css,scss}\" --allow-empty-input --fix"
+    },
     { "script": "knip", "value": "knip" },
     { "script": "env:load", "value": "varlock load" },
     { "script": "quality", "value": "pnpm lint:styles && pnpm knip && pnpm env:load" }
@@ -347,8 +350,8 @@ The corresponding human output should follow the current dry-run printer:
 
 ```text
 Would update package.json
-Would add script lint:styles: "stylelint \"**/*.{css,scss}\""
-Would add script lint:styles:fix: "stylelint \"**/*.{css,scss}\" --fix"
+Would add script lint:styles: "stylelint \"**/*.{css,scss}\" --allow-empty-input"
+Would add script lint:styles:fix: "stylelint \"**/*.{css,scss}\" --allow-empty-input --fix"
 Would add script knip: "knip"
 Would add script env:load: "varlock load"
 Would add script quality: "pnpm lint:styles && pnpm knip && pnpm env:load"

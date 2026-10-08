@@ -247,6 +247,33 @@ test("config schema rejects invalid or detached Stylelint Baseline options", () 
   );
 });
 
+test("config schema rejects invalid or detached HTML Validate options", () => {
+  const validate = ajv.compile(schema);
+  const valid = buildRecipe("default", ["html-validate"], "npm", [], {
+    "html-validate": { quality: false },
+  });
+
+  assertValid(validate, valid);
+  assert.equal(
+    validate({ ...valid, integrations: ["stylelint"] }),
+    false,
+    "options must reference a selected integration",
+  );
+  assert.equal(
+    validate({ ...valid, integrationOptions: { "html-validate": { quality: "false" } } }),
+    false,
+    "quality must be a boolean",
+  );
+  assert.equal(
+    validate({
+      ...valid,
+      integrationOptions: { "html-validate": { quality: false, extra: true } },
+    }),
+    false,
+    "unknown option fields must be rejected",
+  );
+});
+
 test("config schema validates attached GitHub repository-control options", () => {
   const validate = ajv.compile(schema);
   const valid = buildRecipe("minimal", ["github-repository-controls"], "npm", [], {
@@ -2355,8 +2382,14 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     });
 
     const packageFile = JSON.parse(await readFile("package.json", "utf8"));
-    assert.equal(packageFile.scripts["lint:styles"], 'stylelint "**/*.{css,scss}"');
-    assert.equal(packageFile.scripts["lint:styles:fix"], 'stylelint "**/*.{css,scss}" --fix');
+    assert.equal(
+      packageFile.scripts["lint:styles"],
+      'stylelint "**/*.{css,scss}" --allow-empty-input',
+    );
+    assert.equal(
+      packageFile.scripts["lint:styles:fix"],
+      'stylelint "**/*.{css,scss}" --allow-empty-input --fix',
+    );
     assert.doesNotMatch(JSON.stringify(packageFile.scripts), /run-if-files/);
     const stylelintConfig = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist/**"), true);
@@ -2556,10 +2589,11 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
     assert.deepEqual(dryRun.dependencies, ["html-validate"]);
     assert.deepEqual(
       dryRun.changes.filter(({ type }) => type === "write").map(({ path }) => path),
-      [".htmlvalidate.json", ".htmlvalidateignore"],
+      [".htmlvalidate.json", ".htmlvalidateignore", "scripts/lint-html.mjs"],
     );
     await assertPathMissing(".htmlvalidate.json");
     await assertPathMissing(".htmlvalidateignore");
+    await assertPathMissing("scripts/lint-html.mjs");
 
     const mcpDryRun = await callMcpTool("dry_run_apply", { recipe });
     assert.deepEqual(
@@ -2591,13 +2625,13 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
     );
 
     const packageFile = JSON.parse(await readFile("package.json", "utf8"));
-    assert.equal(packageFile.scripts["lint:html"], 'html-validate "**/*.html"');
+    assert.equal(packageFile.scripts["lint:html"], 'node scripts/lint-html.mjs "**/*.html"');
     assert.equal(packageFile.scripts.quality, "npm run lint:html");
 
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
     assert.deepEqual(
       state.managedFiles.map(({ path }) => path),
-      [".htmlvalidate.json", ".htmlvalidateignore"],
+      [".htmlvalidate.json", ".htmlvalidateignore", "scripts/lint-html.mjs"],
     );
 
     const { stdout: doctorStdout } = await execFileAsync(
@@ -2606,7 +2640,9 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
       { env: { ...process.env, NO_COLOR: "1" } },
     );
     assert.equal(
-      JSON.parse(doctorStdout).issues.some(({ message }) => message.includes("htmlvalidate")),
+      JSON.parse(doctorStdout).issues.some(
+        ({ message }) => message.includes("htmlvalidate") || message.includes("lint-html"),
+      ),
       false,
     );
 
@@ -2637,10 +2673,12 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
       [
         { type: "delete", path: ".htmlvalidate.json" },
         { type: "delete", path: ".htmlvalidateignore" },
+        { type: "delete", path: "scripts/lint-html.mjs" },
       ],
     );
     await assertPathMissing(".htmlvalidate.json");
     await assertPathMissing(".htmlvalidateignore");
+    await assertPathMissing("scripts/lint-html.mjs");
   } finally {
     process.chdir(originalDirectory);
     await rm(projectDirectory, { force: true, recursive: true });

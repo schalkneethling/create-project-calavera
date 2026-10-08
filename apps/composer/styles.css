@@ -680,6 +680,14 @@ fieldset {
   min-block-size: 2.5rem;
 }
 
+.inline-field input[type="checkbox"] {
+  block-size: 1.125rem;
+  flex-shrink: 0;
+  inline-size: 1.125rem;
+  margin-block: 0;
+  margin-inline: 0;
+}
+
 .inline-field select:disabled {
   opacity: 0.55;
 }
