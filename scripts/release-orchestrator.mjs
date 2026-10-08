@@ -145,8 +145,10 @@ export async function discoverPublicPackages() {
   return packages.sort((left, right) => left.name.localeCompare(right.name));
 }
 
-function registryQuery(args) {
-  return run("npm", ["view", ...args], { capture: true, allowFailure: true });
+// npm's local cache honors the registry's max-age=300; --prefer-online revalidates against the
+// registry so a packument cached before a publish cannot hide the new version.
+export function npmViewArgs(args) {
+  return ["view", "--prefer-online", ...args];
 }
 
 function requireRegistryJson(result, description) {
@@ -165,7 +167,7 @@ function requireRegistryJson(result, description) {
 export async function registryPlan(packages) {
   const planned = [];
   for (const pkg of packages) {
-    const exact = registryQuery([`${pkg.name}@${pkg.version}`, "version", "--json"]);
+    const exact = defaultViewNpm([`${pkg.name}@${pkg.version}`, "version", "--json"]);
     if (exact.status === 0) {
       planned.push({ ...pkg, published: true, packageExists: true });
       continue;
@@ -174,7 +176,7 @@ export async function registryPlan(packages) {
       requireRegistryJson(exact, `Exact registry lookup for ${pkg.name}@${pkg.version}`);
     }
 
-    const versionsResult = registryQuery([pkg.name, "versions", "--json"]);
+    const versionsResult = defaultViewNpm([pkg.name, "versions", "--json"]);
     if (isExplicitRegistryNotFound(versionsResult)) {
       planned.push({
         ...pkg,
@@ -186,7 +188,7 @@ export async function registryPlan(packages) {
     }
     requireRegistryJson(versionsResult, `Package registry lookup for ${pkg.name}`);
     const tagsBefore = requireRegistryJson(
-      registryQuery([pkg.name, "dist-tags", "--json"]),
+      defaultViewNpm([pkg.name, "dist-tags", "--json"]),
       `Dist-tag lookup for ${pkg.name}`,
     );
     planned.push({
@@ -479,8 +481,8 @@ export async function waitForRun(tag, sha, options = {}) {
 // these delays give `npm view` that same window before treating an explicit 404 as a real failure.
 export const NPM_VIEW_RETRY_DELAYS_MS = [5000, 10000, 20000, 30000, 30000, 30000];
 
-function defaultViewNpm(args) {
-  return run("npm", ["view", ...args], { capture: true, allowFailure: true });
+export function defaultViewNpm(args, runner = run) {
+  return runner("npm", npmViewArgs(args), { capture: true, allowFailure: true });
 }
 
 export async function npmViewWithRetry(args, options = {}) {
@@ -494,18 +496,18 @@ export async function npmViewWithRetry(args, options = {}) {
     if (result.status === 0) return result.stdout.trim();
     if (!isExplicitRegistryNotFound(result)) {
       throw new ReleaseError(
-        `${commandText("npm", ["view", ...args])} failed with exit code ${result.status}.`,
+        `${commandText("npm", npmViewArgs(args))} failed with exit code ${result.status}.`,
       );
     }
     if (attempt >= delays.length) {
       const totalSeconds = Math.round(delays.reduce((total, ms) => total + ms, 0) / 1000);
       throw new ReleaseError(
-        `npm view ${args.join(" ")} still reports the version missing after ${delays.length} retries over ~${totalSeconds}s. npm warns a fresh publish "may take a few minutes to become available" — wait a few minutes and re-run pnpm release:publish; already-published packages are skipped.`,
+        `${commandText("npm", npmViewArgs(args))} still reports the version missing after ${delays.length} retries over ~${totalSeconds}s. npm warns a fresh publish "may take a few minutes to become available" — wait a few minutes and re-run pnpm release:publish; already-published packages are skipped.`,
       );
     }
     const waitSeconds = Math.round(delays[attempt] / 1000);
     report(
-      `Waiting ${waitSeconds}s for npm view ${args.join(" ")} (attempt ${attempt + 1} of ${delays.length}).`,
+      `Waiting ${waitSeconds}s for ${commandText("npm", npmViewArgs(args))} (attempt ${attempt + 1} of ${delays.length}).`,
     );
     await wait(delays[attempt]);
   }
@@ -581,16 +583,14 @@ export async function verifyPublishedPackages(plan, runId, options = {}) {
   }
 }
 
+export function npxSmokeArgs(cli, args) {
+  return ["--yes", "--prefer-online", "--package", `${cli.name}@${cli.version}`, ...args];
+}
+
 async function smokePublishedArtifacts(plan) {
   const cli = plan.packages.find(({ name }) => name === "create-project-calavera");
   if (!cli) throw new ReleaseError("The workspace does not expose create-project-calavera.");
-  runQuiet("npx", [
-    "--yes",
-    "--package",
-    `${cli.name}@${cli.version}`,
-    "create-project-calavera",
-    "--help",
-  ]);
+  runQuiet("npx", npxSmokeArgs(cli, ["create-project-calavera", "--help"]));
   console.info(`Smoke-tested npx create-project-calavera@${cli.version} --help.`);
 
   const candidateArtifact = plan.packages.find(
@@ -623,17 +623,14 @@ async function smokePublishedArtifacts(plan) {
     );
     runQuiet(
       "npx",
-      [
-        "--yes",
-        "--package",
-        `${cli.name}@${cli.version}`,
+      npxSmokeArgs(cli, [
         "create-project-calavera",
         "artifacts",
         "install",
         "--tag",
         candidateArtifact.channel,
         "--yes",
-      ],
+      ]),
       { cwd: directory },
     );
     console.info(
