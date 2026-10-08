@@ -73,8 +73,8 @@ importers:
         specifier: 1.63.0
         version: 1.63.0
       vite:
-        specifier: ^8.3.2
-        version: 8.3.2(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1)
+        specifier: ^8.3.3
+        version: 8.3.3(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1)
 
   apps/composer:
     dependencies:
@@ -89,8 +89,8 @@ importers:
         specifier: 8.20.0
         version: 8.20.0
       vite:
-        specifier: ^8.3.2
-        version: 8.3.2(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1)
+        specifier: ^8.3.3
+        version: 8.3.3(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1)
 
   apps/menu-bar:
     dependencies:
@@ -105,8 +105,8 @@ importers:
         specifier: 2.12.1
         version: 2.12.1
       vite:
-        specifier: ^8.3.2
-        version: 8.3.2(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1)
+        specifier: ^8.3.3
+        version: 8.3.3(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1)
 
   packages/artifact-core:
     dependencies:
@@ -2148,6 +2148,11 @@ packages:
     engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
     hasBin: true
 
+  nanoid@3.3.20:
+    resolution: {integrity: sha512-uKdg2G3GNCKQn9byYOpxbGqrT2fGO5KRt5J/8b3pok8rT6qxGWF6hxMyJiEYtAf+FVyYuD9hRaDqX5uPFYJ4ZQ==}
+    engines: {node: ^10 || ^12 || ^13.7 || ^14 || >=15.0.1}
+    hasBin: true
+
   negotiator@1.0.0:
     resolution: {integrity: sha512-8Ofs/AUQh8MaEcrlq5xOX0CQ9ypTF5dl78mjlMNfOK08fzpgTHQRQPBxcPlEtIw0yRpws+Zo/3r+5WRby7u3Gg==}
     engines: {node: '>= 0.6'}
@@ -2342,6 +2347,10 @@ packages:
 
   postcss@8.5.28:
     resolution: {integrity: sha512-RRuzqDtt5Y9h3quz5hWhK+TPnsmVs6WwSU6LkJMeY4HstUEDuYTG8UJSdawMRzmzAtV+KEoG8N3Qg2qLy5vM/A==}
+    engines: {node: ^10 || ^12 || >=14}
+
+  postcss@8.5.29:
+    resolution: {integrity: sha512-49cGhUbXj8Qenv0iTMxA1cFBzxXoctpC9Ujd77t1WcbJIr6nF/eI7g/8MgxrYldFRuAXvja7xQRwavoW7kgrxQ==}
     engines: {node: ^10 || ^12 || >=14}
 
   prettier@3.9.9:
@@ -2677,8 +2686,8 @@ packages:
     resolution: {integrity: sha512-BNGbWLfd0eUPabhkXUVm0j8uuvREyTh5ovRa/dyow/BqAbZJyC+5fU+IzQOzmAKzYqYRAISoRhdQr3eIZ/PXqg==}
     engines: {node: '>= 0.8'}
 
-  vite@8.3.2:
-    resolution: {integrity: sha512-SQr1x6W5vVSbROg7vsyXIaxK9b0G7zsT68acdWWRmnBUsgDieLCRG+Rep9WdZgcposvv/GSnr4GUUBqB3vXq6w==}
+  vite@8.3.3:
+    resolution: {integrity: sha512-cTAldKPImjg6c+gk48U19POPn3GCBzZwpdsN8ZMEEcbpes+6/wvfqUd0C2y3qYY4wsj8PwgFwrZ/1jBPVttMSg==}
     engines: {node: ^20.19.0 || >=22.12.0}
     hasBin: true
     peerDependencies:
@@ -4382,6 +4391,8 @@ snapshots:
 
   nanoid@3.3.19: {}
 
+  nanoid@3.3.20: {}
+
   negotiator@1.0.0: {}
 
   negotiator@1.1.0:
@@ -4651,6 +4662,12 @@ snapshots:
   postcss@8.5.28:
     dependencies:
       nanoid: 3.3.19
+      picocolors: 1.1.1
+      source-map-js: 1.2.2
+
+  postcss@8.5.29:
+    dependencies:
+      nanoid: 3.3.20
       picocolors: 1.1.1
       source-map-js: 1.2.2
 
@@ -5060,11 +5077,11 @@ snapshots:
 
   vary@1.1.2: {}
 
-  vite@8.3.2(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1):
+  vite@8.3.3(@types/node@26.6.4)(jiti@2.7.0)(yaml@2.9.1):
     dependencies:
       lightningcss: 1.33.0
       picomatch: 4.0.7
-      postcss: 8.5.28
+      postcss: 8.5.29
       rolldown: 1.2.12
       tinyglobby: 0.2.17
     optionalDependencies:
