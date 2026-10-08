@@ -157,7 +157,13 @@ assert.match(publishJob, /npm publish .*--access public.*--tag "\$dist_tag"/);
 assert.doesNotMatch(publishJob, /NODE_AUTH_TOKEN|NPM_TOKEN/);
 // The runbook documents removing a stale `next` tag as a manual step because the publisher is not
 // granted "Allow npm dist-tag"; update the runbook if the workflow starts changing dist-tags.
-assert.doesNotMatch(publishJob, /npm dist-tag/);
+assert.doesNotMatch(
+  publishJob
+    .split("\n")
+    .filter((line) => !line.trimStart().startsWith("#"))
+    .join("\n"),
+  /\bnpm\b[^\n]*\bdist-tags?\b/,
+);
 assert.equal(
   publishWorkflow.includes(`echo "${publishSkipLine("${package_name}", "${package_version}")}"`),
   true,
