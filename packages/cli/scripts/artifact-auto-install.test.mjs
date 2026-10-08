@@ -20,6 +20,7 @@ import { fileURLToPath } from "node:url";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
 
+import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
@@ -46,7 +47,7 @@ function recipeWith(ids) {
  * `releases`, and records every resolve request.
  *
  * @param {Map<string, string>} releases
- * @param {{ failFor?: string, error?: Error }} [options]
+ * @param {{ failFor?: string, error?: Error, registry?: { origin: string, source: string }, warnings?: string[] }} [options]
  */
 function stubRegistry(releases, options = {}) {
   /** @type {{ id: string, version?: string }[]} */
@@ -71,6 +72,8 @@ function stubRegistry(releases, options = {}) {
         tag: request.tag ?? "latest",
         cache: request.cache,
         offline: false,
+        ...(options.registry ? { registry: options.registry } : {}),
+        ...(options.warnings ? { warnings: options.warnings } : {}),
       };
     },
     extract: async (
@@ -159,6 +162,59 @@ test("apply --dry-run without a lock reports the artifacts it would lock and wri
       "each planned artifact write is reported once",
     );
     assert.deepEqual(await snapshot(), before);
+  });
+});
+
+test("apply --dry-run reports the registry artifacts resolve from and the npm configuration warnings", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(
+      new Map([
+        ["skill-project-goal", "0.1.0"],
+        ["hook-block-dangerous-commands", "0.4.0"],
+      ]),
+      {
+        registry: { origin: "https://npm.example.com", source: "project .npmrc" },
+        warnings: ["Ignored //npm.example.com/:_authToken in the project .npmrc."],
+      },
+    );
+    const recipe = recipeWith(["skill-project-goal", "hook-block-dangerous-commands"]);
+
+    const result = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+    assert.deepEqual(result.artifactRegistries, [
+      { origin: "https://npm.example.com", source: "project .npmrc" },
+    ]);
+    assert.deepEqual(result.artifactWarnings, [
+      "Ignored //npm.example.com/:_authToken in the project .npmrc.",
+    ]);
+
+    const preview = await callMcpTool("dry_run_apply", { recipe }, registry);
+    assert.deepEqual(preview.result.artifactRegistries, result.artifactRegistries);
+    assert.deepEqual(preview.result.artifactWarnings, result.artifactWarnings);
+
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+    const install = await runArtifactCommand(
+      {
+        config: "calavera.config.json",
+        dryRun: true,
+        artifactAction: "install",
+      },
+      registry,
+    );
+    assert.deepEqual(install.registries, result.artifactRegistries);
+    assert.deepEqual(install.warnings, result.artifactWarnings);
+  });
+});
+
+test("apply --dry-run reports no registry when the resolver gives none", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const result = await applyRecipeObject(
+      recipeWith(["skill-project-goal"]),
+      { ...applyOptions, dryRun: true },
+      registry,
+    );
+    assert.deepEqual(result.artifactRegistries, []);
+    assert.deepEqual(result.artifactWarnings, []);
   });
 });
 

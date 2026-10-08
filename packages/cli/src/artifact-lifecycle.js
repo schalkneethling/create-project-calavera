@@ -36,6 +36,8 @@ const TRANSACTION_ROOT = ".calavera/.transactions";
  * @typedef {{ resolve: typeof resolveArtifactPackage, extract: typeof extractArtifactPackage }} ArtifactRegistry
  * @typedef {{ id: string, target?: string }} ArtifactSelection
  * @typedef {import("./ai/artifacts.js").AiChange} AiChange
+ * @typedef {{ origin: string, source: string }} ArtifactRegistryReport The registry (protocol, host, and port) an artifact resolves from, and the npm configuration it came from.
+ * @typedef {{ registries: ArtifactRegistryReport[], warnings: string[] }} ArtifactRegistryNotes
  */
 
 /** @param {ArtifactServices} services @returns {ArtifactRegistry} */
@@ -43,6 +45,25 @@ function artifactRegistry(services) {
   return {
     resolve: services.resolve ?? resolveArtifactPackage,
     extract: services.extract ?? extractArtifactPackage,
+  };
+}
+
+/**
+ * Collects the registry and npm configuration warnings the resolutions report, without repeats.
+ * A resolver that reports none, such as a test stand-in, adds nothing.
+ * @returns {{ add: (resolution: { registry?: ArtifactRegistryReport, warnings?: string[] }) => void, notes: () => ArtifactRegistryNotes }}
+ */
+function registryNotes() {
+  /** @type {Map<string, ArtifactRegistryReport>} */
+  const registries = new Map();
+  /** @type {Set<string>} */
+  const warnings = new Set();
+  return {
+    add({ registry, warnings: resolutionWarnings = [] }) {
+      if (registry) registries.set(`${registry.origin} ${registry.source}`, registry);
+      for (const warning of resolutionWarnings) warnings.add(warning);
+    },
+    notes: () => ({ registries: [...registries.values()], warnings: [...warnings] }),
   };
 }
 
@@ -84,7 +105,7 @@ export async function runArtifactCommand(options, services = {}) {
  * @param {ArtifactServices} [services]
  * @param {(sources: Map<string, string>) => Promise<unknown>} [preflight] Checks the complete set of sources before the install commits.
  * @param {ArtifactLockEntry[]} [approved] Entries a dry run reported; an unlocked selection listed here installs at exactly that version and tag instead of resolving its tag again.
- * @returns {Promise<{ sources: Map<string, string>, installed: ArtifactLockEntry[], changes: AiChange[], dispose: () => Promise<void> }>}
+ * @returns {Promise<{ sources: Map<string, string>, installed: ArtifactLockEntry[], changes: AiChange[], dispose: () => Promise<void> } & ArtifactRegistryNotes>}
  */
 export async function prepareArtifactSources(
   recipe,
@@ -104,6 +125,8 @@ export async function prepareArtifactSources(
       installed: [],
       changes: [],
       dispose: async () => {},
+      registries: [],
+      warnings: [],
     };
   }
 
@@ -132,6 +155,8 @@ export async function prepareArtifactSources(
       installed: staged.entries,
       changes: staged.changes,
       dispose: staged.dispose,
+      registries: staged.registries,
+      warnings: staged.warnings,
     };
   } catch (error) {
     await staged.dispose();
@@ -460,6 +485,8 @@ async function installArtifacts(options, updating, registry) {
     dryRun: options.dryRun,
     artifacts: staged.entries,
     changes: staged.changes,
+    registries: staged.registries,
+    warnings: staged.warnings,
   };
 }
 
@@ -475,7 +502,7 @@ async function installArtifacts(options, updating, registry) {
  * @param {ArtifactSelection[]} selections
  * @param {{ lockedById: Map<string, ArtifactLockEntry>, advanceIds: Set<string>, artifactTag?: "latest" | "next", dryRun: boolean, keptEntries: ArtifactLockEntry[], preflight?: (sources: Map<string, string>) => Promise<void> }} plan
  * @param {ArtifactRegistry} registry
- * @returns {Promise<{ entries: ArtifactLockEntry[], changes: AiChange[], sourcePaths: Map<string, string>, dispose: () => Promise<void> }>}
+ * @returns {Promise<{ entries: ArtifactLockEntry[], changes: AiChange[], sourcePaths: Map<string, string>, dispose: () => Promise<void> } & ArtifactRegistryNotes>}
  */
 async function stageArtifactInstall(recipe, selections, plan, registry) {
   const { lockedById, advanceIds, artifactTag, dryRun } = plan;
@@ -487,6 +514,7 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
   const sourcePaths = new Map();
   /** @type {ArtifactLockEntry[]} */
   const nextEntries = [];
+  const collected = registryNotes();
   let commitStarted = false;
 
   await rm(stagingRoot, { recursive: true, force: true });
@@ -504,6 +532,7 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
         version: shouldAdvance ? undefined : locked?.version,
         cache,
       });
+      collected.add(resolution);
       const stage = join(stagingRoot, "packages", selection.id);
       const extracted = await registry.extract(resolution, stage, packageJson.version);
       sourcePaths.set(selection.id, extracted.payloadPath);
@@ -575,7 +604,13 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
       await commitArtifactTransaction(stagingRoot, operations);
       commitStarted = false;
     }
-    return { entries: nextEntries, changes: applied.changes, sourcePaths, dispose };
+    return {
+      entries: nextEntries,
+      changes: applied.changes,
+      sourcePaths,
+      dispose,
+      ...collected.notes(),
+    };
   } catch (error) {
     // A commit that failed part way leaves its journal and staging for recovery.
     if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) await dispose();
