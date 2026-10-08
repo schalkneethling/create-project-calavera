@@ -155,6 +155,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ reownManagedFiles?: string[] }} ProjectInspectionOptions
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[] }} ScriptPlan
  * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
+ * @typedef {{ script: string, value: string, previous?: string | boolean }} ScriptChange A package.json script apply adds, or changes from `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
  *
  * @typedef {object} ApplyResult
@@ -168,6 +169,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {ProjectInspection} projectInspection
  * @property {VitePlusReport} vitePlus
  * @property {Change[]} changes
+ * @property {ScriptChange[]} scriptChanges Each package.json script apply adds or changes, with the value it writes, so the approval boundary shows the command; a script that already has that value is not listed. Kept out of the package.json change, which a dry run reports the same before and after apply.
  * @property {string[]} pointers
  * @property {ArtifactLockEntry[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock.
  *
@@ -2460,6 +2462,17 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
       reason: `package.json defines ${to} with a value of your own, and ${from} still has the value Calavera wrote, so Calavera keeps both instead of renaming ${from}; the generated quality script runs your ${to}.`,
     });
   }
+  // The values apply writes, against the scripts as they are now. A renamed
+  // script is added under its new name.
+  /** @type {ScriptChange[]} */
+  const scriptChanges = [];
+  for (const [script, value] of Object.entries(scripts)) {
+    if (!Object.hasOwn(packageJSON.scripts ?? {}, script)) {
+      scriptChanges.push({ script, value });
+    } else if (packageJSON.scripts?.[script] !== value) {
+      scriptChanges.push({ script, value, previous: packageJSON.scripts?.[script] });
+    }
+  }
   if (renamedScripts.length > 0) {
     // The renamed script keeps the position the old name had.
     const newNames = new Map(renamedScripts.map(({ from, to }) => [from, to]));
@@ -2646,6 +2659,7 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     projectInspection,
     vitePlus: vitePlusReport(projectInspection.vitePlus),
     changes: [...changes, ...aiChanges],
+    scriptChanges,
     pointers: [...aiResult.pointers, ...(usesVarlock ? [VARLOCK_POINTER] : [])],
     autoInstalledArtifacts: artifactPlan.installed,
   };
@@ -4408,8 +4422,22 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       if (change.type === "update") {
         logger.info(`Would update ${change.path}`);
 
-        if (change.scripts && change.scripts.length > 0) {
-          logger.info(`Would add scripts: ${change.scripts.join(", ")}`);
+        // Only the package.json change carries scripts.
+        if (change.scripts) {
+          // JSON string quoting keeps each value on one line, exactly as written.
+          for (const { script, value, previous } of result.scriptChanges) {
+            logger.info(
+              previous === undefined
+                ? `Would add script ${script}: ${JSON.stringify(value)}`
+                : `Would change script ${script} from ${JSON.stringify(previous)} to ${JSON.stringify(value)}`,
+            );
+          }
+
+          const changedScripts = new Set(result.scriptChanges.map(({ script }) => script));
+          const unchangedScripts = change.scripts.filter((script) => !changedScripts.has(script));
+          if (unchangedScripts.length > 0) {
+            logger.info(`Scripts already set: ${unchangedScripts.join(", ")}`);
+          }
         }
 
         if (change.removedDefaultTestScript) {
