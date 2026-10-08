@@ -2153,16 +2153,42 @@ export async function reportVitePlus() {
  * @returns {Promise<ProjectInspection>}
  */
 export async function inspectProject(recipe, options = {}) {
-  const packageJSON = await readPackageJSONIfPresent();
+  /** @type {PackageJSON} */
+  let packageJSON = {};
+  /** @type {ProjectInspectionFinding | undefined} */
+  let unparseableManifest;
+
+  try {
+    packageJSON = await readPackageJSONIfPresent();
+
+    if (!isPlainObject(packageJSON)) {
+      throw new SyntaxError("package.json must contain a JSON object");
+    }
+  } catch (error) {
+    // Inspection is read-only, so a broken manifest becomes a finding. Apply
+    // still stops on it. The cause stays in the message for diagnosis.
+    if (!(error instanceof SyntaxError)) {
+      throw error;
+    }
+
+    packageJSON = {};
+    unparseableManifest = {
+      severity: "error",
+      kind: "package-json-unparseable",
+      path: "package.json",
+      message: `package.json could not be parsed: ${error.message}. Findings that depend on its contents are omitted until it is fixed.`,
+    };
+  }
+
   const previousState = await readStateIfPresent();
   const reownManagedFiles = normalizeManagedFilePathSet(options.reownManagedFiles ?? []);
-  const packageManager = detectPackageManager(packageJSON);
+  const packageManager = unparseableManifest ? undefined : detectPackageManager(packageJSON);
   const integrations = recipe ? resolveRecipeIntegrations(recipe) : [];
   const integrationIds = new Set(integrations.map((integration) => integration.id));
   /** @type {string[]} */
   const files = [];
   /** @type {ProjectInspectionFinding[]} */
-  const findings = [];
+  const findings = unparseableManifest ? [unparseableManifest] : [];
 
   for (const path of projectInspectionFiles) {
     if (await projectFileExists(path)) {
@@ -2206,7 +2232,7 @@ export async function inspectProject(recipe, options = {}) {
   // Only the values of the scripts compared below are read from this plan, and
   // none of them depends on the Vite+ steps of quality, so none are planned.
   const plannedScripts =
-    recipe && (await fileExists(STATE_FILE))
+    recipe && !unparseableManifest && (await fileExists(STATE_FILE))
       ? buildScripts(recipe, integrations, resolveApplyPackageManager(recipe, {}, packageJSON), {
           steps: [],
           omittedSteps: [],
