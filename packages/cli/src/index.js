@@ -65,7 +65,11 @@ import {
   validateRecipeResponse,
 } from "./recipe.js";
 import { assertKnownValue } from "./utils/assertions.js";
-import { FileWriteError } from "./utils/file-write-error.js";
+import {
+  FAILURE_OUTPUT_LINES,
+  formatErrorChain,
+  truncateFailureLine,
+} from "./utils/error-chain.js";
 import {
   assertWorkspacePath,
   fileExists,
@@ -583,16 +587,13 @@ export function formatCommand([command, commandArgs], platform = process.platfor
     .join(" ");
 }
 
-const FAILURE_OUTPUT_LINES = 10;
-const FAILURE_OUTPUT_LINE_LENGTH = 300;
-
 /**
  * How a spawned command failed, so a Calavera error is diagnosable without
  * its `cause`: the exit code, the signal, or why it could not start, and the
  * last lines of the standard output Calavera captured, at most
  * FAILURE_OUTPUT_LINES lines of at most FAILURE_OUTPUT_LINE_LENGTH characters
  * each. Standard error is inherited, so the terminal already shows it. The
- * output is not redacted; redaction is tracked in #619.
+ * CLI and the MCP server redact the output when they display the error.
  *
  * @param {unknown} error
  */
@@ -619,11 +620,7 @@ export function describeCommandFailure(error) {
           .trim()
           .split("\n")
           .slice(-FAILURE_OUTPUT_LINES)
-          .map((line) =>
-            line.length > FAILURE_OUTPUT_LINE_LENGTH
-              ? `${line.slice(0, FAILURE_OUTPUT_LINE_LENGTH)}… [line truncated]`
-              : line,
-          )
+          .map(truncateFailureLine)
           .join("\n")
       : "";
 
@@ -4690,13 +4687,27 @@ export async function runCli() {
   try {
     await main();
   } catch (error) {
-    if (error instanceof FileWriteError) {
-      logger.error(error.message);
-      logger.error(error.cause);
-    } else {
-      logger.error(error);
+    let text;
+    try {
+      text = formatErrorChain(error);
+    } catch {
+      // A failure to format the error must not hide the error itself.
+      text = fallbackErrorText(error);
     }
+    logger.error(text);
     process.exitCode = 1;
+  }
+}
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function fallbackErrorText(error) {
+  try {
+    return String(error instanceof Error ? error.message : error);
+  } catch {
+    return "Calavera stopped with an error it could not display.";
   }
 }
 
