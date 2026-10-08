@@ -13,25 +13,21 @@ const API_RESPONSE_LIMIT = 20 * 1024 * 1024;
 export const CODEQL_ATTEMPTS = 36;
 export const CODEQL_DELAY_MS = 5_000;
 const MAX_PAGES = 100;
-// The languages API names that each CodeQL extractor declares as `github_api_languages` in
-// github/codeql. The c-cpp and java-kotlin extractors are not published there; their entries
-// use the Linguist names of the languages they analyze.
+// The languages API names that the published CodeQL extractors declare as
+// `github_api_languages` in github/codeql. The c-cpp and java-kotlin extractors are not
+// published there, so the presence of those languages is not checked. The actions extractor
+// declares no names, because the languages API does not report workflow files.
 const CODEQL_API_LANGUAGES = {
-  "c-cpp": ["C", "C++"],
   csharp: ["C#"],
   go: ["Go"],
-  "java-kotlin": ["Java", "Kotlin"],
   "javascript-typescript": ["JavaScript", "TypeScript", "Vue", "HTML"],
   python: ["Python"],
   ruby: ["Ruby"],
   swift: ["Swift"],
 };
-// The actions extractor declares no languages API names, because the API does not report
-// workflow files. These are its default paths (actions/extractor/tools/baseline-config.json).
-const ACTIONS_FILE =
-  /^(?:\.github\/workflows\/[^/]+\.ya?ml|\.github\/reusable_workflows\/.+\.ya?ml|(?:.+\/)?action\.ya?ml|(?:.+\/)?actions\.lock)$/;
 // Dependabot security updates are available only when Dependabot alerts are enabled.
 const APPLY_PREREQUISITES = { "dependabot-security-updates": "dependabot-alerts" };
+const GITHUB_TOKEN = /\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,})\b/g;
 const root = fileURLToPath(new URL("..", import.meta.url));
 const configPath = fileURLToPath(new URL("../.github/repository-controls.json", import.meta.url));
 
@@ -233,49 +229,61 @@ export function dependabotAlertsEnabled(api, repository) {
   return api.optional(`repos/${repository}/vulnerability-alerts`) !== null;
 }
 
-function actionsFilesPresent(api, repository, ref) {
-  let tree;
-  try {
-    tree = api.optional(`repos/${repository}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
-  } catch (error) {
-    // GitHub answers 409 for a repository without commits.
-    if (error.status === 409) return false;
-    throw error;
-  }
-  if (tree === null) return null;
-  if (tree.tree.some(({ path, type }) => type === "blob" && ACTIONS_FILE.test(path))) return true;
-  // A truncated listing cannot prove that no file exists.
-  return tree.truncated ? null : false;
+function redactTokens(text) {
+  return String(text).replace(GITHUB_TOKEN, "[redacted token]");
 }
 
-// Returns each requested CodeQL language that GitHub cannot detect, with the reason. A language
-// whose presence cannot be determined is not reported.
-function missingCodeqlLanguages(api, repository, ref, languages) {
+// Returns the reason a language is absent, or null when it is present.
+function languagePresence(api, repository, ref, language, readLanguages) {
+  if (language === "actions") {
+    const workflows = api.optional(
+      `repos/${repository}/contents/.github/workflows?ref=${encodeURIComponent(ref)}`,
+    );
+    if (workflows === null) return `the ${ref} branch has no .github/workflows directory`;
+    const files = Array.isArray(workflows) ? workflows : [workflows];
+    return files.some(({ type, name }) => type === "file" && /\.ya?ml$/.test(name))
+      ? null
+      : `.github/workflows on the ${ref} branch has no .yml or .yaml workflow file`;
+  }
+  const names = CODEQL_API_LANGUAGES[language];
+  if (!names) throw new Error("no published languages API mapping exists for it");
+  const detected = readLanguages();
+  if (names.some((name) => detected.has(name))) return null;
+  const listed =
+    names.length > 1 ? `${names.slice(0, -1).join(", ")}, or ${names.at(-1)}` : names[0];
+  return `GET repos/${repository}/languages reports no ${listed} code`;
+}
+
+// Compares the policy languages with what GitHub can analyze. Returns the missing languages,
+// which block CodeQL default setup, and the languages whose presence is unknown.
+function codeqlLanguagePresence(api, repository, ref, setup, desired) {
   const missing = [];
-  let detected;
-  for (const language of languages) {
-    if (language === "actions") {
-      if (actionsFilesPresent(api, repository, ref) === false) {
-        missing.push({
-          language,
-          reason: `the ${ref} branch has no GitHub Actions workflow or action metadata files, such as .github/workflows/*.yml or action.yml`,
-        });
+  const unknown = [];
+  if (desired.state !== "configured") return { missing, unknown };
+  if (setup.state === "not-configured") {
+    // Observed, not documented: while default setup is not configured, GitHub returns the
+    // languages it detects in the repository, and lists actions exactly when the default
+    // branch has a .github/workflows directory.
+    for (const language of desired.languages) {
+      if (!setup.languages.includes(language)) {
+        missing.push({ language, reason: "GitHub default setup does not detect it" });
       }
-      continue;
     }
-    const names = CODEQL_API_LANGUAGES[language];
-    if (!names) continue;
-    detected ??= new Set(Object.keys(api.request("GET", `repos/${repository}/languages`) ?? {}));
-    if (!names.some((name) => detected.has(name))) {
-      const listed =
-        names.length > 1 ? `${names.slice(0, -1).join(", ")}, or ${names.at(-1)}` : names[0];
-      missing.push({
-        language,
-        reason: `GET repos/${repository}/languages reports no ${listed} code`,
-      });
+    return { missing, unknown };
+  }
+  // Every language that default setup already analyzes is present.
+  let detected;
+  const readLanguages = () =>
+    (detected ??= new Set(Object.keys(api.request("GET", `repos/${repository}/languages`) ?? {})));
+  for (const language of desired.languages.filter((name) => !setup.languages.includes(name))) {
+    try {
+      const reason = languagePresence(api, repository, ref, language, readLanguages);
+      if (reason) missing.push({ language, reason });
+    } catch (error) {
+      unknown.push({ language, reason: redactTokens(error.message) });
     }
   }
-  return missing;
+  return { missing, unknown };
 }
 
 export function normalizeCodeqlDefaultSetup(setup) {
@@ -498,20 +506,37 @@ export function planRepositoryControlChanges(current, desired) {
       status: "unsupported",
       detail: current.security.codeqlDetail,
     });
-  } else if (current.security.codeqlMissingLanguages?.length > 0) {
-    const reasons = current.security.codeqlMissingLanguages
-      .map(({ language, reason }) => `${language}: ${reason}`)
-      .join("; ");
-    changes.push({
-      control: "codeql-default-setup",
-      operation: "update",
-      status: "blocked",
-      detail: `GitHub does not detect every policy language (${reasons}). Add code in each language, or remove it from security.codeqlDefaultSetup.languages in .github/repository-controls.json.`,
-    });
-  } else if (
-    !isDeepStrictEqual(current.security.codeqlDefaultSetup, desired.security.codeqlDefaultSetup)
-  ) {
-    changes.push(drift("codeql-default-setup", "update"));
+  } else {
+    const missing = current.security.codeqlMissingLanguages ?? [];
+    const notes = (current.security.codeqlUnknownLanguages ?? []).map(
+      ({ language, reason }) => `Presence of ${language} could not be determined: ${reason}.`,
+    );
+    if (missing.length > 0) {
+      const reasons = missing.map(({ language, reason }) => `${language}: ${reason}`).join("; ");
+      const steps = missing.map(({ language }) =>
+        language === "actions"
+          ? "add a workflow file under .github/workflows/ or remove actions"
+          : `add ${language} code or remove ${language}`,
+      );
+      changes.push({
+        control: "codeql-default-setup",
+        operation: "update",
+        status: "blocked",
+        detail: [
+          `GitHub cannot analyze every policy language (${reasons}). If you pushed recently, wait and run the check again.`,
+          ...notes,
+        ].join(" "),
+        remedy: `For each language, ${steps.join("; ")} from security.codeqlDefaultSetup.languages in .github/repository-controls.json. Then run the drift check again.`,
+      });
+    } else if (
+      !isDeepStrictEqual(current.security.codeqlDefaultSetup, desired.security.codeqlDefaultSetup)
+    ) {
+      changes.push(
+        notes.length > 0
+          ? { ...drift("codeql-default-setup", "update"), detail: notes.join(" ") }
+          : drift("codeql-default-setup", "update"),
+      );
+    }
   }
   if (!current.rulesetsSupported) {
     changes.push({
@@ -594,22 +619,15 @@ export function readRepositoryControlState(api, repository, desired) {
   const dependabotSecurityUpdates = api.optional(`repos/${repository}/automated-security-fixes`);
   const codeql = api.capability(`repos/${repository}/code-scanning/default-setup`);
   const codeqlDefaultSetup = codeql.supported ? normalizeCodeqlDefaultSetup(codeql.value) : null;
-  // GitHub detected every language that default setup already analyzes.
-  const unconfiguredLanguages =
-    codeqlDefaultSetup && desired.security.codeqlDefaultSetup.state === "configured"
-      ? desired.security.codeqlDefaultSetup.languages.filter(
-          (language) => !codeqlDefaultSetup.languages.includes(language),
-        )
-      : [];
-  const codeqlMissingLanguages =
-    unconfiguredLanguages.length > 0
-      ? missingCodeqlLanguages(
-          api,
-          repository,
-          repositorySettings.default_branch,
-          unconfiguredLanguages,
-        )
-      : [];
+  const codeqlLanguages = codeqlDefaultSetup
+    ? codeqlLanguagePresence(
+        api,
+        repository,
+        repositorySettings.default_branch,
+        codeqlDefaultSetup,
+        desired.security.codeqlDefaultSetup,
+      )
+    : { missing: [], unknown: [] };
   const rulesetsCapability = api.capability(`repos/${repository}/rulesets?includes_parents=false`, {
     paginate: true,
   });
@@ -653,7 +671,8 @@ export function readRepositoryControlState(api, repository, desired) {
         codeqlSupported: codeql.supported,
         codeqlDefaultSetup,
         codeqlDetail: codeql.detail ?? null,
-        codeqlMissingLanguages,
+        codeqlMissingLanguages: codeqlLanguages.missing,
+        codeqlUnknownLanguages: codeqlLanguages.unknown,
       },
       rulesetsSupported: rulesetsCapability.supported,
       rulesetsDetail: rulesetsCapability.detail ?? null,
@@ -675,6 +694,7 @@ function printChanges(changes, log) {
     log(
       `- [${change.status}] ${change.operation} ${change.control}${change.detail ? `: ${change.detail}` : ""}`,
     );
+    if (change.remedy) log(`  What to do: ${change.remedy}`);
   }
 }
 
@@ -735,13 +755,45 @@ function applyReleaseEnvironment(api, repository, environment) {
   }
 }
 
-// The main ruleset is the most important protection and depends on no other change, so it is
-// applied first. The other changes keep the planned order.
-function applyOrder(changes) {
-  return [
-    ...changes.filter(({ control }) => control === "main-ruleset"),
-    ...changes.filter(({ control }) => control !== "main-ruleset"),
-  ];
+// The main ruleset is the most important protection, so it is applied first; applying it does
+// not require any other change. CodeQL default setup is the change most likely to fail, so it is
+// applied last. With mainRuleset.codeScanning set, the ruleset blocks merges until CodeQL
+// results exist. The other changes keep the planned order.
+export function applyOrder(changes) {
+  const rank = ({ control }) =>
+    control === "main-ruleset" ? 0 : control === "codeql-default-setup" ? 2 : 1;
+  return [...changes].sort((left, right) => rank(left) - rank(right));
+}
+
+function applyMainRuleset(api, repository, desired, current) {
+  if (current.rulesetId !== null) {
+    api.request(
+      "PUT",
+      `repos/${repository}/rulesets/${current.rulesetId}`,
+      mainRulesetPayload(desired.mainRuleset, desired.mainRuleset.enforcement, current.ruleset),
+    );
+    return;
+  }
+  const { id } = api.request(
+    "POST",
+    `repos/${repository}/rulesets`,
+    mainRulesetPayload(desired.mainRuleset, "disabled"),
+  );
+  try {
+    api.request(
+      "PUT",
+      `repos/${repository}/rulesets/${id}`,
+      mainRulesetPayload(desired.mainRuleset, desired.mainRuleset.enforcement),
+    );
+  } catch (error) {
+    const failure = new Error(
+      `Ruleset ${id} was created disabled, but the update that enforces it failed: ${error.message}`,
+      { cause: error },
+    );
+    failure.status = error.status;
+    failure.remedy = `Run the apply again; it updates ruleset ${id} in place and enforces it.`;
+    throw failure;
+  }
 }
 
 function applyChange(api, repository, change, desired, current) {
@@ -775,29 +827,35 @@ function applyChange(api, repository, change, desired, current) {
       codeqlDefaultSetupPayload(desired.security.codeqlDefaultSetup),
     );
   } else if (change.control === "main-ruleset") {
-    let rulesetId = current.rulesetId;
-    if (rulesetId === null) {
-      rulesetId = api.request(
-        "POST",
-        `repos/${repository}/rulesets`,
-        mainRulesetPayload(desired.mainRuleset, "disabled"),
-      ).id;
-    }
-    api.request(
-      "PUT",
-      `repos/${repository}/rulesets/${rulesetId}`,
-      mainRulesetPayload(desired.mainRuleset, desired.mainRuleset.enforcement, current.ruleset),
-    );
+    applyMainRuleset(api, repository, desired, current);
   } else if (change.control === "release-environment" && desired.releaseEnvironment) {
     applyReleaseEnvironment(api, repository, desired.releaseEnvironment);
   }
 }
 
-function printApplySummary(outcomes, log) {
+function failureRemedy(change, error) {
+  if (error?.remedy) return error.remedy;
+  const status = error?.status;
+  if (status === 401 || status === 403 || status === 404) {
+    return "Check that the gh token can administer the repository (run gh auth status) and that the repository plan supports this control, then run the apply again.";
+  }
+  if (status === 422 && change.control === "codeql-default-setup") {
+    return "If the error names a language, add code in that language or remove it from security.codeqlDefaultSetup.languages in .github/repository-controls.json. Then run the drift check again.";
+  }
+  if (status === 422) {
+    return "Compare the error with .github/repository-controls.json, correct the policy or the repository, then run the drift check again.";
+  }
+  if (status === 429 || status >= 500) {
+    return "GitHub is rate limiting or unavailable. Wait, then run the apply again.";
+  }
+  return "Run the drift check to see the current state, then run the apply again.";
+}
+
+function printApplySummary(outcomes, desired, log) {
   log("Repository-control apply summary:");
   for (const [heading, status, describe] of [
     ["Applied", "applied", () => ""],
-    ["Failed", "failed", ({ error }) => `: ${error instanceof Error ? error.message : error}`],
+    ["Failed", "failed", ({ error }) => `: ${redactTokens(error?.message ?? error)}`],
     ["Not attempted", "not-attempted", ({ reason }) => `: ${reason}`],
   ]) {
     log(`${heading}:`);
@@ -805,7 +863,14 @@ function printApplySummary(outcomes, log) {
     if (matching.length === 0) log("- none");
     for (const outcome of matching) {
       log(`- ${outcome.change.operation} ${outcome.change.control}${describe(outcome)}`);
+      if (status !== "applied") log(`  What to do: ${outcome.remedy}`);
     }
+  }
+  const codeql = outcomes.find(({ change }) => change.control === "codeql-default-setup");
+  if (codeql && codeql.status !== "applied" && desired.mainRuleset.codeScanning) {
+    log(
+      "Note: the main ruleset requires CodeQL results (mainRuleset.codeScanning), so it blocks merges until CodeQL default setup is configured and reports results.",
+    );
   }
 }
 
@@ -832,13 +897,16 @@ export async function runRepositoryControls(options = {}) {
   const reviewerIds = resolveReviewers(api, config);
   const desired = desiredState(config, reviewerIds);
   const current = readRepositoryControlState(api, config.repository, desired);
-  // Policy languages are required coverage, not a request to remove existing coverage.
-  desired.security.codeqlDefaultSetup.languages = [
-    ...new Set([
-      ...desired.security.codeqlDefaultSetup.languages,
-      ...(current.state.security.codeqlDefaultSetup?.languages ?? []),
-    ]),
-  ].sort();
+  // Policy languages are required coverage, not a request to remove existing coverage. While
+  // default setup is not configured, GitHub lists detected languages, which are not coverage.
+  if (current.state.security.codeqlDefaultSetup?.state === "configured") {
+    desired.security.codeqlDefaultSetup.languages = [
+      ...new Set([
+        ...desired.security.codeqlDefaultSetup.languages,
+        ...current.state.security.codeqlDefaultSetup.languages,
+      ]),
+    ].sort();
+  }
   const changes = planRepositoryControlChanges(current.state, desired);
   printChanges(changes, log);
   if (config.manualControls.dependabotMalwareAlerts) {
@@ -853,14 +921,16 @@ export async function runRepositoryControls(options = {}) {
   }
 
   if (!apply) return { ok: changes.length === 0, changes };
-  const blockers = changes.filter(({ status }) => status !== "drift");
+  const blockers = changes.filter(({ status }) => status === "manual" || status === "unsupported");
   if (blockers.length > 0) {
-    throw new Error(
-      "Blocked, manual, or unsupported repository controls must be resolved before apply.",
-    );
+    throw new Error("Manual or unsupported repository controls must be resolved before apply.");
   }
   if (changes.length === 0) return { ok: true, changes: [] };
-  if (!yes && !(await (options.confirmApply ?? confirmApply)())) {
+  if (
+    changes.some(({ status }) => status === "drift") &&
+    !yes &&
+    !(await (options.confirmApply ?? confirmApply)())
+  ) {
     throw new Error("Repository-control changes were not applied.");
   }
 
@@ -868,21 +938,30 @@ export async function runRepositoryControls(options = {}) {
   const unresolved = new Set();
   for (const change of applyOrder(changes)) {
     const prerequisite = APPLY_PREREQUISITES[change.control];
-    if (change.operation === "enable" && unresolved.has(prerequisite)) {
+    if (change.status === "blocked") {
+      unresolved.add(change.control);
+      outcomes.push({
+        change,
+        status: "not-attempted",
+        reason: change.detail,
+        remedy: change.remedy,
+      });
+    } else if (change.operation === "enable" && unresolved.has(prerequisite)) {
       unresolved.add(change.control);
       outcomes.push({
         change,
         status: "not-attempted",
         reason: `requires ${prerequisite}, which did not apply.`,
+        remedy: `Resolve the ${prerequisite} failure, then run the apply again.`,
       });
-      continue;
-    }
-    try {
-      applyChange(api, config.repository, change, desired, current);
-      outcomes.push({ change, status: "applied" });
-    } catch (error) {
-      unresolved.add(change.control);
-      outcomes.push({ change, status: "failed", error });
+    } else {
+      try {
+        applyChange(api, config.repository, change, desired, current);
+        outcomes.push({ change, status: "applied" });
+      } catch (error) {
+        unresolved.add(change.control);
+        outcomes.push({ change, status: "failed", error, remedy: failureRemedy(change, error) });
+      }
     }
   }
 
@@ -900,7 +979,12 @@ export async function runRepositoryControls(options = {}) {
         options.polling,
       );
     } catch (error) {
-      Object.assign(codeql, { status: "failed", error });
+      Object.assign(codeql, {
+        status: "failed",
+        error,
+        remedy:
+          "CodeQL default setup can take several minutes to finish. Run the drift check again later.",
+      });
     }
   }
   let remaining = [];
@@ -921,6 +1005,8 @@ export async function runRepositoryControls(options = {}) {
       Object.assign(outcome, {
         status: "failed",
         error: new Error("GitHub still reports drift after the change was applied."),
+        remedy:
+          "Run the drift check again. If the control still differs, compare the repository settings with .github/repository-controls.json.",
       });
     }
   }
@@ -929,26 +1015,66 @@ export async function runRepositoryControls(options = {}) {
   const unplanned = remaining.filter(
     ({ control }) => !changes.some((change) => change.control === control),
   );
-  if (failed.length > 0 || notAttempted.length > 0 || unplanned.length > 0 || verificationError) {
-    printApplySummary(outcomes, log);
-    if (unplanned.length > 0) printChanges(unplanned, log);
-    const errors = failed.map(({ error }) => error);
-    if (verificationError) {
-      log(`Verification failed: ${verificationError.message}`);
-      throw new Error(
-        "Repository controls could not be verified after apply. See the apply summary.",
-        {
-          cause: new AggregateError([...errors, verificationError]),
-        },
-      );
-    }
+  if (
+    failed.length === 0 &&
+    notAttempted.length === 0 &&
+    unplanned.length === 0 &&
+    !verificationError
+  ) {
+    log("Repository controls were applied and verified.");
+    return { ok: true, changes };
+  }
+
+  printApplySummary(outcomes, desired, log);
+  const errors = failed.map(({ error }) => error);
+  if (verificationError) {
+    log(`Verification failed: ${redactTokens(verificationError.message)}`);
+    log("  What to do: Run the drift check to see which changes took effect.");
     throw new Error(
-      `Repository controls still differ after apply: ${failed.length} failed, ${notAttempted.length} not attempted. See the apply summary.`,
-      { cause: new AggregateError(errors) },
+      "Repository controls could not be verified after apply. See the apply summary.",
+      { cause: new AggregateError([...errors, verificationError]) },
     );
   }
-  log("Repository controls were applied and verified.");
-  return { ok: true, changes };
+  if (unplanned.length > 0) {
+    log("Drift that the apply did not plan:");
+    printChanges(unplanned, log);
+  }
+  const counts = [`${failed.length} failed`, `${notAttempted.length} not attempted`];
+  if (unplanned.length > 0) {
+    counts.push(`${unplanned.length} unplanned ${unplanned.length === 1 ? "finding" : "findings"}`);
+  }
+  throw new Error(
+    `Repository controls still differ after apply: ${counts.join(", ")}. See the apply summary.`,
+    errors.length > 0 ? { cause: new AggregateError(errors) } : undefined,
+  );
+}
+
+// Describes an error and its causes once each, without repeating text a parent already shows.
+export function describeFailure(error) {
+  const lines = [];
+  const shown = [];
+  const visited = new Set();
+  const visit = (value, depth) => {
+    if (visited.has(value)) return;
+    visited.add(value);
+    const text = redactTokens(value instanceof Error ? value.message : value);
+    const fresh = text
+      .split("\n")
+      .map((line) => line.trim())
+      .filter((line) => line && !shown.some((previous) => previous.includes(line)));
+    fresh.forEach((line, index) => {
+      lines.push(
+        depth === 0 ? line : `${"  ".repeat(depth)}${index === 0 ? "Caused by: " : ""}${line}`,
+      );
+    });
+    shown.push(text);
+    if (value instanceof AggregateError) {
+      for (const inner of value.errors) visit(inner, depth + 1);
+    }
+    if (value instanceof Error && value.cause !== undefined) visit(value.cause, depth + 1);
+  };
+  visit(error, 0);
+  return lines.join("\n") || "Repository-control operation failed.";
 }
 
 const isEntryPoint = process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href;
@@ -958,9 +1084,7 @@ if (isEntryPoint) {
       if (!result.ok) process.exitCode = 1;
     })
     .catch((error) => {
-      console.error(
-        error instanceof Error ? error.message : "Repository-control operation failed.",
-      );
+      console.error(describeFailure(error));
       process.exitCode = 1;
     });
 }

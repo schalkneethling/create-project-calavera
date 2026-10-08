@@ -127,11 +127,13 @@ GitHub must support code-scanning merge protection for the repository. A require
 
 ## CodeQL languages
 
-GitHub rejects a default setup language that is not present in the repository. The drift check reports such a language as a blocker, with the reason, before any change is applied. The \`actions\` language needs a workflow or action metadata file, such as \`.github/workflows/ci.yml\`, on the default branch. Add the missing code, or remove the language from \`security.codeqlDefaultSetup.languages\`.
+GitHub rejects a default setup language that it does not detect in the repository. The drift check reports such a language as blocked, with the reason. GitHub detects \`actions\` when the default branch has workflow files in \`.github/workflows/\`. Add the missing code, or remove the language from \`security.codeqlDefaultSetup.languages\`, then run the drift check again. GitHub can take a short time to detect code after a push.
 
 ## Partial apply
 
-Apply runs the default-branch ruleset first and continues with independent changes when one fails. An apply that does not fully succeed ends with a summary of the changes applied, failed (with the error), and not attempted, and exits with a non-zero code. Run the drift check again after you fix the cause.
+Apply runs the default-branch ruleset first, CodeQL default setup last, and every other change in between. A failed change does not stop the others; a change runs only after the changes it requires (Dependabot security updates require Dependabot alerts). A blocked CodeQL language skips CodeQL default setup and nothing else. An apply that does not fully succeed ends with a summary of the changes applied, failed (with the error), and not attempted, with what to do about each, and exits with a non-zero code.
+
+If CodeQL default setup does not apply, the ruleset still requires CodeQL results, so it blocks merges until CodeQL default setup is configured and reports results. Set \`mainRuleset.codeScanning\` to null to remove that requirement.
 
 ## Manual controls
 
