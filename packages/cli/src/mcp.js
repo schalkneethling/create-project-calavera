@@ -31,6 +31,7 @@ import {
 } from "./recipe.js";
 import { assertPlainObject, assertStringArray } from "./utils/assertions.js";
 import { errorChain } from "./utils/error-chain.js";
+import { redactSecrets } from "./utils/redact.js";
 import { assertWorkspacePath } from "./utils/fs.js";
 
 /**
@@ -469,9 +470,10 @@ function toolResult(payload) {
  * when `isError` is set.
  *
  * @param {unknown} error
+ * @param {Record<string, string | undefined>} [env] The environment whose secret values are redacted.
  */
-export function toolErrorResult(error) {
-  const [first, ...causes] = errorChain(error);
+export function toolErrorResult(error, env = process.env) {
+  const [first, ...causes] = errorChain(error, env);
 
   return {
     content: [
@@ -557,20 +559,21 @@ export async function startMcpServer(transport = new StdioServerTransport()) {
 }
 
 /**
+ * The startup error with its stack, redacted, for the server's own stderr.
+ *
  * @param {unknown} error
+ * @param {Record<string, string | undefined>} env
  * @returns {string}
  */
-function formatStartupError(error) {
-  if (error instanceof Error) {
-    return error.stack ?? error.message;
-  }
-
-  return String(error);
+function formatStartupError(error, env) {
+  const text = error instanceof Error ? (error.stack ?? error.message) : String(error);
+  return redactSecrets(text, env);
 }
 
 /**
  * @param {{
  *   cwd?: string,
+ *   env?: Record<string, string | undefined>,
  *   startServer?: () => Promise<void>,
  *   stderr?: Pick<NodeJS.WriteStream, "write">,
  *   setExitCode?: (code: number) => void,
@@ -578,6 +581,7 @@ function formatStartupError(error) {
  */
 export async function runMcpEntrypoint(options = {}) {
   const cwd = options.cwd ?? process.cwd();
+  const env = options.env ?? process.env;
   const startServer = options.startServer ?? (() => startMcpServer());
   const stderr = options.stderr ?? process.stderr;
   const setExitCode =
@@ -593,7 +597,9 @@ export async function runMcpEntrypoint(options = {}) {
   try {
     await startServer();
   } catch (error) {
-    stderr.write(`[${SERVER_NAME}] failed to start MCP server\n${formatStartupError(error)}\n`);
+    stderr.write(
+      `[${SERVER_NAME}] failed to start MCP server\n${formatStartupError(error, env)}\n`,
+    );
     setExitCode(1);
   }
 }
