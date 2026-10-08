@@ -286,6 +286,17 @@ empty bypass list. Remote apply repairs those shared protections while preservin
 types and other scanners. Code-scanning merge protection requires GitHub support and scan results
 for both the commit and target reference; enabling default setup alone does not guarantee a PR can merge.
 
+The drift check reports a policy CodeQL language that GitHub does not detect as blocked, with the
+reason. While default setup is not configured, it uses the languages GitHub reports for default
+setup. When a configured setup gains a language, it reads the
+[repository languages API](https://docs.github.com/en/rest/repos/repos#list-repository-languages)
+or, for `actions`, which that API does not report, the `.github/workflows` directory on the default
+branch. Remote apply runs the `main` ruleset first and CodeQL default setup last. A failed or
+blocked change does not stop the others; only a change that requires a failed change is skipped.
+An apply that does not fully succeed ends with a summary of the changes applied, failed (with the
+error), and not attempted, with what to do about each, and exits with a non-zero code. Until CodeQL
+default setup reports results, the generated ruleset blocks merges.
+
 ## CLI
 
 The CLI and the MCP server support Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`,
