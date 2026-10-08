@@ -359,6 +359,9 @@ export function normalizeIntegrationInputs(integrationInputs, profile) {
 export function normalizeAiArtifactInputs(artifactInputs = []) {
   assertObjectArray("aiArtifacts", artifactInputs);
 
+  /** @type {Map<string, number>} */
+  const firstIndexById = new Map();
+
   return artifactInputs.map((item, index) => {
     assertString(`aiArtifacts[${index}].id`, item.id);
 
@@ -370,6 +373,13 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
         `Invalid aiArtifacts[${index}].id: ${item.id}. Use artifact IDs, labels, or sources from list_ai_artifacts.`,
       );
     }
+
+    if (firstIndexById.has(id)) {
+      throw new Error(
+        `Invalid aiArtifacts[${index}].id: duplicate artifact id "${id}", already selected at aiArtifacts[${firstIndexById.get(id)}]. Select each artifact once.`,
+      );
+    }
+    firstIndexById.set(id, index);
 
     let target;
 

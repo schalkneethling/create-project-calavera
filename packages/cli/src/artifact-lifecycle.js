@@ -18,6 +18,7 @@ import {
   hashAiInstall,
   resolveAiArtifacts,
 } from "./ai/artifacts.js";
+import { assertFirstSelection } from "./ai/recipe-items.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import { fileExists } from "./utils/fs.js";
 
@@ -596,7 +597,9 @@ function normalizePackageSelections(ai) {
 /** @param {unknown} ai */
 function normalizeSelections(ai) {
   if (!Array.isArray(ai)) return [];
-  return ai.map((item) => {
+  /** @type {Map<string, number>} */
+  const firstIndexById = new Map();
+  return ai.map((item, index) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw new Error("Artifact selections must be objects.");
     }
@@ -607,6 +610,7 @@ function normalizeSelections(ai) {
           ? artifactForLegacyPath(String(item.src))
           : undefined;
     if (!artifact) throw new Error("Unknown artifact selection.");
+    assertFirstSelection(firstIndexById, artifact.id, index);
     const target = "target" in item ? String(item.target).trim() : artifact.defaultTarget;
     return { id: artifact.id, ...(target ? { target } : {}) };
   });
