@@ -7,10 +7,15 @@ import pacote from "pacote";
 import semver from "semver";
 
 import { artifactForId } from "./catalog.js";
+import { loadNpmRegistryOptions } from "./npm-config.js";
 
 const TAGS = new Set(["latest", "next"]);
 
-/** @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean }} request */
+/**
+ * Registry and auth settings come from the project and user .npmrc files of `cwd` (default: the
+ * current directory) and `npm_config_*` variables in `env` (default: the process environment).
+ * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv }} request
+ */
 export async function resolveArtifactPackage(request) {
   const artifact = artifactForId(request.id);
   if (!artifact) throw new Error(`Unknown Calavera artifact: ${request.id}.`);
@@ -21,6 +26,7 @@ export async function resolveArtifactPackage(request) {
   }
 
   const manifest = await pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
+    ...(await loadNpmRegistryOptions(request)),
     cache: request.cache,
     offline: request.offline,
     fullMetadata: true,
@@ -48,9 +54,11 @@ export async function resolveArtifactPackage(request) {
  * @param {{ artifact: { id: string, type: string, packageName: string }, packageName: string, version: string, resolved: string, integrity?: string, tag: string, cache: string, offline: boolean }} resolution
  * @param {string} destination
  * @param {string} cliVersion
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv }} [npmContext] Where to read npm configuration; see resolveArtifactPackage.
  */
-export async function extractArtifactPackage(resolution, destination, cliVersion) {
+export async function extractArtifactPackage(resolution, destination, cliVersion, npmContext) {
   await pacote.extract(resolution.resolved, destination, {
+    ...(await loadNpmRegistryOptions(npmContext)),
     cache: resolution.cache,
     integrity: resolution.integrity,
     offline: resolution.offline,

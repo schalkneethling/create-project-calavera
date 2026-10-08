@@ -1,15 +1,20 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
+import { createServer } from "node:http";
 import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
-import { promisify } from "node:util";
+import { inspect, promisify } from "node:util";
 
 import { artifactForId } from "../src/catalog.js";
-import { extractArtifactPackage, hashArtifactPayload } from "../src/registry.js";
+import {
+  extractArtifactPackage,
+  hashArtifactPayload,
+  resolveArtifactPackage,
+} from "../src/registry.js";
 
 const projectGoalPackageRoot = fileURLToPath(
   new URL("../../artifacts/skill-project-goal/", import.meta.url),
@@ -163,4 +168,244 @@ test("payload hashes include empty directories", async () => {
 
   await rm(join(directory, "empty"), { recursive: true });
   assert.equal(await hashArtifactPayload(directory), initialHash);
+});
+
+const TOKEN = "npm_0123456789abcdefSECRETTOKEN";
+
+/**
+ * Serves one packument and its tarball like an npm registry would, recording each request.
+ * @param {{ version: string, tarball: Buffer, integrity: string }} packed
+ * @param {{ status?: number }} [options]
+ */
+async function startRegistry(packed, { status = 200 } = {}) {
+  const requests = [];
+  const server = createServer((req, res) => {
+    requests.push({ url: req.url, authorization: req.headers.authorization });
+    if (status !== 200) {
+      res.writeHead(status, { "content-type": "application/json" });
+      res.end(JSON.stringify({ error: "denied" }));
+    } else if (req.url?.endsWith(".tgz")) {
+      res.writeHead(200, { "content-type": "application/octet-stream" });
+      res.end(packed.tarball);
+    } else {
+      const origin = `http://127.0.0.1:${server.address().port}`;
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(
+        JSON.stringify({
+          name: artifact.packageName,
+          "dist-tags": { latest: packed.version },
+          versions: {
+            [packed.version]: {
+              name: artifact.packageName,
+              version: packed.version,
+              dist: { tarball: `${origin}/-/artifact.tgz`, integrity: packed.integrity },
+            },
+          },
+        }),
+      );
+    }
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  const { port } = server.address();
+  return {
+    requests,
+    host: `127.0.0.1:${port}`,
+    close: () => new Promise((done) => server.close(done)),
+  };
+}
+
+/** @param {string} projectNpmrc @param {string} [userNpmrc] */
+async function npmConfigFixture(projectNpmrc, userNpmrc = "") {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-npmrc-"));
+  const project = join(directory, "project");
+  await mkdir(project);
+  await writeFile(join(project, ".npmrc"), projectNpmrc);
+  await writeFile(join(directory, "user.npmrc"), userNpmrc);
+  return {
+    directory,
+    cwd: project,
+    cache: join(directory, "cache"),
+    env: { npm_config_userconfig: join(directory, "user.npmrc") },
+  };
+}
+
+test("resolution and extraction use the project .npmrc scoped registry and token", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-configured-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry(packed);
+  try {
+    const fixture = await npmConfigFixture(
+      `@schalkneethling:registry=http://${registry.host}/\n//${registry.host}/:_authToken=\${CALAVERA_TEST_TOKEN}\n`,
+    );
+    const env = { ...fixture.env, CALAVERA_TEST_TOKEN: TOKEN };
+
+    const resolution = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      cache: fixture.cache,
+      cwd: fixture.cwd,
+      env,
+    });
+    assert.equal(resolution.version, packed.version);
+    assert.equal(resolution.integrity, packed.integrity);
+
+    const result = await extractArtifactPackage(
+      resolution,
+      join(fixture.directory, "package"),
+      "2.2.0",
+      { cwd: fixture.cwd, env },
+    );
+    assert.equal(result.manifest.id, "skill-project-goal");
+
+    assert.equal(registry.requests.length, 2);
+    for (const request of registry.requests) {
+      assert.equal(request.authorization, `Bearer ${TOKEN}`);
+    }
+  } finally {
+    await registry.close();
+  }
+});
+
+test("a user .npmrc registry applies and the project .npmrc takes precedence", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-precedence-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry(packed);
+  try {
+    const fixture = await npmConfigFixture(
+      `@schalkneethling:registry=http://${registry.host}/\n`,
+      "@schalkneethling:registry=http://127.0.0.1:9/\nregistry=http://127.0.0.1:9/\n",
+    );
+    const resolution = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      cache: fixture.cache,
+      cwd: fixture.cwd,
+      env: fixture.env,
+    });
+    assert.equal(resolution.version, packed.version);
+    assert.equal(registry.requests.length, 1);
+
+    const userOnly = await npmConfigFixture("", `registry=http://${registry.host}/\n`);
+    const viaUser = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      cache: userOnly.cache,
+      cwd: userOnly.cwd,
+      env: userOnly.env,
+    });
+    assert.equal(viaUser.version, packed.version);
+    assert.equal(registry.requests.length, 2);
+  } finally {
+    await registry.close();
+  }
+});
+
+test("npm_config_registry from the environment overrides .npmrc files", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-env-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry(packed);
+  try {
+    const fixture = await npmConfigFixture("registry=http://127.0.0.1:9/\n");
+    const resolution = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      cache: fixture.cache,
+      cwd: fixture.cwd,
+      env: { ...fixture.env, NPM_CONFIG_REGISTRY: `http://${registry.host}/` },
+    });
+    assert.equal(resolution.version, packed.version);
+    assert.equal(registry.requests.length, 1);
+  } finally {
+    await registry.close();
+  }
+});
+
+test("a token whose environment variable is unset is not sent as a literal", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-unset-token-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry(packed);
+  try {
+    const fixture = await npmConfigFixture(
+      `@schalkneethling:registry=http://${registry.host}/\n//${registry.host}/:_authToken=\${CALAVERA_UNSET_TOKEN}\n`,
+    );
+    await resolveArtifactPackage({
+      id: "skill-project-goal",
+      cache: fixture.cache,
+      cwd: fixture.cwd,
+      env: fixture.env,
+    });
+    assert.equal(registry.requests[0].authorization, undefined);
+  } finally {
+    await registry.close();
+  }
+});
+
+test("integrity verification is unchanged when the registry is configured", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-configured-integrity-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry({
+    ...packed,
+    integrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
+  });
+  try {
+    const fixture = await npmConfigFixture(`@schalkneethling:registry=http://${registry.host}/\n`);
+    const resolution = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      cache: fixture.cache,
+      cwd: fixture.cwd,
+      env: fixture.env,
+    });
+    await assert.rejects(
+      () =>
+        extractArtifactPackage(resolution, join(fixture.directory, "package"), "2.2.0", {
+          cwd: fixture.cwd,
+          env: fixture.env,
+        }),
+      /integrity|checksum/i,
+    );
+  } finally {
+    await registry.close();
+  }
+});
+
+test("registry failures never expose the token from .npmrc", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-redaction-"));
+  const packed = await packFixture(directory);
+  for (const status of [401, 403]) {
+    const registry = await startRegistry(packed, { status });
+    try {
+      const fixture = await npmConfigFixture(
+        `@schalkneethling:registry=http://${registry.host}/\n//${registry.host}/:_authToken=${TOKEN}\n`,
+      );
+      const options = { cwd: fixture.cwd, env: fixture.env };
+      const failure = await resolveArtifactPackage({
+        id: "skill-project-goal",
+        cache: fixture.cache,
+        ...options,
+      }).then(
+        () => assert.fail("Expected the registry failure to reject."),
+        (error) => error,
+      );
+      assert.ok(registry.requests.length > 0);
+      assert.equal(registry.requests[0].authorization, `Bearer ${TOKEN}`);
+      assert.doesNotMatch(inspect(failure, { depth: 10 }), new RegExp(TOKEN));
+      assert.match(failure.message, /\b(401|403)\b|denied|E\d{3}/i);
+    } finally {
+      await registry.close();
+    }
+  }
+});
+
+test("an invalid registry in .npmrc is reported without echoing credentials", async () => {
+  const fixture = await npmConfigFixture(`@schalkneethling:registry=not a url ${TOKEN}\n`);
+  await assert.rejects(
+    () =>
+      resolveArtifactPackage({
+        id: "skill-project-goal",
+        cache: fixture.cache,
+        cwd: fixture.cwd,
+        env: fixture.env,
+      }),
+    (error) => {
+      assert.match(error.message, /@schalkneethling:registry/);
+      assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(TOKEN));
+      return true;
+    },
+  );
 });
