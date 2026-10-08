@@ -125,6 +125,14 @@ Checks verify active branch enforcement, default-branch scope without exclusions
 
 GitHub must support code-scanning merge protection for the repository. A required scan must have results for both the commit and target reference. See [GitHub rules documentation](https://docs.github.com/en/rest/repos/rules).
 
+## CodeQL languages
+
+GitHub rejects a default setup language that is not present in the repository. The drift check reports such a language as a blocker, with the reason, before any change is applied. The \`actions\` language needs a workflow or action metadata file, such as \`.github/workflows/ci.yml\`, on the default branch. Add the missing code, or remove the language from \`security.codeqlDefaultSetup.languages\`.
+
+## Partial apply
+
+Apply runs the default-branch ruleset first and continues with independent changes when one fails. An apply that does not fully succeed ends with a summary of the changes applied, failed (with the error), and not attempted, and exits with a non-zero code. Run the drift check again after you fix the cause.
+
 ## Manual controls
 
 - In **Settings → Advanced Security**, enable Dependabot malware alerts.${release}
