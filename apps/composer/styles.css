@@ -512,7 +512,8 @@ fieldset {
   padding-inline: var(--space-xl) var(--target-size);
 }
 
-.row-head input {
+.row-head input,
+.inline-field input[type="checkbox"] {
   block-size: 1.125rem;
   flex-shrink: 0;
   inline-size: 1.125rem;
@@ -708,8 +709,29 @@ fieldset {
   line-height: 1.75rem;
 }
 
-.options-panel .hint {
+.options-panel-text .hint {
   font-size: 1rem;
+}
+
+.options-choices {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xl);
+  grid-column: 1 / -1;
+}
+
+.check-label {
+  align-items: center;
+  cursor: pointer;
+  display: flex;
+  min-block-size: var(--target-size);
+}
+
+.field-stack {
+  display: flex;
+  flex-direction: column;
+  gap: var(--space-xs);
+  max-inline-size: 40rem;
 }
 
 /* Buttons and tabs */

@@ -523,9 +523,13 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
         "integrationOptions.github-repository-controls requires the github-repository-controls integration.",
       );
     }
-    normalized[GITHUB_REPOSITORY_CONTROLS_ID] = normalizeGithubRepositoryControlsOptions(
-      integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID],
-    );
+    // The default is omitted from the recipe, so a recipe that keeps it still works with a
+    // published CLI that does not know the option and rejects unknown fields.
+    const { requireCodeqlResults, ...repositoryControls } =
+      normalizeGithubRepositoryControlsOptions(integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID]);
+    normalized[GITHUB_REPOSITORY_CONTROLS_ID] = requireCodeqlResults
+      ? repositoryControls
+      : { ...repositoryControls, requireCodeqlResults };
   } else if (resolvedIds.has(GITHUB_REPOSITORY_CONTROLS_ID)) {
     throw new Error(
       "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.",

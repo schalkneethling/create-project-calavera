@@ -259,6 +259,38 @@ test("config schema validates attached GitHub repository-control options", () =>
 
   assertValid(validate, valid);
   assert.equal(
+    schema.$defs.githubRepositoryControlsOptions.properties.requireCodeqlResults.default,
+    true,
+    "CodeQL results are required unless the recipe declines them",
+  );
+  assert.equal(
+    Object.hasOwn(valid.integrationOptions["github-repository-controls"], "requireCodeqlResults"),
+    false,
+    "the default is omitted from a built recipe",
+  );
+  assertValid(validate, {
+    ...valid,
+    integrationOptions: {
+      "github-repository-controls": {
+        ...valid.integrationOptions["github-repository-controls"],
+        requireCodeqlResults: false,
+      },
+    },
+  });
+  assert.equal(
+    validate({
+      ...valid,
+      integrationOptions: {
+        "github-repository-controls": {
+          ...valid.integrationOptions["github-repository-controls"],
+          requireCodeqlResults: "no",
+        },
+      },
+    }),
+    false,
+    "requireCodeqlResults must be a boolean",
+  );
+  assert.equal(
     validate({ ...valid, integrations: ["editorconfig"] }),
     false,
     "repository-control options must reference a selected integration",

@@ -573,6 +573,7 @@ function recipe() {
     repositoryControls: {
       repository: data.get("repositoryControlsRepository"),
       requiredChecks: commaSeparatedValues(data.get("repositoryControlsRequiredChecks")),
+      requireCodeqlResults: data.has("repositoryControlsRequireCodeql"),
     },
   });
 }
@@ -981,6 +982,7 @@ function registerWebMcpTools() {
                     type: "array",
                     items: { type: "string" },
                   },
+                  requireCodeqlResults: { type: "boolean" },
                   defaultBranch: { type: "string" },
                   mergeMethods: {
                     type: "array",
