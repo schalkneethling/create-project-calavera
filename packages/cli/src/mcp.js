@@ -30,6 +30,7 @@ import {
   validateRecipeResponse,
 } from "./recipe.js";
 import { assertPlainObject, assertStringArray } from "./utils/assertions.js";
+import { errorChain } from "./utils/error-chain.js";
 import { assertWorkspacePath } from "./utils/fs.js";
 
 /**
@@ -461,6 +462,29 @@ function toolResult(payload) {
 }
 
 /**
+ * The result of a tool call that threw: the error and its causes, redacted
+ * and each shown once, as JSON text in `content`, as a successful result
+ * carries its payload. The result has no `structuredContent`, because a client
+ * validates `structuredContent` against a tool's declared output schema even
+ * when `isError` is set.
+ *
+ * @param {unknown} error
+ */
+export function toolErrorResult(error) {
+  const [first, ...causes] = errorChain(error);
+
+  return {
+    content: [
+      {
+        type: /** @type {"text"} */ ("text"),
+        text: JSON.stringify({ error: { ...first, causes } }, null, 2),
+      },
+    ],
+    isError: true,
+  };
+}
+
+/**
  * @param {string} name
  * @param {Record<string, unknown>} [input]
  * @param {ArtifactServices} [artifactServices] Registry access for artifacts that are not yet locked.
@@ -515,7 +539,13 @@ export function createMcpServer() {
   );
 
   for (const [name, config] of Object.entries(toolConfigs)) {
-    server.registerTool(name, config, async (input) => toolResult(await callMcpTool(name, input)));
+    server.registerTool(name, config, async (input) => {
+      try {
+        return toolResult(await callMcpTool(name, input));
+      } catch (error) {
+        return toolErrorResult(error);
+      }
+    });
   }
 
   return server;

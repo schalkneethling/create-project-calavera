@@ -65,7 +65,7 @@ import {
   validateRecipeResponse,
 } from "./recipe.js";
 import { assertKnownValue } from "./utils/assertions.js";
-import { FileWriteError } from "./utils/file-write-error.js";
+import { formatErrorChain } from "./utils/error-chain.js";
 import {
   assertWorkspacePath,
   fileExists,
@@ -592,7 +592,7 @@ const FAILURE_OUTPUT_LINE_LENGTH = 300;
  * last lines of the standard output Calavera captured, at most
  * FAILURE_OUTPUT_LINES lines of at most FAILURE_OUTPUT_LINE_LENGTH characters
  * each. Standard error is inherited, so the terminal already shows it. The
- * output is not redacted; redaction is tracked in #619.
+ * CLI and the MCP server redact the output when they display the error.
  *
  * @param {unknown} error
  */
@@ -4690,12 +4690,7 @@ export async function runCli() {
   try {
     await main();
   } catch (error) {
-    if (error instanceof FileWriteError) {
-      logger.error(error.message);
-      logger.error(error.cause);
-    } else {
-      logger.error(error);
-    }
+    logger.error(formatErrorChain(error));
     process.exitCode = 1;
   }
 }
