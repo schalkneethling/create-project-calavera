@@ -114,7 +114,9 @@ Typing the exact phrase is the one human approval in the whole flow. After that,
 4. smoke-tests the published CLI with `npx create-project-calavera@<version> --help`, and, when an
    artifact package changed, installs it into a disposable fixture project;
 5. reports any public package whose `next` dist-tag resolves to a version lower than `latest`, with
-   the exact `npm dist-tag rm` command for each. This report does not fail the release. See
+   the exact `npm dist-tag rm` command for each, under an `ACTION REQUIRED` heading after the final
+   success line. This report never fails a published release; if the lookup itself fails, it says
+   so and tells you to run `npm view <pkg> dist-tags --json` by hand. See
    [Remove a stale `next` tag](#remove-a-stale-next-tag).
 
 Use `--yes` only once you have already reviewed the draft yourself and want to skip the interactive
@@ -174,11 +176,13 @@ npm view <package> dist-tags --json
 
 A `next` tag that is ahead of `latest` is a prerelease in flight and needs no action.
 
-This is a manual step. npm trusted publishing can run `npm dist-tag`, but only with npm CLI 11.21.0
-or later (or 12.2.0 or later) and only when **Allow npm dist-tag** is enabled on the package's trusted
-publisher configuration, which is off by default and independent of the publish permission. The
-publish workflow does not have that permission, and `check-release-contracts.mjs` asserts it never
-runs `npm dist-tag`. See
+This is a manual step. npm trusted publishing can run `npm dist-tag`, but only with npm CLI 11.21.0+
+or 12.2.0+, and only when **Allow npm dist-tag** is enabled on the package's trusted publisher
+configuration. That option is off by default and independent of the publish permission. The publish
+workflow is not configured with it (the maintainer confirms the setting on npmjs.com), and
+`publish.yml` pins Node 24.8.0, whose bundled npm is 11.6.0, older than 11.21.0. Automating the
+removal would therefore also need an npm upgrade in the workflow. `check-release-contracts.mjs`
+asserts the workflow never runs `npm dist-tag`. See
 [Managing dist-tags with trusted publishing](https://docs.npmjs.com/trusted-publishers#managing-dist-tags-with-trusted-publishing).
 
 ## New packages (minting)

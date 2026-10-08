@@ -669,7 +669,8 @@ function watchRun(workflowRun) {
 // unless the publisher opts in to "Allow npm dist-tag", so this reports instead of fixing.
 export async function staleNextTags(plan, options = {}) {
   const stale = [];
-  for (const { name } of plan.packages) {
+  const unparseable = [];
+  for (const { name, version, channel, published } of plan.packages) {
     const tagsRaw = await npmViewWithRetry([name, "dist-tags", "--json"], options);
     let tags;
     try {
@@ -678,25 +679,54 @@ export async function staleNextTags(plan, options = {}) {
       throw new ReleaseError(`npm view ${name} dist-tags --json returned malformed JSON.`);
     }
     const { latest, next } = tags;
-    if (semver.valid(latest) && semver.valid(next) && semver.lt(next, latest)) {
+    if (next === undefined) continue;
+    // A prerelease publish sets next to this very version, which may sit below latest on a
+    // maintenance line. That tag is intentional.
+    if (channel === "next" && !published && next === version) continue;
+    if (!semver.valid(latest) || !semver.valid(next)) {
+      unparseable.push({ name, latest, next });
+    } else if (semver.lt(next, latest)) {
       stale.push({ name, latest, next, command: `npm dist-tag rm ${name} next` });
     }
   }
-  return stale;
+  return { stale, unparseable };
 }
 
-export function reportStaleNextTags(stale, report = console.info) {
-  if (stale.length === 0) return;
-  report(
-    `${stale.length} package(s) have a next dist-tag behind latest. Remove each stale tag (see docs/release-runbook.md):`,
-  );
-  for (const { name, latest, next, command } of stale) {
-    report(`${name}: next ${next} is behind latest ${latest}. Run:`);
-    report(`  ${command}`);
+export function reportNextTags({ stale, unparseable }, report = console.info) {
+  if (stale.length > 0) {
+    report(
+      `ACTION REQUIRED: ${stale.length} stale next tag(s). The release itself succeeded. Remove each tag (see docs/release-runbook.md):`,
+    );
+    for (const { name, latest, next, command } of stale) {
+      report(`${name}: next ${next} is behind latest ${latest}. Run:`);
+      report(`  ${command}`);
+    }
+  }
+  if (unparseable.length > 0) {
+    report(
+      `Could not compare next with latest for ${unparseable.length} package(s) because of unparseable dist-tags. Check each by hand with npm view <pkg> dist-tags --json:`,
+    );
+    for (const { name, latest, next } of unparseable) {
+      report(`${name}: latest ${latest ?? "(missing)"}, next ${next}`);
+    }
+  }
+}
+
+// The release is already published when this runs, so a failed check must report and continue
+// rather than turn a good release into a failure.
+export async function checkNextTags(plan, options = {}) {
+  const report = options.report ?? console.info;
+  try {
+    reportNextTags(await staleNextTags(plan, options), report);
+  } catch (error) {
+    report(
+      `The release succeeded, but could not check next dist-tags: ${error instanceof Error ? error.message : String(error)}. Check each public package by hand with npm view <pkg> dist-tags --json; a next tag below latest needs npm dist-tag rm <pkg> next.`,
+    );
   }
 }
 
 export async function publishRelease(options = {}) {
+  const report = options.report ?? console.info;
   const plan = await prepareRelease({ ...options, allowPublished: true });
   const candidates = plan.packages.filter(({ published }) => !published);
   // Resolve the release already published for this commit before deriving a tag from the
@@ -750,15 +780,15 @@ export async function publishRelease(options = {}) {
     const workflowRun = await waitForRun(tag, plan.sha, options);
     (options.watchRun ?? watchRun)(workflowRun);
     await verifyPublishedPackages(verificationPlan, workflowRun.databaseId, options);
-    await smokePublishedArtifacts(verificationPlan);
-    reportStaleNextTags(await staleNextTags(plan, options), options.report ?? console.info);
-    console.info(`Release ${tag} and its package inventory are already published and verified.`);
+    await (options.smokePublishedArtifacts ?? smokePublishedArtifacts)(verificationPlan);
+    report(`Release ${tag} and its package inventory are already published and verified.`);
+    await checkNextTags(verificationPlan, options);
     return plan;
   }
 
   console.info(`Verified draft: ${metadata.url}`);
   await confirm(`publish ${tag}`, options.yes);
-  run("gh", [
+  (options.run ?? run)("gh", [
     "release",
     "edit",
     tag,
@@ -771,10 +801,10 @@ export async function publishRelease(options = {}) {
   const workflowRun = await waitForRun(tag, plan.sha, options);
   (options.watchRun ?? watchRun)(workflowRun);
   await verifyPublishedPackages(plan, workflowRun.databaseId, options);
-  await smokePublishedArtifacts(plan);
-  reportStaleNextTags(await staleNextTags(plan, options), options.report ?? console.info);
-  assertCandidateUnchanged(plan.sha);
-  console.info(`Release ${tag} is published and verified.`);
+  await (options.smokePublishedArtifacts ?? smokePublishedArtifacts)(plan);
+  (options.assertCandidateUnchanged ?? assertCandidateUnchanged)(plan.sha);
+  report(`Release ${tag} is published and verified.`);
+  await checkNextTags(plan, options);
 }
 
 export function parseOptions(args) {

@@ -25,7 +25,8 @@ import {
   releaseChannel,
   releaseGates,
   releaseTag,
-  reportStaleNextTags,
+  reportNextTags,
+  checkNextTags,
   staleNextTags,
   validateReleaseMetadata,
   verifyPublishedPackages,
@@ -1072,31 +1073,34 @@ function distTagViewer(tagsByPackage) {
 
 test("staleNextTags reports a next tag that resolves below latest, with the removal command", async () => {
   const plan = { packages: [{ name: "pkg-a" }, { name: "pkg-b" }] };
-  const stale = await staleNextTags(plan, {
+  const result = await staleNextTags(plan, {
     viewNpm: distTagViewer({
       "pkg-a": { latest: "2.0.0", next: "2.0.0-beta.3" },
       "pkg-b": { latest: "1.0.0" },
     }),
   });
-  assert.deepEqual(stale, [
-    {
-      name: "pkg-a",
-      latest: "2.0.0",
-      next: "2.0.0-beta.3",
-      command: "npm dist-tag rm pkg-a next",
-    },
-  ]);
+  assert.deepEqual(result, {
+    stale: [
+      {
+        name: "pkg-a",
+        latest: "2.0.0",
+        next: "2.0.0-beta.3",
+        command: "npm dist-tag rm pkg-a next",
+      },
+    ],
+    unparseable: [],
+  });
 });
 
 test("staleNextTags accepts a next tag ahead of latest and a package without a next tag", async () => {
   const plan = { packages: [{ name: "pkg-a" }, { name: "pkg-b" }] };
-  const stale = await staleNextTags(plan, {
+  const result = await staleNextTags(plan, {
     viewNpm: distTagViewer({
       "pkg-a": { latest: "1.0.0", next: "2.0.0-beta.1" },
       "pkg-b": { latest: "1.0.0" },
     }),
   });
-  assert.deepEqual(stale, []);
+  assert.deepEqual(result, { stale: [], unparseable: [] });
 });
 
 test("staleNextTags reads dist-tags through the injected view helper", async () => {
@@ -1113,22 +1117,185 @@ test("staleNextTags reads dist-tags through the injected view helper", async () 
   assert.deepEqual(calls, [["pkg-a", "dist-tags", "--json"]]);
 });
 
-test("reportStaleNextTags prints the exact remedy commands and stays quiet when nothing is stale", () => {
-  const lines = [];
-  reportStaleNextTags(
-    [
-      {
-        name: "pkg-a",
-        latest: "2.0.0",
-        next: "2.0.0-beta.3",
-        command: "npm dist-tag rm pkg-a next",
-      },
+test("staleNextTags skips the next tag a prerelease publish just set", async () => {
+  const plan = {
+    packages: [
+      { name: "pkg-a", version: "1.0.1-next.0", channel: "next", published: false },
+      { name: "pkg-b", version: "1.0.0", channel: "latest", published: false },
     ],
+  };
+  const result = await staleNextTags(plan, {
+    viewNpm: distTagViewer({
+      "pkg-a": { latest: "2.0.0", next: "1.0.1-next.0" },
+      "pkg-b": { latest: "1.0.0", next: "0.9.0-next.1" },
+    }),
+  });
+  assert.deepEqual(
+    result.stale.map(({ name }) => name),
+    ["pkg-b"],
+  );
+});
+
+test("staleNextTags reports tags it cannot compare instead of guessing", async () => {
+  const plan = { packages: [{ name: "pkg-a" }, { name: "pkg-b" }, { name: "pkg-c" }] };
+  const result = await staleNextTags(plan, {
+    viewNpm: distTagViewer({
+      "pkg-a": { latest: "1.0.0", next: "not-a-version" },
+      "pkg-b": { next: "1.0.0-next.1" },
+      "pkg-c": { next: "1.0.0-next.1", latest: "1.0.0" },
+    }),
+  });
+  assert.deepEqual(result.unparseable, [
+    { name: "pkg-a", latest: "1.0.0", next: "not-a-version" },
+    { name: "pkg-b", latest: undefined, next: "1.0.0-next.1" },
+  ]);
+  assert.deepEqual(
+    result.stale.map(({ name }) => name),
+    ["pkg-c"],
+  );
+});
+
+test("reportNextTags leads with an ACTION REQUIRED heading and the exact remedy commands", () => {
+  const lines = [];
+  reportNextTags(
+    {
+      stale: [
+        {
+          name: "pkg-a",
+          latest: "2.0.0",
+          next: "2.0.0-beta.3",
+          command: "npm dist-tag rm pkg-a next",
+        },
+      ],
+      unparseable: [{ name: "pkg-b", latest: "1.0.0", next: "oops" }],
+    },
     (line) => lines.push(line),
   );
-  assert.match(lines.join("\n"), /pkg-a: next 2\.0\.0-beta\.3 is behind latest 2\.0\.0/);
-  assert.match(lines.join("\n"), /^ {2}npm dist-tag rm pkg-a next$/m);
+  const text = lines.join("\n");
+  assert.match(text, /^ACTION REQUIRED: 1 stale next tag\(s\)/m);
+  assert.match(text, /pkg-a: next 2\.0\.0-beta\.3 is behind latest 2\.0\.0/);
+  assert.match(text, /^ {2}npm dist-tag rm pkg-a next$/m);
+  assert.match(text, /unparseable dist-tags.*pkg-b/s);
   const quiet = [];
-  reportStaleNextTags([], (line) => quiet.push(line));
+  reportNextTags({ stale: [], unparseable: [] }, (line) => quiet.push(line));
   assert.deepEqual(quiet, []);
 });
+
+test("checkNextTags turns a registry failure into a report that names the cause and the manual check", async () => {
+  const lines = [];
+  await checkNextTags(
+    { packages: [{ name: "pkg-a" }] },
+    {
+      viewNpm: () => ({ status: 1, stdout: "", stderr: "npm error network" }),
+      report: (line) => lines.push(line),
+    },
+  );
+  const text = lines.join("\n");
+  assert.match(text, /could not check next dist-tags: .*failed with exit code 1/);
+  assert.match(text, /npm view <pkg> dist-tags --json/);
+});
+
+function releasedPackages() {
+  return [
+    packagePlan({ version: "3.0.0" }),
+    packagePlan({
+      name: "@schalkneethling/calavera-skill-calavera",
+      version: "0.2.1",
+      path: "packages/artifacts/skill-calavera",
+    }),
+  ];
+}
+
+// Drives publishRelease through verification with stubs; the first dist-tags read per package
+// belongs to verification, any later one belongs to the stale next tag check.
+function finishRelease({ rerun, nextTags, failCheck }) {
+  const packages = rerun
+    ? releasedPackages().map((pkg) => ({ ...pkg, published: true }))
+    : releasedPackages();
+  const events = [];
+  const reads = {};
+  const metadata = {
+    url: "https://example.test/release",
+    tagName: "v3.0.0",
+    targetCommitish: candidateSha,
+    isDraft: !rerun,
+    isPrerelease: false,
+    body: packages.map(({ name, version }) => `- ${name}@${version}`).join("\n"),
+  };
+  const promise = publishRelease({
+    assertCleanCandidate: () => candidateSha,
+    planPackages: async () => packages,
+    runGates() {},
+    tag: "v3.0.0",
+    yes: true,
+    run() {},
+    readRelease: () => metadata,
+    getRuns: () => [{ headSha: candidateSha, headBranch: "v3.0.0", databaseId: 42 }],
+    watchRun() {},
+    readLog: () =>
+      [
+        "Signed provenance statement",
+        "Signed provenance statement",
+        ...packages.map(({ name, version }) => `+ ${name}@${version}`),
+      ].join("\n"),
+    delays: [],
+    viewNpm(args) {
+      const [spec, field] = args;
+      if (field === "version") {
+        const name = spec.split("@").slice(0, -1).join("@") || spec;
+        const pkg = packages.find((candidate) => candidate.name === name);
+        return { status: 0, stdout: JSON.stringify(pkg.version), stderr: "" };
+      }
+      reads[spec] = (reads[spec] ?? 0) + 1;
+      if (reads[spec] > 1 && failCheck) return { status: 1, stdout: "", stderr: "npm error" };
+      const pkg = packages.find((candidate) => candidate.name === spec);
+      const tags = reads[spec] > 1 ? nextTags : {};
+      return {
+        status: 0,
+        stdout: JSON.stringify({ latest: pkg.version, ...tags }),
+        stderr: "",
+      };
+    },
+    smokePublishedArtifacts: async () => {
+      events.push("smoke");
+    },
+    assertCandidateUnchanged: () => {
+      events.push("unchanged");
+    },
+    report: (line) => events.push(line),
+  });
+  return { events, promise };
+}
+
+for (const rerun of [false, true]) {
+  const label = rerun ? "rerun" : "first-publish";
+
+  test(`publishRelease (${label}) reports a stale next tag after the success line`, async () => {
+    const { events, promise } = finishRelease({
+      rerun,
+      nextTags: { next: "0.1.0-next.1" },
+    });
+    await promise;
+    const success = events.findIndex((line) => /published and verified/.test(line));
+    const action = events.findIndex((line) => /ACTION REQUIRED: 2 stale next tag/.test(line));
+    assert.ok(success >= 0, events.join("\n"));
+    assert.ok(action > success, events.join("\n"));
+    assert.ok(events.includes("  npm dist-tag rm create-project-calavera next"));
+    if (!rerun) assert.ok(events.indexOf("unchanged") < action);
+  });
+
+  test(`publishRelease (${label}) stays quiet when no next tag is stale`, async () => {
+    const { events, promise } = finishRelease({ rerun, nextTags: {} });
+    await promise;
+    assert.equal(
+      events.some((line) => /ACTION REQUIRED|could not check/.test(line)),
+      false,
+    );
+  });
+
+  test(`publishRelease (${label}) completes when the next tag check cannot reach the registry`, async () => {
+    const { events, promise } = finishRelease({ rerun, failCheck: true });
+    await promise;
+    assert.ok(events.some((line) => /could not check next dist-tags/.test(line)));
+  });
+}
