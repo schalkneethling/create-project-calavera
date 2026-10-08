@@ -36,7 +36,7 @@ const TRANSACTION_ROOT = ".calavera/.transactions";
  * @typedef {{ resolve: typeof resolveArtifactPackage, extract: typeof extractArtifactPackage }} ArtifactRegistry
  * @typedef {{ id: string, target?: string }} ArtifactSelection
  * @typedef {import("./ai/artifacts.js").AiChange} AiChange
- * @typedef {{ host: string, source: string }} ArtifactRegistryReport The registry host an artifact resolves from, and the npm configuration it came from.
+ * @typedef {{ origin: string, source: string }} ArtifactRegistryReport The registry (protocol, host, and port) an artifact resolves from, and the npm configuration it came from.
  * @typedef {{ registries: ArtifactRegistryReport[], warnings: string[] }} ArtifactRegistryNotes
  */
 
@@ -60,7 +60,7 @@ function registryNotes() {
   const warnings = new Set();
   return {
     add({ registry, warnings: resolutionWarnings = [] }) {
-      if (registry) registries.set(`${registry.host} ${registry.source}`, registry);
+      if (registry) registries.set(`${registry.origin} ${registry.source}`, registry);
       for (const warning of resolutionWarnings) warnings.add(warning);
     },
     notes: () => ({ registries: [...registries.values()], warnings: [...warnings] }),

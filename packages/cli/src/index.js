@@ -184,7 +184,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {ScriptChange[]} scriptChanges Each package.json script apply adds or changes, with the value it writes, so the approval boundary shows the command; a script that already has that value is not listed. Kept out of the package.json change, which a dry run reports the same before and after apply.
  * @property {string[]} pointers
  * @property {ArtifactLockEntry[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock.
- * @property {ArtifactRegistryReport[]} artifactRegistries The registry host the auto-installed artifacts resolve from, and the npm configuration it comes from, such as the project .npmrc; empty when nothing resolves.
+ * @property {ArtifactRegistryReport[]} artifactRegistries The registry (protocol, host, and port, such as https://registry.npmjs.org) the auto-installed artifacts resolve from, and the npm configuration it comes from, such as the project .npmrc; empty when nothing resolves.
  * @property {string[]} artifactWarnings Notes on npm configuration Calavera ignored while resolving the auto-installed artifacts. They never contain a value.
  *
  * @typedef {object} CleanResult
@@ -3738,8 +3738,8 @@ function formatApplySummary(result) {
 }
 
 /** @param {ArtifactRegistryReport} registry */
-function formatArtifactRegistry({ host, source }) {
-  return source === "default" ? host : `${host} (from the ${source})`;
+function formatArtifactRegistry({ origin, source }) {
+  return source === "default" ? origin : `${origin} (from the ${source})`;
 }
 
 /**
