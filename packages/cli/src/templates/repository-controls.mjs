@@ -13,6 +13,25 @@ const API_RESPONSE_LIMIT = 20 * 1024 * 1024;
 export const CODEQL_ATTEMPTS = 36;
 export const CODEQL_DELAY_MS = 5_000;
 const MAX_PAGES = 100;
+// The languages API names that each CodeQL extractor declares as `github_api_languages` in
+// github/codeql. The c-cpp and java-kotlin extractors are not published there; their entries
+// use the Linguist names of the languages they analyze.
+const CODEQL_API_LANGUAGES = {
+  "c-cpp": ["C", "C++"],
+  csharp: ["C#"],
+  go: ["Go"],
+  "java-kotlin": ["Java", "Kotlin"],
+  "javascript-typescript": ["JavaScript", "TypeScript", "Vue", "HTML"],
+  python: ["Python"],
+  ruby: ["Ruby"],
+  swift: ["Swift"],
+};
+// The actions extractor declares no languages API names, because the API does not report
+// workflow files. These are its default paths (actions/extractor/tools/baseline-config.json).
+const ACTIONS_FILE =
+  /^(?:\.github\/workflows\/[^/]+\.ya?ml|\.github\/reusable_workflows\/.+\.ya?ml|(?:.+\/)?action\.ya?ml|(?:.+\/)?actions\.lock)$/;
+// Dependabot security updates are available only when Dependabot alerts are enabled.
+const APPLY_PREREQUISITES = { "dependabot-security-updates": "dependabot-alerts" };
 const root = fileURLToPath(new URL("..", import.meta.url));
 const configPath = fileURLToPath(new URL("../.github/repository-controls.json", import.meta.url));
 
@@ -212,6 +231,51 @@ export function normalizeDependabotSecurityUpdates(updates) {
 
 export function dependabotAlertsEnabled(api, repository) {
   return api.optional(`repos/${repository}/vulnerability-alerts`) !== null;
+}
+
+function actionsFilesPresent(api, repository, ref) {
+  let tree;
+  try {
+    tree = api.optional(`repos/${repository}/git/trees/${encodeURIComponent(ref)}?recursive=1`);
+  } catch (error) {
+    // GitHub answers 409 for a repository without commits.
+    if (error.status === 409) return false;
+    throw error;
+  }
+  if (tree === null) return null;
+  if (tree.tree.some(({ path, type }) => type === "blob" && ACTIONS_FILE.test(path))) return true;
+  // A truncated listing cannot prove that no file exists.
+  return tree.truncated ? null : false;
+}
+
+// Returns each requested CodeQL language that GitHub cannot detect, with the reason. A language
+// whose presence cannot be determined is not reported.
+function missingCodeqlLanguages(api, repository, ref, languages) {
+  const missing = [];
+  let detected;
+  for (const language of languages) {
+    if (language === "actions") {
+      if (actionsFilesPresent(api, repository, ref) === false) {
+        missing.push({
+          language,
+          reason: `the ${ref} branch has no GitHub Actions workflow or action metadata files, such as .github/workflows/*.yml or action.yml`,
+        });
+      }
+      continue;
+    }
+    const names = CODEQL_API_LANGUAGES[language];
+    if (!names) continue;
+    detected ??= new Set(Object.keys(api.request("GET", `repos/${repository}/languages`) ?? {}));
+    if (!names.some((name) => detected.has(name))) {
+      const listed =
+        names.length > 1 ? `${names.slice(0, -1).join(", ")}, or ${names.at(-1)}` : names[0];
+      missing.push({
+        language,
+        reason: `GET repos/${repository}/languages reports no ${listed} code`,
+      });
+    }
+  }
+  return missing;
 }
 
 export function normalizeCodeqlDefaultSetup(setup) {
@@ -434,6 +498,16 @@ export function planRepositoryControlChanges(current, desired) {
       status: "unsupported",
       detail: current.security.codeqlDetail,
     });
+  } else if (current.security.codeqlMissingLanguages?.length > 0) {
+    const reasons = current.security.codeqlMissingLanguages
+      .map(({ language, reason }) => `${language}: ${reason}`)
+      .join("; ");
+    changes.push({
+      control: "codeql-default-setup",
+      operation: "update",
+      status: "blocked",
+      detail: `GitHub does not detect every policy language (${reasons}). Add code in each language, or remove it from security.codeqlDefaultSetup.languages in .github/repository-controls.json.`,
+    });
   } else if (
     !isDeepStrictEqual(current.security.codeqlDefaultSetup, desired.security.codeqlDefaultSetup)
   ) {
@@ -519,6 +593,23 @@ export function readRepositoryControlState(api, repository, desired) {
   const dependabotAlerts = dependabotAlertsEnabled(api, repository);
   const dependabotSecurityUpdates = api.optional(`repos/${repository}/automated-security-fixes`);
   const codeql = api.capability(`repos/${repository}/code-scanning/default-setup`);
+  const codeqlDefaultSetup = codeql.supported ? normalizeCodeqlDefaultSetup(codeql.value) : null;
+  // GitHub detected every language that default setup already analyzes.
+  const unconfiguredLanguages =
+    codeqlDefaultSetup && desired.security.codeqlDefaultSetup.state === "configured"
+      ? desired.security.codeqlDefaultSetup.languages.filter(
+          (language) => !codeqlDefaultSetup.languages.includes(language),
+        )
+      : [];
+  const codeqlMissingLanguages =
+    unconfiguredLanguages.length > 0
+      ? missingCodeqlLanguages(
+          api,
+          repository,
+          repositorySettings.default_branch,
+          unconfiguredLanguages,
+        )
+      : [];
   const rulesetsCapability = api.capability(`repos/${repository}/rulesets?includes_parents=false`, {
     paginate: true,
   });
@@ -560,8 +651,9 @@ export function readRepositoryControlState(api, repository, desired) {
         dependabotAlerts,
         ...normalizeDependabotSecurityUpdates(dependabotSecurityUpdates),
         codeqlSupported: codeql.supported,
-        codeqlDefaultSetup: codeql.supported ? normalizeCodeqlDefaultSetup(codeql.value) : null,
+        codeqlDefaultSetup,
         codeqlDetail: codeql.detail ?? null,
+        codeqlMissingLanguages,
       },
       rulesetsSupported: rulesetsCapability.supported,
       rulesetsDetail: rulesetsCapability.detail ?? null,
@@ -643,6 +735,80 @@ function applyReleaseEnvironment(api, repository, environment) {
   }
 }
 
+// The main ruleset is the most important protection and depends on no other change, so it is
+// applied first. The other changes keep the planned order.
+function applyOrder(changes) {
+  return [
+    ...changes.filter(({ control }) => control === "main-ruleset"),
+    ...changes.filter(({ control }) => control !== "main-ruleset"),
+  ];
+}
+
+function applyChange(api, repository, change, desired, current) {
+  if (change.control === "immutable-releases") {
+    api.request("PUT", `repos/${repository}/immutable-releases`);
+  } else if (change.control === "repository-settings") {
+    api.request(
+      "PATCH",
+      `repos/${repository}`,
+      repositorySettingsPayload(desired.repositorySettings),
+    );
+  } else if (change.control === "workflow-permissions") {
+    api.request("PUT", `repos/${repository}/actions/permissions/workflow`, {
+      default_workflow_permissions: desired.workflowPermissions.defaultWorkflowPermissions,
+      can_approve_pull_request_reviews: desired.workflowPermissions.canApprovePullRequestReviews,
+    });
+  } else if (change.control === "dependabot-alerts") {
+    api.request(
+      change.operation === "enable" ? "PUT" : "DELETE",
+      `repos/${repository}/vulnerability-alerts`,
+    );
+  } else if (change.control === "dependabot-security-updates") {
+    api.request(
+      change.operation === "enable" ? "PUT" : "DELETE",
+      `repos/${repository}/automated-security-fixes`,
+    );
+  } else if (change.control === "codeql-default-setup") {
+    api.request(
+      "PATCH",
+      `repos/${repository}/code-scanning/default-setup`,
+      codeqlDefaultSetupPayload(desired.security.codeqlDefaultSetup),
+    );
+  } else if (change.control === "main-ruleset") {
+    let rulesetId = current.rulesetId;
+    if (rulesetId === null) {
+      rulesetId = api.request(
+        "POST",
+        `repos/${repository}/rulesets`,
+        mainRulesetPayload(desired.mainRuleset, "disabled"),
+      ).id;
+    }
+    api.request(
+      "PUT",
+      `repos/${repository}/rulesets/${rulesetId}`,
+      mainRulesetPayload(desired.mainRuleset, desired.mainRuleset.enforcement, current.ruleset),
+    );
+  } else if (change.control === "release-environment" && desired.releaseEnvironment) {
+    applyReleaseEnvironment(api, repository, desired.releaseEnvironment);
+  }
+}
+
+function printApplySummary(outcomes, log) {
+  log("Repository-control apply summary:");
+  for (const [heading, status, describe] of [
+    ["Applied", "applied", () => ""],
+    ["Failed", "failed", ({ error }) => `: ${error instanceof Error ? error.message : error}`],
+    ["Not attempted", "not-attempted", ({ reason }) => `: ${reason}`],
+  ]) {
+    log(`${heading}:`);
+    const matching = outcomes.filter((outcome) => outcome.status === status);
+    if (matching.length === 0) log("- none");
+    for (const outcome of matching) {
+      log(`- ${outcome.change.operation} ${outcome.change.control}${describe(outcome)}`);
+    }
+  }
+}
+
 export async function runRepositoryControls(options = {}) {
   const apply = options.apply ?? process.argv.includes("--apply");
   const yes = options.yes ?? process.argv.includes("--yes");
@@ -689,78 +855,97 @@ export async function runRepositoryControls(options = {}) {
   if (!apply) return { ok: changes.length === 0, changes };
   const blockers = changes.filter(({ status }) => status !== "drift");
   if (blockers.length > 0) {
-    throw new Error("Manual or unsupported repository controls must be resolved before apply.");
+    throw new Error(
+      "Blocked, manual, or unsupported repository controls must be resolved before apply.",
+    );
   }
   if (changes.length === 0) return { ok: true, changes: [] };
   if (!yes && !(await (options.confirmApply ?? confirmApply)())) {
     throw new Error("Repository-control changes were not applied.");
   }
 
-  for (const change of changes) {
-    if (change.control === "immutable-releases") {
-      api.request("PUT", `repos/${config.repository}/immutable-releases`);
-    } else if (change.control === "repository-settings") {
-      api.request(
-        "PATCH",
-        `repos/${config.repository}`,
-        repositorySettingsPayload(desired.repositorySettings),
-      );
-    } else if (change.control === "workflow-permissions") {
-      api.request("PUT", `repos/${config.repository}/actions/permissions/workflow`, {
-        default_workflow_permissions: desired.workflowPermissions.defaultWorkflowPermissions,
-        can_approve_pull_request_reviews: desired.workflowPermissions.canApprovePullRequestReviews,
+  const outcomes = [];
+  const unresolved = new Set();
+  for (const change of applyOrder(changes)) {
+    const prerequisite = APPLY_PREREQUISITES[change.control];
+    if (change.operation === "enable" && unresolved.has(prerequisite)) {
+      unresolved.add(change.control);
+      outcomes.push({
+        change,
+        status: "not-attempted",
+        reason: `requires ${prerequisite}, which did not apply.`,
       });
-    } else if (change.control === "dependabot-alerts") {
-      api.request(
-        change.operation === "enable" ? "PUT" : "DELETE",
-        `repos/${config.repository}/vulnerability-alerts`,
-      );
-    } else if (change.control === "dependabot-security-updates") {
-      api.request(
-        change.operation === "enable" ? "PUT" : "DELETE",
-        `repos/${config.repository}/automated-security-fixes`,
-      );
-    } else if (change.control === "codeql-default-setup") {
-      api.request(
-        "PATCH",
-        `repos/${config.repository}/code-scanning/default-setup`,
-        codeqlDefaultSetupPayload(desired.security.codeqlDefaultSetup),
-      );
-    } else if (change.control === "main-ruleset") {
-      let rulesetId = current.rulesetId;
-      if (rulesetId === null) {
-        rulesetId = api.request(
-          "POST",
-          `repos/${config.repository}/rulesets`,
-          mainRulesetPayload(desired.mainRuleset, "disabled"),
-        ).id;
-      }
-      api.request(
-        "PUT",
-        `repos/${config.repository}/rulesets/${rulesetId}`,
-        mainRulesetPayload(desired.mainRuleset, desired.mainRuleset.enforcement, current.ruleset),
-      );
-    } else if (change.control === "release-environment" && desired.releaseEnvironment) {
-      applyReleaseEnvironment(api, config.repository, desired.releaseEnvironment);
+      continue;
+    }
+    try {
+      applyChange(api, config.repository, change, desired, current);
+      outcomes.push({ change, status: "applied" });
+    } catch (error) {
+      unresolved.add(change.control);
+      outcomes.push({ change, status: "failed", error });
     }
   }
 
-  if (changes.some(({ control }) => control === "codeql-default-setup")) {
-    await waitForCodeql(
-      () =>
-        normalizeCodeqlDefaultSetup(
-          api.request("GET", `repos/${config.repository}/code-scanning/default-setup`),
-        ),
-      desired.security.codeqlDefaultSetup,
-      options.polling,
-    );
-  }
-  const remaining = planRepositoryControlChanges(
-    readRepositoryControlState(api, config.repository, desired).state,
-    desired,
+  const codeql = outcomes.find(
+    ({ change, status }) => change.control === "codeql-default-setup" && status === "applied",
   );
-  if (remaining.length > 0) {
-    throw new Error("Repository controls still differ after apply.");
+  if (codeql) {
+    try {
+      await waitForCodeql(
+        () =>
+          normalizeCodeqlDefaultSetup(
+            api.request("GET", `repos/${config.repository}/code-scanning/default-setup`),
+          ),
+        desired.security.codeqlDefaultSetup,
+        options.polling,
+      );
+    } catch (error) {
+      Object.assign(codeql, { status: "failed", error });
+    }
+  }
+  let remaining = [];
+  let verificationError = null;
+  try {
+    remaining = planRepositoryControlChanges(
+      readRepositoryControlState(api, config.repository, desired).state,
+      desired,
+    );
+  } catch (error) {
+    verificationError = error;
+  }
+  for (const outcome of outcomes) {
+    if (
+      outcome.status === "applied" &&
+      remaining.some(({ control }) => control === outcome.change.control)
+    ) {
+      Object.assign(outcome, {
+        status: "failed",
+        error: new Error("GitHub still reports drift after the change was applied."),
+      });
+    }
+  }
+  const failed = outcomes.filter(({ status }) => status === "failed");
+  const notAttempted = outcomes.filter(({ status }) => status === "not-attempted");
+  const unplanned = remaining.filter(
+    ({ control }) => !changes.some((change) => change.control === control),
+  );
+  if (failed.length > 0 || notAttempted.length > 0 || unplanned.length > 0 || verificationError) {
+    printApplySummary(outcomes, log);
+    if (unplanned.length > 0) printChanges(unplanned, log);
+    const errors = failed.map(({ error }) => error);
+    if (verificationError) {
+      log(`Verification failed: ${verificationError.message}`);
+      throw new Error(
+        "Repository controls could not be verified after apply. See the apply summary.",
+        {
+          cause: new AggregateError([...errors, verificationError]),
+        },
+      );
+    }
+    throw new Error(
+      `Repository controls still differ after apply: ${failed.length} failed, ${notAttempted.length} not attempted. See the apply summary.`,
+      { cause: new AggregateError(errors) },
+    );
   }
   log("Repository controls were applied and verified.");
   return { ok: true, changes };

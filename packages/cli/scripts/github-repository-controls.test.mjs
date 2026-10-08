@@ -811,12 +811,15 @@ test("CodeQL apply preserves additional languages and verifies the merged covera
           };
         if (endpoint.endsWith("/actions/permissions/workflow"))
           return { default_workflow_permissions: "read", can_approve_pull_request_reviews: false };
+        if (endpoint.endsWith("/languages")) return { JavaScript: 10, Python: 5 };
         assert.fail(`Unexpected request ${endpoint}`);
       },
       optional(endpoint) {
         if (endpoint.endsWith("/immutable-releases")) return { enabled: true };
         if (endpoint.endsWith("/vulnerability-alerts")) return undefined;
         if (endpoint.endsWith("/automated-security-fixes")) return { enabled: true, paused: false };
+        if (endpoint.endsWith("/git/trees/main?recursive=1"))
+          return { truncated: false, tree: [{ path: ".github/workflows/ci.yml", type: "blob" }] };
         assert.fail(`Unexpected optional ${endpoint}`);
       },
       capability(endpoint) {
@@ -830,11 +833,12 @@ test("CodeQL apply preserves additional languages and verifies the merged covera
         assert.fail(`Unexpected capability ${endpoint}`);
       },
     };
+    const lines = [];
     const options = {
       config,
       api,
       skipGhChecks: true,
-      log: () => {},
+      log: (line) => lines.push(line),
       polling: { attempts: 2, delayMs: 0, delay: async () => {} },
     };
     assert.deepEqual((await runRepositoryControls(options)).changes, [
@@ -845,10 +849,362 @@ test("CodeQL apply preserves additional languages and verifies the merged covera
     if (preserve) {
       assert.equal((await result).ok, true);
       assert.equal((await runRepositoryControls({ ...options, apply: true, yes: true })).ok, true);
-    } else await assert.rejects(result, /did not reach the desired state/);
+    } else {
+      await assert.rejects(result, /still differ after apply: 1 failed, 0 not attempted/);
+      assert.ok(
+        lines.includes(
+          "- update codeql-default-setup: CodeQL default setup did not reach the desired state in time.",
+        ),
+      );
+    }
     assert.equal(writes.length, 1);
     assert.deepEqual(writes[0].languages, ["actions", "javascript-typescript", "python"]);
     assert.equal(writes[0].query_suite, "extended");
     assert.deepEqual(config, original);
   }
+});
+
+const CODEQL_422 =
+  "GitHub API PATCH repos/octocat/example/code-scanning/default-setup failed: gh: One or more languages you selected are not present in the repository. (HTTP 422).";
+
+function apiFailure(message, status) {
+  const error = new Error(message);
+  error.status = status;
+  return error;
+}
+
+// A new repository: every managed control differs from the policy, no ruleset exists, and
+// CodeQL default setup is not configured.
+function newRepository(desired, options = {}) {
+  const state = {
+    immutable: false,
+    repository: {
+      default_branch: "main",
+      ...repositorySettingsPayload({
+        ...desired.repositorySettings,
+        wiki: !desired.repositorySettings.wiki,
+      }),
+    },
+    alerts: false,
+    updates: { enabled: false, paused: false },
+    codeql: { state: "not-configured", languages: [] },
+    ruleset: null,
+  };
+  const languages = options.languages ?? { JavaScript: 29192, TypeScript: 3463 };
+  const tree = options.tree ?? {
+    truncated: false,
+    tree: [
+      { path: ".github", type: "tree" },
+      { path: ".github/workflows", type: "tree" },
+      { path: ".github/workflows/ci.yml", type: "blob" },
+      { path: "src/main.ts", type: "blob" },
+    ],
+  };
+  const failures = options.failures ?? {};
+  const mutations = [];
+  const reads = [];
+  const api = {
+    request(method, endpoint, body) {
+      if (method === "GET") {
+        reads.push(endpoint);
+        if (endpoint === "repos/octocat/example") return state.repository;
+        if (endpoint.endsWith("/actions/permissions/workflow"))
+          return { default_workflow_permissions: "read", can_approve_pull_request_reviews: false };
+        if (endpoint === "repos/octocat/example/languages") return languages;
+        if (endpoint.endsWith("/code-scanning/default-setup")) return state.codeql;
+        if (endpoint === "repos/octocat/example/rulesets/7") return state.ruleset;
+        assert.fail(`Unexpected GET ${endpoint}`);
+      }
+      const operation = `${method} ${endpoint}`;
+      mutations.push(operation);
+      if (failures[operation]) throw failures[operation];
+      if (operation === "PUT repos/octocat/example/immutable-releases") state.immutable = true;
+      else if (operation === "PATCH repos/octocat/example")
+        state.repository = { ...state.repository, ...body };
+      else if (operation === "PUT repos/octocat/example/vulnerability-alerts") state.alerts = true;
+      else if (operation === "PUT repos/octocat/example/automated-security-fixes")
+        state.updates = { enabled: true, paused: false };
+      else if (operation === "PATCH repos/octocat/example/code-scanning/default-setup")
+        state.codeql = structuredClone(body);
+      else if (operation === "POST repos/octocat/example/rulesets") {
+        state.ruleset = { id: 7, ...body };
+        return { id: 7 };
+      } else if (operation === "PUT repos/octocat/example/rulesets/7")
+        state.ruleset = { id: 7, ...body };
+      else assert.fail(`Unexpected mutation ${operation}`);
+      return undefined;
+    },
+    optional(endpoint) {
+      if (endpoint.endsWith("/immutable-releases"))
+        return state.immutable ? { enabled: true } : null;
+      if (endpoint.endsWith("/vulnerability-alerts")) return state.alerts ? undefined : null;
+      if (endpoint.endsWith("/automated-security-fixes")) return state.updates;
+      if (endpoint === "repos/octocat/example/git/trees/main?recursive=1") {
+        reads.push(endpoint);
+        // GitHubApi.optional returns null for a 404 and rethrows any other failure.
+        if (tree instanceof Error && tree.status === 404) return null;
+        if (tree instanceof Error) throw tree;
+        return tree;
+      }
+      assert.fail(`Unexpected optional GET ${endpoint}`);
+    },
+    capability(endpoint) {
+      if (endpoint.endsWith("/code-scanning/default-setup"))
+        return { supported: true, value: state.codeql };
+      if (endpoint.endsWith("/rulesets?includes_parents=false"))
+        return {
+          supported: true,
+          value: state.ruleset ? [{ id: 7, name: desired.mainRuleset.name, target: "branch" }] : [],
+        };
+      assert.fail(`Unexpected capability GET ${endpoint}`);
+    },
+  };
+  return { api, mutations, reads, state };
+}
+
+function newProjectOptions(api, lines) {
+  const config = createRepositoryControlsConfig(
+    normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+  );
+  return {
+    config,
+    api,
+    skipGhChecks: true,
+    log: (line) => lines.push(line),
+    polling: { attempts: 1, delayMs: 0, delay: async () => {} },
+  };
+}
+
+function defaultDesiredState() {
+  return desiredState(
+    createRepositoryControlsConfig(
+      normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    ),
+  );
+}
+
+test("drift check blocks CodeQL languages that GitHub does not detect before any change", async () => {
+  const desired = defaultDesiredState();
+  const { api, mutations } = newRepository(desired, {
+    tree: { truncated: false, tree: [{ path: "src/main.ts", type: "blob" }] },
+    languages: { CSS: 120 },
+  });
+  const lines = [];
+  const options = newProjectOptions(api, lines);
+
+  const check = await runRepositoryControls(options);
+  assert.equal(check.ok, false);
+  const codeql = check.changes.find(({ control }) => control === "codeql-default-setup");
+  assert.equal(codeql.status, "blocked");
+  assert.match(codeql.detail, /actions: .*no GitHub Actions workflow/);
+  assert.match(codeql.detail, /\.github\/workflows/);
+  assert.match(
+    codeql.detail,
+    /javascript-typescript: GET repos\/octocat\/example\/languages reports no JavaScript, TypeScript, Vue, or HTML code/,
+  );
+  assert.ok(lines.some((line) => line.startsWith("- [blocked] update codeql-default-setup: ")));
+
+  await assert.rejects(
+    runRepositoryControls({ ...options, apply: true, yes: true }),
+    /Blocked, manual, or unsupported repository controls must be resolved before apply/,
+  );
+  assert.deepEqual(mutations, []);
+});
+
+test("CodeQL language presence follows the extractor file and languages API mappings", async () => {
+  const desired = defaultDesiredState();
+  const codeqlStatus = async (repository) =>
+    (await runRepositoryControls(newProjectOptions(repository.api, []))).changes.find(
+      ({ control }) => control === "codeql-default-setup",
+    );
+
+  for (const path of [
+    ".github/workflows/ci.yaml",
+    ".github/reusable_workflows/octo/repo/build.yml",
+    "action.yml",
+    "actions/setup/action.yaml",
+  ]) {
+    const repository = newRepository(desired, {
+      tree: { truncated: false, tree: [{ path, type: "blob" }] },
+      languages: { HTML: 10 },
+    });
+    assert.deepEqual(await codeqlStatus(repository), {
+      control: "codeql-default-setup",
+      operation: "update",
+      status: "drift",
+    });
+  }
+
+  for (const path of [".github/workflows/nested/ci.yml", ".github/workflows/README.md"]) {
+    const repository = newRepository(desired, {
+      tree: { truncated: false, tree: [{ path, type: "blob" }] },
+    });
+    assert.equal((await codeqlStatus(repository)).status, "blocked");
+  }
+
+  // A truncated tree or an unreadable ref cannot prove absence, so neither is a blocker.
+  for (const tree of [
+    { truncated: true, tree: [{ path: "src/main.ts", type: "blob" }] },
+    apiFailure("GitHub API GET failed: Not Found (HTTP 404).", 404),
+  ]) {
+    assert.equal((await codeqlStatus(newRepository(desired, { tree }))).status, "drift");
+  }
+
+  // An empty repository has no files on any branch.
+  const empty = newRepository(desired, {
+    tree: apiFailure("GitHub API GET failed: Git Repository is empty. (HTTP 409).", 409),
+    languages: {},
+  });
+  assert.equal((await codeqlStatus(empty)).status, "blocked");
+
+  // Languages that are already configured remotely need no presence check.
+  const configured = newRepository(desired, {
+    tree: { truncated: false, tree: [] },
+    languages: {},
+  });
+  configured.state.codeql = {
+    state: "configured",
+    languages: ["actions", "javascript", "typescript"],
+    query_suite: "default",
+  };
+  assert.equal((await codeqlStatus(configured)).status, "drift");
+  assert.equal(
+    configured.reads.some((endpoint) => endpoint.endsWith("/languages")),
+    false,
+  );
+});
+
+test("apply runs the main ruleset first, continues after a CodeQL 422, and summarizes", async () => {
+  const desired = defaultDesiredState();
+  const { api, mutations } = newRepository(desired, {
+    failures: {
+      "PATCH repos/octocat/example/code-scanning/default-setup": apiFailure(CODEQL_422, 422),
+    },
+  });
+  const lines = [];
+  const options = newProjectOptions(api, lines);
+  assert.deepEqual(
+    (await runRepositoryControls(options)).changes.map(({ control, status }) => [control, status]),
+    [
+      ["immutable-releases", "drift"],
+      ["repository-settings", "drift"],
+      ["dependabot-alerts", "drift"],
+      ["dependabot-security-updates", "drift"],
+      ["codeql-default-setup", "drift"],
+      ["main-ruleset", "drift"],
+    ],
+  );
+  lines.length = 0;
+
+  const error = await runRepositoryControls({ ...options, apply: true, yes: true }).then(
+    () => assert.fail("Apply must fail when a change fails."),
+    (failure) => failure,
+  );
+  assert.match(error.message, /still differ after apply: 1 failed, 0 not attempted/);
+  assert.ok(error.cause instanceof AggregateError);
+  assert.equal(error.cause.errors[0].status, 422);
+  assert.deepEqual(mutations, [
+    "POST repos/octocat/example/rulesets",
+    "PUT repos/octocat/example/rulesets/7",
+    "PUT repos/octocat/example/immutable-releases",
+    "PATCH repos/octocat/example",
+    "PUT repos/octocat/example/vulnerability-alerts",
+    "PUT repos/octocat/example/automated-security-fixes",
+    "PATCH repos/octocat/example/code-scanning/default-setup",
+  ]);
+  assert.deepEqual(lines.slice(lines.indexOf("Repository-control apply summary:")), [
+    "Repository-control apply summary:",
+    "Applied:",
+    "- create main-ruleset",
+    "- enable immutable-releases",
+    "- update repository-settings",
+    "- enable dependabot-alerts",
+    "- enable dependabot-security-updates",
+    "Failed:",
+    `- update codeql-default-setup: ${CODEQL_422}`,
+    "Not attempted:",
+    "- none",
+  ]);
+
+  // The drift check now reports only the failed change.
+  assert.deepEqual(
+    (await runRepositoryControls(options)).changes.map(({ control }) => control),
+    ["codeql-default-setup"],
+  );
+});
+
+test("apply does not attempt a change whose prerequisite failed", async () => {
+  const desired = defaultDesiredState();
+  const alertsFailure = apiFailure(
+    "GitHub API PUT repos/octocat/example/vulnerability-alerts failed: gh: Forbidden (HTTP 403).",
+    403,
+  );
+  const { api, mutations } = newRepository(desired, {
+    failures: { "PUT repos/octocat/example/vulnerability-alerts": alertsFailure },
+  });
+  const lines = [];
+
+  await assert.rejects(
+    runRepositoryControls({ ...newProjectOptions(api, lines), apply: true, yes: true }),
+    (error) => {
+      assert.match(error.message, /still differ after apply: 1 failed, 1 not attempted/);
+      assert.deepEqual(error.cause.errors, [alertsFailure]);
+      return true;
+    },
+  );
+  assert.equal(mutations.includes("PUT repos/octocat/example/automated-security-fixes"), false);
+  assert.ok(mutations.includes("PATCH repos/octocat/example/code-scanning/default-setup"));
+  assert.deepEqual(lines.slice(lines.indexOf("Repository-control apply summary:")), [
+    "Repository-control apply summary:",
+    "Applied:",
+    "- create main-ruleset",
+    "- enable immutable-releases",
+    "- update repository-settings",
+    "- update codeql-default-setup",
+    "Failed:",
+    `- enable dependabot-alerts: ${alertsFailure.message}`,
+    "Not attempted:",
+    "- enable dependabot-security-updates: requires dependabot-alerts, which did not apply.",
+  ]);
+});
+
+test("apply summarizes the outcome when verification cannot read GitHub", async () => {
+  const desired = defaultDesiredState();
+  const { api, mutations } = newRepository(desired);
+  const outage = apiFailure("GitHub API GET repos/octocat/example failed: (HTTP 502).", 502);
+  const request = api.request;
+  let repositoryReads = 0;
+  api.request = (method, endpoint, body) => {
+    if (method === "GET" && endpoint === "repos/octocat/example" && ++repositoryReads > 1) {
+      throw outage;
+    }
+    return request(method, endpoint, body);
+  };
+  const lines = [];
+
+  await assert.rejects(
+    runRepositoryControls({ ...newProjectOptions(api, lines), apply: true, yes: true }),
+    (error) => {
+      assert.match(error.message, /could not be verified after apply/);
+      assert.deepEqual(error.cause.errors, [outage]);
+      return true;
+    },
+  );
+  assert.equal(mutations.length, 7);
+  assert.ok(lines.includes("- update codeql-default-setup"));
+  assert.equal(lines.at(-1), `Verification failed: ${outage.message}`);
+});
+
+test("a fully successful apply prints no failure summary", async () => {
+  const desired = defaultDesiredState();
+  const { api } = newRepository(desired);
+  const lines = [];
+  const result = await runRepositoryControls({
+    ...newProjectOptions(api, lines),
+    apply: true,
+    yes: true,
+  });
+  assert.equal(result.ok, true);
+  assert.equal(lines.includes("Repository-control apply summary:"), false);
+  assert.equal(lines.at(-1), "Repository controls were applied and verified.");
 });

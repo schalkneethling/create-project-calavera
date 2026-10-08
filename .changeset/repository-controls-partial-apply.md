@@ -1,0 +1,5 @@
+---
+"create-project-calavera": patch
+---
+
+The generated `scripts/repository-controls.mjs` no longer fails part way through on a new project. The drift check now confirms that GitHub detects each policy CodeQL language that default setup does not already analyze, using `GET /repos/{owner}/{repo}/languages` and, for `actions`, which that API does not report, the workflow and action metadata files on the default branch. A language that is not present is reported as a `blocked` finding with the reason, and apply stops before it changes anything. Apply now runs the `main` ruleset first, continues with independent changes after a change fails, and skips a change only when a change it requires failed (Dependabot security updates require Dependabot alerts). An apply that does not fully succeed ends with a summary of the changes applied, failed (with the error), and not attempted, and still exits with a non-zero code. Re-apply the recipe to update the managed script and documentation in an existing project.
