@@ -147,7 +147,7 @@ export const recipeToolDescriptions = Object.freeze({
   explain_recipe:
     "Explain the integrations selected by a Calavera recipe, including profile defaults and automatically included parent integrations.",
   dry_run_apply:
-    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe. Reports whether the project is managed by Vite+ and, when it is, what Vite+ provides instead of Calavera.",
+    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe. Reports whether the project is managed by Vite+ and, when it is, what Vite+ provides instead of Calavera. Lists in scriptChanges each package.json script apply would add, change, or rename, with the command it will run and, for a changed or renamed script, the command it replaces; show each command to the user.",
   apply_recipe:
     "Apply an approved Calavera recipe in the current project. Call only after presenting dry_run_apply output and receiving explicit user approval.",
   download_recipe:
