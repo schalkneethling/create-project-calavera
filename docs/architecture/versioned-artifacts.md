@@ -16,7 +16,7 @@ Artifact IDs retain their existing `skill-`, `hook-`, or `agent-` prefix. IDs ar
 
 The artifact catalog contains only identity, routing, target, and compatibility metadata. Neither `create-project-calavera` nor `@schalkneethling/calavera-artifact-core` declares independently versioned artifact packages as runtime dependencies. They therefore do not appear transitively in a consumer's `package.json`, dependency lockfile, or `node_modules` through a Calavera CLI installation.
 
-Artifact packages enter the project only through the explicit artifact lifecycle and are extracted into `.calavera`. Install and update may resolve from npm; ordinary apply only reuses or restores an exact locked version offline. Resolution and extraction honor the npm registry configuration of the project: `registry`, `@scope:registry`, and the `//host/:_authToken`, `_auth`, `username`, `_password`, `certfile`, and `keyfile` keys, read from the user `.npmrc`, then the project `.npmrc`, then `npm_config_*` environment variables, with `${VAR}` expansion. Global and built-in npmrc files and other settings, such as proxy and CA, are not read. Credentials are never written to logs or error messages. The small Calavera guidance payload used by `--init` is owned by the CLI package so bootstrap remains offline; a contract test keeps that copy identical to the versioned source artifact.
+Artifact packages enter the project only through the explicit artifact lifecycle and are extracted into `.calavera`. Install and update may resolve from npm; ordinary apply only reuses or restores an exact locked version offline.
 
 Each manifest declares:
 
@@ -27,6 +27,20 @@ Each manifest declares:
 - the compatible `create-project-calavera` semver range.
 
 The manifest never names an installed project destination. Destination selection belongs to the recipe and target adapter.
+
+## npm registry configuration
+
+Artifact resolution and extraction use the registry and credentials that npm would use for the artifact's package scope. Calavera reads them itself because pacote does not read `.npmrc` files.
+
+- **What is read.** `registry`, the `@scope:registry` of the artifact scope, and the `//host/:_authToken`, `_auth`, `username`, `_password`, `certfile`, and `keyfile` keys. A registry for any other scope is not read, so a broken one cannot stop an unrelated install. A blank registry for the artifact scope is skipped with a warning.
+- **Where it is read from.** The user `.npmrc`, then the project `.npmrc`, then `npm_config_*` environment variables; later sources win. The user `.npmrc` is `~/.npmrc` or the file named by `npm_config_userconfig`, which may use `~` and `${VAR}`. A `userconfig` key in a project `.npmrc` is ignored. The project `.npmrc` is the one in the current directory only; parent directories are not searched. Global and built-in npm configuration files and command-line flags are not read.
+- **Variables.** `${VAR}` is expanded in the keys and values of the user `.npmrc` and of `npm_config_*` variables. It is never expanded in a project `.npmrc`, which is repository content and must not read the caller's environment. A project entry that contains `${...}` is ignored with a warning that names the key, never a value. An entry that references an unset variable is ignored. Registry failures name the ignored keys and unset variables, because an MCP client often passes a minimal environment.
+- **Registry URLs.** A `registry` or `@scope:registry` value must be an `http` or `https` URL without a username or password. Credentials belong in the `//host/:` keys, which npm sends only to the matching host.
+- **What is shown.** The dry run of `apply`, `artifacts install`, and `artifacts update` reports the registry host that artifacts resolve from, and says when it comes from the project `.npmrc`. The `dry_run_apply` MCP tool returns the same fields (`artifactRegistries` and `artifactWarnings`).
+- **Not read.** `proxy`, `https-proxy`, `noproxy`, `cafile`, `ca`, and `strict-ssl` from an `.npmrc` are not loaded. The `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY` variables of the Calavera process, and `NODE_EXTRA_CA_CERTS`, do apply.
+- **Secrets.** Credentials never appear in logs, warnings, or error messages.
+
+A project `.npmrc` can choose the registry that artifacts resolve from. Extraction verifies each tarball against the integrity that registry reported for the resolution. Re-checking that integrity against the lock when an artifact is restored is not part of this behavior.
 
 ## Project records
 
