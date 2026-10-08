@@ -12,8 +12,9 @@ import { loadNpmRegistryOptions } from "./npm-config.js";
 const TAGS = new Set(["latest", "next"]);
 
 /**
- * Registry and auth settings come from the project and user .npmrc files of `cwd` (default: the
- * current directory) and `npm_config_*` variables in `env` (default: the process environment).
+ * Registry and auth settings come from the user and project .npmrc files and `npm_config_*`
+ * variables; see `loadNpmRegistryOptions`. `cwd` (default: the current directory) holds the
+ * project .npmrc, and `env` (default: the process environment) holds the variables.
  * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv }} request
  */
 export async function resolveArtifactPackage(request) {
@@ -25,12 +26,15 @@ export async function resolveArtifactPackage(request) {
     throw new Error(`Artifact version must be exact semver: ${request.version}.`);
   }
 
-  const manifest = await pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
-    ...(await loadNpmRegistryOptions(request)),
-    cache: request.cache,
-    offline: request.offline,
-    fullMetadata: true,
-  });
+  const npm = await loadNpmRegistryOptions({ ...request, scope: packageScope(artifact) });
+  const manifest = await withNpmDiagnostics(npm, () =>
+    pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
+      ...npm.options,
+      cache: request.cache,
+      offline: request.offline,
+      fullMetadata: true,
+    }),
+  );
   if (manifest.name !== artifact.packageName || !semver.valid(manifest.version)) {
     throw new Error(`Resolved package identity mismatch for ${artifact.packageName}.`);
   }
@@ -47,6 +51,8 @@ export async function resolveArtifactPackage(request) {
     tag,
     cache: request.cache,
     offline: request.offline ?? false,
+    registry: npm.registry,
+    warnings: npm.warnings,
   };
 }
 
@@ -57,12 +63,18 @@ export async function resolveArtifactPackage(request) {
  * @param {{ cwd?: string, env?: NodeJS.ProcessEnv }} [npmContext] Where to read npm configuration; see resolveArtifactPackage.
  */
 export async function extractArtifactPackage(resolution, destination, cliVersion, npmContext) {
-  await pacote.extract(resolution.resolved, destination, {
-    ...(await loadNpmRegistryOptions(npmContext)),
-    cache: resolution.cache,
-    integrity: resolution.integrity,
-    offline: resolution.offline,
+  const npm = await loadNpmRegistryOptions({
+    ...npmContext,
+    scope: packageScope(resolution.artifact),
   });
+  await withNpmDiagnostics(npm, () =>
+    pacote.extract(resolution.resolved, destination, {
+      ...npm.options,
+      cache: resolution.cache,
+      integrity: resolution.integrity,
+      offline: resolution.offline,
+    }),
+  );
 
   const packageJson = JSON.parse(await readFile(join(destination, "package.json"), "utf8"));
   const manifest = JSON.parse(await readFile(join(destination, "calavera-artifact.json"), "utf8"));
@@ -78,6 +90,41 @@ export async function extractArtifactPackage(resolution, destination, cliVersion
   }
 
   return { manifest, payloadPath, payloadHash: await hashArtifactPayload(payloadPath) };
+}
+
+/** @param {{ packageName: string }} artifact The npm scope of the package, such as @schalkneethling. */
+function packageScope({ packageName }) {
+  return packageName.startsWith("@") ? packageName.slice(0, packageName.indexOf("/")) : undefined;
+}
+
+/**
+ * Adds what the loader ignored to a registry failure, so a missing token or variable is visible.
+ * The original error stays as `cause`, and its `code` and `statusCode` are kept.
+ * @template T
+ * @param {{ diagnostics: string[], unsetVariables: string[] }} npm
+ * @param {() => Promise<T>} run
+ * @returns {Promise<T>}
+ */
+async function withNpmDiagnostics(npm, run) {
+  try {
+    return await run();
+  } catch (error) {
+    if (npm.diagnostics.length === 0 || !(error instanceof Error)) throw error;
+    const hint =
+      npm.unsetVariables.length > 0
+        ? ` Unset variables: ${npm.unsetVariables.join(", ")}. MCP clients often pass a minimal environment, so a variable set in your shell may be missing here.`
+        : "";
+    throw Object.assign(
+      new Error(
+        `${error.message} Calavera ignored npm configuration that may explain this: ${npm.diagnostics.join(" ")}${hint}`,
+        { cause: error },
+      ),
+      {
+        code: /** @type {NodeJS.ErrnoException} */ (error).code,
+        statusCode: /** @type {{ statusCode?: number }} */ (error).statusCode,
+      },
+    );
+  }
 }
 
 /**
