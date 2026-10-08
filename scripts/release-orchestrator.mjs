@@ -664,6 +664,38 @@ function watchRun(workflowRun) {
   ]);
 }
 
+// After a stable release, `next` must not trail `latest`: `npm install pkg@next` would then
+// install an older build than `npm install pkg`. Trusted publishing does not remove the tag
+// unless the publisher opts in to "Allow npm dist-tag", so this reports instead of fixing.
+export async function staleNextTags(plan, options = {}) {
+  const stale = [];
+  for (const { name } of plan.packages) {
+    const tagsRaw = await npmViewWithRetry([name, "dist-tags", "--json"], options);
+    let tags;
+    try {
+      tags = JSON.parse(tagsRaw);
+    } catch {
+      throw new ReleaseError(`npm view ${name} dist-tags --json returned malformed JSON.`);
+    }
+    const { latest, next } = tags;
+    if (semver.valid(latest) && semver.valid(next) && semver.lt(next, latest)) {
+      stale.push({ name, latest, next, command: `npm dist-tag rm ${name} next` });
+    }
+  }
+  return stale;
+}
+
+export function reportStaleNextTags(stale, report = console.info) {
+  if (stale.length === 0) return;
+  report(
+    `${stale.length} package(s) have a next dist-tag behind latest. Remove each stale tag (see docs/release-runbook.md):`,
+  );
+  for (const { name, latest, next, command } of stale) {
+    report(`${name}: next ${next} is behind latest ${latest}. Run:`);
+    report(`  ${command}`);
+  }
+}
+
 export async function publishRelease(options = {}) {
   const plan = await prepareRelease({ ...options, allowPublished: true });
   const candidates = plan.packages.filter(({ published }) => !published);
@@ -719,6 +751,7 @@ export async function publishRelease(options = {}) {
     (options.watchRun ?? watchRun)(workflowRun);
     await verifyPublishedPackages(verificationPlan, workflowRun.databaseId, options);
     await smokePublishedArtifacts(verificationPlan);
+    reportStaleNextTags(await staleNextTags(plan, options), options.report ?? console.info);
     console.info(`Release ${tag} and its package inventory are already published and verified.`);
     return plan;
   }
@@ -739,6 +772,7 @@ export async function publishRelease(options = {}) {
   (options.watchRun ?? watchRun)(workflowRun);
   await verifyPublishedPackages(plan, workflowRun.databaseId, options);
   await smokePublishedArtifacts(plan);
+  reportStaleNextTags(await staleNextTags(plan, options), options.report ?? console.info);
   assertCandidateUnchanged(plan.sha);
   console.info(`Release ${tag} is published and verified.`);
 }

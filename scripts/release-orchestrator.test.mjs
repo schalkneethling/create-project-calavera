@@ -25,6 +25,8 @@ import {
   releaseChannel,
   releaseGates,
   releaseTag,
+  reportStaleNextTags,
+  staleNextTags,
   validateReleaseMetadata,
   verifyPublishedPackages,
   waitForRun,
@@ -1058,4 +1060,75 @@ test("stable version generation preserves ignored private applications", async (
     versionedChangelog,
   );
   await assert.rejects(access(join(directory, "apps", "unversioned", "CHANGELOG.md")), /ENOENT/);
+});
+
+function distTagViewer(tagsByPackage) {
+  return (args) => ({
+    status: 0,
+    stdout: JSON.stringify(tagsByPackage[args[0]]),
+    stderr: "",
+  });
+}
+
+test("staleNextTags reports a next tag that resolves below latest, with the removal command", async () => {
+  const plan = { packages: [{ name: "pkg-a" }, { name: "pkg-b" }] };
+  const stale = await staleNextTags(plan, {
+    viewNpm: distTagViewer({
+      "pkg-a": { latest: "2.0.0", next: "2.0.0-beta.3" },
+      "pkg-b": { latest: "1.0.0" },
+    }),
+  });
+  assert.deepEqual(stale, [
+    {
+      name: "pkg-a",
+      latest: "2.0.0",
+      next: "2.0.0-beta.3",
+      command: "npm dist-tag rm pkg-a next",
+    },
+  ]);
+});
+
+test("staleNextTags accepts a next tag ahead of latest and a package without a next tag", async () => {
+  const plan = { packages: [{ name: "pkg-a" }, { name: "pkg-b" }] };
+  const stale = await staleNextTags(plan, {
+    viewNpm: distTagViewer({
+      "pkg-a": { latest: "1.0.0", next: "2.0.0-beta.1" },
+      "pkg-b": { latest: "1.0.0" },
+    }),
+  });
+  assert.deepEqual(stale, []);
+});
+
+test("staleNextTags reads dist-tags through the injected view helper", async () => {
+  const calls = [];
+  await staleNextTags(
+    { packages: [{ name: "pkg-a" }] },
+    {
+      viewNpm(args) {
+        calls.push(args);
+        return { status: 0, stdout: "{}", stderr: "" };
+      },
+    },
+  );
+  assert.deepEqual(calls, [["pkg-a", "dist-tags", "--json"]]);
+});
+
+test("reportStaleNextTags prints the exact remedy commands and stays quiet when nothing is stale", () => {
+  const lines = [];
+  reportStaleNextTags(
+    [
+      {
+        name: "pkg-a",
+        latest: "2.0.0",
+        next: "2.0.0-beta.3",
+        command: "npm dist-tag rm pkg-a next",
+      },
+    ],
+    (line) => lines.push(line),
+  );
+  assert.match(lines.join("\n"), /pkg-a: next 2\.0\.0-beta\.3 is behind latest 2\.0\.0/);
+  assert.match(lines.join("\n"), /^ {2}npm dist-tag rm pkg-a next$/m);
+  const quiet = [];
+  reportStaleNextTags([], (line) => quiet.push(line));
+  assert.deepEqual(quiet, []);
 });
