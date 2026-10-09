@@ -13,6 +13,7 @@ The Increment 1 exit condition (H0) is not met. `--new` (#532, ADR-0010), the pr
 - `--new` exit 127 diagnosed (2026-10-09). `npx --package vite-plus vp create` fails with `sh: create-vite@latest: command not found` when npm is the project's package manager. The outer `npx` sets `npm_config_package=vite-plus`, Vite+ copies `process.env` into its template runner (`packages/cli/src/create/discovery.ts`), and the nested `npx create-vite@latest` inherits it. Reproduced with nested `npx` alone. A second source: Calavera started with `npx --package create-project-calavera` leaks the same setting through any runner. `pnpm create project-calavera -- --new` still uses `npx`, as ADR-0010 Decision 1 states.
 - Upstream issue filed: voidzero-dev/vite-plus#2970. It offers a pull request; none is opened until a maintainer answers.
 - Workaround documented (#670, PR #672): `docs/agent-first-calavera-workflow.md`, section "Known Issue: `vp create` Exits With Code 127 Through npx". Both documented commands were run end to end with exit 0. Removal is tracked in #671.
+- The bootstrap always installs the base Calavera skill, although the Composer leaves `skill-calavera` unchecked by default. Filed #673 (decision: should the bootstrap follow the recipe) and #674 (bug, reproduced: `apply` with a skill-free recipe drops the skill from state and leaves `.agents/skills/calavera` unowned; depends on #673).
 - Twelve stale agent worktrees under `.claude/worktrees/` removed. Each was clean, and every local-only commit had a patch-identical commit on its remote branch. The branches remain. Repository-wide `pnpm format:all:check` passes again.
 - Recorded late, landed on `main` between 2026-09-28 and 2026-10-06 without a status update: ADR-0009, ADR-0010, ADR-0011, and ADR-0013 accepted; `--new` with `--config` and recipe next steps; second dry run after apply reports no drift (#548); `github-repository-controls` refuses a workspace member (#550); Composer recipe seam (#525) and redesign (#571, #572); dev dependencies installed with `vp add -D` (#618); `quality` runs `vp check` and `vp test` (#622); supported Node.js range checked (#626). Releases v4.0.0 to v4.1.0 shipped between 2026-10-03 and 2026-10-05.
 
@@ -54,6 +55,7 @@ The Increment 1 exit condition (H0) is not met. `--new` (#532, ADR-0010), the pr
 ## Next session starts with
 
 - Confirm or reject Checkpoint 0 on the evidence above.
+- Decide #673, then fix #674.
 - Review the open pull request queue, starting with the base of each stack: #648, #650, #649, and #654.
 - Watch voidzero-dev/vite-plus#2970; open the upstream pull request only after a maintainer answers.
 - Toward H0: open the Determinant first-slice issue (CAL-01x) and run the bootstrap readiness check (CAL-01y) on a scratch `vp create` library monorepo.
