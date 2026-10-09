@@ -49,6 +49,7 @@ The Increment 1 exit condition (H0) is not met. `--new` (#532, ADR-0010), the pr
 ## Decisions taken this session (with ADR link)
 
 - No Calavera change for the `--new` exit 127 failure: the defect is upstream, and ADR-0010 Decision 1 stands (`docs/adr/0010-new-delegates-scaffolding-to-vp-create.md`). Whether `--new` should choose its runner from the package manager that launched Calavera is not decided; no decision issue is open.
+- ADR-0012 accepted by Schalk on 2026-10-09: `vp add -D` installs development dependencies in a Vite+-managed project (`docs/adr/0012-vp-add-installs-dev-dependencies-in-managed-projects.md`). It read "Proposed" after #620 shipped the decision on 2026-10-04.
 
 ## Next session starts with
 
@@ -56,4 +57,3 @@ The Increment 1 exit condition (H0) is not met. `--new` (#532, ADR-0010), the pr
 - Review the open pull request queue, starting with the base of each stack: #648, #650, #649, and #654.
 - Watch voidzero-dev/vite-plus#2970; open the upstream pull request only after a maintainer answers.
 - Toward H0: open the Determinant first-slice issue (CAL-01x) and run the bootstrap readiness check (CAL-01y) on a scratch `vp create` library monorepo.
-- ADR-0012 still reads "Proposed" although #618 shipped its decision; accept or amend it.
