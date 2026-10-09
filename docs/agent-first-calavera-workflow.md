@@ -223,7 +223,9 @@ given before `--new`, or npm when none is given: `npx --package vite-plus vp cre
 `pnpm dlx --package vite-plus vp create`, `yarn dlx --package vite-plus vp create`
 (Yarn 2 or later), or `bunx --package vite-plus vp create`. The `--package-manager`
 forwarded after `--new` is the project's package manager, which Vite+ uses. Vite+
-1.0.0 requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`.
+1.0.0 requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`. When npm is the project's
+package manager, see
+[Known Issue: `vp create` Exits With Code 127 Through npx](#known-issue-vp-create-exits-with-code-127-through-npx).
 
 Calavera continues into the bootstrap only when `vp create` exits with code 0
 and Vite+ detection reports `managed` for the scaffolded directory. That
@@ -290,6 +292,37 @@ alongside it.
 The separate flow stays available for other scaffolds and existing projects:
 run `vp create` or any other scaffold yourself, change into the project, and run
 `npm create project-calavera -- --init`.
+
+### Known Issue: `vp create` Exits With Code 127 Through npx
+
+As of Vite+ 1.1.0, `vp create` fails when npm is the project's package manager
+and the `npx` that Vite+ starts for the template inherits an
+`npm_config_package` setting. That `npx` then looks for a `create-vite@latest`
+command inside another package. Vite+ prints
+`sh: create-vite@latest: command not found`, and Calavera stops with
+`vp create through <runner> exited with code 127`
+([Vite+ issue 2970: `vp create` fails under `npx --package`](https://github.com/voidzero-dev/vite-plus/issues/2970)).
+
+The setting comes from either of these:
+
+- Calavera's runner is `npx`. That happens when the `--package-manager` before
+  `--new` is npm or is not given, including when you start Calavera with
+  `pnpm create`.
+- Calavera itself was started with `npx --package create-project-calavera`. The
+  setting then reaches Vite+ through any runner.
+
+Until a Vite+ release fixes this, start Calavera with `npm create` or
+`pnpm create`, and choose a runner other than npm before `--new`. The runner must
+be installed; Yarn needs version 2 or later.
+
+```bash
+npm create project-calavera -- --package-manager pnpm --new
+pnpm create project-calavera --package-manager pnpm --new
+```
+
+The project can still use npm: pick npm when Vite+ asks, or forward
+`--package-manager npm` after `--new`. Remove this section once a Vite+ release
+fixes the issue ([Calavera issue 671](https://github.com/schalkneethling/create-project-calavera/issues/671)).
 
 ## Rich CLI Flow
 

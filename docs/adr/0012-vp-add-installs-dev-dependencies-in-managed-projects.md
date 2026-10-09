@@ -1,6 +1,6 @@
 # ADR-0012: `vp add` Installs Development Dependencies in a Vite+-Managed Project
 
-- **Status:** Proposed
+- **Status:** Accepted (2026-10-09, Schalk Neethling; implemented in #620, merged 2026-10-04)
 - **Date:** 2026-10-03
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/618
 - **Decides:** how `apply` installs a recipe's development dependencies when ADR-0001 detection reports `managed`. Calavera delegates the install to Vite+ by running `vp add -D <packages>` with the project's own `vp` bin, started by the running Node.js. Projects that are not managed keep the per-package-manager command. Detection is unchanged, and nothing in C8 changes.
