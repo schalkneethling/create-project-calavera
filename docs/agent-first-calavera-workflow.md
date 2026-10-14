@@ -295,13 +295,16 @@ run `vp create` or any other scaffold yourself, change into the project, and run
 
 ### Known Issue: `vp create` Exits With Code 127 Through npx
 
-As of Vite+ 1.1.0, `vp create` fails when npm is the project's package manager
+As of Vite+ 1.2.0, `vp create` fails when npm is the project's package manager
 and the `npx` that Vite+ starts for the template inherits an
 `npm_config_package` setting. That `npx` then looks for a `create-vite@latest`
 command inside another package. Vite+ prints
 `sh: create-vite@latest: command not found`, and Calavera stops with
 `vp create through <runner> exited with code 127`
 ([Vite+ issue 2970: `vp create` fails under `npx --package`](https://github.com/voidzero-dev/vite-plus/issues/2970)).
+Vite+ closed that issue without changing `vp create`, and recommends its new
+`create-vite-plus` package instead, so a later Vite+ release is not expected to
+fix this.
 
 The setting comes from either of these:
 
@@ -311,9 +314,9 @@ The setting comes from either of these:
 - Calavera itself was started with `npx --package create-project-calavera`. The
   setting then reaches Vite+ through any runner.
 
-Until a Vite+ release fixes this, start Calavera with `npm create` or
-`pnpm create`, and choose a runner other than npm before `--new`. The runner must
-be installed; Yarn needs version 2 or later.
+Until Calavera stops passing the setting to Vite+, start Calavera with
+`npm create` or `pnpm create`, and choose a runner other than npm before
+`--new`. The runner must be installed; Yarn needs version 2 or later.
 
 ```bash
 npm create project-calavera -- --package-manager pnpm --new
@@ -321,8 +324,19 @@ pnpm create project-calavera --package-manager pnpm --new
 ```
 
 The project can still use npm: pick npm when Vite+ asks, or forward
-`--package-manager npm` after `--new`. Remove this section once a Vite+ release
-fixes the issue ([Calavera issue 671](https://github.com/schalkneethling/create-project-calavera/issues/671)).
+`--package-manager npm` after `--new`.
+
+Both causes are tracked in Calavera:
+
+- [Calavera issue 688](https://github.com/schalkneethling/create-project-calavera/issues/688)
+  decides whether `--new` starts `create-vite-plus` instead of
+  `npx --package vite-plus vp create`, which removes the first cause. It waits
+  for a Vite+ release that publishes the package.
+- [Calavera issue 689](https://github.com/schalkneethling/create-project-calavera/issues/689)
+  covers the second cause, which `create-vite-plus` does not fix.
+
+Remove this section once both are resolved
+([Calavera issue 671](https://github.com/schalkneethling/create-project-calavera/issues/671)).
 
 ## Rich CLI Flow
 
