@@ -1,7 +1,7 @@
 // Smoke test for the shipped bins on the Node.js running this script (#626).
 // CI runs it on the lowest Node.js that engines.node allows; the full test
-// suite needs a newer Node.js, because it uses `await using`. It runs the bins,
-// not src, needs no network, and writes only to temporary directories.
+// suite runs on the current Node.js 24 in the check job. It runs the bins, not
+// src, needs no network, and writes only to temporary directories.
 //
 // Run: pnpm --filter create-project-calavera smoke:node-floor
 // When CALAVERA_EXPECTED_NODE is set, as in CI, the script first checks that

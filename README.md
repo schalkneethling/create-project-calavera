@@ -288,9 +288,9 @@ for both the commit and target reference; enabling default setup alone does not 
 
 ## CLI
 
-The CLI and the MCP server support Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`,
-the same range Vite+ 1.0.0 requires. On any other Node.js version, both print
-the required range and exit with a non-zero code.
+The CLI and the MCP server support Node.js `^24.11.0 || >=26.0.0`. Vite+ 1.0.0
+also supports Node.js 22.18 and later, but Calavera does not. On any other
+Node.js version, both print the required range and exit with a non-zero code.
 
 Create a recipe:
 
