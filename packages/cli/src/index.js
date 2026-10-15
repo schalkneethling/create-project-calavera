@@ -184,6 +184,8 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {ScriptChange[]} scriptChanges Each package.json script apply adds or changes, with the value it writes, so the approval boundary shows the command; a script that already has that value is not listed. Kept out of the package.json change, which a dry run reports the same before and after apply.
  * @property {string[]} pointers
  * @property {ArtifactLockEntry[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock.
+ * @property {ArtifactRegistryReport[]} artifactRegistries The registry (protocol, host, and port, such as https://registry.npmjs.org) the auto-installed artifacts resolve from, and the npm configuration it comes from, such as the project .npmrc; empty when nothing resolves.
+ * @property {string[]} artifactWarnings Notes on npm configuration Calavera ignored while resolving the auto-installed artifacts. They never contain a value.
  *
  * @typedef {object} CleanResult
  * @property {"clean"} command
@@ -227,6 +229,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  *
  * @typedef {{ command: `artifacts ${string}`, [key: string]: unknown }} ArtifactCommandResult
  * @typedef {import("./artifact-lifecycle.js").ArtifactLockEntry} ArtifactLockEntry
+ * @typedef {import("./artifact-lifecycle.js").ArtifactRegistryReport} ArtifactRegistryReport
  * @typedef {import("./artifact-lifecycle.js").ArtifactServices} ArtifactServices
  * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | ArtifactCommandResult} CommandResult
  */
@@ -2766,6 +2769,8 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     scriptChanges,
     pointers: [...aiResult.pointers, ...(usesVarlock ? [VARLOCK_POINTER] : [])],
     autoInstalledArtifacts: artifactPlan.installed,
+    artifactRegistries: artifactPlan.registries,
+    artifactWarnings: artifactPlan.warnings,
   };
 }
 
@@ -3724,8 +3729,17 @@ function formatApplySummary(result) {
         .map(({ id, package: packageName, version }) => `${id} (${packageName}@${version})`)
         .join(", ") || "none"
     }`,
+    ...result.artifactRegistries.map(
+      (registry) => `${style("bold", "Artifact registry")}: ${formatArtifactRegistry(registry)}`,
+    ),
+    ...result.artifactWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
     `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
   ].join("\n");
+}
+
+/** @param {ArtifactRegistryReport} registry */
+function formatArtifactRegistry({ origin, source }) {
+  return source === "default" ? origin : `${origin} (from the ${source})`;
 }
 
 /**
@@ -4499,6 +4513,14 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.info(`Inspection ${finding.severity}: ${finding.message}`);
     }
 
+    for (const registry of result.artifactRegistries) {
+      logger.info(`Artifact registry: ${formatArtifactRegistry(registry)}`);
+    }
+
+    for (const warning of result.artifactWarnings) {
+      logger.warn(warning);
+    }
+
     for (const artifact of result.autoInstalledArtifacts) {
       logger.info(
         `Would resolve and lock artifact ${artifact.id} at ${artifact.package}@${artifact.version}`,
@@ -4600,7 +4622,21 @@ function printResult(result, asJSON = false, commandDryRun = false) {
 
   logger.success(`Calavera ${result.command} complete.`);
 
+  if (result.command === "artifacts install" || result.command === "artifacts update") {
+    for (const registry of /** @type {ArtifactRegistryReport[]} */ (result.registries)) {
+      logger.info(`Artifact registry: ${formatArtifactRegistry(registry)}`);
+    }
+
+    for (const warning of /** @type {string[]} */ (result.warnings)) {
+      logger.warn(warning);
+    }
+  }
+
   if (result.command === "apply") {
+    for (const warning of result.artifactWarnings) {
+      logger.warn(warning);
+    }
+
     for (const artifact of result.autoInstalledArtifacts) {
       logger.info(
         `Resolved and locked artifact ${artifact.id} at ${artifact.package}@${artifact.version}`,

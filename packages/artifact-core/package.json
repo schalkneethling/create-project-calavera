@@ -24,6 +24,7 @@
     "test": "node --test test/*.test.mjs"
   },
   "dependencies": {
+    "ini": "7.0.0",
     "pacote": "22.0.0",
     "semver": "7.8.5"
   }
