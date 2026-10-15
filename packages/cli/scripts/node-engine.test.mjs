@@ -43,8 +43,8 @@ function fakeNodeVersionPreload(version) {
   return `data:text/javascript,${encodeURIComponent(source)}`;
 }
 
-test("the CLI declares the Vite+ 1.0.0 floor as its supported Node.js range", () => {
-  assert.equal(packageJson.engines.node, "^22.18.0 || ^24.11.0 || >=26.0.0");
+test("the CLI declares Node.js 24.11 and later as its supported range", () => {
+  assert.equal(packageJson.engines.node, "^24.11.0 || >=26.0.0");
 });
 
 test("the code reads the supported range from engines.node", () => {
@@ -52,21 +52,14 @@ test("the code reads the supported range from engines.node", () => {
 });
 
 test("the range check accepts each range and rejects the versions around them", () => {
-  for (const version of [
-    "v22.18.0",
-    "v22.30.1",
-    "v24.11.0",
-    "v24.21.0",
-    "v26.0.0",
-    "v27.1.0",
-    "22.18.0",
-  ]) {
+  for (const version of ["v24.11.0", "v24.21.0", "v26.0.0", "v27.1.0", "24.11.0"]) {
     assert.equal(nodeSatisfiesEngineRange(version), true, version);
   }
   for (const version of [
     "v20.19.6",
     "v22.0.0",
-    "v22.17.9",
+    "v22.18.0",
+    "v22.30.1",
     "v23.0.0",
     "v23.11.0",
     "v24.0.0",
@@ -79,16 +72,16 @@ test("the range check accepts each range and rejects the versions around them", 
 });
 
 test("the range check accepts prereleases of supported lines and rejects those of unsupported lines", () => {
-  for (const version of [
-    "v22.18.0-pre",
-    "v22.18.1-pre",
-    "v24.12.0-nightly20260101abcdef",
-    "v26.0.0-rc.1",
-  ]) {
+  for (const version of ["v24.11.1-pre", "v24.12.0-nightly20260101abcdef", "v26.0.0-rc.1"]) {
     assert.equal(nodeSatisfiesEngineRange(version), true, version);
     assert.equal(semver.satisfies(version, packageJson.engines.node), false, version);
   }
-  for (const version of ["v25.0.0-rc.1", "v24.10.0-nightly20260101abcdef", "v22.17.0-rc.2"]) {
+  for (const version of [
+    "v25.0.0-rc.1",
+    "v24.10.0-nightly20260101abcdef",
+    "v22.18.0-pre",
+    "v22.17.0-rc.2",
+  ]) {
     assert.equal(nodeSatisfiesEngineRange(version), false, version);
   }
 });
@@ -221,7 +214,7 @@ test("create-project-calavera runs on a supported Node.js through a package-mana
 
     const { stdout, stderr } = await execFileAsync(
       process.execPath,
-      ["--import", fakeNodeVersionPreload("v22.18.0"), symlinkPath, "--help"],
+      ["--import", fakeNodeVersionPreload("v24.11.0"), symlinkPath, "--help"],
       { encoding: "utf8" },
     );
 

@@ -2148,21 +2148,56 @@ export async function reportVitePlus() {
 }
 
 /**
+ * @param {string} reason What is wrong with package.json, completing "package.json …".
+ * @returns {ProjectInspectionFinding}
+ */
+function invalidManifestFinding(reason) {
+  return {
+    severity: "error",
+    kind: "package-json-invalid",
+    path: "package.json",
+    message: `package.json ${reason}. Findings that depend on its contents are omitted until it is fixed.`,
+  };
+}
+
+/**
  * @param {Recipe} [recipe]
  * @param {ProjectInspectionOptions} [options]
  * @returns {Promise<ProjectInspection>}
  */
 export async function inspectProject(recipe, options = {}) {
-  const packageJSON = await readPackageJSONIfPresent();
+  /** @type {PackageJSON} */
+  let packageJSON = {};
+  /** @type {ProjectInspectionFinding | undefined} */
+  let manifestFinding;
+
+  // Inspection is read-only, so a broken manifest becomes a finding. Apply
+  // still stops on it. The cause stays in the message for diagnosis.
+  try {
+    packageJSON = await readPackageJSONIfPresent();
+
+    // `null`, arrays, and other primitives are valid JSON but not a manifest.
+    if (!isPlainObject(packageJSON)) {
+      manifestFinding = invalidManifestFinding("does not contain a JSON object");
+      packageJSON = {};
+    }
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw error;
+    }
+
+    manifestFinding = invalidManifestFinding(`could not be parsed: ${error.message}`);
+  }
+
   const previousState = await readStateIfPresent();
   const reownManagedFiles = normalizeManagedFilePathSet(options.reownManagedFiles ?? []);
-  const packageManager = detectPackageManager(packageJSON);
+  const packageManager = manifestFinding ? undefined : detectPackageManager(packageJSON);
   const integrations = recipe ? resolveRecipeIntegrations(recipe) : [];
   const integrationIds = new Set(integrations.map((integration) => integration.id));
   /** @type {string[]} */
   const files = [];
   /** @type {ProjectInspectionFinding[]} */
-  const findings = [];
+  const findings = manifestFinding ? [manifestFinding] : [];
 
   for (const path of projectInspectionFiles) {
     if (await projectFileExists(path)) {
@@ -2206,7 +2241,7 @@ export async function inspectProject(recipe, options = {}) {
   // Only the values of the scripts compared below are read from this plan, and
   // none of them depends on the Vite+ steps of quality, so none are planned.
   const plannedScripts =
-    recipe && (await fileExists(STATE_FILE))
+    recipe && !manifestFinding && (await fileExists(STATE_FILE))
       ? buildScripts(recipe, integrations, resolveApplyPackageManager(recipe, {}, packageJSON), {
           steps: [],
           omittedSteps: [],
