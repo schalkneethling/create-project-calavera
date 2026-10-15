@@ -494,8 +494,13 @@ test("a failed vp add -D stops the spinner, exits non-zero, and says what was wr
     result.stderr,
     new RegExp(`^To finish the install, run the install command in ${workspace.project}\\.$`, "m"),
   );
-  // The message is self-contained; the underlying error is kept as cause, not printed.
-  assert.doesNotMatch(result.stderr, /ExecaError/);
+  // The cause adds execa's own summary of the command once, and not the output the
+  // message already shows (#619).
+  assert.match(
+    result.stderr,
+    /^Caused by: ExecaError: Command failed with exit code 3: .*vp add -D knip$/m,
+  );
+  assert.equal(result.stderr.split("ERR_STUB_INSTALL").length - 1, 1, result.stderr);
   assert.ok(await exists(join(workspace.project, ".calavera/state.json")));
 });
 
@@ -537,8 +542,11 @@ test("a failed package.json creation stops the spinner and exits non-zero", asyn
     result.stderr,
     /Calavera could not create package\.json with pnpm init, so it stopped before applying the recipe\. It exited with code 5\./,
   );
-  assert.match(result.stderr, /ERR_STUB_COMMAND/);
-  assert.doesNotMatch(result.stderr, /ExecaError/);
+  assert.equal(result.stderr.split("ERR_STUB_COMMAND").length - 1, 1, result.stderr);
+  assert.match(
+    result.stderr,
+    /^Caused by: ExecaError: Command failed with exit code 5: pnpm init$/m,
+  );
   assert.deepEqual(await readStubInvocations(workspace.packageManagerLog), [
     { argv: ["init"], cwd: workspace.project },
   ]);

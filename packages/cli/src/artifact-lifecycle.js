@@ -652,25 +652,53 @@ function isInside(parent, child) {
   return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
-/** @param {string} transactionRoot @param {{ staged: string, target: string }[]} operations */
-async function commitArtifactTransaction(transactionRoot, operations) {
+/**
+ * Moves each staged path to its target through a journal that
+ * `recoverArtifactTransaction` rolls back. Refuses, before anything moves, a
+ * transaction root outside `.calavera/.transactions`, and an operation whose
+ * staged path is outside the transaction root or missing, whose target is
+ * outside the project, or whose target an earlier operation already names,
+ * each with its own message.
+ *
+ * @param {string} transactionRoot
+ * @param {{ staged: string, target: string }[]} operations
+ */
+export async function commitArtifactTransaction(transactionRoot, operations) {
   const projectRoot = resolve(".");
   const normalizedRoot = resolve(transactionRoot);
-  const seenTargets = new Set();
+  if (!isInside(resolve(TRANSACTION_ROOT), normalizedRoot)) {
+    throw new Error(
+      `The artifact transaction root ${normalizedRoot} is outside ${resolve(TRANSACTION_ROOT)}.`,
+    );
+  }
+  /** @type {Map<string, number>} */
+  const seenTargets = new Map();
   const journalOperations = [];
   for (const [index, operation] of operations.entries()) {
     const staged = resolve(operation.staged);
     const target = resolve(operation.target);
-    if (
-      !isInside(resolve(TRANSACTION_ROOT), normalizedRoot) ||
-      !isInside(normalizedRoot, staged) ||
-      !isInside(projectRoot, target) ||
-      seenTargets.has(target) ||
-      !(await fileExists(staged))
-    ) {
-      throw new Error("Invalid artifact transaction operation.");
+    if (!isInside(normalizedRoot, staged)) {
+      throw new Error(
+        `Artifact transaction operation ${index} stages ${staged}, which is outside the transaction root ${normalizedRoot}.`,
+      );
     }
-    seenTargets.add(target);
+    if (!isInside(projectRoot, target)) {
+      throw new Error(
+        `Artifact transaction operation ${index} targets ${target}, which is outside the project ${projectRoot}.`,
+      );
+    }
+    const earlier = seenTargets.get(target);
+    if (earlier !== undefined) {
+      throw new Error(
+        `Artifact transaction operations ${earlier} and ${index} both target ${target}.`,
+      );
+    }
+    if (!(await fileExists(staged))) {
+      throw new Error(
+        `Artifact transaction operation ${index} stages ${staged}, which does not exist.`,
+      );
+    }
+    seenTargets.set(target, index);
     journalOperations.push({
       staged,
       target,
