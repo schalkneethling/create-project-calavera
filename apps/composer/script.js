@@ -592,6 +592,7 @@ function recipe() {
     repositoryControls: {
       repository: data.get("repositoryControlsRepository"),
       requiredChecks: commaSeparatedValues(data.get("repositoryControlsRequiredChecks")),
+      requireCodeqlResults: data.has("repositoryControlsRequireCodeql"),
     },
     // The panel is hidden when html-validate is not selected or the published CLI predates
     // the option; either way, quality keeps lint:html and the recipe records no option.
@@ -1012,6 +1013,7 @@ function registerWebMcpTools() {
                     type: "array",
                     items: { type: "string" },
                   },
+                  requireCodeqlResults: { type: "boolean" },
                   defaultBranch: { type: "string" },
                   mergeMethods: {
                     type: "array",
