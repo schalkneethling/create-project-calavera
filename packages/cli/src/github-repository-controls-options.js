@@ -1,6 +1,8 @@
 // @ts-check
 
 export const GITHUB_REPOSITORY_CONTROLS_ID = "github-repository-controls";
+/** Where apply writes the repository-controls administration script. */
+export const REPOSITORY_CONTROLS_SCRIPT_PATH = "scripts/repository-controls.mjs";
 
 const MERGE_METHODS = new Set(["merge", "squash", "rebase"]);
 const CODEQL_LANGUAGES = new Set([
@@ -137,6 +139,7 @@ export function normalizeGithubRepositoryControlsOptions(value) {
     "repository",
     "defaultBranch",
     "requiredChecks",
+    "requireCodeqlResults",
     "mergeMethods",
     "wiki",
     "projects",
@@ -197,6 +200,11 @@ export function normalizeGithubRepositoryControlsOptions(value) {
       "github-repository-controls.requiredChecks",
       value.requiredChecks,
       [],
+    ),
+    requireCodeqlResults: normalizeBoolean(
+      "github-repository-controls.requireCodeqlResults",
+      value.requireCodeqlResults,
+      true,
     ),
     mergeMethods,
     wiki: normalizeBoolean("github-repository-controls.wiki", value.wiki, false),

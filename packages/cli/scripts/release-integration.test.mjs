@@ -32,6 +32,8 @@ const packedRegistryPreload = fileURLToPath(
 
 /** @type {string} */
 let workRoot;
+/** @type {Map<string, string | undefined>} */
+const previousNpmConfig = new Map();
 /** @type {Map<string, { packageName: string, version: string, path: string, integrity: string }>} */
 const packedArtifacts = new Map();
 
@@ -140,10 +142,22 @@ before(async () => {
   const packed = await Promise.all((await artifactDirectories()).map(packArtifact));
   for (const { id, ...details } of packed) packedArtifacts.set(id, details);
   process.env.CALAVERA_PACKED_ARTIFACTS = JSON.stringify(Object.fromEntries(packedArtifacts));
+  // Extraction reads npm configuration. Point it at a missing file so a developer's own user
+  // .npmrc cannot change the result; the spawned CLI inherits this environment.
+  // Also drop every other npm_config_* variable, such as a registry that npm exported when it
+  // started the test run, and restore them afterwards.
+  for (const [name, value] of Object.entries(process.env)) {
+    if (!/^npm_config_/i.test(name)) continue;
+    previousNpmConfig.set(name, value);
+    delete process.env[name];
+  }
+  process.env.npm_config_userconfig = join(workRoot, "missing.npmrc");
 });
 
 after(async () => {
   delete process.env.CALAVERA_PACKED_ARTIFACTS;
+  delete process.env.npm_config_userconfig;
+  for (const [name, value] of previousNpmConfig) process.env[name] = value;
   if (workRoot) await rm(workRoot, { recursive: true, force: true });
 });
 

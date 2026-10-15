@@ -147,7 +147,7 @@ export const recipeToolDescriptions = Object.freeze({
   explain_recipe:
     "Explain the integrations selected by a Calavera recipe, including profile defaults and automatically included parent integrations.",
   dry_run_apply:
-    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe. Reports whether the project is managed by Vite+ and, when it is, what Vite+ provides instead of Calavera.",
+    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe. Reports whether the project is managed by Vite+ and, when it is, what Vite+ provides instead of Calavera. Lists in scriptChanges each package.json script apply would add, change, or rename, with the command it will run and, for a changed or renamed script, the command it replaces; show each command to the user.",
   apply_recipe:
     "Apply an approved Calavera recipe in the current project. Call only after presenting dry_run_apply output and receiving explicit user approval.",
   download_recipe:
@@ -164,7 +164,7 @@ export const recipeToolInputDescriptions = Object.freeze({
   aiArtifactTarget: "Optional target directory for hook and agent artifacts.",
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
-    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; GitHub repository controls require repository identity and accept governance policy overrides.",
+    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
   baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
   baselineLimit: "Maximum number of Baseline feature search results.",
@@ -359,6 +359,9 @@ export function normalizeIntegrationInputs(integrationInputs, profile) {
 export function normalizeAiArtifactInputs(artifactInputs = []) {
   assertObjectArray("aiArtifacts", artifactInputs);
 
+  /** @type {Map<string, number>} */
+  const firstIndexById = new Map();
+
   return artifactInputs.map((item, index) => {
     assertString(`aiArtifacts[${index}].id`, item.id);
 
@@ -370,6 +373,13 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
         `Invalid aiArtifacts[${index}].id: ${item.id}. Use artifact IDs, labels, or sources from list_ai_artifacts.`,
       );
     }
+
+    if (firstIndexById.has(id)) {
+      throw new Error(
+        `Invalid aiArtifacts[${index}].id: duplicate artifact id "${id}", already selected at aiArtifacts[${firstIndexById.get(id)}]. Select each artifact once.`,
+      );
+    }
+    firstIndexById.set(id, index);
 
     let target;
 
@@ -479,7 +489,7 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
   }
 
   assertPlainObject("integrationOptions", integrationOptions);
-  const supportedIds = ["stylelint-baseline", GITHUB_REPOSITORY_CONTROLS_ID];
+  const supportedIds = ["stylelint-baseline", "html-validate", GITHUB_REPOSITORY_CONTROLS_ID];
   const unknownIds = Object.keys(integrationOptions).filter((id) => !supportedIds.includes(id));
 
   if (unknownIds.length > 0) {
@@ -517,15 +527,47 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
     normalized["stylelint-baseline"] = { available, severity };
   }
 
+  if (Object.hasOwn(integrationOptions, "html-validate")) {
+    if (!resolvedIds.has("html-validate")) {
+      throw new Error("integrationOptions.html-validate requires the html-validate integration.");
+    }
+
+    const options = integrationOptions["html-validate"];
+    assertPlainObject("integrationOptions.html-validate", options);
+    const unknownFields = Object.keys(options).filter((field) => field !== "quality");
+
+    if (unknownFields.length > 0) {
+      throw new Error(
+        `Unknown integrationOptions.html-validate fields: ${unknownFields.join(", ")}.`,
+      );
+    }
+
+    const quality = options.quality ?? true;
+
+    if (typeof quality !== "boolean") {
+      throw new Error("integrationOptions.html-validate.quality must be a boolean.");
+    }
+
+    // Only the non-default choice is recorded, so a recipe that keeps lint:html
+    // in quality stays valid for a CLI release that predates the option.
+    if (!quality) {
+      normalized["html-validate"] = { quality };
+    }
+  }
+
   if (Object.hasOwn(integrationOptions, GITHUB_REPOSITORY_CONTROLS_ID)) {
     if (!resolvedIds.has(GITHUB_REPOSITORY_CONTROLS_ID)) {
       throw new Error(
         "integrationOptions.github-repository-controls requires the github-repository-controls integration.",
       );
     }
-    normalized[GITHUB_REPOSITORY_CONTROLS_ID] = normalizeGithubRepositoryControlsOptions(
-      integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID],
-    );
+    // The default is omitted from the recipe, so a recipe that keeps it still works with a
+    // published CLI that does not know the option and rejects unknown fields.
+    const { requireCodeqlResults, ...repositoryControls } =
+      normalizeGithubRepositoryControlsOptions(integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID]);
+    normalized[GITHUB_REPOSITORY_CONTROLS_ID] = requireCodeqlResults
+      ? repositoryControls
+      : { ...repositoryControls, requireCodeqlResults };
   } else if (resolvedIds.has(GITHUB_REPOSITORY_CONTROLS_ID)) {
     throw new Error(
       "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.",

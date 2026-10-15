@@ -9,14 +9,15 @@ import { inspect } from "node:util";
 
 /**
  * The Node.js range the CLI supports, read from `engines.node` in package.json.
- * It tracks the Vite+ 1.0.0 floor that `--new` relies on (#626).
+ * It is the Vite+ 1.0.0 floor that `--new` relies on (#626), without its
+ * Node.js 22 line.
  *
  * @type {string}
  */
 export const NODE_ENGINE_RANGE = createRequire(import.meta.url)("../package.json").engines.node;
 
 /**
- * Whether a Node.js version satisfies `NODE_ENGINE_RANGE`. The three ranges are
+ * Whether a Node.js version satisfies `NODE_ENGINE_RANGE`. The two ranges are
  * compared by hand because the CLI does not depend on a semver parser; a test
  * checks this function against `engines.node` with semver for release versions.
  *
@@ -32,7 +33,7 @@ export const NODE_ENGINE_RANGE = createRequire(import.meta.url)("../package.json
 export function nodeSatisfiesEngineRange(version) {
   const [major = 0, minor = 0] = version.replace(/^v/, "").split(".").map(Number);
 
-  return (major === 22 && minor >= 18) || (major === 24 && minor >= 11) || major >= 26;
+  return (major === 24 && minor >= 11) || major >= 26;
 }
 
 /**
