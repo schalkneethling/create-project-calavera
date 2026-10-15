@@ -218,6 +218,47 @@ generated `quality` script. The recommended preset already includes HTML
 Validate's accessibility rules, so Calavera does not add a redundant separate
 accessibility integration.
 
+`lint:html` runs `node scripts/lint-html.mjs "**/*.html"`, a Calavera-managed
+wrapper around `html-validate`. `html-validate` exits with an error when no file
+matches and has no option to allow empty input, so the wrapper passes when no
+HTML file matches, and otherwise runs `html-validate` with the same patterns and
+exit code. With an option, such as `--stdin` or `--ext`, it runs
+`html-validate` directly. A real validation error still fails `lint:html`. In the same way,
+`lint:styles` and `lint:styles:fix` pass `--allow-empty-input` to Stylelint, so
+`quality` passes in a project without CSS files.
+
+A project without static HTML files, such as one whose HTML a server or a
+Worker renders, can leave `lint:html` out of `quality` with the `quality`
+option. Calavera still generates `lint:html`, and a later apply keeps the
+choice, because it lives in the recipe:
+
+```json
+{
+  "integrations": ["html-validate"],
+  "integrationOptions": {
+    "html-validate": { "quality": false }
+  }
+}
+```
+
+When `lint:html` is the only script `quality` would run, Calavera does not
+generate `quality`. Apply removes a `quality` script whose value an earlier
+release wrote, such as `npm run lint:html`, and keeps any other value as your
+own. The dry run shows both.
+
+Validate the rendered HTML in your tests instead, with the `HtmlValidate` class
+from the [HTML Validate API](https://html-validate.org/dev/using-api.html), and
+assert that the report is valid. `validateString` does not read
+`.htmlvalidate.json`, so pass the configuration to the constructor:
+
+```js
+import { readFile } from "node:fs/promises";
+import { HtmlValidate } from "html-validate";
+
+const config = JSON.parse(await readFile(".htmlvalidate.json", "utf8"));
+const report = await new HtmlValidate(config).validateString(renderedHtml);
+```
+
 HTML Validate follows HTML semantics and Calavera deliberately leaves its
 doctype and void-element style rules at their honest defaults. Oxfmt, the
 formatter `vp fmt` is built on, cannot currently be configured to preserve an

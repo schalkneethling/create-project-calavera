@@ -164,7 +164,7 @@ export const recipeToolInputDescriptions = Object.freeze({
   aiArtifactTarget: "Optional target directory for hook and agent artifacts.",
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
-    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; GitHub repository controls require repository identity and accept governance policy overrides.",
+    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
   baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
   baselineLimit: "Maximum number of Baseline feature search results.",
@@ -479,7 +479,7 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
   }
 
   assertPlainObject("integrationOptions", integrationOptions);
-  const supportedIds = ["stylelint-baseline", GITHUB_REPOSITORY_CONTROLS_ID];
+  const supportedIds = ["stylelint-baseline", "html-validate", GITHUB_REPOSITORY_CONTROLS_ID];
   const unknownIds = Object.keys(integrationOptions).filter((id) => !supportedIds.includes(id));
 
   if (unknownIds.length > 0) {
@@ -515,6 +515,34 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
     }
 
     normalized["stylelint-baseline"] = { available, severity };
+  }
+
+  if (Object.hasOwn(integrationOptions, "html-validate")) {
+    if (!resolvedIds.has("html-validate")) {
+      throw new Error("integrationOptions.html-validate requires the html-validate integration.");
+    }
+
+    const options = integrationOptions["html-validate"];
+    assertPlainObject("integrationOptions.html-validate", options);
+    const unknownFields = Object.keys(options).filter((field) => field !== "quality");
+
+    if (unknownFields.length > 0) {
+      throw new Error(
+        `Unknown integrationOptions.html-validate fields: ${unknownFields.join(", ")}.`,
+      );
+    }
+
+    const quality = options.quality ?? true;
+
+    if (typeof quality !== "boolean") {
+      throw new Error("integrationOptions.html-validate.quality must be a boolean.");
+    }
+
+    // Only the non-default choice is recorded, so a recipe that keeps lint:html
+    // in quality stays valid for a CLI release that predates the option.
+    if (!quality) {
+      normalized["html-validate"] = { quality };
+    }
   }
 
   if (Object.hasOwn(integrationOptions, GITHUB_REPOSITORY_CONTROLS_ID)) {

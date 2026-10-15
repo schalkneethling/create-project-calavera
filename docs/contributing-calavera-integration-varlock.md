@@ -331,8 +331,11 @@ A useful dry-run result for a fresh project would therefore include changes like
     }
   ],
   "scriptChanges": [
-    { "script": "lint:styles", "value": "stylelint \"**/*.{css,scss}\"" },
-    { "script": "lint:styles:fix", "value": "stylelint \"**/*.{css,scss}\" --fix" },
+    { "script": "lint:styles", "value": "stylelint \"**/*.{css,scss}\" --allow-empty-input" },
+    {
+      "script": "lint:styles:fix",
+      "value": "stylelint \"**/*.{css,scss}\" --allow-empty-input --fix"
+    },
     { "script": "knip", "value": "knip" },
     { "script": "env:load", "value": "varlock load" },
     { "script": "quality", "value": "pnpm lint:styles && pnpm knip && pnpm env:load" }
@@ -347,8 +350,8 @@ The corresponding human output should follow the current dry-run printer:
 
 ```text
 Would update package.json
-Would add script lint:styles: "stylelint \"**/*.{css,scss}\""
-Would add script lint:styles:fix: "stylelint \"**/*.{css,scss}\" --fix"
+Would add script lint:styles: "stylelint \"**/*.{css,scss}\" --allow-empty-input"
+Would add script lint:styles:fix: "stylelint \"**/*.{css,scss}\" --allow-empty-input --fix"
 Would add script knip: "knip"
 Would add script env:load: "varlock load"
 Would add script quality: "pnpm lint:styles && pnpm knip && pnpm env:load"
@@ -415,6 +418,25 @@ check. Calavera's public recipe schema lives at
 [`apps/composer/public/calavera.config.schema.json`](../apps/composer/public/calavera.config.schema.json),
 and repository drift checks live in
 [`packages/cli/scripts/check-config-schema.test.mjs`](../packages/cli/scripts/check-config-schema.test.mjs).
+
+The hosted composer offers only what the CLI release published on npm can
+apply. Two catalog fields record the first CLI release that accepts an
+integration:
+
+- `minimumCliVersion`: the first CLI release that knows the integration. The
+  composer hides the integration, and refuses a recipe that selects it, until
+  that release is published.
+- `optionsMinimumCliVersion`: the first CLI release that accepts the
+  integration's `integrationOptions` entry, when the options arrived after the
+  integration, as `html-validate`'s did in 4.2.0. The composer hides the
+  options panel, and refuses a recipe that carries the entry, until that
+  release is published. Both fields must be exact versions, and this one must
+  not be lower than `minimumCliVersion`.
+
+`optionsMinimumCliVersion` covers the whole options entry. It cannot gate one
+option field separately, so a field added to an existing options entry in a
+later release needs another approach, such as recording only non-default
+values, as the `html-validate` `quality` option does.
 
 ## Test the Contribution
 

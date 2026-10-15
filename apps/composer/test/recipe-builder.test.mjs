@@ -2,7 +2,11 @@ import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
 import test from "node:test";
 
-import { profileDefaults, projectLocalCommandSteps } from "../../../packages/cli/src/recipe.js";
+import {
+  composeRecipeResponse,
+  profileDefaults,
+  projectLocalCommandSteps,
+} from "../../../packages/cli/src/recipe.js";
 import {
   assertPublishedCliCompatibility,
   commaSeparatedValues,
@@ -111,6 +115,61 @@ test("the published CLI guard takes the CLI version as an argument", () => {
     /does not support these AI artifacts: skill-release-with-confidence/,
   );
   assert.throws(() => assertPublishedCliCompatibility({ profile: "minimal" }, "4.0.0"));
+});
+
+test("only leaving lint:html out of quality records an html-validate option", () => {
+  const selection = { profile: "minimal", integrations: ["html-validate"] };
+
+  assert.equal(
+    composerRecipe({ ...selection, htmlValidate: { quality: true } }).integrationOptions,
+    undefined,
+  );
+  assert.equal(composerRecipe(selection).integrationOptions, undefined);
+  assert.deepEqual(
+    composerRecipe({ ...selection, htmlValidate: { quality: false } }).integrationOptions,
+    { "html-validate": { quality: false } },
+  );
+  assert.equal(
+    composerRecipe({ profile: "minimal", integrations: [], htmlValidate: { quality: false } })
+      .integrationOptions,
+    undefined,
+  );
+});
+
+test("the published CLI guard refuses html-validate options below CLI 4.2.0", () => {
+  const recipe = composerRecipe({
+    profile: "minimal",
+    integrations: ["html-validate"],
+    htmlValidate: { quality: false },
+  });
+
+  assert.throws(
+    () => assertPublishedCliCompatibility(recipe, "4.1.0"),
+    /The published Calavera CLI v4\.1\.0 does not support integrationOptions for: html-validate/,
+  );
+  assert.deepEqual(assertPublishedCliCompatibility(recipe, "4.2.0"), recipe);
+  assert.ok(
+    assertPublishedCliCompatibility(
+      composerRecipe({ profile: "minimal", integrations: ["html-validate"] }),
+      "4.1.0",
+    ),
+  );
+});
+
+test("WebMCP compose_recipe with quality true records no html-validate option and suits CLI 4.1.0", () => {
+  for (const options of [{ quality: true }, {}]) {
+    const { recipe } = composeRecipeResponse(
+      {
+        profile: "minimal",
+        tools: ["html-validate"],
+        integrationOptions: { "html-validate": options },
+      },
+      { browser: true },
+    );
+
+    assert.equal(recipe.integrationOptions, undefined);
+    assert.deepEqual(assertPublishedCliCompatibility(recipe, "4.1.0"), recipe);
+  }
 });
 
 test("next commands follow the package manager and default to npm", () => {

@@ -1,32 +1,19 @@
 // @ts-check
-import { lstatSync, readFileSync } from "node:fs";
-import { fileURLToPath } from "node:url";
-
 import { stringify as stringifyYaml } from "yaml";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   normalizeGithubRepositoryControlsOptions,
+  REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls-options.js";
+import { readBoundedTemplate } from "./utils/fs.js";
 
-export { GITHUB_REPOSITORY_CONTROLS_ID, normalizeGithubRepositoryControlsOptions };
+export {
+  GITHUB_REPOSITORY_CONTROLS_ID,
+  normalizeGithubRepositoryControlsOptions,
+  REPOSITORY_CONTROLS_SCRIPT_PATH,
+};
 
-const TEMPLATE_LIMIT = 256 * 1024;
-const TEMPLATE_PATH = fileURLToPath(
-  new URL("./templates/repository-controls.mjs", import.meta.url),
-);
-
-function readBoundedTemplate() {
-  const before = lstatSync(TEMPLATE_PATH);
-  if (!before.isFile()) throw new Error("Repository-controls template must be a regular file.");
-  if (before.size > TEMPLATE_LIMIT) {
-    throw new Error(`Repository-controls template exceeds ${TEMPLATE_LIMIT} bytes.`);
-  }
-  const contents = readFileSync(TEMPLATE_PATH);
-  if (contents.byteLength > TEMPLATE_LIMIT) {
-    throw new Error(`Repository-controls template exceeded ${TEMPLATE_LIMIT} bytes while reading.`);
-  }
-  return contents.toString("utf8");
-}
+const TEMPLATE_URL = new URL("./templates/repository-controls.mjs", import.meta.url);
 
 /** @param {ReturnType<typeof normalizeGithubRepositoryControlsOptions>} options */
 export function createRepositoryControlsConfig(options) {
@@ -106,13 +93,13 @@ Calavera generated a committed desired-state policy for \`${config.repository}\`
 Run the read-only drift check before applying any remote changes:
 
 \`\`\`sh
-node scripts/repository-controls.mjs
+node ${REPOSITORY_CONTROLS_SCRIPT_PATH}
 \`\`\`
 
 Review the reported plan, then apply it interactively:
 
 \`\`\`sh
-node scripts/repository-controls.mjs --apply
+node ${REPOSITORY_CONTROLS_SCRIPT_PATH} --apply
 \`\`\`
 
 For intentional unattended administration, add \`--yes\` to the apply command.
@@ -145,7 +132,10 @@ export function githubRepositoryControlManagedFiles(rawOptions) {
       path: ".github/dependabot.yml",
       contents: createDependabotConfig(options.dependabotEcosystems),
     },
-    { path: "scripts/repository-controls.mjs", contents: readBoundedTemplate() },
+    {
+      path: REPOSITORY_CONTROLS_SCRIPT_PATH,
+      contents: readBoundedTemplate(TEMPLATE_URL, "Repository-controls"),
+    },
     {
       path: "docs/repository-controls.md",
       contents: createRepositoryControlsDocumentation(config),

@@ -1,6 +1,9 @@
 // @ts-check
+import { lstatSync, readFileSync } from "node:fs";
 import { access, constants, realpath, readFile, writeFile } from "node:fs/promises";
 import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+
+const TEMPLATE_LIMIT = 256 * 1024;
 
 /** @param {string} path @param {string} [label] */
 export function assertSafeRelativePath(path, label = "Path") {
@@ -72,4 +75,24 @@ export async function writeJSON(path, value, dryRun) {
   }
 
   await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/**
+ * Reads a template that ships with the CLI, refusing anything but a regular
+ * file within the size limit.
+ *
+ * @param {URL} url
+ * @param {string} label names the template in errors, such as "Repository-controls"
+ */
+export function readBoundedTemplate(url, label) {
+  const before = lstatSync(url);
+  if (!before.isFile()) throw new Error(`${label} template must be a regular file.`);
+  if (before.size > TEMPLATE_LIMIT) {
+    throw new Error(`${label} template exceeds ${TEMPLATE_LIMIT} bytes.`);
+  }
+  const contents = readFileSync(url);
+  if (contents.byteLength > TEMPLATE_LIMIT) {
+    throw new Error(`${label} template exceeded ${TEMPLATE_LIMIT} bytes while reading.`);
+  }
+  return contents.toString("utf8");
 }
