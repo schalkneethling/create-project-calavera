@@ -52,3 +52,17 @@ Future support should only be added when a tool exposes a stable native delta
 command that Calavera can call directly as that tool's documented interface.
 Calavera should not filter file lists itself and pass them through as a
 man-in-the-middle.
+
+The one exception, a wrapper around a tool, is `scripts/lint-html.mjs`, which
+`lint:html` runs (issue #644). It is not a delta runner and does not filter file lists:
+`html-validate` exits with an error when no file matches and has no option to
+allow empty input, so a project without static HTML files would fail
+`lint:html`. The wrapper asks HTML Validate's own file expansion whether any
+file matches. When none does, it exits successfully without running
+`html-validate`. Otherwise, it runs `html-validate` with the same arguments and
+exit code, and with any option, such as `--stdin` or `--ext`, it runs
+`html-validate` directly. The reasons Calavera stopped generating
+`.calavera/run-if-files.mjs` (issue #241) do not apply, because the wrapper
+passes no file list of its own. Remove the wrapper, and generate
+`html-validate` directly in `lint:html`, when `html-validate` gains an option
+that allows empty input, as Stylelint's `--allow-empty-input` does.

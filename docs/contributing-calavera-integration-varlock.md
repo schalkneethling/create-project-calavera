@@ -273,7 +273,12 @@ Dry-run output should also describe the intent accurately. The current
 `renamedScripts`, which lists the scripts apply renames, such as `lint` to
 `lint:styles` in a project an earlier release applied to, and
 `omittedQualitySteps`, which lists the Vite+ steps the generated `quality`
-script leaves out and why.
+script leaves out and why. Beside `changes`, the result carries
+`scriptChanges`, which lists each `package.json` script apply would add or
+change with the value apply writes, and for a changed script its current value
+as `previous`. A renamed script also carries `renamedFrom`, its old name, and
+`previous` is the value under that name. A script that already has the value
+apply writes is not listed.
 
 A useful dry-run result for a fresh project would therefore include changes like:
 
@@ -325,6 +330,16 @@ A useful dry-run result for a fresh project would therefore include changes like
       "ownership": "project"
     }
   ],
+  "scriptChanges": [
+    { "script": "lint:styles", "value": "stylelint \"**/*.{css,scss}\" --allow-empty-input" },
+    {
+      "script": "lint:styles:fix",
+      "value": "stylelint \"**/*.{css,scss}\" --allow-empty-input --fix"
+    },
+    { "script": "knip", "value": "knip" },
+    { "script": "env:load", "value": "varlock load" },
+    { "script": "quality", "value": "pnpm lint:styles && pnpm knip && pnpm env:load" }
+  ],
   "pointers": [
     "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private."
   ]
@@ -335,7 +350,11 @@ The corresponding human output should follow the current dry-run printer:
 
 ```text
 Would update package.json
-Would add scripts: lint:styles, lint:styles:fix, knip, env:load, quality
+Would add script lint:styles: "stylelint \"**/*.{css,scss}\" --allow-empty-input"
+Would add script lint:styles:fix: "stylelint \"**/*.{css,scss}\" --allow-empty-input --fix"
+Would add script knip: "knip"
+Would add script env:load: "varlock load"
+Would add script quality: "pnpm lint:styles && pnpm knip && pnpm env:load"
 Would write and own .editorconfig
 Would write and own .stylelintrc.json
 Would write and own knip.json
@@ -399,6 +418,25 @@ check. Calavera's public recipe schema lives at
 [`apps/composer/public/calavera.config.schema.json`](../apps/composer/public/calavera.config.schema.json),
 and repository drift checks live in
 [`packages/cli/scripts/check-config-schema.test.mjs`](../packages/cli/scripts/check-config-schema.test.mjs).
+
+The hosted composer offers only what the CLI release published on npm can
+apply. Two catalog fields record the first CLI release that accepts an
+integration:
+
+- `minimumCliVersion`: the first CLI release that knows the integration. The
+  composer hides the integration, and refuses a recipe that selects it, until
+  that release is published.
+- `optionsMinimumCliVersion`: the first CLI release that accepts the
+  integration's `integrationOptions` entry, when the options arrived after the
+  integration, as `html-validate`'s did in 4.2.0. The composer hides the
+  options panel, and refuses a recipe that carries the entry, until that
+  release is published. Both fields must be exact versions, and this one must
+  not be lower than `minimumCliVersion`.
+
+`optionsMinimumCliVersion` covers the whole options entry. It cannot gate one
+option field separately, so a field added to an existing options entry in a
+later release needs another approach, such as recording only non-default
+values, as the `html-validate` `quality` option does.
 
 ## Test the Contribution
 

@@ -218,6 +218,47 @@ generated `quality` script. The recommended preset already includes HTML
 Validate's accessibility rules, so Calavera does not add a redundant separate
 accessibility integration.
 
+`lint:html` runs `node scripts/lint-html.mjs "**/*.html"`, a Calavera-managed
+wrapper around `html-validate`. `html-validate` exits with an error when no file
+matches and has no option to allow empty input, so the wrapper passes when no
+HTML file matches, and otherwise runs `html-validate` with the same patterns and
+exit code. With an option, such as `--stdin` or `--ext`, it runs
+`html-validate` directly. A real validation error still fails `lint:html`. In the same way,
+`lint:styles` and `lint:styles:fix` pass `--allow-empty-input` to Stylelint, so
+`quality` passes in a project without CSS files.
+
+A project without static HTML files, such as one whose HTML a server or a
+Worker renders, can leave `lint:html` out of `quality` with the `quality`
+option. Calavera still generates `lint:html`, and a later apply keeps the
+choice, because it lives in the recipe:
+
+```json
+{
+  "integrations": ["html-validate"],
+  "integrationOptions": {
+    "html-validate": { "quality": false }
+  }
+}
+```
+
+When `lint:html` is the only script `quality` would run, Calavera does not
+generate `quality`. Apply removes a `quality` script whose value an earlier
+release wrote, such as `npm run lint:html`, and keeps any other value as your
+own. The dry run shows both.
+
+Validate the rendered HTML in your tests instead, with the `HtmlValidate` class
+from the [HTML Validate API](https://html-validate.org/dev/using-api.html), and
+assert that the report is valid. `validateString` does not read
+`.htmlvalidate.json`, so pass the configuration to the constructor:
+
+```js
+import { readFile } from "node:fs/promises";
+import { HtmlValidate } from "html-validate";
+
+const config = JSON.parse(await readFile(".htmlvalidate.json", "utf8"));
+const report = await new HtmlValidate(config).validateString(renderedHtml);
+```
+
 HTML Validate follows HTML semantics and Calavera deliberately leaves its
 doctype and void-element style rules at their honest defaults. Oxfmt, the
 formatter `vp fmt` is built on, cannot currently be configured to preserve an
@@ -258,13 +299,25 @@ hard stop that names the repository root, before any file is planned or written.
   "integrationOptions": {
     "github-repository-controls": {
       "repository": "octocat/example",
-      "requiredChecks": ["quality"],
+      "requireCodeqlResults": true,
+      "requiredChecks": [],
       "mergeMethods": ["squash"],
       "codeqlLanguages": ["actions", "javascript-typescript"]
     }
   }
 }
 ```
+
+`requireCodeqlResults` (default `true`) requires CodeQL results through the ruleset's code scanning
+rule, not through a status check name, so you do not enter CodeQL in `requiredChecks`. Set it to
+`false` so that Calavera does not manage the code scanning rule; a rule that already exists stays
+until you delete it in the repository settings under Rules. `requiredChecks` (default `[]`) lists
+additional status check names. A required check is the exact name that a check reports on a pull
+request, usually the workflow job name, and a name that no check reports blocks every merge. Leave
+the list empty for a new project and add names after your first CI run, then re-apply the recipe. A
+check added by hand to the managed ruleset is reported as drift and removed on the next apply;
+require it in a separate ruleset that Calavera does not manage instead. See GitHub's
+[available rules for rulesets](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets).
 
 `calavera apply` only writes local files and package scripts. Run `npm run repo:controls:check` for
 a read-only GitHub drift report, then run `npm run repo:controls:apply` separately after reviewing
@@ -286,11 +339,22 @@ empty bypass list. Remote apply repairs those shared protections while preservin
 types and other scanners. Code-scanning merge protection requires GitHub support and scan results
 for both the commit and target reference; enabling default setup alone does not guarantee a PR can merge.
 
+The drift check reports a policy CodeQL language that GitHub does not detect as blocked, with the
+reason. While default setup is not configured, it uses the languages GitHub reports for default
+setup. When a configured setup gains a language, it reads the
+[repository languages API](https://docs.github.com/en/rest/repos/repos#list-repository-languages)
+or, for `actions`, which that API does not report, the `.github/workflows` directory on the default
+branch. Remote apply runs the `main` ruleset first and CodeQL default setup last. A failed or
+blocked change does not stop the others; only a change that requires a failed change is skipped.
+An apply that does not fully succeed ends with a summary of the changes applied, failed (with the
+error), and not attempted, with what to do about each, and exits with a non-zero code. Until CodeQL
+default setup reports results, the generated ruleset blocks merges.
+
 ## CLI
 
-The CLI and the MCP server support Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`,
-the same range Vite+ 1.0.0 requires. On any other Node.js version, both print
-the required range and exit with a non-zero code.
+The CLI and the MCP server support Node.js `^24.11.0 || >=26.0.0`. Vite+ 1.0.0
+also supports Node.js 22.18 and later, but Calavera does not. On any other
+Node.js version, both print the required range and exit with a non-zero code.
 
 Create a recipe:
 

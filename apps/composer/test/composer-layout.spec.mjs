@@ -167,8 +167,8 @@ test("the JSON output for a fixed selection equals the pinned recipe", async ({ 
   await page.getByLabel("Availability").selectOption("2024");
   await page.getByLabel("Severity").selectOption("error");
   await page.getByLabel("Repository (owner/name)").fill("octocat/example");
-  await page.getByLabel("Required checks (comma-separated)").fill("quality, build");
-  await page.getByLabel("Required checks (comma-separated)").blur();
+  await page.getByLabel("Other required checks (optional, comma-separated)").fill("quality, build");
+  await page.getByLabel("Other required checks (optional, comma-separated)").blur();
 
   await page.getByRole("checkbox", { name: "Calavera" }).check();
   await page.getByRole("tab", { name: /Hooks/ }).click();
@@ -193,4 +193,55 @@ test("the JSON output for a fixed selection equals the pinned recipe", async ({ 
     "pnpm dlx create-project-calavera apply --dry-run",
     "pnpm dlx create-project-calavera apply",
   ]);
+});
+
+test("repository controls require CodeQL results by default and accept an empty checks list", async ({
+  page,
+}) => {
+  await openComposer(page);
+  await page.getByRole("radio", { name: "Minimal" }).check();
+  await page.getByRole("checkbox", { name: "GitHub repository controls" }).check();
+  await page.getByLabel("Repository (owner/name)").fill("octocat/example");
+  await page.getByLabel("Repository (owner/name)").blur();
+
+  const group = page.getByRole("group", { name: "Merge requirements" });
+  const codeql = group.getByRole("checkbox", { name: "Require CodeQL results" });
+  const checks = group.getByLabel("Other required checks (optional, comma-separated)");
+
+  await expect(codeql).toBeChecked();
+  await expect(checks).toHaveValue("");
+  await expect(checks).not.toHaveAttribute("placeholder", /.+/);
+  await expect(checks).not.toHaveAttribute("required");
+  await expect(checks).toHaveAccessibleDescription(/Empty is valid: no status checks are required/);
+  await expect(codeql).toHaveAccessibleDescription(
+    /you do not need to enter CodeQL as a status check/,
+  );
+
+  let options = (await recipeOutput(page)).integrationOptions["github-repository-controls"];
+  expect(options.requiredChecks).toEqual([]);
+  expect(options).not.toHaveProperty("requireCodeqlResults");
+
+  await checks.fill("Check, Build");
+  await checks.blur();
+  options = (await recipeOutput(page)).integrationOptions["github-repository-controls"];
+  expect(options.requiredChecks).toEqual(["Check", "Build"]);
+  expect(options).not.toHaveProperty("requireCodeqlResults");
+  await checks.fill("");
+  await checks.blur();
+
+  await codeql.uncheck();
+  options = (await recipeOutput(page)).integrationOptions["github-repository-controls"];
+  expect(options.requireCodeqlResults).toBe(false);
+  expect(options.requiredChecks).toEqual([]);
+
+  await expect(group.getByRole("link", { name: "Available rules for rulesets" })).toHaveAttribute(
+    "href",
+    "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets",
+  );
+  await expect(
+    group.getByRole("link", { name: "Creating rulesets for a repository" }),
+  ).toHaveAttribute(
+    "href",
+    "https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository",
+  );
 });

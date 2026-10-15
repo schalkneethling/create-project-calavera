@@ -18,6 +18,7 @@ import {
   hashAiInstall,
   resolveAiArtifacts,
 } from "./ai/artifacts.js";
+import { assertFirstSelection } from "./ai/recipe-items.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import { fileExists } from "./utils/fs.js";
 
@@ -35,6 +36,8 @@ const TRANSACTION_ROOT = ".calavera/.transactions";
  * @typedef {{ resolve: typeof resolveArtifactPackage, extract: typeof extractArtifactPackage }} ArtifactRegistry
  * @typedef {{ id: string, target?: string }} ArtifactSelection
  * @typedef {import("./ai/artifacts.js").AiChange} AiChange
+ * @typedef {{ origin: string, source: string }} ArtifactRegistryReport The registry (protocol, host, and port) an artifact resolves from, and the npm configuration it came from.
+ * @typedef {{ registries: ArtifactRegistryReport[], warnings: string[] }} ArtifactRegistryNotes
  */
 
 /** @param {ArtifactServices} services @returns {ArtifactRegistry} */
@@ -42,6 +45,25 @@ function artifactRegistry(services) {
   return {
     resolve: services.resolve ?? resolveArtifactPackage,
     extract: services.extract ?? extractArtifactPackage,
+  };
+}
+
+/**
+ * Collects the registry and npm configuration warnings the resolutions report, without repeats.
+ * A resolver that reports none, such as a test stand-in, adds nothing.
+ * @returns {{ add: (resolution: { registry?: ArtifactRegistryReport, warnings?: string[] }) => void, notes: () => ArtifactRegistryNotes }}
+ */
+function registryNotes() {
+  /** @type {Map<string, ArtifactRegistryReport>} */
+  const registries = new Map();
+  /** @type {Set<string>} */
+  const warnings = new Set();
+  return {
+    add({ registry, warnings: resolutionWarnings = [] }) {
+      if (registry) registries.set(`${registry.origin} ${registry.source}`, registry);
+      for (const warning of resolutionWarnings) warnings.add(warning);
+    },
+    notes: () => ({ registries: [...registries.values()], warnings: [...warnings] }),
   };
 }
 
@@ -83,7 +105,7 @@ export async function runArtifactCommand(options, services = {}) {
  * @param {ArtifactServices} [services]
  * @param {(sources: Map<string, string>) => Promise<unknown>} [preflight] Checks the complete set of sources before the install commits.
  * @param {ArtifactLockEntry[]} [approved] Entries a dry run reported; an unlocked selection listed here installs at exactly that version and tag instead of resolving its tag again.
- * @returns {Promise<{ sources: Map<string, string>, installed: ArtifactLockEntry[], changes: AiChange[], dispose: () => Promise<void> }>}
+ * @returns {Promise<{ sources: Map<string, string>, installed: ArtifactLockEntry[], changes: AiChange[], dispose: () => Promise<void> } & ArtifactRegistryNotes>}
  */
 export async function prepareArtifactSources(
   recipe,
@@ -103,6 +125,8 @@ export async function prepareArtifactSources(
       installed: [],
       changes: [],
       dispose: async () => {},
+      registries: [],
+      warnings: [],
     };
   }
 
@@ -131,6 +155,8 @@ export async function prepareArtifactSources(
       installed: staged.entries,
       changes: staged.changes,
       dispose: staged.dispose,
+      registries: staged.registries,
+      warnings: staged.warnings,
     };
   } catch (error) {
     await staged.dispose();
@@ -459,6 +485,8 @@ async function installArtifacts(options, updating, registry) {
     dryRun: options.dryRun,
     artifacts: staged.entries,
     changes: staged.changes,
+    registries: staged.registries,
+    warnings: staged.warnings,
   };
 }
 
@@ -474,7 +502,7 @@ async function installArtifacts(options, updating, registry) {
  * @param {ArtifactSelection[]} selections
  * @param {{ lockedById: Map<string, ArtifactLockEntry>, advanceIds: Set<string>, artifactTag?: "latest" | "next", dryRun: boolean, keptEntries: ArtifactLockEntry[], preflight?: (sources: Map<string, string>) => Promise<void> }} plan
  * @param {ArtifactRegistry} registry
- * @returns {Promise<{ entries: ArtifactLockEntry[], changes: AiChange[], sourcePaths: Map<string, string>, dispose: () => Promise<void> }>}
+ * @returns {Promise<{ entries: ArtifactLockEntry[], changes: AiChange[], sourcePaths: Map<string, string>, dispose: () => Promise<void> } & ArtifactRegistryNotes>}
  */
 async function stageArtifactInstall(recipe, selections, plan, registry) {
   const { lockedById, advanceIds, artifactTag, dryRun } = plan;
@@ -486,6 +514,7 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
   const sourcePaths = new Map();
   /** @type {ArtifactLockEntry[]} */
   const nextEntries = [];
+  const collected = registryNotes();
   let commitStarted = false;
 
   await rm(stagingRoot, { recursive: true, force: true });
@@ -503,6 +532,7 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
         version: shouldAdvance ? undefined : locked?.version,
         cache,
       });
+      collected.add(resolution);
       const stage = join(stagingRoot, "packages", selection.id);
       const extracted = await registry.extract(resolution, stage, packageJson.version);
       sourcePaths.set(selection.id, extracted.payloadPath);
@@ -574,7 +604,13 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
       await commitArtifactTransaction(stagingRoot, operations);
       commitStarted = false;
     }
-    return { entries: nextEntries, changes: applied.changes, sourcePaths, dispose };
+    return {
+      entries: nextEntries,
+      changes: applied.changes,
+      sourcePaths,
+      dispose,
+      ...collected.notes(),
+    };
   } catch (error) {
     // A commit that failed part way leaves its journal and staging for recovery.
     if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) await dispose();
@@ -596,7 +632,9 @@ function normalizePackageSelections(ai) {
 /** @param {unknown} ai */
 function normalizeSelections(ai) {
   if (!Array.isArray(ai)) return [];
-  return ai.map((item) => {
+  /** @type {Map<string, number>} */
+  const firstIndexById = new Map();
+  return ai.map((item, index) => {
     if (!item || typeof item !== "object" || Array.isArray(item)) {
       throw new Error("Artifact selections must be objects.");
     }
@@ -607,6 +645,7 @@ function normalizeSelections(ai) {
           ? artifactForLegacyPath(String(item.src))
           : undefined;
     if (!artifact) throw new Error("Unknown artifact selection.");
+    assertFirstSelection(firstIndexById, artifact.id, index);
     const target = "target" in item ? String(item.target).trim() : artifact.defaultTarget;
     return { id: artifact.id, ...(target ? { target } : {}) };
   });
@@ -652,25 +691,53 @@ function isInside(parent, child) {
   return path === "" || (!path.startsWith("..") && !isAbsolute(path));
 }
 
-/** @param {string} transactionRoot @param {{ staged: string, target: string }[]} operations */
-async function commitArtifactTransaction(transactionRoot, operations) {
+/**
+ * Moves each staged path to its target through a journal that
+ * `recoverArtifactTransaction` rolls back. Refuses, before anything moves, a
+ * transaction root outside `.calavera/.transactions`, and an operation whose
+ * staged path is outside the transaction root or missing, whose target is
+ * outside the project, or whose target an earlier operation already names,
+ * each with its own message.
+ *
+ * @param {string} transactionRoot
+ * @param {{ staged: string, target: string }[]} operations
+ */
+export async function commitArtifactTransaction(transactionRoot, operations) {
   const projectRoot = resolve(".");
   const normalizedRoot = resolve(transactionRoot);
-  const seenTargets = new Set();
+  if (!isInside(resolve(TRANSACTION_ROOT), normalizedRoot)) {
+    throw new Error(
+      `The artifact transaction root ${normalizedRoot} is outside ${resolve(TRANSACTION_ROOT)}.`,
+    );
+  }
+  /** @type {Map<string, number>} */
+  const seenTargets = new Map();
   const journalOperations = [];
   for (const [index, operation] of operations.entries()) {
     const staged = resolve(operation.staged);
     const target = resolve(operation.target);
-    if (
-      !isInside(resolve(TRANSACTION_ROOT), normalizedRoot) ||
-      !isInside(normalizedRoot, staged) ||
-      !isInside(projectRoot, target) ||
-      seenTargets.has(target) ||
-      !(await fileExists(staged))
-    ) {
-      throw new Error("Invalid artifact transaction operation.");
+    if (!isInside(normalizedRoot, staged)) {
+      throw new Error(
+        `Artifact transaction operation ${index} stages ${staged}, which is outside the transaction root ${normalizedRoot}.`,
+      );
     }
-    seenTargets.add(target);
+    if (!isInside(projectRoot, target)) {
+      throw new Error(
+        `Artifact transaction operation ${index} targets ${target}, which is outside the project ${projectRoot}.`,
+      );
+    }
+    const earlier = seenTargets.get(target);
+    if (earlier !== undefined) {
+      throw new Error(
+        `Artifact transaction operations ${earlier} and ${index} both target ${target}.`,
+      );
+    }
+    if (!(await fileExists(staged))) {
+      throw new Error(
+        `Artifact transaction operation ${index} stages ${staged}, which does not exist.`,
+      );
+    }
+    seenTargets.set(target, index);
     journalOperations.push({
       staged,
       target,

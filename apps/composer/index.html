@@ -171,13 +171,38 @@
           <div class="integration-groups" id="integrations"></div>
           <section
             class="options-panel"
+            id="html-validate-options"
+            aria-labelledby="html-validate-heading"
+            hidden
+          >
+            <div class="options-panel-text">
+              <h3 id="html-validate-heading">HTML Validate</h3>
+              <p class="hint" id="html-validate-hint">
+                Without static HTML files, such as when a server renders your HTML, leave
+                <code>lint:html</code> out of <code>quality</code> and validate the rendered HTML in
+                your tests.
+              </p>
+            </div>
+            <label class="inline-field" for="html-validate-quality">
+              <input
+                id="html-validate-quality"
+                type="checkbox"
+                name="htmlValidateQuality"
+                aria-describedby="html-validate-hint"
+                checked
+              />
+              Run <code>lint:html</code> in <code>quality</code>
+            </label>
+          </section>
+          <section
+            class="options-panel"
             id="repository-controls-options"
             aria-labelledby="repository-controls-heading"
             hidden
           >
             <div class="options-panel-text">
               <h3 id="repository-controls-heading">GitHub repository controls</h3>
-              <p class="hint">
+              <p class="hint" id="repository-controls-hint">
                 Calavera generates local desired-state tooling only. Applying remote GitHub changes
                 remains a separate, confirmed command.
               </p>
@@ -192,18 +217,61 @@
                 autocomplete="off"
               />
             </div>
-            <div class="field">
-              <label for="repository-controls-required-checks"
-                >Required checks (comma-separated)</label
-              >
-              <input
-                id="repository-controls-required-checks"
-                type="text"
-                name="repositoryControlsRequiredChecks"
-                placeholder="quality"
-                autocomplete="off"
-              />
-            </div>
+            <fieldset class="options-choices">
+              <legend class="group-heading">Merge requirements</legend>
+              <div class="field-stack">
+                <div class="inline-field">
+                  <input
+                    id="repository-controls-require-codeql"
+                    type="checkbox"
+                    name="repositoryControlsRequireCodeql"
+                    aria-describedby="repository-controls-codeql-hint"
+                    checked
+                  />
+                  <label class="check-label" for="repository-controls-require-codeql"
+                    >Require CodeQL results</label
+                  >
+                </div>
+                <p class="hint" id="repository-controls-codeql-hint">
+                  Blocks merges until CodeQL has scanned the change and found no new alerts at these
+                  levels: errors, warnings, or medium-or-higher security alerts. If CodeQL is not
+                  set up for the repository, merges stay blocked until it is. Calavera sets this up
+                  as a code scanning rule, so you do not need to enter CodeQL as a status check.
+                  Clearing the box leaves scanning unmanaged.
+                </p>
+              </div>
+              <div class="field-stack">
+                <div class="field">
+                  <label for="repository-controls-required-checks"
+                    >Other required checks (optional, comma-separated)</label
+                  >
+                  <input
+                    id="repository-controls-required-checks"
+                    type="text"
+                    name="repositoryControlsRequiredChecks"
+                    aria-describedby="repository-controls-required-checks-hint"
+                    autocomplete="off"
+                  />
+                </div>
+                <p class="hint" id="repository-controls-required-checks-hint">
+                  Leave this empty if you have no continuous integration yet. Empty is valid: no
+                  status checks are required. A name that no check reports blocks every merge, so
+                  add names only after your first run. To require a check later, add its name here
+                  and re-apply the recipe. Do not add it to the Calavera ruleset in the repository
+                  settings, because the next apply removes it. To require a check outside Calavera,
+                  create a separate ruleset in the repository settings. See
+                  <a
+                    href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/available-rules-for-rulesets"
+                    >Available rules for rulesets</a
+                  >
+                  and
+                  <a
+                    href="https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-rulesets/creating-rulesets-for-a-repository"
+                    >Creating rulesets for a repository</a
+                  >.
+                </p>
+              </div>
+            </fieldset>
           </section>
           <section class="group" id="css-integrations" aria-labelledby="css-heading">
             <h3 class="group-heading" id="css-heading">CSS</h3>

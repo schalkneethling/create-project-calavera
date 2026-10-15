@@ -25,6 +25,7 @@ import { prepareArtifactSources, runArtifactCommand } from "./artifact-lifecycle
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   githubRepositoryControlManagedFiles,
+  REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls.js";
 import { assertRootOnlyIntegrationsAtRepositoryRoot } from "./repository-root.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
@@ -44,6 +45,7 @@ import {
   optionalStringArray,
 } from "./state.js";
 import {
+  HTML_VALIDATE_WRAPPER_PATH,
   integrationConfigFiles,
   packageManagerLockfiles,
   projectInspectionFiles,
@@ -63,8 +65,18 @@ import {
   validateRecipeResponse,
 } from "./recipe.js";
 import { assertKnownValue } from "./utils/assertions.js";
-import { FileWriteError } from "./utils/file-write-error.js";
-import { assertWorkspacePath, fileExists, readJSON, writeJSON } from "./utils/fs.js";
+import {
+  FAILURE_OUTPUT_LINES,
+  formatErrorChain,
+  truncateFailureLine,
+} from "./utils/error-chain.js";
+import {
+  assertWorkspacePath,
+  fileExists,
+  readBoundedTemplate,
+  readJSON,
+  writeJSON,
+} from "./utils/fs.js";
 import { isNotEmptyString, isPlainObject } from "./utils/guards.js";
 import { textHash } from "./utils/hash.js";
 import { logger } from "./utils/logger.js";
@@ -120,7 +132,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {(script: string) => string} run
  *
  * @typedef {object} PackageJSON
- * @property {Record<string, string | boolean>} [scripts]
+ * @property {Record<string, unknown>} [scripts] Values come from the project's package.json, so any JSON value is possible.
  * @property {string} [packageManager]
  * @property {{ packageManager?: { name?: string } | Array<{ name?: string }> }} [devEngines]
  * @property {unknown[] | { packages?: unknown }} [workspaces]
@@ -143,7 +155,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string} [profile]
  * @property {PackageManager} [packageManager]
  * @property {string[]} [integrations]
- * @property {Record<string, unknown>} [integrationOptions]
+ * @property {Record<string, unknown> & { "html-validate"?: { quality: boolean } }} [integrationOptions]
  * @property {Record<string, boolean>} [scripts]
  * @property {unknown} [ai]
  *
@@ -153,8 +165,9 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus: VitePlusDetection }} ProjectInspection
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[] }} ProjectInspectionOptions
- * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[] }} ScriptPlan
- * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
+ * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], staleQualityValues: string[] }} ScriptPlan staleQualityValues are quality values an earlier release wrote, which apply removes because the plan omits quality
+ * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
+ * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
  *
  * @typedef {object} ApplyResult
@@ -168,8 +181,11 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {ProjectInspection} projectInspection
  * @property {VitePlusReport} vitePlus
  * @property {Change[]} changes
+ * @property {ScriptChange[]} scriptChanges Each package.json script apply adds or changes, with the value it writes, so the approval boundary shows the command; a script that already has that value is not listed. Kept out of the package.json change, which a dry run reports the same before and after apply.
  * @property {string[]} pointers
  * @property {ArtifactLockEntry[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock.
+ * @property {ArtifactRegistryReport[]} artifactRegistries The registry (protocol, host, and port, such as https://registry.npmjs.org) the auto-installed artifacts resolve from, and the npm configuration it comes from, such as the project .npmrc; empty when nothing resolves.
+ * @property {string[]} artifactWarnings Notes on npm configuration Calavera ignored while resolving the auto-installed artifacts. They never contain a value.
  *
  * @typedef {object} CleanResult
  * @property {"clean"} command
@@ -213,6 +229,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  *
  * @typedef {{ command: `artifacts ${string}`, [key: string]: unknown }} ArtifactCommandResult
  * @typedef {import("./artifact-lifecycle.js").ArtifactLockEntry} ArtifactLockEntry
+ * @typedef {import("./artifact-lifecycle.js").ArtifactRegistryReport} ArtifactRegistryReport
  * @typedef {import("./artifact-lifecycle.js").ArtifactServices} ArtifactServices
  * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | ArtifactCommandResult} CommandResult
  */
@@ -233,6 +250,7 @@ const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/"
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const HTML_VALIDATE_IGNORE = "node_modules/\ndist/\ncoverage/\n";
+const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
 
@@ -495,7 +513,7 @@ const renamedPackageScripts = Object.freeze([
  * the user's and is kept (`kept`). Only names the plan writes are considered
  * (ADR-0013, Decision 6).
  *
- * @param {Record<string, string | boolean>} packageScripts
+ * @param {Record<string, unknown>} packageScripts
  * @param {Record<string, string>} plannedScripts
  */
 function planScriptRenames(packageScripts, plannedScripts) {
@@ -572,16 +590,13 @@ export function formatCommand([command, commandArgs], platform = process.platfor
     .join(" ");
 }
 
-const FAILURE_OUTPUT_LINES = 10;
-const FAILURE_OUTPUT_LINE_LENGTH = 300;
-
 /**
  * How a spawned command failed, so a Calavera error is diagnosable without
  * its `cause`: the exit code, the signal, or why it could not start, and the
  * last lines of the standard output Calavera captured, at most
  * FAILURE_OUTPUT_LINES lines of at most FAILURE_OUTPUT_LINE_LENGTH characters
  * each. Standard error is inherited, so the terminal already shows it. The
- * output is not redacted; redaction is tracked in #619.
+ * CLI and the MCP server redact the output when they display the error.
  *
  * @param {unknown} error
  */
@@ -608,11 +623,7 @@ export function describeCommandFailure(error) {
           .trim()
           .split("\n")
           .slice(-FAILURE_OUTPUT_LINES)
-          .map((line) =>
-            line.length > FAILURE_OUTPUT_LINE_LENGTH
-              ? `${line.slice(0, FAILURE_OUTPUT_LINE_LENGTH)}… [line truncated]`
-              : line,
-          )
+          .map(truncateFailureLine)
           .join("\n")
       : "";
 
@@ -1104,6 +1115,36 @@ function removeDefaultTestScript(packageJSON) {
 }
 
 /**
+ * Removes a `quality` script the plan omits when its value is one an earlier
+ * release wrote (`staleQualityValues`), so it no longer runs what the recipe
+ * leaves out. Any other value is the user's: it is kept, and the quality
+ * omission says so.
+ *
+ * @param {PackageJSON} packageJSON
+ * @param {string[]} staleQualityValues
+ * @param {ScriptOmission[]} omittedScripts
+ * @returns {string | undefined} the removed value
+ */
+function removeStaleQualityScript(packageJSON, staleQualityValues, omittedScripts) {
+  const quality = packageJSON.scripts?.quality;
+
+  if (staleQualityValues.length === 0 || typeof quality !== "string") {
+    return undefined;
+  }
+
+  if (staleQualityValues.includes(quality)) {
+    delete packageJSON.scripts?.quality;
+    return quality;
+  }
+
+  const omission = omittedScripts.find(({ script }) => script === "quality");
+  if (omission) {
+    omission.reason += ` package.json keeps its quality script, ${quoteScriptValue(quality)}, because Calavera did not write that value.`;
+  }
+  return undefined;
+}
+
+/**
  * @param {PackageManager} packageManager
  * @param {boolean} dryRun
  * @param {boolean} assumeYes
@@ -1170,9 +1211,14 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   const usesVarlock = has("varlock");
   const usesGithubRepositoryControls = has(GITHUB_REPOSITORY_CONTROLS_ID);
 
-  const lintParts = [usesStylelint ? 'stylelint "**/*.{css,scss}"' : null].filter(Boolean);
+  // --allow-empty-input keeps a project without CSS files passing (#644).
+  const lintParts = [
+    usesStylelint ? 'stylelint "**/*.{css,scss}" --allow-empty-input' : null,
+  ].filter(Boolean);
 
-  const lintFixParts = [usesStylelint ? 'stylelint "**/*.{css,scss}" --fix' : null].filter(Boolean);
+  const lintFixParts = [
+    usesStylelint ? 'stylelint "**/*.{css,scss}" --allow-empty-input --fix' : null,
+  ].filter(Boolean);
 
   /** @type {Record<string, string>} */
   const scripts = {};
@@ -1180,6 +1226,8 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   const omittedScripts = [];
   /** @type {QualityStepOmission[]} */
   const omittedQualitySteps = [];
+  /** @type {string[]} */
+  const staleQualityValues = [];
 
   if (recipe.scripts?.lint && lintParts.length > 0) {
     scripts["lint:styles"] = lintParts.join(" && ");
@@ -1211,7 +1259,7 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   }
 
   if (usesHtmlValidate) {
-    scripts["lint:html"] = 'html-validate "**/*.html"';
+    scripts["lint:html"] = `node ${HTML_VALIDATE_WRAPPER_PATH} "**/*.html"`;
   }
 
   if (usesVarlock) {
@@ -1219,14 +1267,15 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   }
 
   if (usesGithubRepositoryControls) {
-    scripts["repo:controls:check"] = "node scripts/repository-controls.mjs";
-    scripts["repo:controls:apply"] = "node scripts/repository-controls.mjs --apply";
+    scripts["repo:controls:check"] = `node ${REPOSITORY_CONTROLS_SCRIPT_PATH}`;
+    scripts["repo:controls:apply"] = `node ${REPOSITORY_CONTROLS_SCRIPT_PATH} --apply`;
   }
 
   if (recipe.scripts?.quality) {
+    const htmlInQuality = recipe.integrationOptions?.["html-validate"]?.quality !== false;
     const qualityScripts = [
       "lint:styles",
-      usesHtmlValidate ? "lint:html" : null,
+      usesHtmlValidate && htmlInQuality ? "lint:html" : null,
       usesKnip ? "knip" : null,
       usesReactDoctor ? "react:doctor" : null,
       usesVarlock ? "env:load" : null,
@@ -1234,25 +1283,47 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
       .filter(isNotEmptyString)
       .filter((script) => Boolean(scripts[script]));
 
+    const run = packageManagerCommands[supportedPackageManager].run;
+    const htmlLeftOut = usesHtmlValidate && !htmlInQuality;
+
     // Without a Calavera script to aggregate, quality would only repeat Vite+
     // commands, so it is omitted as before (ADR-0013).
     if (qualityScripts.length > 0) {
-      scripts.quality = [
-        ...vitePlusQuality.steps,
-        ...qualityScripts.map((script) =>
-          packageManagerCommands[supportedPackageManager].run(script),
-        ),
-      ].join(" && ");
+      scripts.quality = [...vitePlusQuality.steps, ...qualityScripts.map(run)].join(" && ");
       omittedQualitySteps.push(...vitePlusQuality.omittedSteps);
+    } else if (htmlLeftOut) {
+      omittedScripts.push({
+        script: "quality",
+        reason:
+          'quality was requested, but integrationOptions["html-validate"].quality leaves out lint:html, the only generated script quality would run, so Calavera does not generate quality.',
+      });
+      // The values a release before #644 wrote when lint:html was the only
+      // Calavera script in quality: without Vite+ steps, as before ADR-0013
+      // and in an unmanaged project, and with the Vite+ steps planned now.
+      staleQualityValues.push(
+        ...new Set([run("lint:html"), [...vitePlusQuality.steps, run("lint:html")].join(" && ")]),
+      );
     } else {
       omittedScripts.push({
         script: "quality",
         reason: "quality was requested but no generated scripts are available to aggregate.",
       });
     }
+
+    if (htmlLeftOut) {
+      omittedQualitySteps.push({
+        step: "lint:html",
+        reason:
+          'the recipe sets integrationOptions["html-validate"].quality to false, so quality does not validate HTML files.',
+      });
+    }
   }
 
-  return { scripts, omittedScripts, omittedQualitySteps };
+  return { scripts, omittedScripts, omittedQualitySteps, staleQualityValues };
+}
+
+function createHtmlValidateWrapper() {
+  return readBoundedTemplate(HTML_VALIDATE_WRAPPER_TEMPLATE, "HTML Validate wrapper");
 }
 
 function createEditorConfig() {
@@ -1506,8 +1577,10 @@ Use the tools in this order when they are available:
 10. \`apply_recipe\`
 
 \`dry_run_apply\` is the review boundary. Show its inspection findings, omitted
-script explanations, ownership notes, and planned file changes to the user, then
-wait for explicit approval before calling \`apply_recipe\`.
+script explanations, ownership notes, and planned file changes to the user,
+including the command each \`package.json\` script in \`scriptChanges\` will run
+and, for a changed or renamed script, the command it replaces, then wait for
+explicit approval before calling \`apply_recipe\`.
 
 \`apply_recipe.writeConfig: false\` only skips writing \`calavera.config.json\`.
 Do not use it to bypass managed-file conflicts, stale state hashes, or an
@@ -1927,6 +2000,7 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
       contents: `${JSON.stringify(createHtmlValidateConfig(integrations), null, 2)}\n`,
     });
     plans.push({ path: ".htmlvalidateignore", contents: HTML_VALIDATE_IGNORE });
+    plans.push({ path: HTML_VALIDATE_WRAPPER_PATH, contents: createHtmlValidateWrapper() });
   }
 
   if (integrations.some((integration) => integration.id === "react-doctor")) {
@@ -2148,21 +2222,56 @@ export async function reportVitePlus() {
 }
 
 /**
+ * @param {string} reason What is wrong with package.json, completing "package.json …".
+ * @returns {ProjectInspectionFinding}
+ */
+function invalidManifestFinding(reason) {
+  return {
+    severity: "error",
+    kind: "package-json-invalid",
+    path: "package.json",
+    message: `package.json ${reason}. Findings that depend on its contents are omitted until it is fixed.`,
+  };
+}
+
+/**
  * @param {Recipe} [recipe]
  * @param {ProjectInspectionOptions} [options]
  * @returns {Promise<ProjectInspection>}
  */
 export async function inspectProject(recipe, options = {}) {
-  const packageJSON = await readPackageJSONIfPresent();
+  /** @type {PackageJSON} */
+  let packageJSON = {};
+  /** @type {ProjectInspectionFinding | undefined} */
+  let manifestFinding;
+
+  // Inspection is read-only, so a broken manifest becomes a finding. Apply
+  // still stops on it. The cause stays in the message for diagnosis.
+  try {
+    packageJSON = await readPackageJSONIfPresent();
+
+    // `null`, arrays, and other primitives are valid JSON but not a manifest.
+    if (!isPlainObject(packageJSON)) {
+      manifestFinding = invalidManifestFinding("does not contain a JSON object");
+      packageJSON = {};
+    }
+  } catch (error) {
+    if (!(error instanceof SyntaxError)) {
+      throw error;
+    }
+
+    manifestFinding = invalidManifestFinding(`could not be parsed: ${error.message}`);
+  }
+
   const previousState = await readStateIfPresent();
   const reownManagedFiles = normalizeManagedFilePathSet(options.reownManagedFiles ?? []);
-  const packageManager = detectPackageManager(packageJSON);
+  const packageManager = manifestFinding ? undefined : detectPackageManager(packageJSON);
   const integrations = recipe ? resolveRecipeIntegrations(recipe) : [];
   const integrationIds = new Set(integrations.map((integration) => integration.id));
   /** @type {string[]} */
   const files = [];
   /** @type {ProjectInspectionFinding[]} */
-  const findings = [];
+  const findings = manifestFinding ? [manifestFinding] : [];
 
   for (const path of projectInspectionFiles) {
     if (await projectFileExists(path)) {
@@ -2206,7 +2315,7 @@ export async function inspectProject(recipe, options = {}) {
   // Only the values of the scripts compared below are read from this plan, and
   // none of them depends on the Vite+ steps of quality, so none are planned.
   const plannedScripts =
-    recipe && (await fileExists(STATE_FILE))
+    recipe && !manifestFinding && (await fileExists(STATE_FILE))
       ? buildScripts(recipe, integrations, resolveApplyPackageManager(recipe, {}, packageJSON), {
           steps: [],
           omittedSteps: [],
@@ -2374,12 +2483,17 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     reownManagedFiles: applyOptions.reownManagedFiles,
   });
   const scriptPlan = buildScripts(recipe, integrations, packageManager, vitePlusQuality);
-  const { scripts, omittedScripts, omittedQualitySteps } = scriptPlan;
+  const { scripts, omittedScripts, omittedQualitySteps, staleQualityValues } = scriptPlan;
   /** @type {Change[]} */
   const changes = [];
   /** @type {ManagedFileState[]} */
   const managedFiles = [];
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
+  const removedQualityScript = removeStaleQualityScript(
+    packageJSON,
+    staleQualityValues,
+    omittedScripts,
+  );
   const managedFilePlans = plannedManagedFiles(integrations, recipe.integrationOptions);
   const usesVarlock = integrations.some(({ id }) => id === "varlock");
   const varlockFilePlans = usesVarlock ? await planVarlockProjectFiles() : [];
@@ -2434,6 +2548,26 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
       reason: `package.json defines ${to} with a value of your own, and ${from} still has the value Calavera wrote, so Calavera keeps both instead of renaming ${from}; the generated quality script runs your ${to}.`,
     });
   }
+  // The values apply writes, against the scripts as they are now. A renamed
+  // script is compared with the value under its old name.
+  const renamedFrom = new Map(renamedScripts.map(({ from, to }) => [to, from]));
+  /** @type {ScriptChange[]} */
+  const scriptChanges = [];
+  for (const [script, value] of Object.entries(scripts)) {
+    const from = renamedFrom.get(script);
+    if (from !== undefined) {
+      scriptChanges.push({
+        script,
+        value,
+        previous: packageJSON.scripts?.[from],
+        renamedFrom: from,
+      });
+    } else if (!Object.hasOwn(packageJSON.scripts ?? {}, script)) {
+      scriptChanges.push({ script, value });
+    } else if (packageJSON.scripts?.[script] !== value) {
+      scriptChanges.push({ script, value, previous: packageJSON.scripts?.[script] });
+    }
+  }
   if (renamedScripts.length > 0) {
     // The renamed script keeps the position the old name had.
     const newNames = new Map(renamedScripts.map(({ from, to }) => [from, to]));
@@ -2447,6 +2581,7 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
   const packageJSONUnchanged =
     previouslyApplied &&
     !removedDefaultTestScript &&
+    removedQualityScript === undefined &&
     renamedScripts.length === 0 &&
     Object.entries(scripts).every(([name, script]) => packageJSON.scripts?.[name] === script);
   packageJSON.scripts = {
@@ -2461,6 +2596,7 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     scripts: Object.keys(scripts),
     omittedScripts,
     removedDefaultTestScript,
+    ...(removedQualityScript !== undefined ? { removedQualityScript } : {}),
     ...(renamedScripts.length > 0 ? { renamedScripts } : {}),
     ...(omittedQualitySteps.length > 0 ? { omittedQualitySteps } : {}),
   });
@@ -2506,6 +2642,16 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
       await writeManagedFile(
         ".htmlvalidateignore",
         HTML_VALIDATE_IGNORE,
+        applyOptions.dryRun,
+        changes,
+        previousState,
+        reownManagedFiles,
+      ),
+    );
+    managedFiles.push(
+      await writeManagedFile(
+        HTML_VALIDATE_WRAPPER_PATH,
+        createHtmlValidateWrapper(),
         applyOptions.dryRun,
         changes,
         previousState,
@@ -2620,8 +2766,11 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     projectInspection,
     vitePlus: vitePlusReport(projectInspection.vitePlus),
     changes: [...changes, ...aiChanges],
+    scriptChanges,
     pointers: [...aiResult.pointers, ...(usesVarlock ? [VARLOCK_POINTER] : [])],
     autoInstalledArtifacts: artifactPlan.installed,
+    artifactRegistries: artifactPlan.registries,
+    artifactWarnings: artifactPlan.warnings,
   };
 }
 
@@ -3130,6 +3279,11 @@ function recipeNextSteps(target, packageManager, { changeDirectory }) {
 const NEW_HARD_STOP_SUFFIX =
   "Calavera wrote nothing further, removed nothing, and did not run the --init bootstrap.";
 
+// The runner inherits stdio, so Calavera cannot read the npm error and shows
+// this for every non-zero npx exit. The wording states its own condition.
+export const NPX_STALE_CACHE_HINT =
+  'This applies only if the npm output above shows "npm error code ERESOLVE" and names a vite-plus version: an older vite-plus in the npx cache can cause that. To fix it, run "npm cache npx ls", find the row that shows vite-plus, run "npm cache npx rm <key>" with the key from that row, then run this command again. If the npm output shows a different error, this does not apply; read the npm or Vite+ output above.';
+
 /**
  * @typedef {{ command: string, args: string[], cwd: string }} RunnerInvocation
  * @typedef {{ exitCode: number | null, signal: string | null }} RunnerExit
@@ -3424,7 +3578,9 @@ export async function newProject(options, runtime = {}) {
       `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
         runnerCommand.command === "yarn"
           ? " If yarn itself failed, note that yarn dlx needs Yarn 2 or later."
-          : ""
+          : runnerCommand.command === "npx"
+            ? ` ${NPX_STALE_CACHE_HINT}`
+            : ""
       }`,
     );
   }
@@ -3573,8 +3729,17 @@ function formatApplySummary(result) {
         .map(({ id, package: packageName, version }) => `${id} (${packageName}@${version})`)
         .join(", ") || "none"
     }`,
+    ...result.artifactRegistries.map(
+      (registry) => `${style("bold", "Artifact registry")}: ${formatArtifactRegistry(registry)}`,
+    ),
+    ...result.artifactWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
     `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
   ].join("\n");
+}
+
+/** @param {ArtifactRegistryReport} registry */
+function formatArtifactRegistry({ origin, source }) {
+  return source === "default" ? origin : `${origin} (from the ${source})`;
 }
 
 /**
@@ -3839,6 +4004,9 @@ async function doctor(options) {
       integrations.some((integration) => integration.id === "html-validate")
         ? ".htmlvalidateignore"
         : null,
+      integrations.some((integration) => integration.id === "html-validate")
+        ? HTML_VALIDATE_WRAPPER_PATH
+        : null,
       integrations.some((integration) => integration.id === "react-doctor")
         ? "react-doctor.config.json"
         : null,
@@ -3899,6 +4067,9 @@ function expectedManagedFiles(integrations) {
       : null,
     integrations.some((integration) => integration.id === "html-validate")
       ? ".htmlvalidateignore"
+      : null,
+    integrations.some((integration) => integration.id === "html-validate")
+      ? HTML_VALIDATE_WRAPPER_PATH
       : null,
     integrations.some((integration) => integration.id === "react-doctor")
       ? "react-doctor.config.json"
@@ -4342,6 +4513,14 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.info(`Inspection ${finding.severity}: ${finding.message}`);
     }
 
+    for (const registry of result.artifactRegistries) {
+      logger.info(`Artifact registry: ${formatArtifactRegistry(registry)}`);
+    }
+
+    for (const warning of result.artifactWarnings) {
+      logger.warn(warning);
+    }
+
     for (const artifact of result.autoInstalledArtifacts) {
       logger.info(
         `Would resolve and lock artifact ${artifact.id} at ${artifact.package}@${artifact.version}`,
@@ -4382,16 +4561,38 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       if (change.type === "update") {
         logger.info(`Would update ${change.path}`);
 
-        if (change.scripts && change.scripts.length > 0) {
-          logger.info(`Would add scripts: ${change.scripts.join(", ")}`);
+        // Only the package.json change carries scripts. A renamed script is
+        // listed here, with renamedScripts on the change carrying the same rename.
+        if (change.scripts) {
+          for (const { script, value, previous, renamedFrom } of result.scriptChanges) {
+            if (renamedFrom !== undefined) {
+              logger.info(
+                `Would rename script ${renamedFrom} to ${script}: ${quoteScriptValue(value)}`,
+              );
+            } else if (previous === undefined) {
+              logger.info(`Would add script ${script}: ${quoteScriptValue(value)}`);
+            } else {
+              logger.info(
+                `Would change script ${script} from ${quoteScriptValue(previous)} to ${quoteScriptValue(value)}`,
+              );
+            }
+          }
+
+          const changedScripts = new Set(result.scriptChanges.map(({ script }) => script));
+          const unchangedScripts = change.scripts.filter((script) => !changedScripts.has(script));
+          if (unchangedScripts.length > 0) {
+            logger.info(`Scripts already set: ${unchangedScripts.join(", ")}`);
+          }
         }
 
         if (change.removedDefaultTestScript) {
           logger.info("Would remove the default npm test placeholder script");
         }
 
-        for (const { from, to } of change.renamedScripts ?? []) {
-          logger.info(`Would rename script ${from} to ${to}`);
+        if (change.removedQualityScript !== undefined) {
+          logger.info(
+            `Would remove script quality: ${quoteScriptValue(change.removedQualityScript)}`,
+          );
         }
 
         for (const omittedScript of change.omittedScripts ?? []) {
@@ -4421,7 +4622,21 @@ function printResult(result, asJSON = false, commandDryRun = false) {
 
   logger.success(`Calavera ${result.command} complete.`);
 
+  if (result.command === "artifacts install" || result.command === "artifacts update") {
+    for (const registry of /** @type {ArtifactRegistryReport[]} */ (result.registries)) {
+      logger.info(`Artifact registry: ${formatArtifactRegistry(registry)}`);
+    }
+
+    for (const warning of /** @type {string[]} */ (result.warnings)) {
+      logger.warn(warning);
+    }
+  }
+
   if (result.command === "apply") {
+    for (const warning of result.artifactWarnings) {
+      logger.warn(warning);
+    }
+
     for (const artifact of result.autoInstalledArtifacts) {
       logger.info(
         `Resolved and locked artifact ${artifact.id} at ${artifact.package}@${artifact.version}`,
@@ -4432,6 +4647,26 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.info(pointer);
     }
   }
+}
+
+/**
+ * A package.json script value as a single line of terminal output. JSON
+ * quoting escapes quotes, backslashes, and C0 control characters; control and
+ * format characters JSON leaves as they are, such as DEL, C1 controls, and
+ * bidirectional overrides, and the line and paragraph separators, are escaped
+ * as `\uXXXX` too, so a value cannot recolor, reorder, or break the line.
+ * Nothing in the value is expanded.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+function quoteScriptValue(value) {
+  return JSON.stringify(value).replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, (character) =>
+    Array.from(
+      { length: character.length },
+      (_, index) => `\\u${character.charCodeAt(index).toString(16).padStart(4, "0")}`,
+    ).join(""),
+  );
 }
 
 async function main() {
@@ -4497,13 +4732,27 @@ export async function runCli() {
   try {
     await main();
   } catch (error) {
-    if (error instanceof FileWriteError) {
-      logger.error(error.message);
-      logger.error(error.cause);
-    } else {
-      logger.error(error);
+    let text;
+    try {
+      text = formatErrorChain(error);
+    } catch {
+      // A failure to format the error must not hide the error itself.
+      text = fallbackErrorText(error);
     }
+    logger.error(text);
     process.exitCode = 1;
+  }
+}
+
+/**
+ * @param {unknown} error
+ * @returns {string}
+ */
+function fallbackErrorText(error) {
+  try {
+    return String(error instanceof Error ? error.message : error);
+  } catch {
+    return "Calavera stopped with an error it could not display.";
   }
 }
 
