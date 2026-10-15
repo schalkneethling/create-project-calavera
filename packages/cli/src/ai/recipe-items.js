@@ -101,6 +101,25 @@ function validateAiSource(src, index, type) {
 }
 
 /**
+ * Records the first index at which an artifact ID is selected and throws on a second selection.
+ * The lock, the outputs, and the transaction are all keyed by artifact ID, so a second selection
+ * cannot be installed whatever its target is.
+ *
+ * @param {Map<string, number>} firstIndexById
+ * @param {string} id
+ * @param {number} index
+ */
+export function assertFirstSelection(firstIndexById, id, index) {
+  const firstIndex = firstIndexById.get(id);
+  if (firstIndex !== undefined) {
+    throw new Error(
+      `Duplicate artifact id "${id}" at AI item indexes ${firstIndex} and ${index}. Select each artifact once.`,
+    );
+  }
+  firstIndexById.set(id, index);
+}
+
+/**
  * @param {unknown} aiConfig
  * @returns {NormalizedAiItem[]}
  */
@@ -112,6 +131,9 @@ export function normalizeAiItems(aiConfig) {
   if (!Array.isArray(aiConfig)) {
     throw new Error("The optional ai config key must be an array.");
   }
+
+  /** @type {Map<string, number>} */
+  const firstIndexById = new Map();
 
   return aiConfig.map((entry, index) => {
     if (!isAiItemConfig(entry)) {
@@ -140,6 +162,8 @@ export function normalizeAiItems(aiConfig) {
     const type = normalizeAiItemType(item.type, index);
     const target = normalizeAiTarget(type, item, index);
     const artifact = validateAiSource(item.src, index, type);
+
+    assertFirstSelection(firstIndexById, artifact.id, index);
 
     if (
       item.target !== undefined &&
