@@ -49,7 +49,7 @@
     "semver": "7.8.5",
     "stylelint": "^17.16.0",
     "stylelint-config-standard": "^40.0.0",
-    "stylelint-order": "^8.1.1",
+    "stylelint-order": "^8.1.2",
     "stylelint-plugin-use-baseline": "^1.4.7",
     "typescript": "^7.0.2"
   },
