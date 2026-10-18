@@ -3,26 +3,21 @@
 // folder only when it finds no skills in its standard places, and it counts the
 // skills of plugins in .claude-plugin/marketplace.json as found. Plugin skills
 // therefore carry `metadata.internal: true`, and this check fails if the bundled
-// skills ever stop being listed.
-//
-// Usage: node scripts/check-skills-discovery.mjs <skills CLI command...>
+// skills ever stop being listed. It runs the skills CLI that package.json pins.
 import { spawnSync } from "node:child_process";
 import { readFile } from "node:fs/promises";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 
 import { distributedSkillFolders } from "./skill-folders.mjs";
 
-const root = new URL("../", import.meta.url).pathname;
-const [command, ...commandArgs] = process.argv.slice(2);
+const root = fileURLToPath(new URL("..", import.meta.url));
+const skillsPackagePath = fileURLToPath(import.meta.resolve("skills/package.json"));
+const skillsBin = join(
+  dirname(skillsPackagePath),
+  JSON.parse(await readFile(skillsPackagePath, "utf8")).bin.skills,
+);
 
-if (!command) {
-  throw new Error("Pass the skills CLI command, such as: npx --yes skills@1.7.2");
-}
-
-/**
- * @param {string} path
- * @returns {Promise<string>}
- */
 async function skillName(path) {
   const match = /^---\n(?:.*\n)*?name: (\S+)\n/.exec(
     (await readFile(path, "utf8")).replaceAll("\r\n", "\n"),
@@ -39,9 +34,11 @@ const pluginSkills = new Set(
   await Promise.all(folders.plugins.map((folder) => skillName(join(folder, "SKILL.md")))),
 );
 
-const result = spawnSync(command, [...commandArgs, "add", root, "--list"], {
+// INSTALL_INTERNAL_SKILLS would make the CLI list the plugin skills on purpose.
+const { INSTALL_INTERNAL_SKILLS: _ignored, ...environment } = process.env;
+const result = spawnSync(process.execPath, [skillsBin, "add", root, "--list"], {
   encoding: "utf8",
-  env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0", DO_NOT_TRACK: "1" },
+  env: { ...environment, NO_COLOR: "1", FORCE_COLOR: "0", DO_NOT_TRACK: "1" },
 });
 if (result.error) throw result.error;
 const output = `${result.stdout}${result.stderr}`;

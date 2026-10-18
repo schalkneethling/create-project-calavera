@@ -19,7 +19,7 @@ claude plugin marketplace add schalkneethling/create-project-calavera
 claude plugin install dependency-review@calavera
 ```
 
-Installation is at user scope by default, so the plugin is available in every project. The plugin sets no `version`, so Claude Code uses the git commit as its version, and every commit that changes the plugin is an update. Run `claude plugin update dependency-review@calavera` to take one, or turn on auto-update for the `calavera` marketplace under `/plugin`, **Marketplaces**. After editing files in a marketplace added from a local checkout, run `/reload-plugins` in a session.
+Installation is at user scope by default, so the plugin is available in every project. The plugin sets no `version`, so Claude Code uses the latest commit of the Calavera repository as its version, and any commit to the repository counts as an update. To take one, run `claude plugin marketplace update calavera`, then `claude plugin update dependency-review@calavera`, and restart Claude Code. You can also turn on auto-update for the `calavera` marketplace under `/plugin`, **Marketplaces**. After editing files in a marketplace added from a local checkout, run `/reload-plugins` in a session.
 
 ## Using it
 

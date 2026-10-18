@@ -16,12 +16,7 @@ import {
   toPackageName,
 } from "../scripts/dependency-map.mjs";
 
-/**
- * Asserts that every expected item appears in actual, in any order.
- *
- * @param {unknown[]} actual
- * @param {unknown[]} expected
- */
+// Asserts that every expected item appears in actual, in any order.
 function assertContainsAll(actual, expected) {
   for (const item of expected) {
     assert.ok(
@@ -67,7 +62,6 @@ describe("stripComments", () => {
 });
 
 describe("parseModuleReferences", () => {
-  /** @param {string} source */
   const only = (source) => parseModuleReferences(stripComments(source));
 
   it("parses a default import", () => {
@@ -292,13 +286,8 @@ describe("extractScriptBlocks", () => {
 });
 
 describe("buildMap (integration)", () => {
-  /** @type {string} */
   let root;
 
-  /**
-   * @param {string} relativePath
-   * @param {string} contents
-   */
   const write = (relativePath, contents) => {
     const full = join(root, relativePath);
     mkdirSync(dirname(full), { recursive: true });
@@ -338,10 +327,6 @@ describe("buildMap (integration)", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  /**
-   * @param {ReturnType<typeof buildMap>} map
-   * @param {string} name
-   */
   const find = (map, name) => {
     const entry = map.packages.find((pkg) => pkg.name === name);
     assert.ok(entry, `${name} is not in the map`);
@@ -447,7 +432,6 @@ describe("buildMap errors", () => {
 });
 
 describe("formatText", () => {
-  /** @param {Record<string, unknown>} overrides */
   const packageEntry = (overrides) => ({
     name: "x",
     declared: [],
@@ -461,7 +445,6 @@ describe("formatText", () => {
     markers: [],
     ...overrides,
   });
-  /** @param {ReturnType<typeof packageEntry>} entry */
   const wrap = (entry) => ({
     root: "/r",
     mode: "git",

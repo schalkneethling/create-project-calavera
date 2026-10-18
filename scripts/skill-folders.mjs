@@ -3,14 +3,9 @@
 import { access, readdir } from "node:fs/promises";
 import { join } from "node:path";
 
-/**
- * Lists the skill folders inside each matching subfolder of `parentPath`.
- *
- * @param {string} parentPath
- * @param {string} prefix Only subfolders whose name starts with this are read.
- * @param {string} skillsFolder The folder inside each subfolder that holds skills.
- * @param {{ optional?: boolean }} [options] Whether a subfolder may have no skills folder.
- */
+// Lists the skill folders in `skillsFolder` inside each subfolder of
+// `parentPath` whose name starts with `prefix`. With `optional`, a subfolder
+// may have no `skillsFolder`.
 async function skillFolders(parentPath, prefix, skillsFolder, { optional = false } = {}) {
   const paths = [];
   const entries = await readdir(parentPath, { withFileTypes: true });
@@ -34,10 +29,6 @@ async function skillFolders(parentPath, prefix, skillsFolder, { optional = false
   return paths.sort();
 }
 
-/**
- * @param {string} root The repository root.
- * @returns {Promise<{ bundled: string[], plugins: string[] }>}
- */
 export async function distributedSkillFolders(root) {
   return {
     bundled: await skillFolders(join(root, "packages/artifacts"), "skill-", "payload"),

@@ -704,11 +704,14 @@ claude plugin install dependency-review@calavera
 | ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `dependency-review` | Reviews Dependabot updates for what matters to the current project, with a dependency usage map and a `WORKAROUND` marker convention for workarounds. |
 
-Calavera does not version the plugins. Claude Code uses the git commit of each
-plugin as its version, so every commit that changes a plugin is an update.
-Claude Code turns auto-update off by default for this marketplace. Run
-`claude plugin update <plugin>@calavera` to take an update, or turn on
-auto-update for the `calavera` marketplace under `/plugin`, **Marketplaces**.
+Calavera does not version the plugins. Claude Code uses the latest commit of
+this repository as the version of every plugin, so any commit to the repository
+counts as an update, even one that does not change the plugin. Claude Code turns
+auto-update off by default for this marketplace. To take an update, run
+`claude plugin marketplace update calavera`, then
+`claude plugin update <plugin>@calavera`, and restart Claude Code. You can also
+turn on auto-update for the `calavera` marketplace under `/plugin`,
+**Marketplaces**.
 Adding the marketplace clones this whole repository into Claude Code's plugin
 folder.
 

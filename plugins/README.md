@@ -19,7 +19,9 @@ Each folder here is one plugin in the `calavera` Claude Code marketplace, which 
 
 ## Rules the checks enforce
 
-- No `version` in `plugin.json` or the marketplace entry, so Claude Code uses the git commit as the version.
+- No `version` in `plugin.json` or the marketplace entry, so Claude Code uses the latest commit of this repository as the version. Any commit to the repository counts as an update to every plugin, which #705 revisits.
 - No `.claude-plugin/plugin.json` inside a plugin. A Claude manifest without a version fails `claude plugin validate --strict`, so the marketplace entry is the only Claude manifest.
 - No `hooks/` folder. Declare hooks inline in the marketplace entry, the only form Claude Code loads from an entry.
+- MCP servers are declared only in `mcp.json`, never inline in the marketplace entry or in a Claude Code `.mcp.json`, and the entry sets `"mcpServers": "./mcp.json"`.
+- Each `SKILL.md` is directly in `skills/<skill>/`, with `metadata.internal` set to `true`.
 - MCP servers in `mcp.json` use the `stdio` transport and do not name `${PLUGIN_ROOT}`, `${CLAUDE_PLUGIN_ROOT}`, or the matching data variables. The two formats spell those differently, so a server that needs them cannot share one file yet.
