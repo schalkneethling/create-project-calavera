@@ -269,10 +269,15 @@ describe("extractScriptBlocks", () => {
     assert.deepEqual(extractScriptBlocks("const a = 1;", ".js"), ["const a = 1;"]);
   });
 
-  it("ends a script block at an end tag with spaces before >", () => {
-    const svelte =
-      "<script>\nimport { tick } from 'svelte'\n</script >\n<p>import x from 'not-code'</p>";
-    assert.deepEqual(extractScriptBlocks(svelte, ".svelte"), ["\nimport { tick } from 'svelte'\n"]);
+  it("ends a script block at an end tag with whitespace or ignored text before >", () => {
+    // HTML ends a script element at </script followed by whitespace, /, or >,
+    // and ignores anything else up to >.
+    for (const endTag of ["</script >", "</script\t\n bar>", "</SCRIPT>"]) {
+      const svelte = `<script>\nimport { tick } from 'svelte'\n${endTag}\n<p>import x from 'not-code'</p>`;
+      assert.deepEqual(extractScriptBlocks(svelte, ".svelte"), [
+        "\nimport { tick } from 'svelte'\n",
+      ]);
+    }
   });
 
   it("extracts script blocks from Vue and Svelte files", () => {

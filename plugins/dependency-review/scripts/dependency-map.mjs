@@ -255,7 +255,7 @@ export function toPackageName(specifier) {
 export function extractScriptBlocks(source, extension) {
   if (!SFC_EXTENSIONS.has(extension)) return [source];
 
-  const blocks = [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(
+  const blocks = [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/gi)].map(
     (match) => match[1],
   );
   if (extension === ".astro") {
