@@ -255,9 +255,12 @@ export function toPackageName(specifier) {
 export function extractScriptBlocks(source, extension) {
   if (!SFC_EXTENSIONS.has(extension)) return [source];
 
-  const blocks = [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\b[^>]*>/gi)].map(
-    (match) => match[1],
-  );
+  // HTML ends a script element at </script followed by a tab, line feed, form
+  // feed, space, / or >, and ignores the rest of that tag. A carriage return
+  // counts too, because HTML turns it into a line feed before reading tags.
+  const blocks = [
+    ...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script(?:[\t\n\f\r /][^>]*)?>/gi),
+  ].map((match) => match[1]);
   if (extension === ".astro") {
     const frontmatter = source.match(/^\s*---\r?\n([\s\S]*?)\r?\n---/);
     if (frontmatter) blocks.unshift(frontmatter[1]);
