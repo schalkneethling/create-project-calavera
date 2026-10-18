@@ -686,6 +686,35 @@ are managed by the `skills` CLI rather than Calavera. Do not mix direct installs
 and Calavera-managed installs for the same destination unless you intentionally
 want Calavera to treat the existing files as local, unmanaged content.
 
+The skills of the Claude Code plugins below are not listed there, because they
+work only inside their plugin.
+
+### Claude Code Plugins
+
+This repository is also a Claude Code plugin marketplace named `calavera`. The
+plugins are in [`plugins/`](plugins/). Add the marketplace once, then install a
+plugin from it:
+
+```sh
+claude plugin marketplace add schalkneethling/create-project-calavera
+claude plugin install dependency-review@calavera
+```
+
+| Plugin              | What it does                                                                                                                                          |
+| ------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `dependency-review` | Reviews Dependabot updates for what matters to the current project, with a dependency usage map and a `WORKAROUND` marker convention for workarounds. |
+
+Calavera does not version the plugins. Claude Code uses the git commit of each
+plugin as its version, so every commit that changes a plugin is an update.
+Claude Code turns auto-update off by default for this marketplace. Run
+`claude plugin update <plugin>@calavera` to take an update, or turn on
+auto-update for the `calavera` marketplace under `/plugin`, **Marketplaces**.
+Adding the marketplace clones this whole repository into Claude Code's plugin
+folder.
+
+Calavera writes nothing into your project for plugins. `calavera apply` does not
+install or enable them.
+
 ## Web Composer
 
 The recipe composer runs as a small Vite app:

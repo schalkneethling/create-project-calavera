@@ -1,0 +1,20 @@
+{
+  "name": "calavera",
+  "description": "Claude Code plugins from Calavera.",
+  "owner": {
+    "name": "Schalk Neethling"
+  },
+  "plugins": [
+    {
+      "name": "dependency-review",
+      "source": "./plugins/dependency-review",
+      "description": "Reviews Dependabot updates for what matters to the current project, with a deterministic dependency usage map and a WORKAROUND marker convention.",
+      "author": {
+        "name": "Schalk Neethling"
+      },
+      "repository": "https://github.com/schalkneethling/create-project-calavera",
+      "license": "MIT",
+      "keywords": ["dependabot", "dependencies", "changelog", "review"]
+    }
+  ]
+}
