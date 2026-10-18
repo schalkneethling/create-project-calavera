@@ -15,7 +15,7 @@ When code compensates for a bug or limitation in a dependency (or a browser or r
 // WORKAROUND(package-name): what it compensates for | upstream: <issue or PR URL> | remove-when: >=x.y.z
 ```
 
-Keep it on one line, and separate the fields with a pipe that has one space on each side, as in the example. Any comment syntax works (`//`, `#`, `/* */`, `<!-- -->`). When the workaround code is removed, remove the marker with it.
+Keep it on one line, and separate the fields with a pipe that has one space on each side, as in the example. Use the comment syntax of the file (`//`, `#`, `/* */`, or `<!-- -->`). The map finds markers in JS and TS files, Vue, Svelte, and Astro files, stylesheets, HTML, shell scripts, YAML, TOML, Python, and Ruby files, Dockerfiles, and `.npmrc`. A marker in any other file is not found, so keep workarounds for other files in one of these, or say in your report that the map cannot see them. When the workaround code is removed, remove the marker with it.
 
 Do not add a marker for ordinary code that merely uses a dependency. A marker means the code exists only because the dependency or platform misbehaves.
 

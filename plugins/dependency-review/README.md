@@ -31,4 +31,4 @@ The map script has a `node:test` suite in `tests/`. Run it with `node --test plu
 
 ## Known limits
 
-The map parses with regular expressions, not a full parser. It finds imports in JS and TS files, the script blocks of Vue, Svelte, and Astro files, and `@import`, `@use`, `@forward`, and `@plugin` rules in stylesheets. Usage that does not go through a module specifier is not tracked.
+The map parses with regular expressions, not a full parser. It finds imports in JS and TS files, the script blocks of Vue, Svelte, and Astro files, and `@import`, `@use`, `@forward`, and `@plugin` rules in stylesheets. Usage that does not go through a module specifier is not tracked. `WORKAROUND` markers are found in those files, in HTML, and in shell scripts (`.sh`, `.bash`, `.zsh`), YAML, TOML, Python, and Ruby files, Dockerfiles, and `.npmrc`. The map skips symlinks, so it never reads a file outside the project through a link; a link to a file inside the project loses nothing, because that file is read itself.

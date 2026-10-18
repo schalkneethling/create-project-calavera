@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
-import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, rmSync, symlinkSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { after, before, describe, it } from "node:test";
@@ -420,6 +421,101 @@ describe("buildMap (integration)", () => {
       assert.ok(text.includes(part), `Expected "${part}" in:\n${text}`);
     }
   });
+});
+
+describe("buildMap markers in files that use # comments", () => {
+  let root;
+
+  before(() => {
+    root = mkdtempSync(join(tmpdir(), "depmap-hash-"));
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ devDependencies: { lefthook: "^1.0.0" } }),
+    );
+    const markers = {
+      "scripts/setup.sh": "# WORKAROUND(lefthook): shell | remove-when: >=2.0.0\n",
+      "lefthook.yml": "# WORKAROUND(lefthook): yaml\n",
+      ".github/workflows/ci.yaml": "# WORKAROUND(lefthook): workflow\n",
+      "config.toml": "# WORKAROUND(lefthook): toml\n",
+      "tools/check.py": "# WORKAROUND(lefthook): python\n",
+      Dockerfile: "# WORKAROUND(lefthook): docker\n",
+      ".npmrc": "# WORKAROUND(lefthook): npmrc\n",
+    };
+    for (const [file, text] of Object.entries(markers)) {
+      mkdirSync(dirname(join(root, file)), { recursive: true });
+      writeFileSync(join(root, file), text);
+    }
+  });
+
+  after(() => {
+    rmSync(root, { recursive: true, force: true });
+  });
+
+  it("finds markers in shell, YAML, TOML, Python, Dockerfile, and .npmrc files", () => {
+    const [lefthook] = buildMap({ root, packages: ["lefthook"] }).packages;
+    assert.deepEqual(lefthook?.markers.map(({ file }) => file).toSorted(), [
+      ".github/workflows/ci.yaml",
+      ".npmrc",
+      "Dockerfile",
+      "config.toml",
+      "lefthook.yml",
+      "scripts/setup.sh",
+      "tools/check.py",
+    ]);
+    assert.equal(
+      lefthook?.markers.find(({ file }) => file === "scripts/setup.sh")?.removeWhen,
+      ">=2.0.0",
+    );
+  });
+});
+
+describe("buildMap and symlinks", () => {
+  let parent;
+
+  before(() => {
+    parent = mkdtempSync(join(tmpdir(), "depmap-links-"));
+    // A file outside the project that a symlink inside it points at.
+    writeFileSync(
+      join(parent, "outside.js"),
+      "// WORKAROUND(react): outside the project\nimport { leaked } from 'react';\n",
+    );
+  });
+
+  after(() => {
+    rmSync(parent, { recursive: true, force: true });
+  });
+
+  const project = (name, { git }) => {
+    const root = join(parent, name);
+    mkdirSync(join(root, "src"), { recursive: true });
+    writeFileSync(
+      join(root, "package.json"),
+      JSON.stringify({ dependencies: { react: "^18.3.0" } }),
+    );
+    writeFileSync(join(root, "src/inside.js"), "import { useState } from 'react';\n");
+    symlinkSync(join(parent, "outside.js"), join(root, "src/link.js"));
+    symlinkSync(join(root, "src/inside.js"), join(root, "src/inside-link.js"));
+    if (git) {
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+      execFileSync("git", ["add", "--all"], { cwd: root });
+    }
+    return root;
+  };
+
+  for (const git of [true, false]) {
+    it(`does not read files through symlinks (${git ? "git" : "walk"} mode)`, () => {
+      const map = buildMap({
+        root: project(git ? "with-git" : "without-git", { git }),
+        packages: ["react"],
+      });
+      const [react] = map.packages;
+
+      assert.equal(map.mode, git ? "git" : "walk");
+      assert.deepEqual(react?.files, ["src/inside.js"]);
+      assert.deepEqual(react?.markers, []);
+      assert.deepEqual(react?.symbols, { useState: 1 });
+    });
+  }
 });
 
 describe("buildMap errors", () => {

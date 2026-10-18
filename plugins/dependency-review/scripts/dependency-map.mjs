@@ -8,7 +8,8 @@
  *   - files that import it opaquely (default, namespace, or require), where member
  *     usage is NOT tracked and a targeted grep of those files is needed
  *   - config files and package.json scripts that appear to reference it
- *   - WORKAROUND(package) markers found anywhere in the code
+ *   - WORKAROUND(package) markers in code, stylesheets, HTML, shell scripts,
+ *     YAML, TOML, Python, Ruby, Dockerfiles, and .npmrc
  *   - a usage fingerprint that changes when files or imported symbols change
  *
  * The script reads the current files on every run and writes nothing, so its output
@@ -20,24 +21,36 @@
  * Known limits: parsing is regex-based, not a full AST. Imports are found in
  * JS/TS files, the script blocks of Vue/Svelte/Astro files, and @import/@use/
  * @forward/@plugin rules in stylesheets. Dynamic specifiers (import(variable)) and
- * usage that does not go through a module specifier are not tracked.
+ * usage that does not go through a module specifier are not tracked. Symlinks are
+ * skipped, so the map never reads a file outside the project through a link.
  */
 
 import { execFileSync } from "node:child_process";
 import { createHash } from "node:crypto";
-import { existsSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
+import { existsSync, lstatSync, readdirSync, readFileSync, realpathSync, statSync } from "node:fs";
 import { basename, extname, join, resolve } from "node:path";
 import { pathToFileURL } from "node:url";
 
 const CODE_EXTENSIONS = new Set([".js", ".mjs", ".cjs", ".jsx", ".ts", ".mts", ".cts", ".tsx"]);
 const SFC_EXTENSIONS = new Set([".vue", ".svelte", ".astro"]);
 const STYLE_EXTENSIONS = new Set([".css", ".scss", ".sass", ".less", ".pcss"]);
+// Markers are also read from files that use # comments, such as shell scripts,
+// CI workflows, and .npmrc, because workarounds often live there.
 const MARKER_EXTENSIONS = new Set([
   ...CODE_EXTENSIONS,
   ...SFC_EXTENSIONS,
   ...STYLE_EXTENSIONS,
   ".html",
+  ".sh",
+  ".bash",
+  ".zsh",
+  ".yml",
+  ".yaml",
+  ".toml",
+  ".py",
+  ".rb",
 ]);
+const MARKER_FILE_NAMES = new Set(["Dockerfile", ".npmrc"]);
 const SKIPPED_DIRECTORIES = new Set([
   "node_modules",
   ".git",
@@ -311,6 +324,14 @@ function walk(root, directory = root, found = []) {
   return found;
 }
 
+function isRegularFile(path) {
+  try {
+    return lstatSync(path).isFile();
+  } catch {
+    return false;
+  }
+}
+
 function listFiles(root) {
   if (existsSync(join(root, ".git"))) {
     try {
@@ -328,7 +349,10 @@ function listFiles(root) {
         .split("\0")
         .filter(Boolean)
         .filter((file) => !file.split("/").includes("node_modules"))
-        .filter((file) => existsSync(join(root, file)));
+        // Like the directory walk, skip symlinks, so a link cannot make the map
+        // read a file outside the project. A link to a file inside the project
+        // loses nothing, because that file is listed itself.
+        .filter((file) => isRegularFile(join(root, file)));
       return { files, mode: "git" };
     } catch {
       // Fall through to the directory walk.
@@ -412,7 +436,7 @@ export function buildMap({ root, packages } = {}) {
     const extension = extname(file);
     const isCode = CODE_EXTENSIONS.has(extension) || SFC_EXTENSIONS.has(extension);
     const isStyle = STYLE_EXTENSIONS.has(extension);
-    if (!MARKER_EXTENSIONS.has(extension)) continue;
+    if (!MARKER_EXTENSIONS.has(extension) && !MARKER_FILE_NAMES.has(basename(file))) continue;
 
     const text = readText(absoluteRoot, file);
     if (text === null) continue;
