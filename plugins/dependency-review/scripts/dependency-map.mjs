@@ -51,6 +51,17 @@ const MARKER_EXTENSIONS = new Set([
   ".rb",
 ]);
 const MARKER_FILE_NAMES = new Set(["Dockerfile", ".npmrc"]);
+// Dockerfile.dev and api.Dockerfile are common names for further Dockerfiles.
+const DOCKERFILE_VARIANT = /^Dockerfile\.[^.]+$|^[^.]+\.Dockerfile$/;
+
+function isMarkerFile(file) {
+  const name = basename(file);
+  return (
+    MARKER_EXTENSIONS.has(extname(file)) ||
+    MARKER_FILE_NAMES.has(name) ||
+    DOCKERFILE_VARIANT.test(name)
+  );
+}
 const SKIPPED_DIRECTORIES = new Set([
   "node_modules",
   ".git",
@@ -244,7 +255,7 @@ export function toPackageName(specifier) {
 export function extractScriptBlocks(source, extension) {
   if (!SFC_EXTENSIONS.has(extension)) return [source];
 
-  const blocks = [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script>/gi)].map(
+  const blocks = [...source.matchAll(/<script\b[^>]*>([\s\S]*?)<\/script\s*>/gi)].map(
     (match) => match[1],
   );
   if (extension === ".astro") {
@@ -263,7 +274,7 @@ export function parseMarkers(text) {
     const match = /WORKAROUND\(([^)\s]+)\)\s*:?\s*(.*)$/.exec(lineText);
     if (!match) return;
 
-    const rest = match[2].replace(/\s*(\*\/|-->)\s*$/, "").trim();
+    const rest = match[2].replace(/\s*(\*\/|--!?>)\s*$/, "").trim();
     const [description, ...fields] = rest.split(/\s+\|\s+/);
     let upstream = null;
     let removeWhen = null;
@@ -436,7 +447,7 @@ export function buildMap({ root, packages } = {}) {
     const extension = extname(file);
     const isCode = CODE_EXTENSIONS.has(extension) || SFC_EXTENSIONS.has(extension);
     const isStyle = STYLE_EXTENSIONS.has(extension);
-    if (!MARKER_EXTENSIONS.has(extension) && !MARKER_FILE_NAMES.has(basename(file))) continue;
+    if (!isMarkerFile(file)) continue;
 
     const text = readText(absoluteRoot, file);
     if (text === null) continue;

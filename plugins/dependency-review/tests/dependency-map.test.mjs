@@ -50,15 +50,13 @@ describe("stripComments", () => {
   });
 
   it("keeps comment-like sequences inside strings", () => {
-    const result = stripComments("const u = 'https://example.com/a'; import q from 'q';");
-    assert.ok(result.includes("https://example.com/a"));
-    assert.ok(result.includes("import q from 'q'"));
+    const source = "const u = 'https://example.com/a'; import q from 'q';";
+    assert.equal(stripComments(source), source);
   });
 
   it("keeps comment-like sequences inside template literals", () => {
-    const result = stripComments('const t = `see http://x.test`; import q from "q";');
-    assert.ok(result.includes("http://x.test"));
-    assert.ok(result.includes('import q from "q"'));
+    const source = 'const t = `see http://x.test`; import q from "q";';
+    assert.equal(stripComments(source), source);
   });
 });
 
@@ -217,6 +215,8 @@ describe("parseMarkers", () => {
 
   it("strips closing comment tokens", () => {
     assert.equal(parseMarkers("<!-- WORKAROUND(pkg): in html -->")[0]?.description, "in html");
+    // HTML also ends a comment at --!>, although it reports a parse error.
+    assert.equal(parseMarkers("<!-- WORKAROUND(pkg): in html --!>")[0]?.description, "in html");
     assert.equal(
       parseMarkers("/* WORKAROUND(pkg): in css | remove-when: >=1.0.0 */")[0]?.removeWhen,
       ">=1.0.0",
@@ -267,6 +267,12 @@ describe("computeFingerprint", () => {
 describe("extractScriptBlocks", () => {
   it("returns plain code files unchanged", () => {
     assert.deepEqual(extractScriptBlocks("const a = 1;", ".js"), ["const a = 1;"]);
+  });
+
+  it("ends a script block at an end tag with spaces before >", () => {
+    const svelte =
+      "<script>\nimport { tick } from 'svelte'\n</script >\n<p>import x from 'not-code'</p>";
+    assert.deepEqual(extractScriptBlocks(svelte, ".svelte"), ["\nimport { tick } from 'svelte'\n"]);
   });
 
   it("extracts script blocks from Vue and Svelte files", () => {
@@ -439,6 +445,9 @@ describe("buildMap markers in files that use # comments", () => {
       "config.toml": "# WORKAROUND(lefthook): toml\n",
       "tools/check.py": "# WORKAROUND(lefthook): python\n",
       Dockerfile: "# WORKAROUND(lefthook): docker\n",
+      "docker/Dockerfile.dev": "# WORKAROUND(lefthook): docker variant\n",
+      "docker/api.Dockerfile": "# WORKAROUND(lefthook): named Dockerfile\n",
+      "notes/Dockerfile-guide.md": "# WORKAROUND(lefthook): not a Dockerfile\n",
       ".npmrc": "# WORKAROUND(lefthook): npmrc\n",
     };
     for (const [file, text] of Object.entries(markers)) {
@@ -451,13 +460,15 @@ describe("buildMap markers in files that use # comments", () => {
     rmSync(root, { recursive: true, force: true });
   });
 
-  it("finds markers in shell, YAML, TOML, Python, Dockerfile, and .npmrc files", () => {
+  it("finds markers in shell, YAML, TOML, Python, Dockerfile, and .npmrc files, including Dockerfile variants", () => {
     const [lefthook] = buildMap({ root, packages: ["lefthook"] }).packages;
     assert.deepEqual(lefthook?.markers.map(({ file }) => file).toSorted(), [
       ".github/workflows/ci.yaml",
       ".npmrc",
       "Dockerfile",
       "config.toml",
+      "docker/Dockerfile.dev",
+      "docker/api.Dockerfile",
       "lefthook.yml",
       "scripts/setup.sh",
       "tools/check.py",

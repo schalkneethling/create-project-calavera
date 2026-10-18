@@ -3,10 +3,12 @@
 // in plugin-marketplace.test.mjs do not cover.
 //
 // Usage: node scripts/validate-plugins.mjs <Claude Code command...>
-import { spawnSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
 import { join } from "node:path";
 import { fileURLToPath } from "node:url";
+
+// execa runs the npx .cmd shim on Windows, as the CLI does for its commands.
+import { execa } from "execa";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 const [command, ...commandArgs] = process.argv.slice(2);
@@ -23,11 +25,11 @@ const plugins = (await readdir(join(root, "plugins"), { withFileTypes: true }))
   .sort();
 
 for (const target of [root, ...plugins]) {
-  const result = spawnSync(command, [...commandArgs, "plugin", "validate", "--strict", target], {
-    stdio: "inherit",
-  });
-  if (result.error) throw result.error;
-  if (result.status !== 0) {
-    throw new Error(`claude plugin validate --strict failed for ${target}.`);
+  try {
+    await execa(command, [...commandArgs, "plugin", "validate", "--strict", target], {
+      stdio: "inherit",
+    });
+  } catch (error) {
+    throw new Error(`claude plugin validate --strict failed for ${target}.`, { cause: error });
   }
 }

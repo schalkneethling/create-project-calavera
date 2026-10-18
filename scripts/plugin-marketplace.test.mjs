@@ -48,7 +48,10 @@ function frontmatterLines(markdown, path) {
 function blockUnder(lines, key) {
   const start = lines.indexOf(`${key}:`);
   if (start < 0) return [];
-  const end = lines.findIndex((line, index) => index > start && !line.startsWith(" "));
+  // A blank line does not end the block; the next unindented line does.
+  const end = lines.findIndex(
+    (line, index) => index > start && line.trim() !== "" && !line.startsWith(" "),
+  );
   return lines.slice(start + 1, end < 0 ? undefined : end);
 }
 
