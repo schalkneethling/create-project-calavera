@@ -60,3 +60,29 @@ jobs:
         run: pnpm --filter create-project-calavera smoke:node-floor
         env:
           CALAVERA_EXPECTED_NODE: "24.11.0"
+  plugins:
+    name: Plugins
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+        with:
+          persist-credentials: false
+      - name: Setup pnpm
+        uses: pnpm/setup@fbda4c85fc2e1e08721cd8763afea8f48d60f024 # v3.0.0
+        with:
+          runtime: node@24
+          install: false
+          cache: false
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      # Claude Code checks the marketplace and each plugin. The script allows the
+      # install script of the pinned Claude Code package only, because .npmrc
+      # turns install scripts off and Claude Code needs one to set up its binary.
+      - name: Validate plugins with Claude Code
+        run: pnpm plugins:validate
+      # The marketplace changes what the skills CLI finds in this repository, so
+      # check that it still lists the bundled skills and none of the plugin skills.
+      - name: Check skills CLI discovery
+        run: pnpm skills:discovery:check
