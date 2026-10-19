@@ -1,0 +1,157 @@
+{
+  "author": {
+    "is_bot": true,
+    "login": "app/dependabot"
+  },
+  "baseRefName": "main",
+  "body": "Bumps [axe-core](https://www.npmjs.com/package/axe-core) from 4.13.0 to 4.14.0.\n\nThis pull request is synthetic eval data for issue #713. Its release notes are not part of the recording.",
+  "commits": [
+    {
+      "authoredDate": "2026-10-19T09:59:50Z",
+      "authors": [
+        {
+          "email": "49699333+dependabot[bot]@users.noreply.github.com",
+          "id": "MDM6Qm90NDk2OTkzMzM=",
+          "login": "dependabot[bot]",
+          "name": "dependabot[bot]"
+        }
+      ],
+      "committedDate": "2026-10-19T09:59:50Z",
+      "messageBody": "",
+      "messageHeadline": "build(deps-dev): bump axe-core from 4.13.0 to 4.14.0",
+      "oid": "1458000000000000000000000000000000000000"
+    }
+  ],
+  "files": [
+    {
+      "path": "package.json",
+      "additions": 1,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "additions": 6,
+      "deletions": 6,
+      "changeType": "MODIFIED"
+    }
+  ],
+  "headRefName": "dependabot/npm_and_yarn/axe-core-4.14.0",
+  "labels": [
+    {
+      "id": "MDU6TGFiZWwyMTUwMDU2MTMz",
+      "name": "dependencies",
+      "description": "Pull requests that update a dependency file",
+      "color": "0366d6"
+    },
+    {
+      "id": "LA_kwDOCUwOE88AAAAB7R7P6g",
+      "name": "javascript",
+      "description": "Pull requests that update javascript code",
+      "color": "168700"
+    }
+  ],
+  "mergeStateStatus": "CLEAN",
+  "mergeable": "MERGEABLE",
+  "number": 1458,
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-19T10:00:29Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234300489/job/118000000017",
+      "name": "test",
+      "startedAt": "2026-10-19T10:00:00Z",
+      "status": "COMPLETED",
+      "workflowName": "Playwright Tests"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-19T10:00:28Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234300510/job/118000000095",
+      "name": "Unit tests and typecheck",
+      "startedAt": "2026-10-19T10:00:01Z",
+      "status": "COMPLETED",
+      "workflowName": "Quality Checks"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-19T10:00:31Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234300510/job/118000000070",
+      "name": "Production build",
+      "startedAt": "2026-10-19T10:00:00Z",
+      "status": "COMPLETED",
+      "workflowName": "Quality Checks"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-19T10:00:08Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b892",
+      "name": "Header rules",
+      "startedAt": "2026-10-19T09:59:56Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-19T10:00:08Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b892",
+      "name": "Pages changed",
+      "startedAt": "2026-10-19T09:59:56Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-19T10:00:09Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b892",
+      "name": "Redirect rules",
+      "startedAt": "2026-10-19T09:59:56Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "deploy/netlify",
+      "startedAt": "2026-10-19T10:00:07Z",
+      "state": "SUCCESS",
+      "targetUrl": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b892",
+      "description": "Deploy Preview ready!"
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-10-19T10:25:28Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-19T09:59:59Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://socket.dev/dashboard/org/schalkneethling/sbom/eff9d0ac-502c-4386-8b48-07b0c4c7f847",
+      "name": "Socket Security: Project Report",
+      "startedAt": "2026-10-19T09:59:56Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-19T10:00:11Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://socket.dev",
+      "name": "Socket Security: Pull Request Alerts",
+      "startedAt": "2026-10-19T10:00:00Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    }
+  ],
+  "title": "build(deps-dev): bump axe-core from 4.13.0 to 4.14.0",
+  "url": "https://github.com/schalkneethling/schalkneethling.com/pull/1458"
+}

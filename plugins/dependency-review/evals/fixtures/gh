@@ -42,12 +42,30 @@ require_repo() {
   [ "$repo" = "$expected_repo" ] || fail "HTTP 404: Not Found (https://api.github.com/repos/$repo)"
 }
 
+# Sets pr_data to the folder that holds a pull request's recording: data/ for
+# 1457, and data/pr-<number>/ for each further pull request a case adds.
 require_pull_request() {
+  local number=""
   case "${1:-}" in
-    1457) require_repo ;;
-    */"$expected_repo"/pull/1457 | */"$expected_repo"/pull/1457/*) ;;
-    *) fail "GraphQL: Could not resolve to a PullRequest with the number of ${1:-}. (repository.pullRequest)" ;;
+    */"$expected_repo"/pull/*) number="${1#*/"$expected_repo"/pull/}"; number="${number%%/*}" ;;
+    "" | *[!0-9]*) ;;
+    *) require_repo; number="$1" ;;
   esac
+  if [ "$number" = "1457" ]; then
+    pr_data="$data"
+  elif [ -n "$number" ] && [ -d "$data/pr-$number" ]; then
+    pr_data="$data/pr-$number"
+  else
+    fail "GraphQL: Could not resolve to a PullRequest with the number of ${number:-${1:-}}. (repository.pullRequest)"
+  fi
+}
+
+# Prints the folder whose recording holds run-<id>.json, across all pull requests.
+run_folder() {
+  local folder
+  for folder in "$data" "$data"/pr-*; do
+    [ -f "$folder/run-$1.json" ] && { echo "$folder"; return; }
+  done
 }
 
 # Prints a recorded JSON file, keeping only the --json fields, then applies --jq.
@@ -78,27 +96,32 @@ case "$command" in
   "pr view")
     require_pull_request "${positional[2]:-}"
     if [ -n "$json" ]; then
-      emit_json "$data/pr-view.json"
+      emit_json "$pr_data/pr-view.json"
     else
-      jq -r '"\(.title) #\(.number)\n\(.state) • \(.author.login) wants to merge into \(.baseRefName) from \(.headRefName)\n\n\(.body)"' "$data/pr-view.json"
+      jq -r '"\(.title) #\(.number)\n\(.state) • \(.author.login) wants to merge into \(.baseRefName) from \(.headRefName)\n\n\(.body)"' "$pr_data/pr-view.json"
     fi
     ;;
   "pr diff")
     require_pull_request "${positional[2]:-}"
-    cat "$data/pr.diff"
+    cat "$pr_data/pr.diff"
     ;;
   "pr checks")
     require_pull_request "${positional[2]:-}"
+    # Like gh (pkg/cmd/pr/checks/checks.go in cli/cli), no checks is an error,
+    # with --json too, because gh stops before it writes any output.
+    if [ "$(jq length "$pr_data/pr-checks.json")" = "0" ]; then
+      fail "no checks reported on the '$(jq -r .headRefName "$pr_data/pr-view.json")' branch"
+    fi
     if [ -n "$json" ]; then
       # With --json, gh exits 0 whatever the checks' states.
-      emit_json "$data/pr-checks.json"
+      emit_json "$pr_data/pr-checks.json"
       exit 0
     fi
-    cat "$data/pr-checks.txt"
+    cat "$pr_data/pr-checks.txt"
     # Like gh: exit 1 when a check failed, 8 when one is pending, else 0.
-    if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' "$data/pr-checks.json" > /dev/null; then
+    if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' "$pr_data/pr-checks.json" > /dev/null; then
       exit 1
-    elif jq -e 'any(.[]; .bucket == "pending")' "$data/pr-checks.json" > /dev/null; then
+    elif jq -e 'any(.[]; .bucket == "pending")' "$pr_data/pr-checks.json" > /dev/null; then
       exit 8
     fi
     ;;
@@ -112,7 +135,8 @@ case "$command" in
     if [ -n "$job" ]; then
       # Like gh, a job ID decides the run, whatever run ID was given.
       run=""
-      for file in "$data"/run-*.json; do
+      for file in "$data"/run-*.json "$data"/pr-*/run-*.json; do
+        [ -f "$file" ] || continue
         if jq -e --arg job "$job" 'any(.jobs[]; (.databaseId | tostring) == $job)' "$file" > /dev/null; then
           run="$(basename "$file" .json)"
           run="${run#run-}"
@@ -120,34 +144,35 @@ case "$command" in
       done
       [ -n "$run" ] || fail "failed to get job: HTTP 404: Not Found (https://api.github.com/repos/$repo/actions/jobs/$job)"
     fi
-    [ -f "$data/run-$run.json" ] || fail "failed to get run: HTTP 404: Not Found (https://api.github.com/repos/$repo/actions/runs/$run)"
+    run_data="$(run_folder "$run")"
+    [ -n "$run_data" ] || fail "failed to get run: HTTP 404: Not Found (https://api.github.com/repos/$repo/actions/runs/$run)"
     if [ -n "$log" ]; then
       # Errors as gh prints them (pkg/cmd/run/view/view.go in cli/cli): no log
       # while a job or run is in progress, and "log not found" for a log GitHub
       # no longer has, such as one past its retention period.
       if [ -n "$job" ]; then
-        job_status="$(jq -r --arg job "$job" '.jobs[] | select((.databaseId | tostring) == $job) | .status' "$data/run-$run.json")"
+        job_status="$(jq -r --arg job "$job" '.jobs[] | select((.databaseId | tostring) == $job) | .status' "$run_data/run-$run.json")"
         [ "$job_status" = "completed" ] || fail "job $job is still in progress; logs will be available when it is complete"
       fi
-      [ "$(jq -r .status "$data/run-$run.json")" = "completed" ] \
+      [ "$(jq -r .status "$run_data/run-$run.json")" = "completed" ] \
         || fail "run $run is still in progress; logs will be available when it is complete"
       # The recording holds the failed steps only, which is what --log-failed
       # returns. A run without failed steps has no recording and prints nothing.
       # A failed run without a recording stands for a log GitHub no longer has.
-      if [ ! -f "$data/run-$run-log-failed.txt" ]; then
-        [ "$(jq -r .conclusion "$data/run-$run.json")" = "failure" ] && fail "failed to get run log: log not found"
+      if [ ! -f "$run_data/run-$run-log-failed.txt" ]; then
+        [ "$(jq -r .conclusion "$run_data/run-$run.json")" = "failure" ] && fail "failed to get run log: log not found"
         exit 0
       fi
       if [ -n "$job" ]; then
-        name="$(jq -r --arg job "$job" '.jobs[] | select((.databaseId | tostring) == $job) | .name' "$data/run-$run.json")"
-        awk -F '\t' -v name="$name" '$1 == name' "$data/run-$run-log-failed.txt"
+        name="$(jq -r --arg job "$job" '.jobs[] | select((.databaseId | tostring) == $job) | .name' "$run_data/run-$run.json")"
+        awk -F '\t' -v name="$name" '$1 == name' "$run_data/run-$run-log-failed.txt"
       else
-        cat "$data/run-$run-log-failed.txt"
+        cat "$run_data/run-$run-log-failed.txt"
       fi
     elif [ -n "$json" ]; then
-      emit_json "$data/run-$run.json"
+      emit_json "$run_data/run-$run.json"
     else
-      cat "$data/run-$run.txt"
+      cat "$run_data/run-$run.txt"
     fi
     ;;
   "api "*)

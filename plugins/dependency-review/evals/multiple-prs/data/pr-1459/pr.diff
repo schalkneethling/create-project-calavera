@@ -1,0 +1,20 @@
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -1,1 +1,1 @@
+-    "@types/node": "^26.2.0",
++    "@types/node": "^26.6.5",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1,1 +1,1 @@
+      '@types/node':
+-        specifier: ^26.2.0
+-        version: 26.2.0
++        specifier: ^26.6.5
++        version: 26.6.5
+@@ -2,2 +2,2 @@
+-  '@types/node@26.2.0':
+-    resolution: {integrity: sha512-RECORDING-OMITTED-OLD}
++  '@types/node@26.6.5':
++    resolution: {integrity: sha512-RECORDING-OMITTED-NEW}

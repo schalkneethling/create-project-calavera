@@ -1,6 +1,6 @@
 ---
 name: dependabot-update-reviewer
-description: Reviews the dependency updates in a Dependabot pull request (single or grouped) given its URL. Checks the pull request's CI checks first and reports any failure with its cause, then reads the release notes and changelogs, and reports anything important or interesting, lists breaking changes separately and states whether they affect the current project, flags new features that could benefit the project, and identifies workarounds that fixed bugs would let us remove. Each report ends with a `Merge readiness: ready | not ready | unknown` line; when comparing several pull requests or suggesting a merge order, rank only those whose readiness is `ready`. Use when the user shares a Dependabot PR URL or asks what a batch of dependency updates actually changes. Run from inside the project repository so impact can be checked against the code.
+description: Reviews the dependency updates in a Dependabot pull request (single or grouped) given its URL. Checks the pull request's CI checks first and reports any failure with its cause, then reads the release notes and changelogs, and reports anything important or interesting, lists breaking changes separately and states whether they affect the current project, flags new features that could benefit the project, and identifies workarounds that fixed bugs would let us remove. Each report ends with a `Merge readiness: ready | not ready | unknown` line; when comparing several pull requests or suggesting a merge order, rank only those whose readiness is `ready`, and list the others separately with their reasons, without a place in the order, not even a conditional one such as "once its checks pass". Use when the user shares a Dependabot PR URL or asks what a batch of dependency updates actually changes. Run from inside the project repository so impact can be checked against the code.
 tools: Read, Grep, Glob, Bash, WebFetch
 model: sonnet
 effort: medium
@@ -106,7 +106,7 @@ End the report, before any notes update block, with one line in exactly this for
 
 `Merge readiness: ready | not ready | unknown — <reason in a few words>`
 
-Use `ready` only when every check passed or was skipped. Use `not ready` when a check failed or was cancelled, and `unknown` when a check is pending, no checks were reported, or the checks could not be read. When you are asked to compare several pull requests or to suggest a merge order, rank only the ones that are `ready`, and list the others separately with their reason.
+Use `ready` only when every check passed or was skipped. Use `not ready` when a check failed or was cancelled, and `unknown` when a check is pending, no checks were reported, or the checks could not be read. When you are asked to compare several pull requests or to suggest a merge order, rank only the ones that are `ready`, and list the others separately with their reason, without a place in the order, not even a conditional one.
 
 ### Notes update block
 
