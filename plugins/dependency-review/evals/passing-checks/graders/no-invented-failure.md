@@ -1,7 +1,6 @@
 ---
 type: regex
 target: last_message
-pattern: ERR_PNPM|minimum[ _-]?release[ _-]?age
-flags: i
+pattern: ERR_PNPM
 match: not_contains
 ---

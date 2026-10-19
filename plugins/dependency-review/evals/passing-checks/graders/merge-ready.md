@@ -1,5 +1,6 @@
 ---
 type: regex
 target: last_message
-pattern: Merge readiness:\s*`?ready\b
+pattern: Merge readiness:\W*ready\b
+flags: i
 ---

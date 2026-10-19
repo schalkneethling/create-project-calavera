@@ -7,6 +7,20 @@
 # the stand-in.
 set -euo pipefail
 
+# claude plugin eval runs this in a new, empty workspace. Refuse to run in a
+# directory that has anything in it, so running it by hand cannot overwrite a
+# real project's files. (The workspace itself sits inside a git repository that
+# the eval creates for the run's home folder, so that cannot be the test.)
+if [ -n "$(ls -A)" ]; then
+  echo "scaffold.sh: run this only through claude plugin eval, in an empty directory" >&2
+  exit 1
+fi
+
+# The script runs as the user, outside the eval sandbox. Ignore the user's git
+# configuration, so the throwaway commit below is never signed with their key,
+# and no hooks path or template from it applies.
+export GIT_CONFIG_GLOBAL=/dev/null GIT_CONFIG_NOSYSTEM=1
+
 fixtures="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 overrides="${1:-}"
 
@@ -33,4 +47,5 @@ fi
 
 git init --quiet
 git add --all
-git -c user.name=eval -c user.email=eval@example.invalid commit --quiet -m "The project on main"
+git -c user.name=eval -c user.email=eval@example.invalid -c commit.gpgsign=false \
+  commit --quiet -m "The project on main"

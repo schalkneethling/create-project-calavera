@@ -1,0 +1,127 @@
+{
+  "conclusion": "",
+  "databaseId": 39234213489,
+  "headBranch": "dependabot/npm_and_yarn/devalue-5.9.3",
+  "headSha": "c3e07eff69b8c5dfa1767a4468320d4ee7166e67",
+  "jobs": [
+    {
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "databaseId": 117999264017,
+      "name": "test",
+      "startedAt": "2026-10-19T10:00:00Z",
+      "status": "in_progress",
+      "steps": [
+        {
+          "completedAt": "2026-10-19T10:00:03Z",
+          "conclusion": "success",
+          "name": "Set up job",
+          "number": 1,
+          "startedAt": "2026-10-19T10:00:01Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:08Z",
+          "conclusion": "success",
+          "name": "Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          "number": 2,
+          "startedAt": "2026-10-19T10:00:03Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:13Z",
+          "conclusion": "success",
+          "name": "Set up pnpm",
+          "number": 3,
+          "startedAt": "2026-10-19T10:00:08Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:19Z",
+          "conclusion": "success",
+          "name": "Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+          "number": 4,
+          "startedAt": "2026-10-19T10:00:13Z",
+          "status": "completed"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:26Z",
+          "conclusion": "",
+          "name": "Install dependencies",
+          "number": 5,
+          "startedAt": "2026-10-19T10:00:19Z",
+          "status": "in_progress"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:26Z",
+          "conclusion": "",
+          "name": "Cache Playwright browsers",
+          "number": 6,
+          "startedAt": "2026-10-19T10:00:26Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:26Z",
+          "conclusion": "",
+          "name": "Install Playwright Browsers",
+          "number": 7,
+          "startedAt": "2026-10-19T10:00:26Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:26Z",
+          "conclusion": "",
+          "name": "Run Playwright tests",
+          "number": 8,
+          "startedAt": "2026-10-19T10:00:26Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:26Z",
+          "conclusion": "",
+          "name": "Run actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a",
+          "number": 9,
+          "startedAt": "2026-10-19T10:00:26Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:26Z",
+          "conclusion": "",
+          "name": "Post Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020",
+          "number": 16,
+          "startedAt": "2026-10-19T10:00:26Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:26Z",
+          "conclusion": "",
+          "name": "Post Set up pnpm",
+          "number": 17,
+          "startedAt": "2026-10-19T10:00:26Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:27Z",
+          "conclusion": "",
+          "name": "Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1",
+          "number": 18,
+          "startedAt": "2026-10-19T10:00:26Z",
+          "status": "pending"
+        },
+        {
+          "completedAt": "2026-10-19T10:00:27Z",
+          "conclusion": "",
+          "name": "Complete job",
+          "number": 19,
+          "startedAt": "2026-10-19T10:00:27Z",
+          "status": "pending"
+        }
+      ],
+      "url": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234213489/job/117999264017"
+    }
+  ],
+  "name": "Playwright Tests",
+  "status": "in_progress",
+  "url": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234213489",
+  "workflowName": "Playwright Tests"
+}

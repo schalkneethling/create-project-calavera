@@ -2,13 +2,19 @@
 # A stand-in for the GitHub CLI in these eval cases. Eval runs have no network
 # and no GitHub login, so this answers the read-only commands the reviewer uses
 # from a recording of schalkneethling/schalkneethling.com pull request 1457,
-# taken on 2026-10-19 (issue #713). Anything else fails as gh would.
+# taken on 2026-10-19 (issue #713). It fails where gh would fail, and on any
+# command or flag that was not recorded, so the eval accepts no more than gh.
 set -u
 
 data="$(cd "$(dirname "$0")" && pwd)/data"
-repo="schalkneethling/schalkneethling.com"
-json="" jq_expr="" job="" log=""
+expected_repo="schalkneethling/schalkneethling.com"
+json="" jq_expr="" job="" log="" repo="" method="GET"
 positional=()
+
+fail() {
+  echo "$1" >&2
+  exit 1
+}
 
 while [ $# -gt 0 ]; do
   case "$1" in
@@ -19,41 +25,51 @@ while [ $# -gt 0 ]; do
     --job) job="${2:-}"; shift 2 ;;
     --job=*) job="${1#--job=}"; shift ;;
     --log-failed) log="failed"; shift ;;
-    --log) log="all"; shift ;;
-    -R | --repo | -H | --header | -X | --method | -L | --limit | -b | --branch | -w | --workflow)
-      shift 2 ;;
-    --web | --watch)
-      echo "gh (eval recording): $1 is not available here" >&2
-      exit 1 ;;
-    -*) shift ;;
+    -R | --repo) repo="${2:-}"; shift 2 ;;
+    --repo=*) repo="${1#--repo=}"; shift ;;
+    -X | --method) method="${2:-}"; shift 2 ;;
+    -H | --header) shift 2 ;;
+    --paginate) shift ;;
+    --log) fail "gh (eval recording): only the failed steps were recorded; use --log-failed" ;;
+    -*) fail "gh (eval recording): the flag $1 was not recorded for this eval" ;;
     *) positional+=("$1"); shift ;;
   esac
 done
 
-fail() {
-  echo "$1" >&2
-  exit 1
+# The workspace has no git remote, so gh cannot infer the repository.
+require_repo() {
+  [ -n "$repo" ] || fail "could not determine the repository: this directory has no git remote; pass -R <owner>/<repo>"
+  [ "$repo" = "$expected_repo" ] || fail "HTTP 404: Not Found (https://api.github.com/repos/$repo)"
+}
+
+require_pull_request() {
+  case "${1:-}" in
+    1457) require_repo ;;
+    */"$expected_repo"/pull/1457 | */"$expected_repo"/pull/1457/*) ;;
+    *) fail "GraphQL: Could not resolve to a PullRequest with the number of ${1:-}. (repository.pullRequest)" ;;
+  esac
 }
 
 # Prints a recorded JSON file, keeping only the --json fields, then applies --jq.
+# Like gh, an unknown field is an error that lists the available ones.
 emit_json() {
   local file="$1" filter="."
   if [ -n "$json" ]; then
-    local fields="{${json}}"
-    filter="if type == \"array\" then map(${fields}) else ${fields} end"
+    local available field
+    available="$(jq -r 'if type == "array" then (map(keys) | add // []) else keys end | unique | .[]' "$file")"
+    for field in ${json//,/ }; do
+      if ! grep -qx "$field" <<< "$available"; then
+        printf 'Unknown JSON field: "%s"\nAvailable fields:\n%s\n' "$field" "$(sed 's/^/  /' <<< "$available")" >&2
+        exit 1
+      fi
+    done
+    filter="if type == \"array\" then map({${json}}) else {${json}} end"
   fi
   if [ -n "$jq_expr" ]; then
     jq "$filter" "$file" | jq -r "$jq_expr"
   else
     jq "$filter" "$file"
   fi
-}
-
-require_pull_request() {
-  case "${1:-}" in
-    1457 | */"$repo"/pull/1457 | */"$repo"/pull/1457/*) ;;
-    *) fail "GraphQL: Could not resolve to a PullRequest with the number of ${1:-}. (repository.pullRequest)" ;;
-  esac
 }
 
 command="${positional[0]:-} ${positional[1]:-}"
@@ -74,39 +90,44 @@ case "$command" in
   "pr checks")
     require_pull_request "${positional[2]:-}"
     if [ -n "$json" ]; then
+      # With --json, gh exits 0 whatever the checks' states.
       emit_json "$data/pr-checks.json"
-    else
-      cat "$data/pr-checks.txt"
+      exit 0
     fi
+    cat "$data/pr-checks.txt"
     # Like gh: exit 1 when a check failed, 8 when one is pending, else 0.
-    if jq -e 'any(.[]; .bucket == "fail")' "$data/pr-checks.json" > /dev/null; then
+    if jq -e 'any(.[]; .bucket == "fail" or .bucket == "cancel")' "$data/pr-checks.json" > /dev/null; then
       exit 1
     elif jq -e 'any(.[]; .bucket == "pending")' "$data/pr-checks.json" > /dev/null; then
       exit 8
     fi
     ;;
   "run list")
+    require_repo
     emit_json "$data/runs.json"
     ;;
   "run view")
+    require_repo
     run="${positional[2]:-}"
-    if [ -z "$run" ] && [ -n "$job" ]; then
+    if [ -n "$job" ]; then
+      # Like gh, a job ID decides the run, whatever run ID was given.
+      run=""
       for file in "$data"/run-*.json; do
         if jq -e --arg job "$job" 'any(.jobs[]; (.databaseId | tostring) == $job)' "$file" > /dev/null; then
           run="$(basename "$file" .json)"
           run="${run#run-}"
         fi
       done
+      [ -n "$run" ] || fail "failed to get job: HTTP 404: Not Found (https://api.github.com/repos/$repo/actions/jobs/$job)"
     fi
-    [ -f "$data/run-$run.json" ] || fail "could not find any workflow run with ID ${run:-$job}"
+    [ -f "$data/run-$run.json" ] || fail "failed to get run: HTTP 404: Not Found (https://api.github.com/repos/$repo/actions/runs/$run)"
     if [ -n "$log" ]; then
       # The recording holds the failed steps only, which is what --log-failed
       # returns. A run without failed steps has no recording and prints nothing.
       [ -f "$data/run-$run-log-failed.txt" ] || exit 0
       if [ -n "$job" ]; then
         name="$(jq -r --arg job "$job" '.jobs[] | select((.databaseId | tostring) == $job) | .name' "$data/run-$run.json")"
-        [ -n "$name" ] || fail "could not find job with ID $job"
-        grep -F "${name}"$'\t' "$data/run-$run-log-failed.txt"
+        awk -F '\t' -v name="$name" '$1 == name' "$data/run-$run-log-failed.txt"
       else
         cat "$data/run-$run-log-failed.txt"
       fi
@@ -117,19 +138,21 @@ case "$command" in
     fi
     ;;
   "api "*)
+    [ "$method" = "GET" ] || fail "gh (eval recording): only GET requests were recorded"
     path="${positional[1]#/}"
     path="${path%%\?*}"
     case "$path" in
       repos/sveltejs/devalue/releases)
-        emit_json "$data/devalue-releases.json" ;;
+        emit_json "$data/devalue-releases.json"
+        ;;
       repos/sveltejs/devalue/releases/tags/*)
         tag="${path##*/}"
-        jq -e --arg tag "$tag" '.[] | select(.tag_name == $tag)' "$data/devalue-releases.json" > /dev/null \
-          || fail "gh: Not Found (HTTP 404)"
+        release="$(jq -c --arg tag "$tag" '.[] | select(.tag_name == $tag)' "$data/devalue-releases.json")"
+        [ -n "$release" ] || fail "gh: Not Found (HTTP 404)"
         if [ -n "$jq_expr" ]; then
-          jq --arg tag "$tag" '.[] | select(.tag_name == $tag)' "$data/devalue-releases.json" | jq -r "$jq_expr"
+          jq -r "$jq_expr" <<< "$release"
         else
-          jq --arg tag "$tag" '.[] | select(.tag_name == $tag)' "$data/devalue-releases.json"
+          jq . <<< "$release"
         fi
         ;;
       *) fail "gh: Not Found (HTTP 404)" ;;
