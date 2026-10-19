@@ -1,0 +1,501 @@
+Production build	UNKNOWN STEP	﻿2026-10-19T10:00:01.9664217Z Current runner version: '2.337.0'
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9691365Z ##[group]Runner Image Provisioner
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9692225Z Hosted Compute Agent
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9692925Z Version: 20261012.601
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9693567Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9694326Z Build Date: 2026-10-12T17:48:21Z
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9695073Z Worker ID: {1fffb4fc-383e-41b3-9d33-3aa21f9e54f0}
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9695818Z Region: westus2
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9696421Z Cloud: Azure
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9696989Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9698503Z ##[group]Operating System
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9699496Z Ubuntu
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9700061Z 24.04.5
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9700635Z LTS
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9701151Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9701780Z ##[group]Runner Image
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9702475Z Image: ubuntu-24.04
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9703070Z Version: 20261012.334.1
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9704372Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9705902Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9706920Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9708062Z ##[group]GITHUB_TOKEN Permissions
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9710312Z Contents: read
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9710966Z Metadata: read
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9711630Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9713860Z Secret source: Dependabot
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9714872Z Cache mode: write
+Production build	UNKNOWN STEP	2026-10-19T10:00:01.9715633Z Prepare workflow directory
+Production build	UNKNOWN STEP	2026-10-19T10:00:02.0058119Z Prepare all required actions
+Production build	UNKNOWN STEP	2026-10-19T10:00:02.0109619Z Getting action download info
+Production build	UNKNOWN STEP	2026-10-19T10:00:02.3862456Z Download action repository 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+Production build	UNKNOWN STEP	2026-10-19T10:00:02.4996523Z Download action repository 'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86' (SHA:0977fd99725f1db4007ccb2928dbb4e90d06cc86)
+Production build	UNKNOWN STEP	2026-10-19T10:00:02.7142618Z Download action repository 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020' (SHA:820762786026740c76f36085b0efc47a31fe5020)
+Production build	UNKNOWN STEP	2026-10-19T10:00:02.7961040Z Download action repository 'actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9' (SHA:55cc8345863c7cc4c66a329aec7e433d2d1c52a9)
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.0137583Z Complete job name: Production build
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1065143Z ##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1066228Z with:
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1066676Z   persist-credentials: false
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1067267Z   repository: schalkneethling/schalkneethling.com
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1071222Z   token: ***
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1071665Z   ssh-strict: true
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1072117Z   ssh-user: git
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1072541Z   clean: true
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1072983Z   sparse-checkout-cone-mode: true
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1073506Z   fetch-depth: 1
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1073956Z   fetch-tags: false
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1074404Z   show-progress: true
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1074867Z   lfs: false
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1075287Z   submodules: false
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1075754Z   set-safe-directory: true
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1076262Z   allow-unsafe-pr-checkout: false
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.1077048Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2100203Z Syncing repository: schalkneethling/schalkneethling.com
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2102360Z ##[group]Getting Git version info
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2103266Z Working directory is '/home/runner/work/schalkneethling.com/schalkneethling.com'
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2104459Z [command]/usr/bin/git version
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2215577Z git version 2.55.0
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2238230Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2249497Z Temporarily overriding HOME='/home/runner/work/_temp/8d6405bc-f51d-498c-86d1-75a24d95f3be' before making global git config changes
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2251947Z Adding repository directory to the temporary git global config as a safe directory
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2256043Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/schalkneethling.com/schalkneethling.com
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2306837Z Deleting the contents of '/home/runner/work/schalkneethling.com/schalkneethling.com'
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2310864Z ##[group]Determining repository object format
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2312955Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2314586Z ##[group]Initializing the repository
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2318100Z [command]/usr/bin/git init /home/runner/work/schalkneethling.com/schalkneethling.com
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2446367Z hint: Using 'master' as the name for the initial branch. This default branch name
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2447538Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2448973Z hint: to use in all of your new repositories, which will suppress this warning,
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2450094Z hint: call:
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2450823Z hint:
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2451742Z hint: 	git config --global init.defaultBranch <name>
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2452768Z hint:
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2453798Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2454935Z hint: 'development'. The just-created branch can be renamed via this command:
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2455665Z hint:
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2456090Z hint: 	git branch -m <name>
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2456562Z hint:
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2457209Z hint: Disable this message with "git config set advice.defaultBranchName false"
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2458659Z Initialized empty Git repository in /home/runner/work/schalkneethling.com/schalkneethling.com/.git/
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2468653Z [command]/usr/bin/git remote add origin https://github.com/schalkneethling/schalkneethling.com
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2529443Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2530853Z ##[group]Disabling automatic garbage collection
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2532439Z [command]/usr/bin/git config --local gc.auto 0
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2566281Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2567543Z ##[group]Setting up auth
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2568486Z Removing SSH command configuration
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2572210Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2607383Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.2988448Z Removing HTTP extra header
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3065516Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3070761Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3257457Z Removing includeIf entries pointing to credentials config files
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3263138Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3297965Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3525872Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-7b96bd3f-0c6d-4124-9fc1-96ac740ebc8c.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3565977Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git.path /home/runner/work/_temp/git-credentials-7b96bd3f-0c6d-4124-9fc1-96ac740ebc8c.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3599295Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-7b96bd3f-0c6d-4124-9fc1-96ac740ebc8c.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3636880Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-7b96bd3f-0c6d-4124-9fc1-96ac740ebc8c.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3674092Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-7b96bd3f-0c6d-4124-9fc1-96ac740ebc8c.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3707148Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3708582Z ##[group]Fetching the repository
+Production build	UNKNOWN STEP	2026-10-19T10:00:03.3715178Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +178bbf03503dbc39e7059a67ebb9484a082e8990:refs/remotes/pull/1457/merge
+Production build	UNKNOWN STEP	2026-10-19T10:00:08.9698092Z From https://github.com/schalkneethling/schalkneethling.com
+Production build	UNKNOWN STEP	2026-10-19T10:00:08.9699130Z  * [new ref]         178bbf03503dbc39e7059a67ebb9484a082e8990 -> pull/1457/merge
+Production build	UNKNOWN STEP	2026-10-19T10:00:08.9710140Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:08.9711073Z ##[group]Determining the checkout info
+Production build	UNKNOWN STEP	2026-10-19T10:00:08.9712099Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:08.9713812Z [command]/usr/bin/git sparse-checkout disable
+Production build	UNKNOWN STEP	2026-10-19T10:00:08.9768471Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+Production build	UNKNOWN STEP	2026-10-19T10:00:08.9805773Z ##[group]Checking out the ref
+Production build	UNKNOWN STEP	2026-10-19T10:00:08.9806431Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/1457/merge
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6302717Z Note: switching to 'refs/remotes/pull/1457/merge'.
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6303226Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6303581Z You are in 'detached HEAD' state. You can look around, make experimental
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6310301Z changes and commit them, and you can discard any commits you make in this
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6311181Z state without impacting any branches by switching back to a branch.
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6311717Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6312092Z If you want to create a new branch to retain commits you create, you may
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6312899Z do so (now or later) by using -c with the switch command. Example:
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6313359Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6313543Z   git switch -c <new-branch-name>
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6313857Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6314040Z Or undo this operation with:
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6314329Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6314474Z   git switch -
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6314745Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6315150Z Turn off this advice by setting config variable advice.detachedHead to false
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6315701Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6316310Z HEAD is now at 178bbf0 Merge c3e07eff69b8c5dfa1767a4468320d4ee7166e67 into 05a4097c73a99ac3d07cf4d28da6891b6b27d1b4
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6357427Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6417564Z [command]/usr/bin/git log -1 --format=%H
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6446965Z 178bbf03503dbc39e7059a67ebb9484a082e8990
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6456844Z ##[group]Removing auth
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6457157Z Removing SSH command configuration
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6461009Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6497784Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6720317Z Removing HTTP extra header
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6724911Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6761864Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6986707Z Removing includeIf entries pointing to credentials config files
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.6991604Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7022563Z includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git.path
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7023905Z includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git/worktrees/*.path
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7024968Z includeif.gitdir:/github/workspace/.git.path
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7025688Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7032085Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git.path
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7058238Z /home/runner/work/_temp/git-credentials-7b96bd3f-0c6d-4124-9fc1-96ac740ebc8c.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7068140Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-7b96bd3f\-0c6d\-4124\-9fc1\-96ac740ebc8c\.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7104255Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git/worktrees/*.path
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7130829Z /home/runner/work/_temp/git-credentials-7b96bd3f-0c6d-4124-9fc1-96ac740ebc8c.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7138102Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-7b96bd3f\-0c6d\-4124\-9fc1\-96ac740ebc8c\.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7173430Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7199382Z /github/runner_temp/git-credentials-7b96bd3f-0c6d-4124-9fc1-96ac740ebc8c.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7207393Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-7b96bd3f\-0c6d\-4124\-9fc1\-96ac740ebc8c\.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7251439Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7277981Z /github/runner_temp/git-credentials-7b96bd3f-0c6d-4124-9fc1-96ac740ebc8c.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7291049Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-7b96bd3f\-0c6d\-4124\-9fc1\-96ac740ebc8c\.config
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7327939Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7544937Z Removing credentials config '/home/runner/work/_temp/git-credentials-7b96bd3f-0c6d-4124-9fc1-96ac740ebc8c.config'
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7554009Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7782051Z ##[group]Run pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7782483Z with:
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7782690Z   dest: ~/setup-pnpm
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7782911Z   run_install: null
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7783119Z   cache: false
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7783351Z   cache_dependency_path: pnpm-lock.yaml
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7783660Z   package_json_file: package.json
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7783923Z   standalone: false
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.7784131Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:09.9287162Z ##[group]Running self-installer...
+Production build	UNKNOWN STEP	2026-10-19T10:00:11.8616508Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:11.8617085Z added 1 package, and audited 2 packages in 2s
+Production build	UNKNOWN STEP	2026-10-19T10:00:11.8617571Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:11.8617763Z 1 package is looking for funding
+Production build	UNKNOWN STEP	2026-10-19T10:00:11.8618238Z   run `npm fund` for details
+Production build	UNKNOWN STEP	2026-10-19T10:00:11.8625446Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:11.8625745Z found 0 vulnerabilities
+Production build	UNKNOWN STEP	2026-10-19T10:00:12.4800574Z Checking for updates...
+Production build	UNKNOWN STEP	2026-10-19T10:00:12.6631912Z Switching pnpm from v11.19.0 to v11.9.0...
+Production build	UNKNOWN STEP	2026-10-19T10:00:13.2231255Z .../v11/966-1a1539abff0-d97fd6728c4d3be2 | Progress: resolved 1, reused 0, downloaded 0, added 0
+Production build	UNKNOWN STEP	2026-10-19T10:00:13.2250270Z .../v11/966-1a1539abff0-d97fd6728c4d3be2 |   +1 +
+Production build	UNKNOWN STEP	2026-10-19T10:00:13.4190604Z .../v11/966-1a1539abff0-d97fd6728c4d3be2 | Progress: resolved 1, reused 0, downloaded 1, added 1, done
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0356067Z [WARN] Detected a pnpm v10 installation layout at PNPM_HOME. The pnpm shims at PNPM_HOME have been refreshed so the new version is active, but pnpm v11 expects bins in PNPM_HOME/bin. Run "pnpm setup" to migrate your PATH to the v11 layout.
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0390289Z Successfully updated pnpm to v11.9.0
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0753896Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0754231Z Installation Completed!
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0942945Z ##[group]Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0943496Z with:
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0943696Z   node-version: 24.16.0
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0943919Z   cache: pnpm
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0944119Z   check-latest: false
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0946608Z   token: ***
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0946828Z   package-manager-cache: true
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0947068Z env:
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0947305Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.0947608Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.2160671Z Attempting to download 24.16.0...
+Production build	UNKNOWN STEP	2026-10-19T10:00:14.7677109Z Acquiring 24.16.0 - x64 from https://github.com/actions/node-versions/releases/download/24.16.0-26265092718/node-24.16.0-linux-x64.tar.gz
+Production build	UNKNOWN STEP	2026-10-19T10:00:15.2020029Z Extracting ...
+Production build	UNKNOWN STEP	2026-10-19T10:00:15.2148321Z [command]/usr/bin/tar xz --strip 1 --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/e71fc699-340c-4415-a12a-da839ac0b03b -f /home/runner/work/_temp/5db139cf-59c8-4080-ad42-786fe42f6fd7
+Production build	UNKNOWN STEP	2026-10-19T10:00:16.4088974Z Adding to the cache ...
+Production build	UNKNOWN STEP	2026-10-19T10:00:19.9120465Z ##[group]Environment details
+Production build	UNKNOWN STEP	2026-10-19T10:00:20.1752230Z node: v24.16.0
+Production build	UNKNOWN STEP	2026-10-19T10:00:20.1752490Z npm: 11.13.0
+Production build	UNKNOWN STEP	2026-10-19T10:00:20.1752695Z yarn: 1.22.22
+Production build	UNKNOWN STEP	2026-10-19T10:00:20.1753137Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:20.1774647Z [command]/home/runner/setup-pnpm/node_modules/.bin/bin/pnpm store path --silent
+Production build	UNKNOWN STEP	2026-10-19T10:00:20.9142904Z /home/runner/setup-pnpm/node_modules/.bin/store/v11
+Production build	UNKNOWN STEP	2026-10-19T10:00:21.2083817Z pnpm cache is not found
+Production build	UNKNOWN STEP	2026-10-19T10:00:21.2296670Z ##[group]Run pnpm install --frozen-lockfile --ignore-scripts
+Production build	UNKNOWN STEP	2026-10-19T10:00:21.2297202Z ^[[36;1mpnpm install --frozen-lockfile --ignore-scripts^[[0m
+Production build	UNKNOWN STEP	2026-10-19T10:00:21.2582448Z shell: /usr/bin/bash -e {0}
+Production build	UNKNOWN STEP	2026-10-19T10:00:21.2582785Z env:
+Production build	UNKNOWN STEP	2026-10-19T10:00:21.2583115Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+Production build	UNKNOWN STEP	2026-10-19T10:00:21.2583526Z ##[endgroup]
+Production build	UNKNOWN STEP	2026-10-19T10:00:21.8652999Z ? Verifying lockfile against supply-chain policies (813 entries)...
+Production build	UNKNOWN STEP	2026-10-19T10:00:21.8736376Z Lockfile is up to date, resolution step is skipped
+Production build	UNKNOWN STEP	2026-10-19T10:00:21.9917696Z Progress: resolved 1, reused 0, downloaded 0, added 0
+Production build	UNKNOWN STEP	2026-10-19T10:00:22.1026208Z Packages: +673
+Production build	UNKNOWN STEP	2026-10-19T10:00:22.1027382Z ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Production build	UNKNOWN STEP	2026-10-19T10:00:22.9981003Z Progress: resolved 673, reused 0, downloaded 0, added 0
+Production build	UNKNOWN STEP	2026-10-19T10:00:24.0030362Z Progress: resolved 673, reused 0, downloaded 76, added 4
+Production build	UNKNOWN STEP	2026-10-19T10:00:25.0187947Z Progress: resolved 673, reused 0, downloaded 364, added 27
+Production build	UNKNOWN STEP	2026-10-19T10:00:25.3734216Z ✗ Lockfile failed supply-chain policy check (813 entries in 3.5s)
+Production build	UNKNOWN STEP	2026-10-19T10:00:26.0196440Z Progress: resolved 673, reused 0, downloaded 505, added 37
+Production build	UNKNOWN STEP	2026-10-19T10:00:27.0192916Z Progress: resolved 673, reused 0, downloaded 672, added 262
+Production build	UNKNOWN STEP	2026-10-19T10:00:27.5232421Z Progress: resolved 673, reused 0, downloaded 672, added 673, done
+Production build	UNKNOWN STEP	2026-10-19T10:00:27.5491151Z [ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:
+Production build	UNKNOWN STEP	2026-10-19T10:00:27.5492581Z   postcss@8.5.31 was published at 2026-10-18T19:36:28.000Z, within the minimumReleaseAge cutoff (2026-10-18T10:00:21.777Z)
+Production build	UNKNOWN STEP	2026-10-19T10:00:27.5493358Z 
+Production build	UNKNOWN STEP	2026-10-19T10:00:27.5497342Z The lockfile contains entries that the active policies reject. This can mean the lockfile is stale, or that someone committed a lockfile that bypassed the policy locally — inspect recent changes to pnpm-lock.yaml before trusting it. If the changes look expected, run "pnpm clean --lockfile" and then "pnpm install" to rebuild from a fresh resolution. Alternatively, relax the policy that flagged them.
+Production build	UNKNOWN STEP	2026-10-19T10:00:27.8207809Z ##[error]Process completed with exit code 1.
+Production build	UNKNOWN STEP	2026-10-19T10:00:27.8347081Z Post job cleanup.
+Production build	UNKNOWN STEP	2026-10-19T10:00:27.9778289Z Pruning is unnecessary.
+Production build	UNKNOWN STEP	2026-10-19T10:00:27.9932426Z Post job cleanup.
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.0824573Z [command]/usr/bin/git version
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.0870179Z git version 2.55.0
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.0911768Z Temporarily overriding HOME='/home/runner/work/_temp/4af2e04c-614c-488a-89f6-d627bcdaea15' before making global git config changes
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.0913166Z Adding repository directory to the temporary git global config as a safe directory
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.0917656Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/schalkneethling.com/schalkneethling.com
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.0954825Z Removing SSH command configuration
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.0963244Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.0997800Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.1249229Z Removing HTTP extra header
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.1256921Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.1299723Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.1571461Z Removing includeIf entries pointing to credentials config files
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.1576773Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.1614909Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Production build	UNKNOWN STEP	2026-10-19T10:00:28.2011234Z Cleaning up orphan processes
+Unit tests and typecheck	UNKNOWN STEP	﻿2026-10-19T10:00:01.9803320Z Current runner version: '2.337.0'
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9827540Z ##[group]Runner Image Provisioner
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9828392Z Hosted Compute Agent
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9828972Z Version: 20261012.601
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9830212Z Commit: f3dc54e1fb89da6852db922499a0233137369e1d
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9830989Z Build Date: 2026-10-12T17:48:21Z
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9831717Z Worker ID: {82b6a028-bae8-490c-9cbf-2acea6ad7b9e}
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9832442Z Region: westus3
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9832996Z Cloud: Azure
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9833614Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9835141Z ##[group]Operating System
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9835837Z Ubuntu
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9836412Z 24.04.5
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9836920Z LTS
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9837469Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9838035Z ##[group]Runner Image
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9838605Z Image: ubuntu-24.04
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9839511Z Version: 20261012.334.1
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9840778Z Included Software: https://github.com/actions/runner-images/blob/ubuntu24/20261012.334/images/ubuntu/Ubuntu2404-Readme.md
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9842441Z Image Release: https://github.com/actions/runner-images/releases/tag/ubuntu24%2F20261012.334
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9843395Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9844584Z ##[group]GITHUB_TOKEN Permissions
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9846506Z Contents: read
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9847223Z Metadata: read
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9847849Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9850655Z Secret source: Dependabot
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9851597Z Cache mode: write
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:01.9852534Z Prepare workflow directory
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:02.0194051Z Prepare all required actions
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:02.0241235Z Getting action download info
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:02.3415539Z Download action repository 'actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1' (SHA:3d3c42e5aac5ba805825da76410c181273ba90b1)
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:02.4525748Z Download action repository 'pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86' (SHA:0977fd99725f1db4007ccb2928dbb4e90d06cc86)
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:02.9480509Z Download action repository 'actions/setup-node@820762786026740c76f36085b0efc47a31fe5020' (SHA:820762786026740c76f36085b0efc47a31fe5020)
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.1306701Z Complete job name: Unit tests and typecheck
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2197875Z ##[group]Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2199271Z with:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2199795Z   persist-credentials: false
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2200445Z   repository: schalkneethling/schalkneethling.com
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2204396Z   token: ***
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2204881Z   ssh-strict: true
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2205381Z   ssh-user: git
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2205848Z   clean: true
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2206338Z   sparse-checkout-cone-mode: true
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2206916Z   fetch-depth: 1
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2207399Z   fetch-tags: false
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2207888Z   show-progress: true
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2208379Z   lfs: false
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2208837Z   submodules: false
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2209891Z   set-safe-directory: true
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2210516Z   allow-unsafe-pr-checkout: false
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.2211447Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3222718Z Syncing repository: schalkneethling/schalkneethling.com
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3225963Z ##[group]Getting Git version info
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3227477Z Working directory is '/home/runner/work/schalkneethling.com/schalkneethling.com'
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3229960Z [command]/usr/bin/git version
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3308008Z git version 2.55.0
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3338893Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3354190Z Temporarily overriding HOME='/home/runner/work/_temp/f4f4a88e-441b-466e-86f0-53facf2f41ff' before making global git config changes
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3356962Z Adding repository directory to the temporary git global config as a safe directory
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3359945Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/schalkneethling.com/schalkneethling.com
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3410361Z Deleting the contents of '/home/runner/work/schalkneethling.com/schalkneethling.com'
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3413923Z ##[group]Determining repository object format
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3415660Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3417031Z ##[group]Initializing the repository
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3420151Z [command]/usr/bin/git init /home/runner/work/schalkneethling.com/schalkneethling.com
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3560891Z hint: Using 'master' as the name for the initial branch. This default branch name
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3562869Z hint: will change to "main" in Git 3.0. To configure the initial branch name
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3565002Z hint: to use in all of your new repositories, which will suppress this warning,
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3566942Z hint: call:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3568146Z hint:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3569840Z hint: 	git config --global init.defaultBranch <name>
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3571533Z hint:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3573285Z hint: Names commonly chosen instead of 'master' are 'main', 'trunk' and
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3575234Z hint: 'development'. The just-created branch can be renamed via this command:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3576769Z hint:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3577635Z hint: 	git branch -m <name>
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3578654Z hint:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3580352Z hint: Disable this message with "git config set advice.defaultBranchName false"
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3582900Z Initialized empty Git repository in /home/runner/work/schalkneethling.com/schalkneethling.com/.git/
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3586705Z [command]/usr/bin/git remote add origin https://github.com/schalkneethling/schalkneethling.com
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3645500Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3648248Z ##[group]Disabling automatic garbage collection
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3652103Z [command]/usr/bin/git config --local gc.auto 0
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3684173Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3686153Z ##[group]Setting up auth
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3687247Z Removing SSH command configuration
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3692192Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.3728750Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4132271Z Removing HTTP extra header
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4139851Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4176713Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4398866Z Removing includeIf entries pointing to credentials config files
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4403587Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4438707Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4664861Z [command]/usr/bin/git config --file /home/runner/work/_temp/git-credentials-1667c829-6450-4e85-88cf-8a696adc4ecf.config http.https://github.com/.extraheader AUTHORIZATION: basic ***
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4705282Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git.path /home/runner/work/_temp/git-credentials-1667c829-6450-4e85-88cf-8a696adc4ecf.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4738911Z [command]/usr/bin/git config --local includeIf.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git/worktrees/*.path /home/runner/work/_temp/git-credentials-1667c829-6450-4e85-88cf-8a696adc4ecf.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4778850Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git.path /github/runner_temp/git-credentials-1667c829-6450-4e85-88cf-8a696adc4ecf.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4814969Z [command]/usr/bin/git config --local includeIf.gitdir:/github/workspace/.git/worktrees/*.path /github/runner_temp/git-credentials-1667c829-6450-4e85-88cf-8a696adc4ecf.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4846738Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4848243Z ##[group]Fetching the repository
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:03.4857140Z [command]/usr/bin/git -c protocol.version=2 fetch --no-tags --prune --no-recurse-submodules --depth=1 origin +178bbf03503dbc39e7059a67ebb9484a082e8990:refs/remotes/pull/1457/merge
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.1901576Z From https://github.com/schalkneethling/schalkneethling.com
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.1903597Z  * [new ref]         178bbf03503dbc39e7059a67ebb9484a082e8990 -> pull/1457/merge
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.1906786Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.1907704Z ##[group]Determining the checkout info
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.1908674Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.1913783Z [command]/usr/bin/git sparse-checkout disable
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.1979605Z [command]/usr/bin/git config --local --unset-all extensions.worktreeConfig
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.2014474Z ##[group]Checking out the ref
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.2019718Z [command]/usr/bin/git checkout --progress --force refs/remotes/pull/1457/merge
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8562933Z Note: switching to 'refs/remotes/pull/1457/merge'.
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8563528Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8563865Z You are in 'detached HEAD' state. You can look around, make experimental
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8564674Z changes and commit them, and you can discard any commits you make in this
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8589215Z state without impacting any branches by switching back to a branch.
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8589733Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8590002Z If you want to create a new branch to retain commits you create, you may
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8590527Z do so (now or later) by using -c with the switch command. Example:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8590844Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8590978Z   git switch -c <new-branch-name>
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8591188Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8591330Z Or undo this operation with:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8591518Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8591677Z   git switch -
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8591900Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8592147Z Turn off this advice by setting config variable advice.detachedHead to false
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8592558Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8592937Z HEAD is now at 178bbf0 Merge c3e07eff69b8c5dfa1767a4468320d4ee7166e67 into 05a4097c73a99ac3d07cf4d28da6891b6b27d1b4
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8630513Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8692219Z [command]/usr/bin/git log -1 --format=%H
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8721831Z 178bbf03503dbc39e7059a67ebb9484a082e8990
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8732223Z ##[group]Removing auth
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8732683Z Removing SSH command configuration
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8735970Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8773261Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.8997969Z Removing HTTP extra header
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9078399Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9084227Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9305199Z Removing includeIf entries pointing to credentials config files
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9309875Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9342023Z includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git.path
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9343530Z includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git/worktrees/*.path
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9344815Z includeif.gitdir:/github/workspace/.git.path
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9345702Z includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9352966Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git.path
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9380687Z /home/runner/work/_temp/git-credentials-1667c829-6450-4e85-88cf-8a696adc4ecf.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9392540Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git.path \/home\/runner\/work\/_temp\/git\-credentials\-1667c829\-6450\-4e85\-88cf\-8a696adc4ecf\.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9429813Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git/worktrees/*.path
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9456949Z /home/runner/work/_temp/git-credentials-1667c829-6450-4e85-88cf-8a696adc4ecf.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9464542Z [command]/usr/bin/git config --local --unset includeif.gitdir:/home/runner/work/schalkneethling.com/schalkneethling.com/.git/worktrees/*.path \/home\/runner\/work\/_temp\/git\-credentials\-1667c829\-6450\-4e85\-88cf\-8a696adc4ecf\.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9500819Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git.path
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9526492Z /github/runner_temp/git-credentials-1667c829-6450-4e85-88cf-8a696adc4ecf.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9536130Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git.path \/github\/runner_temp\/git\-credentials\-1667c829\-6450\-4e85\-88cf\-8a696adc4ecf\.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9576626Z [command]/usr/bin/git config --local --get-all includeif.gitdir:/github/workspace/.git/worktrees/*.path
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9608361Z /github/runner_temp/git-credentials-1667c829-6450-4e85-88cf-8a696adc4ecf.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9620871Z [command]/usr/bin/git config --local --unset includeif.gitdir:/github/workspace/.git/worktrees/*.path \/github\/runner_temp\/git\-credentials\-1667c829\-6450\-4e85\-88cf\-8a696adc4ecf\.config
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9660644Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9881849Z Removing credentials config '/home/runner/work/_temp/git-credentials-1667c829-6450-4e85-88cf-8a696adc4ecf.config'
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:08.9891348Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:09.0114683Z ##[group]Run pnpm/action-setup@0977fd99725f1db4007ccb2928dbb4e90d06cc86
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:09.0115115Z with:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:09.0115324Z   dest: ~/setup-pnpm
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:09.0115554Z   run_install: null
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:09.0115762Z   cache: false
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:09.0115991Z   cache_dependency_path: pnpm-lock.yaml
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:09.0116289Z   package_json_file: package.json
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:09.0116559Z   standalone: false
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:09.0116771Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:09.1636635Z ##[group]Running self-installer...
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:11.2368582Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:11.2369395Z added 1 package, and audited 2 packages in 2s
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:11.2369888Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:11.2370091Z 1 package is looking for funding
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:11.2370593Z   run `npm fund` for details
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:11.2377825Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:11.2378295Z found 0 vulnerabilities
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:11.8522804Z Checking for updates...
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:12.0372608Z Switching pnpm from v11.19.0 to v11.9.0...
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:12.5115701Z .../v11/986-1a1539abd52-c6bb039effea6e62 | Progress: resolved 1, reused 0, downloaded 0, added 0
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:12.5133271Z .../v11/986-1a1539abd52-c6bb039effea6e62 |   +1 +
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:12.7165446Z .../v11/986-1a1539abd52-c6bb039effea6e62 | Progress: resolved 1, reused 0, downloaded 1, added 1, done
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.3539620Z [WARN] Detected a pnpm v10 installation layout at PNPM_HOME. The pnpm shims at PNPM_HOME have been refreshed so the new version is active, but pnpm v11 expects bins in PNPM_HOME/bin. Run "pnpm setup" to migrate your PATH to the v11 layout.
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.3590248Z Successfully updated pnpm to v11.9.0
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.3875970Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.3876262Z Installation Completed!
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.4062789Z ##[group]Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.4063184Z with:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.4063381Z   node-version: 24.16.0
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.4063768Z   cache: pnpm
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.4063966Z   check-latest: false
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.4066222Z   token: ***
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.4066446Z   package-manager-cache: true
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.4066683Z env:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.4066916Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.4067217Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:13.5330630Z Attempting to download 24.16.0...
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:14.6041742Z Acquiring 24.16.0 - x64 from https://github.com/actions/node-versions/releases/download/24.16.0-26265092718/node-24.16.0-linux-x64.tar.gz
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:15.1979601Z Extracting ...
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:15.2096801Z [command]/usr/bin/tar xz --strip 1 --warning=no-unknown-keyword --overwrite -C /home/runner/work/_temp/7c7ab3a6-7b7a-4855-94db-72805f274911 -f /home/runner/work/_temp/f4ff91af-907c-46a4-b612-f5017998b7c9
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:16.4571488Z Adding to the cache ...
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:18.4911989Z ##[group]Environment details
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:18.7167671Z node: v24.16.0
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:18.7168083Z npm: 11.13.0
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:18.7168405Z yarn: 1.22.22
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:18.7168892Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:18.7187539Z [command]/home/runner/setup-pnpm/node_modules/.bin/bin/pnpm store path --silent
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:19.2921756Z /home/runner/setup-pnpm/node_modules/.bin/store/v11
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:19.5196506Z pnpm cache is not found
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:19.5379548Z ##[group]Run pnpm install --frozen-lockfile --ignore-scripts
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:19.5380308Z ^[[36;1mpnpm install --frozen-lockfile --ignore-scripts^[[0m
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:19.5663555Z shell: /usr/bin/bash -e {0}
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:19.5663843Z env:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:19.5664133Z   PNPM_HOME: /home/runner/setup-pnpm/node_modules/.bin
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:19.5664501Z ##[endgroup]
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:20.0897162Z ? Verifying lockfile against supply-chain policies (813 entries)...
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:20.0983423Z Lockfile is up to date, resolution step is skipped
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:20.2152150Z Progress: resolved 1, reused 0, downloaded 0, added 0
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:20.3210391Z Packages: +673
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:20.3218600Z ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:21.2181813Z Progress: resolved 673, reused 0, downloaded 0, added 0
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:22.2211196Z Progress: resolved 673, reused 0, downloaded 70, added 4
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:23.2312097Z Progress: resolved 673, reused 0, downloaded 383, added 28
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:23.9633613Z ✗ Lockfile failed supply-chain policy check (813 entries in 3.8s)
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:24.2317121Z Progress: resolved 673, reused 0, downloaded 549, added 42
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:25.2323973Z Progress: resolved 673, reused 0, downloaded 672, added 475
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:25.6670684Z Progress: resolved 673, reused 0, downloaded 672, added 673, done
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:25.6959384Z [ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION] 1 lockfile entries failed verification:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:25.6960900Z   postcss@8.5.31 was published at 2026-10-18T19:36:28.000Z, within the minimumReleaseAge cutoff (2026-10-18T10:00:20.019Z)
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:25.6961399Z 
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:25.6963583Z The lockfile contains entries that the active policies reject. This can mean the lockfile is stale, or that someone committed a lockfile that bypassed the policy locally — inspect recent changes to pnpm-lock.yaml before trusting it. If the changes look expected, run "pnpm clean --lockfile" and then "pnpm install" to rebuild from a fresh resolution. Alternatively, relax the policy that flagged them.
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:25.8481201Z ##[error]Process completed with exit code 1.
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:25.8597513Z Post job cleanup.
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.0108059Z Pruning is unnecessary.
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.0286955Z Post job cleanup.
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1273660Z [command]/usr/bin/git version
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1326315Z git version 2.55.0
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1406353Z Temporarily overriding HOME='/home/runner/work/_temp/be3dcc07-f228-444c-b658-c2e548483f0c' before making global git config changes
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1407977Z Adding repository directory to the temporary git global config as a safe directory
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1410113Z [command]/usr/bin/git config --global --add safe.directory /home/runner/work/schalkneethling.com/schalkneethling.com
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1450448Z Removing SSH command configuration
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1452116Z [command]/usr/bin/git config --local --name-only --get-regexp core\.sshCommand
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1495861Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'core\.sshCommand' && git config --local --unset-all 'core.sshCommand' || :"
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1792045Z Removing HTTP extra header
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1793176Z [command]/usr/bin/git config --local --name-only --get-regexp http\.https\:\/\/github\.com\/\.extraheader
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.1828540Z [command]/usr/bin/git submodule foreach --recursive sh -c "git config --local --name-only --get-regexp 'http\.https\:\/\/github\.com\/\.extraheader' && git config --local --unset-all 'http.https://github.com/.extraheader' || :"
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.2101296Z Removing includeIf entries pointing to credentials config files
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.2102401Z [command]/usr/bin/git config --local --name-only --get-regexp ^includeIf\.gitdir:
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.2145494Z [command]/usr/bin/git submodule foreach --recursive git config --local --show-origin --name-only --get-regexp remote.origin.url
+Unit tests and typecheck	UNKNOWN STEP	2026-10-19T10:00:26.2625941Z Cleaning up orphan processes
