@@ -24,18 +24,18 @@ The user provides a URL, normally a Dependabot pull request on GitHub. It may be
 
 ## Process
 
-### 1. Fetch the PR and its checks
+### 1. Read the PR's checks, then its updates
 
-Use `gh pr view <url> --json title,body,files,headRefName,baseRefName` and `gh pr diff <url>`. If `gh` is unavailable or fails, use WebFetch on the URL. Identify every package updated, with its old version, new version, ecosystem, semver level of the bump, and whether it is a production dependency, a dev dependency, or an indirect (transitive) one. Dependabot bodies are sometimes truncated, so do not rely on the body alone.
-
-Then read the lockfile part of the diff and find the packages whose resolved version changes, or that are added or removed, although they are not in the list of updates you just built. These changes come from the lockfile being resolved again. They are Tier C in step 2, and they are a common reason for a pull request to fail. Copy their versions exactly from the `-` and `+` lines of the diff, never from memory or from the registry. Name in full each one that a check failure involves and each major bump. Summarize the rest by package family with a count, such as "14 `@rolldown/binding-*` packages, 1.2.7 to 1.2.14".
-
-Then check the pull request's checks with `gh pr checks <url>`. It exits with a non-zero code when a check failed or is pending, and when no checks are reported, so read its output rather than its exit code. Each check is in one of five states: passed, skipped, failed, cancelled, or pending. A skipped check, such as a job whose `if:` condition was false, counts as passed; list it as skipped. A cancelled check counts as failed. When the output says that no checks were reported, say so: readiness is then `unknown`, because nothing was verified.
+Start with the pull request's checks: run `gh pr checks <url>`. It exits with a non-zero code when a check failed or is pending, and when no checks are reported, so read its output rather than its exit code. Each check is in one of five states: passed, skipped, failed, cancelled, or pending. A skipped check, such as a job whose `if:` condition was false, counts as passed; list it as skipped. A cancelled check counts as failed. When the output says that no checks were reported, say so: readiness is then `unknown`, because nothing was verified.
 
 - **A failed GitHub Actions check:** its link has the form `.../actions/runs/<run-id>/job/<job-id>`. Read its failed steps with `gh run view <run-id> --job <job-id> -R <owner>/<repo> --log-failed`, taking `<owner>/<repo>` from the pull request URL, because without `-R` the command uses the repository of the current directory. A log can be tens of thousands of characters, so read only its end, for example `... --log-failed | tail -n 80`, or its error lines, for example `... --log-failed | grep -n -E 'ERR_|[Ee]rror' | tail -n 40`. Find the cause: quote the error line, and say in one or two sentences what failed and why. Say that several checks share an error only after you have seen it in the bounded output of each of their logs.
 - **A failed check from another service,** such as a Netlify deploy preview, whose log `gh` cannot read: name it, link it, and say that you did not read its log. Do not guess its cause.
-- **When a cause names a package,** say whether that package is one of the updates or one of the lockfile changes the pull request does not name.
+- **When a cause names a package,** note it. Once you have the updates and the lockfile changes below, say whether that package is one of the updates or one of the lockfile changes the pull request does not name.
 - **When the cause tells you when or how the failure will clear,** say so. For example, a package version younger than pnpm's `minimumReleaseAge` passes once it is old enough, and the failed jobs can then be re-run.
+
+Then read the updates: use `gh pr view <url> --json title,body,files,headRefName,baseRefName` and `gh pr diff <url>`. If `gh` is unavailable or fails, use WebFetch on the URL. Identify every package updated, with its old version, new version, ecosystem, semver level of the bump, and whether it is a production dependency, a dev dependency, or an indirect (transitive) one. Dependabot bodies are sometimes truncated, so do not rely on the body alone.
+
+Then read the lockfile part of the diff and find the packages whose resolved version changes, or that are added or removed, although they are not in the list of updates you just built. These changes come from the lockfile being resolved again. They are Tier C in step 2, and they are a common reason for a pull request to fail. Copy their versions exactly from the `-` and `+` lines of the diff, never from memory or from the registry. Name in full each one that a check failure involves and each major bump. Summarize the rest by package family with a count, such as "14 `@rolldown/binding-*` packages, 1.2.7 to 1.2.14".
 
 Continue with step 2 even when checks fail, because the release notes still matter once the failure is fixed. But the failures decide the verdict.
 
