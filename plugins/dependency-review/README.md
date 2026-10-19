@@ -46,7 +46,7 @@ Each case passes the agent only a pull request URL, so it tests the agent's own 
 PATH=".eval-bin:$PATH" claude plugin eval plugins/dependency-review --scaffold --allow-tools Bash --ablation none
 ```
 
-The runs call the model with your credentials, so they cost money and do not run in CI. A run of all six cases with the default three runs each costs about $4 at list price, as of October 2026. The `evals/` folder is part of the plugin, as `claude plugin eval` requires, so it adds about 230 KB to each install. The map script needs Node.js, which the eval sandbox hides when Node.js is installed in your home folder, so in the runs the agent uses its `git grep` fallback instead.
+The runs call the model with your credentials, so they cost money and do not run in CI. A run of all six cases with the default three runs each costs about $4 at list price, as of October 2026. The `evals/` folder is part of the plugin, as `claude plugin eval` requires, so it adds about 284 KB to each install. The map script needs Node.js, which the eval sandbox hides when Node.js is installed in your home folder, so in the runs the agent uses its `git grep` fallback instead.
 
 ## Known limits
 
