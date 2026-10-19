@@ -53,6 +53,15 @@ function rollupBucket(check) {
   }[check.conclusion];
 }
 
+// The symbol gh run view prints for a job or step, from Symbol in
+// cli/cli pkg/cmd/run/shared/shared.go: "*" for anything not completed.
+function ghSymbol({ status, conclusion }) {
+  if (status !== "completed") return "*";
+  if (conclusion === "success") return "✓";
+  if (conclusion === "skipped" || conclusion === "neutral") return "-";
+  return "X";
+}
+
 function jobBucket(job) {
   if (job.status !== "completed") return "pending";
   return { success: "pass", skipped: "skipping", failure: "fail", cancelled: "cancel" }[
@@ -125,6 +134,35 @@ for (const [caseName, expected] of Object.entries(cases)) {
           run.conclusion === "failure",
           `run ${runId}: a failed-step log exists only for a failed run`,
         );
+      }
+    });
+
+    it("shows each job and step in run-*.txt with the symbol gh prints for its state in run-*.json", () => {
+      for (const name of readdirSync(join(directory, "data")).filter((file) =>
+        /^run-\d+\.json$/.test(file),
+      )) {
+        const run = readJson(directory, name);
+        const text = readFileSync(join(directory, "data", name.replace(".json", ".txt")), "utf8");
+        const jobsSection = text.split("\nJOBS\n")[1]?.split("\n\n")[0] ?? "";
+        let job;
+        let step = 0;
+
+        for (const line of jobsSection.split("\n")) {
+          const header = /^(\S) .+ \(ID (\d+)\)$/.exec(line);
+          if (header) {
+            job = run.jobs.find((candidate) => String(candidate.databaseId) === header[2]);
+            step = 0;
+            assert.ok(job, `${name}: job ${header[2]} is not in the JSON`);
+            assert.equal(header[1], ghSymbol(job), `${name}: ${line}`);
+            continue;
+          }
+          const stepLine = /^ {2}(\S) (.+)$/.exec(line);
+          assert.ok(stepLine && job, `${name}: unexpected line in JOBS: ${line}`);
+          const recorded = job.steps[step++];
+          assert.equal(stepLine[2], recorded?.name, `${name}: step order`);
+          assert.equal(stepLine[1], ghSymbol(recorded), `${name}: ${line}`);
+        }
+        assert.ok(job, `${name}: no jobs in the text recording`);
       }
     });
 

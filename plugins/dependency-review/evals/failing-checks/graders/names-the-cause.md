@@ -1,6 +1,8 @@
 ---
 type: regex
 target: last_message
-pattern: ERR_PNPM_MINIMUM_RELEASE_AGE_VIOLATION|minimum[ _-]?release[ _-]?age
+# An explanation in words. The underscore form inside the error code does not
+# count, so this is independent of quotes-the-error.
+pattern: minimum[ -]?release[ -]?age
 flags: i
 ---

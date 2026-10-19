@@ -9,25 +9,25 @@ JOBS
   ✓ Set up pnpm
   ✓ Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
   * Install dependencies
-  - Cache Playwright browsers
-  - Install Chromium for the Open Graph generator
-  - Build the site
-  - Post Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-  ✓ Post Set up pnpm
-  ✓ Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-  ✓ Complete job
+  * Cache Playwright browsers
+  * Install Chromium for the Open Graph generator
+  * Build the site
+  * Post Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+  * Post Set up pnpm
+  * Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+  * Complete job
 * Unit tests and typecheck (ID 117999264595)
   ✓ Set up job
   ✓ Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
   ✓ Set up pnpm
   ✓ Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
   * Install dependencies
-  - Run unit tests
-  - Run typecheck
-  - Post Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
-  ✓ Post Set up pnpm
-  ✓ Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
-  ✓ Complete job
+  * Run unit tests
+  * Run typecheck
+  * Post Run actions/setup-node@820762786026740c76f36085b0efc47a31fe5020
+  * Post Set up pnpm
+  * Post Run actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
+  * Complete job
 
 
 View this run on GitHub: https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234213510
