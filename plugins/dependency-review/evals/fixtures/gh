@@ -122,9 +122,22 @@ case "$command" in
     fi
     [ -f "$data/run-$run.json" ] || fail "failed to get run: HTTP 404: Not Found (https://api.github.com/repos/$repo/actions/runs/$run)"
     if [ -n "$log" ]; then
+      # Errors as gh prints them (pkg/cmd/run/view/view.go in cli/cli): no log
+      # while a job or run is in progress, and "log not found" for a log GitHub
+      # no longer has, such as one past its retention period.
+      if [ -n "$job" ]; then
+        job_status="$(jq -r --arg job "$job" '.jobs[] | select((.databaseId | tostring) == $job) | .status' "$data/run-$run.json")"
+        [ "$job_status" = "completed" ] || fail "job $job is still in progress; logs will be available when it is complete"
+      fi
+      [ "$(jq -r .status "$data/run-$run.json")" = "completed" ] \
+        || fail "run $run is still in progress; logs will be available when it is complete"
       # The recording holds the failed steps only, which is what --log-failed
       # returns. A run without failed steps has no recording and prints nothing.
-      [ -f "$data/run-$run-log-failed.txt" ] || exit 0
+      # A failed run without a recording stands for a log GitHub no longer has.
+      if [ ! -f "$data/run-$run-log-failed.txt" ]; then
+        [ "$(jq -r .conclusion "$data/run-$run.json")" = "failure" ] && fail "failed to get run log: log not found"
+        exit 0
+      fi
       if [ -n "$job" ]; then
         name="$(jq -r --arg job "$job" '.jobs[] | select((.databaseId | tostring) == $job) | .name' "$data/run-$run.json")"
         awk -F '\t' -v name="$name" '$1 == name' "$data/run-$run-log-failed.txt"

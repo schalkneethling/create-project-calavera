@@ -69,10 +69,13 @@ function jobBucket(job) {
   ];
 }
 
+// failedLogs: whether each failed run has its failed-step log. unreadable-logs
+// removes them on purpose, to stand for logs GitHub no longer has.
 const cases = {
-  "failing-checks": { exitCode: 1, mergeState: "BLOCKED" },
-  "passing-checks": { exitCode: 0, mergeState: "CLEAN" },
-  "pending-checks": { exitCode: 8, mergeState: "BLOCKED" },
+  "failing-checks": { exitCode: 1, mergeState: "BLOCKED", failedLogs: true },
+  "passing-checks": { exitCode: 0, mergeState: "CLEAN", failedLogs: true },
+  "pending-checks": { exitCode: 8, mergeState: "BLOCKED", failedLogs: true },
+  "unreadable-logs": { exitCode: 1, mergeState: "BLOCKED", failedLogs: false },
 };
 
 const directories = [];
@@ -131,8 +134,8 @@ for (const [caseName, expected] of Object.entries(cases)) {
         assert.equal(listed?.conclusion, run.conclusion, `run ${runId}: runs.json conclusion`);
         assert.equal(
           existsSync(join(directory, `data/run-${runId}-log-failed.txt`)),
-          run.conclusion === "failure",
-          `run ${runId}: a failed-step log exists only for a failed run`,
+          run.conclusion === "failure" && expected.failedLogs,
+          `run ${runId}: a failed-step log exists only for a failed run, unless the case removes it`,
         );
       }
     });
@@ -172,6 +175,37 @@ for (const [caseName, expected] of Object.entries(cases)) {
     });
   });
 }
+
+describe("the stand-in gh's errors for logs it cannot give", () => {
+  const view = (caseName, ...args) => {
+    const directory = caseData(caseName);
+    directories.push(directory);
+    return spawnSync(
+      "bash",
+      [join(directory, "gh"), "run", "view", ...args, "-R", repository, "--log-failed"],
+      {
+        encoding: "utf8",
+      },
+    );
+  };
+
+  it("answers log not found for a failed run whose log is gone", () => {
+    const result = view("unreadable-logs", "--job", "117999264170");
+
+    assert.equal(result.status, 1);
+    assert.equal(result.stderr.trim(), "failed to get run log: log not found");
+  });
+
+  it("refuses the log of a job that is still in progress, as gh does", () => {
+    const result = view("pending-checks", "--job", "117999264170");
+
+    assert.equal(result.status, 1);
+    assert.equal(
+      result.stderr.trim(),
+      "job 117999264170 is still in progress; logs will be available when it is complete",
+    );
+  });
+});
 
 describe("the stand-in gh", () => {
   const directory = caseData("failing-checks");

@@ -34,8 +34,9 @@ The agent has `claude plugin eval` cases in `evals/`. They replay a recording of
 - `failing-checks` uses the recording as it is. The report must lead with the failing checks and their cause, and say that the pull request is not ready to merge.
 - `passing-checks` uses the same pull request with every check passed, so the report must not invent failures.
 - `pending-checks` uses the same pull request while its checks are still running, so the report must say that it is not known yet whether the pull request can be merged.
+- `unreadable-logs` uses the failing pull request after its job logs are gone, as after GitHub's log retention period, so the report must say that the logs could not be read and give no cause for the failures.
 
-The data for the last two cases is derived from the recording. `tests/eval-fixtures.test.mjs`, which `pnpm test:plugins` runs, checks that each case's files agree on every check's state and that the stand-in `gh` behaves like `gh` where the agent relies on it.
+The data for the last three cases is derived from the recording. `tests/eval-fixtures.test.mjs`, which `pnpm test:plugins` runs, checks that each case's files agree on every check's state and that the stand-in `gh` behaves like `gh` where the agent relies on it.
 
 Each case passes the agent only the pull request URL, so it tests the agent's own instructions rather than what the main session adds to its prompt. Eval runs have no network or GitHub login, so a stand-in `gh` in `evals/fixtures/gh` answers from the recording. Each case's setup script copies it into the run's workspace as `.eval-bin/gh`, and the run finds it through a relative `PATH` entry. Run the cases from the repository root:
 
@@ -43,7 +44,7 @@ Each case passes the agent only the pull request URL, so it tests the agent's ow
 PATH=".eval-bin:$PATH" claude plugin eval plugins/dependency-review --scaffold --allow-tools Bash --ablation none
 ```
 
-The runs call the model with your credentials, so they cost money and do not run in CI. A run of all three cases with the default three runs each costs about $2 at list price, as of October 2026. The `evals/` folder is part of the plugin, as `claude plugin eval` requires, so it adds about 230 KB to each install. The map script needs Node.js, which the eval sandbox hides when Node.js is installed in your home folder, so in the runs the agent uses its `git grep` fallback instead.
+The runs call the model with your credentials, so they cost money and do not run in CI. A run of all four cases with the default three runs each costs about $2.70 at list price, as of October 2026. The `evals/` folder is part of the plugin, as `claude plugin eval` requires, so it adds about 230 KB to each install. The map script needs Node.js, which the eval sandbox hides when Node.js is installed in your home folder, so in the runs the agent uses its `git grep` fallback instead.
 
 ## Known limits
 
