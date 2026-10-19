@@ -1,0 +1,62 @@
+[
+  {
+    "body": "### Patch Changes\n\n-   5cd712a: perf: use native `JSON.stringify` for strings that need escaping, instead of a per-character loop\n-   b49ae34: chore: lower required node version to \u003e=18\n-   c411e5e: fix: use explicit `.js` extension in type imports for `nodenext` compatibility\n",
+    "name": "v6.0.3",
+    "published_at": "2026-10-13T14:49:15Z",
+    "tag_name": "v6.0.3"
+  },
+  {
+    "body": "### Patch Changes\n\n-   12ad9d6: chore: remove dts-buddy\n",
+    "name": "v6.0.2",
+    "published_at": "2026-09-22T09:46:32Z",
+    "tag_name": "v6.0.2"
+  },
+  {
+    "body": "### Patch Changes\n\n-   c13cf6a: fix: populate `error.path` for values reached through a promise in `stringifyAsync`\n-   6156b2e: perf: `stringify` and `uneval` skip per-character escaping for strings with nothing to escape\n-   e7a9a73: fix: throw `Invalid input` instead of a raw `TypeError` for malformed typed array and boxed primitive payloads\n-   6156b2e: perf: only format path when an error is raised\n-   6156b2e: perf: cache quoted property names\n-   9e44253: Fix `uneval` for typed array views whose backing buffer ends with a partial element\n",
+    "name": "v6.0.1",
+    "published_at": "2026-09-21T20:53:20Z",
+    "tag_name": "v6.0.1"
+  },
+  {
+    "body": "### Major Changes\n\n-   afb3cb4: breaking: use tagged template `js` for uneval replacers instead of nested `uneval`\n-   3100507: breaking: require Node 22.17 or newer\n\n### Minor Changes\n\n-   afb3cb4: feat: support cyclic custom objects\n\n### Patch Changes\n\n-   ac295fb: fix: escape unpaired surrogates so uneval/stringify output survives UTF-8 transport\n",
+    "name": "v6.0.0",
+    "published_at": "2026-09-19T11:27:27Z",
+    "tag_name": "v6.0.0"
+  },
+  {
+    "body": "### Patch Changes\n\n-   067b125: perf: annotate module-level `Object.freeze` calls as pure so unused operation tables tree-shake\n",
+    "name": "v5.9.4",
+    "published_at": "2026-09-18T19:03:57Z",
+    "tag_name": "v5.9.4"
+  },
+  {
+    "body": "### Patch Changes\n\n-   6861dbb: fix: avoid scanning sparse array holes in `uneval` traversal and shared-array population\n-   9ec5130: fix: reject non-string null-prototype object keys in `parse` and `unflatten` to prevent bypassing the `__proto__` check\n-   dae8153: fix: prevent unhandled internal rejections in `stringifyAsync` when serializing multiple promises\n-   84f6f67: fix: prevent quadratic `uneval` output expansion for repeated strings and bigints\n-   6861dbb: fix: avoid eager allocation when evaluating sparse arrays emitted by `uneval`\n-   8f8d78e: fix: validate revived backing buffers before constructing typed arrays\n-   46dc877: fix: serialize only the visible bytes of Node Buffers in `stringify`, `stringifyAsync` and `uneval`, preventing disclosure of unrelated data from their shared allocation pool\n",
+    "name": "v5.9.3",
+    "published_at": "2026-09-18T18:44:46Z",
+    "tag_name": "v5.9.3"
+  },
+  {
+    "body": "### Patch Changes\n\n-   8b2a456: fix: reject out-of-bounds indices\n",
+    "name": "v5.9.2",
+    "published_at": "2026-08-27T14:13:12Z",
+    "tag_name": "v5.9.2"
+  },
+  {
+    "body": "### Patch Changes\n\n-   39457ce: fix: `uneval` emits valid JS for graphs with more than 65534 repeated references\n-   686e379: fix: emit valid JS for Node `Buffer` in `uneval`\n-   376b65c: fix: preserve `-0` in float typed arrays in `uneval`\n",
+    "name": "v5.9.1",
+    "published_at": "2026-08-20T16:45:58Z",
+    "tag_name": "v5.9.1"
+  },
+  {
+    "body": "### Minor Changes\n\n-   07d6a38: feat: export `filterArrayIndices`, the array-index filtering used by the `indicesOf` stringify operation, so custom operations can reuse it instead of reimplementing it\n-   07d6a38: feat: add pluggable `operations` option to `parse`/`unflatten`, allowing customization of how values are constructed while reviving (e.g. cross-realm or foreign-runtime revival)\n-   5b53532: feat: add pluggable `operations` option to `stringify`/`stringifyAsync`, allowing customization of how values are introspected during serialization (e.g. side-effect-free or foreign-runtime serialization)\n",
+    "name": "v5.9.0",
+    "published_at": "2026-07-30T19:42:54Z",
+    "tag_name": "v5.9.0"
+  },
+  {
+    "body": "### Patch Changes\n\n-   48cc81f: fix: serialize DataView subviews with the correct byte offset and length\n-   cd6da94: fix: resolve circular references through custom revivers when payload is already hydrated\n-   29a3382: fix: `uneval` now produces valid output for a repeated empty `Map` or `Set`\n-   8c0db06: fix: serialize Temporal values referenced more than once in `uneval`\n-   3770846: fix: emit valid JS for `BigInt64Array` and `BigUint64Array` in `uneval`\n-   756265a: fix: preserve shared-reference identity for Map keys in `uneval`\n-   faa8a05: fix: emit uneval reconstructions before the statements that reference them\n-   06129ad: fix: do not grow sparse arrays by one slot in uneval\n",
+    "name": "v5.8.2",
+    "published_at": "2026-07-20T15:16:26Z",
+    "tag_name": "v5.8.2"
+  }
+]

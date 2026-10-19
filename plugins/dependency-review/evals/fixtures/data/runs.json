@@ -1,0 +1,30 @@
+[
+  {
+    "conclusion": "failure",
+    "databaseId": 39234213489,
+    "headSha": "c3e07eff69b8c5dfa1767a4468320d4ee7166e67",
+    "name": "Playwright Tests",
+    "workflowName": "Playwright Tests"
+  },
+  {
+    "conclusion": "failure",
+    "databaseId": 39234213510,
+    "headSha": "c3e07eff69b8c5dfa1767a4468320d4ee7166e67",
+    "name": "Quality Checks",
+    "workflowName": "Quality Checks"
+  },
+  {
+    "conclusion": "success",
+    "databaseId": 37447510585,
+    "headSha": "7c608bc1decd07100e45e44299d08755a0f72874",
+    "name": "Quality Checks",
+    "workflowName": "Quality Checks"
+  },
+  {
+    "conclusion": "success",
+    "databaseId": 37447510700,
+    "headSha": "7c608bc1decd07100e45e44299d08755a0f72874",
+    "name": "Playwright Tests",
+    "workflowName": "Playwright Tests"
+  }
+]

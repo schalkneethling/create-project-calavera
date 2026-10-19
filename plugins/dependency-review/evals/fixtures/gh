@@ -1,0 +1,145 @@
+#!/usr/bin/env bash
+# A stand-in for the GitHub CLI in these eval cases. Eval runs have no network
+# and no GitHub login, so this answers the read-only commands the reviewer uses
+# from a recording of schalkneethling/schalkneethling.com pull request 1457,
+# taken on 2026-10-19 (issue #713). Anything else fails as gh would.
+set -u
+
+data="$(cd "$(dirname "$0")" && pwd)/data"
+repo="schalkneethling/schalkneethling.com"
+json="" jq_expr="" job="" log=""
+positional=()
+
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --json) json="${2:-}"; shift 2 ;;
+    --json=*) json="${1#--json=}"; shift ;;
+    --jq | -q) jq_expr="${2:-}"; shift 2 ;;
+    --jq=*) jq_expr="${1#--jq=}"; shift ;;
+    --job) job="${2:-}"; shift 2 ;;
+    --job=*) job="${1#--job=}"; shift ;;
+    --log-failed) log="failed"; shift ;;
+    --log) log="all"; shift ;;
+    -R | --repo | -H | --header | -X | --method | -L | --limit | -b | --branch | -w | --workflow)
+      shift 2 ;;
+    --web | --watch)
+      echo "gh (eval recording): $1 is not available here" >&2
+      exit 1 ;;
+    -*) shift ;;
+    *) positional+=("$1"); shift ;;
+  esac
+done
+
+fail() {
+  echo "$1" >&2
+  exit 1
+}
+
+# Prints a recorded JSON file, keeping only the --json fields, then applies --jq.
+emit_json() {
+  local file="$1" filter="."
+  if [ -n "$json" ]; then
+    local fields="{${json}}"
+    filter="if type == \"array\" then map(${fields}) else ${fields} end"
+  fi
+  if [ -n "$jq_expr" ]; then
+    jq "$filter" "$file" | jq -r "$jq_expr"
+  else
+    jq "$filter" "$file"
+  fi
+}
+
+require_pull_request() {
+  case "${1:-}" in
+    1457 | */"$repo"/pull/1457 | */"$repo"/pull/1457/*) ;;
+    *) fail "GraphQL: Could not resolve to a PullRequest with the number of ${1:-}. (repository.pullRequest)" ;;
+  esac
+}
+
+command="${positional[0]:-} ${positional[1]:-}"
+
+case "$command" in
+  "pr view")
+    require_pull_request "${positional[2]:-}"
+    if [ -n "$json" ]; then
+      emit_json "$data/pr-view.json"
+    else
+      jq -r '"\(.title) #\(.number)\n\(.state) • \(.author.login) wants to merge into \(.baseRefName) from \(.headRefName)\n\n\(.body)"' "$data/pr-view.json"
+    fi
+    ;;
+  "pr diff")
+    require_pull_request "${positional[2]:-}"
+    cat "$data/pr.diff"
+    ;;
+  "pr checks")
+    require_pull_request "${positional[2]:-}"
+    if [ -n "$json" ]; then
+      emit_json "$data/pr-checks.json"
+    else
+      cat "$data/pr-checks.txt"
+    fi
+    # Like gh: exit 1 when a check failed, 8 when one is pending, else 0.
+    if jq -e 'any(.[]; .bucket == "fail")' "$data/pr-checks.json" > /dev/null; then
+      exit 1
+    elif jq -e 'any(.[]; .bucket == "pending")' "$data/pr-checks.json" > /dev/null; then
+      exit 8
+    fi
+    ;;
+  "run list")
+    emit_json "$data/runs.json"
+    ;;
+  "run view")
+    run="${positional[2]:-}"
+    if [ -z "$run" ] && [ -n "$job" ]; then
+      for file in "$data"/run-*.json; do
+        if jq -e --arg job "$job" 'any(.jobs[]; (.databaseId | tostring) == $job)' "$file" > /dev/null; then
+          run="$(basename "$file" .json)"
+          run="${run#run-}"
+        fi
+      done
+    fi
+    [ -f "$data/run-$run.json" ] || fail "could not find any workflow run with ID ${run:-$job}"
+    if [ -n "$log" ]; then
+      # The recording holds the failed steps only, which is what --log-failed
+      # returns. A run without failed steps has no recording and prints nothing.
+      [ -f "$data/run-$run-log-failed.txt" ] || exit 0
+      if [ -n "$job" ]; then
+        name="$(jq -r --arg job "$job" '.jobs[] | select((.databaseId | tostring) == $job) | .name' "$data/run-$run.json")"
+        [ -n "$name" ] || fail "could not find job with ID $job"
+        grep -F "${name}"$'\t' "$data/run-$run-log-failed.txt"
+      else
+        cat "$data/run-$run-log-failed.txt"
+      fi
+    elif [ -n "$json" ]; then
+      emit_json "$data/run-$run.json"
+    else
+      cat "$data/run-$run.txt"
+    fi
+    ;;
+  "api "*)
+    path="${positional[1]#/}"
+    path="${path%%\?*}"
+    case "$path" in
+      repos/sveltejs/devalue/releases)
+        emit_json "$data/devalue-releases.json" ;;
+      repos/sveltejs/devalue/releases/tags/*)
+        tag="${path##*/}"
+        jq -e --arg tag "$tag" '.[] | select(.tag_name == $tag)' "$data/devalue-releases.json" > /dev/null \
+          || fail "gh: Not Found (HTTP 404)"
+        if [ -n "$jq_expr" ]; then
+          jq --arg tag "$tag" '.[] | select(.tag_name == $tag)' "$data/devalue-releases.json" | jq -r "$jq_expr"
+        else
+          jq --arg tag "$tag" '.[] | select(.tag_name == $tag)' "$data/devalue-releases.json"
+        fi
+        ;;
+      *) fail "gh: Not Found (HTTP 404)" ;;
+    esac
+    ;;
+  "auth status")
+    echo "github.com"
+    echo "  ✓ Logged in to github.com account eval-recording"
+    ;;
+  *)
+    fail "gh (eval recording): \"gh ${positional[*]:-}\" was not recorded for this eval"
+    ;;
+esac

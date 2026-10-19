@@ -29,6 +29,19 @@ From inside a project, ask Claude to review a Dependabot PR and paste the URL. T
 
 The map script has a `node:test` suite in `tests/`. Run it with `node --test plugins/dependency-review/tests/*.test.mjs` from the repository root. `pnpm test:plugins` runs it together with the checks on the plugin layout.
 
+The agent has `claude plugin eval` cases in `evals/`. They replay a recording of a real Dependabot pull request, schalkneethling/schalkneethling.com#1457, whose checks all failed at `pnpm install`:
+
+- `failing-checks` uses the recording as it is. The report must lead with the failing checks and their cause, and say that the pull request is not ready to merge.
+- `passing-checks` uses the same pull request with every check passed, so the report must not invent failures.
+
+Each case passes the agent only the pull request URL, so it tests the agent's own instructions rather than what the main session adds to its prompt. Eval runs have no network or GitHub login, so a stand-in `gh` in `evals/fixtures/gh` answers from the recording. Each case's setup script copies it into the run's workspace as `.eval-bin/gh`, and the run finds it through a relative `PATH` entry. Run the cases from the repository root:
+
+```sh
+PATH=".eval-bin:$PATH" claude plugin eval plugins/dependency-review --scaffold --allow-tools Bash --ablation none
+```
+
+The runs call the model with your credentials, so they cost money and do not run in CI. A run of both cases with the default three runs each cost about $1.50 at list price in October 2026. The map script needs Node.js, which the eval sandbox hides when Node.js is installed in your home folder, so in the runs the agent uses its `git grep` fallback instead.
+
 ## Known limits
 
 The map parses with regular expressions, not a full parser. It finds imports in JS and TS files, the script blocks of Vue, Svelte, and Astro files, and `@import`, `@use`, `@forward`, and `@plugin` rules in stylesheets. Usage that does not go through a module specifier is not tracked. `WORKAROUND` markers are found in those files, in HTML, and in shell scripts (`.sh`, `.bash`, `.zsh`), YAML, TOML, Python, and Ruby files, Dockerfiles, and `.npmrc`. The map skips symlinks, so it never reads a file outside the project through a link; a link to a file inside the project loses nothing, because that file is read itself.

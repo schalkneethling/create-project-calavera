@@ -136,3 +136,6 @@ dist-web
 .yarn/build-state.yml
 .yarn/install-state.gz
 .pnp.*
+
+# Results of claude plugin eval runs
+plugins/*/evals/results/
