@@ -168,7 +168,7 @@ npm and Bun use `create-vite-plus` because it is Vite+'s own entry point and it 
 
 For npm and Bun, the runner no longer names the package and the bin, which was Decision 1's rule. `create-vite-plus` has one bin, so there is nothing for a runner to choose between, and `vp` reaches the child because npm and Bun link a dependency's bins next to the requested package's. That is runner behavior, not a promise from Vite+, so it is held to the same standard as before: the per-runner check that `vp create` completes with no `vp` on the parent `PATH` stays in force, and a runner that fails it returns here.
 
-The spec is `@latest`, which keeps what Decision 1 does today: run the latest vite-plus. The expectation is that naming a version makes npm and Bun check the registry instead of reusing a copy already cached, which is the failure in #645. No run started from a stale cache, so the implementation verifies this. It does not address #675, which concerns a stale copy of Calavera itself.
+The spec is `@latest`, which keeps what Decision 1 does today: run the latest vite-plus. `@latest` is not a cache fix. A separate check on 2026-10-21 used `semver` as a stand-in package with an isolated npm cache and Bun cache. It placed 7.5.0 in the cache entries that `semver` and `semver@latest` use, while 7.8.5 was `latest`. npm 11.19.1 and Bun 1.3.9 both replaced the old copy and ran 7.8.5, with and without `@latest`. So naming `latest` neither causes nor prevents reuse in that case, and it does not address #645, an `ERESOLVE` raised while npm updates a cached tree, or #675, a stale copy of Calavera itself. `@latest` is kept because it is the form the Vite+ documentation uses, and because it states the intent in the command Calavera shows.
 
 npm needs `--` between `vite-plus@latest` and the forwarded arguments, as the Vite+ documentation in #3028 states. Calavera adds that one token, which amends Decision 5's rule that Calavera adds nothing. The forwarded arguments themselves still reach Vite+ verbatim and in order, including a second `--` for template arguments, as the separator check above shows.
 
@@ -181,7 +181,7 @@ Calavera does not add `--package-manager` to the forwarded arguments when the us
   - the unchanged pnpm and Yarn commands;
   - forwarded arguments without `--package-manager` reaching the child unchanged, with no `--package-manager` added;
   - the confirmation text about the package-manager default.
-- The implementation runs the npm row and the Bun row once against the published package, with npm and with no `--package-manager` forwarded, and records the versions. It also checks whether a forwarded `--no-install` reaches Vite+ through `bun create`, and whether `@latest` replaces an older cached copy.
+- The implementation runs the npm row and the Bun row once against the published package, with npm and with no `--package-manager` forwarded, and records the versions. It also checks whether a forwarded `--no-install` reaches Vite+ through `bun create`.
 - The `runnerCommand.command === "npx"` branch that attaches `NPX_STALE_CACHE_HINT` (`packages/cli/src/index.js`) no longer matches any runner. The implementation removes the hint or rewrites it for npm, and settles #719, which asks for a separate exit 127 hint, at the same time.
 - In `docs/agent-first-calavera-workflow.md`, the implementation pull request:
   - narrows the known-issue section "`vp create` Exits With Code 127 Through npx" to the cause #689 tracks, Calavera itself started with `npx --package`, which this amendment does not fix;
