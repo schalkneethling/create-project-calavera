@@ -1,8 +1,8 @@
 # ADR-0010: `--new` Delegates Project Scaffolding to `vp create`
 
-- **Status:** Accepted (2026-09-28, merged in #531)
+- **Status:** Accepted (2026-09-28, merged in #531); amendment to Decisions 1, 4, and 5 proposed 2026-10-21 (#688)
 - **Date:** 2026-09-27
-- **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/442
+- **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/442; amendment https://github.com/schalkneethling/create-project-calavera/issues/688
 - **Decides:** how Calavera starts a project that does not exist yet. `--new` confirms, spawns `vp create` through a package-manager runner with inherited stdio, and continues into what `--init` does today only when the child exits zero and ADR-0001 detection reports `managed` on the scaffolded directory. Calavera writes no JavaScript or TypeScript scaffolding itself, and nothing in C8 changes.
 
 ## Context
@@ -48,7 +48,9 @@ Calavera always runs `vp create` through a package-manager runner that names the
 | Yarn                   | `yarn dlx --package vite-plus vp create <forwarded>` |
 | Bun                    | `bunx --package vite-plus vp create <forwarded>`     |
 
-The runner is chosen from Calavera's own `--package-manager` when it is given, and is npm otherwise, matching the `?? "npm"` fallback `agentBootstrap` already applies when no manifest names a package manager. There is nothing to detect in a directory that has no manifest yet. The runner only fetches and starts vite-plus; the project's package manager is a question Vite+ asks, or that a forwarded `vp create --package-manager` answers, and the `--init` step that follows detects it from the scaffolded manifest as it does today.
+The npm and Bun rows are replaced by the 2026-10-21 amendment ("Amendment: `create-vite-plus` for the npm and Bun Runners" below). The pnpm and Yarn rows stand.
+
+The runner is chosen from Calavera's own `--package-manager` when it is given, and is npm otherwise, matching the `?? "npm"` fallback `agentBootstrap` already applies when no manifest names a package manager. There is nothing to detect in a directory that has no manifest yet. The runner only fetches and starts vite-plus; the project's package manager is a question Vite+ asks, or that a forwarded `vp create --package-manager` answers (from Vite+ 1.3.0, Vite+ uses the runner's package manager instead of asking; see the amendment), and the `--init` step that follows detects it from the scaffolded manifest as it does today.
 
 The runner is chosen over putting a bin directory on `PATH` because the `PATH` alternative requires Calavera to install vite-plus somewhere first and then locate its bin directory, which is the job a runner exists to do. A runner that executes a package bin is expected to expose that package's bins to the process it starts, and that is what the bare `"vp"` re-invocation needs. Setting `VP_CLI_BIN` is rejected for the same reason ADR-0001 rejected the `vite-plus-core` pin as a primary signal: it is an internal name Vite+ has not promised to keep. A globally installed `vp` is not preferred even when one is on `PATH`, because its version is whatever the machine happens to hold, and the spawn has to behave the same on every machine.
 
@@ -77,7 +79,7 @@ The prompt defaults to "no" and shows:
 
 - the exact command line Calavera will spawn, runner and forwarded arguments included, and the working directory it will run in;
 - that the runner may download vite-plus;
-- that Vite+ will ask its own questions (template, target directory, package manager, and the rest) unless forwarded flags answer them, and that Calavera does not answer them;
+- that Vite+ will ask its own questions (template, target directory, package manager, and the rest) unless forwarded flags answer them, and that Calavera does not answer them (the 2026-10-21 amendment changes this line for the package manager);
 - that Vite+ installs dependencies and that this cannot be skipped;
 - that when the target directory Vite+ is given is not empty, Vite+ may offer to remove its contents, and that this choice is Vite+'s;
 - that Calavera's dry run does not preview what Vite+ writes, and that Calavera does not undo it if the scaffold fails;
@@ -86,7 +88,7 @@ The prompt defaults to "no" and shows:
 
 ### 5. Pass-through and automation
 
-`--new` ends Calavera's own arguments. Every token after it is forwarded to `vp create` verbatim and in order, including a `--` that introduces template arguments; Calavera parses only the tokens before `--new`. Calavera does not declare, validate, or rename any `vp create` flag, so a flag Vite+ adds or removes needs no Calavera change. This requires splitting the raw arguments at `--new` before `parseArgs` removes `--` tokens. The `npm create` separator rule from `docs/agent-first-calavera-workflow.md` still applies, so the npm form is `npm create project-calavera -- --new vite:library --no-interactive --package-manager pnpm`, while the pnpm, Yarn, and Bun launchers take `--new` directly.
+`--new` ends Calavera's own arguments. Every token after it is forwarded to `vp create` verbatim and in order, including a `--` that introduces template arguments (the 2026-10-21 amendment adds one `--` in front of them for the npm runner); Calavera parses only the tokens before `--new`. Calavera does not declare, validate, or rename any `vp create` flag, so a flag Vite+ adds or removes needs no Calavera change. This requires splitting the raw arguments at `--new` before `parseArgs` removes `--` tokens. The `npm create` separator rule from `docs/agent-first-calavera-workflow.md` still applies, so the npm form is `npm create project-calavera -- --new vite:library --no-interactive --package-manager pnpm`, while the pnpm, Yarn, and Bun launchers take `--new` directly.
 
 Calavera reads two forwarded tokens and changes neither: `--directory`, to locate the target (Decision 3), and `--no-interactive`, to decide whether its own confirmation can be shown. Calavera's own confirmation is answered with the existing `--yes` flag, placed before `--new`. No new flag is introduced. When stdin is a TTY and `--yes` is absent, Calavera shows the confirmation. When `--no-interactive` is forwarded, or stdin is not a TTY, or `CI` is set, and `--yes` is absent, Calavera refuses before spawning and names `--yes` in the message. It never treats a non-interactive run as consent. `--yes` keeps its existing meaning for the `--init` step that follows, so a scripted run takes the same defaults `--init --yes` takes today, and `--agents-md` and `--mcp-harness` override them as they do today.
 
@@ -105,6 +107,90 @@ After a successful scaffold, `--new` continues in the same process into exactly 
 Continuing in the same process is chosen because the hand-off between the two commands is the friction #442 exists to remove, and printing a second command to run would keep it. It adds no new write path: the bootstrap is the same CLI code under the same prompts, and its existing handling of an `AGENTS.md` that is already present covers the `AGENTS.md` or `CLAUDE.md` that `vp create --agent` can write. When the bootstrap fails after a successful scaffold, the scaffold stays, and the error names the `--init` command to run in the scaffolded directory.
 
 `--new` is a CLI option only. It adds no MCP tool, and the MCP tool list in Section 2 of the brief is unchanged, because there is no project root for a project-local MCP server to run from before the scaffold exists, and because only the CLI writes into projects.
+
+## Amendment: `create-vite-plus` for the npm and Bun Runners
+
+**Status:** Proposed (2026-10-21, #688). It amends Decision 1 (the runner table and how `vp` reaches the child), Decision 4 (one confirmation line), and Decision 5 (one separator token that Calavera adds for npm). Decisions 2, 3, 6, and 7 are unchanged.
+
+### Why Decision 1 is reopened
+
+With the npm runner, `npx --package vite-plus` sets `npm_config_package=vite-plus` for `vp`. When npm is also the project's package manager, the `npx create-vite@latest` that `vp create` starts for the template inherits that setting, looks for its command inside vite-plus, and exits 127 (#670). Vite+ closed voidzero-dev/vite-plus#2970 without changing `vp create` and recommended the `create-vite-plus` package instead (voidzero-dev/vite-plus#3028).
+
+Vite+ 1.3.0 made this failure the default. When `--package-manager` is not passed, `vp create` no longer asks which package manager to use; it picks the one that launched it. Through Calavera's default npm runner that is npm, so a plain `npm create project-calavera -- --new` now fails every time. The owner hit this twice while dogfooding on 2026-10-21.
+
+### Evidence
+
+`create-vite-plus` 1.3.0 is published and is npm's `latest`. Its manifest declares one bin, `create-vite-plus`, an `engines` range of `^22.18.0 || ^24.11.0 || >=26.0.0`, and one dependency, `"vite-plus": "1.3.0"`, an exact version. The bin inserts `create` into its arguments and imports `vite-plus/bin` in the same process, so nothing is launched with `--package`.
+
+All runs below took place on 2026-10-21 on macOS, each from an empty directory, with Node.js 24.22.0, npm 11.19.1, pnpm 12.9.1, and Bun 1.3.9 on `PATH`. Yarn classic (1.22) is the only `yarn` installed, so Yarn 4.18.1 was started through Corepack as `corepack yarn@4.18.1`, where the table shows `yarn`. `PATH` held no `vp`, so a run could pass only if the runner exposed `vp` to the child. Unless a row says otherwise, every run forwarded `vite:application --directory app --no-agent --no-editor --git --hooks --no-interactive --verbose`, plus `--package-manager` when the project column names one. For the template step, Vite+ installed its own copy of the project's package manager: npm 12.2.0, pnpm 12.14.0, Yarn 4.18.1, or Bun 1.4.3.
+
+A pass means exit 0, a lockfile for the project's package manager, a Git repository, and a `pre-commit` hook in `.vite-hooks`.
+
+| Runner command                                                                           | Project package manager                            | Result                                                |
+| ---------------------------------------------------------------------------------------- | -------------------------------------------------- | ----------------------------------------------------- |
+| `npm create vite-plus@1.3.0 --` or `@latest --`                                          | npm, pnpm, Yarn, Bun, and not passed (npm chosen)  | Pass                                                  |
+| `bun create vite-plus@1.3.0` or `@latest`                                                | Bun, npm, pnpm, Yarn, and not passed (Bun chosen)  | Pass                                                  |
+| `pnpm create vite-plus@1.3.0`                                                            | pnpm, npm, and not passed                          | Exit 1, `spawn vp ENOENT` at the install step         |
+| `yarn create vite-plus@1.3.0`                                                            | Yarn, npm, and not passed                          | Exit 1, `spawn vp ENOENT` at the install step         |
+| `pnpm dlx --package vite-plus@1.3.0 vp create`                                           | pnpm, npm, Yarn, Bun, and not passed (pnpm chosen) | Pass                                                  |
+| `yarn dlx --package vite-plus@1.3.0 vp create`                                           | Yarn, npm, pnpm, Bun, and not passed (Yarn chosen) | Pass                                                  |
+| `bunx --package vite-plus@1.3.0 vp create`                                               | not passed (Bun chosen)                            | Pass                                                  |
+| `npx --package vite-plus@1.3.0 vp create`                                                | not passed (npm chosen)                            | Exit 127, `sh: create-vite@latest: command not found` |
+| `npm create vite-plus@1.3.0 --`, with `npm_config_package` set in the parent environment | npm                                                | Exit 127, the same failure; this is #689              |
+
+Further checks:
+
+- **Separators.** `npm create vite-plus@latest -- <flags> --package-manager npm -- --template vanilla-ts` and `bun create vite-plus@latest <flags> --package-manager bun -- --template vanilla-ts` both passed, and Vite+ ran the template as `create-vite@latest app --template vanilla-ts …`. npm consumed only the first `--`, and Bun consumed none.
+- **Bun's own flags.** `bun create` has its own `--no-git` and `--no-install` options. Forwarding `--no-git --no-hooks` through `bun create vite-plus@latest` reached Vite+: the run passed with no Git repository and no hooks. `--no-install` was not tried.
+- **How `vp` reaches the child.** After the npm runs, the npx cache directory for `create-vite-plus` holds `vp` and `vpr` in its `node_modules/.bin`, next to `create-vite-plus`. npm links the bins of every installed package, dependencies included, so `vp` is on the child's `PATH`. Bun passing with no `vp` on `PATH` shows the same exposure, but its cache was not inspected. The pnpm and Yarn `create` failures fit `dlx` linking only the bins of the package it was asked for. That is an inference from the error; the `dlx` directories were not inspected.
+- **The version the project records.** `bunx --package vite-plus@1.2.0 vp create` with Bun, and `pnpm dlx --package vite-plus@1.2.0 vp create` with npm, both wrote `"vite-plus": "1.2.0"` while 1.3.0 was `latest`. The vite-plus that runs decides the version an npm or Bun project starts on. pnpm and Yarn projects record `catalog:` instead.
+
+Three findings follow:
+
+- `pnpm create vite-plus` and `yarn create vite-plus` do not expose `vp` to the install step, which is the case Decision 1 tells the implementation to stop on. A user with a global `vp` on `PATH` would not see it. This looks like a defect in the entry point Vite+ recommends, but the cause is inferred, not shown.
+- In every shape, when `--package-manager` is not forwarded, Vite+ 1.3.0 makes the runner's package manager the project's package manager.
+- Through `create-vite-plus`, the `create-vite-plus` version decides the exact vite-plus that runs, and therefore the vite-plus version an npm or Bun project starts on.
+
+### Decision
+
+The runner table in Decision 1 becomes:
+
+| Runner package manager | Spawned command                                      |
+| ---------------------- | ---------------------------------------------------- |
+| npm                    | `npm create vite-plus@latest -- <forwarded>`         |
+| pnpm                   | `pnpm dlx --package vite-plus vp create <forwarded>` |
+| Yarn                   | `yarn dlx --package vite-plus vp create <forwarded>` |
+| Bun                    | `bun create vite-plus@latest <forwarded>`            |
+
+How the runner is chosen does not change: Calavera's own `--package-manager` when it is given, and npm otherwise. Issue #676 still decides whether the launching package manager should choose it instead.
+
+npm and Bun use `create-vite-plus` because it is Vite+'s own entry point and it passed with every project package manager. For npm it also removes the first cause of #670. pnpm and Yarn keep today's shape because `create-vite-plus` fails through `dlx` on a machine without a global `vp`, and Decision 1 forbids working around that with `VP_CLI_BIN` or a hand-built `PATH`. They move to `create-vite-plus` in their own issue once a Vite+ release passes the same probe.
+
+For npm and Bun, the runner no longer names the package and the bin, which was Decision 1's rule. `create-vite-plus` has one bin, so there is nothing for a runner to choose between, and `vp` reaches the child because npm and Bun link a dependency's bins next to the requested package's. That is runner behavior, not a promise from Vite+, so it is held to the same standard as before: the per-runner check that `vp create` completes with no `vp` on the parent `PATH` stays in force, and a runner that fails it returns here.
+
+The spec is `@latest`, which keeps what Decision 1 does today: run the latest vite-plus. The expectation is that naming a version makes npm and Bun check the registry instead of reusing a copy already cached, which is the failure in #645. No run started from a stale cache, so the implementation verifies this. It does not address #675, which concerns a stale copy of Calavera itself.
+
+npm needs `--` between `vite-plus@latest` and the forwarded arguments, as the Vite+ documentation in #3028 states. Calavera adds that one token, which amends Decision 5's rule that Calavera adds nothing. The forwarded arguments themselves still reach Vite+ verbatim and in order, including a second `--` for template arguments, as the separator check above shows.
+
+Calavera does not add `--package-manager` to the forwarded arguments when the user did not pass it, because Decision 5 forbids rewriting them and Vite+'s default is reasonable. The Decision 4 line "Vite+ will ask its own questions (template, target directory, package manager, and the rest)" changes to match Vite+ 1.3.0: Vite+ asks its own questions, and it uses the runner's package manager for the project unless `--package-manager` is forwarded after `--new`. The `--dry-run` output shows the same text.
+
+### Consequences of the amendment
+
+- One implementation issue changes `createVpCreateCommand` (`packages/cli/src/index.js`) for npm and Bun, and the confirmation text. The hard-stop message already names `runnerCommand.command`, so it reads `through npm` and `through bun` without a change. Its tests cover:
+  - the npm and Bun commands, including where `--` goes when the forwarded arguments also hold one;
+  - the unchanged pnpm and Yarn commands;
+  - forwarded arguments without `--package-manager` reaching the child unchanged, with no `--package-manager` added;
+  - the confirmation text about the package-manager default.
+- The implementation runs the npm row and the Bun row once against the published package, with npm and with no `--package-manager` forwarded, and records the versions. It also checks whether a forwarded `--no-install` reaches Vite+ through `bun create`, and whether `@latest` replaces an older cached copy.
+- The `runnerCommand.command === "npx"` branch that attaches `NPX_STALE_CACHE_HINT` (`packages/cli/src/index.js`) no longer matches any runner. The implementation removes the hint or rewrites it for npm, and settles #719, which asks for a separate exit 127 hint, at the same time.
+- In `docs/agent-first-calavera-workflow.md`, the implementation pull request:
+  - narrows the known-issue section "`vp create` Exits With Code 127 Through npx" to the cause #689 tracks, Calavera itself started with `npx --package`, which this amendment does not fix;
+  - removes the sentence "pick npm when Vite+ asks";
+  - changes the sentence in "Start A New Vite+ Project With `--new`" that says Vite+ asks about the package manager.
+
+  #671 removes the known-issue section when #689 is fixed.
+
+- The `pnpm create` and `yarn create` failure is reported to Vite+ with the reproduction above, after the owner approves filing it.
 
 ## Consequences
 
@@ -142,9 +228,9 @@ The documentation that describes `vp create` as a separate first step, `docs/age
 
 ## Open questions
 
-- **Runner exposure of `vp`.** That each runner puts the vite-plus bins on the child's `PATH` is the premise of Decision 1, and it is not yet proven for any of the four runners. The implementation issue proves it; a runner that fails it sends this decision back for review.
+- **Runner exposure of `vp`.** That each runner puts the vite-plus bins on the child's `PATH` is the premise of Decision 1. The 2026-10-21 amendment's probe shows it for the four commands in the amended table on vite-plus 1.3.0, and shows that `pnpm create vite-plus` and `yarn create vite-plus` fail it. Each implementation repeats the check for the version it spawns; a runner that fails it sends this decision back for review.
 - **Version drift between 0.2.8, 0.3.1, and 1.0.0.** The target-directory rules, the cancellation exit code, and the `VP_CLI_BIN` fallback were read from 0.2.8 source, the `ENOENT` finding comes from the 0.3.1 probe, and the option list was confirmed on 1.0.0. The implementation verifies the three 0.2.8 mechanisms against 1.0.0, the version the runner resolves today, and records the version it probed.
 - **Node.js floor.** Vite+ 1.0.0 requires `^22.18.0 || ^24.11.0 || >=26.0.0` and Calavera declares no `engines` field. Whether the confirmation states the floor, or the hard stop explains a child that refused to start on an older Node.js, is left to the implementation.
-- **Pinning vite-plus.** Decision 1 runs whatever version the runner resolves for `vite-plus`. Whether `--new` should pin a version, or accept one from the user, is not decided here.
+- **Pinning vite-plus.** Decision 1 runs whatever version the runner resolves for `vite-plus`. Whether `--new` should pin a version, or accept one from the user, is not decided here. The 2026-10-21 amendment adds evidence: `create-vite-plus` depends on one exact vite-plus version, so pinning `create-vite-plus` would pin both the `vp create` that runs and the vite-plus version an npm or Bun project starts on.
 - **`--json` with inherited stdio.** Vite+ writes its prompts and progress to the inherited stdout, which would corrupt a JSON result on the same stream. Whether `--new --json` is refused or routes the child's output elsewhere is left to the implementation issue, with the refusal as the default if it is not settled there.
 - **`vp create --agent` and the bootstrap.** The bootstrap's existing `AGENTS.md` handling is expected to cover files Vite+ writes, but the combination has not been run. CAL-01y's bootstrap readiness check on a scratch `vp create` project is the evidence to read first.
