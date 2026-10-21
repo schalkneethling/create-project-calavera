@@ -1,0 +1,92 @@
+[
+  {
+    "bucket": "pending",
+    "completedAt": "0001-01-01T00:00:00Z",
+    "description": "",
+    "link": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234301510/job/118000000195",
+    "name": "Unit tests and typecheck",
+    "state": "IN_PROGRESS",
+    "workflow": "Quality Checks"
+  },
+  {
+    "bucket": "pending",
+    "completedAt": "0001-01-01T00:00:00Z",
+    "description": "",
+    "link": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234301489/job/118000000117",
+    "name": "test",
+    "state": "IN_PROGRESS",
+    "workflow": "Playwright Tests"
+  },
+  {
+    "bucket": "pending",
+    "completedAt": "0001-01-01T00:00:00Z",
+    "description": "",
+    "link": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234301510/job/118000000170",
+    "name": "Production build",
+    "state": "IN_PROGRESS",
+    "workflow": "Quality Checks"
+  },
+  {
+    "bucket": "pass",
+    "completedAt": "2026-10-19T10:00:11Z",
+    "description": "",
+    "link": "https://socket.dev",
+    "name": "Socket Security: Pull Request Alerts",
+    "state": "SUCCESS",
+    "workflow": ""
+  },
+  {
+    "bucket": "pending",
+    "completedAt": "0001-01-01T00:00:00Z",
+    "description": "",
+    "link": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b893",
+    "name": "Header rules",
+    "state": "PENDING",
+    "workflow": ""
+  },
+  {
+    "bucket": "pending",
+    "completedAt": "0001-01-01T00:00:00Z",
+    "description": "",
+    "link": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b893",
+    "name": "Pages changed",
+    "state": "PENDING",
+    "workflow": ""
+  },
+  {
+    "bucket": "pending",
+    "completedAt": "0001-01-01T00:00:00Z",
+    "description": "",
+    "link": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b893",
+    "name": "Redirect rules",
+    "state": "PENDING",
+    "workflow": ""
+  },
+  {
+    "bucket": "pass",
+    "completedAt": "2026-10-19T09:59:59Z",
+    "description": "",
+    "link": "https://socket.dev/dashboard/org/schalkneethling/sbom/eff9d0ac-502c-4386-8b48-07b0c4c7f847",
+    "name": "Socket Security: Project Report",
+    "state": "SUCCESS",
+    "workflow": ""
+  },
+  {
+    "bucket": "pending",
+    "completedAt": "0001-01-01T00:00:00Z",
+    "description": "Deploy Preview processing.",
+    "link": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b893",
+    "name": "deploy/netlify",
+    "state": "PENDING",
+    "workflow": ""
+  },
+  {
+    "bucket": "pass",
+    "completedAt": "0001-01-01T00:00:00Z",
+    "description": "Review skipped: bot user not eligible for review",
+    "link": "",
+    "name": "CodeRabbit",
+    "state": "SUCCESS",
+    "workflow": ""
+  }
+]

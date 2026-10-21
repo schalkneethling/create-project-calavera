@@ -1,0 +1,10 @@
+Header rules	pending	0	https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b893	
+Pages changed	pending	0	https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b893	
+Production build	pending	0	https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234301510/job/118000000170	
+Redirect rules	pending	0	https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b893	
+Unit tests and typecheck	pending	0	https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234301510/job/118000000195	
+deploy/netlify	pending	0	https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b893	Deploy Preview processing.
+test	pending	0	https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234301489/job/118000000117	
+CodeRabbit	pass	0		Review skipped: bot user not eligible for review
+Socket Security: Project Report	pass	3s	https://socket.dev/dashboard/org/schalkneethling/sbom/eff9d0ac-502c-4386-8b48-07b0c4c7f847	
+Socket Security: Pull Request Alerts	pass	11s	https://socket.dev	

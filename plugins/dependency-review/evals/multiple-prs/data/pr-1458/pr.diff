@@ -1,0 +1,22 @@
+diff --git a/package.json b/package.json
+--- a/package.json
++++ b/package.json
+@@ -1,1 +1,1 @@
+-    "axe-core": "^4.13.0",
++    "axe-core": "^4.14.0",
+diff --git a/pnpm-lock.yaml b/pnpm-lock.yaml
+--- a/pnpm-lock.yaml
++++ b/pnpm-lock.yaml
+@@ -1,1 +1,1 @@
+      axe-core:
+-        specifier: ^4.13.0
+-        version: 4.13.0
++        specifier: ^4.14.0
++        version: 4.14.0
+@@ -2,2 +2,2 @@
+-  axe-core@4.13.0:
+-    resolution: {integrity: sha512-RECORDING-OMITTED-OLD}
+-    engines: {node: '>=4'}
++  axe-core@4.14.0:
++    resolution: {integrity: sha512-RECORDING-OMITTED-NEW}
++    engines: {node: '>=4'}

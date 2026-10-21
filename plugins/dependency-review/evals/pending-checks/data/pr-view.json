@@ -1,0 +1,157 @@
+{
+  "author": {
+    "is_bot": true,
+    "login": "app/dependabot"
+  },
+  "baseRefName": "main",
+  "body": "Bumps [devalue](https://github.com/sveltejs/devalue) from 5.9.0 to 5.9.3.\n<details>\n<summary>Release notes</summary>\n<p><em>Sourced from <a href=\"https://github.com/sveltejs/devalue/releases\">devalue's releases</a>.</em></p>\n<blockquote>\n<h2>v5.9.3</h2>\n<h3>Patch Changes</h3>\n<ul>\n<li>6861dbb: fix: avoid scanning sparse array holes in <code>uneval</code> traversal and shared-array population</li>\n<li>9ec5130: fix: reject non-string null-prototype object keys in <code>parse</code> and <code>unflatten</code> to prevent bypassing the <code>__proto__</code> check</li>\n<li>dae8153: fix: prevent unhandled internal rejections in <code>stringifyAsync</code> when serializing multiple promises</li>\n<li>84f6f67: fix: prevent quadratic <code>uneval</code> output expansion for repeated strings and bigints</li>\n<li>6861dbb: fix: avoid eager allocation when evaluating sparse arrays emitted by <code>uneval</code></li>\n<li>8f8d78e: fix: validate revived backing buffers before constructing typed arrays</li>\n<li>46dc877: fix: serialize only the visible bytes of Node Buffers in <code>stringify</code>, <code>stringifyAsync</code> and <code>uneval</code>, preventing disclosure of unrelated data from their shared allocation pool</li>\n</ul>\n<h2>v5.9.2</h2>\n<h3>Patch Changes</h3>\n<ul>\n<li>8b2a456: fix: reject out-of-bounds indices</li>\n</ul>\n<h2>v5.9.1</h2>\n<h3>Patch Changes</h3>\n<ul>\n<li>39457ce: fix: <code>uneval</code> emits valid JS for graphs with more than 65534 repeated references</li>\n<li>686e379: fix: emit valid JS for Node <code>Buffer</code> in <code>uneval</code></li>\n<li>376b65c: fix: preserve <code>-0</code> in float typed arrays in <code>uneval</code></li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Changelog</summary>\n<p><em>Sourced from <a href=\"https://github.com/sveltejs/devalue/blob/main/CHANGELOG.md\">devalue's changelog</a>.</em></p>\n<blockquote>\n<h2>5.9.3</h2>\n<h3>Patch Changes</h3>\n<ul>\n<li>6861dbb: fix: avoid scanning sparse array holes in <code>uneval</code> traversal and shared-array population</li>\n<li>9ec5130: fix: reject non-string null-prototype object keys in <code>parse</code> and <code>unflatten</code> to prevent bypassing the <code>__proto__</code> check</li>\n<li>dae8153: fix: prevent unhandled internal rejections in <code>stringifyAsync</code> when serializing multiple promises</li>\n<li>84f6f67: fix: prevent quadratic <code>uneval</code> output expansion for repeated strings and bigints</li>\n<li>6861dbb: fix: avoid eager allocation when evaluating sparse arrays emitted by <code>uneval</code></li>\n<li>8f8d78e: fix: validate revived backing buffers before constructing typed arrays</li>\n<li>46dc877: fix: serialize only the visible bytes of Node Buffers in <code>stringify</code>, <code>stringifyAsync</code> and <code>uneval</code>, preventing disclosure of unrelated data from their shared allocation pool</li>\n</ul>\n<h2>5.9.2</h2>\n<h3>Patch Changes</h3>\n<ul>\n<li>8b2a456: fix: reject out-of-bounds indices</li>\n</ul>\n<h2>5.9.1</h2>\n<h3>Patch Changes</h3>\n<ul>\n<li>39457ce: fix: <code>uneval</code> emits valid JS for graphs with more than 65534 repeated references</li>\n<li>686e379: fix: emit valid JS for Node <code>Buffer</code> in <code>uneval</code></li>\n<li>376b65c: fix: preserve <code>-0</code> in float typed arrays in <code>uneval</code></li>\n</ul>\n</blockquote>\n</details>\n<details>\n<summary>Commits</summary>\n<ul>\n<li><a href=\"https://github.com/sveltejs/devalue/commit/53cd3db7dddf34bb8c2ab1ebc98dafd21daab918\"><code>53cd3db</code></a> Version Packages (<a href=\"https://redirect.github.com/sveltejs/devalue/issues/201\">#201</a>)</li>\n<li><a href=\"https://github.com/sveltejs/devalue/commit/46dc877b3570dafb1cd3291b9bb48cecef8f7266\"><code>46dc877</code></a> Merge commit from fork</li>\n<li><a href=\"https://github.com/sveltejs/devalue/commit/84f6f67999104e36940f744bec0443536de1b463\"><code>84f6f67</code></a> Merge commit from fork</li>\n<li><a href=\"https://github.com/sveltejs/devalue/commit/6861dbbb7e548849e48bce718e88747a298f7250\"><code>6861dbb</code></a> Merge commit from fork</li>\n<li><a href=\"https://github.com/sveltejs/devalue/commit/8f8d78e173f8a00023d009c7677ccc600dee0b99\"><code>8f8d78e</code></a> Merge commit from fork</li>\n<li><a href=\"https://github.com/sveltejs/devalue/commit/dae8153e9d7541b975cc4018138d6cebec6c1199\"><code>dae8153</code></a> Merge commit from fork</li>\n<li><a href=\"https://github.com/sveltejs/devalue/commit/9ec513072e31f45e60d44dad6f0dba9c92bb8675\"><code>9ec5130</code></a> Merge commit from fork</li>\n<li><a href=\"https://github.com/sveltejs/devalue/commit/8ade61d0e70d935a780e6cb0a69ee2a5383b4855\"><code>8ade61d</code></a> chore: fix bench:compare script (<a href=\"https://redirect.github.com/sveltejs/devalue/issues/198\">#198</a>)</li>\n<li><a href=\"https://github.com/sveltejs/devalue/commit/a3d30d94c8fd9cfca4b774814ff9d5bfade5010c\"><code>a3d30d9</code></a> Version Packages (<a href=\"https://redirect.github.com/sveltejs/devalue/issues/180\">#180</a>)</li>\n<li><a href=\"https://github.com/sveltejs/devalue/commit/8b2a4562c446d7c36d9d629778079a5fae4243e1\"><code>8b2a456</code></a> Merge commit from fork</li>\n<li>Additional commits viewable in <a href=\"https://github.com/sveltejs/devalue/compare/v5.9.0...v5.9.3\">compare view</a></li>\n</ul>\n</details>\n<br />\n",
+  "commits": [
+    {
+      "authoredDate": "2026-10-19T09:59:50Z",
+      "authors": [
+        {
+          "email": "49699333+dependabot[bot]@users.noreply.github.com",
+          "id": "MDM6Qm90NDk2OTkzMzM=",
+          "login": "dependabot[bot]",
+          "name": "dependabot[bot]"
+        }
+      ],
+      "committedDate": "2026-10-19T09:59:50Z",
+      "messageBody": "Bumps [devalue](https://github.com/sveltejs/devalue) from 5.9.0 to 5.9.3.\n- [Release notes](https://github.com/sveltejs/devalue/releases)\n- [Changelog](https://github.com/sveltejs/devalue/blob/main/CHANGELOG.md)\n- [Commits](https://github.com/sveltejs/devalue/compare/v5.9.0...v5.9.3)\n\n---\nupdated-dependencies:\n- dependency-name: devalue\n  dependency-version: 5.9.3\n  dependency-type: direct:development\n...\n\nSigned-off-by: dependabot[bot] <support@github.com>",
+      "messageHeadline": "build(deps-dev): bump devalue from 5.9.0 to 5.9.3",
+      "oid": "c3e07eff69b8c5dfa1767a4468320d4ee7166e67"
+    }
+  ],
+  "files": [
+    {
+      "path": "package.json",
+      "additions": 1,
+      "deletions": 1,
+      "changeType": "MODIFIED"
+    },
+    {
+      "path": "pnpm-lock.yaml",
+      "additions": 210,
+      "deletions": 86,
+      "changeType": "MODIFIED"
+    }
+  ],
+  "headRefName": "dependabot/npm_and_yarn/devalue-5.9.3",
+  "labels": [
+    {
+      "id": "MDU6TGFiZWwyMTUwMDU2MTMz",
+      "name": "dependencies",
+      "description": "Pull requests that update a dependency file",
+      "color": "0366d6"
+    },
+    {
+      "id": "LA_kwDOCUwOE88AAAAB7R7P6g",
+      "name": "javascript",
+      "description": "Pull requests that update javascript code",
+      "color": "168700"
+    }
+  ],
+  "mergeStateStatus": "BLOCKED",
+  "mergeable": "MERGEABLE",
+  "number": 1457,
+  "state": "OPEN",
+  "statusCheckRollup": [
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234213489/job/117999264017",
+      "name": "test",
+      "startedAt": "2026-10-19T10:00:00Z",
+      "status": "IN_PROGRESS",
+      "workflowName": "Playwright Tests"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234213510/job/117999264595",
+      "name": "Unit tests and typecheck",
+      "startedAt": "2026-10-19T10:00:01Z",
+      "status": "IN_PROGRESS",
+      "workflowName": "Quality Checks"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://github.com/schalkneethling/schalkneethling.com/actions/runs/39234213510/job/117999264170",
+      "name": "Production build",
+      "startedAt": "2026-10-19T10:00:00Z",
+      "status": "IN_PROGRESS",
+      "workflowName": "Quality Checks"
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b891",
+      "name": "Header rules",
+      "startedAt": "2026-10-19T09:59:56Z",
+      "status": "IN_PROGRESS",
+      "workflowName": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b891",
+      "name": "Pages changed",
+      "startedAt": "2026-10-19T09:59:56Z",
+      "status": "IN_PROGRESS",
+      "workflowName": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "0001-01-01T00:00:00Z",
+      "conclusion": "",
+      "detailsUrl": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b891",
+      "name": "Redirect rules",
+      "startedAt": "2026-10-19T09:59:56Z",
+      "status": "IN_PROGRESS",
+      "workflowName": ""
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "deploy/netlify",
+      "startedAt": "2026-10-19T10:00:07Z",
+      "state": "PENDING",
+      "targetUrl": "https://app.netlify.com/projects/schalkneethling-com/deploys/6ad5ea1a7e955c3a5838b891",
+      "description": "Deploy Preview processing."
+    },
+    {
+      "__typename": "StatusContext",
+      "context": "CodeRabbit",
+      "startedAt": "2026-10-19T10:25:28Z",
+      "state": "SUCCESS",
+      "targetUrl": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-19T09:59:59Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://socket.dev/dashboard/org/schalkneethling/sbom/eff9d0ac-502c-4386-8b48-07b0c4c7f847",
+      "name": "Socket Security: Project Report",
+      "startedAt": "2026-10-19T09:59:56Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    },
+    {
+      "__typename": "CheckRun",
+      "completedAt": "2026-10-19T10:00:11Z",
+      "conclusion": "SUCCESS",
+      "detailsUrl": "https://socket.dev",
+      "name": "Socket Security: Pull Request Alerts",
+      "startedAt": "2026-10-19T10:00:00Z",
+      "status": "COMPLETED",
+      "workflowName": ""
+    }
+  ],
+  "title": "build(deps-dev): bump devalue from 5.9.0 to 5.9.3",
+  "url": "https://github.com/schalkneethling/schalkneethling.com/pull/1457"
+}
