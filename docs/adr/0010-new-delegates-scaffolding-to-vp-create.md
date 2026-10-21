@@ -164,7 +164,7 @@ The runner table in Decision 1 becomes:
 
 How the runner is chosen does not change: Calavera's own `--package-manager` when it is given, and npm otherwise. Issue #676 still decides whether the launching package manager should choose it instead.
 
-npm and Bun use `create-vite-plus` because it is Vite+'s own entry point and it passed with every project package manager. For npm it also removes the first cause of #670. pnpm and Yarn keep today's shape because `create-vite-plus` fails through `dlx` on a machine without a global `vp`, and Decision 1 forbids working around that with `VP_CLI_BIN` or a hand-built `PATH`. They move to `create-vite-plus` in their own issue once a Vite+ release passes the same probe.
+npm and Bun use `create-vite-plus` because it is Vite+'s own entry point and it passed with every project package manager. For npm it also removes the first cause of #670. pnpm and Yarn keep today's shape because `create-vite-plus` fails through `dlx` on a machine without a global `vp`, and Decision 1 forbids working around that with `VP_CLI_BIN` or a hand-built `PATH`. They move to `create-vite-plus` in their own issue once a Vite+ release fixes voidzero-dev/vite-plus#3177 and passes the same probe.
 
 For npm and Bun, the runner no longer names the package and the bin, which was Decision 1's rule. `create-vite-plus` has one bin, so there is nothing for a runner to choose between, and `vp` reaches the child because npm and Bun link a dependency's bins next to the requested package's. That is runner behavior, not a promise from Vite+, so it is held to the same standard as before: the per-runner check that `vp create` completes with no `vp` on the parent `PATH` stays in force, and a runner that fails it returns here.
 
@@ -190,7 +190,7 @@ Calavera does not add `--package-manager` to the forwarded arguments when the us
 
   #671 removes the known-issue section when #689 is fixed.
 
-- The `pnpm create` and `yarn create` failure is reported to Vite+ with the reproduction above, after the owner approves filing it.
+- The `pnpm create` and `yarn create` failure was reported to Vite+ on 2026-10-21 as voidzero-dev/vite-plus#3177 (https://github.com/voidzero-dev/vite-plus/issues/3177), with the reproduction above.
 
 ## Consequences
 
