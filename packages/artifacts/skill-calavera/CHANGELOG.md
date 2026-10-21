@@ -1,5 +1,11 @@
 # @schalkneethling/calavera-skill-calavera
 
+## 0.2.3
+
+### Patch Changes
+
+- f893fbe: The Calavera skill asks the agent to show the user the command each `package.json` script in the `dry_run_apply` result's `scriptChanges` will run, and for a changed or renamed script the command it replaces, before asking for approval.
+
 ## 0.2.2
 
 ### Patch Changes
