@@ -139,3 +139,7 @@ dist-web
 
 # Results of claude plugin eval runs
 plugins/*/evals/results/
+
+# Stryker sandbox and mutation reports
+.stryker-tmp
+reports/mutation/
