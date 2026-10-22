@@ -547,6 +547,18 @@ function planScriptRenames(packageScripts, plannedScripts) {
 }
 
 /**
+ * Whether `directory` is the root of a pnpm workspace: its
+ * `pnpm-workspace.yaml` lists member packages. The file is read whichever
+ * package manager Calavera resolved, because in a project Vite+ manages, Vite+
+ * runs the package manager the project pins (ADR-0012).
+ *
+ * @param {string} directory
+ */
+async function isPnpmWorkspaceRoot(directory) {
+  return (await workspacePackagePatterns(directory, undefined, "pnpm")) !== undefined;
+}
+
+/**
  * The command that installs a recipe's development dependencies. When Vite+
  * manages the project, Vite+ installs them with `vp add -D`, so they are
  * installed with the package manager and version the project pins, and the
@@ -556,7 +568,11 @@ function planScriptRenames(packageScripts, plannedScripts) {
  * At the root of a pnpm workspace, pnpm refuses to add a dependency unless
  * `-w` (`--workspace-root`) is given (`ERR_PNPM_ADDING_TO_ROOT`), so both
  * `vp add`, which runs pnpm there, and pnpm's own command get `-w` (#731).
- * npm, Yarn, and Bun commands are unchanged.
+ * pnpm raises that error only when more than one package pattern is listed,
+ * but it accepts `-w` at any workspace root, so `-w` is passed for a single
+ * pattern too. `-w` is the flag `vp add` documents for the workspace root, so
+ * Calavera does not translate it per package manager. npm, Yarn, and Bun
+ * commands are unchanged.
  *
  * @param {PackageManager} packageManager
  * @param {VitePlusDetection} detection
@@ -747,10 +763,8 @@ async function planDevDependencyInstall(
   projectDirectory,
   { explicitPackageManager },
 ) {
-  const pnpmWorkspaceRoot =
-    (await workspacePackagePatterns(projectDirectory, undefined, "pnpm")) !== undefined;
   const command = devDependencyInstallCommand(packageManager, detection, dependencies, {
-    pnpmWorkspaceRoot,
+    pnpmWorkspaceRoot: await isPnpmWorkspaceRoot(projectDirectory),
   });
   /** @type {string[]} */
   const notes = [];

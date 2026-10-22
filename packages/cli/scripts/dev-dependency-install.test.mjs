@@ -335,6 +335,49 @@ test("devDependencyInstallCommand adds -w at the root of a pnpm workspace, to vp
 
 // #731: pnpm refuses to add a dependency at a workspace root without -w
 // (ERR_PNPM_ADDING_TO_ROOT), and so does vp add, which runs pnpm there.
+test("the stand-in vp add refuses a workspace-root install without -w, as pnpm does, and accepts it with -w or in a member", async () => {
+  await using workspace = await managedWorkspaceRoot();
+  const vp = join(workspace.project, "node_modules/vite-plus/bin/vp");
+  /**
+   * @param {string} cwd
+   * @param {string[]} vpArgs
+   * @returns {Promise<{ code: number | string | null | undefined, stdout: string }>}
+   */
+  const run = (cwd, vpArgs) =>
+    new Promise((resolvePromise) => {
+      execFile(process.execPath, [vp, ...vpArgs], { cwd }, (error, stdout) =>
+        resolvePromise({ code: error ? error.code : 0, stdout }),
+      );
+    });
+
+  const refused = await run(workspace.project, ["add", "-D", "knip"]);
+  assert.equal(refused.code, 1);
+  assert.match(refused.stdout, /ERR_PNPM_ADDING_TO_ROOT/);
+  assert.deepEqual(await run(workspace.project, ["add", "-D", "-w", "knip"]), {
+    code: 0,
+    stdout: "",
+  });
+  assert.deepEqual(await run(join(workspace.project, "packages/utils"), ["add", "-D", "knip"]), {
+    code: 0,
+    stdout: "",
+  });
+});
+
+// pnpm raises ERR_PNPM_ADDING_TO_ROOT only for more than one pattern, but it
+// accepts -w at any workspace root, so a single pattern gets -w too.
+test("a dry run at the root of a pnpm workspace that lists a single package pattern names pnpm add --save-dev -w", async () => {
+  await using fixture = await createTemporaryFixture("single-pattern", {
+    "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+    "calavera.config.json": json(recipe),
+    "package.json": json(plainViteManifest),
+  });
+
+  const result = await inDirectory(fixture.root, () =>
+    applyRecipeObject(recipe, { json: true, dryRun: true }),
+  );
+  assert.equal(result.installCommand, "pnpm add --save-dev -w knip");
+});
+
 test("at the root of a Vite+-managed pnpm workspace, the dry run and apply name vp add -D -w, and the install succeeds", async () => {
   await using workspace = await managedWorkspaceRoot();
 
@@ -364,6 +407,10 @@ test("at the root of a pnpm workspace Vite+ does not manage, the dry run and app
     join(workspace.project, "pnpm-workspace.yaml"),
     "packages:\n  - apps/*\n  - packages/*\n",
   );
+
+  const human = await runCli(workspace, ["apply", "--dry-run"]);
+  assert.equal(human.code, 0, human.stderr);
+  assert.match(human.stdout, /^Dev dependency install command: pnpm add --save-dev -w knip$/m);
 
   const dryRun = await runCli(workspace, ["apply", "--dry-run", "--json"]);
   assert.equal(dryRun.code, 0, dryRun.stderr);

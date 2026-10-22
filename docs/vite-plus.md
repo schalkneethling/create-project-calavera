@@ -178,10 +178,10 @@ At the root of a pnpm workspace, whose `pnpm-workspace.yaml` lists the
 member `packages`, pnpm refuses to add a dependency unless it is told to add
 it to the workspace root (`ERR_PNPM_ADDING_TO_ROOT`). There, Calavera adds
 `-w` (`--workspace-root`) to the install command: `vp add -D -w knip` in a
-project Vite+ manages, and `pnpm add --save-dev -w knip` otherwise. The dry
-run names the same command. A workspace member, and a project whose
-`pnpm-workspace.yaml` holds only catalogs or settings, keeps the command
-without `-w`.
+project Vite+ manages, and `pnpm add --save-dev -w knip` in a pnpm project
+Vite+ does not manage. The dry run names the same command. A workspace
+member, and a project whose `pnpm-workspace.yaml` holds only catalogs or
+settings, keeps the command without `-w`.
 
 If the install fails, `apply` has already written the recipe's files,
 `package.json` scripts, configuration, and `.calavera/state.json`. The error
