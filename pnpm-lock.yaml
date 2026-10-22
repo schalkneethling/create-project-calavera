@@ -66,8 +66,8 @@ importers:
         specifier: ^8.1.2
         version: 8.1.2(stylelint@17.16.0(typescript@7.0.2))
       stylelint-plugin-use-baseline:
-        specifier: ^1.4.7
-        version: 1.4.7(stylelint@17.16.0(typescript@7.0.2))
+        specifier: ^1.4.8
+        version: 1.4.8(stylelint@17.16.0(typescript@7.0.2))
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -2366,6 +2366,10 @@ packages:
     resolution: {integrity: sha512-zkd+e9S1AQHhmaBKye9zlFHWjOwVgqXl1q3ECYy8561K7qxR2cREf/STLskulBFd78k6AOFeA+ff1TtEzk9bAA==}
     engines: {node: ^10 || ^12 || >=14}
 
+  postcss@8.5.31:
+    resolution: {integrity: sha512-YUbWYCgErwnMAVkjUnYa+KlMBzGpHwiIt/DE7f0G33AuX2LH9UcTk6KgWxd3zRU+pN3u/C+Xl3EnMLM4Hea7Sg==}
+    engines: {node: ^10 || ^12 || >=14}
+
   prettier@3.9.10:
     resolution: {integrity: sha512-skGHTH1Yb9QvaTC4hWnRTzEYtCpApF0UMBPz+t/0ZPzP8ihefo/btKd+QA7pUE0fEwA1SbS/NmhyEcstdXOIdA==}
     engines: {node: '>=14'}
@@ -2601,8 +2605,8 @@ packages:
     peerDependencies:
       stylelint: ^16.18.0 || ^17.0.0
 
-  stylelint-plugin-use-baseline@1.4.7:
-    resolution: {integrity: sha512-5mFGYObiJ6kr6nqT0GyvIiKkpJuLoW/oG15pseJdF4S8zndb1ZQoT0I+3lEFjOmhwWuqq6MEBEtUMRlGuSBiwQ==}
+  stylelint-plugin-use-baseline@1.4.8:
+    resolution: {integrity: sha512-AJtV32b6aOoZdbiaJaj0OEO8I/wh8TSZUGUHsR/15MHSWPon2IPPVcNfzhCodvB+nBEre9xC2wdVJ8QNOWHBLw==}
     peerDependencies:
       stylelint: ^16.0.2 || ^17.0.0
 
@@ -4684,6 +4688,12 @@ snapshots:
       picocolors: 1.1.1
       source-map-js: 1.2.2
 
+  postcss@8.5.31:
+    dependencies:
+      nanoid: 3.3.20
+      picocolors: 1.1.1
+      source-map-js: 1.2.2
+
   prettier@3.9.10: {}
 
   pretty-ms@9.3.1:
@@ -4946,11 +4956,11 @@ snapshots:
       postcss-sorting: 10.0.0(postcss@8.5.30)
       stylelint: 17.16.0(typescript@7.0.2)
 
-  stylelint-plugin-use-baseline@1.4.7(stylelint@17.16.0(typescript@7.0.2)):
+  stylelint-plugin-use-baseline@1.4.8(stylelint@17.16.0(typescript@7.0.2)):
     dependencies:
       css-tree: 3.2.1
       is-plain-object: 5.1.0
-      postcss: 8.5.30
+      postcss: 8.5.31
       postcss-value-parser: 4.2.0
       stylelint: 17.16.0(typescript@7.0.2)
 
