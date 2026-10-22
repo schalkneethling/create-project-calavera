@@ -30,8 +30,8 @@ importers:
         specifier: 8.20.0
         version: 8.20.0
       execa:
-        specifier: 10.1.1
-        version: 10.1.1
+        specifier: 10.2.0
+        version: 10.2.0
       fledgling:
         specifier: 1.3.1
         version: 1.3.1(@gunshi/plugin-i18n@0.36.0)
@@ -185,8 +185,8 @@ importers:
         specifier: workspace:^
         version: link:../baseline-core
       execa:
-        specifier: ^10.1.1
-        version: 10.1.1
+        specifier: ^10.2.0
+        version: 10.2.0
       prettier:
         specifier: ^3.9.10
         version: 3.9.10
@@ -1577,8 +1577,8 @@ packages:
     resolution: {integrity: sha512-CRT1WTyuQoD771GW56XEZFQ/ZoSfWid1alKGDYMmkt2yl8UXrVR4pspqWNEcqKvVIzg6PAltWjxcSSPrboA4iA==}
     engines: {node: '>=18.0.0'}
 
-  execa@10.1.1:
-    resolution: {integrity: sha512-yJAC9ulsE6fU0K6wzJBIH+wI+KAtMeu6Ck8rs23OVzvEhqXjGADdI6K+YNIDAjcQQ6AwXTD96cKExJo6xFJXyg==}
+  execa@10.2.0:
+    resolution: {integrity: sha512-j1pFOVxaybMVCTNHSBuISL2KQcDS3KIE1wBmUp4n2X+1FgaQI2ZDJVy9TYxDyMCzYojRIMh9O8X/UoWZtxTJdw==}
     engines: {node: '>=22'}
 
   exponential-backoff@3.1.3:
@@ -3840,7 +3840,7 @@ snapshots:
     dependencies:
       eventsource-parser: 3.1.1
 
-  execa@10.1.1:
+  execa@10.2.0:
     dependencies:
       '@sindresorhus/merge-streams': 4.0.0
       figures: 6.1.0
