@@ -204,7 +204,8 @@ that once accompanied it are gone; a Vite+ project enables Oxlint plugins in the
 
 The optional Knip integration adds unused-file, dependency, and export analysis
 to the generated `quality` script. Calavera writes a minimal `knip.json` that
-keeps Knip's default project discovery. When those defaults do not fit a
+keeps Knip's default project discovery and ignores `.agents/**`, because
+Calavera-installed agent files are not imported by project code. When those defaults do not fit a
 project, add targeted `entry`, `project`, or `workspaces` configuration as
 described in the [Knip configuration guide](https://knip.dev/overview/configuration).
 Calavera treats those changes as local edits and will refuse to overwrite or

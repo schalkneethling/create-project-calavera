@@ -2634,6 +2634,10 @@ test("Knip config ignores .agents and upgrades an unedited config from the previ
     knipState.hash = textHash(previousKnipContents);
     await writeFile(".calavera/state.json", `${JSON.stringify(state, null, 2)}\n`);
 
+    const previousDryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+    assert.equal(previousDryRun.changes.find(({ path }) => path === "knip.json").type, "write");
+    assert.equal(await readFile("knip.json", "utf8"), previousKnipContents);
+
     await applyRecipeObject(recipe, options);
     assert.deepEqual(JSON.parse(await readFile("knip.json", "utf8")).ignore, [".agents/**"]);
     const secondDryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
@@ -2654,6 +2658,7 @@ test("Knip config ignores .agents and upgrades an unedited config from the previ
 });
 
 test("Knip ignores unused files under .agents but still reports other unused files", async () => {
+  const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-knip-run-"));
   const knipBinary = fileURLToPath(
     new URL("../../../node_modules/knip/bin/knip.js", import.meta.url),
@@ -2678,14 +2683,12 @@ test("Knip ignores unused files under .agents but still reports other unused fil
       join(projectDirectory, ".agents", "skills", "example", "script.mjs"),
       "export const unused = 1;\n",
     );
-    await writeFile(
-      join(projectDirectory, "knip.json"),
-      `${JSON.stringify(
-        { $schema: "https://unpkg.com/knip@6/schema.json", ignore: [".agents/**"] },
-        null,
-        2,
-      )}\n`,
-    );
+    // Write the knip.json that Calavera generates, not a hand-written one.
+    const recipe = buildRecipe("minimal", ["knip"], "npm");
+    process.chdir(projectDirectory);
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+    await applyRecipeObject(recipe, { json: true, noInstall: true, assumeYes: true });
+    process.chdir(originalDirectory);
 
     const cleanReport = await runKnip();
     assert.doesNotMatch(cleanReport, /\.agents/);
@@ -2695,6 +2698,7 @@ test("Knip ignores unused files under .agents but still reports other unused fil
     assert.match(orphanReport, /orphan\.js/);
     assert.doesNotMatch(orphanReport, /\.agents/);
   } finally {
+    process.chdir(originalDirectory);
     await rm(projectDirectory, { force: true, recursive: true });
   }
 });
