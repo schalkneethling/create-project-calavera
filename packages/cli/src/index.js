@@ -547,20 +547,53 @@ function planScriptRenames(packageScripts, plannedScripts) {
 }
 
 /**
+ * Whether `directory` is the root of a pnpm workspace: its
+ * `pnpm-workspace.yaml` lists member packages. The file is read whichever
+ * package manager Calavera resolved, because in a project Vite+ manages, Vite+
+ * runs the package manager the project pins (ADR-0012).
+ *
+ * @param {string} directory
+ */
+async function isPnpmWorkspaceRoot(directory) {
+  return (await workspacePackagePatterns(directory, undefined, "pnpm")) !== undefined;
+}
+
+/**
  * The command that installs a recipe's development dependencies. When Vite+
  * manages the project, Vite+ installs them with `vp add -D`, so they are
  * installed with the package manager and version the project pins, and the
  * package manager Calavera resolved plays no part; every other project keeps
  * its package manager's own command (ADR-0012).
  *
+ * At the root of a pnpm workspace, pnpm refuses to add a dependency unless
+ * `-w` (`--workspace-root`) is given (`ERR_PNPM_ADDING_TO_ROOT`), so both
+ * `vp add`, which runs pnpm there, and pnpm's own command get `-w` (#731).
+ * pnpm raises that error only when more than one package pattern is listed,
+ * but it accepts `-w` at any workspace root, so `-w` is passed for a single
+ * pattern too. `-w` is the flag `vp add` documents for the workspace root, so
+ * Calavera does not translate it per package manager. npm, Yarn, and Bun
+ * commands are unchanged.
+ *
  * @param {PackageManager} packageManager
  * @param {VitePlusDetection} detection
  * @param {string[]} dependencies
+ * @param {{ pnpmWorkspaceRoot?: boolean }} [options]
  * @returns {[string, string[]]}
  */
-export function devDependencyInstallCommand(packageManager, detection, dependencies) {
-  return delegatesToVitePlus(detection)
-    ? ["vp", ["add", "-D", ...dependencies]]
+export function devDependencyInstallCommand(
+  packageManager,
+  detection,
+  dependencies,
+  { pnpmWorkspaceRoot = false } = {},
+) {
+  const workspaceRoot = pnpmWorkspaceRoot ? ["-w"] : [];
+
+  if (delegatesToVitePlus(detection)) {
+    return ["vp", ["add", "-D", ...workspaceRoot, ...dependencies]];
+  }
+
+  return packageManager === "pnpm"
+    ? packageManagerCommands.pnpm.installDev([...workspaceRoot, ...dependencies])
     : packageManagerCommands[packageManager].installDev(dependencies);
 }
 
@@ -730,7 +763,9 @@ async function planDevDependencyInstall(
   projectDirectory,
   { explicitPackageManager },
 ) {
-  const command = devDependencyInstallCommand(packageManager, detection, dependencies);
+  const command = devDependencyInstallCommand(packageManager, detection, dependencies, {
+    pnpmWorkspaceRoot: await isPnpmWorkspaceRoot(projectDirectory),
+  });
   /** @type {string[]} */
   const notes = [];
 

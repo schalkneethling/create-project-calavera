@@ -102,7 +102,8 @@ const toolchainDependency =
   /^(eslint|@eslint\/|typescript-eslint|prettier|oxlint|oxfmt|typescript$|@typescript\/|vitest|jest|mocha|@biomejs\/)/;
 
 // The quality script each case gets (ADR-0013): a workspace root runs every
-// member's test script, as the template's own ready script does.
+// member's test script, as the template's own ready script does. Only the
+// root of the pnpm workspace installs with -w (#731).
 const cases = [
   {
     name: "library",
@@ -110,6 +111,7 @@ const cases = [
     directory: ".",
     integrations: rootIntegrations,
     quality: "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip",
+    installFlags: [],
   },
   {
     name: "monorepo root",
@@ -117,6 +119,7 @@ const cases = [
     directory: ".",
     integrations: rootIntegrations,
     quality: "vp check && vp run -r test && pnpm lint:styles && pnpm knip",
+    installFlags: ["-w"],
   },
   {
     name: "monorepo member packages/utils",
@@ -124,6 +127,7 @@ const cases = [
     directory: "packages/utils",
     integrations: memberIntegrations,
     quality: "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip",
+    installFlags: [],
   },
 ];
 
@@ -392,7 +396,8 @@ for (const flowCase of cases) {
 // recipe's development dependencies with the project's own vp add -D, which
 // runs the package manager the project pins. A stand-in vite-plus at the
 // fixture root records the call, so the case stays offline; the monorepo
-// member finds it at the workspace root, as Node.js resolution would.
+// member finds it at the workspace root, as Node.js resolution would. Like
+// pnpm, the stand-in refuses a workspace-root install without -w (#731).
 for (const flowCase of cases) {
   test(`vp create ${flowCase.name}: apply_recipe installs the dev dependencies with the project's vp add -D`, async () => {
     await using fixture = await copyRepositoryFixture(flowCase.fixture);
@@ -415,7 +420,11 @@ for (const flowCase of cases) {
           : {}),
       });
       const dryRun = await callMcpTool("dry_run_apply", { recipe });
-      const installCommand = `vp add -D ${dryRun.result.dependencies.join(" ")}`;
+      const installCommand = [
+        "vp add -D",
+        ...flowCase.installFlags,
+        ...dryRun.result.dependencies,
+      ].join(" ");
 
       assert.ok(dryRun.result.dependencies.length > 0, "the recipe installs no dependency");
       assert.equal(dryRun.result.installCommand, installCommand);
@@ -428,7 +437,7 @@ for (const flowCase of cases) {
     });
 
     assert.deepEqual(await readStubInvocations(logPath), [
-      { argv: ["add", "-D", ...dependencies], cwd: project },
+      { argv: ["add", "-D", ...flowCase.installFlags, ...dependencies], cwd: project },
     ]);
   });
 }
