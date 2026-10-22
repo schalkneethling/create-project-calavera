@@ -1,6 +1,6 @@
 # STATUS
 
-Updated: 2026-10-09
+Updated: 2026-10-22
 
 ## Current phase and checkpoint
 
@@ -10,23 +10,16 @@ The Increment 1 exit condition (H0) is not met. `--new` (#532, ADR-0010), the pr
 
 ## Completed this session
 
-- `--new` exit 127 diagnosed (2026-10-09). `npx --package vite-plus vp create` fails with `sh: create-vite@latest: command not found` when npm is the project's package manager. The outer `npx` sets `npm_config_package=vite-plus`, Vite+ copies `process.env` into its template runner (`packages/cli/src/create/discovery.ts`), and the nested `npx create-vite@latest` inherits it. Reproduced with nested `npx` alone. A second source: Calavera started with `npx --package create-project-calavera` leaks the same setting through any runner. `pnpm create project-calavera -- --new` still uses `npx`, as ADR-0010 Decision 1 states.
-- Upstream issue filed: voidzero-dev/vite-plus#2970. It offers a pull request; none is opened until a maintainer answers.
-- Workaround documented (#670, PR #672): `docs/agent-first-calavera-workflow.md`, section "Known Issue: `vp create` Exits With Code 127 Through npx". Both documented commands were run end to end with exit 0. Removal is tracked in #671.
-- The bootstrap always installs the base Calavera skill, although the Composer leaves `skill-calavera` unchecked by default. Filed #673 (decision: should the bootstrap follow the recipe) and #674 (bug, reproduced: `apply` with a skill-free recipe drops the skill from state and leaves `.agents/skills/calavera` unowned; depends on #673).
-- The user's original run used a stale cached Calavera 4.0.2: unversioned `npm create project-calavera` reuses the npx cache without updating, whereas `@latest` and `npx --package` reinstall `latest`. Reproduced by seeding the cache. Filed #675 (p1).
-- Filed #676 (decision: `--new` runner from the launching package manager, amends ADR-0010), #677 (agent worktrees break format and lint checks, p3), and #678 (feature, p3: remove Calavera's management files and keep the installed tooling).
-- Twelve stale agent worktrees under `.claude/worktrees/` removed. Each was clean, and every local-only commit had a patch-identical commit on its remote branch. The branches remain. Repository-wide `pnpm format:all:check` passes again.
-- Recorded late, landed on `main` between 2026-09-28 and 2026-10-06 without a status update: ADR-0009, ADR-0010, ADR-0011, and ADR-0013 accepted; `--new` with `--config` and recipe next steps; second dry run after apply reports no drift (#548); `github-repository-controls` refuses a workspace member (#550); Composer recipe seam (#525) and redesign (#571, #572); dev dependencies installed with `vp add -D` (#618); `quality` runs `vp check` and `vp test` (#622); supported Node.js range checked (#626). Releases v4.0.0 to v4.1.0 shipped between 2026-10-03 and 2026-10-05.
+- Stryker mutation testing set up for the CLI package (#723, PR #725). This is development tooling outside the current increment. `pnpm test:mutation` runs `@stryker-mutator/tap-runner` 10.0.0 over `packages/cli/scripts/*.test.mjs` and mutates only `packages/cli/src/**/*.js`, which is 25 files and 7,460 mutants. The dry run passes, and `pnpm quality` and every CI check on PR #725 pass.
+- Two workarounds are in `stryker.config.mjs`. Stryker's tsconfig preprocessing calls the TypeScript JavaScript API that TypeScript 7 removed, so `tsconfigFile` points at a missing file. The line has a `WORKAROUND(@stryker-mutator/core)` marker that links stryker-mutator/stryker-js#6111. The redaction linear-time test is skipped under Stryker only, because instrumented code exceeds its 2,000 ms budget. The normal suite still runs it.
+- The tap runner records coverage per test file, and only inside that file's own process. Code that tests reach only through a child process, such as the unsupported Node.js branch in `packages/cli/src/node-engine.js`, is reported as not covered, and a survivor there may be killed by a file that was not run. Issue #723 and the config record this.
+- Filed #724 (spike: the Stryker TypeScript checker on TypeScript 7). Its TypeScript 7 mode still calls the TypeScript 6 JavaScript API, and it requires the tsconfig file that the workaround above skips.
+- Recorded late, landed on `main` between 2026-10-09 and 2026-10-21 without a status update, and not reviewed in this session: every pull request listed as in progress on 2026-10-09 merged; ADR-0010 was amended to run `create-vite-plus` for npm and Bun, with links to voidzero-dev/vite-plus#3177; Claude Code plugins are hosted in a Calavera marketplace (#704); and the dependency-review plugin reports failing checks first (#713).
 
 ## In progress
 
-- Open pull requests awaiting review, as stacks that merge base first:
-  - #648 (#429) → #653 (#623) → #659 (#645) → #662 (#644) → #664 (#619)
-  - #650 (#593) → #652 (#594)
-  - #649 (#607) → #660 (#608)
-  - #654 (#642) → #661 (#596)
-  - Standalone on `main`: #672 (#670, this session) and #640 (Baseline data refresh).
+- #725 (#723, this session): all checks pass, and CodeRabbit left no actionable comments. It waits for Schalk to merge.
+- #722 (Version Packages) and Dependabot pull requests #726 to #730 are open.
 
 ## Blocked
 
@@ -51,15 +44,15 @@ The Increment 1 exit condition (H0) is not met. `--new` (#532, ADR-0010), the pr
 
 ## Decisions taken this session (with ADR link)
 
-- No Calavera change for the `--new` exit 127 failure: the defect is upstream, and ADR-0010 Decision 1 stands (`docs/adr/0010-new-delegates-scaffolding-to-vp-create.md`). Whether `--new` should choose its runner from the package manager that launched Calavera is not decided; no decision issue is open.
-- ADR-0012 accepted by Schalk on 2026-10-09: `vp add -D` installs development dependencies in a Vite+-managed project (`docs/adr/0012-vp-add-installs-dev-dependencies-in-managed-projects.md`). It read "Proposed" after #620 shipped the decision on 2026-10-04.
+- Stryker uses the tap runner, not the command runner. On a sample of 72 mutants in `node-engine.js` and `repository-root.js`, the command runner timed out on every mutant, and Stryker counts timeouts as detected, so it reported a meaningless 100% in 3 minutes 52 seconds. The tap runner reported 64 killed, 4 timed out, 1 survived, 2 not covered, and 1 runtime error in 47 seconds. No ADR: this is development tooling, and the evidence is in #723 and PR #725.
+- The Stryker TypeScript checker is deferred to #724. No ADR.
 
 ## Next session starts with
 
 - Confirm or reject Checkpoint 0 on the evidence above.
+- Merge #725 if the review holds. A full mutation run has not been done, and whether the 4 sample timeouts are real or caused by CPU load is unverified.
 - Decide #673, then fix #674.
 - #675 is p1: the documented npm command can run an old Calavera silently.
-- Decide #676.
-- Review the open pull request queue, starting with the base of each stack: #648, #650, #649, and #654.
+- Decide #676, and check it against the 2026-10-21 amendment to ADR-0010.
 - Watch voidzero-dev/vite-plus#2970; open the upstream pull request only after a maintainer answers.
 - Toward H0: open the Determinant first-slice issue (CAL-01x) and run the bootstrap readiness check (CAL-01y) on a scratch `vp create` library monorepo.

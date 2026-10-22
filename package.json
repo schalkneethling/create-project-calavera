@@ -21,6 +21,7 @@
     "schema:check": "pnpm --filter create-project-calavera schema:check",
     "test": "pnpm --recursive --if-present test",
     "test:plugins": "node --test scripts/plugin-marketplace.test.mjs \"plugins/*/tests/*.test.mjs\"",
+    "test:mutation": "stryker run",
     "plugins:validate": "node scripts/validate-plugins.mjs npx --yes --ignore-scripts=false @anthropic-ai/claude-code@2.1.301",
     "skills:discovery:check": "node scripts/check-skills-discovery.mjs",
     "typecheck": "tsc --noEmit",
@@ -38,6 +39,9 @@
   "devDependencies": {
     "@changesets/cli": "^3.0.3",
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
+    "@stryker-mutator/api": "10.0.0",
+    "@stryker-mutator/core": "10.0.0",
+    "@stryker-mutator/tap-runner": "10.0.0",
     "@types/ini": "^4.1.1",
     "@types/node": "^26.6.5",
     "@types/pacote": "^11.1.8",
