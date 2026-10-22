@@ -61,14 +61,37 @@ export async function copyReleaseFixture(name) {
 }
 
 /**
+ * Stand-in source, for a CommonJS script whose arguments are in `argv`, that
+ * refuses `add` at the root of a pnpm workspace without `-w` the way pnpm
+ * does (#731). pnpm 10 and 11 raise `ERR_PNPM_ADDING_TO_ROOT` when the working
+ * directory is the workspace directory, neither `-w` nor `--workspace-root`
+ * is given, and `pnpm-workspace.yaml` lists more than one package pattern.
+ * The YAML is read with the `yaml` package Calavera itself depends on.
+ */
+export const pnpmAddingToRootCheck = `
+if (argv[0] === "add" && !argv.includes("-w") && !argv.includes("--workspace-root")) {
+  const { existsSync, readFileSync } = require("node:fs");
+  const packages = existsSync("pnpm-workspace.yaml")
+    ? require(${JSON.stringify(fileURLToPath(import.meta.resolve("yaml")))}).parse(readFileSync("pnpm-workspace.yaml", "utf8"))?.packages
+    : undefined;
+  if (Array.isArray(packages) && packages.length > 1) {
+    console.log("ERR_PNPM_ADDING_TO_ROOT Running this command will add the dependency to the workspace root, which might not be what you want - if you really meant it, make it explicit by running this command again with the -w flag (or --workspace-root).");
+    process.exit(1);
+  }
+}
+`;
+
+/**
  * Writes a stand-in for the vite-plus package at `node_modules/vite-plus` under
  * `directory`, shaped like vite-plus 1.0.0 where apply relies on it: the
  * manifest exports `./package.json` and declares the `vp` bin as `./bin/vp`.
  * The bin records its argv and working directory as one JSON line in
  * `logPath`, then exits with `exitCode`, so a test can assert what apply ran
- * with no network access and no real install. A failing bin also writes a
- * line to standard output, which apply captures. `manifest` replaces the
- * manifest's text, to give it a shape apply has to refuse.
+ * with no network access and no real install. Like `vp add` in a pnpm
+ * workspace, it refuses a root install without `-w` (`pnpmAddingToRootCheck`).
+ * A failing bin also writes a line to standard output, which apply captures.
+ * `manifest` replaces the manifest's text, to give it a shape apply has to
+ * refuse.
  *
  * @param {string} directory
  * @param {{ logPath: string, exitCode?: number, manifest?: string }} options
@@ -90,7 +113,9 @@ export async function writeVitePlusStub(directory, { logPath, exitCode = 0, mani
     join(packageDirectory, "bin/vp"),
     `#!/usr/bin/env node
 const { appendFileSync } = require("node:fs");
-appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ argv: process.argv.slice(2), cwd: process.cwd() }) + "\\n");
+const argv = process.argv.slice(2);
+appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ argv, cwd: process.cwd() }) + "\\n");
+${pnpmAddingToRootCheck}
 if (${exitCode} !== 0) {
   console.log("vp stub: ERR_STUB_INSTALL the install failed");
   console.error("vp stub: the install failed");

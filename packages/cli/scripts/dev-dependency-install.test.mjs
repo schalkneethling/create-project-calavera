@@ -1,8 +1,9 @@
 // Issue #618 and ADR-0012: in a Vite+-managed project, apply installs the
 // recipe's development dependencies with the project's own `vp add -D`, so
 // Vite+ runs the package manager the project pins. Every other project keeps
-// its package manager's command. A failed install stops the spinner, exits
-// non-zero, and says what was already written and how to finish.
+// its package manager's command. At the root of a pnpm workspace, both add
+// `-w` (#731). A failed install stops the spinner, exits non-zero, and says
+// what was already written and how to finish.
 //
 // No test installs anything: a stand-in vite-plus package under node_modules,
 // or a stand-in package manager first on PATH, records what apply ran.
@@ -25,6 +26,7 @@ import {
   createTemporaryFixture,
   json,
   plainViteManifest,
+  pnpmAddingToRootCheck,
   readStubInvocations,
   writeVitePlusStub,
 } from "./vite-plus-fixtures.mjs";
@@ -38,12 +40,16 @@ const CLI_TIMEOUT_MS = 30_000;
 /**
  * A package-manager stand-in. It records its argv and working directory, then
  * exits with STUB_EXIT, which defaults to zero. A successful `init` writes a
- * package.json, as the real command does.
+ * package.json, as the real command does. The pnpm stand-in also refuses a
+ * root install without `-w`, as pnpm does.
+ *
+ * @param {string} name
  */
-const packageManagerStub = `#!/usr/bin/env node
+const packageManagerStub = (name) => `#!/usr/bin/env node
 const { appendFileSync, writeFileSync } = require("node:fs");
 const argv = process.argv.slice(2);
 appendFileSync(process.env.STUB_LOG, JSON.stringify({ argv, cwd: process.cwd() }) + "\\n");
+${name === "pnpm" ? pnpmAddingToRootCheck : ""}
 const exitCode = Number(process.env.STUB_EXIT ?? "0");
 if (exitCode !== 0) {
   console.log("package manager stub: ERR_STUB_COMMAND the command failed");
@@ -65,7 +71,7 @@ async function writePackageManagerStubs(bin) {
 
   for (const name of ["npm", "pnpm", "yarn", "bun"]) {
     const path = join(bin, name);
-    await writeFile(path, packageManagerStub);
+    await writeFile(path, packageManagerStub(name));
     await chmod(path, 0o755);
   }
 }
@@ -204,6 +210,33 @@ async function memberWithoutManifest() {
 }
 
 /**
+ * The root of the committed `vp create` monorepo fixture, whose
+ * `pnpm-workspace.yaml` lists three package patterns, with the recipe saved
+ * there and a stand-in vite-plus that refuses a root install without `-w`.
+ */
+async function managedWorkspaceRoot() {
+  const workspace = await copyReleaseFixture("monorepo");
+  const tools = await createTemporaryFixture("install-root-tools", {});
+  const vpLog = join(tools.root, "vp.log");
+
+  await mkdir(join(workspace.root, ".git"));
+  await writeFile(join(workspace.root, "calavera.config.json"), json(recipe));
+  await writePackageManagerStubs(join(tools.root, "bin"));
+  await writeVitePlusStub(workspace.root, { logPath: vpLog });
+
+  return {
+    project: workspace.root,
+    bin: join(tools.root, "bin"),
+    vpLog,
+    packageManagerLog: join(tools.root, "package-manager.log"),
+    async [Symbol.asyncDispose]() {
+      await workspace[Symbol.asyncDispose]();
+      await tools[Symbol.asyncDispose]();
+    },
+  };
+}
+
+/**
  * Runs `callback` with the process working directory set to `directory`.
  *
  * @template T
@@ -267,6 +300,82 @@ test("devDependencyInstallCommand keeps each package manager's command when the 
       ["add", "--dev", "knip"],
     ]);
   }
+});
+
+test("devDependencyInstallCommand adds -w at the root of a pnpm workspace, to vp add -D and to pnpm only", () => {
+  const root = { pnpmWorkspaceRoot: true };
+
+  for (const packageManager of /** @type {const} */ (["npm", "pnpm", "yarn", "bun"])) {
+    for (const vitePlus of [detection("managed"), detection("unknown", "managed")]) {
+      assert.deepEqual(devDependencyInstallCommand(packageManager, vitePlus, ["knip"], root), [
+        "vp",
+        ["add", "-D", "-w", "knip"],
+      ]);
+    }
+  }
+
+  const unmanaged = detection("unmanaged");
+  assert.deepEqual(devDependencyInstallCommand("pnpm", unmanaged, ["knip"], root), [
+    "pnpm",
+    ["add", "--save-dev", "-w", "knip"],
+  ]);
+  assert.deepEqual(devDependencyInstallCommand("npm", unmanaged, ["knip"], root), [
+    "npm",
+    ["install", "--save-dev", "knip"],
+  ]);
+  assert.deepEqual(devDependencyInstallCommand("yarn", unmanaged, ["knip"], root), [
+    "yarn",
+    ["add", "--dev", "knip"],
+  ]);
+  assert.deepEqual(devDependencyInstallCommand("bun", unmanaged, ["knip"], root), [
+    "bun",
+    ["add", "--dev", "knip"],
+  ]);
+});
+
+// #731: pnpm refuses to add a dependency at a workspace root without -w
+// (ERR_PNPM_ADDING_TO_ROOT), and so does vp add, which runs pnpm there.
+test("at the root of a Vite+-managed pnpm workspace, the dry run and apply name vp add -D -w, and the install succeeds", async () => {
+  await using workspace = await managedWorkspaceRoot();
+
+  const human = await runCli(workspace, ["apply", "--dry-run"]);
+  assert.equal(human.code, 0, human.stderr);
+  assert.match(human.stdout, /^Dev dependency install command: vp add -D -w knip$/m);
+
+  const dryRun = await runCli(workspace, ["apply", "--dry-run", "--json"]);
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  const planned = JSON.parse(dryRun.stdout);
+  assert.equal(planned.installCommand, "vp add -D -w knip");
+  assert.deepEqual(await readStubInvocations(workspace.vpLog), [], "the dry run ran vp");
+
+  const applied = await runCli(workspace, ["apply", "--yes", "--json"]);
+  assert.equal(applied.code, 0, applied.stderr);
+  assert.equal(applied.timedOut, false);
+  assert.equal(JSON.parse(applied.stdout).installCommand, planned.installCommand);
+  assert.deepEqual(await readStubInvocations(workspace.vpLog), [
+    { argv: ["add", "-D", "-w", "knip"], cwd: workspace.project },
+  ]);
+  assert.deepEqual(await readStubInvocations(workspace.packageManagerLog), []);
+});
+
+test("at the root of a pnpm workspace Vite+ does not manage, the dry run and apply name pnpm add --save-dev -w, and the install succeeds", async () => {
+  await using workspace = await unmanagedProject("pnpm-root");
+  await writeFile(
+    join(workspace.project, "pnpm-workspace.yaml"),
+    "packages:\n  - apps/*\n  - packages/*\n",
+  );
+
+  const dryRun = await runCli(workspace, ["apply", "--dry-run", "--json"]);
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  const planned = JSON.parse(dryRun.stdout);
+  assert.equal(planned.installCommand, "pnpm add --save-dev -w knip");
+
+  const applied = await runCli(workspace, ["apply", "--yes", "--json"]);
+  assert.equal(applied.code, 0, applied.stderr);
+  assert.equal(JSON.parse(applied.stdout).installCommand, planned.installCommand);
+  assert.deepEqual(await readStubInvocations(workspace.packageManagerLog), [
+    { argv: ["add", "--save-dev", "-w", "knip"], cwd: workspace.project },
+  ]);
 });
 
 test("apply --dry-run names vp add -D, and how apply runs it, in a Vite+-managed project", async () => {

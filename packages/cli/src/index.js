@@ -553,14 +553,31 @@ function planScriptRenames(packageScripts, plannedScripts) {
  * package manager Calavera resolved plays no part; every other project keeps
  * its package manager's own command (ADR-0012).
  *
+ * At the root of a pnpm workspace, pnpm refuses to add a dependency unless
+ * `-w` (`--workspace-root`) is given (`ERR_PNPM_ADDING_TO_ROOT`), so both
+ * `vp add`, which runs pnpm there, and pnpm's own command get `-w` (#731).
+ * npm, Yarn, and Bun commands are unchanged.
+ *
  * @param {PackageManager} packageManager
  * @param {VitePlusDetection} detection
  * @param {string[]} dependencies
+ * @param {{ pnpmWorkspaceRoot?: boolean }} [options]
  * @returns {[string, string[]]}
  */
-export function devDependencyInstallCommand(packageManager, detection, dependencies) {
-  return delegatesToVitePlus(detection)
-    ? ["vp", ["add", "-D", ...dependencies]]
+export function devDependencyInstallCommand(
+  packageManager,
+  detection,
+  dependencies,
+  { pnpmWorkspaceRoot = false } = {},
+) {
+  const workspaceRoot = pnpmWorkspaceRoot ? ["-w"] : [];
+
+  if (delegatesToVitePlus(detection)) {
+    return ["vp", ["add", "-D", ...workspaceRoot, ...dependencies]];
+  }
+
+  return packageManager === "pnpm"
+    ? packageManagerCommands.pnpm.installDev([...workspaceRoot, ...dependencies])
     : packageManagerCommands[packageManager].installDev(dependencies);
 }
 
@@ -730,7 +747,11 @@ async function planDevDependencyInstall(
   projectDirectory,
   { explicitPackageManager },
 ) {
-  const command = devDependencyInstallCommand(packageManager, detection, dependencies);
+  const pnpmWorkspaceRoot =
+    (await workspacePackagePatterns(projectDirectory, undefined, "pnpm")) !== undefined;
+  const command = devDependencyInstallCommand(packageManager, detection, dependencies, {
+    pnpmWorkspaceRoot,
+  });
   /** @type {string[]} */
   const notes = [];
 
