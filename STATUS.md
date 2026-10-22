@@ -15,7 +15,7 @@ The Increment 1 exit condition (H0) is not met. `--new` (#532, ADR-0010), the pr
 - Researched Stryker as a Calavera integration: feasible for projects Vite+ manages, using the Vitest runner. ADR-0014 (PR #738, merged) accepts it as an optional integration that uses the project's runner rather than adding one, offered only where Calavera delegates to Vite+, and run only through `test:mutation`.
 - Dependency installs at a pnpm workspace root now pass `-w` (#731, PR #739, merged). The install previously failed with `ERR_PNPM_ADDING_TO_ROOT` after Calavera had written its files. This was on H0's path, because the exit condition installs Knip on a `vp create` library monorepo.
 - Filed #724 (spike: Stryker TypeScript checker on TypeScript 7), #732 (Stryker scope decision, open for its documentation criteria), #733 to #736 (the Stryker integration: ignore entries, catalog entry, Composer and MCP, `node:test` support), and #737 (remove the TypeScript 7 workaround once Stryker supports it).
-- Recorded late, landed on `main` between 2026-10-09 and 2026-10-21 without a status update, and not reviewed in this session: every pull request listed as in progress on 2026-10-09 merged; ADR-0010 was amended to run `create-vite-plus` for npm and Bun, with links to voidzero-dev/vite-plus#3177; Claude Code plugins are hosted in a Calavera marketplace (#704); and the dependency-review plugin reports failing checks first (#713).
+- Recorded late, landed on `main` between 2026-10-09 and 2026-10-21 without a status update, and not reviewed in this session: every pull request listed as in progress on 2026-10-09 merged; an amendment to ADR-0010 that runs `create-vite-plus` for npm and Bun was proposed on 2026-10-21 (#688, merged in #720 while still proposed), with links to voidzero-dev/vite-plus#3177; Claude Code plugins are hosted in a Calavera marketplace (#704); and the dependency-review plugin reports failing checks first (#713).
 
 ## In progress
 
@@ -56,5 +56,5 @@ The Increment 1 exit condition (H0) is not met. `--new` (#532, ADR-0010), the pr
 - Finish Increment 1: CAL-01x, the Determinant tracking issue, then CAL-01y on a scratch `vp create` library monorepo, then H0.
 - Decide #673, then fix #674.
 - #675 is p1: the documented npm command can run an old Calavera silently.
-- Decide #676, and check it against the 2026-10-21 amendment to ADR-0010.
+- Decide #676, and check it against the amendment to ADR-0010 proposed on 2026-10-21, which also still needs a decision.
 - Watch voidzero-dev/vite-plus#2970; open the upstream pull request only after a maintainer answers.
