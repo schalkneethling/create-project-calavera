@@ -1,9 +1,9 @@
 # ADR-0014: Stryker Mutation Testing as an Optional Integration for Vite+-Managed Projects
 
-- **Status:** Proposed (2026-10-22)
+- **Status:** Accepted (2026-10-22, Schalk Neethling)
 - **Date:** 2026-10-22
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/732
-- **Decides:** whether Calavera may offer Stryker mutation testing as an optional integration, and on what terms. It proposes that mutation testing is not a "test runner" under ADR-0009, that version 1 supports only projects that Calavera delegates to Vite+, and that Stryker runs only through a `test:mutation` script, outside `quality` and outside CI. Where the work sits relative to Increment 1 is left to the project owner. None of the C8 safety properties (brief Section 3) changes.
+- **Decides:** whether Calavera may offer Stryker mutation testing as an optional integration, and on what terms. It decides that mutation testing is not a "test runner" under ADR-0009, that version 1 supports only projects that Calavera delegates to Vite+, and that Stryker runs only through a `test:mutation` script, outside `quality` and outside CI. Where the work sits relative to Increment 1 is left to the project owner. None of the C8 safety properties (brief Section 3) changes.
 
 ## Context
 
@@ -43,7 +43,7 @@ The evidence comes from the feasibility study's scratch projects, from the insta
 
 ### 1. Mutation testing is not a test runner under ADR-0009
 
-Two readings of ADR-0009 are possible. This ADR calls them the "test runner" reading and the "uses the runner" reading, and recommends the second.
+Two readings of ADR-0009 are possible. This ADR calls them the "test runner" reading and the "uses the runner" reading, and adopts the second.
 
 **The "test runner" reading: Stryker counts as a test runner, so ADR-0009 excludes it.** Stryker starts the tests, has a `testRunner` option, and needs a runner plugin before it can do anything. ADR-0009 says "for any project", without exceptions, and brief C2 names test runners by type. The strongest point is how Stryker reaches the tests. Its Vitest runner plugin does not go through `vp test`: it calls Vitest's own API, and its configuration (`testRunner`, `plugins`, and `vitest.configFile`) is a second place, next to Vite+'s, that decides how the project's tests are run. If Vite+ changed how `vp test` runs tests, that second place would not follow. On this reading, a Stryker integration starts a second test toolchain beside Vite+'s, and offering it would need ADR-0009 to be amended first.
 
@@ -77,11 +77,11 @@ Increment 1 ends at its exit condition, handoff H0. H0 is defined in the handoff
 
 This ADR does not decide when the Stryker issues, #733 to #736, are scheduled relative to Increment 1: whether they wait until Increment 1 ends with H0, or run alongside it. The project owner decides that, and this ADR does not change Section 0. #731 affects Knip and Varlock today, whatever happens to Stryker, so its placement can be decided on its own.
 
-Issue #732's acceptance criteria also ask for `docs/vite-plus.md` and the sequencing map to reflect the outcome. Those changes wait until the owner decides, because their content depends on the decision.
+Issue #732's acceptance criteria also ask for `docs/vite-plus.md` and the sequencing map to reflect the outcome. Those changes are not part of this ADR, so #732 stays open until they are made.
 
 ## Consequences
 
-If this ADR is accepted, #733, #734, and #735 are unblocked on scope. #734 still depends on #731 and #733, and possibly on the CQ3 decision about whether scripts can be expressed as metadata. #736 is decided separately.
+With this ADR accepted, #733, #734, and #735 are unblocked on scope. #734 still depends on #731 and #733, and possibly on the CQ3 decision about whether scripts can be expressed as metadata. #736 is decided separately.
 
 The catalog gains its first integration that depends on Vite+ detection to be offered at all: none of the fourteen entries in `packages/cli/src/catalog.js` is limited to projects that Vite+ manages today. The Composer and the MCP descriptions have to say so (#735).
 
