@@ -1444,16 +1444,29 @@ function createMcpLaunchCommand(packageManager) {
 }
 
 /**
- * The command `--new` spawns, per ADR-0010 Decision 1.
+ * The command `--new` spawns, per ADR-0010 Decision 1 and its 2026-10-21
+ * amendment: npm and Bun run Vite+'s `create-vite-plus` entry point, and pnpm
+ * and Yarn keep `dlx --package vite-plus vp create` until #740.
  *
  * @param {PackageManager} packageManager
  * @param {string[]} forwardedArgs
  * @returns {{ command: string, args: string[] }}
  */
 export function createVpCreateCommand(packageManager, forwardedArgs) {
-  const runner = createPackageRunnerCommand(packageManager, "vite-plus", "vp");
+  switch (packageManager) {
+    case "pnpm":
+    case "yarn": {
+      const runner = createPackageRunnerCommand(packageManager, "vite-plus", "vp");
 
-  return { command: runner.command, args: [...runner.args, "create", ...forwardedArgs] };
+      return { command: runner.command, args: [...runner.args, "create", ...forwardedArgs] };
+    }
+    case "bun":
+      // Not bun create: it prefers a local .bun-create template of the same name.
+      return { command: "bunx", args: ["create-vite-plus@latest", ...forwardedArgs] };
+    default:
+      // npm create consumes the first --, so a forwarded -- still reaches Vite+.
+      return { command: "npm", args: ["create", "vite-plus@latest", "--", ...forwardedArgs] };
+  }
 }
 
 /**
@@ -3315,10 +3328,14 @@ function recipeNextSteps(target, packageManager, { changeDirectory }) {
 const NEW_HARD_STOP_SUFFIX =
   "Calavera wrote nothing further, removed nothing, and did not run the --init bootstrap.";
 
-// The runner inherits stdio, so Calavera cannot read the npm error and shows
-// this for every non-zero npx exit. The wording states its own condition.
-export const NPX_STALE_CACHE_HINT =
-  'This applies only if the npm output above shows "npm error code ERESOLVE" and names a vite-plus version: an older vite-plus in the npx cache can cause that. To fix it, run "npm cache npx ls", find the row that shows vite-plus, run "npm cache npx rm <key>" with the key from that row, then run this command again. If the npm output shows a different error, this does not apply; read the npm or Vite+ output above.';
+// The runner inherits stdio, so Calavera cannot read the npm error. It picks
+// a hint from the exit code alone, and each hint states its own condition.
+export const NPM_STALE_CACHE_HINT =
+  'This applies only if the npm output above shows "npm error code ERESOLVE" and names a vite-plus version: an older create-vite-plus or vite-plus in the npx cache can cause that. To fix it, run "npm cache npx ls", find the rows that show create-vite-plus or vite-plus, run "npm cache npx rm <key>" with the key from each row, then run this command again. If the npm output shows a different error, this does not apply; read the npm or Vite+ output above.';
+
+// Exit 127 means a shell did not find a command, which no cache change fixes.
+export const NPM_EXIT_127_HINT =
+  'This applies only if the output above shows "command not found", for example for create-vite@latest. A likely cause is that Calavera itself was started with "npx --package" or "npm exec --package": npm then passes npm_config_package to the npx that Vite+ starts for the template, and that npx looks for its command in the wrong package. To avoid it, start Calavera with "npm create project-calavera" or "pnpm create project-calavera" if you did not already, or pass --package-manager pnpm before --new, with pnpm installed, and do not forward --package-manager npm after --new. See https://github.com/schalkneethling/create-project-calavera/blob/main/docs/agent-first-calavera-workflow.md#known-issue-vp-create-exits-with-code-127-through-npm. If the output shows a different error, this does not apply; read the npm or Vite+ output above.';
 
 /**
  * @typedef {{ command: string, args: string[], cwd: string }} RunnerInvocation
@@ -3478,18 +3495,20 @@ async function readNewProjectRecipe(source) {
 
 /**
  * @param {string} runner
+ * @param {PackageManager} runnerPackageManager The package manager Vite+ uses unless one is forwarded.
  * @param {string} cwd
  * @param {VitePlusDetection} cwdDetection
  * @param {string} [recipeSource] Absolute path of the recipe `--config` copies.
  * @returns {string[]}
  */
-function newProjectConfirmation(runner, cwd, cwdDetection, recipeSource) {
+function newProjectConfirmation(runner, runnerPackageManager, cwd, cwdDetection, recipeSource) {
   return [
     "Calavera will run Vite+ to scaffold a new project:",
     `  Command: ${runner}`,
     `  Working directory: ${cwd}`,
-    "- The runner may download vite-plus before it starts.",
-    "- Vite+ asks its own questions (template, target directory, package manager, and the rest) unless the forwarded flags answer them. Calavera does not answer them.",
+    "- The runner may download Vite+ before it starts.",
+    "- Vite+ asks its own questions (template, target directory, and the rest) unless the forwarded flags answer them. Calavera does not answer them.",
+    `- Vite+ uses ${runnerPackageManager} as the project's package manager unless --package-manager is forwarded after --new. Inside an existing workspace, Vite+ uses that workspace's package manager instead, even when --package-manager is forwarded.`,
     "- Vite+ installs the project's dependencies. This needs network access, can take minutes, and cannot be skipped.",
     "- If the target directory Vite+ is given is not empty, Vite+ may offer to remove its contents. That choice is Vite+'s.",
     "- Calavera's dry run does not preview what Vite+ writes, and Calavera does not undo it if the scaffold fails.",
@@ -3557,7 +3576,8 @@ export async function newProject(options, runtime = {}) {
     );
   }
 
-  const runnerCommand = createVpCreateCommand(options.packageManager ?? "npm", forwardedArgs);
+  const runnerPackageManager = options.packageManager ?? "npm";
+  const runnerCommand = createVpCreateCommand(runnerPackageManager, forwardedArgs);
   const runner = formatShellCommand(runnerCommand);
   const recipe =
     options.newConfig === undefined
@@ -3565,6 +3585,7 @@ export async function newProject(options, runtime = {}) {
       : await readNewProjectRecipe(resolve(cwd, options.newConfig));
   const confirmation = newProjectConfirmation(
     runner,
+    runnerPackageManager,
     cwd,
     await detectVitePlus(cwd),
     recipe?.source,
@@ -3614,9 +3635,9 @@ export async function newProject(options, runtime = {}) {
       `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
         runnerCommand.command === "yarn"
           ? " If yarn itself failed, note that yarn dlx needs Yarn 2 or later."
-          : runnerCommand.command === "npx"
-            ? ` ${NPX_STALE_CACHE_HINT}`
-            : ""
+          : runnerCommand.command !== "npm"
+            ? ""
+            : ` ${exit.exitCode === 127 ? NPM_EXIT_127_HINT : NPM_STALE_CACHE_HINT}`
       }`,
     );
   }
