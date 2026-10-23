@@ -2536,6 +2536,7 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
     assert.equal(packageFile.scripts.quality, "npm run knip");
     assert.deepEqual(JSON.parse(await readFile("knip.json", "utf8")), {
       $schema: "https://unpkg.com/knip@6/schema.json",
+      ignore: [".agents/**"],
       ignoreExportsUsedInFile: true,
     });
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
@@ -2591,6 +2592,111 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
       await readFile("knip.json", "utf8"),
       '{\n  "entry": [\n    "src/index.js"\n  ]\n}\n',
     );
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+test("Knip config ignores .agents and upgrades an unedited config from the previous version", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-knip-upgrade-"));
+  const recipe = buildRecipe("minimal", ["knip"], "npm");
+  const previousKnipContents = `${JSON.stringify(
+    {
+      $schema: "https://unpkg.com/knip@6/schema.json",
+      ignoreExportsUsedInFile: true,
+    },
+    null,
+    2,
+  )}\n`;
+  const options = { json: true, noInstall: true, assumeYes: true };
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+
+    // Given no knip.json, when dry_run_apply runs, then the plan writes the ignore entry and nothing is on disk.
+    const dryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+    assert.equal(
+      dryRun.changes.some(({ type, path }) => type === "write" && path === "knip.json"),
+      true,
+    );
+    await assertPathMissing("knip.json", "dry-run apply must not write Knip configuration");
+
+    // Given an unedited knip.json from the previous version, when apply runs, then it gains ignore
+    // and a second dry run reports it unchanged.
+    await applyRecipeObject(recipe, options);
+    await writeFile("knip.json", previousKnipContents);
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    const knipState = state.managedFiles.find(({ path }) => path === "knip.json");
+    knipState.hash = textHash(previousKnipContents);
+    await writeFile(".calavera/state.json", `${JSON.stringify(state, null, 2)}\n`);
+
+    const previousDryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+    assert.equal(previousDryRun.changes.find(({ path }) => path === "knip.json").type, "write");
+    assert.equal(await readFile("knip.json", "utf8"), previousKnipContents);
+
+    await applyRecipeObject(recipe, options);
+    assert.deepEqual(JSON.parse(await readFile("knip.json", "utf8")).ignore, [".agents/**"]);
+    const secondDryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+    assert.equal(secondDryRun.changes.find(({ path }) => path === "knip.json").type, "unchanged");
+
+    // Given an edited knip.json, when apply runs, then it refuses and leaves the file byte-for-byte unchanged.
+    const editedContents = `${JSON.stringify({ ignoreDependencies: ["left-pad"] }, null, 2)}\n`;
+    await writeFile("knip.json", editedContents);
+    await assert.rejects(
+      () => applyRecipeObject(recipe, options),
+      /Refusing to overwrite existing managed file: knip\.json/,
+    );
+    assert.equal(await readFile("knip.json", "utf8"), editedContents);
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+test("Knip ignores unused files under .agents but still reports other unused files", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-knip-run-"));
+  const knipBinary = fileURLToPath(
+    new URL("../../../node_modules/knip/bin/knip.js", import.meta.url),
+  );
+  const runKnip = () =>
+    execFileAsync(process.execPath, [knipBinary, "--no-progress"], {
+      cwd: projectDirectory,
+      env: { ...process.env, NO_COLOR: "1" },
+    }).then(
+      ({ stdout }) => stdout,
+      (error) => error.stdout,
+    );
+
+  try {
+    await writeFile(
+      join(projectDirectory, "package.json"),
+      `${JSON.stringify({ name: "knip-fixture", version: "1.0.0", type: "module", main: "index.js" }, null, 2)}\n`,
+    );
+    await writeFile(join(projectDirectory, "index.js"), "export const value = 1;\n");
+    await mkdir(join(projectDirectory, ".agents", "skills", "example"), { recursive: true });
+    await writeFile(
+      join(projectDirectory, ".agents", "skills", "example", "script.mjs"),
+      "export const unused = 1;\n",
+    );
+    // Write the knip.json that Calavera generates, not a hand-written one.
+    const recipe = buildRecipe("minimal", ["knip"], "npm");
+    process.chdir(projectDirectory);
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+    await applyRecipeObject(recipe, { json: true, noInstall: true, assumeYes: true });
+    process.chdir(originalDirectory);
+
+    const cleanReport = await runKnip();
+    assert.doesNotMatch(cleanReport, /\.agents/);
+
+    await writeFile(join(projectDirectory, "orphan.js"), "export const orphan = 1;\n");
+    const orphanReport = await runKnip();
+    assert.match(orphanReport, /orphan\.js/);
+    assert.doesNotMatch(orphanReport, /\.agents/);
   } finally {
     process.chdir(originalDirectory);
     await rm(projectDirectory, { force: true, recursive: true });
