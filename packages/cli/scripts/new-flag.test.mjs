@@ -9,7 +9,8 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
-  NPX_STALE_CACHE_HINT,
+  NPM_EXIT_127_HINT,
+  NPM_STALE_CACHE_HINT,
   createVpCreateCommand,
   newProject,
   parseArgs,
@@ -28,7 +29,8 @@ const fixturesUrl = pathToFileURL(
 );
 
 /**
- * The runner stub. It records its argv and cwd, then acts on STUB_MODE:
+ * The runner stub. It records its argv, cwd, VP_CLI_BIN, and PATH, strips the
+ * runner's own arguments to find what \`vp create\` receives, then acts on STUB_MODE:
  * `scaffold` writes a Vite+ project into the `--directory` target (or
  * STUB_TARGET), `unmanaged` writes a manifest without vite-plus, `unknown`
  * writes an unparseable manifest, `nothing` exits zero having written nothing,
@@ -37,14 +39,31 @@ const fixturesUrl = pathToFileURL(
  */
 const stubSource = `#!/usr/bin/env node
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { json, libraryManifest, plainViteManifest, vitePlusConfig } from ${JSON.stringify(fixturesUrl.href)};
 
 const argv = process.argv.slice(2);
-appendFileSync(process.env.STUB_LOG, JSON.stringify({ argv, cwd: process.cwd() }) + "\\n");
+appendFileSync(
+  process.env.STUB_LOG,
+  JSON.stringify({
+    argv,
+    cwd: process.cwd(),
+    vpCliBin: process.env.VP_CLI_BIN ?? null,
+    path: process.env.PATH,
+  }) + "\\n",
+);
 
-const separator = argv.indexOf("--");
-const own = separator === -1 ? argv : argv.slice(0, separator);
+// npm create vite-plus@latest -- <args>, bunx create-vite-plus@latest <args>,
+// and <runner> --package vite-plus vp create <args>.
+const runner = basename(process.argv[1]);
+const vpCreateArgs =
+  runner === "npm"
+    ? argv.slice(argv.indexOf("--") + 1)
+    : runner === "bunx"
+      ? argv.slice(1)
+      : argv.slice(argv.indexOf("create") + 1);
+const separator = vpCreateArgs.indexOf("--");
+const own = separator === -1 ? vpCreateArgs : vpCreateArgs.slice(0, separator);
 const directoryIndex = own.indexOf("--directory");
 const target = resolve(
   directoryIndex === -1 ? (process.env.STUB_TARGET ?? "my-lib") : own[directoryIndex + 1],
@@ -99,7 +118,7 @@ async function createTemporaryWorkspace(label) {
   await mkdir(bin);
   await mkdir(work);
 
-  for (const name of ["npx", "pnpm", "yarn", "bunx"]) {
+  for (const name of ["npm", "pnpm", "yarn", "bunx"]) {
     const path = join(bin, name);
     await writeFile(path, stubSource);
     await chmod(path, 0o755);
@@ -115,25 +134,40 @@ async function createTemporaryWorkspace(label) {
 }
 
 /**
+ * The PATH runCli gives the CLI: the stub runners first, then the inherited PATH.
+ *
+ * @param {{ bin: string }} workspace
+ * @returns {string}
+ */
+function stubPath(workspace) {
+  return `${workspace.bin}${delimiter}${process.env.PATH ?? ""}`;
+}
+
+/**
  * @param {{ work: string, log: string, bin: string }} workspace
  * @param {string[]} args
  * @param {Record<string, string>} [env]
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
 function runCli(workspace, args, env = {}) {
+  const childEnv = {
+    ...process.env,
+    NO_COLOR: "1",
+    PATH: stubPath(workspace),
+    STUB_LOG: workspace.log,
+    ...env,
+  };
+
+  // A VP_CLI_BIN from the developer's shell would hide whether Calavera sets one.
+  delete childEnv.VP_CLI_BIN;
+
   return new Promise((resolvePromise) => {
     execFile(
       process.execPath,
       [binPath, ...args],
       {
         cwd: workspace.work,
-        env: {
-          ...process.env,
-          NO_COLOR: "1",
-          PATH: `${workspace.bin}${delimiter}${process.env.PATH ?? ""}`,
-          STUB_LOG: workspace.log,
-          ...env,
-        },
+        env: childEnv,
       },
       (error, stdout, stderr) => {
         resolvePromise({
@@ -193,12 +227,14 @@ function recipeBlock(target, { cd, applyDryRun, applyRecipe }) {
   ].join("\n");
 }
 
-test("createVpCreateCommand names the vite-plus package and the vp bin for each runner", () => {
+test("createVpCreateCommand runs create-vite-plus for npm and Bun and vp create for pnpm and Yarn", () => {
   const forwarded = ["vite:library", "--", "--template", "react-ts"];
 
+  // npm consumes the first --, so Calavera adds exactly one in front of the
+  // forwarded arguments and leaves the template's own -- in place.
   assert.deepEqual(createVpCreateCommand("npm", forwarded), {
-    command: "npx",
-    args: ["--package", "vite-plus", "vp", "create", ...forwarded],
+    command: "npm",
+    args: ["create", "vite-plus@latest", "--", ...forwarded],
   });
   assert.deepEqual(createVpCreateCommand("pnpm", forwarded), {
     command: "pnpm",
@@ -208,9 +244,14 @@ test("createVpCreateCommand names the vite-plus package and the vp bin for each 
     command: "yarn",
     args: ["dlx", "--package", "vite-plus", "vp", "create", ...forwarded],
   });
+  // Not bun create, which prefers a local .bun-create template of the same name.
   assert.deepEqual(createVpCreateCommand("bun", forwarded), {
     command: "bunx",
-    args: ["--package", "vite-plus", "vp", "create", ...forwarded],
+    args: ["create-vite-plus@latest", ...forwarded],
+  });
+  assert.deepEqual(createVpCreateCommand("npm", []), {
+    command: "npm",
+    args: ["create", "vite-plus@latest", "--"],
   });
 });
 
@@ -329,9 +370,14 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
     result.stdout,
     /pnpm dlx --package vite-plus vp create vite:library --directory 'my lib'/,
   );
+  assert.match(result.stdout, /Calavera will run Vite\+ to scaffold a new project:/);
   assert.match(result.stdout, new RegExp(`Working directory: ${workspace.work}`));
-  assert.match(result.stdout, /may download vite-plus/);
+  assert.match(result.stdout, /may download Vite\+/);
   assert.match(result.stdout, /asks its own questions/);
+  assert.match(
+    result.stdout,
+    /Vite\+ uses pnpm as the project's package manager unless --package-manager is forwarded after --new\./,
+  );
   assert.match(result.stdout, /cannot be skipped/);
   assert.match(result.stdout, /may offer to remove/);
   assert.match(result.stdout, /does not undo/);
@@ -342,6 +388,37 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
   assert.doesNotMatch(result.stdout, /needs a recipe/);
   assert.deepEqual(await readInvocations(workspace.log), []);
   assert.deepEqual(await readdir(workspace.work), []);
+});
+
+test("--new --dry-run shows the npm and Bun create-vite-plus commands", async () => {
+  await using workspace = await createTemporaryWorkspace("dry-run-create-vite-plus");
+
+  const npm = await runCli(workspace, [
+    "--dry-run",
+    "--new",
+    "vite:library",
+    "--",
+    "--template",
+    "vanilla-ts",
+  ]);
+  const bun = await runCli(workspace, [
+    "--dry-run",
+    "--package-manager",
+    "bun",
+    "--new",
+    "vite:library",
+  ]);
+
+  assert.equal(npm.code, 0, npm.stderr);
+  assert.match(
+    npm.stdout,
+    /Command: npm create vite-plus@latest -- vite:library -- --template vanilla-ts/,
+  );
+  assert.match(npm.stdout, /Vite\+ uses npm as the project's package manager/);
+  assert.equal(bun.code, 0, bun.stderr);
+  assert.match(bun.stdout, /Command: bunx create-vite-plus@latest vite:library/);
+  assert.match(bun.stdout, /Vite\+ uses bun as the project's package manager/);
+  assert.deepEqual(await readInvocations(workspace.log), []);
 });
 
 test("--new --yes scaffolds through the runner, verifies managed, and runs the bootstrap", async () => {
@@ -356,15 +433,22 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(invocations.length, 1);
+  // No --package-manager is added: Vite+ picks the runner's package manager.
   assert.deepEqual(invocations[0].argv, [
-    "--package",
-    "vite-plus",
-    "vp",
     "create",
+    "vite-plus@latest",
+    "--",
     "vite:library",
     "--no-interactive",
   ]);
   assert.equal(invocations[0].cwd, workspace.work);
+  // Calavera adds no VP_CLI_BIN and passes PATH through unchanged (ADR-0010 Decision 1).
+  assert.equal(invocations[0].vpCliBin, null);
+  assert.equal(invocations[0].path, stubPath(workspace));
+  assert.match(
+    result.stdout,
+    /Vite\+ uses npm as the project's package manager unless --package-manager is forwarded after --new\./,
+  );
   assert.equal((await detectVitePlus(target)).status, "managed");
   assert.ok(await exists(join(target, ".agents/skills/calavera/SKILL.md")));
   assert.ok(await exists(join(target, ".calavera/state.json")));
@@ -630,8 +714,8 @@ test("--new names the terminating signal when the runner is killed", async () =>
 
   assert.deepEqual(spawned, [
     {
-      command: "npx",
-      args: ["--package", "vite-plus", "vp", "create", "vite:library"],
+      command: "npm",
+      args: ["create", "vite-plus@latest", "--", "vite:library"],
       cwd: workspace.work,
     },
   ]);
@@ -668,35 +752,89 @@ async function failedNewMessage(packageManager, exit) {
   }
 }
 
-test("--new adds the npx stale-cache hint when npm exits non-zero", async () => {
+/**
+ * The parts both npm failure messages keep, so an exit 127 and any other
+ * failure differ only in the exit description and the hint.
+ *
+ * @param {string} message
+ */
+function assertSharedFailureParts(message) {
+  assert.match(message, /^vp create through npm /);
+  assert.match(message, /\(run in [^)]+\)/);
+  assert.match(
+    message,
+    /Calavera wrote nothing further, removed nothing, and did not run the --init bootstrap\./,
+  );
+  assert.match(message, /may hold a partial scaffold that belongs to Vite\+\./);
+}
+
+test("--new adds the stale-cache hint when npm exits non-zero for a reason other than 127", async () => {
   const message = await failedNewMessage("npm", { exitCode: 1 });
 
+  assertSharedFailureParts(message);
   assert.match(message, /exited with code 1/);
-  assert.ok(message.includes(NPX_STALE_CACHE_HINT));
+  assert.ok(message.includes(NPM_STALE_CACHE_HINT));
+  assert.ok(!message.includes(NPM_EXIT_127_HINT));
   assert.match(message, /"npm cache npx ls"/);
   assert.match(message, /"npm cache npx rm <key>"/);
 });
 
-test("--new adds the npx hint on the default package manager", async () => {
+test("--new adds the stale-cache hint on the default package manager", async () => {
   const message = await failedNewMessage(undefined, { exitCode: 1 });
 
-  assert.ok(message.includes(NPX_STALE_CACHE_HINT));
+  assert.ok(message.includes(NPM_STALE_CACHE_HINT));
 });
 
-test("--new keeps the npx hint and the signal when npm is killed", async () => {
+test("--new keeps the stale-cache hint and the signal when npm is killed", async () => {
   const message = await failedNewMessage("npm", { exitCode: null, signal: "SIGTERM" });
 
+  assertSharedFailureParts(message);
   assert.match(message, /terminated by signal SIGTERM/);
-  assert.ok(message.includes(NPX_STALE_CACHE_HINT));
+  assert.ok(message.includes(NPM_STALE_CACHE_HINT));
+  assert.ok(!message.includes(NPM_EXIT_127_HINT));
+});
+
+test("--new replaces the stale-cache hint with the exit 127 hint when npm exits 127", async () => {
+  for (const packageManager of ["npm", undefined]) {
+    const message = await failedNewMessage(packageManager, { exitCode: 127 });
+
+    assertSharedFailureParts(message);
+    assert.match(message, /exited with code 127/);
+    assert.ok(message.includes(NPM_EXIT_127_HINT));
+    assert.ok(!message.includes(NPM_STALE_CACHE_HINT));
+    assert.doesNotMatch(message, /npm cache npx/);
+  }
+});
+
+test("the exit 127 hint states its condition and names the cause, the workaround, and the docs", () => {
+  assert.match(
+    NPM_EXIT_127_HINT,
+    /^This applies only if the output above shows "command not found"/,
+  );
+  assert.match(NPM_EXIT_127_HINT, /npx --package/);
+  assert.match(NPM_EXIT_127_HINT, /npm_config_package/);
+  assert.match(NPM_EXIT_127_HINT, /npm create project-calavera/);
+  assert.match(NPM_EXIT_127_HINT, /if you did not already/);
+  assert.match(NPM_EXIT_127_HINT, /--package-manager pnpm before --new, with pnpm installed/);
+  assert.match(NPM_EXIT_127_HINT, /do not forward --package-manager npm after --new/);
+  assert.match(
+    NPM_EXIT_127_HINT,
+    /docs\/agent-first-calavera-workflow\.md#known-issue-vp-create-exits-with-code-127-through-npm/,
+  );
+  assert.match(NPM_EXIT_127_HINT, /If the output shows a different error, this does not apply/);
 });
 
 for (const packageManager of ["pnpm", "yarn", "bun"]) {
-  test(`--new does not show the npx hint for ${packageManager}`, async () => {
+  test(`--new does not show the npm hints for ${packageManager}`, async () => {
     const message = await failedNewMessage(packageManager, { exitCode: 1 });
 
     assert.match(message, /exited with code 1/);
     assert.doesNotMatch(message, /npm cache npx/);
+    assert.doesNotMatch(message, /command not found/);
     assert.equal(/yarn dlx needs Yarn 2/.test(message), packageManager === "yarn");
+    if (packageManager !== "yarn") {
+      assert.match(message, /may hold a partial scaffold that belongs to Vite\+\.$/);
+    }
   });
 }
 
