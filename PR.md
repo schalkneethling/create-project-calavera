@@ -15,3 +15,4 @@ This guidance is written around the idea of a pull request, as this is a common 
 - Review findings deemed invalid must be reported in the PR description along with the reasoning for why they were marked as such.
 - Start the PR description by answering what this pull request does and which issue or issues it fixes using the "Fixes #xxx" syntax. Make it specific enough to focus the review on the proposed solution or decision. Then explain what changed, why it changed, and how you validated it. Include relevant commands, results, and any limitations. Prefer concise, useful evidence over a prescribed reporting format.
 - Create follow-up issues for deferred work that might otherwise be forgotten.
+- When feedback on a pull request have been address, ensure that threads are resolved unless there are open questions.
