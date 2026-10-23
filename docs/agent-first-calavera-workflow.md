@@ -190,7 +190,9 @@ Vite+ owns every question and every file the scaffold writes. Calavera starts
 (template, target directory, and the rest), and Calavera does not answer them.
 As of Vite+ 1.3.0, Vite+ does not ask for the project's package manager: it uses
 the package manager of the runner Calavera starts, unless `--package-manager` is
-forwarded after `--new`. Vite+ also installs the project's dependencies; that
+forwarded after `--new`. When `--new` runs inside an existing workspace, Vite+
+uses that workspace's package manager instead, even when `--package-manager` is
+forwarded. Vite+ also installs the project's dependencies; that
 step needs network access and cannot be skipped.
 
 `--new` ends Calavera's own flags. Every token after it goes to `vp create`

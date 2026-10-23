@@ -378,6 +378,11 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
     result.stdout,
     /Vite\+ uses pnpm as the project's package manager unless --package-manager is forwarded after --new\./,
   );
+  // Vite+ 1.4.0 prefers an enclosing workspace's package manager over a forwarded one.
+  assert.match(
+    result.stdout,
+    /Inside an existing workspace, Vite\+ uses that workspace's package manager instead, even when --package-manager is forwarded\./,
+  );
   assert.match(result.stdout, /cannot be skipped/);
   assert.match(result.stdout, /may offer to remove/);
   assert.match(result.stdout, /does not undo/);
