@@ -3604,6 +3604,51 @@ test("skill apply rejects incompatible CodeRabbit configuration before writing s
   }
 });
 
+test("an unedited hook from an earlier payload updates instead of stopping as a local edit", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-hook-upgrade-"));
+  const id = "hook-block-dangerous-commands";
+  const installedHook = ".agents/hooks/claude-code/block-dangerous-commands.mjs";
+  const recipe = buildRecipe("minimal", [], "npm", [{ id }]);
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", JSON.stringify({ scripts: {} }));
+    await lockArtifactFixtures([id]);
+    await applyRecipeObject(recipe, { json: true, noInstall: true, assumeYes: true });
+
+    // A new release changes the hook's text, as reformatting the payload did (#761).
+    const payloadPath = join(".calavera", "packages", id, "0.0.0-test", artifactForId(id).payload);
+    const nextHook = `${await readFile(join(payloadPath, "hook.mjs"), "utf8")}// next release\n`;
+    await writeFile(join(payloadPath, "hook.mjs"), nextHook);
+    const lock = JSON.parse(await readFile(".calavera/artifacts.lock.json", "utf8"));
+    lock.artifacts[0].payloadHash = await hashArtifactPayload(payloadPath);
+    await writeFile(".calavera/artifacts.lock.json", `${JSON.stringify(lock, null, 2)}\n`);
+
+    const dryRun = await applyRecipeObject(recipe, {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.equal(dryRun.changes.find(({ path }) => path === installedHook)?.type, "write");
+    await applyRecipeObject(recipe, { json: true, noInstall: true, assumeYes: true });
+    assert.equal(await readFile(installedHook, "utf8"), nextHook);
+    const settled = await applyRecipeObject(recipe, {
+      dryRun: true,
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    assert.equal(
+      settled.changes.some(({ path }) => path === installedHook),
+      false,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
 test("non-skill AI artifacts do not add CodeRabbit configuration", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-hook-"));
