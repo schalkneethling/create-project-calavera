@@ -1708,6 +1708,7 @@ function createReactDoctorConfig() {
 function createKnipConfig() {
   return {
     $schema: "https://unpkg.com/knip@6/schema.json",
+    ignore: [".agents/**"],
     ignoreExportsUsedInFile: true,
   };
 }
