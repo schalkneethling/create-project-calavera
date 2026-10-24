@@ -715,6 +715,24 @@ test("every workspace package with Playwright tests installs its own Chromium bu
   }
 });
 
+test("CI installs browsers through the shared script instead of naming one package", async () => {
+  const workflowsDir = join(root, ".github/workflows");
+  for (const file of await readdir(workflowsDir)) {
+    const workflow = await readFile(join(workflowsDir, file), "utf8");
+    assert.ok(
+      !workflow.includes("playwright install"),
+      `${file} runs playwright install directly; run pnpm browsers:install --with-deps instead.`,
+    );
+  }
+  for (const file of ["pull-request.yml", "publish.yml"]) {
+    const workflow = await readFile(join(workflowsDir, file), "utf8");
+    assert.ok(
+      workflow.includes("run: pnpm browsers:install --with-deps\n"),
+      `${file} must install browsers with pnpm browsers:install --with-deps.`,
+    );
+  }
+});
+
 test("a failed browser install gate explains the cause and the remedy and keeps the original failure", () => {
   const gate = releaseGates.find(([, args]) => args[0] === "browsers:install");
   const failure = new ReleaseError("pnpm browsers:install failed with exit code 1.");
