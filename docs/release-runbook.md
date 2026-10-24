@@ -68,9 +68,12 @@ See "New packages (minting)" below instead of continuing to step 5.
 
 Once every planned package already exists on npm, `release:prepare` runs the Baseline data check
 (`baseline:check`), which fails on a stale snapshot cutoff or stale generated data and otherwise
-prints one line with the cutoff and source versions, then the full local rehearsal
-(`release:rehearse`), the workflow audit (`workflow:check`), and confirms Changesets has no packages
-left to version. The rehearsal includes `release:fixture`, which packs every workspace artifact with
+prints one line with the cutoff and source versions. It then installs the Chromium build that each
+workspace package's Playwright version needs (`browsers:install`). This takes about a second when
+the build is already cached, and it means a Playwright upgrade cannot fail the rehearsal because a
+browser is missing. If the install fails, the error says so and tells you how to recover. Next, it
+runs the full local rehearsal (`release:rehearse`) and the workflow audit (`workflow:check`), and
+confirms that Changesets has no packages left to version. The rehearsal includes `release:fixture`, which packs every workspace artifact with
 `pnpm pack` and installs each one through the real `artifacts install` path with the workspace CLI
 version, so a manifest or compatibility range that would break consumers fails before anything is
 published. It then prints the plan. "Packages absent from npm" lists versions that are not on

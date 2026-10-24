@@ -26,6 +26,7 @@ import {
   releaseGates,
   releaseTag,
   reportNextTags,
+  runGate,
   checkNextTags,
   staleNextTags,
   validateReleaseMetadata,
@@ -673,12 +674,13 @@ test("verifyPublishedPackages counts only the packages expected to actually publ
   );
 });
 
-test("release gates check the Baseline data first, right after the frozen install", async () => {
+test("release gates check the Baseline data first, right after the frozen install, and install browsers before the rehearsal", async () => {
   assert.deepEqual(
     releaseGates.map(([command, args]) => [command, ...args].join(" ")),
     [
       "pnpm install --frozen-lockfile",
       "pnpm baseline:check",
+      "pnpm browsers:install",
       "pnpm release:rehearse",
       "pnpm workflow:check",
     ],
@@ -688,6 +690,66 @@ test("release gates check the Baseline data first, right after the frozen instal
     scripts["baseline:check"],
     "pnpm --filter @schalkneethling/calavera-baseline-core check:data",
   );
+  assert.equal(scripts["browsers:install"], "pnpm --recursive --if-present browsers:install");
+});
+
+test("every workspace package with Playwright tests installs its own Chromium build", async () => {
+  const workspace = JSON.parse(
+    execFileSync("pnpm", ["ls", "--recursive", "--depth", "-1", "--json"], {
+      cwd: root,
+      encoding: "utf8",
+    }),
+  );
+  const manifests = await Promise.all(
+    workspace.map(async ({ path }) =>
+      JSON.parse(await readFile(join(path, "package.json"), "utf8")),
+    ),
+  );
+  const playwrightPackages = manifests.filter(
+    ({ devDependencies, dependencies }) =>
+      devDependencies?.["@playwright/test"] || dependencies?.["@playwright/test"],
+  );
+  assert.ok(playwrightPackages.length > 0, "Expected at least one package with Playwright tests.");
+  for (const { name, scripts } of playwrightPackages) {
+    assert.equal(scripts?.["browsers:install"], "playwright install chromium", name);
+  }
+});
+
+test("a failed browser install gate explains the cause and the remedy and keeps the original failure", () => {
+  const gate = releaseGates.find(([, args]) => args[0] === "browsers:install");
+  const failure = new ReleaseError("pnpm browsers:install failed with exit code 1.");
+  assert.throws(
+    () =>
+      runGate(gate, () => {
+        throw failure;
+      }),
+    (error) => {
+      assert.ok(error instanceof ReleaseError);
+      assert.match(error.message, /^pnpm browsers:install failed with exit code 1\./);
+      assert.match(error.message, /Playwright could not install the Chromium build/);
+      assert.match(error.message, /run pnpm browsers:install until it succeeds/);
+      assert.match(error.message, /pnpm release:prepare/);
+      assert.equal(error.cause, failure);
+      return true;
+    },
+  );
+});
+
+test("a failed gate without a remedy rethrows its original failure unchanged", () => {
+  const failure = new ReleaseError("pnpm workflow:check failed with exit code 1.");
+  assert.throws(
+    () =>
+      runGate(["pnpm", ["workflow:check"]], () => {
+        throw failure;
+      }),
+    (error) => error === failure,
+  );
+});
+
+test("a gate passes its command and arguments to the runner", () => {
+  const calls = [];
+  runGate(["pnpm", ["browsers:install"], "remedy"], (command, args) => calls.push([command, args]));
+  assert.deepEqual(calls, [["pnpm", ["browsers:install"]]]);
 });
 
 test("Changesets status distinguishes pending bumps from NO-package summaries", () => {
