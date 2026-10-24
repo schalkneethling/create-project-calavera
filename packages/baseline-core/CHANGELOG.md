@@ -1,5 +1,11 @@
 # @schalkneethling/calavera-baseline-core
 
+## 0.2.4
+
+### Patch Changes
+
+- 905a863: Refresh Baseline data from web-features 3.43.0 (previously 3.42.0) and baseline-browser-mapping 2.11.29 (previously 2.11.28) at snapshot cutoff 2026-09-15. The widely available floor is unchanged.
+
 ## 0.2.3
 
 ### Patch Changes
