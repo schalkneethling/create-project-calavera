@@ -6,6 +6,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vite build",
     "preview": "vite preview --host 127.0.0.1",
+    "browsers:install": "playwright install chromium",
     "test": "node --test test/*.test.mjs && playwright test"
   },
   "dependencies": {
