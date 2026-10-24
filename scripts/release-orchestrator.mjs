@@ -233,16 +233,32 @@ function assertCandidateUnchanged(sha) {
   }
 }
 
+// Each Playwright version needs one exact browser build, and a dependency bump leaves a local cache
+// without it. Installing before the rehearsal costs about a second when the build is present.
 export const releaseGates = [
   ["pnpm", ["install", "--frozen-lockfile"]],
   ["pnpm", ["baseline:check"]],
+  [
+    "pnpm",
+    ["browsers:install"],
+    "Playwright could not install the Chromium build that the workspace tests need. Check the output above and your network access, run pnpm browsers:install until it succeeds, then rerun pnpm release:prepare.",
+  ],
   ["pnpm", ["release:rehearse"]],
   ["pnpm", ["workflow:check"]],
 ];
 
+export function runGate([command, args, remedy], runner = run) {
+  try {
+    runner(command, args);
+  } catch (error) {
+    if (!remedy) throw error;
+    throw new ReleaseError(`${error.message}\n${remedy}`, { cause: error });
+  }
+}
+
 function runGates(sha) {
-  for (const [command, args] of releaseGates) {
-    run(command, args);
+  for (const gate of releaseGates) {
+    runGate(gate);
     assertCandidateUnchanged(sha);
   }
 
