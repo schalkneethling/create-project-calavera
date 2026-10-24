@@ -1,5 +1,16 @@
 # create-project-calavera
 
+## 5.0.1
+
+### Patch Changes
+
+- 34d2b10: The `knip.json` that the Knip integration generates now ignores `.agents/**`, so `knip` and `quality` stay green once agent skills are installed: the scripts under `.agents/skills/` are not imported by any code, which Knip otherwise reports as unused files. An unedited `knip.json` from an earlier version gains the `ignore` entry on the next apply, and an edited one is still refused rather than overwritten.
+- a2229ad: `--new` now starts Vite+ with `npm create vite-plus@latest --` when npm is the runner and with `bunx create-vite-plus@latest` when Bun is, instead of `npx --package vite-plus vp create` and `bunx --package vite-plus vp create`. A plain `npm create project-calavera -- --new` no longer exits with code 127: since Vite+ 1.3.0 picks the runner's package manager for the project, the old npm runner's `npm_config_package` setting reached the `npx` that Vite+ starts for the template and made it fail every time. The confirmation now says which package manager Vite+ will use unless `--package-manager` is forwarded after `--new`. When the npm runner still exits with code 127, the error names the remaining likely cause, Calavera itself started with `npx --package`, and its workaround, instead of the npx cache advice, which still appears for other npm failures. pnpm and Yarn are unchanged.
+- d8b32d6: Apply no longer fails with `ERR_PNPM_ADDING_TO_ROOT` when it installs a recipe's development dependencies at the root of a pnpm workspace, such as one `vp create vite:monorepo` scaffolds. When `pnpm-workspace.yaml` in the project directory lists member packages, the install command gets `-w`: `vp add -D -w <packages>` in a project Vite+ manages, and `pnpm add --save-dev -w <packages>` in a pnpm project Vite+ does not manage. The dry run names the same command. Workspace members and single-package projects keep their current command.
+- e145316: `prettier` is now a development dependency, so installing `create-project-calavera` no longer installs Prettier. Calavera's runtime never used it; only one of its tests does.
+- Updated dependencies [905a863]
+  - @schalkneethling/calavera-baseline-core@0.2.4
+
 ## 5.0.0
 
 ### Major Changes
