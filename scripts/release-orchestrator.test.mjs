@@ -690,7 +690,11 @@ test("release gates check the Baseline data first, right after the frozen instal
     scripts["baseline:check"],
     "pnpm --filter @schalkneethling/calavera-baseline-core check:data",
   );
-  assert.equal(scripts["browsers:install"], "pnpm --recursive --if-present browsers:install");
+  // One package at a time: with --with-deps, each package runs apt-get, and two at once fail on its lock.
+  assert.equal(
+    scripts["browsers:install"],
+    "pnpm --recursive --if-present --workspace-concurrency=1 browsers:install",
+  );
 });
 
 test("every workspace package with Playwright tests installs its own Chromium build", async () => {
@@ -713,6 +717,49 @@ test("every workspace package with Playwright tests installs its own Chromium bu
   for (const { name, scripts } of playwrightPackages) {
     assert.equal(scripts?.["browsers:install"], "playwright install chromium", name);
   }
+});
+
+test("every CI job that runs the checks installs browsers through the shared script first", async () => {
+  const workflowsDir = join(root, ".github/workflows");
+  const command = "pnpm browsers:install --with-deps";
+  const install = `run: ${command}`;
+  const jobsRunningChecks = [];
+  for (const file of await readdir(workflowsDir)) {
+    const lines = (await readFile(join(workflowsDir, file), "utf8")).split(/\r?\n/);
+    for (const line of lines) {
+      assert.ok(
+        !/playwright\s+install/.test(line),
+        `${file} runs the Playwright CLI directly; use ${command} instead: ${line.trim()}`,
+      );
+      if (line.includes("browsers:install")) {
+        assert.equal(
+          line.trim().replace(/^- /, ""),
+          install,
+          `${file} must run browsers:install as ${command}, for every package`,
+        );
+      }
+    }
+    const jobsAt = lines.indexOf("jobs:");
+    const jobStarts = lines.flatMap((line, index) =>
+      index > jobsAt && /^ {2}[\w-]+:$/.test(line) ? [index] : [],
+    );
+    jobStarts.forEach((start, position) => {
+      const job = lines.slice(start, jobStarts[position + 1]).map((line) => line.trim());
+      const check = job.indexOf("run: pnpm check");
+      if (check === -1) return;
+      const name = `${file} jobs.${lines[start].trim().slice(0, -1)}`;
+      jobsRunningChecks.push(name);
+      const installAt = job.indexOf(install);
+      assert.ok(
+        installAt !== -1 && installAt < check,
+        `${name} runs pnpm check without first running ${command}.`,
+      );
+    });
+  }
+  assert.deepEqual(jobsRunningChecks.sort(), [
+    "publish.yml jobs.test",
+    "pull-request.yml jobs.check",
+  ]);
 });
 
 test("a failed browser install gate explains the cause and the remedy and keeps the original failure", () => {
