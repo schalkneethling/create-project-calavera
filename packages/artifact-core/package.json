@@ -25,7 +25,7 @@
   },
   "dependencies": {
     "ini": "7.0.0",
-    "pacote": "22.0.0",
+    "pacote": "22.0.1",
     "semver": "7.8.5"
   }
 }
