@@ -51,7 +51,7 @@ jobs:
         with:
           # The lowest Node.js that packages/cli/package.json engines.node allows.
           # The full suite runs in the check job only, on the current Node.js 24.
-          runtime: node@24.11.0
+          runtime: node@24.15.0
           install: false
           cache: false
       - name: Install dependencies
@@ -59,7 +59,7 @@ jobs:
       - name: Smoke test the CLI bins
         run: pnpm --filter create-project-calavera smoke:node-floor
         env:
-          CALAVERA_EXPECTED_NODE: "24.11.0"
+          CALAVERA_EXPECTED_NODE: "24.15.0"
   plugins:
     name: Plugins
     runs-on: ubuntu-latest
