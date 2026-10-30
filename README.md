@@ -353,9 +353,11 @@ default setup reports results, the generated ruleset blocks merges.
 
 ## CLI
 
-The CLI and the MCP server support Node.js `^24.11.0 || >=26.0.0`. Vite+ 1.0.0
-also supports Node.js 22.18 and later, but Calavera does not. On any other
-Node.js version, both print the required range and exit with a non-zero code.
+The CLI and the MCP server support Node.js `^24.15.0 || >=26.0.0`. Vite+ 1.0.0
+also supports Node.js 22.18 and later, but Calavera does not. Vite+ also
+supports Node.js 24.11 to 24.14, but Calavera's dependencies, such as pacote 22,
+require 24.15 or later on the Node.js 24 line. On any other Node.js version,
+both print the required range and exit with a non-zero code.
 
 Create a recipe:
 

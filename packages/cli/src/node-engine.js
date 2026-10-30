@@ -9,7 +9,8 @@ import { inspect } from "node:util";
 
 /**
  * The Node.js range the CLI supports, read from `engines.node` in package.json.
- * It is the Vite+ 1.0.0 floor that `--new` relies on (#626), without its
+ * It is the higher of the Vite+ 1.0.0 floor that `--new` relies on (#626) and
+ * the floor of the locked dependencies, such as pacote 22 (#789), without the
  * Node.js 22 line.
  *
  * @type {string}
@@ -23,7 +24,7 @@ export const NODE_ENGINE_RANGE = createRequire(import.meta.url)("../package.json
  *
  * Only the major and minor numbers count, so a prerelease such as a nightly or
  * a release candidate is accepted when its line is supported (for example
- * `v26.0.0-rc.1` or `v24.12.0-nightly20260101abcdef`), although semver ranges
+ * `v26.0.0-rc.1` or `v24.16.0-nightly20260101abcdef`), although semver ranges
  * exclude prereleases. Those builds are how people test upcoming Node.js
  * releases, and refusing them would block that testing for no benefit.
  *
@@ -33,7 +34,7 @@ export const NODE_ENGINE_RANGE = createRequire(import.meta.url)("../package.json
 export function nodeSatisfiesEngineRange(version) {
   const [major = 0, minor = 0] = version.replace(/^v/, "").split(".").map(Number);
 
-  return (major === 24 && minor >= 11) || major >= 26;
+  return (major === 24 && minor >= 15) || major >= 26;
 }
 
 /**

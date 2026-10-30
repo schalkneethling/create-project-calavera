@@ -43,8 +43,8 @@ function fakeNodeVersionPreload(version) {
   return `data:text/javascript,${encodeURIComponent(source)}`;
 }
 
-test("the CLI declares Node.js 24.11 and later as its supported range", () => {
-  assert.equal(packageJson.engines.node, "^24.11.0 || >=26.0.0");
+test("the CLI declares Node.js 24.15 and later as its supported range", () => {
+  assert.equal(packageJson.engines.node, "^24.15.0 || >=26.0.0");
 });
 
 test("the code reads the supported range from engines.node", () => {
@@ -52,7 +52,7 @@ test("the code reads the supported range from engines.node", () => {
 });
 
 test("the range check accepts each range and rejects the versions around them", () => {
-  for (const version of ["v24.11.0", "v24.21.0", "v26.0.0", "v27.1.0", "24.11.0"]) {
+  for (const version of ["v24.15.0", "v24.21.0", "v26.0.0", "v27.1.0", "24.15.0"]) {
     assert.equal(nodeSatisfiesEngineRange(version), true, version);
   }
   for (const version of [
@@ -64,6 +64,8 @@ test("the range check accepts each range and rejects the versions around them", 
     "v23.11.0",
     "v24.0.0",
     "v24.10.9",
+    "v24.11.0",
+    "v24.14.9",
     "v25.0.0",
     "v25.9.0",
   ]) {
@@ -72,13 +74,20 @@ test("the range check accepts each range and rejects the versions around them", 
 });
 
 test("the range check accepts prereleases of supported lines and rejects those of unsupported lines", () => {
-  for (const version of ["v24.11.1-pre", "v24.12.0-nightly20260101abcdef", "v26.0.0-rc.1"]) {
+  // `v24.15.0-pre` comes before the 24.15.0 that the dependencies require, but
+  // only the line counts, so it is accepted like any other prerelease of 24.15.
+  for (const version of [
+    "v24.15.0-pre",
+    "v24.15.1-pre",
+    "v24.16.0-nightly20260101abcdef",
+    "v26.0.0-rc.1",
+  ]) {
     assert.equal(nodeSatisfiesEngineRange(version), true, version);
     assert.equal(semver.satisfies(version, packageJson.engines.node), false, version);
   }
   for (const version of [
     "v25.0.0-rc.1",
-    "v24.10.0-nightly20260101abcdef",
+    "v24.14.0-nightly20260101abcdef",
     "v22.18.0-pre",
     "v22.17.0-rc.2",
   ]) {
@@ -185,24 +194,28 @@ test("a failing entry prints its error and sets a non-zero exit code", async () 
   assert.match(stderrWrites[0], /code: 'ERR_EXAMPLE'/u);
 });
 
+// v24.14.0 is in the Node.js 24.11 to 24.14 range that was dropped when pacote 22
+// raised the floor (#789).
 for (const [command, binPath] of Object.entries(binPaths)) {
-  test(`${command} prints one line naming the range and exits non-zero on an unsupported Node.js`, async () => {
-    const result = await execFileAsync(
-      process.execPath,
-      ["--import", fakeNodeVersionPreload("v20.19.6"), binPath, "--help"],
-      { encoding: "utf8" },
-    ).then(
-      () => assert.fail(`${command} exited with code 0 on Node.js v20.19.6`),
-      (error) => error,
-    );
+  for (const version of ["v20.19.6", "v24.14.0"]) {
+    test(`${command} prints one line naming the range and exits non-zero on Node.js ${version}`, async () => {
+      const result = await execFileAsync(
+        process.execPath,
+        ["--import", fakeNodeVersionPreload(version), binPath, "--help"],
+        { encoding: "utf8" },
+      ).then(
+        () => assert.fail(`${command} exited with code 0 on Node.js ${version}`),
+        (error) => error,
+      );
 
-    assert.equal(result.code, 1);
-    assert.equal(result.stdout, "");
-    assert.equal(
-      result.stderr,
-      `${command} requires Node.js ${packageJson.engines.node}. This is Node.js v20.19.6.\n`,
-    );
-  });
+      assert.equal(result.code, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(
+        result.stderr,
+        `${command} requires Node.js ${packageJson.engines.node}. This is Node.js ${version}.\n`,
+      );
+    });
+  }
 }
 
 test("create-project-calavera runs on a supported Node.js through a package-manager-style symlink", async () => {
@@ -214,7 +227,7 @@ test("create-project-calavera runs on a supported Node.js through a package-mana
 
     const { stdout, stderr } = await execFileAsync(
       process.execPath,
-      ["--import", fakeNodeVersionPreload("v24.11.0"), symlinkPath, "--help"],
+      ["--import", fakeNodeVersionPreload("v24.15.0"), symlinkPath, "--help"],
       { encoding: "utf8" },
     );
 
