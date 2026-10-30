@@ -185,3 +185,28 @@ test("Given a recipe, when inputs are described for an agent, then each declared
     [],
   );
 });
+
+test("Given no git on PATH, when inputs resolve, then apply stops with a Git-is-missing error instead of refusing the branch name", async (t) => {
+  const cwd = await repository(t, "main");
+  const path = process.env.PATH;
+  process.env.PATH = "";
+  t.after(() => {
+    process.env.PATH = path;
+  });
+
+  await assert.rejects(
+    resolveArtifactInputs(
+      recipe({ id: "skill-protected-branch-guard", inputs: { protectedBranch: "main" } }),
+      { cwd, declarationsFor },
+    ),
+    (error) => {
+      assert.match(error.message, /Calavera needs Git to check the input, and git was not found/);
+      assert.equal(error.cause?.code, "ENOENT");
+      return true;
+    },
+  );
+  await assert.rejects(
+    resolveArtifactInputs(recipe({ id: "skill-protected-branch-guard" }), { cwd, declarationsFor }),
+    /Calavera needs Git to read the default, and git was not found/,
+  );
+});
