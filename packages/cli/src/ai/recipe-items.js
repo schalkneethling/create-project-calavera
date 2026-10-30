@@ -16,12 +16,14 @@ const AI_SOURCE_DIRECTORIES = Object.freeze({
  * @property {string} [type]
  * @property {string} [src]
  * @property {string} [target]
+ * @property {Record<string, unknown>} [inputs]
  *
  * @typedef {object} NormalizedAiItem
  * @property {string} [id]
  * @property {AiArtifactType} type
  * @property {string} src
  * @property {string} [target]
+ * @property {Record<string, string>} [inputs]
  */
 
 /**
@@ -48,8 +50,45 @@ function isAiItemConfig(value) {
     isPlainObject(value) &&
     ((isNotEmptyString(value.id) && value.type === undefined && value.src === undefined) ||
       (isNotEmptyString(value.type) && isNotEmptyString(value.src) && value.id === undefined)) &&
-    (value.target === undefined || isNotEmptyString(value.target))
+    (value.target === undefined || isNotEmptyString(value.target)) &&
+    // Only a package-backed selection can record inputs, because only the catalog declares them.
+    (value.inputs === undefined || (value.id !== undefined && isPlainObject(value.inputs)))
   );
+}
+
+/**
+ * Checks recorded input values against the inputs the artifact declares. A value's own check,
+ * such as a valid branch name, needs Git and runs when the CLI resolves the inputs.
+ *
+ * @param {Record<string, unknown> | undefined} inputs
+ * @param {(typeof aiArtifactCatalog)[number]} artifact
+ * @param {number} index
+ * @returns {Record<string, string> | undefined}
+ */
+function normalizeAiItemInputs(inputs, artifact, index) {
+  if (inputs === undefined) {
+    return undefined;
+  }
+
+  const entries = Object.entries(inputs);
+
+  if (entries.length === 0) {
+    throw new Error(`AI item at index ${index} inputs must record at least one value.`);
+  }
+
+  for (const [name, value] of entries) {
+    if (!Object.hasOwn(artifact.inputs ?? {}, name)) {
+      throw new Error(
+        `AI item at index ${index} sets input "${name}", which ${artifact.id} does not declare.`,
+      );
+    }
+
+    if (!isNotEmptyString(value)) {
+      throw new Error(`AI item at index ${index} input "${name}" must be a non-empty string.`);
+    }
+  }
+
+  return /** @type {Record<string, string>} */ ({ ...inputs });
 }
 
 /**
@@ -150,6 +189,7 @@ export function normalizeAiItems(aiConfig) {
         type: artifact.type,
         src: artifact.src,
         target: entry.target?.trim(),
+        inputs: normalizeAiItemInputs(entry.inputs, artifact, index),
       };
     } else {
       item = {
@@ -180,6 +220,7 @@ export function normalizeAiItems(aiConfig) {
       type,
       src: item.src,
       target,
+      ...(item.inputs ? { inputs: item.inputs } : {}),
     };
   });
 }

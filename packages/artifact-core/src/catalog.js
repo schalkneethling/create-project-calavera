@@ -6,7 +6,17 @@ const ARTIFACT_SCHEMA =
   "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json";
 const DEFAULT_COMPATIBILITY = ">=2.2.0";
 const ARTIFACT_TARGETS = Object.freeze(["claude-code", "codex", "cursor", "opencode"]);
-/** @type {readonly (readonly [string, string, string?])[]} */
+
+/**
+ * The optional manifest members a definition can carry. The artifact schema allows them on skills
+ * only; see `inputs` and `wiring` in `calavera-artifact.schema.json`.
+ *
+ * @typedef {{ prompt: string, default?: "current-branch", check: "branch-name" }} ArtifactInput
+ * @typedef {{ viteHooks?: Partial<Record<"pre-commit" | "prepare-commit-msg" | "pre-push", string>>, claudeCode?: string }} ArtifactWiring
+ * @typedef {{ inputs?: Record<string, ArtifactInput>, wiring?: ArtifactWiring }} ArtifactExtensions
+ */
+
+/** @type {readonly (readonly [string, string, string?, ArtifactExtensions?])[]} */
 const definitions = Object.freeze([
   ["skill-calavera", "Calavera"],
   ["skill-code-review", "Code review"],
@@ -28,8 +38,8 @@ const definitions = Object.freeze([
 
 export const artifactCatalog = Object.freeze(definitions.map(createArtifact));
 
-/** @param {readonly [string, string, string?]} definition */
-function createArtifact([id, displayName, calavera = DEFAULT_COMPATIBILITY]) {
+/** @param {readonly [string, string, string?, ArtifactExtensions?]} definition */
+function createArtifact([id, displayName, calavera = DEFAULT_COMPATIBILITY, extensions = {}]) {
   const separator = id.indexOf("-");
   const type = id.slice(0, separator);
   const slug = id.slice(separator + 1);
@@ -45,6 +55,8 @@ function createArtifact([id, displayName, calavera = DEFAULT_COMPATIBILITY]) {
     payload: `payload/${slug}${isAgent ? ".md" : ""}`,
     ...(usesTargetAdapter ? { targets: ARTIFACT_TARGETS } : {}),
     compatibility: { calavera },
+    ...(extensions.inputs ? { inputs: extensions.inputs } : {}),
+    ...(extensions.wiring ? { wiring: extensions.wiring } : {}),
     packageName: `@schalkneethling/calavera-${id}`,
     legacyPath: `${type}s/${slug}${isAgent ? ".md" : ""}`,
     group: type === "skill" ? "Skills" : type === "hook" ? "Hooks" : "Agents",

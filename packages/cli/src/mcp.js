@@ -68,6 +68,10 @@ const reownManagedFilesSchema = z
 const aiArtifactInputSchema = z.object({
   id: z.string().describe(recipeToolInputDescriptions.aiArtifactId),
   target: z.string().optional().describe(recipeToolInputDescriptions.aiArtifactTarget),
+  inputs: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe(recipeToolInputDescriptions.aiArtifactInputs),
 });
 const baselineTargetSchema = z
   .union([z.enum(["widely", "newly"]), z.number().int()])
