@@ -1480,8 +1480,6 @@ test("standard MCP compose_recipe returns structured schema-valid content", asyn
     assert.deepEqual(recipe.integrations, ["stylelint"]);
     assert.deepEqual(recipe.ai, [{ id: "skill-frontend-engineering" }]);
     assertValid(ajv.compile(schema), recipe);
-    // No selected artifact declares an input, so there is nothing to confirm with the user.
-    assert.deepEqual(result.structuredContent.artifactInputs, []);
 
     const undeclared = await client.callTool({
       name: "compose_recipe",

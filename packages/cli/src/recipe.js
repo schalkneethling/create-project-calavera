@@ -141,7 +141,7 @@ export const recipeToolDescriptions = Object.freeze({
   recommend_baseline_target:
     "Recommend the earliest fixed Baseline target compatible with selected CSS feature IDs.",
   compose_recipe:
-    "Compose a schema-valid Calavera recipe from a profile, package manager, integration IDs or labels, and optional AI artifacts. When a selected artifact declares inputs, the response lists them in artifactInputs with their defaults; confirm each value with the user and pass it as the artifact's inputs before dry_run_apply.",
+    "Compose a schema-valid Calavera recipe from a profile, package manager, integration IDs or labels, and optional AI artifacts.",
   validate_recipe:
     "Validate a Calavera recipe object before previewing, applying, or downloading it. Returns validation status and errors instead of writing files.",
   explain_recipe:
@@ -163,7 +163,7 @@ export const recipeToolInputDescriptions = Object.freeze({
   aiArtifactId: "AI artifact ID, source, or label from list_ai_artifacts.",
   aiArtifactTarget: "Optional target directory for hook and agent artifacts.",
   aiArtifactInputs:
-    'Values for the inputs the artifact declares, keyed by input name, such as { protectedBranch: "main" }. compose_recipe reports each declared input with its default; confirm the value with the user before dry_run_apply.',
+    'Values for the inputs the artifact declares, keyed by input name, such as { protectedBranch: "main" }.',
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
     "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides.",

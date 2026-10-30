@@ -59,6 +59,22 @@ function commandFailure(error) {
 }
 
 /**
+ * A missing Git would otherwise read as a refused branch name, and a prompt would refuse every
+ * answer, so it stops resolution with its own message.
+ *
+ * @param {unknown} error
+ * @param {string} purpose
+ */
+function assertGitFound(error, purpose) {
+  if (/** @type {{ code?: unknown }} */ (error).code === "ENOENT") {
+    throw new Error(
+      `Calavera needs Git to ${purpose}, and git was not found on PATH. Install Git or add it to PATH, then run Calavera again.`,
+      { cause: error },
+    );
+  }
+}
+
+/**
  * @param {ArtifactInput["default"]} kind
  * @param {string} cwd
  * @returns {Promise<{ value: string } | { reason: string }>}
@@ -74,6 +90,7 @@ async function readDefault(kind, cwd) {
     });
     return { value: stdout.trim() };
   } catch (error) {
+    assertGitFound(error, "read the default");
     // With --quiet, a detached HEAD exits 1 and prints nothing; anything else is a Git failure.
     const code = /** @type {{ code?: unknown }} */ (error).code;
     const failure = commandFailure(error);
@@ -105,6 +122,7 @@ export async function checkInputValue(check, value, cwd) {
       ? undefined
       : `"${value}" is not a plain branch name: git check-ref-format --branch reads it as "${normalized}".`;
   } catch (error) {
+    assertGitFound(error, "check the input");
     return `"${value}" is not a valid branch name: git check-ref-format --branch refused it (${commandFailure(error)}).`;
   }
 }
