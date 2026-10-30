@@ -371,6 +371,64 @@ test("config schema accepts package-backed artifact selections and legacy items"
   );
 });
 
+test("config schema accepts recorded input values on package-backed artifact selections", () => {
+  const validate = ajv.compile(schema);
+  const recipe = buildRecipe("minimal", [], "npm");
+
+  assertValid(validate, {
+    ...recipe,
+    ai: [{ id: "skill-protected-branch-guard", inputs: { protectedBranch: "main" } }],
+  });
+  for (const ai of [
+    [{ id: "skill-protected-branch-guard", inputs: {} }],
+    [{ id: "skill-protected-branch-guard", inputs: { protectedBranch: "" } }],
+    [{ id: "skill-protected-branch-guard", inputs: { protectedBranch: 1 } }],
+    [{ id: "skill-protected-branch-guard", inputs: { "protected-branch": "main" } }],
+    [{ type: "skill", src: "skills/project-goal", inputs: { protectedBranch: "main" } }],
+  ]) {
+    assert.equal(validate({ ...recipe, ai }), false, JSON.stringify(ai));
+  }
+});
+
+test("recipe validation rejects input values for inputs an artifact does not declare", () => {
+  const recipe = buildRecipe("minimal", [], "npm");
+
+  assert.throws(
+    () =>
+      validateRecipe({
+        ...recipe,
+        ai: [{ id: "skill-project-goal", inputs: { protectedBranch: "main" } }],
+      }),
+    /AI item at index 0 sets input "protectedBranch", which skill-project-goal does not declare/,
+  );
+  assert.throws(
+    () => validateRecipe({ ...recipe, ai: [{ id: "skill-project-goal", inputs: "main" }] }),
+    /must contain id, or legacy type and src fields/,
+  );
+  assert.throws(
+    () =>
+      validateRecipe({
+        ...recipe,
+        ai: [{ type: "skill", src: "skills/project-goal", inputs: { protectedBranch: "main" } }],
+      }),
+    /must contain id, or legacy type and src fields/,
+  );
+});
+
+test("shared composition rejects input values an artifact does not declare", () => {
+  assert.throws(
+    () =>
+      normalizeAiArtifactInputs([
+        { id: "skill-project-goal", inputs: { protectedBranch: "main" } },
+      ]),
+    /Invalid aiArtifacts\[0\]\.inputs\.protectedBranch: skill-project-goal declares no input with that name/,
+  );
+  assert.throws(
+    () => normalizeAiArtifactInputs([{ id: "skill-project-goal", inputs: ["main"] }]),
+    /Invalid aiArtifacts\[0\]\.inputs: expected an object of input values/,
+  );
+});
+
 test("config schema requires legacy AI paths to match their artifact type", () => {
   const validate = ajv.compile(schema);
   const recipe = buildRecipe("minimal", [], "npm");
@@ -1422,6 +1480,18 @@ test("standard MCP compose_recipe returns structured schema-valid content", asyn
     assert.deepEqual(recipe.integrations, ["stylelint"]);
     assert.deepEqual(recipe.ai, [{ id: "skill-frontend-engineering" }]);
     assertValid(ajv.compile(schema), recipe);
+    // No selected artifact declares an input, so there is nothing to confirm with the user.
+    assert.deepEqual(result.structuredContent.artifactInputs, []);
+
+    const undeclared = await client.callTool({
+      name: "compose_recipe",
+      arguments: {
+        profile: "default",
+        aiArtifacts: [{ id: "skill-project-goal", inputs: { protectedBranch: "main" } }],
+      },
+    });
+    assert.equal(undeclared.isError, true);
+    assert.match(undeclared.content[0].text, /skill-project-goal declares no input with that name/);
   } finally {
     await client.close();
     await server.close();

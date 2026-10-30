@@ -14,4 +14,6 @@ export const aiArtifactCatalog = artifactCatalog.map((artifact) => ({
   group: artifact.group,
   status: "packaged",
   defaultTarget: artifact.defaultTarget,
+  inputs: artifact.inputs,
+  wiring: artifact.wiring,
 }));

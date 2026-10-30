@@ -141,7 +141,7 @@ export const recipeToolDescriptions = Object.freeze({
   recommend_baseline_target:
     "Recommend the earliest fixed Baseline target compatible with selected CSS feature IDs.",
   compose_recipe:
-    "Compose a schema-valid Calavera recipe from a profile, package manager, integration IDs or labels, and optional AI artifacts.",
+    "Compose a schema-valid Calavera recipe from a profile, package manager, integration IDs or labels, and optional AI artifacts. When a selected artifact declares inputs, the response lists them in artifactInputs with their defaults; confirm each value with the user and pass it as the artifact's inputs before dry_run_apply.",
   validate_recipe:
     "Validate a Calavera recipe object before previewing, applying, or downloading it. Returns validation status and errors instead of writing files.",
   explain_recipe:
@@ -162,6 +162,8 @@ export const recipeToolInputDescriptions = Object.freeze({
   integrationId: "Integration ID or label from list_integrations.",
   aiArtifactId: "AI artifact ID, source, or label from list_ai_artifacts.",
   aiArtifactTarget: "Optional target directory for hook and agent artifacts.",
+  aiArtifactInputs:
+    'Values for the inputs the artifact declares, keyed by input name, such as { protectedBranch: "main" }. compose_recipe reports each declared input with its default; confirm the value with the user before dry_run_apply.',
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
     "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides.",
@@ -394,17 +396,50 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
     return {
       id,
       target: artifact.defaultTarget ? target || artifact.defaultTarget : undefined,
+      ...(item.inputs !== undefined
+        ? { inputs: normalizeAiArtifactInputValues(item.inputs, artifact, index) }
+        : {}),
     };
   });
 }
 
+/**
+ * Checks the names and the shape of recorded input values. The value's own check, such as a valid
+ * branch name, needs Git, so the CLI runs it before apply plans anything.
+ */
+function normalizeAiArtifactInputValues(inputs, artifact, index) {
+  if (!isPlainObject(inputs)) {
+    throw new Error(
+      `Invalid aiArtifacts[${index}].inputs: expected an object of input values keyed by input name.`,
+    );
+  }
+
+  for (const [name, value] of Object.entries(inputs)) {
+    if (!Object.hasOwn(artifact.inputs ?? {}, name)) {
+      throw new Error(
+        `Invalid aiArtifacts[${index}].inputs.${name}: ${artifact.id} declares no input with that name.`,
+      );
+    }
+    assertString(`aiArtifacts[${index}].inputs.${name}`, value);
+    if (value.trim() === "") {
+      throw new Error(`Invalid aiArtifacts[${index}].inputs.${name}: the value is empty.`);
+    }
+  }
+
+  return { ...inputs };
+}
+
 export function aiArtifactRecipeItems(artifactInputs = []) {
-  return normalizeAiArtifactInputs(artifactInputs).map(({ id, target }) => {
+  return normalizeAiArtifactInputs(artifactInputs).map(({ id, target, inputs }) => {
     const artifact = aiArtifactCatalog.find((candidate) => candidate.id === id);
     const item = { id };
 
     if (artifact.defaultTarget) {
       item.target = target ?? artifact.defaultTarget;
+    }
+
+    if (inputs && Object.keys(inputs).length > 0) {
+      item.inputs = inputs;
     }
 
     return item;
