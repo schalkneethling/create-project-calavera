@@ -29,6 +29,7 @@ import {
   validateRecipe,
   validateRecipeResponse,
 } from "./recipe.js";
+import { describeArtifactInputs } from "./ai/artifact-inputs.js";
 import { assertPlainObject, assertStringArray } from "./utils/assertions.js";
 import { errorChain } from "./utils/error-chain.js";
 import { redactSecrets } from "./utils/redact.js";
@@ -68,6 +69,10 @@ const reownManagedFilesSchema = z
 const aiArtifactInputSchema = z.object({
   id: z.string().describe(recipeToolInputDescriptions.aiArtifactId),
   target: z.string().optional().describe(recipeToolInputDescriptions.aiArtifactTarget),
+  inputs: z
+    .record(z.string(), z.string())
+    .optional()
+    .describe(recipeToolInputDescriptions.aiArtifactInputs),
 });
 const baselineTargetSchema = z
   .union([z.enum(["widely", "newly"]), z.number().int()])
@@ -370,7 +375,12 @@ function recommendBaselineTargetTool(args) {
  */
 async function composeRecipeTool(args) {
   const response = composeRecipeResponse(args);
-  return { ...response, vitePlus: await reportVitePlus() };
+  return {
+    ...response,
+    // ADR-0015, Decision 6: the agent confirms each value with the user before dry_run_apply.
+    artifactInputs: await describeArtifactInputs(response.recipe),
+    vitePlus: await reportVitePlus(),
+  };
 }
 
 /**

@@ -28,6 +28,7 @@ import {
   REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls.js";
 import { assertRootOnlyIntegrationsAtRepositoryRoot } from "./repository-root.js";
+import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
 
 import {
@@ -186,6 +187,9 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {ArtifactLockEntry[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock.
  * @property {ArtifactRegistryReport[]} artifactRegistries The registry (protocol, host, and port, such as https://registry.npmjs.org) the auto-installed artifacts resolve from, and the npm configuration it comes from, such as the project .npmrc; empty when nothing resolves.
  * @property {string[]} artifactWarnings Notes on npm configuration Calavera ignored while resolving the auto-installed artifacts. They never contain a value.
+ * @property {ResolvedInput[]} artifactInputs Each input a selected artifact declares, with the value apply uses and where it came from; a value from the default is written to the recipe unless writeConfig is false.
+ *
+ * @typedef {import("./ai/artifact-inputs.js").ResolvedInput} ResolvedInput
  *
  * @typedef {object} CleanResult
  * @property {"clean"} command
@@ -2468,13 +2472,13 @@ export async function applyRecipe(options) {
 }
 
 /**
- * @param {Recipe} recipe
+ * @param {Recipe} recipeInput
  * @param {Partial<CliOptions>} options
  * @param {ArtifactServices} [artifactServices] Registry access for artifacts that are not yet locked.
  * @returns {Promise<ApplyResult>}
  */
-export async function applyRecipeObject(recipe, options = {}, artifactServices = {}) {
-  validateRecipe(recipe);
+export async function applyRecipeObject(recipeInput, options = {}, artifactServices = {}) {
+  validateRecipe(recipeInput);
 
   const applyOptions = {
     dryRun: false,
@@ -2484,6 +2488,11 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     reownManagedFiles: [],
     ...options,
   };
+  // ADR-0015, Decision 6: every input a selected artifact declares has a value before anything is
+  // planned. An interactive run asks; any other run uses the default and reports it.
+  const { recipe, inputs: artifactInputs } = await resolveArtifactInputs(recipeInput, {
+    ask: canPrompt(applyOptions) ? promptForArtifactInput : undefined,
+  });
   const previousState = await readStateIfPresent();
   // Only a project Calavera already applied to can have a config or scripts
   // that are unchanged; on a first apply the whole plan is new.
@@ -2572,7 +2581,10 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     ...aiResult.changes.filter(({ path }) => !autoInstalledPaths.has(path)),
   ];
 
-  if (applyOptions.writeConfig) {
+  // A value Calavera filled in is recorded in the recipe, so a later apply neither asks nor guesses
+  // again. Only an explicit writeConfig: false skips that.
+  const recordsInputs = artifactInputs.some(({ source }) => source !== "recorded");
+  if (applyOptions.writeConfig || (recordsInputs && applyOptions.writeConfig !== false)) {
     const configPath = resolve(applyOptions.config ?? "calavera.config.json");
     const configUnchanged = previouslyApplied && (await jsonFileUnchanged(configPath, recipe));
     changes.push({
@@ -2820,6 +2832,7 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     autoInstalledArtifacts: artifactPlan.installed,
     artifactRegistries: artifactPlan.registries,
     artifactWarnings: artifactPlan.warnings,
+    artifactInputs,
   };
 }
 
@@ -3790,8 +3803,40 @@ function formatApplySummary(result) {
       (registry) => `${style("bold", "Artifact registry")}: ${formatArtifactRegistry(registry)}`,
     ),
     ...result.artifactWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
+    ...result.artifactInputs.map(
+      (input) => `${style("bold", "Input")}: ${formatArtifactInput(input)}`,
+    ),
     `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
   ].join("\n");
+}
+
+/** @param {ResolvedInput} input */
+function formatArtifactInput({ artifact, name, value, source }) {
+  const origin = {
+    recorded: "recorded in the recipe",
+    prompt: "your answer",
+    default: "the default, because the recipe records no value and nobody was asked",
+  }[source];
+  return `${artifact} ${name} = ${value} (${origin})`;
+}
+
+/**
+ * @param {{ json?: boolean, assumeYes?: boolean }} options
+ * @returns {boolean}
+ */
+function canPrompt(options) {
+  return !options.json && !options.assumeYes && Boolean(process.stdin.isTTY);
+}
+
+/** @type {import("./ai/artifact-inputs.js").AskForInput} */
+async function promptForArtifactInput({ artifact, name, prompt, defaultValue, error }) {
+  if (error) logger.warn(error);
+  const answer = await text({
+    message: `${prompt} (${artifact}, ${name})`,
+    ...(defaultValue ? { defaultValue, placeholder: defaultValue } : {}),
+  });
+  exitIfCancel(answer);
+  return typeof answer === "string" ? answer : "";
 }
 
 /** @param {ArtifactRegistryReport} registry */
@@ -3946,12 +3991,16 @@ export async function initRecipe(options) {
   const packageManager = await promptForPackageManager(options, detectedPackageManager);
   const integrations = await promptForIntegrations(options, profile);
   const aiArtifacts = await promptForAiArtifacts(options);
-  const recipe = composeRecipe({
-    profile,
-    packageManager,
-    tools: integrations,
-    aiArtifacts,
-  });
+  // The recipe written below records every input, so a later apply does not ask again.
+  const { recipe } = await resolveArtifactInputs(
+    composeRecipe({
+      profile,
+      packageManager,
+      tools: integrations,
+      aiArtifacts,
+    }),
+    { ask: canPrompt(options) ? promptForArtifactInput : undefined },
+  );
   const validation = validateRecipeResponse(recipe);
   const explanation = explainRecipeResponse(recipe);
 
@@ -4690,6 +4739,10 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   }
 
   if (result.command === "apply") {
+    for (const input of result.artifactInputs) {
+      logger.info(`Input: ${formatArtifactInput(input)}`);
+    }
+
     for (const warning of result.artifactWarnings) {
       logger.warn(warning);
     }
