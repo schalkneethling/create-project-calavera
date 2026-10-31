@@ -4,6 +4,7 @@ import { assertSafeRelativePath } from "./utils/fs.js";
 
 /**
  * @typedef {import("./ai/artifacts.js").AiArtifactState} AiArtifactState
+ * @typedef {import("./ai/artifact-wiring.js").WiringRecord} WiringRecord
  *
  * @typedef {object} ManagedFileState
  * @property {string} path
@@ -16,6 +17,7 @@ import { assertSafeRelativePath } from "./utils/fs.js";
  * @property {string[]} files
  * @property {ManagedFileState[]} managedFiles
  * @property {AiArtifactState[]} aiArtifacts
+ * @property {WiringRecord[]} aiWiring The hook lines and settings groups apply wrote for each artifact (ADR-0015, Decision 5).
  */
 
 /**
@@ -28,6 +30,7 @@ export function createEmptyState() {
     files: [],
     managedFiles: [],
     aiArtifacts: [],
+    aiWiring: [],
   };
 }
 
@@ -107,6 +110,36 @@ function normalizeAiArtifacts(value) {
 }
 
 /**
+ * Checks the shape of the wiring records. The planners check the groups inside a record again when
+ * they use them, and name the artifact whose record is damaged.
+ *
+ * @param {unknown} value
+ * @returns {WiringRecord[]}
+ */
+function normalizeAiWiring(value) {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (
+    !Array.isArray(value) ||
+    !value.every(
+      (record) =>
+        isPlainObject(record) &&
+        isNotEmptyString(record.artifact) &&
+        (record.viteHooks === undefined ||
+          (isPlainObject(record.viteHooks) &&
+            Object.values(record.viteHooks).every(isNotEmptyString))) &&
+        (record.claudeCode === undefined || isPlainObject(record.claudeCode)),
+    )
+  ) {
+    throw new Error("Calavera state contains invalid aiWiring entries.");
+  }
+
+  return /** @type {WiringRecord[]} */ (value);
+}
+
+/**
  * Normalize persisted state once at the boundary. Legacy state files with only
  * `files` are migrated to the current `managedFiles` shape in memory.
  *
@@ -135,6 +168,7 @@ export function normalizeState(rawState) {
     files: managedFiles.map((file) => file.path),
     managedFiles,
     aiArtifacts: normalizeAiArtifacts(rawState.aiArtifacts),
+    aiWiring: normalizeAiWiring(rawState.aiWiring),
   };
 }
 

@@ -24,11 +24,13 @@ import {
   packageManagerIdsForRecipe,
   assertKnownProfile,
   profileIdsForRecipe,
+  mcpComposeRecipeDescription,
   recipeToolDescriptions,
   recipeToolInputDescriptions,
   validateRecipe,
   validateRecipeResponse,
 } from "./recipe.js";
+import { describeArtifactInputs } from "./ai/artifact-inputs.js";
 import { assertPlainObject, assertStringArray } from "./utils/assertions.js";
 import { errorChain } from "./utils/error-chain.js";
 import { redactSecrets } from "./utils/redact.js";
@@ -200,7 +202,7 @@ const toolConfigs = {
     annotations: toolAnnotations.read,
   },
   compose_recipe: {
-    description: recipeToolDescriptions.compose_recipe,
+    description: mcpComposeRecipeDescription,
     inputSchema: {
       profile: profileSchema.describe(recipeToolInputDescriptions.profile),
       packageManager: z
@@ -374,7 +376,12 @@ function recommendBaselineTargetTool(args) {
  */
 async function composeRecipeTool(args) {
   const response = composeRecipeResponse(args);
-  return { ...response, vitePlus: await reportVitePlus() };
+  return {
+    ...response,
+    // ADR-0015, Decision 6: the agent confirms each value with the user before dry_run_apply.
+    artifactInputs: await describeArtifactInputs(response.recipe),
+    vitePlus: await reportVitePlus(),
+  };
 }
 
 /**

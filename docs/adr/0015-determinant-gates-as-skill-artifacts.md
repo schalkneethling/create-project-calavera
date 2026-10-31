@@ -1,6 +1,6 @@
 # ADR-0015: Determinant Gates as Calavera Artifacts in a Vite+ Project
 
-- **Status:** Proposed (2026-10-22, revised 2026-10-23)
+- **Status:** Accepted (2026-10-31; proposed 2026-10-22, revised 2026-10-23, amended by the owner's rulings of 2026-10-31 in Decisions 5, 6, and 16)
 - **Date:** 2026-10-22
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/743
 - **Decides:** how the Determinant gates of Increment 1 reach a project that `vp create` scaffolded.
@@ -121,7 +121,7 @@ node .agents/skills/protected-branch-guard/scripts/guard.mjs commit main
 
 **`.claude/settings.json`.** Apply parses the file and stops with a conflict when it is not valid JSON. It adds the fragment's matcher groups to `hooks.SessionStart` and `hooks.PreToolUse` and keeps every other key, event, and group. The state record holds the exact groups apply wrote. On a later apply, a group that matches the record is replaced, a missing group is added again only after the dry run reports it as a change, and a group whose command still points into the skill directory but whose text differs from the record is a conflict. Calavera writes nothing to `.claude/settings.local.json`, which is personal and ignored by Git.
 
-**Format.** Both writers produce text that already passes `oxfmt --check` with no configuration, as the owner's #669 ruling requires, and #745 tests that with this repository's `oxfmt`. Neither runs `vp fmt` over its output.
+**Format.** Both writers produce text that already passes the project's `vp check`, as the owner's #669 ruling requires. The `.vite-hooks` scripts have no file extension, so Oxfmt does not format them, and the block is written as it will stay. `.claude/settings.json` is rewritten as a whole, so its text is formatted in memory before the dry run, by passing it through the project's own `vp fmt --stdin-filepath`, which prints the formatted text and writes nothing (`packages/cli/src/utils/project-formatter.js`). The project's Oxfmt version, its `fmt` settings in `vite.config.ts`, `.editorconfig`, and its ignore patterns then apply exactly as they do for `vp check`, and the dry run shows the bytes apply writes. Nothing is formatted after it is written. A project that Vite+ does not manage gets `JSON.stringify` output with two-space indentation, because no Oxfmt check runs there. _Amended 2026-10-31: the first text required output that passes `oxfmt --check` with no configuration, which a project with its own `fmt` settings would still fail._
 
 **Dry run.** `dry_run_apply` and `apply --dry-run` list each of the four files with `write`, `update`, `unchanged`, or `conflict`, and show the lines or groups that will change, so the approval covers the exact text. When the current branch is the protected branch, the dry run also warns that the commit of the applied files will be refused, and tells the person to create a feature branch first.
 
@@ -131,6 +131,8 @@ The manifest declares an input, `protectedBranch`, with a prompt, a default, and
 
 The answer is recorded in the recipe, on the artifact's entry, as in `{ "id": "skill-protected-branch-guard", "inputs": { "protectedBranch": "main" } }`. A later apply, a non-interactive run, and the MCP flow read it from there and do not ask again. `compose_recipe` returns the input with its default, and the bootstrap guidance tells the agent to confirm the name with the person before `dry_run_apply`. A non-interactive run without a recorded value uses the default and says so in the dry run. Without a default, on a detached HEAD, the run stops and names the missing input.
 
+**Amended by the owner on 2026-10-31.** A value from the default is never written without approval. `dry_run_apply` and `apply --dry-run` fill it in, report it with its source, and return the recipe that records it in `result.recipe`. `apply_recipe` and any other apply that cannot ask the person refuse an input the recipe does not record, name each one with the value the dry run would use, and write nothing. The agent therefore passes the dry run's recipe to `apply_recipe`, so the branch cannot change between the approval and the apply, for example when the person creates a feature branch in between. An interactive `apply` asks and records the answer, and `init` records the value it used, saying so when it was the default. This replaces "A non-interactive run without a recorded value uses the default" above for apply.
+
 Apply then writes the name as the last argument of every guard command it places (Decision 5). The lines are committed, so every clone and every CI job reads the same name, and a reviewer sees it. The prompt replaces detection as the source of the value: the first version rejected detection because a detected name is not one anyone chose, and a default that the person confirms is chosen.
 
 ### 7. The changes to the copied script
@@ -139,7 +141,7 @@ The copy changes these behaviors, and `SOURCE.md` lists each one:
 
 1. The guard takes the protected branch as a required last argument in every mode, checks it with `git check-ref-format --branch`, and uses it wherever `refs/heads/main` appears today. A missing, empty, or invalid argument is an error whose message names the line to fix and shows its correct form.
 2. While a rebase runs, the `commit` and `check` modes judge the branch named in `rebase-merge/head-name` instead of refusing the detached HEAD. Any other detached HEAD is still refused.
-3. A new `claude-pre-tool-use` mode reads Claude Code's `PreToolUse` input. It judges the branch of the repository that holds each target path, from `tool_input.file_path` and the path fields that #745 confirms for `MultiEdit` and `NotebookEdit` against the installed Claude Code build. It denies with the documented `permissionDecision: "deny"` output and exit code 2. A path outside every Git working tree is allowed, because the guard protects branches, and an edit to a scratch file outside the repository changes no branch. The existing `pre-tool-use` mode stays for Codex and is renamed `codex-pre-tool-use`, so each mode names the agent whose input it reads.
+3. A new `claude-pre-tool-use` mode reads Claude Code's `PreToolUse` input. It judges the branch of the repository that holds each target path, from `tool_input.file_path` and the path fields that #745 confirms for `MultiEdit` and `NotebookEdit` against the installed Claude Code build. #745 confirmed them in Claude Code 2.1.310: `Write`, `Edit`, and `MultiEdit` carry the path in `tool_input.file_path`, and `NotebookEdit` in `tool_input.notebook_path`. It denies with the documented `permissionDecision: "deny"` output and exit code 2. A path outside every Git working tree is allowed, because the guard protects branches, and an edit to a scratch file outside the repository changes no branch. The existing `pre-tool-use` mode stays for Codex and is renamed `codex-pre-tool-use`, so each mode names the agent whose input it reads.
 4. The `session-start` mode names the skill in a way every agent understands ("run `node .agents/skills/protected-branch-guard/scripts/start-work.mjs <slug> --base <branch>`") instead of the Codex `$start-work` syntax.
 5. `start-work.mjs` drops the hard-coded `codex/` prefix, so the slug is the branch name, and takes the base branch as a required `--base <branch>` option. This repository's branch names start with the issue number (`AGENTS.md` requires the number in the name), and the slug grammar `^[a-z0-9]+(?:-[a-z0-9]+)*$` already admits a leading number.
 
@@ -206,6 +208,13 @@ The owner's review of 2026-10-23 replaced one ruling of 2026-10-22 and added thr
 - Calavera wires the guard into Claude Code by merging owned entries into `.claude/settings.json`.
 - `agent-red-test-verification` is deferred from Increment 1 (Decision 11).
 
+The owner's review of #745 on 2026-10-31 added four rulings:
+
+- The `inputs` and `wiring` schema of #745's first layer is the final shape.
+- `apply_recipe` refuses an input the recipe does not record, and `dry_run_apply` returns the recipe with the value filled in (Decision 6).
+- On a project whose Git hooks no Vite+ dispatcher runs, apply warns and does not stop. The warning says the guard's hooks will not run and names the remedy that fits the clone: `vp config` installs the dispatcher, `vp hooks enable` turns hooks back on after `vp hooks disable`, and a `core.hooksPath` that points elsewhere must be removed first, because `vp config` leaves it alone (`node_modules/vite-plus/docs/guide/commit-hooks.md`, vite-plus 1.4.0).
+- Calavera formats the text of a rewritten JSON file in memory with the project's own `vp fmt` before the dry run (Decision 5, "Format"). The #669 ruling below still holds, because nothing is formatted after it is written.
+
 These rulings of 2026-10-22 stand:
 
 - The `.mcp.json` that the bootstrap writes satisfies "the MCP registration" for H0.
@@ -255,7 +264,7 @@ The litmus test holds. Vite+ provides the hook dispatcher and `vp staged`, and t
 
 **Adopt `agent-red-test-verification` with fixes now.** Not chosen by the owner. The fixes that would make its evidence checkable are new design, not copy changes, and they belong after the gate's value is shown (Decision 11).
 
-**Exempt the payloads from formatting with `.prettierignore`.** Rejected, because the exemption hides the problem in this repository and leaves it in every project. **Run `vp fmt` over Calavera's writes.** Rejected by the owner's #669 ruling, because managed-file and MCP-config comparisons are textual.
+**Exempt the payloads from formatting with `.prettierignore`.** Rejected, because the exemption hides the problem in this repository and leaves it in every project. **Run `vp fmt` over Calavera's writes.** Rejected by the owner's #669 ruling, because managed-file and MCP-config comparisons are textual, and because a file formatted after the write holds bytes the dry run never showed. Formatting in memory before the dry run, as Decision 5 now does, has neither problem. **Call Oxfmt's `format` function, which `vite-plus/fmt` exports.** Rejected, because it reads no configuration, so a project with its own `fmt` settings would still fail `vp check`.
 
 **Add an `mcp.harness` recipe key.** Rejected for Decision 13's reasons.
 
@@ -264,6 +273,5 @@ The litmus test holds. Vite+ provides the hook dispatcher and `vp staged`, and t
 ## Open questions
 
 - **The worktree gap.** Whether the Git path should run in linked worktrees, and how, given that `vp config` there also needs the worktree's dependencies, is not decided. The Consequences section records the gap.
-- **Projects with their own formatter options.** Whether Calavera should detect `fmt` options in `vite.config.ts`, or whether the project should exclude `.agents/**` from `staged`, is not decided.
-- **Projects scaffolded with `--no-hooks`.** Such a project has no `.vite-hooks/pre-commit` and no dispatcher. Apply would create the hook scripts, but no dispatcher runs them until `vp config` installs one. The dry run should say so; #745 decides whether to warn or stop.
+- **Projects with their own formatter options.** The files Calavera rewrites now follow the project's `fmt` options (Decision 5). The copied payload under `.agents/skills/` does not: `vp staged` can rewrite it in the first commit, and the next apply then reports a local edit. Whether the project should exclude `.agents/**` from `staged` is not decided.
 - **Codex wiring.** Whether `wiring` gains a `codex` member that writes `.codex/hooks.json` is a follow-up (Decision 10).
