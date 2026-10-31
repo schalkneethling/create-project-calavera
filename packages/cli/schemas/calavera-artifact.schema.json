@@ -47,6 +47,54 @@
           "minLength": 1
         }
       }
+    },
+    "inputs": {
+      "description": "Values the person supplies when the artifact is selected. A recipe records the answers on the artifact's entry, and wiring commands reference them as {{name}}.",
+      "type": "object",
+      "minProperties": 1,
+      "propertyNames": { "pattern": "^[a-z][A-Za-z0-9]*$" },
+      "additionalProperties": {
+        "type": "object",
+        "additionalProperties": false,
+        "required": ["prompt", "check"],
+        "properties": {
+          "prompt": {
+            "description": "The question Calavera asks for the value.",
+            "type": "string",
+            "minLength": 1
+          },
+          "default": {
+            "description": "How Calavera finds the suggested value. current-branch reads git symbolic-ref --short HEAD and has no value on a detached HEAD.",
+            "enum": ["current-branch"]
+          },
+          "check": {
+            "description": "How Calavera validates the value. branch-name requires a name that git check-ref-format --branch accepts unchanged.",
+            "enum": ["branch-name"]
+          }
+        }
+      }
+    },
+    "wiring": {
+      "description": "Project files apply wires the installed skill into, under the same dry-run approval as the skill itself.",
+      "type": "object",
+      "additionalProperties": false,
+      "minProperties": 1,
+      "properties": {
+        "viteHooks": {
+          "description": "A command line per Git hook. Apply writes each one into an owned block of .vite-hooks/<hook>.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "enum": ["pre-commit", "prepare-commit-msg", "pre-push"] },
+          "additionalProperties": {
+            "type": "string",
+            "pattern": "^[^\\r\\n]+$"
+          }
+        },
+        "claudeCode": {
+          "description": "The payload path of a Claude Code settings fragment whose hook groups apply merges into .claude/settings.json.",
+          "$ref": "#/$defs/relativePath"
+        }
+      }
     }
   },
   "allOf": [
@@ -67,7 +115,8 @@
       },
       "then": {
         "properties": { "id": { "type": "string", "pattern": "^hook-" } },
-        "required": ["targets"]
+        "required": ["targets"],
+        "not": { "anyOf": [{ "required": ["inputs"] }, { "required": ["wiring"] }] }
       }
     },
     {
@@ -77,7 +126,8 @@
       },
       "then": {
         "properties": { "id": { "type": "string", "pattern": "^agent-" } },
-        "required": ["targets"]
+        "required": ["targets"],
+        "not": { "anyOf": [{ "required": ["inputs"] }, { "required": ["wiring"] }] }
       }
     }
   ],

@@ -348,6 +348,16 @@
           "type": "string",
           "minLength": 1,
           "pattern": "^(?!(?:\\.|\\.\\.)$)[^/\\\\]+$"
+        },
+        "inputs": {
+          "description": "Answers to the inputs the artifact declares, such as the protected branch of skill-protected-branch-guard. Calavera checks each value against the artifact's declaration before it applies the recipe.",
+          "type": "object",
+          "minProperties": 1,
+          "propertyNames": { "pattern": "^[a-z][A-Za-z0-9]*$" },
+          "additionalProperties": {
+            "type": "string",
+            "minLength": 1
+          }
         }
       },
       "allOf": [

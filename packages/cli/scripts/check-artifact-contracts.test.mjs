@@ -203,6 +203,103 @@ test("artifact manifest rejects mismatched types, unsafe payloads, and missing t
   });
 });
 
+const wiredSkillManifest = Object.freeze({
+  schemaVersion: 1,
+  id: "skill-protected-branch-guard",
+  type: "skill",
+  displayName: "Protected branch guard",
+  payload: "payload/protected-branch-guard",
+  compatibility: { calavera: ">=2.2.0" },
+  inputs: {
+    protectedBranch: {
+      prompt: "Which branch should the guard protect?",
+      default: "current-branch",
+      check: "branch-name",
+    },
+  },
+  wiring: {
+    viteHooks: {
+      "pre-commit":
+        "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit {{protectedBranch}}",
+      "pre-push":
+        "node .agents/skills/protected-branch-guard/scripts/guard.mjs pre-push {{protectedBranch}}",
+    },
+    claudeCode: "hooks/claude-code.settings.json",
+  },
+});
+
+test("artifact manifest accepts declared inputs and wiring on a skill", () => {
+  const validate = ajv.compile(manifestSchema);
+
+  assertValid(validate, wiredSkillManifest);
+  assertValid(validate, {
+    ...wiredSkillManifest,
+    inputs: { protectedBranch: { prompt: "Branch to protect", check: "branch-name" } },
+  });
+  assertValid(validate, { ...wiredSkillManifest, wiring: { claudeCode: "hooks/settings.json" } });
+});
+
+test("artifact manifest rejects inputs and wiring it cannot honor", () => {
+  const validate = ajv.compile(manifestSchema);
+  const hook = {
+    schemaVersion: 1,
+    id: "hook-block-dangerous-commands",
+    type: "hook",
+    displayName: "Block dangerous commands",
+    payload: "artifact",
+    targets: ["claude-code"],
+    compatibility: { calavera: ">=2.2.0" },
+  };
+
+  // Given a hook or agent manifest, when it declares inputs or wiring, then it is invalid.
+  assertInvalid(validate, { ...hook, inputs: wiredSkillManifest.inputs });
+  assertInvalid(validate, { ...hook, wiring: wiredSkillManifest.wiring });
+  // Given a skill manifest, when an input or wiring member is malformed, then it is invalid.
+  assertInvalidAt(validate, { ...wiredSkillManifest, inputs: {} }, "/inputs");
+  assertInvalidAt(
+    validate,
+    {
+      ...wiredSkillManifest,
+      inputs: { "protected-branch": { prompt: "x", check: "branch-name" } },
+    },
+    "/inputs",
+  );
+  assertInvalidAt(
+    validate,
+    { ...wiredSkillManifest, inputs: { protectedBranch: { prompt: "x" } } },
+    "/inputs/protectedBranch",
+  );
+  assertInvalidAt(
+    validate,
+    {
+      ...wiredSkillManifest,
+      inputs: { protectedBranch: { prompt: "x", check: "branch-name", default: "main" } },
+    },
+    "/inputs/protectedBranch/default",
+  );
+  assertInvalidAt(validate, { ...wiredSkillManifest, wiring: {} }, "/wiring");
+  assertInvalidAt(
+    validate,
+    { ...wiredSkillManifest, wiring: { viteHooks: { "post-merge": "node x.mjs" } } },
+    "/wiring/viteHooks",
+  );
+  assertInvalidAt(
+    validate,
+    { ...wiredSkillManifest, wiring: { viteHooks: { "pre-commit": "node a.mjs\nrm -rf ." } } },
+    "/wiring/viteHooks/pre-commit",
+  );
+  assertInvalidAt(
+    validate,
+    { ...wiredSkillManifest, wiring: { claudeCode: "../settings.json" } },
+    "/wiring/claudeCode",
+  );
+  assertInvalidAt(
+    validate,
+    { ...wiredSkillManifest, wiring: { codex: "hooks/hooks.codex.json" } },
+    "/wiring",
+  );
+});
+
 test("artifact lock accepts exact deterministic package resolutions", () => {
   const validate = ajv.compile(lockSchema);
 
