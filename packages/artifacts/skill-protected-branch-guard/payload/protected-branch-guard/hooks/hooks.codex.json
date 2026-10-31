@@ -1,0 +1,28 @@
+{
+  "description": "Protected branch guard: advisory session check and synchronous patch gate. Replace {{protectedBranch}} with the branch Calavera protects before you merge this into .codex/hooks.json.",
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.agents/skills/protected-branch-guard/scripts/guard.mjs\" session-start {{protectedBranch}}",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "^apply_patch$",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$(git rev-parse --show-toplevel)/.agents/skills/protected-branch-guard/scripts/guard.mjs\" codex-pre-tool-use {{protectedBranch}}",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

@@ -24,7 +24,15 @@ be portable source artifacts. Hooks and agents include a `target` directory
 because their runtime shape is usually vendor-specific. Preserved Toolkit hooks
 and agents default to `claude-code`.
 
-Calavera does not currently write `.claude/`, `.codex/`, editor settings, global
+A skill whose manifest declares wiring is the one exception (ADR-0015). For
+`skill-protected-branch-guard`, apply adds the guard's hook groups to the committed
+`.claude/settings.json` and a marked block to `.vite-hooks/pre-commit`,
+`.vite-hooks/prepare-commit-msg`, and `.vite-hooks/pre-push`. The dry run shows each
+group and each line first. Apply keeps every other key, group, and line, replaces only
+what it recorded writing, and stops with a conflict when you have edited its part. It
+never writes `.claude/settings.local.json`.
+
+Otherwise, Calavera does not write `.claude/`, `.codex/`, editor settings, global
 agent directories, symlinks, or machine-local configuration. If a tool needs one
 of those locations, wire it up explicitly after reviewing the generated files.
 

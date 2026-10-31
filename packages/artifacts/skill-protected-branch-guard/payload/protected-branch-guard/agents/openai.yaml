@@ -1,0 +1,4 @@
+interface:
+  display_name: "Protected Branch Guard"
+  short_description: "Keep commits and edits off the protected branch"
+  default_prompt: "Use $protected-branch-guard to start this work on a feature branch instead of the protected branch."

@@ -1,6 +1,6 @@
 {
   "$schema": "https://unpkg.com/knip@6/schema.json",
-  "ignore": ["packages/artifacts/*/payload/**/*.mts", "packages/cli/fixtures/**"],
+  "ignore": ["packages/artifacts/*/payload/**", "packages/cli/fixtures/**"],
   "ignoreBinaries": ["uv", "uvx"],
   "ignoreDependencies": ["fledgling", "vite-plus"],
   "ignoreExportsUsedInFile": true

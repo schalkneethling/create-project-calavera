@@ -73,6 +73,44 @@ export function assertRootOnlyIntegrationsAtRepositoryRoot(
     return;
   }
 
+  assertAtRepositoryRoot(rootOnly.id, "", projectDirectory, packageManager);
+}
+
+/**
+ * Hard stop for an artifact that writes Git hooks, selected in a project that is not the repository
+ * root. Git runs every hook from the repository root, so a hook line that runs a script by its
+ * path inside a workspace member would fail on every commit. Raised before any file is planned or
+ * written; a project that is not yet a git repository counts as its own root.
+ *
+ * @param {string[]} artifactIds The selected artifacts that write Git hooks.
+ * @param {string} projectDirectory
+ * @param {keyof typeof projectLocalCommandCatalog} packageManager
+ */
+export function assertGitHookArtifactsAtRepositoryRoot(
+  artifactIds,
+  projectDirectory,
+  packageManager,
+) {
+  const [id] = artifactIds;
+  if (id === undefined) {
+    return;
+  }
+
+  assertAtRepositoryRoot(
+    id,
+    " It writes Git hooks, and Git runs every hook from the repository root, so its hook lines would not find their scripts from here.",
+    projectDirectory,
+    packageManager,
+  );
+}
+
+/**
+ * @param {string} id
+ * @param {string} why An extra sentence after the first, or an empty string.
+ * @param {string} projectDirectory
+ * @param {keyof typeof projectLocalCommandCatalog} packageManager
+ */
+function assertAtRepositoryRoot(id, why, projectDirectory, packageManager) {
   const project = resolve(projectDirectory);
   const root = findRepositoryRoot(project) ?? project;
 
@@ -82,6 +120,6 @@ export function assertRootOnlyIntegrationsAtRepositoryRoot(
 
   const command = projectLocalCommandCatalog[packageManager].applyDryRun;
   throw new Error(
-    `${rootOnly.id} applies at the repository root, not in a workspace member. This project is ${project}; the repository root is ${root}. Apply a recipe that selects ${rootOnly.id} from the repository root (cd ${root} && ${command}, adding --config <path> when the recipe is saved elsewhere), or remove ${rootOnly.id} from this recipe.`,
+    `${id} applies at the repository root, not in a workspace member.${why} This project is ${project}; the repository root is ${root}. Apply a recipe that selects ${id} from the repository root (cd ${root} && ${command}, adding --config <path> when the recipe is saved elsewhere), or remove ${id} from this recipe.`,
   );
 }
