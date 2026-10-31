@@ -1,7 +1,7 @@
 // @ts-check
 import { inspect, isDeepStrictEqual } from "node:util";
 
-import { formatJSON, rewriteLossProblem } from "../utils/oxfmt-json.js";
+import { rewriteLossProblem, toJSONText, writeJSON } from "../utils/json-rewrite.js";
 import { viteHookCommandProblem } from "./vite-hook-blocks.js";
 
 // ADR-0015, Decision 5: apply adds an artifact's Claude Code hook groups to the committed
@@ -145,14 +145,14 @@ function handlerRunsSkill(handler, skillDirectory) {
 }
 
 /**
- * Shows a group in a conflict message. A group from the person's file can hold a value formatJSON
- * refuses, such as a number too large to write, and the message must still show it.
+ * Shows a group in a conflict message. A group from the person's file can hold a value JSON cannot
+ * write, such as a number too large for a double, and the message must still show it.
  *
  * @param {unknown} group
  */
 function showGroup(group) {
   try {
-    return indent(formatJSON(group));
+    return indent(toJSONText(group));
   } catch {
     return indent(inspect(group, { depth: null }));
   }
@@ -204,15 +204,17 @@ function recordedGroups(recorded, event, artifactId) {
  * @param {unknown} options.fragment The artifact's fragment, with its placeholders filled.
  * @param {HookGroups | undefined} options.recorded The groups apply wrote last, from the state record.
  * @param {string} options.skillDirectory The installed skill directory, such as .agents/skills/protected-branch-guard.
- * @returns {ClaudeSettingsPlan}
+ * @param {import("../utils/project-formatter.js").ProjectFormatter} options.formatter Formats the rewritten file the way the project's own formatter would.
+ * @returns {Promise<ClaudeSettingsPlan>}
  */
-export function planClaudeSettings({
+export async function planClaudeSettings({
   path,
   contents,
   artifactId,
   fragment,
   recorded,
   skillDirectory,
+  formatter,
 }) {
   const groups = fragmentGroups(fragment, skillDirectory);
   const directory = `${skillDirectory.replace(/\/+$/, "")}/`;
@@ -287,7 +289,7 @@ export function planClaudeSettings({
           (handler) => !handlerRunsSkill(handler, skillDirectory),
         );
         return conflict(
-          `hooks.${event} holds a group that runs ${directory} and ${written.length === 0 ? "Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\nThe file now holds:\n${showGroup(group)}\nCalavera would write:\n${desired.map((candidate) => indent(formatJSON(candidate))).join("\n") || "  nothing"}\nTo let Calavera write ${artifactId}'s hooks, ${shared ? `remove only the hook in that group that runs ${directory}, keep your other hooks,` : "remove that group"} and run apply again.`,
+          `hooks.${event} holds a group that runs ${directory} and ${written.length === 0 ? "Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\nThe file now holds:\n${showGroup(group)}\nCalavera would write:\n${desired.map((candidate) => indent(toJSONText(candidate))).join("\n") || "  nothing"}\nTo let Calavera write ${artifactId}'s hooks, ${shared ? `remove only the hook in that group that runs ${directory}, keep your other hooks,` : "remove that group"} and run apply again.`,
         );
       }
     }
@@ -306,7 +308,7 @@ export function planClaudeSettings({
     return { type: "unchanged", groups, changes, contents, reformatted: false };
   }
   if (contents !== undefined) {
-    const loss = rewriteLossProblem(contents);
+    const loss = await rewriteLossProblem(contents, path, formatter);
     if (loss !== undefined) {
       return conflict(
         `${loss}. Calavera rewrites the whole file to add its hooks, so it stops instead of changing that silently. Edit that part of the file and run apply again.`,
@@ -318,11 +320,14 @@ export function planClaudeSettings({
     groups,
     changes,
     // Apply's removals can empty hooks; an empty hooks object that apply left behind goes too.
-    contents: formatJSON(
+    contents: await writeJSON(
       hadHooks && Object.keys(hooks).length === 0
         ? Object.fromEntries(Object.entries(settings).filter(([key]) => key !== "hooks"))
         : { ...settings, hooks },
+      path,
+      formatter,
     ),
-    reformatted: contents !== undefined && formatJSON(settings) !== contents,
+    reformatted:
+      contents !== undefined && (await writeJSON(settings, path, formatter)) !== contents,
   };
 }

@@ -1,13 +1,14 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after } from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { claudeHookCommandProblem, planClaudeSettings } from "../src/ai/claude-settings.js";
-import { formatJSON } from "../src/utils/oxfmt-json.js";
+import { writeJSON } from "../src/utils/json-rewrite.js";
+import { loadProjectFormatter } from "../src/utils/project-formatter.js";
+import { createTemporaryFixture, writeVitePlusFormatter } from "./vite-plus-fixtures.mjs";
 
 const oxfmt = fileURLToPath(new URL("../../../node_modules/.bin/oxfmt", import.meta.url));
 const skillDirectory = ".agents/skills/protected-branch-guard";
@@ -25,6 +26,13 @@ const fragment = (branch = "main") => ({
 const recordFor = (branch = "main") => fragment(branch).hooks;
 const userGroup = { matcher: "Bash", hooks: [{ type: "command", command: "./scripts/check.sh" }] };
 
+const vitePlusProject = await createTemporaryFixture("claude-settings", {});
+after(() => vitePlusProject[Symbol.asyncDispose]());
+await writeVitePlusFormatter(vitePlusProject.root);
+const formatter = await loadProjectFormatter(vitePlusProject.root, "managed");
+/** The settings text Calavera writes for `value` in a Vite+ project. */
+const json = (value) => writeJSON(value, ".claude/settings.json", formatter);
+
 /** @param {Partial<Parameters<typeof planClaudeSettings>[0]>} options */
 function plan(options) {
   return planClaudeSettings({
@@ -34,14 +42,15 @@ function plan(options) {
     fragment: fragment(),
     recorded: undefined,
     skillDirectory,
+    formatter,
     ...options,
   });
 }
 
-test("Given no settings file, when the hooks are planned, then apply writes the fragment's groups and records them", () => {
-  const result = plan({});
+test("Given no settings file, when the hooks are planned, then apply writes the fragment's groups and records them", async () => {
+  const result = await plan({});
   assert.equal(result.type, "write");
-  assert.equal(result.contents, formatJSON(fragment()));
+  assert.equal(result.contents, await json(fragment()));
   assert.deepEqual(result.groups, recordFor());
   assert.deepEqual(result.changes, [
     { event: "SessionStart", action: "add", group: sessionGroup() },
@@ -49,13 +58,13 @@ test("Given no settings file, when the hooks are planned, then apply writes the 
   ]);
 });
 
-test("Given settings of the person's own, when the hooks are planned, then every other key, event, and group is kept", () => {
+test("Given settings of the person's own, when the hooks are planned, then every other key, event, and group is kept", async () => {
   const settings = {
     $schema: "https://json.schemastore.org/claude-code-settings.json",
     permissions: { allow: ["Bash(pnpm test)"] },
     hooks: { PreToolUse: [userGroup], Stop: [{ hooks: [{ type: "command", command: "true" }] }] },
   };
-  const result = plan({ contents: formatJSON(settings) });
+  const result = await plan({ contents: await json(settings) });
   assert.equal(result.type, "update");
   assert.deepEqual(JSON.parse(/** @type {string} */ (result.contents)), {
     ...settings,
@@ -67,18 +76,18 @@ test("Given settings of the person's own, when the hooks are planned, then every
   });
 });
 
-test("Given the groups apply wrote, when nothing changed, then the plan is unchanged and the person's formatting is kept", () => {
+test("Given the groups apply wrote, when nothing changed, then the plan is unchanged and the person's formatting is kept", async () => {
   const contents = JSON.stringify({ hooks: recordFor() });
-  const result = plan({ contents, recorded: recordFor() });
+  const result = await plan({ contents, recorded: recordFor() });
   assert.equal(result.type, "unchanged");
   assert.equal(result.contents, contents);
   assert.deepEqual(result.changes, []);
-  assert.equal(plan({ contents }).type, "unchanged");
+  assert.equal((await plan({ contents })).type, "unchanged");
 });
 
-test("Given the groups apply wrote last, when the protected branch changes, then only those groups are replaced, in place", () => {
-  const contents = formatJSON({ hooks: { PreToolUse: [userGroup, toolGroup(), userGroup] } });
-  const result = plan({
+test("Given the groups apply wrote last, when the protected branch changes, then only those groups are replaced, in place", async () => {
+  const contents = await json({ hooks: { PreToolUse: [userGroup, toolGroup(), userGroup] } });
+  const result = await plan({
     contents,
     recorded: { PreToolUse: [toolGroup()] },
     fragment: fragment("trunk"),
@@ -95,12 +104,15 @@ test("Given the groups apply wrote last, when the protected branch changes, then
   assert.deepEqual(result.groups, recordFor("trunk"));
 });
 
-test("Given a group apply wrote that the fragment no longer holds, when the hooks are planned, then it is removed", () => {
+test("Given a group apply wrote that the fragment no longer holds, when the hooks are planned, then it is removed", async () => {
   const extra = { matcher: "Write", hooks: [handler("claude-pre-tool-use")] };
-  const contents = formatJSON({
+  const contents = await json({
     hooks: { ...recordFor(), PreToolUse: [toolGroup(), extra, userGroup] },
   });
-  const result = plan({ contents, recorded: { ...recordFor(), PreToolUse: [toolGroup(), extra] } });
+  const result = await plan({
+    contents,
+    recorded: { ...recordFor(), PreToolUse: [toolGroup(), extra] },
+  });
   assert.deepEqual(result.changes, [{ event: "PreToolUse", action: "remove", previous: extra }]);
   assert.deepEqual(JSON.parse(/** @type {string} */ (result.contents)).hooks.PreToolUse, [
     toolGroup(),
@@ -108,9 +120,9 @@ test("Given a group apply wrote that the fragment no longer holds, when the hook
   ]);
 });
 
-test("Given an event the fragment no longer holds, when the hooks are planned, then apply removes the groups it wrote there", () => {
-  const contents = formatJSON({ hooks: { ...recordFor(), Stop: [userGroup] } });
-  const result = plan({
+test("Given an event the fragment no longer holds, when the hooks are planned, then apply removes the groups it wrote there", async () => {
+  const contents = await json({ hooks: { ...recordFor(), Stop: [userGroup] } });
+  const result = await plan({
     contents,
     recorded: recordFor(),
     fragment: { hooks: { PreToolUse: [toolGroup()] } },
@@ -126,11 +138,11 @@ test("Given an event the fragment no longer holds, when the hooks are planned, t
   assert.deepEqual(result.groups, { PreToolUse: [toolGroup()] });
 });
 
-test("Given the new group already in the file beside the old one, when the hooks are planned, then the old one is removed, not reported as a conflict", () => {
-  const contents = formatJSON({
+test("Given the new group already in the file beside the old one, when the hooks are planned, then the old one is removed, not reported as a conflict", async () => {
+  const contents = await json({
     hooks: { PreToolUse: [toolGroup(), toolGroup("trunk")], SessionStart: [sessionGroup("trunk")] },
   });
-  const result = plan({ contents, recorded: recordFor(), fragment: fragment("trunk") });
+  const result = await plan({ contents, recorded: recordFor(), fragment: fragment("trunk") });
   assert.equal(result.type, "update");
   assert.deepEqual(result.changes, [
     { event: "PreToolUse", action: "remove", previous: toolGroup() },
@@ -139,8 +151,8 @@ test("Given the new group already in the file beside the old one, when the hooks
   const a = { matcher: "Write", hooks: [handler("claude-pre-tool-use")] };
   const oldB = { matcher: "Edit", hooks: [handler("claude-pre-tool-use")] };
   const newB = { matcher: "Edit|MultiEdit", hooks: [handler("claude-pre-tool-use")] };
-  const swapped = plan({
-    contents: formatJSON({ hooks: { PreToolUse: [oldB, a] } }),
+  const swapped = await plan({
+    contents: await json({ hooks: { PreToolUse: [oldB, a] } }),
     recorded: { PreToolUse: [a, oldB] },
     fragment: { hooks: { PreToolUse: [a, newB] } },
   });
@@ -153,7 +165,7 @@ test("Given the new group already in the file beside the old one, when the hooks
   ]);
 });
 
-test("Given settings a rewrite would change beyond the hooks, when the hooks are planned, then data loss is a conflict and reformatting is reported", () => {
+test("Given settings a rewrite would change beyond the hooks, when the hooks are planned, then data loss is a conflict and reformatting is reported", async () => {
   for (const [contents, problem] of [
     ['{"model": "opus", "hooks": {}, "model": "sonnet"}', /holds the key "model" more than once/],
     ['{"a": {"x": 1, "x": 2}}', /holds the key "x" more than once/],
@@ -165,32 +177,32 @@ test("Given settings a rewrite would change beyond the hooks, when the hooks are
     ['{"n": -0}', /the number -0, which Calavera would write as 0/],
     ['{"cleanupPeriodDays": 1e400}', /the number 1e400, which is too large for Calavera to write/],
   ]) {
-    const result = plan({ contents });
+    const result = await plan({ contents });
     assert.equal(result.type, "conflict", contents);
     assert.match(result.reason, problem, contents);
     assert.match(result.reason, /Calavera rewrites the whole file/, contents);
   }
   // Keys that only look alike, such as the same key in two objects, are not duplicates.
   assert.equal(
-    plan({ contents: '{"a": {"x": 1}, "b": {"x": 1}, "x": "{\\"x\\": 1}"}' }).type,
+    (await plan({ contents: '{"a": {"x": 1}, "b": {"x": 1}, "x": "{\\"x\\": 1}"}' })).type,
     "update",
   );
 
   const fourSpaces = JSON.stringify({ permissions: { allow: ["Bash(ls)"] } }, null, 4);
-  const reformatted = plan({ contents: fourSpaces });
+  const reformatted = await plan({ contents: fourSpaces });
   assert.equal(reformatted.type, "update");
   assert.equal(reformatted.reformatted, true);
-  assert.equal(plan({ contents: formatJSON({ permissions: {} }) }).reformatted, false);
-  assert.equal(plan({}).reformatted, false);
+  assert.equal((await plan({ contents: await json({ permissions: {} }) })).reformatted, false);
+  assert.equal((await plan({})).reformatted, false);
 });
 
-test("Given a guard handler merged into a group of the person's own, when it was edited, then the advice keeps the person's hooks", () => {
+test("Given a guard handler merged into a group of the person's own, when it was edited, then the advice keeps the person's hooks", async () => {
   const merged = {
     matcher: "Bash",
     hooks: [userGroup.hooks[0], handler("claude-pre-tool-use", "dev")],
   };
-  const result = plan({
-    contents: formatJSON({ hooks: { PreToolUse: [merged] } }),
+  const result = await plan({
+    contents: await json({ hooks: { PreToolUse: [merged] } }),
     recorded: recordFor(),
   });
   assert.equal(result.type, "conflict");
@@ -200,25 +212,25 @@ test("Given a guard handler merged into a group of the person's own, when it was
   );
 });
 
-test("Given a record without groups for an event, when a skill group is there, then the conflict says Calavera never wrote it", () => {
-  const contents = formatJSON({ hooks: { SessionStart: [sessionGroup("dev")] } });
-  const result = plan({ contents, recorded: { PreToolUse: [toolGroup()] } });
+test("Given a record without groups for an event, when a skill group is there, then the conflict says Calavera never wrote it", async () => {
+  const contents = await json({ hooks: { SessionStart: [sessionGroup("dev")] } });
+  const result = await plan({ contents, recorded: { PreToolUse: [toolGroup()] } });
   assert.equal(result.type, "conflict");
   assert.match(result.reason, /hooks\.SessionStart .* Calavera has no record of writing it/s);
   assert.equal(result.groups, undefined);
 });
 
-test("Given a person's group with a number too large to write, when it is a conflict, then the message still shows it", () => {
+test("Given a person's group with a number too large to write, when it is a conflict, then the message still shows it", async () => {
   const contents =
     '{"hooks": {"PreToolUse": [{"matcher": "Write", "hooks": [{"type": "command", "command": "node \\"$CLAUDE_PROJECT_DIR/.agents/skills/protected-branch-guard/x.mjs\\"", "timeout": 1e400}]}]}}';
-  const result = plan({ contents });
+  const result = await plan({ contents });
   assert.equal(result.type, "conflict");
   assert.match(result.reason, /"timeout": 1e400|Infinity/);
 });
 
-test("Given apply removed the last group, when hooks is left empty, then the empty hooks object is removed too", () => {
-  const contents = formatJSON({ model: "opus", hooks: { PreToolUse: [toolGroup()] } });
-  const result = plan({
+test("Given apply removed the last group, when hooks is left empty, then the empty hooks object is removed too", async () => {
+  const contents = await json({ model: "opus", hooks: { PreToolUse: [toolGroup()] } });
+  const result = await plan({
     contents,
     recorded: { PreToolUse: [toolGroup()] },
     fragment: { hooks: { SessionStart: [sessionGroup()] } },
@@ -226,7 +238,7 @@ test("Given apply removed the last group, when hooks is left empty, then the emp
   assert.deepEqual(Object.keys(JSON.parse(/** @type {string} */ (result.contents)).hooks), [
     "SessionStart",
   ]);
-  const emptied = plan({
+  const emptied = await plan({
     contents,
     recorded: { PreToolUse: [toolGroup()] },
     fragment: { hooks: {} },
@@ -234,13 +246,13 @@ test("Given apply removed the last group, when hooks is left empty, then the emp
   assert.deepEqual(JSON.parse(/** @type {string} */ (emptied.contents)), { model: "opus" });
 });
 
-test("A group runs the skill only when its command names the skill directory from the project root", () => {
+test("A group runs the skill only when its command names the skill directory from the project root", async () => {
   const vendored = {
     hooks: [
       { type: "command", command: `node "$CLAUDE_PROJECT_DIR/vendor/${skillDirectory}/x.mjs"` },
     ],
   };
-  const result = plan({ contents: formatJSON({ hooks: { PreToolUse: [vendored] } }) });
+  const result = await plan({ contents: await json({ hooks: { PreToolUse: [vendored] } }) });
   assert.equal(result.type, "update");
   assert.deepEqual(JSON.parse(/** @type {string} */ (result.contents)).hooks.PreToolUse, [
     vendored,
@@ -248,35 +260,35 @@ test("A group runs the skill only when its command names the skill directory fro
   ]);
   const relative = { hooks: [{ type: "command", command: `node ${skillDirectory}/x.mjs` }] };
   assert.equal(
-    plan({ contents: formatJSON({ hooks: { PreToolUse: [relative] } }) }).type,
+    (await plan({ contents: await json({ hooks: { PreToolUse: [relative] } }) })).type,
     "conflict",
   );
 });
 
-test("A damaged state record is a diagnosable error", () => {
+test("A damaged state record is a diagnosable error", async () => {
   for (const recorded of [[toolGroup()], "x"]) {
-    assert.throws(
-      () => plan({ contents: "{}", recorded: /** @type {any} */ (recorded) }),
+    await assert.rejects(
+      plan({ contents: "{}", recorded: /** @type {any} */ (recorded) }),
       /The Calavera state record for skill-protected-branch-guard is damaged: its hooks are not an object of hook events/,
     );
   }
-  assert.throws(
-    () => plan({ contents: "{}", recorded: /** @type {any} */ ({ PreToolUse: {} }) }),
+  await assert.rejects(
+    plan({ contents: "{}", recorded: /** @type {any} */ ({ PreToolUse: {} }) }),
     /The Calavera state record for skill-protected-branch-guard is damaged: its hooks\.PreToolUse is not a list of matcher groups/,
   );
 });
 
-test("Given a group the person removed, when the hooks are planned, then it is added again as a change the dry run shows", () => {
-  const contents = formatJSON({ hooks: { SessionStart: [sessionGroup()] } });
-  const result = plan({ contents, recorded: recordFor() });
+test("Given a group the person removed, when the hooks are planned, then it is added again as a change the dry run shows", async () => {
+  const contents = await json({ hooks: { SessionStart: [sessionGroup()] } });
+  const result = await plan({ contents, recorded: recordFor() });
   assert.equal(result.type, "update");
   assert.deepEqual(result.changes, [{ event: "PreToolUse", action: "add", group: toolGroup() }]);
 });
 
-test("Given a group the person edited, when the hooks are planned, then it is a conflict that names the file and event and shows both texts", () => {
+test("Given a group the person edited, when the hooks are planned, then it is a conflict that names the file and event and shows both texts", async () => {
   const edited = { ...toolGroup(), matcher: "Write|Edit" };
-  const contents = formatJSON({ hooks: { PreToolUse: [edited] } });
-  const result = plan({ contents, recorded: recordFor() });
+  const contents = await json({ hooks: { PreToolUse: [edited] } });
+  const result = await plan({ contents, recorded: recordFor() });
   assert.equal(result.type, "conflict");
   assert.equal(result.contents, undefined);
   assert.match(
@@ -290,12 +302,12 @@ test("Given a group the person edited, when the hooks are planned, then it is a 
   );
   assert.match(result.reason, /remove that group and run apply again/);
 
-  const unrecorded = plan({ contents });
+  const unrecorded = await plan({ contents });
   assert.equal(unrecorded.type, "conflict");
   assert.match(unrecorded.reason, /Calavera has no record of writing it/);
 });
 
-test("Given settings Calavera cannot read, when the hooks are planned, then it is a conflict and nothing is rewritten", () => {
+test("Given settings Calavera cannot read, when the hooks are planned, then it is a conflict and nothing is rewritten", async () => {
   for (const [contents, problem] of [
     ["{ // comment\n}", /is not valid JSON/],
     ['{"a": 1,}', /is not valid JSON/],
@@ -303,7 +315,7 @@ test("Given settings Calavera cannot read, when the hooks are planned, then it i
     ['{"hooks": []}', /hooks must be an object/],
     ['{"hooks": {"PreToolUse": {}}}', /hooks\.PreToolUse must be an array/],
   ]) {
-    const result = plan({ contents });
+    const result = await plan({ contents });
     assert.equal(result.type, "conflict", contents);
     assert.equal(result.contents, undefined, contents);
     assert.match(result.reason, problem, contents);
@@ -311,35 +323,35 @@ test("Given settings Calavera cannot read, when the hooks are planned, then it i
   }
 });
 
-test("A fragment must hold only command hooks that run scripts from the artifact's skill directory", () => {
-  const bad = (hooks) => () => plan({ fragment: { hooks } });
-  assert.throws(() => plan({ fragment: { hooks: {}, permissions: {} } }), /may hold only "hooks"/);
-  assert.throws(bad([]), /hooks must be an object/);
-  assert.throws(bad({ PreToolUse: {} }), /hooks\.PreToolUse must be a non-empty array/);
-  assert.throws(bad({ PreToolUse: [{ hooks: [] }] }), /must hold a non-empty hooks array/);
-  assert.throws(
+test("A fragment must hold only command hooks that run scripts from the artifact's skill directory", async () => {
+  const bad = (hooks) => plan({ fragment: { hooks } });
+  await assert.rejects(plan({ fragment: { hooks: {}, permissions: {} } }), /may hold only "hooks"/);
+  await assert.rejects(bad([]), /hooks must be an object/);
+  await assert.rejects(bad({ PreToolUse: {} }), /hooks\.PreToolUse must be a non-empty array/);
+  await assert.rejects(bad({ PreToolUse: [{ hooks: [] }] }), /must hold a non-empty hooks array/);
+  await assert.rejects(
     bad({ PreToolUse: [{ matcher: 1, hooks: [handler("x")] }] }),
     /matcher must be a string/,
   );
-  assert.throws(
+  await assert.rejects(
     bad({ PreToolUse: [{ hooks: [handler("x")], extra: true }] }),
     /may hold only matcher and hooks/,
   );
-  assert.throws(
+  await assert.rejects(
     bad({ PreToolUse: [{ hooks: [{ type: "prompt", prompt: "x" }] }] }),
     /must be a command hook/,
   );
-  assert.throws(
+  await assert.rejects(
     bad({ PreToolUse: [{ hooks: [{ type: "command", command: guard("x"), timeout: 0 }] }] }),
     /timeout must be a positive whole number/,
   );
-  assert.throws(
+  await assert.rejects(
     bad({ PreToolUse: [{ hooks: [{ type: "command", command: "rm -rf /" }] }] }),
     /must start with node "\$CLAUDE_PROJECT_DIR\/\.agents\/skills\/protected-branch-guard\//,
   );
 });
 
-test("A Claude Code hook command runs a script from the skill directory through CLAUDE_PROJECT_DIR, with no other shell syntax", () => {
+test("A Claude Code hook command runs a script from the skill directory through CLAUDE_PROJECT_DIR, with no other shell syntax", async () => {
   assert.equal(claudeHookCommandProblem(guard("claude-pre-tool-use"), skillDirectory), undefined);
   for (const [command, problem] of [
     [
@@ -364,21 +376,40 @@ test("A Claude Code hook command runs a script from the skill directory through 
   }
 });
 
-test("The settings apply writes pass this repository's oxfmt --check", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-claude-settings-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
-  await mkdir(join(directory, ".claude"));
+test("In a Vite+ project, the settings apply writes pass oxfmt --check", async () => {
+  await using project = await createTemporaryFixture("claude-settings-check", {});
+  await mkdir(join(project.root, ".claude"));
   const settings = {
     permissions: { allow: ["Bash(pnpm test)", "Bash(git status)"], deny: [] },
     hooks: { PreToolUse: [userGroup] },
   };
-  const result = plan({ contents: JSON.stringify(settings) });
+  const result = await plan({ contents: JSON.stringify(settings) });
   await writeFile(
-    join(directory, ".claude", "settings.json"),
+    join(project.root, ".claude", "settings.json"),
     /** @type {string} */ (result.contents),
   );
 
-  const check = spawnSync(oxfmt, ["--check", "."], { cwd: directory, encoding: "utf8" });
+  const check = spawnSync(oxfmt, ["--check", "."], { cwd: project.root, encoding: "utf8" });
   assert.equal(check.status, 0, `${check.stdout}\n${check.stderr}`);
   assert.match(check.stdout, /on 1 file/);
+});
+
+test("In a Vite+ project with its own formatter settings, the settings apply writes follow them", async () => {
+  await using project = await createTemporaryFixture("claude-settings-tabs", {
+    ".oxfmtrc.json": '{ "useTabs": true }\n',
+  });
+  await writeVitePlusFormatter(project.root);
+  const tabs = await loadProjectFormatter(project.root, "managed");
+  const result = await plan({ formatter: tabs });
+  assert.match(/** @type {string} */ (result.contents), /^\{\n\t"hooks"/);
+  // A file already in the project's layout is not reported as reformatted.
+  const settings = { permissions: { allow: ["Read"] } };
+  const contents = await writeJSON(settings, ".claude/settings.json", tabs);
+  assert.equal((await plan({ contents, formatter: tabs })).reformatted, false);
+});
+
+test("In a project without Vite+, the settings apply writes are two-space JSON.stringify output", async () => {
+  const plain = await loadProjectFormatter(vitePlusProject.root, "unmanaged");
+  const result = await plan({ formatter: plain });
+  assert.equal(result.contents, `${JSON.stringify(fragment(), null, 2)}\n`);
 });
