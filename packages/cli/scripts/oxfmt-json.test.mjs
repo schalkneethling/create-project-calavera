@@ -56,6 +56,32 @@ const samples = {
   combiningMarks: { kk: ["e\u0301".repeat(30), "b".repeat(40)] },
   hangulAndKana: { kk: ["\ud55c".repeat(15), "\u30ab".repeat(15), "\uff21".repeat(10)] },
   emoji: { kk: ["\u{1F600}".repeat(20), "b".repeat(30)] },
+  stringsWithPlus: { note: "Ctrl+C or Shift+Insert, use the+key", e: ["e+", "1e+21"] },
+  // Grapheme clusters and characters whose width a code-point table gets wrong.
+  ...Object.fromEntries(
+    [
+      "\u{1F1FF}\u{1F1E6}",
+      "\u{1F468}\u200d\u{1F469}\u200d\u{1F467}",
+      "\u{1F44D}\u{1F3FD}",
+      "\u{1F3F3}\ufe0f\u200d\u{1F308}",
+      "\u{1F3F4}\u{E0067}\u{E0062}\u{E0065}\u{E006E}\u{E0067}\u{E007F}",
+      "\u2764\ufe0f",
+      "1\ufe0f\u20e3",
+      "\u1100",
+      "\u3131\u3134",
+      "\u3105\u3106",
+      "\u3220\u3280",
+      "\u3300\ua000\ufe10\ufe30\ufe50\ua960\u{1B000}\u{17000}\u2ff0\u4dc0",
+      "\u00ad\ufeff\u2060\u202e\u1160",
+      "\u0915\u094d\u0937\u093f",
+      "\uff71\uff72",
+    ].flatMap((sample, index) =>
+      Array.from({ length: 12 }, (_, pad) => [
+        `grapheme${index}pad${pad}`,
+        { kk: ["a".repeat(80 + pad) + sample, "b"] },
+      ]),
+    ),
+  ),
   exponents: { k: [1e21, 1.7976931348623157e308, 5e-324, 1e-7, -1e21] },
   claudeSettings: {
     $schema: "https://json.schemastore.org/claude-code-settings.json",
@@ -132,8 +158,9 @@ test("formatJSON output passes this repository's oxfmt --check with no configura
   assert.match(result.stdout, new RegExp(`${files.length} files`));
 });
 
-test("formatJSON writes an exponent without a plus sign, as Oxfmt does", () => {
+test("formatJSON writes an exponent without a plus sign, as Oxfmt does, and leaves strings alone", () => {
   assert.equal(formatJSON([1e21, 1e-7]), "[1e21, 1e-7]\n");
+  assert.equal(formatJSON(["Use+Ctrl", "1e+21"]), '["Use+Ctrl", "1e+21"]\n');
 });
 
 test("formatJSON refuses values JSON cannot hold", () => {

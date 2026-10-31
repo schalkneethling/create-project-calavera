@@ -10,13 +10,37 @@
 const PRINT_WIDTH = 100;
 const INDENT = "  ";
 
-// Oxfmt measures a line in display columns. A combining mark takes none; an East Asian wide or
-// fullwidth character and an emoji take two. This covers the scripts and blocks that hold such
-// characters (Han, Hiragana, Katakana apart from its halfwidth forms, Hangul syllables, CJK
-// punctuation, fullwidth forms, and emoji presentation), not the whole Unicode width table.
-const ZERO_WIDTH = /[\p{Mn}\p{Me}\p{Cc}\u200b-\u200f]/u;
-const WIDE =
-  /[\p{Script=Han}\p{Script=Hiragana}\u30a0-\u30ff\u31f0-\u31ff\uac00-\ud7a3\u3000-\u303f\uff01-\uff60\uffe0-\uffe6\p{Emoji_Presentation}]/u;
+// Oxfmt measures a line in display columns. An emoji sequence, such as a flag or a family joined
+// with zero-width joiners, takes two columns as a whole. Otherwise each code point counts on its
+// own: a combining mark, a control character, or a default-ignorable one takes none, and an East
+// Asian wide or fullwidth character takes two. WIDE lists the East Asian wide and fullwidth blocks
+// rather than the whole Unicode width table; scripts/oxfmt-json.test.mjs checks samples from each
+// against Oxfmt.
+const SEGMENTER = new Intl.Segmenter("en", { granularity: "grapheme" });
+const EMOJI = /^\p{RGI_Emoji}$/v;
+const ZERO_WIDTH = /[\p{Mn}\p{Me}\p{Cc}\p{Default_Ignorable_Code_Point}]/u;
+const WIDE = new RegExp(
+  `[${[
+    "\\u1100-\\u115f", // Hangul Jamo initial consonants
+    "\\u2e80-\\u303e", // CJK radicals, Kangxi, ideographic description, CJK punctuation
+    "\\u3041-\\u33ff", // kana, Bopomofo, Hangul compatibility Jamo, enclosed CJK, CJK compatibility
+    "\\u3400-\\u4dbf", // CJK extension A
+    "\\u4dc0-\\u4dff", // Yijing hexagrams
+    "\\u4e00-\\ua4cf", // CJK unified ideographs and Yi
+    "\\ua960-\\ua97f", // Hangul Jamo extended A
+    "\\uac00-\\ud7a3", // Hangul syllables
+    "\\uf900-\\ufaff", // CJK compatibility ideographs
+    "\\ufe10-\\ufe19", // vertical forms
+    "\\ufe30-\\ufe6f", // CJK compatibility and small forms
+    "\\uff00-\\uff60", // fullwidth forms
+    "\\uffe0-\\uffe6",
+    "\\u{16fe0}-\\u{1b2ff}", // Tangut, Khitan, kana supplements, Nushu
+    "\\u{1f300}-\\u{1f64f}", // pictographs and emoticons with emoji presentation
+    "\\u{1f900}-\\u{1f9ff}",
+    "\\u{20000}-\\u{3fffd}", // CJK extensions B and later
+  ].join("")}]`,
+  "u",
+);
 
 /**
  * @param {string} text
@@ -25,8 +49,14 @@ const WIDE =
 function displayWidth(text) {
   if (/^[\x20-\x7e]*$/.test(text)) return text.length;
   let width = 0;
-  for (const character of text) {
-    width += ZERO_WIDTH.test(character) ? 0 : WIDE.test(character) ? 2 : 1;
+  for (const { segment } of SEGMENTER.segment(text)) {
+    if (EMOJI.test(segment)) {
+      width += 2;
+      continue;
+    }
+    for (const character of segment) {
+      width += ZERO_WIDTH.test(character) ? 0 : WIDE.test(character) ? 2 : 1;
+    }
   }
   return width;
 }
@@ -42,8 +72,9 @@ function scalar(value) {
     typeof value === "boolean" ||
     (typeof value === "number" && Number.isFinite(value))
   ) {
-    // JSON.stringify writes 1e+21, and Oxfmt writes 1e21.
-    return JSON.stringify(value).replace("e+", "e");
+    // JSON.stringify writes 1e+21, and Oxfmt writes 1e21. Only a number has an exponent.
+    const text = JSON.stringify(value);
+    return typeof value === "number" ? text.replace("e+", "e") : text;
   }
   throw new Error(`${String(value)} cannot be written as JSON.`);
 }
@@ -191,6 +222,9 @@ export function rewriteLossProblem(text) {
       }
       keys.add(key);
     } else if (number !== undefined) {
+      if (!Number.isFinite(Number(number))) {
+        return `holds the number ${number}, which is too large for Calavera to write`;
+      }
       const written = scalar(Number(number));
       if (written !== number) {
         return `holds the number ${number}, which Calavera would write as ${written}`;

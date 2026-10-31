@@ -163,6 +163,7 @@ test("Given settings a rewrite would change beyond the hooks, when the hooks are
     ],
     ['{"n": [1.50]}', /the number 1\.50, which Calavera would write as 1\.5/],
     ['{"n": -0}', /the number -0, which Calavera would write as 0/],
+    ['{"cleanupPeriodDays": 1e400}', /the number 1e400, which is too large for Calavera to write/],
   ]) {
     const result = plan({ contents });
     assert.equal(result.type, "conflict", contents);
@@ -207,7 +208,58 @@ test("Given a record without groups for an event, when a skill group is there, t
   assert.equal(result.groups, undefined);
 });
 
+test("Given a person's group with a number too large to write, when it is a conflict, then the message still shows it", () => {
+  const contents =
+    '{"hooks": {"PreToolUse": [{"matcher": "Write", "hooks": [{"type": "command", "command": "node \\"$CLAUDE_PROJECT_DIR/.agents/skills/protected-branch-guard/x.mjs\\"", "timeout": 1e400}]}]}}';
+  const result = plan({ contents });
+  assert.equal(result.type, "conflict");
+  assert.match(result.reason, /"timeout": 1e400|Infinity/);
+});
+
+test("Given apply removed the last group, when hooks is left empty, then the empty hooks object is removed too", () => {
+  const contents = formatJSON({ model: "opus", hooks: { PreToolUse: [toolGroup()] } });
+  const result = plan({
+    contents,
+    recorded: { PreToolUse: [toolGroup()] },
+    fragment: { hooks: { SessionStart: [sessionGroup()] } },
+  });
+  assert.deepEqual(Object.keys(JSON.parse(/** @type {string} */ (result.contents)).hooks), [
+    "SessionStart",
+  ]);
+  const emptied = plan({
+    contents,
+    recorded: { PreToolUse: [toolGroup()] },
+    fragment: { hooks: {} },
+  });
+  assert.deepEqual(JSON.parse(/** @type {string} */ (emptied.contents)), { model: "opus" });
+});
+
+test("A group runs the skill only when its command names the skill directory from the project root", () => {
+  const vendored = {
+    hooks: [
+      { type: "command", command: `node "$CLAUDE_PROJECT_DIR/vendor/${skillDirectory}/x.mjs"` },
+    ],
+  };
+  const result = plan({ contents: formatJSON({ hooks: { PreToolUse: [vendored] } }) });
+  assert.equal(result.type, "update");
+  assert.deepEqual(JSON.parse(/** @type {string} */ (result.contents)).hooks.PreToolUse, [
+    vendored,
+    toolGroup(),
+  ]);
+  const relative = { hooks: [{ type: "command", command: `node ${skillDirectory}/x.mjs` }] };
+  assert.equal(
+    plan({ contents: formatJSON({ hooks: { PreToolUse: [relative] } }) }).type,
+    "conflict",
+  );
+});
+
 test("A damaged state record is a diagnosable error", () => {
+  for (const recorded of [[toolGroup()], "x"]) {
+    assert.throws(
+      () => plan({ contents: "{}", recorded: /** @type {any} */ (recorded) }),
+      /The Calavera state record for skill-protected-branch-guard is damaged: its hooks are not an object of hook events/,
+    );
+  }
   assert.throws(
     () => plan({ contents: "{}", recorded: /** @type {any} */ ({ PreToolUse: {} }) }),
     /The Calavera state record for skill-protected-branch-guard is damaged: its hooks\.PreToolUse is not a list of matcher groups/,

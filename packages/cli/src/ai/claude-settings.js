@@ -1,5 +1,5 @@
 // @ts-check
-import { isDeepStrictEqual } from "node:util";
+import { inspect, isDeepStrictEqual } from "node:util";
 
 import { formatJSON, rewriteLossProblem } from "../utils/oxfmt-json.js";
 import { viteHookCommandProblem } from "./vite-hook-blocks.js";
@@ -123,17 +123,39 @@ function fragmentGroups(fragment, skillDirectory) {
  * @param {string} skillDirectory
  */
 function runsSkill(group, skillDirectory) {
-  const prefix = `${skillDirectory.replace(/\/+$/, "")}/`;
   return (
     isObject(group) &&
     Array.isArray(group.hooks) &&
-    group.hooks.some(
-      (handler) =>
-        isObject(handler) &&
-        typeof handler.command === "string" &&
-        handler.command.includes(prefix),
-    )
+    group.hooks.some((handler) => handlerRunsSkill(handler, skillDirectory))
   );
+}
+
+/**
+ * Whether a hook handler's command runs a script from the skill directory: the directory path
+ * starts the command's path, either from $CLAUDE_PROJECT_DIR or as a relative path. A copy of the
+ * directory elsewhere, such as vendor/.agents/skills/..., is not the skill.
+ *
+ * @param {unknown} handler
+ * @param {string} skillDirectory
+ */
+function handlerRunsSkill(handler, skillDirectory) {
+  if (!isObject(handler) || typeof handler.command !== "string") return false;
+  const directory = skillDirectory.replace(/\/+$/, "").replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  return new RegExp(`(?:^|[\\s"'=]|\\$CLAUDE_PROJECT_DIR/)${directory}/`).test(handler.command);
+}
+
+/**
+ * Shows a group in a conflict message. A group from the person's file can hold a value formatJSON
+ * refuses, such as a number too large to write, and the message must still show it.
+ *
+ * @param {unknown} group
+ */
+function showGroup(group) {
+  try {
+    return indent(formatJSON(group));
+  } catch {
+    return indent(inspect(group, { depth: null }));
+  }
 }
 
 /**
@@ -219,6 +241,12 @@ export function planClaudeSettings({
 
   /** @type {HookGroupChange[]} */
   const changes = [];
+  if (recorded !== undefined && recorded !== null && !isObject(recorded)) {
+    throw new Error(
+      `The Calavera state record for ${artifactId} is damaged: its hooks are not an object of hook events.`,
+    );
+  }
+  const hadHooks = isObject(settings.hooks) && Object.keys(settings.hooks).length > 0;
   const events = new Set([...Object.keys(groups), ...Object.keys(recorded ?? {})]);
   for (const event of events) {
     const desired = groups[event] ?? [];
@@ -256,10 +284,10 @@ export function planClaudeSettings({
         }
       } else {
         const shared = /** @type {HookGroup} */ (group).hooks.some(
-          (handler) => !(isObject(handler) && String(handler.command).includes(directory)),
+          (handler) => !handlerRunsSkill(handler, skillDirectory),
         );
         return conflict(
-          `hooks.${event} holds a group that runs ${directory} and ${written.length === 0 ? "Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\nThe file now holds:\n${indent(formatJSON(group))}\nCalavera would write:\n${desired.map((candidate) => indent(formatJSON(candidate))).join("\n") || "  nothing"}\nTo let Calavera write ${artifactId}'s hooks, ${shared ? `remove only the hook in that group that runs ${directory}, keep your other hooks,` : "remove that group"} and run apply again.`,
+          `hooks.${event} holds a group that runs ${directory} and ${written.length === 0 ? "Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\nThe file now holds:\n${showGroup(group)}\nCalavera would write:\n${desired.map((candidate) => indent(formatJSON(candidate))).join("\n") || "  nothing"}\nTo let Calavera write ${artifactId}'s hooks, ${shared ? `remove only the hook in that group that runs ${directory}, keep your other hooks,` : "remove that group"} and run apply again.`,
         );
       }
     }
@@ -289,7 +317,12 @@ export function planClaudeSettings({
     type: contents === undefined ? "write" : "update",
     groups,
     changes,
-    contents: formatJSON({ ...settings, hooks }),
+    // Apply's removals can empty hooks; an empty hooks object that apply left behind goes too.
+    contents: formatJSON(
+      hadHooks && Object.keys(hooks).length === 0
+        ? Object.fromEntries(Object.entries(settings).filter(([key]) => key !== "hooks"))
+        : { ...settings, hooks },
+    ),
     reformatted: contents !== undefined && formatJSON(settings) !== contents,
   };
 }
