@@ -19,7 +19,7 @@ The Increment 1 exit condition (H0) is not met. ADR-0015 is merged, and its firs
 
 ## In progress
 
-- #745, layer 4, not started. It holds the guard package and its scripts, the apply, init, and `compose_recipe` wiring, and the docs. The scripts and their 26 tests are written and saved as `/tmp/745-guard-scripts/scripts-layer.patch` and in the Git stash "745 guard scripts". They were set aside when the layers changed order.
+- #745, layer 4, not started. It holds the guard package and its scripts, the apply, init, and `compose_recipe` wiring, and the docs. The scripts and their 26 tests are written and saved as `.git/calavera-745/scripts-layer.patch` (untracked, local to this clone) and in the Git stash "745 guard scripts". They were set aside when the layers changed order.
 - `@schalkneethling/calavera-skill-protected-branch-guard` is not minted. The Fledgling dry run was clean; the apply needs Schalk's npm login and 2FA: `pnpm exec fledgling add @schalkneethling/calavera-skill-protected-branch-guard --new --yes --repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --publish --placeholder-version 0.0.0`.
 - #722 (Version Packages) is open.
 
@@ -57,7 +57,7 @@ The Increment 1 exit condition (H0) is not met. ADR-0015 is merged, and its firs
 ## Next session starts with
 
 - Review PRs #796, #799, and #800, and PR #798.
-- #745, layer 4: apply the saved scripts patch into `packages/artifacts/skill-protected-branch-guard/`, add the package, manifest, and catalog row, connect both planners and the input resolver to apply, the dry run, the state record, init, and `compose_recipe` (the saved wiring diffs are `/tmp/layer1-index-wiring.patch` and `/tmp/layer1-other-wiring.patch`, if they still exist), add the `--no-hooks` warning, update `docs/ai-adapter-guidance.md`, the README count, and ADR-0015, scan the payload with SkillSpector, and end the description with "fix #745". The `/tmp` files may not survive a restart; the Git stash does.
+- #745, layer 4: apply the saved scripts patch into `packages/artifacts/skill-protected-branch-guard/`, add the package, manifest, and catalog row, connect both planners and the input resolver to apply, the dry run, the state record, init, and `compose_recipe` (the saved wiring diffs are in `.git/calavera-745/`), add the `--no-hooks` warning, update `docs/ai-adapter-guidance.md`, the README count, and ADR-0015, scan the payload with SkillSpector, and end the description with "fix #745".
 - Mint the guard package before layer 4's release.
 - #669 can adopt `formatJSON` once PR #800 merges.
 - Finish Increment 1: the Determinant tracking issue (#744), the readiness check (#749), then H0 (#750).
