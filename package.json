@@ -68,6 +68,6 @@
     "provider": "github",
     "workflow": "publish.yml",
     "environment": "publish",
-    "permissions": "publish"
+    "publish": true
   }
 }

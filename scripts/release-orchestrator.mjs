@@ -310,8 +310,7 @@ export function fledglingArgs(packageNames, dryRun) {
     workflow,
     "--env",
     publishEnvironment,
-    "--permissions",
-    "publish",
+    "--publish",
     "--placeholder-version",
     placeholderVersion,
   ];

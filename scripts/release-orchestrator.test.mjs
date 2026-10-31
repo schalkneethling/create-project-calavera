@@ -78,7 +78,7 @@ test("release options accept pnpm's argument separator and reject unknown flags"
 test("the Fledgling command is printed in dry-run and apply forms from one argument builder", () => {
   const names = ["@schalkneethling/calavera-new", "calavera-other"];
   const shared =
-    "--repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --permissions publish --placeholder-version 0.0.0";
+    "--repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --publish --placeholder-version 0.0.0";
   assert.equal(
     fledglingCommand(names, true),
     `pnpm exec fledgling add @schalkneethling/calavera-new calavera-other --dry-run ${shared}`,
