@@ -1,6 +1,6 @@
 // @ts-check
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 
@@ -336,6 +336,20 @@ async function exists(path) {
 }
 
 /**
+ * The path with symbolic links resolved when it exists, so /var and /private/var on macOS, or a
+ * symlinked home directory, compare equal; otherwise the path as given.
+ *
+ * @param {string} path
+ */
+async function canonical(path) {
+  try {
+    return await realpath(path);
+  } catch {
+    return path;
+  }
+}
+
+/**
  * Explains, with the remedy, why Git would not run the scripts in .vite-hooks in this clone, or
  * returns undefined when the Vite+ hook dispatcher runs them. Paths are compared resolved, as Vite+
  * compares them, because core.hooksPath can be relative to the repository root or absolute.
@@ -358,11 +372,17 @@ async function viteHooksProblem(cwd, vitePlusStatus, wiredBy) {
   }
   const dispatcher = resolve(root, VITE_HOOKS_DISPATCHER);
   const hooksDirectory = await gitOutput(cwd, ["config", "--get", "vp.hooks.dir"]);
-  if (hooksDirectory !== undefined && resolve(root, hooksDirectory) !== dirname(dispatcher)) {
+  if (
+    hooksDirectory !== undefined &&
+    (await canonical(resolve(root, hooksDirectory))) !== (await canonical(dirname(dispatcher)))
+  ) {
     return `Vite+ runs the hook scripts in ${hooksDirectory} in this clone (vp.hooks.dir), not the ones in .vite-hooks, ${consequence}. Run vp hooks enable --hooks-dir .vite-hooks to use .vite-hooks; the scripts in ${hooksDirectory} then stop running.`;
   }
   const hooksPath = await gitOutput(cwd, ["config", "--get", "core.hooksPath"]);
-  if (hooksPath !== undefined && resolve(root, hooksPath) !== dispatcher) {
+  if (
+    hooksPath !== undefined &&
+    (await canonical(resolve(root, hooksPath))) !== (await canonical(dispatcher))
+  ) {
     return `core.hooksPath is ${hooksPath}, so Git runs hooks from there instead of from the Vite+ hook dispatcher, ${consequence}. vp config leaves a different hooks path alone. To use the Vite+ dispatcher, remove that setting (git config --show-origin --get core.hooksPath shows where it is set), then run vp config.`;
   }
   if (hooksPath === undefined || !(await exists(dispatcher))) {

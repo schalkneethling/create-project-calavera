@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -260,6 +260,12 @@ test("The hooks warning names the remedy that fits the clone: vp config, vp hook
     join(git(project.root, ["rev-parse", "--show-toplevel"]), ".vite-hooks/_"),
   ]);
   assert.deepEqual(await warnings(), []);
+
+  // The same dispatcher through a symbolic link, as /var and /private/var are on macOS.
+  await symlink(join(project.root, ".vite-hooks"), join(project.root, "linked-hooks"));
+  git(project.root, ["config", "core.hooksPath", join(project.root, "linked-hooks/_")]);
+  assert.deepEqual(await warnings(), []);
+  git(project.root, ["config", "core.hooksPath", ".vite-hooks/_"]);
 
   git(project.root, ["config", "vp.hooks.dir", ".custom-hooks"]);
   assert.match(

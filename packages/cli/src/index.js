@@ -2841,6 +2841,11 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   }
 
   if (!applyOptions.dryRun) {
+    // The wiring is written before the state record. If a write fails part way, the next apply
+    // still plans correctly: a block or group that already holds what apply would write is
+    // unchanged whatever the record says, and the old record still names a block to remove.
+    // Writing the record first would instead record text the files never received.
+    await writeArtifactWiring(wiringPlan.files);
     await mkdir(".calavera", { recursive: true });
     await writeJSON(
       STATE_FILE,
@@ -2854,9 +2859,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       ),
       false,
     );
-    // Written after the state record: if a write fails part way, the next apply finds a recorded
-    // block or group missing and adds it again, instead of finding text it has no record of.
-    await writeArtifactWiring(wiringPlan.files);
   }
 
   if (installPlan?.spawn && !applyOptions.dryRun) {
