@@ -108,6 +108,112 @@ test("Given a group apply wrote that the fragment no longer holds, when the hook
   ]);
 });
 
+test("Given an event the fragment no longer holds, when the hooks are planned, then apply removes the groups it wrote there", () => {
+  const contents = formatJSON({ hooks: { ...recordFor(), Stop: [userGroup] } });
+  const result = plan({
+    contents,
+    recorded: recordFor(),
+    fragment: { hooks: { PreToolUse: [toolGroup()] } },
+  });
+  assert.equal(result.type, "update");
+  assert.deepEqual(result.changes, [
+    { event: "SessionStart", action: "remove", previous: sessionGroup() },
+  ]);
+  assert.deepEqual(JSON.parse(/** @type {string} */ (result.contents)).hooks, {
+    PreToolUse: [toolGroup()],
+    Stop: [userGroup],
+  });
+  assert.deepEqual(result.groups, { PreToolUse: [toolGroup()] });
+});
+
+test("Given the new group already in the file beside the old one, when the hooks are planned, then the old one is removed, not reported as a conflict", () => {
+  const contents = formatJSON({
+    hooks: { PreToolUse: [toolGroup(), toolGroup("trunk")], SessionStart: [sessionGroup("trunk")] },
+  });
+  const result = plan({ contents, recorded: recordFor(), fragment: fragment("trunk") });
+  assert.equal(result.type, "update");
+  assert.deepEqual(result.changes, [
+    { event: "PreToolUse", action: "remove", previous: toolGroup() },
+  ]);
+
+  const a = { matcher: "Write", hooks: [handler("claude-pre-tool-use")] };
+  const oldB = { matcher: "Edit", hooks: [handler("claude-pre-tool-use")] };
+  const newB = { matcher: "Edit|MultiEdit", hooks: [handler("claude-pre-tool-use")] };
+  const swapped = plan({
+    contents: formatJSON({ hooks: { PreToolUse: [oldB, a] } }),
+    recorded: { PreToolUse: [a, oldB] },
+    fragment: { hooks: { PreToolUse: [a, newB] } },
+  });
+  assert.deepEqual(swapped.changes, [
+    { event: "PreToolUse", action: "replace", group: newB, previous: oldB },
+  ]);
+  assert.deepEqual(JSON.parse(/** @type {string} */ (swapped.contents)).hooks.PreToolUse, [
+    newB,
+    a,
+  ]);
+});
+
+test("Given settings a rewrite would change beyond the hooks, when the hooks are planned, then data loss is a conflict and reformatting is reported", () => {
+  for (const [contents, problem] of [
+    ['{"model": "opus", "hooks": {}, "model": "sonnet"}', /holds the key "model" more than once/],
+    ['{"a": {"x": 1, "x": 2}}', /holds the key "x" more than once/],
+    [
+      '{"big": 12345678901234567890}',
+      /the number 12345678901234567890, which Calavera would write as 12345678901234567000/,
+    ],
+    ['{"n": [1.50]}', /the number 1\.50, which Calavera would write as 1\.5/],
+    ['{"n": -0}', /the number -0, which Calavera would write as 0/],
+  ]) {
+    const result = plan({ contents });
+    assert.equal(result.type, "conflict", contents);
+    assert.match(result.reason, problem, contents);
+    assert.match(result.reason, /Calavera rewrites the whole file/, contents);
+  }
+  // Keys that only look alike, such as the same key in two objects, are not duplicates.
+  assert.equal(
+    plan({ contents: '{"a": {"x": 1}, "b": {"x": 1}, "x": "{\\"x\\": 1}"}' }).type,
+    "update",
+  );
+
+  const fourSpaces = JSON.stringify({ permissions: { allow: ["Bash(ls)"] } }, null, 4);
+  const reformatted = plan({ contents: fourSpaces });
+  assert.equal(reformatted.type, "update");
+  assert.equal(reformatted.reformatted, true);
+  assert.equal(plan({ contents: formatJSON({ permissions: {} }) }).reformatted, false);
+  assert.equal(plan({}).reformatted, false);
+});
+
+test("Given a guard handler merged into a group of the person's own, when it was edited, then the advice keeps the person's hooks", () => {
+  const merged = {
+    matcher: "Bash",
+    hooks: [userGroup.hooks[0], handler("claude-pre-tool-use", "dev")],
+  };
+  const result = plan({
+    contents: formatJSON({ hooks: { PreToolUse: [merged] } }),
+    recorded: recordFor(),
+  });
+  assert.equal(result.type, "conflict");
+  assert.match(
+    result.reason,
+    /remove only the hook in that group that runs \.agents\/skills\/protected-branch-guard\/, keep your other hooks,/,
+  );
+});
+
+test("Given a record without groups for an event, when a skill group is there, then the conflict says Calavera never wrote it", () => {
+  const contents = formatJSON({ hooks: { SessionStart: [sessionGroup("dev")] } });
+  const result = plan({ contents, recorded: { PreToolUse: [toolGroup()] } });
+  assert.equal(result.type, "conflict");
+  assert.match(result.reason, /hooks\.SessionStart .* Calavera has no record of writing it/s);
+  assert.equal(result.groups, undefined);
+});
+
+test("A damaged state record is a diagnosable error", () => {
+  assert.throws(
+    () => plan({ contents: "{}", recorded: /** @type {any} */ ({ PreToolUse: {} }) }),
+    /The Calavera state record for skill-protected-branch-guard is damaged: its hooks\.PreToolUse is not a list of matcher groups/,
+  );
+});
+
 test("Given a group the person removed, when the hooks are planned, then it is added again as a change the dry run shows", () => {
   const contents = formatJSON({ hooks: { SessionStart: [sessionGroup()] } });
   const result = plan({ contents, recorded: recordFor() });
@@ -196,6 +302,11 @@ test("A Claude Code hook command runs a script from the skill directory through 
     [`${guard("x")}; rm -rf /`, /only letters, digits/],
     [`${guard("x")} "$(id)"`, /only letters, digits/],
     [`node "$CLAUDE_PROJECT_DIR/${skillDirectory}/scripts/guard.mjs"x`, /must start with/],
+    [
+      `node "$CLAUDE_PROJECT_DIR/${skillDirectory}/scripts/a.mjs b.mjs" x`,
+      /script path must not contain a space/,
+    ],
+    [`${guard("x")}\nrm -rf /`, /must be a single line/],
   ]) {
     assert.match(claudeHookCommandProblem(command, skillDirectory) ?? "", problem, command);
   }

@@ -48,6 +48,15 @@ const samples = {
   numbers: { k: [1, 2, 3] },
   manyNumbers: { k: Array.from({ length: 40 }, (_, index) => index * 1000) },
   topLevelArray: ["a", "b"],
+  // Oxfmt counts display columns: a wide CJK character as 2 and a combining mark as 0.
+  wideAtWidth: { kk: ["\u4e2d".repeat(21), "b".repeat(42)] },
+  widePastWidth: { kk: ["\u4e2d".repeat(22), "b".repeat(41)] },
+  wideCharacters: { kk: ["\u4e2d".repeat(30), "\u4e2d".repeat(30)] },
+  wideKey: { ["\u4e2d".repeat(10)]: ["a".repeat(36), "b".repeat(36)] },
+  combiningMarks: { kk: ["e\u0301".repeat(30), "b".repeat(40)] },
+  hangulAndKana: { kk: ["\ud55c".repeat(15), "\u30ab".repeat(15), "\uff21".repeat(10)] },
+  emoji: { kk: ["\u{1F600}".repeat(20), "b".repeat(30)] },
+  exponents: { k: [1e21, 1.7976931348623157e308, 5e-324, 1e-7, -1e21] },
   claudeSettings: {
     $schema: "https://json.schemastore.org/claude-code-settings.json",
     permissions: { allow: ["Bash(git status)", "Bash(pnpm test)"], deny: [] },
@@ -121,6 +130,10 @@ test("formatJSON output passes this repository's oxfmt --check with no configura
   const result = spawnSync(oxfmt, ["--check", "."], { cwd: directory, encoding: "utf8" });
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
   assert.match(result.stdout, new RegExp(`${files.length} files`));
+});
+
+test("formatJSON writes an exponent without a plus sign, as Oxfmt does", () => {
+  assert.equal(formatJSON([1e21, 1e-7]), "[1e21, 1e-7]\n");
 });
 
 test("formatJSON refuses values JSON cannot hold", () => {

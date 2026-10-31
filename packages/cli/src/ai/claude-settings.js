@@ -1,7 +1,7 @@
 // @ts-check
 import { isDeepStrictEqual } from "node:util";
 
-import { formatJSON } from "../utils/oxfmt-json.js";
+import { formatJSON, rewriteLossProblem } from "../utils/oxfmt-json.js";
 import { viteHookCommandProblem } from "./vite-hook-blocks.js";
 
 // ADR-0015, Decision 5: apply adds an artifact's Claude Code hook groups to the committed
@@ -25,9 +25,10 @@ const PROJECT_DIR_COMMAND = /^node "\$CLAUDE_PROJECT_DIR\/([^"]*)"((?: .*)?)$/;
  *
  * @typedef {object} ClaudeSettingsPlan
  * @property {"write" | "update" | "unchanged" | "conflict"} type
- * @property {HookGroups} groups The groups to record as written, so the next apply can tell them from an edit.
  * @property {HookGroupChange[]} changes
+ * @property {HookGroups} [groups] The groups to record as written, so the next apply can tell them from an edit. Absent on a conflict, because nothing is written.
  * @property {string} [contents] The settings text after apply, unless the plan is a conflict.
+ * @property {boolean} [reformatted] Whether the rewrite also changes the layout of text outside the hook groups, which the dry run must show.
  * @property {string} [reason] Why apply stops, when it is a conflict.
  */
 
@@ -41,10 +42,17 @@ const PROJECT_DIR_COMMAND = /^node "\$CLAUDE_PROJECT_DIR\/([^"]*)"((?: .*)?)$/;
  * @returns {string | undefined}
  */
 export function claudeHookCommandProblem(command, skillDirectory) {
+  if (/[\r\n]/.test(command)) {
+    return `"${command}" must be a single line.`;
+  }
   const match = PROJECT_DIR_COMMAND.exec(command);
   const directory = skillDirectory.replace(/\/+$/, "");
   if (!match || !match[1]?.startsWith(`${directory}/`)) {
     return `"${command}" must start with node "$CLAUDE_PROJECT_DIR/${directory}/" followed by a script in that directory and a closing quote.`;
+  }
+  // The shell reads a quoted space as part of one path, which the word check below would miss.
+  if (match[1].includes(" ")) {
+    return `"${command}": the script path must not contain a space.`;
   }
   // The script path is checked without its quotes, and the message names the command as written.
   const unquoted = `node ${match[1]}${match[2]}`;
@@ -140,10 +148,32 @@ function indent(text) {
 }
 
 /**
- * Plans apply's hook groups in .claude/settings.json. For each event in the fragment, a group
- * equal to a fragment group stays, a group equal to one apply recorded is replaced in place, any
- * other group that runs the skill's scripts is a conflict, and every remaining fragment group is
- * added at the end of its event.
+ * The groups apply recorded for `event`, checked, because a damaged record must not decide what
+ * counts as an edit.
+ *
+ * @param {HookGroups | undefined} recorded
+ * @param {string} event
+ * @param {string} artifactId
+ * @returns {unknown[]}
+ */
+function recordedGroups(recorded, event, artifactId) {
+  const groups = recorded?.[event];
+  if (groups === undefined) return [];
+  if (!Array.isArray(groups)) {
+    throw new Error(
+      `The Calavera state record for ${artifactId} is damaged: its hooks.${event} is not a list of matcher groups.`,
+    );
+  }
+  return groups;
+}
+
+/**
+ * Plans apply's hook groups in .claude/settings.json. For each event in the fragment or the
+ * record, a group equal to a fragment group stays; a group equal to one apply recorded is
+ * replaced in place by a fragment group not yet in the file, or removed when none is left; any
+ * other group that runs the skill's scripts is a conflict; and every fragment group still missing
+ * is added at the end of its event. A rewrite that would lose a value elsewhere in the file is a
+ * conflict too.
  *
  * @param {object} options
  * @param {string} options.path The settings path to name in a conflict, such as .claude/settings.json.
@@ -163,13 +193,9 @@ export function planClaudeSettings({
   skillDirectory,
 }) {
   const groups = fragmentGroups(fragment, skillDirectory);
+  const directory = `${skillDirectory.replace(/\/+$/, "")}/`;
   /** @param {string} reason @returns {ClaudeSettingsPlan} */
-  const conflict = (reason) => ({
-    type: "conflict",
-    groups,
-    changes: [],
-    reason: `${path}: ${reason}`,
-  });
+  const conflict = (reason) => ({ type: "conflict", changes: [], reason: `${path}: ${reason}` });
 
   /** @type {unknown} */
   let settings = {};
@@ -193,40 +219,47 @@ export function planClaudeSettings({
 
   /** @type {HookGroupChange[]} */
   const changes = [];
-  for (const [event, desired] of Object.entries(groups)) {
+  const events = new Set([...Object.keys(groups), ...Object.keys(recorded ?? {})]);
+  for (const event of events) {
+    const desired = groups[event] ?? [];
+    const written = recordedGroups(recorded, event, artifactId);
     const existing = hooks[event] ?? [];
     if (!Array.isArray(existing)) {
       return conflict(
         `hooks.${event} must be an array of matcher groups, which is what Claude Code reads.`,
       );
     }
-    const written = recorded?.[event] ?? [];
+
+    // First pass: a group already equal to a fragment group stays, wherever it is, so a recorded
+    // group is never paired with a fragment group the file already holds.
     const remaining = [...desired];
+    const kept = existing.map((group) => {
+      const same = remaining.findIndex((candidate) => isDeepStrictEqual(candidate, group));
+      if (same === -1) return false;
+      remaining.splice(same, 1);
+      return true;
+    });
+
     /** @type {unknown[]} */
     const next = [];
-    for (const group of existing) {
-      const same = remaining.findIndex((candidate) => isDeepStrictEqual(candidate, group));
-      if (same !== -1) {
-        remaining.splice(same, 1);
-        next.push(group);
-      } else if (!runsSkill(group, skillDirectory)) {
+    for (const [index, group] of existing.entries()) {
+      if (kept[index] || !runsSkill(group, skillDirectory)) {
         next.push(group);
       } else if (written.some((candidate) => isDeepStrictEqual(candidate, group))) {
         const replacement = remaining.shift();
+        const previous = /** @type {HookGroup} */ (group);
         if (replacement === undefined) {
-          changes.push({ event, action: "remove", previous: /** @type {HookGroup} */ (group) });
+          changes.push({ event, action: "remove", previous });
         } else {
           next.push(replacement);
-          changes.push({
-            event,
-            action: "replace",
-            group: replacement,
-            previous: /** @type {HookGroup} */ (group),
-          });
+          changes.push({ event, action: "replace", group: replacement, previous });
         }
       } else {
+        const shared = /** @type {HookGroup} */ (group).hooks.some(
+          (handler) => !(isObject(handler) && String(handler.command).includes(directory)),
+        );
         return conflict(
-          `hooks.${event} holds a group that runs ${skillDirectory.replace(/\/+$/, "")}/ and ${recorded === undefined ? "Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\nThe file now holds:\n${indent(formatJSON(group))}\nCalavera would write:\n${desired.map((candidate) => indent(formatJSON(candidate))).join("\n")}\nTo let Calavera write ${artifactId}'s hooks, remove that group and run apply again.`,
+          `hooks.${event} holds a group that runs ${directory} and ${written.length === 0 ? "Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\nThe file now holds:\n${indent(formatJSON(group))}\nCalavera would write:\n${desired.map((candidate) => indent(formatJSON(candidate))).join("\n") || "  nothing"}\nTo let Calavera write ${artifactId}'s hooks, ${shared ? `remove only the hook in that group that runs ${directory}, keep your other hooks,` : "remove that group"} and run apply again.`,
         );
       }
     }
@@ -234,16 +267,29 @@ export function planClaudeSettings({
       next.push(group);
       changes.push({ event, action: "add", group });
     }
-    hooks[event] = next;
+    if (next.length === 0 && existing.length > 0) {
+      delete hooks[event];
+    } else if (next.length > 0) {
+      hooks[event] = next;
+    }
   }
 
   if (contents !== undefined && changes.length === 0) {
-    return { type: "unchanged", groups, changes, contents };
+    return { type: "unchanged", groups, changes, contents, reformatted: false };
+  }
+  if (contents !== undefined) {
+    const loss = rewriteLossProblem(contents);
+    if (loss !== undefined) {
+      return conflict(
+        `${loss}. Calavera rewrites the whole file to add its hooks, so it stops instead of changing that silently. Edit that part of the file and run apply again.`,
+      );
+    }
   }
   return {
     type: contents === undefined ? "write" : "update",
     groups,
     changes,
     contents: formatJSON({ ...settings, hooks }),
+    reformatted: contents !== undefined && formatJSON(settings) !== contents,
   };
 }
