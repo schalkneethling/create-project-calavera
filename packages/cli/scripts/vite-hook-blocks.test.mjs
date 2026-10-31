@@ -123,7 +123,47 @@ test("Given another artifact's block, when this block is planned, then the other
 test("Markers are matched as whole lines, ignoring trailing whitespace", () => {
   const contents = `${start}  \n${line}\n${end}\r\nvp staged\n`;
   assert.equal(plan({ contents, recorded: line }).type, "unchanged");
-  assert.equal(plan({ contents: `echo "${start}"\nvp staged\n` }).type, "update");
+});
+
+test("Given a marker the person changed, such as an indented block inside an if, then it is a conflict, not a second block", () => {
+  const wrapped = `if [ -z "$CI" ]; then\n  ${start}\n  ${line}\n  ${end}\nfi\nvp staged\n`;
+  const result = plan({ contents: wrapped, recorded: line });
+  assert.equal(result.type, "conflict");
+  assert.equal(result.contents, undefined);
+  assert.match(
+    result.reason,
+    /a marker line was changed: " {2}# calavera:skill-protected-branch-guard:start"/,
+  );
+  for (const contents of [
+    `${start} (managed)\n${line}\n${end}\n`,
+    `echo "${start}"\nvp staged\n`,
+  ]) {
+    assert.equal(plan({ contents, recorded: line }).type, "conflict", contents);
+  }
+});
+
+test("Given a script with Windows line endings, when the block is planned, then it keeps them and still matches its block", () => {
+  const crlf = `#!/bin/sh\r\n${start}\r\n${line}\r\n${end}\r\nvp staged\r\n`;
+  assert.equal(plan({ contents: crlf, recorded: line }).type, "unchanged");
+  const trunk = line.replace(/main$/, "trunk");
+  assert.equal(
+    plan({ contents: crlf, recorded: line, line: trunk }).contents,
+    crlf.replace(`${line}\r\n`, `${trunk}\r\n`),
+  );
+  assert.equal(
+    plan({ contents: "#!/bin/sh\r\nvp staged\r\n" }).contents,
+    `#!/bin/sh\r\n${start}\r\n${line}\r\n${end}\r\nvp staged\r\n`,
+  );
+  assert.equal(
+    plan({ contents: "vp staged\r\n" }).contents,
+    `${start}\r\n${line}\r\n${end}\r\nvp staged\r\n`,
+  );
+});
+
+test("A command line that holds a line break is refused before it can add lines to the script", () => {
+  for (const bad of [`${line}\n${end}\nrm -rf x`, `${line}\r`]) {
+    assert.throws(() => plan({ line: bad }), /must be a single line/);
+  }
 });
 
 test("Input placeholders are filled from the recorded inputs, and an unknown or malformed placeholder stops apply", () => {
@@ -135,9 +175,12 @@ test("Input placeholders are filled from the recorded inputs, and an unknown or 
   );
   assert.throws(
     () => fillInputPlaceholders("guard.mjs {{branch}}", { protectedBranch: "main" }),
-    /\{\{branch\}\} names no input of this artifact; it declares protectedBranch/,
+    /\{\{branch\}\} has no recorded value; the recorded inputs are protectedBranch/,
   );
-  assert.throws(() => fillInputPlaceholders("guard.mjs {{branch}}", {}), /it declares no inputs/);
+  assert.throws(() => fillInputPlaceholders("guard.mjs {{branch}}", {}), /no inputs are recorded/);
+  for (const name of ["toString", "constructor", "valueOf", "hasOwnProperty"]) {
+    assert.throws(() => fillInputPlaceholders(`x {{${name}}}`, {}), /has no recorded value/, name);
+  }
   for (const template of [
     "guard.mjs {{ protectedBranch }}",
     "guard.mjs {{protectedBranch}",
@@ -165,12 +208,16 @@ test("A hook command must run a script from the artifact's own skill directory, 
     [`${line}  main`, /single spaces/],
     [` ${line}`, /single spaces/],
     [`${line} -x`, /must not start with "-"/],
+    ["node .agents/skills/protected-branch-guard/scripts/", /empty path segment/],
+    ["node .agents/skills/protected-branch-guard//guard.mjs", /empty path segment/],
+    ["node .agents/skills/protected-branch-guard/scripts/guard.sh", /\.mjs, \.cjs, or \.js/],
   ]) {
     assert.match(viteHookCommandProblem(command, skillDirectory) ?? "", problem, command);
   }
+  assert.equal(viteHookCommandProblem(line, `${skillDirectory}/`), undefined);
 });
 
-test("Oxfmt leaves a written hook script unchanged, so vp staged does not rewrite it", async (t) => {
+test("Oxfmt does not format an extensionless hook script, so vp staged leaves a written one unchanged", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "calavera-vite-hooks-"));
   t.after(() => rm(directory, { recursive: true, force: true }));
   await mkdir(join(directory, ".vite-hooks"));
@@ -184,6 +231,7 @@ test("Oxfmt leaves a written hook script unchanged, so vp staged does not rewrit
     { cwd: directory, encoding: "utf8" },
   );
   assert.equal(result.status, 0, `${result.stdout}\n${result.stderr}`);
+  assert.match(result.stdout, /on 0 files/);
   assert.equal(await readFile(path, "utf8"), contents);
 });
 

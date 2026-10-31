@@ -28,14 +28,14 @@ const SHELL_SAFE_TOKEN = /^[A-Za-z0-9._/-]+$/;
  */
 export function fillInputPlaceholders(template, inputs) {
   const filled = template.replace(PLACEHOLDER, (placeholder, /** @type {string} */ name) => {
-    const value = inputs[name];
-    if (value === undefined) {
-      const declared = Object.keys(inputs);
+    // Object.hasOwn, so {{toString}} is not filled from Object.prototype.
+    if (!Object.hasOwn(inputs, name)) {
+      const recorded = Object.keys(inputs);
       throw new Error(
-        `${placeholder} names no input of this artifact; ${declared.length === 0 ? "it declares no inputs" : `it declares ${declared.join(", ")}`}.`,
+        `${placeholder} has no recorded value; ${recorded.length === 0 ? "no inputs are recorded for this artifact" : `the recorded inputs are ${recorded.join(", ")}`}.`,
       );
     }
-    return value;
+    return /** @type {string} */ (inputs[name]);
   });
   if (filled.includes("{{") || filled.includes("}}")) {
     throw new Error(
@@ -63,12 +63,19 @@ export function viteHookCommandProblem(command, skillDirectory) {
     return `"${command}" may hold only letters, digits, ".", "_", "-", and "/" in each word, and "${unsafe}" does not.`;
   }
   const [program, script, ...args] = tokens;
-  const prefix = `${skillDirectory}/`;
+  const prefix = `${skillDirectory.replace(/\/+$/, "")}/`;
   if (program !== "node" || !script?.startsWith(prefix) || script.length === prefix.length) {
     return `"${command}" must start with "node ${prefix}" followed by a script in that directory.`;
   }
-  if (script.split("/").some((segment) => segment === "." || segment === "..")) {
+  const segments = script.slice(prefix.length).split("/");
+  if (segments.some((segment) => segment === "." || segment === "..")) {
     return `"${command}" must not use ".." or "." in the script path.`;
+  }
+  if (segments.includes("")) {
+    return `"${command}" has an empty path segment in the script path.`;
+  }
+  if (!/\.(?:mjs|cjs|js)$/.test(script)) {
+    return `"${command}" must name a script ending in .mjs, .cjs, or .js.`;
   }
   const option = args.find((arg) => arg.startsWith("-"));
   if (option !== undefined) {
@@ -102,28 +109,49 @@ function markers(artifactId) {
  * @returns {ViteHookBlockPlan}
  */
 export function planViteHookBlock({ path, contents, artifactId, line, recorded }) {
+  if (/[\r\n]/.test(line)) {
+    throw new Error(`The ${artifactId} command for ${path} must be a single line.`);
+  }
   const { start, end } = markers(artifactId);
-  const block = `${start}\n${line}\n${end}`;
   if (contents === undefined) {
-    return { type: "write", contents: `${block}\n`, block: line };
+    return { type: "write", contents: `${start}\n${line}\n${end}\n`, block: line };
   }
 
+  // Lines keep their own endings. A script with Windows line endings gets them on the lines
+  // Calavera adds too, and every comparison ignores the carriage return.
+  const cr = contents.includes("\r\n") ? "\r" : "";
   const lines = contents.split("\n");
+  const bare = lines.map((text) => text.replace(/\r$/, ""));
   const indexes = (/** @type {string} */ marker) =>
-    lines.flatMap((text, index) => (text.trimEnd() === marker ? [index] : []));
+    bare.flatMap((text, index) => (text.trimEnd() === marker ? [index] : []));
   const starts = indexes(start);
   const ends = indexes(end);
+  const blockLines = [start, line, end].map((text) => `${text}${cr}`);
+
+  // A line that names this block but is not exactly a marker is one the person changed, such as
+  // an indented block inside an `if`. Inserting a second block would defeat their change.
+  const changedMarker = bare.find(
+    (text) =>
+      (text.includes(`calavera:${artifactId}:start`) ||
+        text.includes(`calavera:${artifactId}:end`)) &&
+      text.trimEnd() !== start &&
+      text.trimEnd() !== end,
+  );
+  if (changedMarker !== undefined) {
+    return {
+      type: "conflict",
+      block: line,
+      reason: `${path}: a marker line was changed: "${changedMarker}". Calavera only recognizes "${start}" and "${end}" as whole lines. Restore them, or remove the block, both markers included, and run apply again.`,
+    };
+  }
 
   if (starts.length === 0 && ends.length === 0) {
-    const shebang = lines[0]?.startsWith("#!") ? 1 : 0;
+    const shebang = bare[0]?.startsWith("#!") ? 1 : 0;
+    const head = lines.slice(0, shebang).map((text) => `${text}\n`);
     const rest = lines.slice(shebang).join("\n");
-    const head = lines
-      .slice(0, shebang)
-      .map((text) => `${text}\n`)
-      .join("");
     return {
       type: "update",
-      contents: `${head}${block}\n${rest}`,
+      contents: `${head.join("")}${blockLines.join("\n")}\n${rest}`,
       block: line,
     };
   }
@@ -148,14 +176,18 @@ export function planViteHookBlock({ path, contents, artifactId, line, recorded }
 
   const startIndex = /** @type {number} */ (starts[0]);
   const endIndex = /** @type {number} */ (ends[0]);
-  const current = lines.slice(startIndex + 1, endIndex).join("\n");
+  const current = bare.slice(startIndex + 1, endIndex).join("\n");
   if (current === line) {
     return { type: "unchanged", contents, block: line };
   }
   if (recorded !== undefined && current === recorded) {
     return {
       type: "update",
-      contents: [...lines.slice(0, startIndex + 1), line, ...lines.slice(endIndex)].join("\n"),
+      contents: [
+        ...lines.slice(0, startIndex + 1),
+        /** @type {string} */ (blockLines[1]),
+        ...lines.slice(endIndex),
+      ].join("\n"),
       block: line,
     };
   }
@@ -169,6 +201,6 @@ export function planViteHookBlock({ path, contents, artifactId, line, recorded }
     type: "conflict",
     block: line,
     previousBlock: current,
-    reason: `${path}: the Calavera block for ${artifactId} ${recorded === undefined ? "is already in the file, and Calavera has no record of writing it" : "was edited since Calavera wrote it"}.${recorded === undefined ? "" : `\nCalavera wrote:\n${indent(recorded)}\n`}The file now holds:\n${indent(current)}\nCalavera would write:\n${indent(line)}\nTo let Calavera write it, remove the block, both markers included, and run apply again.`,
+    reason: `${path}: the Calavera block for ${artifactId} ${recorded === undefined ? "is already in the file, and Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\n${recorded === undefined ? "" : `Calavera wrote:\n${indent(recorded)}\n`}The file now holds:\n${indent(current)}\nCalavera would write:\n${indent(line)}\nTo let Calavera write it, remove the block, both markers included, and run apply again.`,
   };
 }
