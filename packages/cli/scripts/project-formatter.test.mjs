@@ -94,3 +94,18 @@ test("Given text the project's Oxfmt cannot parse, when it is formatted, then th
     /vp fmt from vite-plus .* could not format \.claude\/settings\.json \(exit code 2\):\n.*Unexpected token/s,
   );
 });
+
+test("Given a vp fmt that never finishes, when Calavera formats a file, then it stops the process and says why", async () => {
+  await using project = await createTemporaryFixture("formatter-hang", {});
+  await writeVitePlusFormatter(project.root, { hang: true });
+  const formatter = await loadProjectFormatter(project.root, "managed", { timeout: 500 });
+  await assert.rejects(formatter.format(".claude/settings.json", "{}\n"), (error) => {
+    assert.ok(error instanceof Error);
+    assert.match(
+      error.message,
+      /vp fmt from vite-plus .* did not finish formatting \.claude\/settings\.json within 0\.5 seconds, so Calavera stopped it\. Check that vite\.config\.ts does not wait on anything when vp fmt loads it, then run Calavera again\./,
+    );
+    assert.equal(/** @type {{ timedOut?: boolean }} */ (error.cause).timedOut, true);
+    return true;
+  });
+});

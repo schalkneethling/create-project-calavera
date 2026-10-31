@@ -35,9 +35,14 @@ const unformatted = {
  *
  * @param {string} projectDirectory
  * @param {"managed" | "unmanaged" | "unknown"} vitePlusStatus From detectVitePlus. Only "managed" counts as a Vite+ project.
+ * @param {{ timeout?: number }} [options] How long one vp fmt run may take, in milliseconds.
  * @returns {Promise<ProjectFormatter>}
  */
-export async function loadProjectFormatter(projectDirectory, vitePlusStatus) {
+export async function loadProjectFormatter(
+  projectDirectory,
+  vitePlusStatus,
+  { timeout = 60_000 } = {},
+) {
   if (vitePlusStatus !== "managed") return unformatted;
 
   // vite-plus is the project's dependency, never the CLI's, so knip.json ignores it.
@@ -72,7 +77,16 @@ export async function loadProjectFormatter(projectDirectory, vitePlusStatus) {
         input: text,
         reject: false,
         stripFinalNewline: false,
+        // vp fmt runs the project's vite.config.ts, which could wait on something that never
+        // completes; without a limit the dry run would hang with no message.
+        timeout,
       });
+      if (result.timedOut) {
+        throw new Error(
+          `${description} did not finish formatting ${path} within ${timeout / 1000} seconds, so Calavera stopped it. Check that vite.config.ts does not wait on anything when vp fmt loads it, then run Calavera again.`,
+          { cause: result },
+        );
+      }
       if (result.exitCode !== 0 || result.failed) {
         throw new Error(
           `${description} could not format ${path} (exit code ${result.exitCode ?? "none"}):\n${result.stderr || result.stdout || result.message}`,
