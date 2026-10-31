@@ -27,10 +27,14 @@ import {
   githubRepositoryControlManagedFiles,
   REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls.js";
-import { assertRootOnlyIntegrationsAtRepositoryRoot } from "./repository-root.js";
+import {
+  assertGitHookArtifactsAtRepositoryRoot,
+  assertRootOnlyIntegrationsAtRepositoryRoot,
+} from "./repository-root.js";
 import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
 import {
   artifactWiringWarnings,
+  gitHookArtifactIds,
   planArtifactWiring,
   writeArtifactWiring,
 } from "./ai/artifact-wiring.js";
@@ -2515,7 +2519,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
           ({ artifact, index, name, value }) =>
             `- ${artifact} needs ${name}; the dry run would use ${value}. Record it as ai[${index}].inputs.${name}.`,
         ),
-        "Run the dry run and apply the recipe it returns, which records each value, or run apply in a terminal, where Calavera asks for each value.",
+        "Run the dry run and apply the recipe it returns, which records each value, or run apply in a terminal without --yes or --json, where Calavera asks for each value.",
       ].join("\n"),
     );
   }
@@ -2531,6 +2535,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = resolveApplyPackageManager(recipe, applyOptions, detectedPackageJSON);
   assertRootOnlyIntegrationsAtRepositoryRoot(integrations, process.cwd(), packageManager);
+  assertGitHookArtifactsAtRepositoryRoot(gitHookArtifactIds(recipe), process.cwd(), packageManager);
   // The install and the quality script are planned before anything is
   // written, including package.json, from one detection, so the dry run and
   // the apply that follows it name the same command and write the same
@@ -2641,9 +2646,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       ownership: /** @type {const} */ ("project"),
     })),
   ];
-  if (!applyOptions.dryRun) {
-    await writeArtifactWiring(wiringPlan.files);
-  }
   const wiringWarnings = await artifactWiringWarnings({
     recipe,
     vitePlusStatus: vitePlusDetection.status,
@@ -2852,6 +2854,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       ),
       false,
     );
+    // Written after the state record: if a write fails part way, the next apply finds a recorded
+    // block or group missing and adds it again, instead of finding text it has no record of.
+    await writeArtifactWiring(wiringPlan.files);
   }
 
   if (installPlan?.spawn && !applyOptions.dryRun) {
@@ -3917,7 +3922,21 @@ function formatArtifactInput({ artifact, name, value, source }) {
  * @param {WiringChange} change
  * @returns {string[]}
  */
-function formatWiringChange({ artifact, path, kind, type, block, groupChanges, reformatted }) {
+function formatWiringChange({
+  artifact,
+  path,
+  kind,
+  type,
+  block,
+  removedBlock,
+  groupChanges,
+  reformatted,
+}) {
+  if (removedBlock !== undefined) {
+    return [
+      `Would remove the ${artifact} block from ${path}, because ${artifact} no longer wires that hook: ${quoteScriptValue(removedBlock)}`,
+    ];
+  }
   if (kind === "vite-hook") {
     return [
       type === "unchanged"

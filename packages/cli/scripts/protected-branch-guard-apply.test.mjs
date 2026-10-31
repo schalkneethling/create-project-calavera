@@ -189,3 +189,21 @@ test("an edited guard block stops apply before any skill or any wiring is writte
     assert.deepEqual(await snapshot(), before);
   });
 });
+
+test("in a workspace member, the guard stops before anything is written, because Git runs hooks from the repository root", async () => {
+  await inProject(async (registry) => {
+    execFileSync("mkdir", ["app"]);
+    process.chdir("app");
+    try {
+      await writeFile("package.json", `${JSON.stringify({ name: "app" }, null, 2)}\n`);
+      const before = await snapshot("..");
+      await assert.rejects(
+        callMcpTool("dry_run_apply", { recipe: composed() }, registry),
+        /skill-protected-branch-guard applies at the repository root, not in a workspace member\. It writes Git hooks, and Git runs every hook from the repository root/,
+      );
+      assert.deepEqual(await snapshot(".."), before);
+    } finally {
+      process.chdir("..");
+    }
+  });
+});

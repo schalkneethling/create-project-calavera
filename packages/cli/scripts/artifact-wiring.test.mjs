@@ -253,6 +253,20 @@ test("The hooks warning names the remedy that fits the clone: vp config, vp hook
   git(project.root, ["config", "core.hooksPath", ".vite-hooks/_"]);
   await mkdir(join(project.root, ".vite-hooks/_"), { recursive: true });
   assert.deepEqual(await warnings(), []);
+  // Vite+ compares resolved paths, so an absolute path to the same dispatcher is not foreign.
+  git(project.root, [
+    "config",
+    "core.hooksPath",
+    join(git(project.root, ["rev-parse", "--show-toplevel"]), ".vite-hooks/_"),
+  ]);
+  assert.deepEqual(await warnings(), []);
+
+  git(project.root, ["config", "vp.hooks.dir", ".custom-hooks"]);
+  assert.match(
+    (await warnings()).join("\n"),
+    /Vite\+ runs the hook scripts in \.custom-hooks in this clone \(vp\.hooks\.dir\), not the ones in \.vite-hooks.*Run vp hooks enable --hooks-dir \.vite-hooks/s,
+  );
+  git(project.root, ["config", "--unset", "vp.hooks.dir"]);
 
   git(project.root, ["config", "vp.hooks.disabled", "true"]);
   assert.match(
@@ -281,5 +295,54 @@ test("Given the protected branch is the current branch, the warning says the com
   assert.match(
     warnings.join("\n"),
     /You are on main, the branch skill-protected-branch-guard protects \(protectedBranch\), so the guard will refuse to commit the applied files here\. Create a feature branch first, for example with git switch -c <name>, and commit there\./,
+  );
+});
+
+test("Given a hook the artifact no longer wires, when apply plans, then its unchanged block is removed and an edited one is a conflict", async () => {
+  await using project = await createTemporaryFixture("wiring-dropped-hook", {});
+  const first = await plan(project.root);
+  await writeArtifactWiring(first.files, project.root);
+  const guardWiring = /** @type {any} */ ({
+    viteHooks: {
+      "pre-commit": `node ${skillDirectory}/scripts/guard.mjs commit {{protectedBranch}}`,
+    },
+  });
+
+  const shrunk = await plan(project.root, {
+    previousRecords: first.records,
+    wiringFor: () => guardWiring,
+  });
+  assert.deepEqual(
+    shrunk.files.map(({ path, type, contents }) => [path, type, contents]),
+    [
+      [".vite-hooks/prepare-commit-msg", "update", ""],
+      [".vite-hooks/pre-push", "update", ""],
+      [".vite-hooks/pre-commit", "unchanged", block("commit")],
+    ],
+  );
+  assert.deepEqual(
+    shrunk.changes
+      .filter(({ removedBlock }) => removedBlock)
+      .map(({ path, removedBlock }) => [path, removedBlock]),
+    [
+      [".vite-hooks/prepare-commit-msg", line("commit")],
+      [".vite-hooks/pre-push", line("pre-push")],
+    ],
+  );
+  assert.deepEqual(shrunk.records[0]?.viteHooks, { "pre-commit": line("commit") });
+
+  const prePush = join(project.root, ".vite-hooks/pre-push");
+  await writeFile(prePush, (await readFile(prePush, "utf8")).replace("main", "main # mine"));
+  await assert.rejects(
+    plan(project.root, { previousRecords: first.records, wiringFor: () => guardWiring }),
+    /\.vite-hooks\/pre-push: skill-protected-branch-guard no longer wires this hook/,
+  );
+});
+
+test("Given an installed payload without the Claude Code fragment, when apply plans, then the error names the artifact and the remedy", async () => {
+  await using project = await createTemporaryFixture("wiring-old-payload", {});
+  await assert.rejects(
+    plan(project.root, { artifacts: [{ ...guard, payloadDirectory: project.root }] }),
+    /skill-protected-branch-guard wires Claude Code with hooks\/claude-code\.settings\.json, but the installed payload in .* has no such file.*Run create-project-calavera artifacts update skill-protected-branch-guard/s,
   );
 });

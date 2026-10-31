@@ -10,6 +10,7 @@ import { planClaudeSettings } from "./claude-settings.js";
 import {
   fillInputPlaceholders,
   planViteHookBlock,
+  planViteHookBlockRemoval,
   viteHookCommandProblem,
 } from "./vite-hook-blocks.js";
 
@@ -54,6 +55,7 @@ const VITE_HOOKS_DISPATCHER = ".vite-hooks/_";
  * @property {"vite-hook" | "claude-settings"} kind
  * @property {"write" | "update" | "unchanged"} type
  * @property {string} [block] The command line in the artifact's block, for a vite-hook change.
+ * @property {string} [removedBlock] The command line of a block apply removes, because the artifact no longer wires that hook.
  * @property {HookGroupChange[]} [groupChanges] The groups added, replaced, or removed, for a claude-settings change.
  * @property {boolean} [reformatted] Whether rewriting .claude/settings.json also changes the layout of text outside the groups.
  */
@@ -66,6 +68,25 @@ function catalogWiring(id) {
 /** @param {string} id @returns {Record<string, ArtifactInput> | undefined} */
 function catalogInputs(id) {
   return artifactForId(id)?.inputs;
+}
+
+/**
+ * The selected artifacts that write Git hooks. Git runs a hook from the repository root, so these
+ * apply at the repository root only.
+ *
+ * @param {{ ai?: unknown }} recipe
+ * @param {(id: string) => ArtifactWiring | undefined} [wiringFor]
+ * @returns {string[]}
+ */
+export function gitHookArtifactIds(recipe, wiringFor = catalogWiring) {
+  return (Array.isArray(recipe.ai) ? recipe.ai : []).flatMap((item) =>
+    item &&
+    typeof item === "object" &&
+    typeof item.id === "string" &&
+    Object.keys(wiringFor(item.id)?.viteHooks ?? {}).length > 0
+      ? [/** @type {string} */ (item.id)]
+      : [],
+  );
 }
 
 /** @param {string} path */
@@ -156,6 +177,31 @@ export async function planArtifactWiring({
     /** @type {WiringRecord} */
     const record = { artifact: artifact.id };
 
+    // A hook the artifact wired before but no longer does loses its block, so it stops running.
+    for (const [hook, recorded] of Object.entries(previous?.viteHooks ?? {})) {
+      if (Object.hasOwn(wiring.viteHooks ?? {}, hook)) continue;
+      const path = `.vite-hooks/${hook}`;
+      const file = await current(path);
+      const plan = planViteHookBlockRemoval({
+        path,
+        contents: file.contents,
+        artifactId: artifact.id,
+        recorded,
+      });
+      if (plan.type === "conflict") {
+        conflicts.push(/** @type {string} */ (plan.reason));
+      } else if (plan.type === "update") {
+        file.contents = plan.contents;
+        changes.push({
+          artifact: artifact.id,
+          path,
+          kind: "vite-hook",
+          type: "update",
+          removedBlock: recorded,
+        });
+      }
+    }
+
     for (const [hook, template] of Object.entries(wiring.viteHooks ?? {})) {
       const line = fillInputPlaceholders(template, inputs);
       const problem = viteHookCommandProblem(line, artifact.skillDirectory);
@@ -193,7 +239,15 @@ export async function planArtifactWiring({
 
     if (wiring.claudeCode) {
       const fragmentPath = join(artifact.payloadDirectory, wiring.claudeCode);
-      const fragment = fillFragment(JSON.parse(await readFile(fragmentPath, "utf8")), inputs);
+      // The wiring comes from this CLI's catalog, and the fragment from the installed payload, so
+      // an installed version older than the catalog can lack the file.
+      const fragmentText = await readIfPresent(fragmentPath);
+      if (fragmentText === undefined) {
+        throw new Error(
+          `${artifact.id} wires Claude Code with ${wiring.claudeCode}, but the installed payload in ${artifact.payloadDirectory} has no such file, so the installed version does not match this version of Calavera. Run create-project-calavera artifacts update ${artifact.id}, then run apply again.`,
+        );
+      }
+      const fragment = fillFragment(JSON.parse(fragmentText), inputs);
       const file = await current(CLAUDE_SETTINGS_PATH);
       formatter ??= await loadFormatter();
       const plan = await planClaudeSettings({
@@ -283,9 +337,10 @@ async function exists(path) {
 
 /**
  * Explains, with the remedy, why Git would not run the scripts in .vite-hooks in this clone, or
- * returns undefined when the Vite+ hook dispatcher runs them.
+ * returns undefined when the Vite+ hook dispatcher runs them. Paths are compared resolved, as Vite+
+ * compares them, because core.hooksPath can be relative to the repository root or absolute.
  *
- * @param {string} cwd
+ * @param {string} cwd The project directory, which is the repository root (see gitHookArtifactIds).
  * @param {"managed" | "unmanaged" | "unknown"} vitePlusStatus
  * @param {string} wiredBy The artifacts that wire .vite-hooks, for the message.
  */
@@ -294,17 +349,23 @@ async function viteHooksProblem(cwd, vitePlusStatus, wiredBy) {
   if (vitePlusStatus !== "managed") {
     return `This project does not use Vite+, and only the Vite+ hook dispatcher runs the scripts in .vite-hooks, ${consequence}.`;
   }
-  if ((await gitOutput(cwd, ["rev-parse", "--git-dir"])) === undefined) {
+  const root = await gitOutput(cwd, ["rev-parse", "--show-toplevel"]);
+  if (root === undefined) {
     return `${cwd} is not a Git repository, ${consequence}. Run git init, then vp config to install the Vite+ hook dispatcher.`;
   }
   if ((await gitOutput(cwd, ["config", "--get", "--type=bool", "vp.hooks.disabled"])) === "true") {
     return `Vite+ hooks are turned off in this clone (vp hooks disable), so Git runs none of the scripts in .vite-hooks, ${consequence}. Run vp hooks enable to turn them back on; vp config does not, because it keeps that choice.`;
   }
+  const dispatcher = resolve(root, VITE_HOOKS_DISPATCHER);
+  const hooksDirectory = await gitOutput(cwd, ["config", "--get", "vp.hooks.dir"]);
+  if (hooksDirectory !== undefined && resolve(root, hooksDirectory) !== dirname(dispatcher)) {
+    return `Vite+ runs the hook scripts in ${hooksDirectory} in this clone (vp.hooks.dir), not the ones in .vite-hooks, ${consequence}. Run vp hooks enable --hooks-dir .vite-hooks to use .vite-hooks; the scripts in ${hooksDirectory} then stop running.`;
+  }
   const hooksPath = await gitOutput(cwd, ["config", "--get", "core.hooksPath"]);
-  if (hooksPath !== undefined && hooksPath !== VITE_HOOKS_DISPATCHER) {
+  if (hooksPath !== undefined && resolve(root, hooksPath) !== dispatcher) {
     return `core.hooksPath is ${hooksPath}, so Git runs hooks from there instead of from the Vite+ hook dispatcher, ${consequence}. vp config leaves a different hooks path alone. To use the Vite+ dispatcher, remove that setting (git config --show-origin --get core.hooksPath shows where it is set), then run vp config.`;
   }
-  if (hooksPath === undefined || !(await exists(resolve(cwd, VITE_HOOKS_DISPATCHER)))) {
+  if (hooksPath === undefined || !(await exists(dispatcher))) {
     return `The Vite+ hook dispatcher is not installed in this clone, so Git runs none of the scripts in .vite-hooks, ${consequence}. Run vp config to install it.`;
   }
   return undefined;
@@ -335,9 +396,8 @@ export async function artifactWiringWarnings({
       ? [{ id: /** @type {string} */ (item.id), index }]
       : [],
   );
-  const hookArtifacts = selections.filter(
-    ({ id }) => Object.keys(wiringFor(id)?.viteHooks ?? {}).length > 0,
-  );
+  const hookIds = new Set(gitHookArtifactIds(recipe, wiringFor));
+  const hookArtifacts = selections.filter(({ id }) => hookIds.has(id));
   if (hookArtifacts.length === 0) return [];
 
   /** @type {string[]} */
