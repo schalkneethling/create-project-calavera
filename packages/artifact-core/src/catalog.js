@@ -29,6 +29,31 @@ const definitions = Object.freeze([
   ["skill-npm-publishing-best-practices", "npm publishing best practices"],
   ["skill-npm-trusted-publishing-github-workflow", "npm trusted publishing GitHub workflow"],
   ["skill-project-goal", "Project goal"],
+  [
+    "skill-protected-branch-guard",
+    "Protected branch guard",
+    ">=5.0.1",
+    {
+      inputs: {
+        protectedBranch: {
+          prompt: "Which branch should the guard protect from direct commits and pushes?",
+          default: "current-branch",
+          check: "branch-name",
+        },
+      },
+      wiring: {
+        viteHooks: {
+          "pre-commit":
+            "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit {{protectedBranch}}",
+          "prepare-commit-msg":
+            "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit {{protectedBranch}}",
+          "pre-push":
+            "node .agents/skills/protected-branch-guard/scripts/guard.mjs pre-push {{protectedBranch}}",
+        },
+        claudeCode: "hooks/claude-code.settings.json",
+      },
+    },
+  ],
   ["skill-refined-plan-mode", "Refined plan mode"],
   ["skill-release-with-confidence", "Release with confidence", ">=2.4.0-next.0"],
   ["hook-auto-approve-safe-commands", "Auto-approve safe commands"],

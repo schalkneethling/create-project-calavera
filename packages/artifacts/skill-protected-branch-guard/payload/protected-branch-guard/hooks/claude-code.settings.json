@@ -1,0 +1,27 @@
+{
+  "hooks": {
+    "SessionStart": [
+      {
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/protected-branch-guard/scripts/guard.mjs\" session-start {{protectedBranch}}",
+            "timeout": 10
+          }
+        ]
+      }
+    ],
+    "PreToolUse": [
+      {
+        "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/protected-branch-guard/scripts/guard.mjs\" claude-pre-tool-use {{protectedBranch}}",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}

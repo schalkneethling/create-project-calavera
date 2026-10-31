@@ -166,6 +166,8 @@ importers:
 
   packages/artifacts/skill-project-goal: {}
 
+  packages/artifacts/skill-protected-branch-guard: {}
+
   packages/artifacts/skill-refined-plan-mode: {}
 
   packages/artifacts/skill-release-with-confidence: {}

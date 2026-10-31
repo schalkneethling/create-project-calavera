@@ -1,0 +1,26 @@
+{
+  "$schema": "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json",
+  "schemaVersion": 1,
+  "id": "skill-protected-branch-guard",
+  "type": "skill",
+  "displayName": "Protected branch guard",
+  "payload": "payload/protected-branch-guard",
+  "compatibility": {
+    "calavera": ">=5.0.1"
+  },
+  "inputs": {
+    "protectedBranch": {
+      "prompt": "Which branch should the guard protect from direct commits and pushes?",
+      "default": "current-branch",
+      "check": "branch-name"
+    }
+  },
+  "wiring": {
+    "viteHooks": {
+      "pre-commit": "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit {{protectedBranch}}",
+      "prepare-commit-msg": "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit {{protectedBranch}}",
+      "pre-push": "node .agents/skills/protected-branch-guard/scripts/guard.mjs pre-push {{protectedBranch}}"
+    },
+    "claudeCode": "hooks/claude-code.settings.json"
+  }
+}
