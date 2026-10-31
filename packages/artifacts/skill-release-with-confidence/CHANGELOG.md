@@ -1,5 +1,11 @@
 # @schalkneethling/calavera-skill-release-with-confidence
 
+## 0.2.3
+
+### Patch Changes
+
+- f1a7f3d: The Fledgling reference in the release-with-confidence skill now configures direct publishing with `"publish": true` instead of `"permissions": "publish"`. Fledgling 1.3 deprecates the `permissions` key, and prints a warning on every run that uses it.
+
 ## 0.2.2
 
 ### Patch Changes
