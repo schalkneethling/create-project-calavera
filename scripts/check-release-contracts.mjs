@@ -105,7 +105,7 @@ assert.deepEqual(rootPackage.fledgling, {
   provider: "github",
   workflow: "publish.yml",
   environment: "publish",
-  permissions: "publish",
+  publish: true,
 });
 assert.match(releasePrWorkflow, /version-script: pnpm release:version/);
 assert.match(workspace, /packages:\n\s+- "apps\/\*"/);

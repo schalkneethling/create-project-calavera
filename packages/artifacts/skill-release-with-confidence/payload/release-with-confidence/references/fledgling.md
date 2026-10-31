@@ -39,14 +39,16 @@ state:
     "provider": "github",
     "workflow": "publish.yml",
     "environment": "publish",
-    "permissions": "publish"
+    "publish": true
   }
 }
 ```
 
 Adapt the provider and workflow to the project. Tie the publisher to a protected environment when the
-CI provider supports it. Request only `publish` unless the project deliberately uses npm staged
-publishing.
+CI provider supports it. Keep `publish` set to `true`, which lets the trusted publisher run
+`npm publish` directly. Set it to `false` only when the project deliberately uses npm staged
+publishing. Fledgling 1.3 deprecates the older `permissions` key, and prints a warning on every run
+that uses it.
 
 Install the reviewed version as a local development dependency and invoke that pinned binary. If its
 package includes an unrelated install hook, explicitly disable that build script only after verifying

@@ -198,8 +198,8 @@ example:
 New package names must be minted on npm by hand before a release: @schalkneethling/calavera-new.
 Review the Fledgling plan, then apply it (Fledgling requires npm 11.15.0 or newer):
 
-  pnpm exec fledgling add @schalkneethling/calavera-new --dry-run --repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --permissions publish --placeholder-version 0.0.0
-  pnpm exec fledgling add @schalkneethling/calavera-new --yes --repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --permissions publish --placeholder-version 0.0.0
+  pnpm exec fledgling add @schalkneethling/calavera-new --dry-run --repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --publish --placeholder-version 0.0.0
+  pnpm exec fledgling add @schalkneethling/calavera-new --yes --repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --publish --placeholder-version 0.0.0
 
 The first release of each minted package must be a stable version so it replaces the 0.0.0 placeholder on latest.
 Then rerun pnpm release:prepare.
