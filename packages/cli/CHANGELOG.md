@@ -1,5 +1,29 @@
 # create-project-calavera
 
+## 6.0.0
+
+### Major Changes
+
+- b96db36: The CLI and the MCP server now require Node.js `^24.15.0 || >=26.0.0`. Node.js 24.11 to 24.14 are no longer supported, because pacote 22 and the npm and Sigstore packages it depends on require Node.js 24.15 or later on the Node.js 24 line. Calavera 5.0.x already depends on pacote 22, so this corrects a range that claimed support those dependencies do not have. On Node.js 24.11 to 24.14, both commands print the required range and exit with a non-zero code. Upgrade to Node.js 24.15 or later before updating Calavera.
+
+### Minor Changes
+
+- 6c1d4b8: Skill artifacts can now declare inputs and wiring in `calavera-artifact.json` (ADR-0015, Decisions 4 and 6), and the artifact catalog carries them. An input such as `protectedBranch` has a prompt, an optional default, and a check. A recipe can record an answer on the artifact's entry, as in `{ "id": "skill-protected-branch-guard", "inputs": { "protectedBranch": "main" } }`, and `compose_recipe` accepts `inputs` on each AI artifact. Recipe validation refuses a value for an input the artifact does not declare. No artifact declares inputs or wiring yet, and apply does not read them yet; `skill-protected-branch-guard` will be the first artifact to use them.
+- 873e517: Add `skill-protected-branch-guard`, which refuses a commit, a push, or a Claude Code file edit on the branch you protect (ADR-0015). Apply installs the skill and wires it into the project: a marked block in `.vite-hooks/pre-commit`, `.vite-hooks/prepare-commit-msg`, and `.vite-hooks/pre-push`, and hook groups in the committed `.claude/settings.json`. The dry run shows every line and group first, and apply stops with a conflict, writing nothing, when you have edited its part.
+
+  Calavera asks for the protected branch, with the current branch as the default, and records it in the recipe. `compose_recipe` reports the input and its default, `dry_run_apply` returns the recipe with the value filled in, and `apply_recipe` refuses a recipe that does not record it, so the branch cannot change between approval and apply. When Git would not run the hooks, because the Vite+ hook dispatcher is not installed or hooks are turned off in the clone, apply warns and names the command that fixes it.
+
+  A rewritten `.claude/settings.json` is formatted before the dry run with the project's own `vp fmt`, so it already passes `vp check` with the project's formatter settings.
+
+### Patch Changes
+
+- a2901b8: The generated `.stylelintrc.json` and `.htmlvalidateignore` now ignore `.claude/worktrees/`, where agent worktrees keep full checkouts of other branches. Without the entry, a lint run that names a path there, such as `html-validate ".claude/worktrees/**/*.html"`, reports the errors of a different branch as errors of your project. Calavera treats the two files as managed. A project whose files are unedited since the last apply sees both as changed in the dry run and gains the entry on apply, and a file with local edits is kept and reported, as before.
+- Updated dependencies [6c1d4b8]
+- Updated dependencies [ce8029b]
+- Updated dependencies [873e517]
+  - @schalkneethling/calavera-artifact-core@0.5.0
+  - @schalkneethling/calavera-baseline-core@0.2.5
+
 ## 5.0.1
 
 ### Patch Changes
