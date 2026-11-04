@@ -213,8 +213,11 @@ remove them automatically on a later apply or clean.
 
 The optional HTML Validate integration adds `html-validate`, writes
 `.htmlvalidate.json` with the `html-validate:recommended` and
-`html-validate:document` presets, and ignores `node_modules/`, `dist/`, and
-`coverage/` through `.htmlvalidateignore`. It also adds `lint:html` to the
+`html-validate:document` presets, and ignores `node_modules/`, `dist/`,
+`coverage/`, and `.claude/worktrees/` through `.htmlvalidateignore`. The Stylelint
+integration ignores `.claude/worktrees/**` in `.stylelintrc.json` as well,
+because agent worktrees are full checkouts of other branches, and their files are
+not part of your project. The HTML Validate integration also adds `lint:html` to the
 generated `quality` script. The recommended preset already includes HTML
 Validate's accessibility rules, so Calavera does not add a redundant separate
 accessibility integration.

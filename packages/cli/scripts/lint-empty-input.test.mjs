@@ -463,3 +463,59 @@ test(
     });
   },
 );
+
+/**
+ * Runs a command in `directory` and returns its exit code and combined output.
+ *
+ * @param {string} command
+ * @param {string[]} args
+ * @param {string} directory
+ */
+async function runCommand(command, args, directory) {
+  try {
+    const { stdout, stderr } = await execFileAsync(command, args, {
+      cwd: directory,
+      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+    });
+    return { code: 0, output: `${stdout}${stderr}` };
+  } catch (error) {
+    return { code: error.code, output: `${error.stdout}${error.stderr}` };
+  }
+}
+
+test(
+  "the generated Stylelint and HTML Validate configuration ignores agent worktrees, even for a path passed directly",
+  { skip: process.platform === "win32" && "links the Stylelint binary with a POSIX symlink" },
+  async () => {
+    await inProject(async (directory) => {
+      await applyRecipeObject(recipeFor(), applyOptions);
+      await linkInstalledTools(directory);
+
+      // The default "**" patterns skip dot-directories on their own, so only a path
+      // that names .claude/worktrees directly shows whether the ignore files list it.
+      // Agent worktrees are full checkouts of other branches, with errors of their own.
+      await mkdir(join(".claude", "worktrees", "other-branch"), { recursive: true });
+      await writeFile(
+        join(".claude", "worktrees", "other-branch", "broken.css"),
+        "a { colr: red; }\n",
+      );
+      await writeFile(join(".claude", "worktrees", "other-branch", "index.html"), invalidHtml);
+
+      const styles = await runCommand(
+        join(directory, "node_modules", ".bin", "stylelint"),
+        [".claude/worktrees/**/*.css", "--allow-empty-input"],
+        directory,
+      );
+      assert.equal(styles.code, 0, styles.output);
+      assert.doesNotMatch(styles.output, /property-no-unknown/);
+
+      const html = await runCommand(
+        process.execPath,
+        ["scripts/lint-html.mjs", ".claude/worktrees/**/*.html"],
+        directory,
+      );
+      assert.equal(html.code, 0, html.output);
+      assert.match(html.output, /HTML Validate has nothing to check/);
+    });
+  },
+);
