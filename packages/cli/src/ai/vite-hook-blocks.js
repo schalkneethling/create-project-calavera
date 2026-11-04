@@ -95,6 +95,89 @@ function markers(artifactId) {
 }
 
 /**
+ * @typedef {object} FoundBlock
+ * @property {string[]} lines The script's lines, each with its own carriage return, if any.
+ * @property {string} cr "\r" when the script uses Windows line endings, so added lines match.
+ * @property {number} startIndex The start marker's line, or -1 when the script has no block.
+ * @property {number} endIndex The end marker's line, or -1 when the script has no block.
+ * @property {string} current The text between the markers, without carriage returns.
+ */
+
+/**
+ * Finds this artifact's block in a script, or explains why its markers cannot be trusted.
+ *
+ * @param {string} path
+ * @param {string} contents
+ * @param {string} artifactId
+ * @returns {FoundBlock | { reason: string }}
+ */
+function findBlock(path, contents, artifactId) {
+  const { start, end } = markers(artifactId);
+  // Lines keep their own endings. A script with Windows line endings gets them on the lines
+  // Calavera adds too, and every comparison ignores the carriage return.
+  const cr = contents.includes("\r\n") ? "\r" : "";
+  const lines = contents.split("\n");
+  const bare = lines.map((text) => text.replace(/\r$/, ""));
+  const indexes = (/** @type {string} */ marker) =>
+    bare.flatMap((text, index) => (text.trimEnd() === marker ? [index] : []));
+  const starts = indexes(start);
+  const ends = indexes(end);
+
+  // A line that names this block but is not exactly a marker is one the person changed, such as
+  // an indented block inside an `if`. Inserting a second block would defeat their change.
+  const changedMarker = bare.find(
+    (text) =>
+      (text.includes(`calavera:${artifactId}:start`) ||
+        text.includes(`calavera:${artifactId}:end`)) &&
+      text.trimEnd() !== start &&
+      text.trimEnd() !== end,
+  );
+  if (changedMarker !== undefined) {
+    return {
+      reason: `${path}: a marker line was changed: "${changedMarker}". Calavera only recognizes "${start}" and "${end}" as whole lines. Restore them, or remove the block, both markers included, and run apply again.`,
+    };
+  }
+
+  if (starts.length === 0 && ends.length === 0) {
+    return { lines, cr, startIndex: -1, endIndex: -1, current: "" };
+  }
+
+  const markerProblem =
+    starts.length === 1 && ends.length === 0
+      ? "has a start marker without an end marker"
+      : starts.length === 0 && ends.length === 1
+        ? "has an end marker without a start marker"
+        : starts.length !== 1 || ends.length !== 1
+          ? `has ${starts.length} start marker${starts.length === 1 ? "" : "s"} and ${ends.length} end marker${ends.length === 1 ? "" : "s"}`
+          : /** @type {number} */ (ends[0]) < /** @type {number} */ (starts[0])
+            ? "has an end marker that comes before its start marker"
+            : undefined;
+  if (markerProblem !== undefined) {
+    return {
+      reason: `${path}: the Calavera block for ${artifactId} ${markerProblem}, so Calavera cannot tell where its block ends. Make the file hold exactly one "${start}" line followed later by one "${end}" line, or remove both markers and the lines between them, and run apply again.`,
+    };
+  }
+
+  const startIndex = /** @type {number} */ (starts[0]);
+  const endIndex = /** @type {number} */ (ends[0]);
+  return {
+    lines,
+    cr,
+    startIndex,
+    endIndex,
+    current: bare.slice(startIndex + 1, endIndex).join("\n"),
+  };
+}
+
+/** @param {string} text */
+function indent(text) {
+  return text
+    .split("\n")
+    .map((row) => `  ${row}`)
+    .join("\n");
+}
+
+/**
  * Plans apply's block in one .vite-hooks script. Without the script, apply writes the block alone.
  * Without the block, apply inserts it first, after a `#!` line. With the block, apply replaces it
  * only when it still holds what apply wrote last; an edited block or a broken marker pair is a
@@ -117,36 +200,15 @@ export function planViteHookBlock({ path, contents, artifactId, line, recorded }
     return { type: "write", contents: `${start}\n${line}\n${end}\n`, block: line };
   }
 
-  // Lines keep their own endings. A script with Windows line endings gets them on the lines
-  // Calavera adds too, and every comparison ignores the carriage return.
-  const cr = contents.includes("\r\n") ? "\r" : "";
-  const lines = contents.split("\n");
-  const bare = lines.map((text) => text.replace(/\r$/, ""));
-  const indexes = (/** @type {string} */ marker) =>
-    bare.flatMap((text, index) => (text.trimEnd() === marker ? [index] : []));
-  const starts = indexes(start);
-  const ends = indexes(end);
+  const found = findBlock(path, contents, artifactId);
+  if ("reason" in found) {
+    return { type: "conflict", block: line, reason: found.reason };
+  }
+  const { lines, cr, startIndex, endIndex, current } = found;
   const blockLines = [start, line, end].map((text) => `${text}${cr}`);
 
-  // A line that names this block but is not exactly a marker is one the person changed, such as
-  // an indented block inside an `if`. Inserting a second block would defeat their change.
-  const changedMarker = bare.find(
-    (text) =>
-      (text.includes(`calavera:${artifactId}:start`) ||
-        text.includes(`calavera:${artifactId}:end`)) &&
-      text.trimEnd() !== start &&
-      text.trimEnd() !== end,
-  );
-  if (changedMarker !== undefined) {
-    return {
-      type: "conflict",
-      block: line,
-      reason: `${path}: a marker line was changed: "${changedMarker}". Calavera only recognizes "${start}" and "${end}" as whole lines. Restore them, or remove the block, both markers included, and run apply again.`,
-    };
-  }
-
-  if (starts.length === 0 && ends.length === 0) {
-    const shebang = bare[0]?.startsWith("#!") ? 1 : 0;
+  if (startIndex === -1) {
+    const shebang = lines[0]?.startsWith("#!") ? 1 : 0;
     const head = lines.slice(0, shebang).map((text) => `${text}\n`);
     const rest = lines.slice(shebang).join("\n");
     return {
@@ -156,27 +218,6 @@ export function planViteHookBlock({ path, contents, artifactId, line, recorded }
     };
   }
 
-  const markerProblem =
-    starts.length === 1 && ends.length === 0
-      ? "has a start marker without an end marker"
-      : starts.length === 0 && ends.length === 1
-        ? "has an end marker without a start marker"
-        : starts.length !== 1 || ends.length !== 1
-          ? `has ${starts.length} start marker${starts.length === 1 ? "" : "s"} and ${ends.length} end marker${ends.length === 1 ? "" : "s"}`
-          : /** @type {number} */ (ends[0]) < /** @type {number} */ (starts[0])
-            ? "has an end marker that comes before its start marker"
-            : undefined;
-  if (markerProblem !== undefined) {
-    return {
-      type: "conflict",
-      block: line,
-      reason: `${path}: the Calavera block for ${artifactId} ${markerProblem}, so Calavera cannot tell where its block ends. Make the file hold exactly one "${start}" line followed later by one "${end}" line, or remove both markers and the lines between them, and run apply again.`,
-    };
-  }
-
-  const startIndex = /** @type {number} */ (starts[0]);
-  const endIndex = /** @type {number} */ (ends[0]);
-  const current = bare.slice(startIndex + 1, endIndex).join("\n");
   if (current === line) {
     return { type: "unchanged", contents, block: line };
   }
@@ -192,15 +233,40 @@ export function planViteHookBlock({ path, contents, artifactId, line, recorded }
     };
   }
 
-  const indent = (/** @type {string} */ text) =>
-    text
-      .split("\n")
-      .map((row) => `  ${row}`)
-      .join("\n");
   return {
     type: "conflict",
     block: line,
     previousBlock: current,
     reason: `${path}: the Calavera block for ${artifactId} ${recorded === undefined ? "is already in the file, and Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\n${recorded === undefined ? "" : `Calavera wrote:\n${indent(recorded)}\n`}The file now holds:\n${indent(current)}\nCalavera would write:\n${indent(line)}\nTo let Calavera write it, remove the block, both markers included, and run apply again.`,
+  };
+}
+
+/**
+ * Plans the removal of a block apply wrote for a hook the artifact no longer wires. The block goes,
+ * markers included, only while it still holds what apply wrote; an edited block is a conflict, so
+ * a change the person made is never deleted silently.
+ *
+ * @param {object} options
+ * @param {string} options.path
+ * @param {string | undefined} options.contents
+ * @param {string} options.artifactId
+ * @param {string} options.recorded The command line apply wrote last, from the state record.
+ * @returns {{ type: "update" | "unchanged" | "conflict", contents?: string, reason?: string }}
+ */
+export function planViteHookBlockRemoval({ path, contents, artifactId, recorded }) {
+  if (contents === undefined) return { type: "unchanged" };
+  const found = findBlock(path, contents, artifactId);
+  if ("reason" in found) return { type: "conflict", reason: found.reason };
+  const { lines, startIndex, endIndex, current } = found;
+  if (startIndex === -1) return { type: "unchanged", contents };
+  if (current !== recorded) {
+    return {
+      type: "conflict",
+      reason: `${path}: ${artifactId} no longer wires this hook, so Calavera would remove its block, but the block was edited since Calavera wrote it.\nCalavera wrote:\n${indent(recorded)}\nThe file now holds:\n${indent(current)}\nRemove the block yourself, both markers included, or keep it and delete its markers, and run apply again.`,
+    };
+  }
+  return {
+    type: "update",
+    contents: [...lines.slice(0, startIndex), ...lines.slice(endIndex + 1)].join("\n"),
   };
 }

@@ -119,6 +119,7 @@ import {
   projectLocalCommandSteps,
   profileDefaults,
   recipeWorkflow,
+  mcpComposeRecipeDescription,
   recipeToolDescriptions,
   resolveRecipeIntegrations,
   standardMcpToolNames,
@@ -1445,8 +1446,11 @@ test("standard MCP server exposes Calavera recipe composition tools", async () =
     );
     assert.equal(
       tools.find(({ name }) => name === "compose_recipe")?.description,
-      recipeToolDescriptions.compose_recipe,
+      mcpComposeRecipeDescription,
     );
+    assert.ok(mcpComposeRecipeDescription.startsWith(recipeToolDescriptions.compose_recipe));
+    // The Composer's browser tool shares the base description and cannot compute artifactInputs.
+    assert.doesNotMatch(recipeToolDescriptions.compose_recipe, /artifactInputs/);
     assert.equal(
       tools.find(({ name }) => name === "apply_recipe")?.annotations?.destructiveHint,
       true,

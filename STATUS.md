@@ -6,21 +6,21 @@ Updated: 2026-10-31
 
 Increment 1 (sequencing map Section 0). Checkpoint 0 passed: Schalk confirmed it on 2026-10-22 on the recorded evidence. The reduced audit worksheet (CAL-001, #448) is complete and approved, every removal has an issue (#452 to #456, all merged), and the CQ1 and CQ2 ADRs are accepted (ADR-0009 merged in #530 on 2026-09-28; ADR-0001).
 
-The Increment 1 exit condition (H0) is not met. ADR-0015 is merged, and its first slice, the `skill-protected-branch-guard` artifact (#745), is three of four stacked pull requests in. The bootstrap readiness check (#749) has not been run as a recorded exercise.
+The Increment 1 exit condition (H0) is not met. ADR-0015 is accepted, and its first slice, the `skill-protected-branch-guard` artifact (#745), has its last layer in review as PR #803. The bootstrap readiness check (#749) has not been run as a recorded exercise.
 
 ## Completed this session
 
-- Opened #785, a decision issue on installing every bundled skill behind a router skill instead of selecting skills per recipe.
-- Opened #797 and PR #798: the Fledgling mint commands, the root Fledgling config, its release contract, the runbook, and the release-with-confidence skill use `--publish` and `"publish": true` instead of the deprecated `permissions` option.
-- #745, layer 1 (PR #796, draft): skill manifests declare `inputs` and `wiring`, recipes record input values, and `packages/cli/src/ai/artifact-inputs.js` resolves and checks them. A branch name is limited to `[A-Za-z0-9._/-]`, because it is written into hook commands that a shell runs.
-- #745, layer 2 (PR #799, draft): `planViteHookBlock` plans Calavera's marked block in a `.vite-hooks` script and stops on an edited block, a broken or changed marker, and a block it has no record of writing.
-- #745, layer 3 (PR #800, draft): `planClaudeSettings` plans an artifact's hook groups in `.claude/settings.json`. The text it writes is formatted in memory, before the dry run, by `loadProjectFormatter` (`packages/cli/src/utils/project-formatter.js`): in a Vite+ project by the project's own `vp fmt --stdin-filepath`, which applies the project's Oxfmt version, `fmt` settings, `.editorconfig`, and ignore patterns and writes nothing, and in any other project not at all. A rewrite that would lose a value elsewhere in the file is a conflict, and a layout-only rewrite is reported for the dry run.
-- Confirmed against the installed Claude Code 2.1.310 build that `Write`, `Edit`, and `MultiEdit` carry their path in `tool_input.file_path` and `NotebookEdit` in `tool_input.notebook_path`, which ADR-0015, Decision 7, left open.
+- #797 and PR #798 (merged): the Fledgling mint commands, root config, release contract, runbook, and release-with-confidence skill use `--publish` and `"publish": true`.
+- #745, layers 1 to 3 (PRs #796, #799, #800, merged): skill manifests declare `inputs` and `wiring`, recipes record input values, `planViteHookBlock` plans Calavera's marked block in a `.vite-hooks` script, and `planClaudeSettings` plans an artifact's hook groups in `.claude/settings.json`.
+- PR #800 replaced the hand-written Oxfmt imitation with `loadProjectFormatter` (`packages/cli/src/utils/project-formatter.js`). A rewritten JSON file is formatted in memory, before the dry run, by the project's own `vp fmt --stdin-filepath`, which applies the project's Oxfmt version, `fmt` settings, `.editorconfig`, and ignore patterns and writes nothing. Each run has a 60-second limit. A project Vite+ does not manage gets `JSON.stringify` output.
+- #745, layer 4 (PR #803, open): the guard package, the catalog row, and apply wiring (`packages/cli/src/ai/artifact-wiring.js`). Apply plans every artifact's wiring before it writes anything, records it as `aiWiring` in the state, refuses an unrecorded input outside a dry run, and warns with the fitting remedy when Git would not run the hooks. ADR-0015 is accepted and amended. Two adversarial reviews ran; their disposition is in the PR.
+- Opened #802: remove an artifact's wiring when it is deselected, and report wiring in `doctor`.
+- Confirmed against Claude Code 2.1.310 that `Write`, `Edit`, and `MultiEdit` carry their path in `tool_input.file_path` and `NotebookEdit` in `tool_input.notebook_path` (recorded in ADR-0015, Decision 7).
 
 ## In progress
 
-- #745, layer 4, not started. It holds the guard package and its scripts, the apply, init, and `compose_recipe` wiring, and the docs. The scripts and their 26 tests are written and saved as `.git/calavera-745/scripts-layer.patch` (untracked, local to this clone) and in the Git stash "745 guard scripts". They were set aside when the layers changed order.
-- `@schalkneethling/calavera-skill-protected-branch-guard` is not minted. The Fledgling dry run was clean; the apply needs Schalk's npm login and 2FA: `pnpm exec fledgling add @schalkneethling/calavera-skill-protected-branch-guard --new --yes --repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --publish --placeholder-version 0.0.0`.
+- PR #803 (#745, layer 4) waits for review and CI. Merging it closes #745.
+- `@schalkneethling/calavera-skill-protected-branch-guard` is not minted; `npm view` returns 404. The apply needs Schalk's npm login and 2FA: `pnpm exec fledgling add @schalkneethling/calavera-skill-protected-branch-guard --new --yes --repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --publish --placeholder-version 0.0.0`. It must be minted before the release that ships PR #803.
 - #722 (Version Packages) is open.
 
 ## Blocked
@@ -48,16 +48,19 @@ The Increment 1 exit condition (H0) is not met. ADR-0015 is merged, and its firs
 
 ## Decisions taken this session (with ADR link)
 
-- The `inputs` and `wiring` schema in PR #796 is the final shape. Decided by Schalk on 2026-10-31 (ADR-0015, Decision 4 left the names to #745).
-- `apply_recipe` refuses a declared input the recipe does not record; `dry_run_apply` returns the recipe with the value filled in. This is stricter than ADR-0015, Decision 6, and layer 4 amends the ADR. Decided by Schalk on 2026-10-31.
-- On a project without Vite+ hooks, apply warns, saying the guard hooks will not run and naming the command that installs the Vite+ hook dispatcher. Decided by Schalk on 2026-10-31 (an open question in ADR-0015).
-- ADR-0015's status line changes to "Accepted" in layer 4. Decided by Schalk on 2026-10-31.
-- The #745 stack is four layers, with the two writers before the guard package, because a catalog row would make the guard selectable before apply writes its hooks. Decided by Schalk on 2026-10-31.
+- The `inputs` and `wiring` schema of PR #796 is the final shape. Decided by Schalk on 2026-10-31 (ADR-0015, Decision 16).
+- `apply_recipe` refuses a declared input the recipe does not record; `dry_run_apply` returns the recipe with the value filled in. Decided by Schalk on 2026-10-31 (ADR-0015, Decision 6, amended). PR #803 applies the same rule to any non-interactive apply, because the reason is the same.
+- When Git would not run the guard's hooks, apply warns with the command that fixes it and does not stop. Decided by Schalk on 2026-10-31 (ADR-0015, Decision 16).
+- ADR-0015 is accepted. Decided by Schalk on 2026-10-31.
+- A rewritten JSON file is formatted in memory with the project's own `vp fmt` before the dry run, and nothing is formatted after it is written. Decided by Schalk on 2026-10-31 (ADR-0015, Decision 5, amended).
+- When the project's `vite-plus` cannot be loaded: a Vite+ project stops with the `vp install` remedy, and any other project gets unformatted output. Decided by Schalk on 2026-10-31.
+- `skill-protected-branch-guard` declares compatibility `>=5.0.1`, the workspace CLI version, because published 5.0.1 refuses the unknown ID. Decided by Schalk on 2026-10-31.
 
 ## Next session starts with
 
-- Review PRs #796, #799, and #800, and PR #798.
-- #745, layer 4: apply the saved scripts patch into `packages/artifacts/skill-protected-branch-guard/`, add the package, manifest, and catalog row, connect both planners and the input resolver to apply, the dry run, the state record, init, and `compose_recipe` (the saved wiring diffs are in `.git/calavera-745/`), add the `--no-hooks` warning, update `docs/ai-adapter-guidance.md`, the README count, and ADR-0015, scan the payload with SkillSpector, and end the description with "fix #745".
-- Mint the guard package before layer 4's release.
-- #669, in its own pull request after PR #800 merges: write the seven files it lists through `loadProjectFormatter`, fix the list in the repository-controls docs template, and add the `vp fmt --check` fixture test. Layer 4 also loads the formatter in apply and awaits `planClaudeSettings`, which is now async.
+- Review and merge PR #803, which closes #745.
+- Mint the guard package before the release that ships it.
+- #669 in its own PR: write the seven files it lists through `loadProjectFormatter`, fix the list in the repository-controls docs template, and add the `vp fmt --check` fixture test.
+- Decide #802 (remove or report the wiring of a deselected artifact).
 - Finish Increment 1: the Determinant tracking issue (#744), the readiness check (#749), then H0 (#750).
+- The saved patches in `.git/calavera-745/` and the Git stash "745 guard scripts" are applied in PR #803 and can be deleted once it merges.

@@ -9,6 +9,7 @@ import { fileURLToPath } from "node:url";
 import {
   fillInputPlaceholders,
   planViteHookBlock,
+  planViteHookBlockRemoval,
   viteHookCommandProblem,
 } from "../src/ai/vite-hook-blocks.js";
 
@@ -253,4 +254,33 @@ test("A written block runs first under sh -e, so a refusing guard stops the line
   await assert.rejects(readFile(join(directory, "after.txt")), { code: "ENOENT" });
   assert.equal(await runHook(0), 0);
   assert.equal(await readFile(join(directory, "after.txt"), "utf8"), "after\n");
+});
+
+test("Given a block apply wrote for a hook the artifact no longer wires, when it is unchanged, then only the block is removed", () => {
+  const remove = (contents, recorded = line) =>
+    planViteHookBlockRemoval({ path: ".vite-hooks/pre-push", contents, artifactId, recorded });
+  assert.deepEqual(remove(`#!/bin/sh\n${block}\nvp staged\n`), {
+    type: "update",
+    contents: "#!/bin/sh\nvp staged\n",
+  });
+  assert.equal(remove(`${block}\n`).contents, "");
+  assert.equal(remove("vp staged\n").type, "unchanged");
+  assert.deepEqual(remove(undefined), { type: "unchanged" });
+  assert.equal(remove(`${start}\r\n${line}\r\n${end}\r\nvp staged\r\n`).contents, "vp staged\r\n");
+});
+
+test("Given an edited or broken block for a dropped hook, when its removal is planned, then it is a conflict and nothing is removed", () => {
+  const remove = (contents) =>
+    planViteHookBlockRemoval({
+      path: ".vite-hooks/pre-push",
+      contents,
+      artifactId,
+      recorded: line,
+    });
+  const edited = remove(`${start}\n${line} # mine\n${end}\n`);
+  assert.equal(edited.type, "conflict");
+  assert.equal(edited.contents, undefined);
+  assert.match(edited.reason, /no longer wires this hook.*was edited since Calavera wrote it/s);
+  assert.match(edited.reason, /The file now holds:\n {2}.* # mine/);
+  assert.equal(remove(`${start}\n${line}\n`).type, "conflict");
 });

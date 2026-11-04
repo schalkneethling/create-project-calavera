@@ -3,7 +3,6 @@
 // as `artifacts install`, and stops on a conflict or failure without changing the project.
 import assert from "node:assert/strict";
 import fsPromises, {
-  cp,
   mkdir,
   mkdtempDisposable,
   readFile,
@@ -13,7 +12,7 @@ import fsPromises, {
 } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join } from "node:path";
+import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -24,6 +23,7 @@ import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
+import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory as snapshot } from "./project-snapshot.mjs";
 
 const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.meta.url));
@@ -40,60 +40,6 @@ const applyOptions = {
 /** @param {string[]} ids */
 function recipeWith(ids) {
   return { ...buildRecipe("minimal", [], "npm"), ai: ids.map((id) => ({ id })) };
-}
-
-/**
- * A registry stand-in that serves the workspace payload of each artifact at the version in
- * `releases`, and records every resolve request.
- *
- * @param {Map<string, string>} releases
- * @param {{ failFor?: string, error?: Error, registry?: { origin: string, source: string }, warnings?: string[] }} [options]
- */
-function stubRegistry(releases, options = {}) {
-  /** @type {{ id: string, version?: string }[]} */
-  const requests = [];
-  return {
-    requests,
-    resolve: async (
-      /** @type {{ id: string, tag?: string, version?: string, cache: string }} */ request,
-    ) => {
-      requests.push({ id: request.id, version: request.version });
-      if (request.id === options.failFor) throw options.error;
-      const artifact = artifactForId(request.id);
-      assert.ok(artifact, `Unknown artifact ${request.id}`);
-      const version = request.version ?? releases.get(request.id);
-      assert.ok(version, `No release for ${request.id}`);
-      return {
-        artifact,
-        packageName: artifact.packageName,
-        version,
-        resolved: `https://registry.example/${request.id}-${version}.tgz`,
-        integrity: `sha512-${"a".repeat(86)}==`,
-        tag: request.tag ?? "latest",
-        cache: request.cache,
-        offline: false,
-        ...(options.registry ? { registry: options.registry } : {}),
-        ...(options.warnings ? { warnings: options.warnings } : {}),
-      };
-    },
-    extract: async (
-      /** @type {{ artifact: { id: string } }} */ resolution,
-      /** @type {string} */ destination,
-    ) => {
-      const artifact = artifactForId(resolution.artifact.id);
-      assert.ok(artifact);
-      const payloadPath = join(destination, artifact.payload);
-      await mkdir(dirname(payloadPath), { recursive: true });
-      await cp(join(artifactPackagesRoot, artifact.id, artifact.payload), payloadPath, {
-        recursive: true,
-      });
-      return {
-        manifest: { type: artifact.type, payload: artifact.payload },
-        payloadPath,
-        payloadHash: await hashArtifactPayload(payloadPath),
-      };
-    },
-  };
 }
 
 /**

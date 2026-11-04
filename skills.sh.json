@@ -14,13 +14,14 @@
     },
     {
       "title": "Maintainer automation",
-      "description": "Skills for code review, issue triage, dependency upkeep, and secure npm publishing.",
+      "description": "Skills for code review, issue triage, dependency upkeep, branch protection, and secure npm publishing.",
       "skills": [
         "code-review",
         "github-goal-issue-triage",
         "more-secure-dependabot-config",
         "npm-publishing-best-practices",
         "npm-trusted-publishing-github-workflow",
+        "protected-branch-guard",
         "release-with-confidence"
       ]
     }

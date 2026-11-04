@@ -27,7 +27,18 @@ import {
   githubRepositoryControlManagedFiles,
   REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls.js";
-import { assertRootOnlyIntegrationsAtRepositoryRoot } from "./repository-root.js";
+import {
+  assertGitHookArtifactsAtRepositoryRoot,
+  assertRootOnlyIntegrationsAtRepositoryRoot,
+} from "./repository-root.js";
+import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
+import {
+  artifactWiringWarnings,
+  gitHookArtifactIds,
+  planArtifactWiring,
+  writeArtifactWiring,
+} from "./ai/artifact-wiring.js";
+import { loadProjectFormatter } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
 
 import {
@@ -186,6 +197,13 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {ArtifactLockEntry[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock.
  * @property {ArtifactRegistryReport[]} artifactRegistries The registry (protocol, host, and port, such as https://registry.npmjs.org) the auto-installed artifacts resolve from, and the npm configuration it comes from, such as the project .npmrc; empty when nothing resolves.
  * @property {string[]} artifactWarnings Notes on npm configuration Calavera ignored while resolving the auto-installed artifacts. They never contain a value.
+ * @property {ResolvedInput[]} artifactInputs Each input a selected artifact declares, with the value apply uses and where it came from.
+ * @property {WiringChange[]} wiringChanges Each hook block and settings group apply writes into the project for a selected artifact, so the approval boundary shows the exact text.
+ * @property {string[]} wiringWarnings Why written wiring would not act yet, such as Git hooks that no dispatcher runs, with the remedy. They never stop apply.
+ * @property {Recipe} recipe The recipe apply used, with every artifact input filled in. After a dry run, pass this recipe to apply, so the values cannot change between approval and apply.
+ *
+ * @typedef {import("./ai/artifact-inputs.js").ResolvedInput} ResolvedInput
+ * @typedef {import("./ai/artifact-wiring.js").WiringChange} WiringChange
  *
  * @typedef {object} CleanResult
  * @property {"clean"} command
@@ -205,6 +223,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {Recipe} recipe
  * @property {{ ok: boolean, recipe?: Recipe, errors?: string[] }} validation
  * @property {{ integrations: unknown[], dependencies: string[], aiArtifacts: unknown[] }} explanation
+ * @property {ResolvedInput[]} artifactInputs Each input a selected artifact declares, with the value the recipe records and where it came from. A value from the default was recorded without anyone choosing it.
  * @property {ApplyResult} [applyDryRun]
  * @property {ApplyResult} [applyResult]
  *
@@ -2468,13 +2487,13 @@ export async function applyRecipe(options) {
 }
 
 /**
- * @param {Recipe} recipe
+ * @param {Recipe} recipeInput
  * @param {Partial<CliOptions>} options
  * @param {ArtifactServices} [artifactServices] Registry access for artifacts that are not yet locked.
  * @returns {Promise<ApplyResult>}
  */
-export async function applyRecipeObject(recipe, options = {}, artifactServices = {}) {
-  validateRecipe(recipe);
+export async function applyRecipeObject(recipeInput, options = {}, artifactServices = {}) {
+  validateRecipe(recipeInput);
 
   const applyOptions = {
     dryRun: false,
@@ -2484,6 +2503,26 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     reownManagedFiles: [],
     ...options,
   };
+  // ADR-0015, Decision 6: every input a selected artifact declares has a value before anything is
+  // planned. An interactive run asks; any other run uses the default and reports it.
+  const ask = canPrompt(applyOptions) ? promptForArtifactInput : undefined;
+  const { recipe, inputs: artifactInputs } = await resolveArtifactInputs(recipeInput, { ask });
+  // Owner ruling of 2026-10-31, stricter than Decision 6: a value nobody chose is shown by the dry
+  // run, and apply writes only a value the recipe records or the person typed, so the value
+  // cannot change between the approval and the apply.
+  const unrecorded = artifactInputs.filter(({ source }) => source === "default");
+  if (!applyOptions.dryRun && unrecorded.length > 0) {
+    throw new Error(
+      [
+        "Calavera stopped before writing anything, because the recipe records no value for these artifact inputs, and apply only writes a value that was approved:",
+        ...unrecorded.map(
+          ({ artifact, index, name, value }) =>
+            `- ${artifact} needs ${name}; the dry run would use ${value}. Record it as ai[${index}].inputs.${name}.`,
+        ),
+        "Run the dry run and apply the recipe it returns, which records each value, or run apply in a terminal without --yes or --json, where Calavera asks for each value.",
+      ].join("\n"),
+    );
+  }
   const previousState = await readStateIfPresent();
   // Only a project Calavera already applied to can have a config or scripts
   // that are unchanged; on a first apply the whole plan is new.
@@ -2496,6 +2535,7 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
   const detectedPackageJSON = await readPackageJSONIfPresent();
   const packageManager = resolveApplyPackageManager(recipe, applyOptions, detectedPackageJSON);
   assertRootOnlyIntegrationsAtRepositoryRoot(integrations, process.cwd(), packageManager);
+  assertGitHookArtifactsAtRepositoryRoot(gitHookArtifactIds(recipe), process.cwd(), packageManager);
   // The install and the quality script are planned before anything is
   // written, including package.json, from one detection, so the dry run and
   // the apply that follows it name the same command and write the same
@@ -2549,15 +2589,44 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
 
   await assertSafeManagedFileWrites(managedFilePlans, previousState, reownManagedFiles);
 
-  // Before an auto-install commits, check every selected artifact against the project, so a
-  // conflict with an already-locked artifact stops apply before the install changes anything.
+  // ADR-0015, Decision 5: the wiring of every selected skill is planned before anything is
+  // written. The project's formatter is loaded only for wiring that rewrites a JSON file.
+  /** @type {Promise<import("./utils/project-formatter.js").ProjectFormatter> | undefined} */
+  let formatter;
+  /** @param {Map<string, string>} sources */
+  const planWiring = (sources) =>
+    planArtifactWiring({
+      recipe,
+      artifacts: resolveAiArtifacts(recipe, sources)
+        .filter(({ type }) => type === "skill")
+        .map(({ source, index, path, sourcePath }) => ({
+          id: source,
+          index,
+          skillDirectory: path,
+          payloadDirectory: sourcePath,
+        })),
+      previousRecords: previousState.aiWiring,
+      loadFormatter: () =>
+        (formatter ??= loadProjectFormatter(process.cwd(), vitePlusDetection.status)),
+    });
+
+  // Before an auto-install commits, check every selected artifact and its wiring against the
+  // project, so a conflict stops apply before the install changes anything.
   const artifactPlan = await prepareArtifactSources(
     recipe,
     applyOptions.dryRun,
     artifactServices,
-    (sources) => buildAiApplyResult(recipe, { dryRun: true }, previousState, sources),
+    async (sources) => {
+      await buildAiApplyResult(recipe, { dryRun: true }, previousState, sources);
+      await planWiring(sources);
+    },
     applyOptions.approvedArtifacts,
   );
+  // Planned again from the sources apply installs from, and still before any skill is written.
+  const wiringPlan = await planWiring(artifactPlan.sources).catch(async (error) => {
+    await artifactPlan.dispose();
+    throw error;
+  });
   const aiResult = await buildAiApplyResult(
     recipe,
     applyOptions,
@@ -2570,9 +2639,22 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
   const aiChanges = [
     ...artifactPlan.changes,
     ...aiResult.changes.filter(({ path }) => !autoInstalledPaths.has(path)),
+    ...wiringPlan.files.map(({ path, type }) => ({
+      type,
+      path,
+      action: type === "write" ? /** @type {const} */ ("write") : /** @type {const} */ ("update"),
+      ownership: /** @type {const} */ ("project"),
+    })),
   ];
+  const wiringWarnings = await artifactWiringWarnings({
+    recipe,
+    vitePlusStatus: vitePlusDetection.status,
+  });
 
-  if (applyOptions.writeConfig) {
+  // A value the person typed is recorded in the recipe, so a later apply does not ask again.
+  // Only an explicit writeConfig: false skips that.
+  const answered = artifactInputs.some(({ source }) => source === "prompt");
+  if (applyOptions.writeConfig || (answered && applyOptions.writeConfig !== false)) {
     const configPath = resolve(applyOptions.config ?? "calavera.config.json");
     const configUnchanged = previouslyApplied && (await jsonFileUnchanged(configPath, recipe));
     changes.push({
@@ -2759,6 +2841,11 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
   }
 
   if (!applyOptions.dryRun) {
+    // The wiring is written before the state record. If a write fails part way, the next apply
+    // still plans correctly: a block or group that already holds what apply would write is
+    // unchanged whatever the record says, and the old record still names a block to remove.
+    // Writing the record first would instead record text the files never received.
+    await writeArtifactWiring(wiringPlan.files);
     await mkdir(".calavera", { recursive: true });
     await writeJSON(
       STATE_FILE,
@@ -2768,6 +2855,7 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
         integrations.map((integration) => integration.id),
         managedFiles,
         aiResult.artifacts,
+        wiringPlan.records,
       ),
       false,
     );
@@ -2820,6 +2908,10 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
     autoInstalledArtifacts: artifactPlan.installed,
     artifactRegistries: artifactPlan.registries,
     artifactWarnings: artifactPlan.warnings,
+    artifactInputs,
+    wiringChanges: wiringPlan.changes,
+    wiringWarnings,
+    recipe,
   };
 }
 
@@ -2829,9 +2921,17 @@ export async function applyRecipeObject(recipe, options = {}, artifactServices =
  * @param {string[]} integrations
  * @param {ManagedFileState[]} managedFiles
  * @param {AiArtifactState[]} aiArtifacts
+ * @param {import("./ai/artifact-wiring.js").WiringRecord[]} aiWiring What apply wrote for the selected artifacts; records of artifacts no longer selected are kept, because their wiring stays in the project.
  * @returns {CalaveraState}
  */
-function mergeRecipeIntoState(previousState, profile, integrations, managedFiles, aiArtifacts) {
+function mergeRecipeIntoState(
+  previousState,
+  profile,
+  integrations,
+  managedFiles,
+  aiArtifacts,
+  aiWiring,
+) {
   const managedFilesByPath = new Map(
     managedFilesFromState(previousState).map((file) => [file.path, file]),
   );
@@ -2851,6 +2951,12 @@ function mergeRecipeIntoState(previousState, profile, integrations, managedFiles
     files: nextManagedFiles.map((file) => file.path),
     managedFiles: nextManagedFiles,
     aiArtifacts,
+    aiWiring: [
+      ...previousState.aiWiring.filter(
+        ({ artifact }) => !aiWiring.some((record) => record.artifact === artifact),
+      ),
+      ...aiWiring,
+    ],
   };
 }
 
@@ -3790,8 +3896,90 @@ function formatApplySummary(result) {
       (registry) => `${style("bold", "Artifact registry")}: ${formatArtifactRegistry(registry)}`,
     ),
     ...result.artifactWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
+    ...result.artifactInputs.map(
+      (input) => `${style("bold", "Input")}: ${formatArtifactInput(input)}`,
+    ),
+    ...result.wiringChanges
+      .flatMap(formatWiringChange)
+      .map((line) => `${style("bold", "Wiring")}: ${line}`),
+    ...result.wiringWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
     `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
   ].join("\n");
+}
+
+/** @param {ResolvedInput} input */
+function formatArtifactInput({ artifact, name, value, source }) {
+  const origin = {
+    recorded: "recorded in the recipe",
+    prompt: "your answer",
+    default:
+      "the default, because the recipe records no value; apply needs it recorded in the recipe",
+  }[source];
+  return `${artifact} ${name} = ${value} (${origin})`;
+}
+
+/**
+ * The lines a dry run shows for one artifact's wiring, so the approval covers the exact text.
+ *
+ * @param {WiringChange} change
+ * @returns {string[]}
+ */
+function formatWiringChange({
+  artifact,
+  path,
+  kind,
+  type,
+  block,
+  removedBlock,
+  groupChanges,
+  reformatted,
+}) {
+  if (removedBlock !== undefined) {
+    return [
+      `Would remove the ${artifact} block from ${path}, because ${artifact} no longer wires that hook: ${quoteScriptValue(removedBlock)}`,
+    ];
+  }
+  if (kind === "vite-hook") {
+    return [
+      type === "unchanged"
+        ? `${path} already holds the ${artifact} block: ${quoteScriptValue(block)}`
+        : `Would ${type} the ${artifact} block in ${path}: ${quoteScriptValue(block)}`,
+    ];
+  }
+  if (type === "unchanged") return [`${path} already holds the ${artifact} hook groups`];
+  return [
+    ...(groupChanges ?? []).map(({ event, action, group, previous }) =>
+      action === "add"
+        ? `Would add a ${event} group for ${artifact} to ${path}: ${quoteScriptValue(group)}`
+        : action === "replace"
+          ? `Would replace the ${event} group for ${artifact} in ${path}: ${quoteScriptValue(previous)} with ${quoteScriptValue(group)}`
+          : `Would remove the ${event} group for ${artifact} from ${path}: ${quoteScriptValue(previous)}`,
+    ),
+    ...(reformatted
+      ? [
+          `Would also change the layout of the rest of ${path}, because Calavera writes the whole file in the project's format; no value outside the groups changes`,
+        ]
+      : []),
+  ];
+}
+
+/**
+ * @param {{ json?: boolean, assumeYes?: boolean }} options
+ * @returns {boolean}
+ */
+function canPrompt(options) {
+  return !options.json && !options.assumeYes && Boolean(process.stdin.isTTY);
+}
+
+/** @type {import("./ai/artifact-inputs.js").AskForInput} */
+async function promptForArtifactInput({ artifact, name, prompt, defaultValue, error }) {
+  if (error) logger.warn(error);
+  const answer = await text({
+    message: `${prompt} (${artifact}, ${name})`,
+    ...(defaultValue ? { defaultValue, placeholder: defaultValue } : {}),
+  });
+  exitIfCancel(answer);
+  return typeof answer === "string" ? answer : "";
 }
 
 /** @param {ArtifactRegistryReport} registry */
@@ -3946,12 +4134,16 @@ export async function initRecipe(options) {
   const packageManager = await promptForPackageManager(options, detectedPackageManager);
   const integrations = await promptForIntegrations(options, profile);
   const aiArtifacts = await promptForAiArtifacts(options);
-  const recipe = composeRecipe({
-    profile,
-    packageManager,
-    tools: integrations,
-    aiArtifacts,
-  });
+  // The recipe written below records every input, so apply neither asks again nor refuses it.
+  const { recipe, inputs: artifactInputs } = await resolveArtifactInputs(
+    composeRecipe({
+      profile,
+      packageManager,
+      tools: integrations,
+      aiArtifacts,
+    }),
+    { ask: canPrompt(options) ? promptForArtifactInput : undefined },
+  );
   const validation = validateRecipeResponse(recipe);
   const explanation = explainRecipeResponse(recipe);
 
@@ -3959,6 +4151,15 @@ export async function initRecipe(options) {
 
   if (!options.json) {
     note(formatRecipeSummary(recipe, explanation), "Recipe summary");
+    // Nobody was asked for a value taken from the default, so say which one it was and where it
+    // is recorded.
+    for (const { artifact, name, value, index } of artifactInputs.filter(
+      ({ source }) => source === "default",
+    )) {
+      logger.info(
+        `Input: ${artifact} ${name} = ${value}, the default, recorded as ai[${index}].inputs.${name} in ${options.config}. Change it there if it is wrong.`,
+      );
+    }
   }
 
   /** @type {ApplyResult | undefined} */
@@ -4015,6 +4216,7 @@ export async function initRecipe(options) {
     recipe,
     validation,
     explanation,
+    artifactInputs,
     applyDryRun,
     applyResult,
   };
@@ -4584,6 +4786,18 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       );
     }
 
+    for (const input of result.artifactInputs) {
+      logger.info(`Input: ${formatArtifactInput(input)}`);
+    }
+
+    for (const line of result.wiringChanges.flatMap(formatWiringChange)) {
+      logger.info(line);
+    }
+
+    for (const warning of result.wiringWarnings) {
+      logger.warn(warning);
+    }
+
     for (const change of result.changes) {
       if (change.type === "write") {
         if (change.category === "ai") {
@@ -4690,7 +4904,15 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   }
 
   if (result.command === "apply") {
+    for (const input of result.artifactInputs) {
+      logger.info(`Input: ${formatArtifactInput(input)}`);
+    }
+
     for (const warning of result.artifactWarnings) {
+      logger.warn(warning);
+    }
+
+    for (const warning of result.wiringWarnings) {
       logger.warn(warning);
     }
 

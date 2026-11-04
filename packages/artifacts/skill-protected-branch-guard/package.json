@@ -1,0 +1,24 @@
+{
+  "name": "@schalkneethling/calavera-skill-protected-branch-guard",
+  "version": "0.0.0",
+  "description": "Protected branch guard artifact for Calavera.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+ssh://git@github.com/schalkneethling/create-project-calavera.git",
+    "directory": "packages/artifacts/skill-protected-branch-guard"
+  },
+  "files": [
+    "calavera-artifact.json",
+    "payload"
+  ],
+  "type": "module",
+  "exports": {
+    ".": "./calavera-artifact.json",
+    "./package.json": "./package.json"
+  },
+  "publishConfig": {
+    "access": "public",
+    "provenance": true
+  }
+}
