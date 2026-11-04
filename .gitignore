@@ -143,3 +143,6 @@ plugins/*/evals/results/
 # Stryker sandbox and mutation reports
 .stryker-tmp
 reports/mutation/
+
+# Agent worktrees: full checkouts of other branches, created under .claude/worktrees/
+.claude/worktrees/
