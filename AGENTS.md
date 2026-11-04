@@ -38,6 +38,9 @@ Calavera is what runs after `vp create`: Baseline target, CSS verification (css-
 
 Rewrite `STATUS.md` (do not append) following its existing headings. Record delivered handoffs there and in the sequencing map.
 
+- Before your session ends, check whether the pull request for your branch has merged with `gh pr view <branch> --json state`. A squash-merged branch does not appear in `git branch --merged`. If it has merged, change to the main worktree, run `git worktree remove <path>`, and delete the local branch with `git branch -D <branch>`. Do not run `git worktree prune`, because it also removes entries for worktrees that other sessions and tools created. If it has not merged, leave the worktree in place and record its path in the handoff.
+- Never record a path under `/tmp` in a stash message, `STATUS.md`, or a handoff, because `/tmp` can be cleared on restart. Save patches in the shared Git folder instead, which `git rev-parse --git-common-dir` prints. In a linked worktree, `.git` is a file, not a folder.
+
 ## Issues and labels
 
 `gh issue create --template cal.md`. Labels: `calavera-evolution`; add `removal`, `handoff`, `dogfood` as applicable.
