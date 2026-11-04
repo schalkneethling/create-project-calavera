@@ -213,9 +213,9 @@ remove them automatically on a later apply or clean.
 
 The optional HTML Validate integration adds `html-validate`, writes
 `.htmlvalidate.json` with the `html-validate:recommended` and
-`html-validate:document` presets, and ignores `node_modules/`, `dist/`, and
-`coverage/` through `.htmlvalidateignore`. It also adds `lint:html` to the
-generated `quality` script. The recommended preset already includes HTML
+`html-validate:document` presets, and ignores `node_modules/`, `dist/`,
+`coverage/`, and `.claude/worktrees/` through `.htmlvalidateignore`. It also
+adds `lint:html` to the generated `quality` script. The recommended preset already includes HTML
 Validate's accessibility rules, so Calavera does not add a redundant separate
 accessibility integration.
 
@@ -227,6 +227,12 @@ exit code. With an option, such as `--stdin` or `--ext`, it runs
 `html-validate` directly. A real validation error still fails `lint:html`. In the same way,
 `lint:styles` and `lint:styles:fix` pass `--allow-empty-input` to Stylelint, so
 `quality` passes in a project without CSS files.
+
+Both ignore files also list `.claude/worktrees/`, where agent worktrees keep full
+checkouts of other branches. Their files belong to those branches, so a lint run
+that names a path there, such as `html-validate ".claude/worktrees/**/*.html"`,
+does not report their errors as yours. The Stylelint integration lists
+`.claude/worktrees/**` in the `ignoreFiles` of `.stylelintrc.json`.
 
 A project without static HTML files, such as one whose HTML a server or a
 Worker renders, can leave `lint:html` out of `quality` with the `quality`

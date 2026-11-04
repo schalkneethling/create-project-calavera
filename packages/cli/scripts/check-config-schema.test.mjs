@@ -2499,6 +2499,7 @@ test("apply uses direct tool scripts without the run-if-files helper", async () 
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist/**"), true);
     assert.equal(stylelintConfig.ignoreFiles.includes("**/dist-types/**"), true);
     assert.equal(stylelintConfig.ignoreFiles.includes("node_modules/**"), true);
+    assert.equal(stylelintConfig.ignoreFiles.includes(".claude/worktrees/**"), true);
     await assertPathMissing(".calavera/run-if-files.mjs");
   } finally {
     process.chdir(originalDirectory);
@@ -2729,6 +2730,81 @@ test("Knip config ignores .agents and upgrades an unedited config from the previ
   }
 });
 
+test("a project from an earlier release gains the worktree ignores in Stylelint and HTML Validate, and local edits are kept", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-worktree-ignore-upgrade-"));
+  const recipe = buildRecipe("minimal", ["stylelint", "html-validate"], "npm");
+  const options = { json: true, noInstall: true, assumeYes: true };
+  const previousHtmlIgnore = "node_modules/\ndist/\ncoverage/\n";
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+
+    // Given files as the previous release wrote them, recorded unedited in the state, when a dry
+    // run happens, then both are planned as writes and nothing changes on disk.
+    await applyRecipeObject(recipe, options);
+    const currentStylelint = JSON.parse(await readFile(".stylelintrc.json", "utf8"));
+    const previousStylelint = `${JSON.stringify(
+      {
+        ...currentStylelint,
+        ignoreFiles: currentStylelint.ignoreFiles.filter(
+          (entry) => entry !== ".claude/worktrees/**",
+        ),
+      },
+      null,
+      2,
+    )}\n`;
+    await writeFile(".stylelintrc.json", previousStylelint);
+    await writeFile(".htmlvalidateignore", previousHtmlIgnore);
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    for (const [path, contents] of [
+      [".stylelintrc.json", previousStylelint],
+      [".htmlvalidateignore", previousHtmlIgnore],
+    ]) {
+      state.managedFiles.find((file) => file.path === path).hash = textHash(contents);
+    }
+    await writeFile(".calavera/state.json", `${JSON.stringify(state, null, 2)}\n`);
+
+    const dryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+    for (const path of [".stylelintrc.json", ".htmlvalidateignore"]) {
+      assert.equal(dryRun.changes.find((change) => change.path === path).type, "write", path);
+    }
+    assert.equal(await readFile(".htmlvalidateignore", "utf8"), previousHtmlIgnore);
+
+    // When apply runs, then both gain the worktree entry, and a second dry run reports no drift.
+    await applyRecipeObject(recipe, options);
+    assert.equal(
+      await readFile(".htmlvalidateignore", "utf8"),
+      "node_modules/\ndist/\ncoverage/\n.claude/worktrees/\n",
+    );
+    assert.equal(
+      JSON.parse(await readFile(".stylelintrc.json", "utf8")).ignoreFiles.includes(
+        ".claude/worktrees/**",
+      ),
+      true,
+    );
+    const secondDryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+    for (const path of [".stylelintrc.json", ".htmlvalidateignore"]) {
+      assert.equal(secondDryRun.changes.find((change) => change.path === path).type, "unchanged");
+    }
+
+    // Given a locally edited .htmlvalidateignore, when apply runs, then it refuses and leaves the
+    // file byte-for-byte unchanged.
+    const editedIgnore = "node_modules/\nvendor/\n";
+    await writeFile(".htmlvalidateignore", editedIgnore);
+    await assert.rejects(
+      () => applyRecipeObject(recipe, options),
+      /Refusing to overwrite existing managed file: \.htmlvalidateignore/,
+    );
+    assert.equal(await readFile(".htmlvalidateignore", "utf8"), editedIgnore);
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
 test("Knip ignores unused files under .agents but still reports other unused files", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-knip-run-"));
@@ -2783,7 +2859,7 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
     extends: ["html-validate:recommended", "html-validate:document"],
     rules: {},
   };
-  const expectedIgnore = "node_modules/\ndist/\ncoverage/\n";
+  const expectedIgnore = "node_modules/\ndist/\ncoverage/\n.claude/worktrees/\n";
 
   try {
     process.chdir(projectDirectory);
