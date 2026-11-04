@@ -228,16 +228,16 @@ test("a missing or invalid branch argument is an error that names the line to fi
   for (const [mode, location] of cases) {
     for (const args of [[mode], [mode, ""], [mode, "main", "extra"]]) {
       const result = f.script("guard.mjs", args, { status: 1, input: "" });
-      assert.match(result.stderr, new RegExp(`Fix ${location.replaceAll(".", "\\.")}`), args);
+      assert.match(result.stderr, new RegExp(`Fix ${RegExp.escape(location)}`), args);
       assert.match(
         result.stderr,
-        new RegExp(`node ${scripts.replaceAll(".", "\\.")}/guard\\.mjs ${mode} <protected-branch>`),
+        new RegExp(`node ${RegExp.escape(`${scripts}/guard.mjs`)} ${mode} <protected-branch>`),
       );
     }
   }
   for (const value of ["a;b", "{{protectedBranch}}", "-main", "main..dev", "@{-1}", "main.lock"]) {
     const result = f.script("guard.mjs", ["commit", value], { status: 1 });
-    assert.match(result.stderr, new RegExp(`"${value.replace(/[.{}]/g, "\\$&")}"`), value);
+    assert.match(result.stderr, new RegExp(`"${RegExp.escape(value)}"`), value);
     assert.match(result.stderr, /Fix \.vite-hooks\/pre-commit/, value);
   }
 
