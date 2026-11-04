@@ -5,6 +5,8 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { artifactForId } from "@schalkneethling/calavera-artifact-core";
+
 import {
   artifactWiringWarnings,
   planArtifactWiring,
@@ -309,6 +311,7 @@ test("Given a hook the artifact no longer wires, when apply plans, then its unch
   const first = await plan(project.root);
   await writeArtifactWiring(first.files, project.root);
   const guardWiring = /** @type {any} */ ({
+    ...artifactForId(id)?.wiring,
     viteHooks: {
       "pre-commit": `node ${skillDirectory}/scripts/guard.mjs commit {{protectedBranch}}`,
     },
@@ -324,6 +327,11 @@ test("Given a hook the artifact no longer wires, when apply plans, then its unch
       [".vite-hooks/prepare-commit-msg", "update", ""],
       [".vite-hooks/pre-push", "update", ""],
       [".vite-hooks/pre-commit", "unchanged", block("commit")],
+      [
+        ".claude/settings.json",
+        "unchanged",
+        await readFile(join(project.root, ".claude/settings.json"), "utf8"),
+      ],
     ],
   );
   assert.deepEqual(
@@ -343,6 +351,102 @@ test("Given a hook the artifact no longer wires, when apply plans, then its unch
     plan(project.root, { previousRecords: first.records, wiringFor: () => guardWiring }),
     /\.vite-hooks\/pre-push: skill-protected-branch-guard no longer wires this hook/,
   );
+});
+
+test("Given Claude Code wiring the artifact no longer declares, when apply plans, then its unchanged groups are removed and an edited one is a conflict", async () => {
+  await using project = await createTemporaryFixture("wiring-dropped-claude-code", {});
+  const first = await plan(project.root);
+  await writeArtifactWiring(first.files, project.root);
+  const settingsPath = join(project.root, ".claude/settings.json");
+  const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+  await writeFile(settingsPath, JSON.stringify({ ...settings, model: "mine" }, null, 2));
+  const hooksOnly = /** @type {any} */ ({
+    viteHooks: {
+      "pre-commit": `node ${skillDirectory}/scripts/guard.mjs commit {{protectedBranch}}`,
+      "prepare-commit-msg": `node ${skillDirectory}/scripts/guard.mjs commit {{protectedBranch}}`,
+      "pre-push": `node ${skillDirectory}/scripts/guard.mjs pre-push {{protectedBranch}}`,
+    },
+  });
+
+  const dropped = await plan(project.root, {
+    previousRecords: first.records,
+    wiringFor: () => hooksOnly,
+  });
+  const settingsFile = dropped.files.find(({ path }) => path === ".claude/settings.json");
+  assert.equal(settingsFile?.type, "update");
+  // The groups go, and the user's own setting stays.
+  assert.deepEqual(JSON.parse(settingsFile?.contents ?? ""), { model: "mine" });
+  assert.deepEqual(
+    dropped.changes
+      .find(({ kind }) => kind === "claude-settings")
+      ?.groupChanges?.map(({ event, action }) => [event, action]),
+    [
+      ["SessionStart", "remove"],
+      ["PreToolUse", "remove"],
+    ],
+  );
+  assert.equal(Object.hasOwn(dropped.records[0] ?? {}, "claudeCode"), false);
+
+  // With the groups gone and nothing recorded, a later plan leaves the file alone.
+  await writeArtifactWiring(dropped.files, project.root);
+  const again = await plan(project.root, {
+    previousRecords: dropped.records,
+    wiringFor: () => hooksOnly,
+  });
+  assert.equal(
+    again.files.some(({ path }) => path === ".claude/settings.json"),
+    false,
+  );
+
+  const edited = { ...settings };
+  edited.hooks.PreToolUse[0].matcher = "Write";
+  await writeFile(settingsPath, JSON.stringify(edited, null, 2));
+  await assert.rejects(
+    plan(project.root, { previousRecords: first.records, wiringFor: () => hooksOnly }),
+    /\.claude\/settings\.json: hooks\.PreToolUse holds a group that runs .* was edited since Calavera wrote it/s,
+  );
+});
+
+test("Given recorded Claude Code wiring and no settings file, when the artifact no longer declares it, then apply writes no settings file", async () => {
+  await using project = await createTemporaryFixture("wiring-dropped-claude-code-no-file", {});
+  const first = await plan(project.root);
+  await writeArtifactWiring(
+    first.files.filter(({ path }) => path !== ".claude/settings.json"),
+    project.root,
+  );
+
+  const dropped = await plan(project.root, {
+    previousRecords: first.records,
+    wiringFor: () => /** @type {any} */ ({}),
+  });
+  assert.equal(
+    dropped.files.some(({ path }) => path === ".claude/settings.json"),
+    false,
+  );
+  assert.equal(Object.hasOwn(dropped.records[0] ?? {}, "claudeCode"), false);
+});
+
+test("Given recorded wiring, when the catalog no longer wires the artifact at all, then apply removes its blocks and groups", async () => {
+  await using project = await createTemporaryFixture("wiring-dropped-entirely", {
+    ".vite-hooks/pre-commit": "vp staged\n",
+  });
+  const first = await plan(project.root);
+  await writeArtifactWiring(first.files, project.root);
+
+  const dropped = await plan(project.root, {
+    previousRecords: first.records,
+    wiringFor: () => undefined,
+  });
+  assert.deepEqual(
+    dropped.files.map(({ path, type, contents }) => [path, type, contents]),
+    [
+      [".vite-hooks/pre-commit", "update", "vp staged\n"],
+      [".vite-hooks/prepare-commit-msg", "update", ""],
+      [".vite-hooks/pre-push", "update", ""],
+      [".claude/settings.json", "update", "{}\n"],
+    ],
+  );
+  assert.deepEqual(dropped.records, [{ artifact: id }]);
 });
 
 test("Given an installed payload without the Claude Code fragment, when apply plans, then the error names the artifact and the remedy", async () => {

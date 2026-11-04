@@ -170,10 +170,11 @@ export async function planArtifactWiring({
   };
 
   for (const artifact of artifacts) {
-    const wiring = wiringFor(artifact.id);
+    const previous = previousRecords.find((record) => record.artifact === artifact.id);
+    // Wiring the catalog dropped still has recorded blocks and groups to remove.
+    const wiring = wiringFor(artifact.id) ?? (previous ? {} : undefined);
     if (!wiring) continue;
     const inputs = recordedInputs(recipe, artifact.index);
-    const previous = previousRecords.find((record) => record.artifact === artifact.id);
     /** @type {WiringRecord} */
     const record = { artifact: artifact.id };
 
@@ -237,18 +238,26 @@ export async function planArtifactWiring({
       });
     }
 
-    if (wiring.claudeCode) {
-      const fragmentPath = join(artifact.payloadDirectory, wiring.claudeCode);
-      // The wiring comes from this CLI's catalog, and the fragment from the installed payload, so
-      // an installed version older than the catalog can lack the file.
-      const fragmentText = await readIfPresent(fragmentPath);
-      if (fragmentText === undefined) {
-        throw new Error(
-          `${artifact.id} wires Claude Code with ${wiring.claudeCode}, but the installed payload in ${artifact.payloadDirectory} has no such file, so the installed version does not match this version of Calavera. Run create-project-calavera artifacts update ${artifact.id}, then run apply again.`,
-        );
+    // Groups apply recorded but the artifact no longer declares are planned against an empty
+    // fragment, so they are removed rather than left running without a record.
+    // A missing file holds none of them, so there is nothing to remove.
+    const file =
+      wiring.claudeCode || previous?.claudeCode ? await current(CLAUDE_SETTINGS_PATH) : undefined;
+    if (file && (wiring.claudeCode || file.contents !== undefined)) {
+      /** @type {unknown} */
+      let fragment = { hooks: {} };
+      if (wiring.claudeCode) {
+        const fragmentPath = join(artifact.payloadDirectory, wiring.claudeCode);
+        // The wiring comes from this CLI's catalog, and the fragment from the installed payload, so
+        // an installed version older than the catalog can lack the file.
+        const fragmentText = await readIfPresent(fragmentPath);
+        if (fragmentText === undefined) {
+          throw new Error(
+            `${artifact.id} wires Claude Code with ${wiring.claudeCode}, but the installed payload in ${artifact.payloadDirectory} has no such file, so the installed version does not match this version of Calavera. Run create-project-calavera artifacts update ${artifact.id}, then run apply again.`,
+          );
+        }
+        fragment = fillFragment(JSON.parse(fragmentText), inputs);
       }
-      const fragment = fillFragment(JSON.parse(fragmentText), inputs);
-      const file = await current(CLAUDE_SETTINGS_PATH);
       formatter ??= await loadFormatter();
       const plan = await planClaudeSettings({
         path: CLAUDE_SETTINGS_PATH,
@@ -263,7 +272,8 @@ export async function planArtifactWiring({
         conflicts.push(/** @type {string} */ (plan.reason));
       } else {
         file.contents = plan.contents;
-        record.claudeCode = plan.groups;
+        // An artifact that no longer declares groups records none.
+        if (plan.groups && Object.keys(plan.groups).length > 0) record.claudeCode = plan.groups;
         changes.push({
           artifact: artifact.id,
           path: CLAUDE_SETTINGS_PATH,
@@ -285,11 +295,14 @@ export async function planArtifactWiring({
   }
 
   return {
-    files: [...files].map(([path, { original, contents }]) => ({
-      path,
-      type: original === undefined ? "write" : contents === original ? "unchanged" : "update",
-      contents: /** @type {string} */ (contents),
-    })),
+    // A file read only to find it missing, and left missing, is not part of the plan.
+    files: [...files]
+      .filter(([, { original, contents }]) => original !== undefined || contents !== undefined)
+      .map(([path, { original, contents }]) => ({
+        path,
+        type: original === undefined ? "write" : contents === original ? "unchanged" : "update",
+        contents: /** @type {string} */ (contents),
+      })),
     changes,
     records,
   };
