@@ -132,18 +132,22 @@ test("generated repository-control documentation uses portable Node commands", (
 // #669: without a blank line after the last list item, Markdown continues that item with the
 // closing paragraph, so the paragraph renders inside the "Manual controls" list.
 test("the paragraph after the manual controls list stands on its own, with or without a release environment", () => {
-  for (const options of [{ repository: "octocat/example" }, rawOptions]) {
+  const malwareAlerts = "- In **Settings → Advanced Security**, enable Dependabot malware alerts.";
+  const adminBypass = "- In **Settings → Environments → release**, disable administrator bypass.";
+  for (const [options, items] of [
+    [{ repository: "octocat/example" }, [malwareAlerts]],
+    [rawOptions, [malwareAlerts, adminBypass]],
+  ]) {
     const documentation = githubRepositoryControlManagedFiles(options).find(
       ({ path }) => path === "docs/repository-controls.md",
     ).contents;
     const manualControls = documentation.slice(documentation.indexOf("## Manual controls"));
 
-    assert.match(
+    assert.equal(
       manualControls,
-      /^- .+\n\nThe generated script verifies the repository identity/m,
+      `## Manual controls\n\n${items.join("\n")}\n\nThe generated script verifies the repository identity before planning or applying changes. Unsupported GitHub plan features are reported separately from drift.\n`,
       JSON.stringify(options),
     );
-    assert.doesNotMatch(manualControls, /\n\n\n/, JSON.stringify(options));
   }
 });
 

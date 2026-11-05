@@ -164,7 +164,7 @@ installed `vp` of another version (ADR-0012, Decision 2). Calavera decides the
 install command and locates the bin before `apply` writes anything, including
 a new `package.json`. If the project's vite-plus is not installed, or cannot
 be used, `apply` stops at that point; install the project's dependencies, then
-run `apply` again. `apply --no-install` is no way around this, because Calavera
+run `apply` again. `apply --no-install` does not get around this, because Calavera
 also formats the JSON and Markdown files it writes with the project's own
 `vp fmt`, in memory and before the dry run, so the files pass `vp check` as
 written. In a project Vite+ does not manage, those files are written

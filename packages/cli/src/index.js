@@ -816,7 +816,7 @@ async function planDevDependencyInstall(
     );
     return { command, spawn, problem: undefined, notes };
   } catch (error) {
-    // --no-install is no way around this: apply formats the files it writes with the same vp
+    // --no-install does not get around this: apply formats the files it writes with the same vp
     // (#669), so the project's dependencies must be installed either way.
     const problem = new Error(
       `Vite+ manages this project, so Calavera installs development dependencies with the project's own vp add, but ${error instanceof Error ? error.message : String(error)}. Install the project's dependencies, then run apply again. Calavera stopped before writing anything.`,
@@ -3330,8 +3330,10 @@ export async function agentBootstrap(options = {}) {
   await assertBootstrapDirectoryAvailable(".calavera");
 
   // #669: the Markdown Calavera writes is formatted by the project's formatter before anything is
-  // written, so a Vite+ project's vp check accepts it and a project whose formatter cannot run
-  // stops with nothing written. The MCP JSON is formatted the same way when it is planned.
+  // written, so a Vite+ project's vp check accepts it, and a project whose formatter cannot load
+  // stops with nothing written. The MCP JSON is formatted when it is planned, after the guidance
+  // is written; the formatter has already run by then, but a failure there leaves AGENTS.md in
+  // place and is reported as a manual MCP setup.
   const loadFormatter = projectFormatterLoader(process.cwd());
   const [guidanceText, mcpInstructions] = await Promise.all([
     formatAgentBootstrapGuidance(loadFormatter),

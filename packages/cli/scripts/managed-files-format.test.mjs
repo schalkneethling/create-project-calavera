@@ -10,7 +10,14 @@ import test from "node:test";
 
 import { agentBootstrap, applyRecipeObject } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
-import { copyReleaseFixture, createTemporaryFixture, json } from "./vite-plus-fixtures.mjs";
+import { formatGeneratedText } from "../src/utils/generated-text.js";
+import { loadProjectFormatter } from "../src/utils/project-formatter.js";
+import {
+  copyReleaseFixture,
+  createTemporaryFixture,
+  json,
+  writeVitePlusFormatter,
+} from "./vite-plus-fixtures.mjs";
 
 const recipe = buildRecipe(
   "default",
@@ -179,4 +186,47 @@ test("Given a project Vite+ does not manage, when Calavera applies, then it writ
   const htmlValidate = await readFile(join(project.root, ".htmlvalidate.json"), "utf8");
   assert.equal(htmlValidate, json(JSON.parse(htmlValidate)));
   assert.match(htmlValidate, /"extends": \[\n/);
+});
+
+test("Given a repository-controls doc that vp fmt reshaped under an earlier release, when apply runs, then it stops, and --reown-managed-files replaces the doc", async () => {
+  await using project = await copyReleaseFixture("library");
+  await applyAndBootstrap(project.root);
+  const docs = join(project.root, "docs/repository-controls.md");
+  // What Oxfmt made of the old template: the closing paragraph indented into the last list item.
+  const reshaped = (await readFile(docs, "utf8")).replace(
+    "\n\nThe generated script verifies",
+    "\n  The generated script verifies",
+  );
+  await writeFile(docs, reshaped);
+
+  await inDirectory(project.root, async () => {
+    await assert.rejects(
+      applyRecipeObject(recipe, applyOptions),
+      /Refusing to overwrite existing managed file: docs\/repository-controls\.md/,
+    );
+    await applyRecipeObject(recipe, {
+      ...applyOptions,
+      reownManagedFiles: ["docs/repository-controls.md"],
+    });
+  });
+
+  assert.match(await readFile(docs, "utf8"), /\n\nThe generated script verifies/);
+  const check = vpFmt(project.root, ["--check", "docs/repository-controls.md"]);
+  assert.equal(check.status, 0, `vp fmt --check failed:\n${check.stdout}${check.stderr}`);
+});
+
+test("formatGeneratedText formats JSON and Markdown only, and refuses Markdown that vite.config.ts printed into", async () => {
+  await using project = await createTemporaryFixture("generated-text", {});
+  const refuse = () => Promise.reject(new Error("the formatter was loaded"));
+  assert.equal(
+    await formatGeneratedText(".editorconfig", "root = true\n", refuse),
+    "root = true\n",
+  );
+
+  await writeVitePlusFormatter(project.root, { banner: "dotenv: injected 2 variables" });
+  const noisy = await loadProjectFormatter(project.root, "managed");
+  await assert.rejects(
+    formatGeneratedText("docs/notes.md", "# Notes\n", async () => noisy),
+    /returned text for docs\/notes\.md that does not start with the line Calavera sent, "# Notes"\. It begins: "dotenv: injected 2 variables"\. Make sure vite\.config\.ts prints nothing/,
+  );
 });
