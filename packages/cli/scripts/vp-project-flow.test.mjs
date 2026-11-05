@@ -4,17 +4,21 @@
 // vite-plus 1.0.0. Each case applies to a temporary copy of the committed
 // fixture, never to the fixture itself.
 import assert from "node:assert/strict";
-import { mkdir, readFile, readdir } from "node:fs/promises";
+import { mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { callMcpTool } from "../src/mcp.js";
 import { textHash } from "../src/utils/hash.js";
+import { writeMcpServersJsonConfig } from "../src/utils/mcp-config.js";
+import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { isRemovedToolchainId } from "./removed-toolchain-ids.mjs";
 import {
   copyReleaseFixture,
   createTemporaryFixture,
   readStubInvocations,
+  writeVitePlusFormatter,
   writeVitePlusStub,
 } from "./vite-plus-fixtures.mjs";
 
@@ -104,11 +108,17 @@ const toolchainDependency =
 // The quality script each case gets (ADR-0013): a workspace root runs every
 // member's test script, as the template's own ready script does. Only the
 // root of the pnpm workspace installs with -w (#731).
+//
+// A workspace member does not take the protected branch guard: it writes Git
+// hooks, and Git runs every hook from the repository root, so apply refuses
+// the guard in a member (ADR-0015, Decision 5; protected-branch-guard-apply
+// tests). The member case asserts that refusal instead of the wiring.
 const cases = [
   {
     name: "library",
     fixture: "library",
     directory: ".",
+    guard: true,
     integrations: rootIntegrations,
     quality: "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip",
     installFlags: [],
@@ -117,6 +127,7 @@ const cases = [
     name: "monorepo root",
     fixture: "monorepo",
     directory: ".",
+    guard: true,
     integrations: rootIntegrations,
     quality: "vp check && vp run -r test && pnpm lint:styles && pnpm knip",
     installFlags: ["-w"],
@@ -125,6 +136,7 @@ const cases = [
     name: "monorepo member packages/utils",
     fixture: "monorepo",
     directory: "packages/utils",
+    guard: false,
     integrations: memberIntegrations,
     quality: "vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip",
     installFlags: [],
@@ -141,6 +153,40 @@ async function copyRepositoryFixture(name) {
   const fixture = await copyReleaseFixture(name);
   await mkdir(join(fixture.root, ".git"));
   return fixture;
+}
+
+const guardId = "skill-protected-branch-guard";
+const guardSkillDirectory = ".agents/skills/protected-branch-guard";
+const guardHookScripts = [
+  ".vite-hooks/pre-commit",
+  ".vite-hooks/prepare-commit-msg",
+  ".vite-hooks/pre-push",
+];
+const guardSettingsPath = ".claude/settings.json";
+const guardCommand = (/** @type {string} */ mode) =>
+  `node ${guardSkillDirectory}/scripts/guard.mjs ${mode} main`;
+// Stands in for createMcpLaunchCommand("pnpm"), which index.js does not export;
+// the flow does not depend on the command, only on the file staying as written.
+const bootstrapLaunchCommand = {
+  command: "pnpm",
+  args: ["dlx", "--package", "create-project-calavera", "create-project-calavera-mcp"],
+};
+const guardRecipeItem = { id: guardId, inputs: { protectedBranch: "main" } };
+
+// The registry stand-in serves the workspace payload of the guard, so the flow
+// installs offline and from exactly what this repository ships.
+const registry = () => stubRegistry(new Map([[guardId, "0.1.0"]]));
+
+/**
+ * Writes the pre-commit script `vp create` leaves in a project, which the
+ * `--no-git` fixtures lack. The scripts live at the repository root, whatever
+ * the project directory is.
+ *
+ * @param {string} root
+ */
+async function seedViteHooks(root) {
+  await mkdir(join(root, ".vite-hooks"));
+  await writeFile(join(root, ".vite-hooks/pre-commit"), "vp staged\n");
 }
 
 /**
@@ -197,11 +243,20 @@ function plannedScripts(changes) {
  * Drives the flow up to and including apply_recipe, asserting each step, and
  * returns what the second dry run needs.
  *
- * @param {{ fixture: "library" | "monorepo", directory: string, integrations: string[], quality: string }} flowCase
+ * @param {{ fixture: "library" | "monorepo", directory: string, integrations: string[], quality: string, guard: boolean }} flowCase
  * @param {string} root
  */
-async function runFlow({ directory, integrations, quality }, root) {
+async function runFlow({ directory, integrations, quality, guard }, root) {
   const project = join(root, directory);
+  await seedViteHooks(root);
+  // Apply formats .claude/settings.json through the project's own vp, which the
+  // fixtures do not install. This stand-in hands `vp fmt` to the repository's Oxfmt.
+  await writeVitePlusFormatter(root);
+  // The bootstrap's registration step, with the writer `--init --mcp-harness
+  // claude-code` calls, so the flow starts from the file the bootstrap wrote.
+  await inDirectory(project, () =>
+    writeMcpServersJsonConfig(".mcp.json", bootstrapLaunchCommand, false, []),
+  );
   const before = await snapshotTree(root);
   const manifestPath = join(directory, "package.json");
   const manifestBefore = JSON.parse(before.get(manifestPath).toString("utf8"));
@@ -233,6 +288,7 @@ async function runFlow({ directory, integrations, quality }, root) {
       profile: "default",
       packageManager: "pnpm",
       tools: [...new Set([...composed.recipe.integrations, ...integrations])],
+      ...(guard ? { aiArtifacts: [guardRecipeItem] } : {}),
       ...(integrations.includes("github-repository-controls")
         ? {
             integrationOptions: {
@@ -243,7 +299,7 @@ async function runFlow({ directory, integrations, quality }, root) {
     });
     assert.deepEqual(recipe.integrations.filter(isRemovedToolchainId), []);
 
-    const dryRun = await callMcpTool("dry_run_apply", { recipe });
+    const dryRun = await callMcpTool("dry_run_apply", { recipe }, registry());
     const { changes } = dryRun.result;
     const writes = calaveraWrites(changes);
     const scripts = plannedScripts(changes);
@@ -277,7 +333,7 @@ async function runFlow({ directory, integrations, quality }, root) {
     );
     assert.deepEqual(await snapshotTree(root), before, "the dry run changed a file");
 
-    const applied = await callMcpTool("apply_recipe", { recipe, noInstall: true });
+    const applied = await callMcpTool("apply_recipe", { recipe, noInstall: true }, registry());
     assert.equal(applied.result.dryRun, false);
     assert.deepEqual(applied.result.changes, changes);
 
@@ -307,12 +363,15 @@ async function runFlow({ directory, integrations, quality }, root) {
     );
 
     const after = await snapshotTree(root);
+    // Apply changes package.json, and with the guard it inserts a block into the
+    // seeded pre-commit script; every other file it did not plan stays as it was.
+    const edited = new Set([manifestPath, ...(guard ? [".vite-hooks/pre-commit"] : [])]);
     for (const [path, contents] of before) {
-      if (path === manifestPath) continue;
+      if (edited.has(path)) continue;
       assert.ok(after.get(path)?.equals(contents), `${path} is not byte-for-byte unchanged`);
     }
 
-    return { recipe, changes, writes };
+    return { recipe, changes, writes, applied, before };
   });
 }
 
@@ -325,7 +384,7 @@ for (const flowCase of cases) {
     const { recipe, changes } = await runFlow(flowCase, fixture.root);
 
     const secondDryRun = await inDirectory(join(fixture.root, flowCase.directory), () =>
-      callMcpTool("dry_run_apply", { recipe }),
+      callMcpTool("dry_run_apply", { recipe }, registry()),
     );
     const findings = secondDryRun.result.projectInspection.findings;
 
@@ -338,9 +397,24 @@ for (const flowCase of cases) {
       ),
       [],
     );
+    // With the guard, three entries differ for reasons unrelated to drift: the
+    // second dry run no longer reports the installed skill directory or the
+    // .coderabbit.yaml that installing a skill writes, and the hook scripts and
+    // settings file are now "update" instead of "write" because they exist. The
+    // wiring entries are compared by path and type, and the rest exactly.
+    const wiringPaths = new Set(flowCase.guard ? [...guardHookScripts, guardSettingsPath] : []);
+    const notReported = new Set(flowCase.guard ? [guardSkillDirectory, ".coderabbit.yaml"] : []);
+    const exact = (/** @type {Array<{ path?: string }>} */ list) =>
+      list.filter(({ path }) => !wiringPaths.has(path) && !notReported.has(path));
     assert.deepEqual(
-      secondDryRun.result.changes,
-      changes.map((change) => ({ ...change, type: "unchanged" })),
+      exact(secondDryRun.result.changes),
+      exact(changes).map((change) => ({ ...change, type: "unchanged" })),
+    );
+    assert.deepEqual(
+      secondDryRun.result.changes
+        .filter(({ path }) => wiringPaths.has(path))
+        .map(({ path, type }) => [path, type]),
+      [...wiringPaths].map((path) => [path, "unchanged"]),
     );
     assert.deepEqual(secondDryRun.result.vitePlus.lines, managedLines);
   });
@@ -378,7 +452,7 @@ for (const flowCase of cases) {
     const { recipe } = await runFlow(flowCase, fixture.root);
 
     const secondDryRun = await inDirectory(join(fixture.root, flowCase.directory), () =>
-      callMcpTool("dry_run_apply", { recipe }),
+      callMcpTool("dry_run_apply", { recipe }, registry()),
     );
 
     assert.deepEqual(
@@ -441,3 +515,231 @@ for (const flowCase of cases) {
     ]);
   });
 }
+
+// #748: the protected branch guard and its wiring, the Knip ignore, the
+// bootstrap's MCP registration, and the written .editorconfig, on the committed
+// Vite+ fixtures. The registry stand-in serves the guard offline, so no case
+// installs a package or runs a Git commit. The fixtures hold a `.git` directory
+// that is not a real repository, so the hook scripts and .claude/settings.json
+// are checked as text; whether Git runs them belongs to the guard's own tests
+// and the readiness check.
+const rootCases = cases.filter(({ guard }) => guard);
+const memberCase = cases.find(({ guard }) => !guard);
+const guardFragmentPath = fileURLToPath(
+  new URL(
+    "../../artifacts/skill-protected-branch-guard/payload/protected-branch-guard/hooks/claude-code.settings.json",
+    import.meta.url,
+  ),
+);
+const guardBlock = (/** @type {string} */ line) =>
+  `# calavera:${guardId}:start\n${line}\n# calavera:${guardId}:end\n`;
+
+/**
+ * Applies the flow to a copy of the fixture, then hands the result to `check`.
+ *
+ * @param {(typeof cases)[number]} flowCase
+ * @param {(flow: Awaited<ReturnType<typeof runFlow>> & { root: string, project: string }) => Promise<void>} check
+ */
+async function afterApply(flowCase, check) {
+  await using fixture = await copyRepositoryFixture(flowCase.fixture);
+  const flow = await runFlow(flowCase, fixture.root);
+  await check({ ...flow, root: fixture.root, project: join(fixture.root, flowCase.directory) });
+}
+
+for (const flowCase of rootCases) {
+  test(`vp create ${flowCase.name}: Given .vite-hooks/pre-commit holding vp staged, when the flow runs with the guard and the Knip integration, then the apply result lists the skill directory, the three .vite-hooks scripts, and .claude/settings.json, and .calavera/state.json records all of them`, async () => {
+    await afterApply(flowCase, async ({ applied, project }) => {
+      const listed = applied.result.changes.map(({ path }) => path);
+      for (const path of [guardSkillDirectory, ...guardHookScripts, guardSettingsPath]) {
+        assert.ok(listed.includes(path), `the apply result does not list ${path}`);
+      }
+      assert.ok(listed.includes("knip.json"), "the apply result does not list knip.json");
+
+      const state = JSON.parse(await readFile(join(project, ".calavera/state.json"), "utf8"));
+      assert.ok(
+        state.aiArtifacts.some(({ path }) => path === guardSkillDirectory),
+        "the state does not record the skill directory",
+      );
+      const wiring = state.aiWiring.find(({ artifact }) => artifact === guardId);
+      assert.deepEqual(wiring.viteHooks, {
+        "pre-commit": guardCommand("commit"),
+        "prepare-commit-msg": guardCommand("commit"),
+        "pre-push": guardCommand("pre-push"),
+      });
+      assert.deepEqual(Object.keys(wiring.claudeCode), ["SessionStart", "PreToolUse"]);
+      await stat(join(project, guardSkillDirectory, "scripts/guard.mjs"));
+    });
+  });
+
+  test(`vp create ${flowCase.name}: Given the case after apply, when .vite-hooks/pre-commit is read, then the guard block comes first, vp staged follows it unchanged, and the guard command ends with main`, async () => {
+    await afterApply(flowCase, async ({ project }) => {
+      const hook = (/** @type {string} */ name) =>
+        readFile(join(project, ".vite-hooks", name), "utf8");
+      const commit = guardCommand("commit");
+
+      assert.equal(await hook("pre-commit"), `${guardBlock(commit)}vp staged\n`);
+      // The other two scripts did not exist, so they hold the block alone.
+      assert.equal(await hook("prepare-commit-msg"), guardBlock(commit));
+      assert.equal(await hook("pre-push"), guardBlock(guardCommand("pre-push")));
+      for (const name of ["pre-commit", "prepare-commit-msg", "pre-push"]) {
+        const [, line] = (await hook(name)).split("\n");
+        assert.ok(line.endsWith(" main"), `${name}: ${line}`);
+      }
+    });
+  });
+
+  test(`vp create ${flowCase.name}: Given the case after apply, when .claude/settings.json is read, then it holds exactly the fragment's SessionStart and PreToolUse groups, each command ending with main`, async () => {
+    await afterApply(flowCase, async ({ project }) => {
+      const fragment = JSON.parse(
+        (await readFile(guardFragmentPath, "utf8")).replaceAll("{{protectedBranch}}", "main"),
+      );
+      // Parsed, not byte for byte: apply formats the file through the project's own vp fmt.
+      const settings = JSON.parse(await readFile(join(project, guardSettingsPath), "utf8"));
+
+      assert.deepEqual(settings, fragment);
+      assert.deepEqual(Object.keys(settings.hooks), ["SessionStart", "PreToolUse"]);
+      for (const group of Object.values(settings.hooks).flat()) {
+        for (const { command } of group.hooks) {
+          assert.ok(command.endsWith(" main"), command);
+        }
+      }
+    });
+  });
+
+  test(`vp create ${flowCase.name}: Given the case after apply, when calavera.config.json is read, then it records protectedBranch main`, async () => {
+    await afterApply(flowCase, async ({ project }) => {
+      const config = JSON.parse(await readFile(join(project, "calavera.config.json"), "utf8"));
+      assert.deepEqual(
+        config.ai.filter(({ id }) => id === guardId),
+        [guardRecipeItem],
+      );
+    });
+  });
+
+  test(`vp create ${flowCase.name}: Given the case after apply, when a second dry_run_apply runs, then it plans no write and no update for any Calavera file, including the three hook scripts and .claude/settings.json`, async () => {
+    await afterApply(flowCase, async ({ recipe, project }) => {
+      const { result } = await inDirectory(project, () =>
+        callMcpTool("dry_run_apply", { recipe }, registry()),
+      );
+
+      assert.deepEqual(
+        result.changes.filter(({ type }) => type === "write" || type === "update"),
+        [],
+      );
+      const planned = result.changes.map(({ path }) => path);
+      for (const path of [...guardHookScripts, guardSettingsPath]) {
+        assert.ok(planned.includes(path), `the second dry run does not mention ${path}`);
+      }
+      assert.deepEqual(
+        result.wiringChanges.map(({ path, type }) => [path, type]),
+        [...guardHookScripts, guardSettingsPath].map((path) => [path, "unchanged"]),
+      );
+    });
+  });
+}
+
+for (const flowCase of cases) {
+  test(`vp create ${flowCase.name}: Given the case after apply, when knip.json is read, then its ignore equals [".agents/**"]`, async () => {
+    await afterApply(flowCase, async ({ project }) => {
+      const knip = JSON.parse(await readFile(join(project, "knip.json"), "utf8"));
+      assert.deepEqual(knip.ignore, [".agents/**"]);
+    });
+  });
+
+  test(`vp create ${flowCase.name}: Given a project where the bootstrap registration step has run with --mcp-harness claude-code, when the flow applies the recipe, then .mcp.json holds mcpServers.calavera, apply does not list .mcp.json as a change, and the file is byte-for-byte what the bootstrap wrote`, async () => {
+    await afterApply(flowCase, async ({ applied, project, before }) => {
+      const written = await readFile(join(project, ".mcp.json"));
+      const bootstrapBytes = before.get(join(flowCase.directory, ".mcp.json"));
+
+      assert.deepEqual(JSON.parse(written.toString("utf8")), {
+        mcpServers: { calavera: bootstrapLaunchCommand },
+      });
+      assert.deepEqual(
+        applied.result.changes.filter(({ path }) => path?.endsWith(".mcp.json")),
+        [],
+      );
+      assert.ok(bootstrapBytes?.equals(written), ".mcp.json differs from what the bootstrap wrote");
+    });
+  });
+
+  test(`vp create ${flowCase.name}: Given the written .editorconfig, when its content is read, then it equals the expected text, line for line`, async () => {
+    await afterApply(flowCase, async ({ project }) => {
+      const expected = [
+        "root = true",
+        "",
+        "[*]",
+        "charset = utf-8",
+        "end_of_line = lf",
+        "insert_final_newline = true",
+        "indent_style = space",
+        "indent_size = 2",
+        "trim_trailing_whitespace = true",
+        "",
+      ];
+      const written = (await readFile(join(project, ".editorconfig"), "utf8")).split("\n");
+
+      assert.equal(written.length, expected.length);
+      for (const [index, line] of expected.entries()) {
+        assert.equal(written[index], line, `.editorconfig line ${index + 1}`);
+      }
+    });
+  });
+}
+
+test(`vp create ${memberCase?.name}: Given the guard in a workspace member, when dry_run_apply and apply_recipe run, then both refuse because Git runs hooks from the repository root, and nothing is written`, async () => {
+  assert.ok(memberCase);
+  await using fixture = await copyRepositoryFixture(memberCase.fixture);
+  await seedViteHooks(fixture.root);
+  await writeVitePlusFormatter(fixture.root);
+  const before = await snapshotTree(fixture.root);
+
+  await inDirectory(join(fixture.root, memberCase.directory), async () => {
+    const { recipe } = await callMcpTool("compose_recipe", {
+      profile: "default",
+      packageManager: "pnpm",
+      tools: memberCase.integrations,
+      aiArtifacts: [guardRecipeItem],
+    });
+    const refusal =
+      /skill-protected-branch-guard applies at the repository root, not in a workspace member/;
+
+    await assert.rejects(callMcpTool("dry_run_apply", { recipe }, registry()), refusal);
+    await assert.rejects(
+      callMcpTool("apply_recipe", { recipe, noInstall: true }, registry()),
+      refusal,
+    );
+  });
+
+  assert.deepEqual(await snapshotTree(fixture.root), before, "the refusal changed a file");
+});
+
+test("vp create library: Given a registry stand-in that serves a payload whose hash differs from the lock, when apply runs, then it refuses and writes nothing", async () => {
+  const [flowCase] = cases;
+  await afterApply(flowCase, async ({ recipe, root, project }) => {
+    // Without the stored package, apply restores the locked payload from the registry.
+    await rm(join(project, ".calavera/packages"), { recursive: true });
+    const served = registry();
+    const tampered = {
+      resolve: served.resolve,
+      extract: async (/** @type {any} */ resolution, /** @type {string} */ destination) => ({
+        ...(await served.extract(resolution, destination)),
+        payloadHash: "f".repeat(64),
+      }),
+    };
+    // The refused restore leaves its staging directory, which holds no project file.
+    const snapshot = async () =>
+      new Map(
+        [...(await snapshotTree(root))].filter(([path]) => !path.includes(".calavera/.staging")),
+      );
+    const before = await snapshot();
+
+    await inDirectory(project, () =>
+      assert.rejects(
+        callMcpTool("apply_recipe", { recipe, noInstall: true }, tampered),
+        /Locked payload hash mismatch for skill-protected-branch-guard/,
+      ),
+    );
+
+    assert.deepEqual(await snapshot(), before, "the refused apply changed a file");
+  });
+});
