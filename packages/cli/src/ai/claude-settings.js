@@ -119,10 +119,12 @@ function fragmentGroups(fragment, skillDirectory) {
 }
 
 /**
+ * Whether any hook in a matcher group runs a script from the skill directory.
+ *
  * @param {unknown} group
  * @param {string} skillDirectory
  */
-function runsSkill(group, skillDirectory) {
+export function runsSkill(group, skillDirectory) {
   return (
     isObject(group) &&
     Array.isArray(group.hooks) &&
@@ -205,6 +207,7 @@ function recordedGroups(recorded, event, artifactId) {
  * @param {HookGroups | undefined} options.recorded The groups apply wrote last, from the state record.
  * @param {string} options.skillDirectory The installed skill directory, such as .agents/skills/protected-branch-guard.
  * @param {import("../utils/project-formatter.js").ProjectFormatter} options.formatter Formats the rewritten file the way the project's own formatter would.
+ * @param {boolean} [options.deselected] Whether the recipe no longer selects the artifact, so apply only removes its groups, and a conflict says so.
  * @returns {Promise<ClaudeSettingsPlan>}
  */
 export async function planClaudeSettings({
@@ -215,6 +218,7 @@ export async function planClaudeSettings({
   recorded,
   skillDirectory,
   formatter,
+  deselected = false,
 }) {
   const groups = fragmentGroups(fragment, skillDirectory);
   const directory = `${skillDirectory.replace(/\/+$/, "")}/`;
@@ -288,8 +292,14 @@ export async function planClaudeSettings({
         const shared = /** @type {HookGroup} */ (group).hooks.some(
           (handler) => !handlerRunsSkill(handler, skillDirectory),
         );
+        const found = `hooks.${event} holds a group that runs ${directory} and ${written.length === 0 ? "Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\nThe file now holds:\n${showGroup(group)}\n`;
+        const remove = shared
+          ? `remove only the hook in that group that runs ${directory}, keep your other hooks,`
+          : "remove that group";
         return conflict(
-          `hooks.${event} holds a group that runs ${directory} and ${written.length === 0 ? "Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\nThe file now holds:\n${showGroup(group)}\nCalavera would write:\n${desired.map((candidate) => indent(toJSONText(candidate))).join("\n") || "  nothing"}\nTo let Calavera write ${artifactId}'s hooks, ${shared ? `remove only the hook in that group that runs ${directory}, keep your other hooks,` : "remove that group"} and run apply again.`,
+          deselected
+            ? `${found}The recipe no longer selects ${artifactId}, so Calavera would remove its groups, but it never deletes a group that was edited. To let Calavera finish, ${remove} or restore it to what Calavera wrote, and run apply again.`
+            : `${found}Calavera would write:\n${desired.map((candidate) => indent(toJSONText(candidate))).join("\n") || "  nothing"}\nTo let Calavera write ${artifactId}'s hooks, ${remove} and run apply again.`,
         );
       }
     }

@@ -18,6 +18,7 @@ import {
   spinner,
   text,
 } from "@clack/prompts";
+import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { execa } from "execa";
 import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
@@ -33,8 +34,10 @@ import {
 } from "./repository-root.js";
 import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
 import {
+  artifactWiringFindings,
   artifactWiringWarnings,
   gitHookArtifactIds,
+  installedSkillDirectory,
   planArtifactWiring,
   writeArtifactWiring,
 } from "./ai/artifact-wiring.js";
@@ -2610,6 +2613,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
           payloadDirectory: sourcePath,
         })),
       previousRecords: previousState.aiWiring,
+      skillDirectoryFor: (id) => installedSkillDirectory(id, previousState.aiArtifacts),
       loadFormatter: () =>
         (formatter ??= loadProjectFormatter(process.cwd(), vitePlusDetection.status)),
     });
@@ -2925,7 +2929,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
  * @param {string[]} integrations
  * @param {ManagedFileState[]} managedFiles
  * @param {AiArtifactState[]} aiArtifacts
- * @param {import("./ai/artifact-wiring.js").WiringRecord[]} aiWiring What apply wrote for the selected artifacts; records of artifacts no longer selected are kept, because their wiring stays in the project.
+ * @param {import("./ai/artifact-wiring.js").WiringRecord[]} aiWiring The wiring in the project after apply. It replaces the previous records, because apply removes the wiring of every artifact the recipe no longer selects, and a record of removed wiring would describe text the files no longer hold.
  * @returns {CalaveraState}
  */
 function mergeRecipeIntoState(
@@ -2955,12 +2959,7 @@ function mergeRecipeIntoState(
     files: nextManagedFiles.map((file) => file.path),
     managedFiles: nextManagedFiles,
     aiArtifacts,
-    aiWiring: [
-      ...previousState.aiWiring.filter(
-        ({ artifact }) => !aiWiring.some((record) => record.artifact === artifact),
-      ),
-      ...aiWiring,
-    ],
+    aiWiring,
   };
 }
 
@@ -3937,10 +3936,14 @@ function formatWiringChange({
   removedBlock,
   groupChanges,
   reformatted,
+  deselected,
 }) {
+  const because = deselected
+    ? `because the recipe no longer selects ${artifact}`
+    : `because ${artifact} no longer wires that hook`;
   if (removedBlock !== undefined) {
     return [
-      `Would remove the ${artifact} block from ${path}, because ${artifact} no longer wires that hook: ${quoteScriptValue(removedBlock)}`,
+      `Would remove the ${artifact} block from ${path}, ${because}: ${quoteScriptValue(removedBlock)}`,
     ];
   }
   if (kind === "vite-hook") {
@@ -3957,7 +3960,7 @@ function formatWiringChange({
         ? `Would add a ${event} group for ${artifact} to ${path}: ${quoteScriptValue(group)}`
         : action === "replace"
           ? `Would replace the ${event} group for ${artifact} in ${path}: ${quoteScriptValue(previous)} with ${quoteScriptValue(group)}`
-          : `Would remove the ${event} group for ${artifact} from ${path}: ${quoteScriptValue(previous)}`,
+          : `Would remove the ${event} group for ${artifact} from ${path}${deselected ? `, because the recipe no longer selects ${artifact}` : ""}: ${quoteScriptValue(previous)}`,
     ),
     ...(reformatted
       ? [
@@ -4297,7 +4300,11 @@ async function doctor(options) {
     }
 
     for (const artifact of aiArtifacts) {
-      await assertAiSourceExists(artifact.type, artifact.sourcePath, artifact.index);
+      // A packaged artifact's payload comes from the lock and .calavera/packages, not from its
+      // legacy source path, which no project holds; `artifacts status` checks the lock.
+      if (!artifactForId(artifact.source)) {
+        await assertAiSourceExists(artifact.type, artifact.sourcePath, artifact.index);
+      }
 
       for (const path of aiArtifactOutputPaths(artifact)) {
         if (!(await fileExists(path))) {
@@ -4308,6 +4315,16 @@ async function doctor(options) {
         }
       }
     }
+
+    // ADR-0015, Decision 5: the hook blocks and Claude Code groups apply recorded.
+    const state = await readStateIfPresent();
+    issues.push(
+      ...(await artifactWiringFindings({
+        records: state.aiWiring,
+        selected: new Set(aiArtifacts.map(({ source }) => source)),
+        skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
+      })),
+    );
   }
 
   return {

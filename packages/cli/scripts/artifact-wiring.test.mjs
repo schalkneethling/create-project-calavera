@@ -8,7 +8,9 @@ import { fileURLToPath } from "node:url";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 
 import {
+  artifactWiringFindings,
   artifactWiringWarnings,
+  installedSkillDirectory,
   planArtifactWiring,
   writeArtifactWiring,
 } from "../src/ai/artifact-wiring.js";
@@ -454,5 +456,155 @@ test("Given an installed payload without the Claude Code fragment, when apply pl
   await assert.rejects(
     plan(project.root, { artifacts: [{ ...guard, payloadDirectory: project.root }] }),
     /skill-protected-branch-guard wires Claude Code with hooks\/claude-code\.settings\.json, but the installed payload in .* has no such file.*Run create-project-calavera artifacts update skill-protected-branch-guard/s,
+  );
+});
+
+test("Given recorded wiring of an artifact the recipe no longer selects, when apply plans, then it removes the blocks and groups and keeps no record", async () => {
+  await using project = await createTemporaryFixture("wiring-deselected", {
+    ".vite-hooks/pre-commit": "vp staged\n",
+  });
+  const first = await plan(project.root);
+  await writeArtifactWiring(first.files, project.root);
+
+  // With no state entry for the skill, its directory comes from the catalog.
+  const deselected = await plan(project.root, {
+    recipe: { ai: [] },
+    artifacts: [],
+    previousRecords: first.records,
+  });
+  assert.deepEqual(
+    deselected.files.map(({ path, type, contents }) => [path, type, contents]),
+    [
+      [".vite-hooks/pre-commit", "update", "vp staged\n"],
+      [".vite-hooks/prepare-commit-msg", "update", ""],
+      [".vite-hooks/pre-push", "update", ""],
+      [".claude/settings.json", "update", "{}\n"],
+    ],
+  );
+  assert.ok(deselected.changes.every((change) => change.deselected === true));
+  assert.deepEqual(deselected.records, []);
+
+  // Once the groups are gone, a deselected artifact reports no settings change.
+  await writeArtifactWiring(deselected.files, project.root);
+  const again = await plan(project.root, {
+    recipe: { ai: [] },
+    artifacts: [],
+    previousRecords: first.records,
+  });
+  assert.deepEqual(again.changes, []);
+  assert.deepEqual(again.records, []);
+});
+
+test("Given a deselected artifact that neither the state nor the catalog places, when its groups are planned, then the error names the artifact and the remedy", async () => {
+  await using project = await createTemporaryFixture("wiring-deselected-unknown", {});
+  const first = await plan(project.root);
+  await writeArtifactWiring(first.files, project.root);
+
+  await assert.rejects(
+    plan(project.root, {
+      recipe: { ai: [] },
+      artifacts: [],
+      previousRecords: first.records,
+      skillDirectoryFor: () => undefined,
+    }),
+    /neither the state record nor this version of Calavera says where skill-protected-branch-guard was installed[\s\S]*Run apply with a version of Calavera that knows skill-protected-branch-guard/,
+  );
+});
+
+test("installedSkillDirectory reads the state record first, then the catalog, and knows no other artifact", () => {
+  const installed = [
+    { type: "skill", name: "x", source: id, path: ".agents/skills/moved", hash: "h" },
+  ];
+  assert.equal(installedSkillDirectory(id, /** @type {any} */ (installed)), ".agents/skills/moved");
+  assert.equal(installedSkillDirectory(id, []), skillDirectory);
+  assert.equal(installedSkillDirectory("hook-block-dangerous-commands", []), undefined);
+  assert.equal(installedSkillDirectory("skill-unknown", []), undefined);
+});
+
+test("Given unreadable settings or a broken marker pair, doctor's wiring findings name the file and the remedy", async () => {
+  await using project = await createTemporaryFixture("wiring-doctor-broken", {
+    ".vite-hooks/pre-commit": "vp staged\n",
+  });
+  const first = await plan(project.root);
+  await writeArtifactWiring(first.files, project.root);
+  await mkdir(join(project.root, skillDirectory, "scripts"), { recursive: true });
+  await writeFile(join(project.root, skillDirectory, "scripts/guard.mjs"), "");
+  const findings = () =>
+    artifactWiringFindings({
+      records: first.records,
+      selected: new Set([id]),
+      skillDirectoryFor: () => skillDirectory,
+      cwd: project.root,
+    });
+
+  assert.deepEqual(await findings(), []);
+
+  await writeFile(join(project.root, ".claude/settings.json"), "{");
+  const prePush = join(project.root, ".vite-hooks/pre-push");
+  await writeFile(prePush, (await readFile(prePush, "utf8")).replace(`# calavera:${id}:end\n`, ""));
+  const messages = (await findings()).map(({ level, message }) => `${level} ${message}`);
+  assert.equal(messages.length, 2);
+  assert.match(
+    messages[0] ?? "",
+    /^warning \.vite-hooks\/pre-push: the Calavera block for skill-protected-branch-guard has a start marker without an end marker[\s\S]*run apply again/,
+  );
+  assert.match(
+    messages[1] ?? "",
+    /^warning \.claude\/settings\.json is not valid JSON .*Fix the JSON and run doctor again\./,
+  );
+});
+
+test("Given a deselected artifact's wiring that is missing or edited, doctor's remedy is the apply that drops the record or the person's own removal", async () => {
+  await using project = await createTemporaryFixture("wiring-doctor-deselected", {
+    ".vite-hooks/pre-commit": "vp staged\n",
+  });
+  const first = await plan(project.root);
+  await writeArtifactWiring(first.files, project.root);
+  await mkdir(join(project.root, skillDirectory, "scripts"), { recursive: true });
+  await writeFile(join(project.root, skillDirectory, "scripts/guard.mjs"), "");
+  await writeFile(join(project.root, ".vite-hooks/pre-commit"), "vp staged\n");
+  const prePush = join(project.root, ".vite-hooks/pre-push");
+  await writeFile(
+    prePush,
+    (await readFile(prePush, "utf8")).replace("pre-push main", "pre-push x"),
+  );
+  const settingsPath = join(project.root, ".claude/settings.json");
+  const settings = JSON.parse(await readFile(settingsPath, "utf8"));
+  delete settings.hooks.SessionStart;
+  settings.hooks.PreToolUse[0].matcher = "Write";
+  await writeFile(settingsPath, JSON.stringify(settings, null, 2));
+
+  const messages = (
+    await artifactWiringFindings({
+      records: first.records,
+      selected: new Set(),
+      skillDirectoryFor: () => skillDirectory,
+      cwd: project.root,
+    })
+  ).map(({ message }) => message);
+  assert.deepEqual(
+    messages.map((message) => message.split(":")[0]),
+    [
+      ".vite-hooks/pre-commit",
+      ".vite-hooks/pre-push",
+      ".claude/settings.json",
+      ".claude/settings.json",
+    ],
+  );
+  assert.match(
+    messages[0] ?? "",
+    /is missing, and the recipe no longer selects skill-protected-branch-guard, so nothing needs to run there\. Run create-project-calavera apply to drop the record\./,
+  );
+  assert.match(
+    messages[1] ?? "",
+    /was edited since Calavera wrote it, and the recipe no longer selects skill-protected-branch-guard, so the next apply stops with a conflict instead of removing it\. Restore it to "node \.agents\/skills\/protected-branch-guard\/scripts\/guard\.mjs pre-push main" so apply removes it/,
+  );
+  assert.match(
+    messages[2] ?? "",
+    /the SessionStart group for skill-protected-branch-guard that Calavera recorded is missing, and the recipe no longer selects/,
+  );
+  assert.match(
+    messages[3] ?? "",
+    /a PreToolUse group that runs \.agents\/skills\/protected-branch-guard\/ was edited since Calavera wrote it, and the recipe no longer selects .* so apply removes it, or remove that group yourself/,
   );
 });
