@@ -14,6 +14,7 @@ import {
   planArtifactWiring,
   writeArtifactWiring,
 } from "../src/ai/artifact-wiring.js";
+import { normalizeState } from "../src/state.js";
 import { loadProjectFormatter } from "../src/utils/project-formatter.js";
 import { createTemporaryFixture } from "./vite-plus-fixtures.mjs";
 
@@ -606,5 +607,41 @@ test("Given a deselected artifact's wiring that is missing or edited, doctor's r
   assert.match(
     messages[3] ?? "",
     /a PreToolUse group that runs \.agents\/skills\/protected-branch-guard\/ was edited since Calavera wrote it, and the recipe no longer selects .* so apply removes it, or remove that group yourself/,
+  );
+});
+
+test("A recorded hook name that would leave .vite-hooks is a damaged state record, so neither apply nor doctor reaches the file", () => {
+  assert.throws(
+    () =>
+      normalizeState({
+        aiWiring: [{ artifact: "evil", viteHooks: { "../outside/victim": "node x.mjs" } }],
+      }),
+    /Calavera state contains invalid aiWiring entries\./,
+  );
+  assert.deepEqual(
+    normalizeState({ aiWiring: [{ artifact: id, viteHooks: { "pre-push": line("pre-push") } }] })
+      .aiWiring,
+    [{ artifact: id, viteHooks: { "pre-push": line("pre-push") } }],
+  );
+});
+
+test("Given a hand-edited record whose command leaves the skill directory, doctor reports the damaged record instead of checking that path", async () => {
+  const tampered = `node ../outside/x.mjs main`;
+  await using project = await createTemporaryFixture("wiring-doctor-tampered", {
+    ".vite-hooks/pre-push": `# calavera:${id}:start\n${tampered}\n# calavera:${id}:end\n`,
+  });
+  const findings = await artifactWiringFindings({
+    records: [{ artifact: id, viteHooks: { "pre-push": tampered } }],
+    selected: new Set([id]),
+    skillDirectoryFor: () => skillDirectory,
+    cwd: project.root,
+  });
+  assert.deepEqual(
+    findings.map(({ level }) => level),
+    ["warning"],
+  );
+  assert.match(
+    findings[0]?.message ?? "",
+    /^\.vite-hooks\/pre-push: the skill-protected-branch-guard block holds what Calavera recorded, but the record is not a command Calavera writes: .*must start with "node \.agents\/skills\/protected-branch-guard\/"/,
   );
 });

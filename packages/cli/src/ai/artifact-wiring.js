@@ -423,6 +423,7 @@ export async function artifactWiringFindings({
   for (const { artifact: id, viteHooks, claudeCode } of records) {
     const isSelected = selected.has(id);
     const deselectedNote = `the recipe no longer selects ${id}`;
+    const directory = skillDirectoryFor(id);
 
     for (const [hook, recorded] of Object.entries(viteHooks ?? {})) {
       const path = `.vite-hooks/${hook}`;
@@ -446,9 +447,18 @@ export async function artifactWiringFindings({
             : `${path}: the ${id} block was edited since Calavera wrote it, and ${deselectedNote}, so the next apply stops with a conflict instead of removing it. Restore it to "${recorded}" so apply removes it, or remove the block yourself, both markers included, or delete its markers to keep it as your own, and run ${apply}.`,
         );
       } else {
-        // The recorded line passed viteHookCommandProblem, so its second word is the script.
+        // The state file can be edited by hand, so the recorded line is checked again before its
+        // second word is read as a script path inside the skill directory.
+        const problem =
+          directory === undefined
+            ? `doctor does not know where ${id} is installed`
+            : viteHookCommandProblem(recorded, directory);
         const script = recorded.split(" ")[1];
-        if (script !== undefined && !(await exists(resolve(cwd, script)))) {
+        if (problem !== undefined) {
+          warn(
+            `${path}: the ${id} block holds what Calavera recorded, but the record is not a command Calavera writes: ${problem} Check the block and .calavera/state.json before you run ${apply}.`,
+          );
+        } else if (script !== undefined && !(await exists(resolve(cwd, script)))) {
           findings.push({
             level: "error",
             message: `${path}: the ${id} block runs ${script}, which does not exist, so the ${hook} hook fails and Git refuses every ${hook === "pre-push" ? "push" : "commit"}. ${isSelected ? `Run ${apply} to install the skill again.` : `Because ${deselectedNote}, ${apply} removes the block; the dry run lists the removal first.`}`,
@@ -473,7 +483,6 @@ export async function artifactWiringFindings({
         continue;
       }
     }
-    const directory = skillDirectoryFor(id);
     for (const [event, groups] of Object.entries(claudeCode)) {
       const present = Array.isArray(hooks[event]) ? /** @type {unknown[]} */ (hooks[event]) : [];
       const recorded = Array.isArray(groups) ? groups : [];
