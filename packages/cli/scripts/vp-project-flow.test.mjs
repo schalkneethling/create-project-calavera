@@ -416,6 +416,13 @@ for (const flowCase of cases) {
         .map(({ path, type }) => [path, type]),
       [...wiringPaths].map((path) => [path, "unchanged"]),
     );
+    // The two entries left out above may be absent, but never anything but unchanged.
+    assert.deepEqual(
+      secondDryRun.result.changes.filter(
+        ({ path, type }) => notReported.has(path) && type !== "unchanged",
+      ),
+      [],
+    );
     assert.deepEqual(secondDryRun.result.vitePlus.lines, managedLines);
   });
 }
