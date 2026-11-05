@@ -12,7 +12,11 @@ export async function issueRefund(db, orderId, { amountCents, retries = false } 
   let result;
   for (let attempt = 0; ; attempt++) {
     try {
-      result = await refund({ orderId, amountCents: amount, idempotencyKey: `refund:${orderId}:${attempt}` });
+      result = await refund({
+        orderId,
+        amountCents: amount,
+        idempotencyKey: `refund:${orderId}:${attempt}`,
+      });
       break;
     } catch (err) {
       if (!retries || attempt >= 2) throw err;

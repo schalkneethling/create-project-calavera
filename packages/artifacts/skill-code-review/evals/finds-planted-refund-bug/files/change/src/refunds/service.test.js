@@ -4,7 +4,12 @@ import { issueRefund } from "./service.js";
 
 function fakeDb(order) {
   const orders = new Map([["o1", order]]);
-  return { orders: { get: async (id) => orders.get(id), update: async (id, patch) => orders.set(id, { ...orders.get(id), ...patch }) } };
+  return {
+    orders: {
+      get: async (id) => orders.get(id),
+      update: async (id, patch) => orders.set(id, { ...orders.get(id), ...patch }),
+    },
+  };
 }
 
 test("refunds the full amount by default", async () => {

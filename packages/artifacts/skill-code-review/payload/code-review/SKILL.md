@@ -15,9 +15,9 @@ Arguments: `$ARGUMENTS`
 
 Read the arguments. They take one of two shapes:
 
-| Shape | Example | Meaning |
-|---|---|---|
-| A GitHub pull request | `https://github.com/org/repo/pull/123` or `org/repo#123` | Review that PR at its head commit. |
+| Shape                 | Example                                                           | Meaning                                                                               |
+| --------------------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| A GitHub pull request | `https://github.com/org/repo/pull/123` or `org/repo#123`          | Review that PR at its head commit.                                                    |
 | A folder and a branch | `~/code/store-bff feature/refunds` or `. feature/refunds develop` | Review that branch against its base (third argument, else the remote default branch). |
 
 Flags, anywhere in the arguments:
@@ -39,18 +39,18 @@ Run the collector from the project root (the scripts live in `.agents/skills/cod
 
 In that folder:
 
-| File | Read it for |
-|---|---|
-| `meta.json` | title, body, author, base, head, counts, and `checkout`: a checkout of the head commit you can read code from |
-| `diff.patch` | the full diff, base to head |
-| `diff-numbered.patch` | the same diff with the new-file line number in front of every kept line. Cite from here, do not count. |
-| `files.txt` | every changed path with its status and line counts |
-| `commits.txt` | the commits, oldest first: they tell you the author's plan |
-| `comments.json`, `issue-comments.json` | review comments already on the PR. Do not raise what someone already raised. Ignore comments that are not about the code. |
-| `threads.json` | review threads with `resolved` and the last reply. A thread a person resolved is settled: do not raise it again unless the code got worse since. A still-open finding you also found: keep its wording. |
-| `issues.json` | issues the PR body links, with title and body. These are the requirements. |
-| `checks.json` | CI results on the head commit. A failed check is a finding only if the diff causes it. |
-| `uncommitted.patch`, `untracked.txt` | branch shape only, when the branch is checked out and has uncommitted work. Review it too, and say it is uncommitted. |
+| File                                   | Read it for                                                                                                                                                                                             |
+| -------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `meta.json`                            | title, body, author, base, head, counts, and `checkout`: a checkout of the head commit you can read code from                                                                                           |
+| `diff.patch`                           | the full diff, base to head                                                                                                                                                                             |
+| `diff-numbered.patch`                  | the same diff with the new-file line number in front of every kept line. Cite from here, do not count.                                                                                                  |
+| `files.txt`                            | every changed path with its status and line counts                                                                                                                                                      |
+| `commits.txt`                          | the commits, oldest first: they tell you the author's plan                                                                                                                                              |
+| `comments.json`, `issue-comments.json` | review comments already on the PR. Do not raise what someone already raised. Ignore comments that are not about the code.                                                                               |
+| `threads.json`                         | review threads with `resolved` and the last reply. A thread a person resolved is settled: do not raise it again unless the code got worse since. A still-open finding you also found: keep its wording. |
+| `issues.json`                          | issues the PR body links, with title and body. These are the requirements.                                                                                                                              |
+| `checks.json`                          | CI results on the head commit. A failed check is a finding only if the diff causes it.                                                                                                                  |
+| `uncommitted.patch`, `untracked.txt`   | branch shape only, when the branch is checked out and has uncommitted work. Review it too, and say it is uncommitted.                                                                                   |
 
 If the script fails, show its error and stop. Do not guess at a diff from memory.
 
@@ -122,12 +122,12 @@ A finding stays only if it passes every line of this test.
 
 Then give it a severity:
 
-| Severity | Meaning | Report it |
-|---|---|---|
-| **P0** | Data lost, money wrong or security broken if shipped. No recovery. | Always |
-| **P1** | Crashes, hangs, wrong behavior users will see, a broken caller, a new test that passes with the change reverted. | Always |
-| **P2** | Works, but a real maintenance or correctness risk: a missing test for changed behavior, a swallowed error, a duplicated helper. | With `--nits`. Without it, only when you can write the exact fix as a `suggestion` block: a few lines, all inside added lines, nothing to change elsewhere. At most two. |
-| **Nit** | Taste, naming, style. | Never, unless `--nits` |
+| Severity | Meaning                                                                                                                         | Report it                                                                                                                                                                |
+| -------- | ------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **P0**   | Data lost, money wrong or security broken if shipped. No recovery.                                                              | Always                                                                                                                                                                   |
+| **P1**   | Crashes, hangs, wrong behavior users will see, a broken caller, a new test that passes with the change reverted.                | Always                                                                                                                                                                   |
+| **P2**   | Works, but a real maintenance or correctness risk: a missing test for changed behavior, a swallowed error, a duplicated helper. | With `--nits`. Without it, only when you can write the exact fix as a `suggestion` block: a few lines, all inside added lines, nothing to change elsewhere. At most two. |
+| **Nit**  | Taste, naming, style.                                                                                                           | Never, unless `--nits`                                                                                                                                                   |
 
 Report every P0 and P1. Without `--nits`, a P2 earns its place by its fix, not its severity: if you can write the replacement lines exactly, it is cheap for the author and goes in, capped at two; if the fix needs judgement or touches other code, it waits for `--nits`. The rest are not lost, they are what `--nits` is for. An empty list is a valid result. "No problems found" is a good review when it is true; do not invent a P2 to look thorough.
 
@@ -148,8 +148,8 @@ Link what you name. In PR shape a file location is a link to the head commit: `[
 
 Use exactly this shape. Leave out any section that would be empty.
 
-```markdown
-## Review: <title> ([owner/repo#N](url))            ← branch shape: "## Review: <branch> against <base> in <folder>"
+````markdown
+## Review: <title> ([owner/repo#N](url)) ← branch shape: "## Review: <branch> against <base> in <folder>"
 
 **Verdict:** Merge | Fix 2 before merge | Needs rework · **Risk:** Low | Medium | High | Critical
 <One sentence: what the change does.>
@@ -165,23 +165,27 @@ Use exactly this shape. Leave out any section that would be empty.
    ```suggestion
    <replacement for the quoted lines, only when the fix is a few lines and fully local>
    ```
+````
 
 2. 🟠 **P1 · Older clients lose `fieldErrors`** · `src/store-bff/filters/error.ts:41`, also `src/store-bff/filters/validation.ts:17`
    The filter now wraps the body in `{ error }` and drops `fieldErrors`. The app's form screens read `fieldErrors` (`apps/mobile/src/forms/useServerErrors.ts:23`) and will show a blank form on every validation failure.
    **Fix:** keep `fieldErrors` at the top level, or version the response.
 
-3. ⚪ **Nit · `retries` is a boolean named like a count** · `src/refunds/service.ts:12`          ← only with --nits
+3. ⚪ **Nit · `retries` is a boolean named like a count** · `src/refunds/service.ts:12` ← only with --nits
    **Fix:** rename to `shouldRetry`.
 
 ### Also worth knowing
+
 - CI: `unit-tests` failed on the head commit. The failure is in `cart.spec.ts` and is caused by finding 2.
 - Mutation: with the change reverted the suite still passes (`TESTS_EXIT=0`), so no test covers finding 1.
 - Asks without a line: there is no test for the new `CANCELLED -> REFUNDED` transition.
 <At most three bullets. A pre-existing problem takes one of them only when the PR touches the line next to it.>
 
 ### Checked and fine
+
 <Leave this out for small changes. For a risky change (migration, auth, payments), at most three bullets naming the thing a reviewer would otherwise check themselves, each with the file and line that handles it. Never a list of everything you looked at.>
-```
+
+````
 
 Severity markers: 🔴 P0, 🟠 P1, 🟡 P2, ⚪ Nit. Where the house rules forbid emoji, write `P0 ·` and so on without the marker. Sort findings by severity, then by file.
 
@@ -199,7 +203,7 @@ A review posted under the user's name reads as the user's own words. So:
 
 ```json
 { "event": "REQUEST_CHANGES", "body": "...", "comments": [ { "path": "src/x.ts", "line": 88, "side": "RIGHT", "body": "..." } ] }
-```
+````
 
 4. After the yes: `.agents/skills/code-review/scripts/post-review.sh <folder>/review.json`. It prints the review URL. Give the user that link.
 

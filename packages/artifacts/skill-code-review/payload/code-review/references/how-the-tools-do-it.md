@@ -31,12 +31,12 @@ Positioning: "Real bugs, not nitpicks." Benchmark (Sept 2025, 118 runtime bugs a
 
 Severity, labelled on every comment:
 
-| Label | Definition |
-|---|---|
-| CRITICAL | "Data lost or security breached if shipped, no recovery" |
-| HIGH | "Production crashes, hangs, or security degraded" |
-| MEDIUM | "Core functionality broken in production but recoverable" |
-| LOW | "Cosmetic or edge-case issues" |
+| Label    | Definition                                                |
+| -------- | --------------------------------------------------------- |
+| CRITICAL | "Data lost or security breached if shipped, no recovery"  |
+| HIGH     | "Production crashes, hangs, or security degraded"         |
+| MEDIUM   | "Core functionality broken in production but recoverable" |
+| LOW      | "Cosmetic or edge-case issues"                            |
 
 Configuration (web app, per repository, with org defaults):
 
@@ -56,20 +56,20 @@ Configuration lives in `.greptile/config.json`, `.greptile/rules.md`, `.greptile
 
 Key settings:
 
-| Setting | Default | Meaning |
-|---|---|---|
-| `strictness` | 2 | 1 comments on everything, 2 "comments on P2s less often", 3 "never comments on P2s" |
-| `commentTypes` | `["syntax","logic","style"]` | Drop `style` for no formatting comments; `["logic"]` for bugs only |
-| `autoReview` | `["open"]` | Add `"push"`, `"rebase"`; `[]` for manual only |
-| `triggerOnDrafts` | false | Drafts are skipped "to avoid noise during development" |
-| `ignorePatterns` | | gitignore syntax: lockfiles, generated code, vendor |
-| `excludeAuthors`, `disabledLabels`, `ignoreKeywords` | | Skip bots, release PRs, "WIP" |
-| `fileChangeLimit` | | Skip huge PRs |
-| `summarySection`, `issuesTableSection`, `confidenceScoreSection`, `sequenceDiagramSection` | on | Each `{included, collapsible, defaultOpen}` |
-| `statusCheck` | false | Replace "X files reviewed, no comments" chatter with a check run |
-| `fixWithAI` | | Add an agent prompt to each comment |
-| `instructions`, `rules[]` (`id`, `rule`, `scope`, `severity`), `rules.md` | | Free-form and structured house rules |
-| `autoApprove` | off | Approve clean 5/5 reviews under a risk ceiling; never for auth, secrets, billing, migrations, infra, public APIs |
+| Setting                                                                                    | Default                      | Meaning                                                                                                          |
+| ------------------------------------------------------------------------------------------ | ---------------------------- | ---------------------------------------------------------------------------------------------------------------- |
+| `strictness`                                                                               | 2                            | 1 comments on everything, 2 "comments on P2s less often", 3 "never comments on P2s"                              |
+| `commentTypes`                                                                             | `["syntax","logic","style"]` | Drop `style` for no formatting comments; `["logic"]` for bugs only                                               |
+| `autoReview`                                                                               | `["open"]`                   | Add `"push"`, `"rebase"`; `[]` for manual only                                                                   |
+| `triggerOnDrafts`                                                                          | false                        | Drafts are skipped "to avoid noise during development"                                                           |
+| `ignorePatterns`                                                                           |                              | gitignore syntax: lockfiles, generated code, vendor                                                              |
+| `excludeAuthors`, `disabledLabels`, `ignoreKeywords`                                       |                              | Skip bots, release PRs, "WIP"                                                                                    |
+| `fileChangeLimit`                                                                          |                              | Skip huge PRs                                                                                                    |
+| `summarySection`, `issuesTableSection`, `confidenceScoreSection`, `sequenceDiagramSection` | on                           | Each `{included, collapsible, defaultOpen}`                                                                      |
+| `statusCheck`                                                                              | false                        | Replace "X files reviewed, no comments" chatter with a check run                                                 |
+| `fixWithAI`                                                                                |                              | Add an agent prompt to each comment                                                                              |
+| `instructions`, `rules[]` (`id`, `rule`, `scope`, `severity`), `rules.md`                  |                              | Free-form and structured house rules                                                                             |
+| `autoApprove`                                                                              | off                          | Approve clean 5/5 reviews under a risk ceiling; never for auth, secrets, billing, migrations, infra, public APIs |
 
 Severity: **P0** "must fix before merging: security vulnerabilities, data loss, crashes", **P1** "should fix: bugs, incorrect behavior, edge cases", **P2** "consider fixing: code quality, maintainability, best practices". Strictness removes P2s; P0 and P1 always post.
 
@@ -142,32 +142,32 @@ Patterns that repeat across public configurations:
 - **Frappe** (Greptile rules.md): "Before reporting a finding, confirm the symbol, string or class exists where you say it does. Cite a file and line you read." "Report each cause once with the smallest correction. An empty finding list is a valid result." "One concern per comment, on the exact line, in short plain sentences." "The review body holds only asks with no line: tests, title, screenshots, rebase. Do not repeat inline points there." "Leave formatting to pre-commit."
 - **NVIDIA Megatron-LM** (Greptile): strictness 3, "Only comment if ... there is an important or critical bug", a disclaimer line "This is AI-generated."
 - **mirrord** (Greptile): "Review the logical change, not only the diff. Before commenting on lines, reconstruct what the pull request is supposed to accomplish from its title, description, and the issue it references, then check the implementation against that intent." "Before accepting a new helper, trait, module, or codepath, check whether an existing abstraction already covers it."
-- **Onyx**, **cline** (Greptile): rules that explain *why* something is not a bug in this codebase, to stop known false positives ("Do not flag hardcoded admin paths as bugs").
+- **Onyx**, **cline** (Greptile): rules that explain _why_ something is not a bug in this codebase, to stop known false positives ("Do not flag hardcoded admin paths as bugs").
 - **Project MONAI** (CodeRabbit): `tone_instructions: "Be terse and to the point in all statements and commentary."`, every walkthrough extra off, `ignore_title_keywords: ["WIP", "DO NOT MERGE"]`.
 - **Common CodeRabbit noise recipe**: `tone_instructions: "Focus only on critical bugs, security issues, and architectural concerns. Skip style nitpicks and minor improvements unless they significantly impact code quality."`, `poem: false`, `collapse_walkthrough: true`, path filters for lockfiles and generated code.
 - Everyone excludes bots (`dependabot[bot]`, `renovate[bot]`), release PRs, drafts and generated files on day one.
 
 ## 7. What the skill took from each
 
-| In the skill | From |
-|---|---|
-| P0 / P1 / P2 / Nit with P2 and nits off by default (`--nits`) | Greptile strictness and `commentTypes`; Macroscope Minimum Severity to Comment; CodeRabbit quiet profile |
-| Verdict line plus risk (Merge / Fix N before merge / Needs rework; Low to Critical) | Greptile confidence score and impact line; Macroscope severity definitions |
-| "Reconstruct the intent" and "read the acknowledgments" | mirrord's rule; Greptile's Acknowledgments section |
-| "Cite the file and line you read"; "an empty finding list is a valid result" | Frappe's rules; Greptile v3 hypothesis checking |
-| The comment test (linters catch it, already raised, one cause, say it to their face) | PostHog, Frappe, Greptile's nit clusters, CodeRabbit duplicate bucket |
-| Follow the change out of the diff: callers, siblings, consumers | Greptile code graph; mentor plugin's reviewer agent |
-| Finding shape: severity, bold title, what/why/fix in two to four sentences, suggestion only when local | Greptile and CodeRabbit inline comments; Macroscope's suggestion rule |
-| Top comment holds only asks with no line; inline points are not repeated | Frappe; CodeRabbit review body |
-| Existing threads and CI checks collected before reviewing | CodeRabbit incremental reviews and github-checks tool; Macroscope `waitsFor` |
-| House rules files read as criteria, not reviewed as code | CodeRabbit code guidelines; Greptile auto-detection |
-| Post only after the user sees the exact text | The rule every team above applies to anything posted in a person's name |
-| No poem, no walkthrough, no praise, no "checked" list unless it saves work | What the teams above turn off first |
-| Cap of two P2s, low-confidence high-impact findings allowed with the doubt stated, name the caller path, trigger first | PR-Agent review prompt and `num_max_findings` |
-| Never-list: docstrings, type hints, unused imports, "more specific exception", "please verify" | PR-Agent self-reflection zeros |
-| Numbered diff, anchor validation and range comments in the poster, invalid anchors folded into the body | PR-Agent hunk format and `try_fix_invalid_inline_comments` |
-| Re-review keeps earlier wording and does not re-raise a thread a human resolved | PR-Agent persistent finding state |
-| Linked issue requirements: met, not met, needs a human | PR-Agent ticket compliance |
+| In the skill                                                                                                           | From                                                                                                     |
+| ---------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| P0 / P1 / P2 / Nit with P2 and nits off by default (`--nits`)                                                          | Greptile strictness and `commentTypes`; Macroscope Minimum Severity to Comment; CodeRabbit quiet profile |
+| Verdict line plus risk (Merge / Fix N before merge / Needs rework; Low to Critical)                                    | Greptile confidence score and impact line; Macroscope severity definitions                               |
+| "Reconstruct the intent" and "read the acknowledgments"                                                                | mirrord's rule; Greptile's Acknowledgments section                                                       |
+| "Cite the file and line you read"; "an empty finding list is a valid result"                                           | Frappe's rules; Greptile v3 hypothesis checking                                                          |
+| The comment test (linters catch it, already raised, one cause, say it to their face)                                   | PostHog, Frappe, Greptile's nit clusters, CodeRabbit duplicate bucket                                    |
+| Follow the change out of the diff: callers, siblings, consumers                                                        | Greptile code graph; mentor plugin's reviewer agent                                                      |
+| Finding shape: severity, bold title, what/why/fix in two to four sentences, suggestion only when local                 | Greptile and CodeRabbit inline comments; Macroscope's suggestion rule                                    |
+| Top comment holds only asks with no line; inline points are not repeated                                               | Frappe; CodeRabbit review body                                                                           |
+| Existing threads and CI checks collected before reviewing                                                              | CodeRabbit incremental reviews and github-checks tool; Macroscope `waitsFor`                             |
+| House rules files read as criteria, not reviewed as code                                                               | CodeRabbit code guidelines; Greptile auto-detection                                                      |
+| Post only after the user sees the exact text                                                                           | The rule every team above applies to anything posted in a person's name                                  |
+| No poem, no walkthrough, no praise, no "checked" list unless it saves work                                             | What the teams above turn off first                                                                      |
+| Cap of two P2s, low-confidence high-impact findings allowed with the doubt stated, name the caller path, trigger first | PR-Agent review prompt and `num_max_findings`                                                            |
+| Never-list: docstrings, type hints, unused imports, "more specific exception", "please verify"                         | PR-Agent self-reflection zeros                                                                           |
+| Numbered diff, anchor validation and range comments in the poster, invalid anchors folded into the body                | PR-Agent hunk format and `try_fix_invalid_inline_comments`                                               |
+| Re-review keeps earlier wording and does not re-raise a thread a human resolved                                        | PR-Agent persistent finding state                                                                        |
+| Linked issue requirements: met, not met, needs a human                                                                 | PR-Agent ticket compliance                                                                               |
 
 ## 8. Sources
 
