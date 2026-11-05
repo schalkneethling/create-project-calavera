@@ -25,6 +25,16 @@ need git; need python3
 
 ROOT_TMP="${TMPDIR:-/tmp}/pr-review"
 
+# Empties and recreates the output folder. An existing folder is only replaced when it is one this
+# script made earlier (it holds meta.json), so a wrong argument can never delete a repository.
+fresh_out() {
+  if [[ -e "$1" ]]; then
+    [[ -d "$1" && -f "$1/meta.json" ]] || die "'$1' exists and is not a folder this script made; choose another out-dir"
+    rm -rf "$1"
+  fi
+  mkdir -p "$1"
+}
+
 # Writes diff-numbered.patch: every context and added line carries its line number in the new file,
 # so a reviewer can cite path:line without counting.
 number_diff() {
@@ -60,12 +70,13 @@ if [[ "$TARGET" =~ ^https?://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || [[ 
   OWNER="${BASH_REMATCH[1]}" REPO="${BASH_REMATCH[2]%.git}" NUM="${BASH_REMATCH[3]}"
   need gh
   OUT="${2:-$ROOT_TMP/$OWNER-$REPO-$NUM}"
-  rm -rf "$OUT"; mkdir -p "$OUT"
+  fresh_out "$OUT"
   API="repos/$OWNER/$REPO/pulls/$NUM"
 
   gh api "$API" > "$OUT/pr.json" || die "cannot read $OWNER/$REPO#$NUM (is gh logged in?)"
   gh api -H "Accept: application/vnd.github.v3.diff" "$API" > "$OUT/diff.patch"
-  gh api --paginate "$API/files" --jq '.[] | "\(.status)\t+\(.additions)\t-\(.deletions)\t\(.filename)"' > "$OUT/files.txt"
+  # A rename is listed as a removal of the old path and an addition of the new one, so a revert can undo it.
+  gh api --paginate "$API/files" --jq '.[] | if .status == "renamed" then "removed\t+0\t-0\t\(.previous_filename)\nadded\t+\(.additions)\t-\(.deletions)\t\(.filename)" else "\(.status)\t+\(.additions)\t-\(.deletions)\t\(.filename)" end' > "$OUT/files.txt"
   gh api --paginate "$API/commits" --jq '.[] | "\(.sha[0:8])  \(.commit.message | split("\n") | map(select(length > 0)) | join("\n    "))"' > "$OUT/commits.txt"
   gh api --paginate "$API/comments" --jq '[.[] | {path, line, user: .user.login, body: (.body[0:400]), url: .html_url}]' > "$OUT/comments.json" 2>/dev/null || echo '[]' > "$OUT/comments.json"
   gh api --paginate "repos/$OWNER/$REPO/issues/$NUM/comments" --jq '[.[] | {user: .user.login, body: (.body[0:600])}]' > "$OUT/issue-comments.json" 2>/dev/null || echo '[]' > "$OUT/issue-comments.json"
@@ -157,7 +168,7 @@ fi
 [[ -n "$BASE" ]] || die "cannot find a base branch; pass it as the third argument"
 
 OUT="${4:-$ROOT_TMP/$(basename "$REPO_ROOT")-$(echo "$BRANCH" | tr '/' '-')}"
-rm -rf "$OUT"; mkdir -p "$OUT"
+fresh_out "$OUT"
 
 # Compare against the freshest base we can get, without failing offline.
 BASE_REF="$BASE"
@@ -186,8 +197,8 @@ if [[ -z "$MERGE_BASE" ]]; then
   MERGE_BASE="$BASE_REF"; DIFF_BASIS="tip-to-tip"
 fi
 git -C "$REPO_ROOT" diff "$MERGE_BASE" "$BRANCH_REF" > "$OUT/diff.patch"
-paste <(git -C "$REPO_ROOT" diff --name-status "$MERGE_BASE" "$BRANCH_REF" | cut -f1) \
-      <(git -C "$REPO_ROOT" diff --numstat "$MERGE_BASE" "$BRANCH_REF") \
+paste <(git -C "$REPO_ROOT" diff --no-renames --name-status "$MERGE_BASE" "$BRANCH_REF" | cut -f1) \
+      <(git -C "$REPO_ROOT" diff --no-renames --numstat "$MERGE_BASE" "$BRANCH_REF") \
   | awk -F'\t' '{s=$1; sub(/^A.*/,"added",s); sub(/^M.*/,"modified",s); sub(/^D.*/,"removed",s); sub(/^R.*/,"renamed",s); printf "%s\t+%s\t-%s\t%s\n",s,$2,$3,$4}' > "$OUT/files.txt"
 # Subjects and bodies, oldest first: the bodies carry the author's reasons.
 git -C "$REPO_ROOT" log --reverse --format='%h  %s%n%w(0,4,4)%b' "$MERGE_BASE..$BRANCH_REF" | sed '/^ *$/d' > "$OUT/commits.txt"

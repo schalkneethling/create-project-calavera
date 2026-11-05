@@ -1,6 +1,6 @@
 interface:
   display_name: "Code Review"
-  short_description: "Review a pull request or branch for real bugs, with a verdict and verified findings."
+  short_description: "Review a pull request or branch for verified bugs."
   default_prompt: "Use $code-review to review this pull request or branch and report only verified findings with a severity, file and line, and the fix."
 policy:
   allow_implicit_invocation: false

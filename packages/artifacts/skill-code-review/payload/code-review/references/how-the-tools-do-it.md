@@ -29,7 +29,7 @@ Contents
 
 Positioning: "Real bugs, not nitpicks." Benchmark (Sept 2025, 118 runtime bugs across 45 repositories): Macroscope 48% detection at 2.55 comments per PR, CodeRabbit 46% at 10.84, Cursor Bugbot 42% at 0.91. Release v3 (Feb 2026) claims precision 75% to 98%, 22% fewer comments, 64% fewer nitpicks in Python and 80% in TypeScript.
 
-Severity, labelled on every comment:
+Severity, labeled on every comment:
 
 | Label    | Definition                                                |
 | -------- | --------------------------------------------------------- |
@@ -95,7 +95,7 @@ Inline comment: severity badge, bold three-to-six-word title naming the failure 
 
 What it learned about noise ("How to Make LLMs Shut Up", Dec 2024): prompting for fewer nits also cut real findings; LLM self-scored severity was near random; what worked was clustering past comments the team ignored or downvoted and blocking new comments similar to three or more of them. "Nits are subjective and team-specific." The metric is the address rate: the share of comments the author acted on before merge. v4 (Mar 2026) reports comments addressed per PR 0.92 to 1.60.
 
-Never suppressed by learning: security vulnerabilities, memory leaks, infinite loops, null pointer exceptions, missing input validation. Suppressed when consistently ignored: style, import organisation, non-critical documentation, naming, code organisation preferences.
+Never suppressed by learning: security vulnerabilities, memory leaks, infinite loops, null pointer exceptions, missing input validation. Suppressed when consistently ignored: style, import organization, non-critical documentation, naming, code organization preferences.
 
 ## 4. CodeRabbit
 

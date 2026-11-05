@@ -2,6 +2,7 @@
 name: code-review
 description: Reviews a pull request or a branch for real bugs and writes a short report with a verdict, a severity on every finding, the file and line, why it matters and the fix. Use this whenever the user asks to review, check, look over or give feedback on a PR, a pull request, a branch, a diff or a change set, gives a GitHub pull request URL, or names a folder and a branch, even if they do not say "review". Can post the review to GitHub after the user says yes.
 argument-hint: <github pull request url> | <folder> <branch> [base] [--post] [--nits] [--focus "..."]
+disable-model-invocation: true
 ---
 
 # Review a pull request or branch
@@ -29,11 +30,11 @@ No arguments and the current folder is a git repository: review the current bran
 
 ## 2. Collect the change
 
-Run the collector from the project root (the scripts live in `.agents/skills/code-review/scripts/`). It writes everything into one folder and prints that folder's path on its last line:
+Run the collector. The scripts live beside this file: `${CLAUDE_SKILL_DIR}` is the folder that holds this SKILL.md (Claude Code fills it in; in a Calavera project it is `.agents/skills/code-review`). It writes everything into one folder, `<out-dir>` from here on, and prints that folder's path on its last line:
 
 ```bash
-.agents/skills/code-review/scripts/resolve-target.sh <url>                       # PR shape
-.agents/skills/code-review/scripts/resolve-target.sh <folder> <branch> [base]    # branch shape
+${CLAUDE_SKILL_DIR}/scripts/resolve-target.sh <url>                       # PR shape
+${CLAUDE_SKILL_DIR}/scripts/resolve-target.sh <folder> <branch> [base]    # branch shape
 ```
 
 In that folder:
@@ -93,12 +94,14 @@ A finding from another bot or an earlier thread counts only after you have check
 
 ### Prove it with a mutation
 
-Reading a test tells you what it looks like. Running it against a broken version tells you what it checks. When the change touches code that has a runnable test suite, run the mutation script. It works in a throwaway worktree, never in the user's checkout, and prints `TESTS_EXIT=<code>` then the test output:
+Reading a test tells you what it looks like. Running it against a broken version tells you what it checks. When the change touches code that has a runnable test suite, run the mutation script. It works in a throwaway worktree, never in the user's checkout, and prints `TESTS_EXIT=<code>` then the test output. It runs the repository's own test command, so it is not pre-approved: expect a permission prompt, and in PR shape remember the code came from the pull request.
+
+`<out-dir>` below is always the folder the collector printed, never the repository.
 
 ```bash
-.agents/skills/code-review/scripts/mutate.sh <folder> --revert                          # base code, branch tests
-.agents/skills/code-review/scripts/mutate.sh <folder> --sed <path> '<sed expression>'  # one targeted mutation
-.agents/skills/code-review/scripts/mutate.sh <folder> --patch <file.diff>              # same, from a diff
+${CLAUDE_SKILL_DIR}/scripts/mutate.sh <out-dir> --revert                          # base code, branch tests
+${CLAUDE_SKILL_DIR}/scripts/mutate.sh <out-dir> --sed <path> '<sed expression>'  # one targeted mutation, path relative to the repository root
+${CLAUDE_SKILL_DIR}/scripts/mutate.sh <out-dir> --patch <file.diff>              # same, from a diff
 ```
 
 - **Always run `--revert` when the diff adds or changes tests.** It restores every non-test file to its base version and keeps the branch's tests. A new or changed test that still passes was not testing the change. That is a P1 on the test: it certifies behavior it does not check, which is worse than no test. Quote the `TESTS_EXIT` line and the passing test's name as evidence.
@@ -128,7 +131,7 @@ Then give it a severity:
 | **P2**   | Works, but a real maintenance or correctness risk: a missing test for changed behavior, a swallowed error, a duplicated helper. | With `--nits`. Without it, only when you can write the exact fix as a `suggestion` block: a few lines, all inside added lines, nothing to change elsewhere. At most two. |
 | **Nit**  | Taste, naming, style.                                                                                                           | Never, unless `--nits`                                                                                                                                                   |
 
-Report every P0 and P1. Without `--nits`, a P2 earns its place by its fix, not its severity: if you can write the replacement lines exactly, it is cheap for the author and goes in, capped at two; if the fix needs judgement or touches other code, it waits for `--nits`. The rest are not lost, they are what `--nits` is for. An empty list is a valid result. "No problems found" is a good review when it is true; do not invent a P2 to look thorough.
+Report every P0 and P1. Without `--nits`, a P2 earns its place by its fix, not its severity: if you can write the replacement lines exactly, it is cheap for the author and goes in, capped at two; if the fix needs judgment or touches other code, it waits for `--nits`. The rest are not lost, they are what `--nits` is for. An empty list is a valid result. "No problems found" is a good review when it is true; do not invent a P2 to look thorough.
 
 ## 5. Write the report
 
@@ -198,13 +201,13 @@ A review posted under the user's name reads as the user's own words. So:
 
 1. Build the review from the report. One inline comment per finding, anchored to the finding's file and line on the head commit, with the same title, body and fix. The top comment holds only the verdict line and asks that have no line. Do not repeat inline points there. Nits and P2s that were not in the report are not posted.
 2. Choose the event: `REQUEST_CHANGES` when there is a P0 or P1, `APPROVE` when there are no findings, `COMMENT` otherwise.
-3. Write it to `review.json` in the collector's folder in this shape, then **show the user the exact text and wait for a yes**. One yes is for one post.
+3. Write it to `review.json` in `<out-dir>` in this shape, then **show the user the exact text and wait for a yes**. One yes is for one post.
 
 ```json
 { "event": "REQUEST_CHANGES", "body": "...", "comments": [ { "path": "src/x.ts", "line": 88, "side": "RIGHT", "body": "..." } ] }
 ````
 
-4. After the yes: `.agents/skills/code-review/scripts/post-review.sh <folder>/review.json`. It prints the review URL. Give the user that link.
+4. After the yes: `${CLAUDE_SKILL_DIR}/scripts/post-review.sh <out-dir>/review.json`. It prints the review URL. Give the user that link.
 
 Each comment takes `line`, or `start_line` and `line` for a range. The poster checks every anchor against the diff first: a range partly outside the diff is shrunk to its lines inside it, and a comment with no line in the diff is moved into the top comment under "Outside the diff". Run it with `--dry-run` to see the payload before the yes if anything looks off.
 
@@ -212,7 +215,7 @@ On a re-review of a PR you or someone else already reviewed: keep the wording of
 
 ## 7. Clean up
 
-When the review is done and posted or not, run `.agents/skills/code-review/scripts/cleanup.sh <folder>` to remove the worktree or clone. Skip this if the user may want to ask follow-up questions about the code; then say where the checkout is.
+When the review is done and posted or not, run `${CLAUDE_SKILL_DIR}/scripts/cleanup.sh <out-dir>` to remove the worktree or clone. It refuses any folder the collector did not make. Skip this if the user may want to ask follow-up questions about the code; then say where the checkout is.
 
 ## When the user asks a follow-up
 

@@ -1,3 +1,3 @@
 # refund-service
 
-Issues refunds for cancelled orders through the payment gateway.
+Issues refunds for canceled orders through the payment gateway.

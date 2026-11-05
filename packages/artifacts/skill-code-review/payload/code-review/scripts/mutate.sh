@@ -71,7 +71,10 @@ elif [[ "$MODE" == "patch" ]]; then
   git apply --index "$PATCH" || { echo "mutate: patch does not apply" >&2; exit 1; }
   echo "mutate: applied $(basename "$PATCH")" >&2
 else
-  [[ -f "$SED_PATH" ]] || { echo "mutate: no such file $SED_PATH" >&2; exit 1; }
+  # The path is relative to the repository root, so the edit stays inside the throwaway worktree.
+  SED_PATH="${SED_PATH#"$CHECKOUT"/}"
+  case "$SED_PATH" in /*|../*|*/../*|*/..) echo "mutate: give a path relative to the repository root, not $SED_PATH" >&2; exit 1 ;; esac
+  [[ -f "$SED_PATH" ]] || { echo "mutate: no such file $SED_PATH in the worktree" >&2; exit 1; }
   sed -i -e "$SED_EXPR" "$SED_PATH"
   if git diff --quiet -- "$SED_PATH"; then echo "mutate: the sed expression changed nothing in $SED_PATH" >&2; exit 1; fi
   echo "mutate: mutated $SED_PATH:" >&2; git diff --no-color -U0 -- "$SED_PATH" | grep '^[-+][^-+]' >&2
