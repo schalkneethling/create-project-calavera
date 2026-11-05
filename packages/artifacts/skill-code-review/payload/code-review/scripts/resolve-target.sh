@@ -86,7 +86,7 @@ for o, r, n in re.findall(r"(?:([\w.-]+)/([\w.-]+))?#(\d+)\b", body):
     key = (o or owner, r or repo, int(n))
     if key in seen: continue
     seen.add(key)
-    res = subprocess.run(["gh", "api", f"repos/{key[0]}/{key[1]}/issues/{key[2]}"], capture_output=True, text=True)
+    res = subprocess.run(["gh", "api", f"repos/{key[0]}/{key[1]}/issues/{key[2]}"], stdout=subprocess.PIPE, stderr=subprocess.DEVNULL, text=True)
     if res.returncode != 0: continue
     i = json.loads(res.stdout)
     if "pull_request" in i: continue
@@ -213,7 +213,7 @@ number_diff "$OUT"
 python3 - "$OUT" "$REPO_ROOT" "$BRANCH" "$BRANCH_REF" "$BASE" "$MERGE_BASE" "$DIFF_BASIS" "$CHECKOUT" "$UNCOMMITTED" <<'PY'
 import json, subprocess, sys
 out, root, branch, ref, base, merge_base, diff_basis, checkout, uncommitted = sys.argv[1:]
-def git(*a): return subprocess.run(["git","-C",root,*a],capture_output=True,text=True).stdout.strip()
+def git(*a): return subprocess.run(["git","-C",root,*a],stdout=subprocess.PIPE, stderr=subprocess.DEVNULL,text=True).stdout.strip()
 stat = git("diff","--shortstat",merge_base,ref)
 files = sum(1 for _ in open(f"{out}/files.txt"))
 meta = {

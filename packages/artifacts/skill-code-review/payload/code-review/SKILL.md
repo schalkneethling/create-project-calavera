@@ -2,7 +2,6 @@
 name: code-review
 description: Reviews a pull request or a branch for real bugs and writes a short report with a verdict, a severity on every finding, the file and line, why it matters and the fix. Use this whenever the user asks to review, check, look over or give feedback on a PR, a pull request, a branch, a diff or a change set, gives a GitHub pull request URL, or names a folder and a branch, even if they do not say "review". Can post the review to GitHub after the user says yes.
 argument-hint: <github pull request url> | <folder> <branch> [base] [--post] [--nits] [--focus "..."]
-allowed-tools: Bash(.agents/skills/code-review/scripts/*), Bash(git *), Bash(gh api *), Bash(gh pr *), Read, Grep, Glob
 ---
 
 # Review a pull request or branch
@@ -90,7 +89,7 @@ A finding goes in the report only after you have read the code that proves it. C
 
 One exception: when you are not sure but the impact would be data loss, money or security, report it, and say in the finding what you could not confirm. This is for a cause you have not reported yet, never for a second symptom of one you have. For anything smaller, not reporting beats guessing.
 
-Do not trust a finding from another bot or an earlier thread without checking it yourself.
+A finding from another bot or an earlier thread counts only after you have checked it yourself.
 
 ### Prove it with a mutation
 
