@@ -85,7 +85,7 @@ async function writePackageManagerStubs(bin) {
  * @param {{ vitePlus?: { exitCode?: number } }} [options]
  */
 async function managedProject({ vitePlus } = {}) {
-  const project = await copyReleaseFixture("library");
+  const project = await copyReleaseFixture("library", { vitePlus: false });
   const tools = await createTemporaryFixture("install-tools", {});
   const vpLog = join(tools.root, "vp.log");
 
@@ -535,15 +535,17 @@ test("in a workspace member without its own package.json under a Vite+ workspace
   );
 });
 
-test("a Vite+-managed project without vite-plus installed: the dry run reports it, and apply stops before writing anything", async () => {
+// #669: apply formats the files it writes with the project's own vp fmt, so without vite-plus
+// neither the dry run nor an apply with --no-install can say what apply would write.
+const formatterMissing =
+  /uses Vite\+, but Calavera cannot find its vite-plus package, so it cannot format the files it writes the way vp check expects\. Run vp install, then run Calavera again\./;
+
+test("a Vite+-managed project without vite-plus installed: the dry run and every apply stop before writing anything and say to install", async () => {
   await using workspace = await managedProject();
 
   const dryRun = await runCli(workspace, ["apply", "--dry-run"]);
-  assert.equal(dryRun.code, 0, dryRun.stderr);
-  assert.match(
-    dryRun.stdout,
-    /^Apply with the install stops before writing anything: .*vite-plus is not installed/m,
-  );
+  assert.equal(dryRun.code, 1);
+  assert.match(dryRun.stderr, formatterMissing);
 
   const result = await runCli(workspace, ["apply", "--yes"]);
   assert.equal(result.code, 1);
@@ -554,15 +556,18 @@ test("a Vite+-managed project without vite-plus installed: the dry run reports i
   );
   assert.match(
     result.stderr,
-    /run apply with --no-install and add these development dependencies yourself: knip\. Calavera stopped before writing anything\./,
+    /Install the project's dependencies, then run apply again\. Calavera stopped before writing anything\./,
   );
+  // --no-install would stop as well, so the message does not offer it.
+  assert.doesNotMatch(result.stderr, /--no-install/);
   assert.doesNotMatch(result.stderr, /\bvp install\b/);
-  assert.equal(await exists(join(workspace.project, "knip.json")), false);
-  assert.equal(await exists(join(workspace.project, ".calavera/state.json")), false);
   assert.deepEqual(await readStubInvocations(workspace.packageManagerLog), []);
 
   const skipped = await runCli(workspace, ["apply", "--yes", "--no-install"]);
-  assert.equal(skipped.code, 0, skipped.stderr);
+  assert.equal(skipped.code, 1);
+  assert.match(skipped.stderr, formatterMissing);
+  assert.equal(await exists(join(workspace.project, "knip.json")), false);
+  assert.equal(await exists(join(workspace.project, ".calavera/state.json")), false);
 });
 
 const unusableVitePlus = [

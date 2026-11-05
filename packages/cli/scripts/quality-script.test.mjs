@@ -13,7 +13,7 @@ import { promisify } from "node:util";
 
 import { applyRecipeObject } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
-import { createTemporaryFixture } from "./vite-plus-fixtures.mjs";
+import { createTemporaryFixture, writeVitePlusFormatter } from "./vite-plus-fixtures.mjs";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
@@ -64,6 +64,8 @@ function packageChange(changes) {
  */
 async function plannedPackageChange(files, recipe) {
   await using fixture = await createTemporaryFixture("quality", files);
+  // A managed project formats what apply writes with its own vite-plus (#669).
+  await writeVitePlusFormatter(fixture.root);
 
   return await inDirectory(fixture.root, async () =>
     packageChange((await applyRecipeObject(recipe, dryRunOptions)).changes),
@@ -80,6 +82,8 @@ async function plannedPackageChange(files, recipe) {
  */
 async function appliedScripts(files, integrations, packageManager = "npm") {
   await using fixture = await createTemporaryFixture("quality", files);
+  // A managed project formats what apply writes with its own vite-plus (#669).
+  await writeVitePlusFormatter(fixture.root);
   const recipe = buildRecipe("default", integrations, packageManager);
 
   return await inDirectory(fixture.root, async () => {
@@ -284,6 +288,7 @@ test("the CLI dry run names the vp run -r test step it leaves out of quality", a
     ...workspacesWithoutTest[0].files,
     "calavera.config.json": json(buildRecipe("default", ["stylelint"], "npm")),
   });
+  await writeVitePlusFormatter(fixture.root);
   const { stdout } = await execFileAsync(process.execPath, [cliPath, "apply", "--dry-run"], {
     cwd: fixture.root,
     env: { ...process.env, NO_COLOR: "1" },
@@ -359,6 +364,7 @@ test("a workspace member with a manifest of its own runs vp test --passWithNoTes
     "package.json": managedManifest({ workspaces: ["packages/*"] }),
     "packages/member/package.json": `${JSON.stringify({ name: "member" }, null, 2)}\n`,
   });
+  await writeVitePlusFormatter(fixture.root);
   const scripts = await inDirectory(join(fixture.root, "packages/member"), async () => {
     await applyRecipeObject(buildRecipe("default", ["stylelint"], "npm"), applyOptions);
     return JSON.parse(await readFile("package.json", "utf8")).scripts;

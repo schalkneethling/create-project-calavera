@@ -2,10 +2,12 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { fileExists, writeJSON } from "./fs.js";
+import { fileExists } from "./fs.js";
+import { formatGeneratedText } from "./generated-text.js";
 import { isPlainObject } from "./guards.js";
 
 /**
+ * @typedef {() => Promise<import("./project-formatter.js").ProjectFormatter>} LoadFormatter
  * @typedef {{ command: string, args: string[] }} McpLaunchCommand
  * @typedef {"claude-code" | "codex" | "cursor" | "opencode" | "skip"} McpHarness
  * @typedef {"write" | "update" | "skip"} McpConfigAction
@@ -56,15 +58,31 @@ async function readProjectJsonConfigIfPresent(path) {
 }
 
 /**
+ * Writes `nextConfig` as the text the project's formatter produces, so a Vite+ project's
+ * `vp check` accepts the file and a second run finds it up to date (#669).
+ *
  * @param {string} path
  * @param {Record<string, unknown>} nextConfig
  * @param {boolean} dryRun
  * @param {McpConfigChange[]} changes
+ * @param {LoadFormatter} loadFormatter
  * @param {string} [currentContents]
  * @returns {Promise<McpConfigAction>}
  */
-async function writeProjectJsonConfig(path, nextConfig, dryRun, changes, currentContents) {
+async function writeProjectJsonConfig(
+  path,
+  nextConfig,
+  dryRun,
+  changes,
+  loadFormatter,
+  currentContents,
+) {
   const targetPath = normalizeConfigPath(path);
+  const nextContents = await formatGeneratedText(
+    targetPath,
+    `${JSON.stringify(nextConfig, null, 2)}\n`,
+    loadFormatter,
+  );
 
   if (currentContents === undefined) {
     changes.push({ type: "write", path: targetPath });
@@ -74,13 +92,11 @@ async function writeProjectJsonConfig(path, nextConfig, dryRun, changes, current
       if (directory !== ".") {
         await mkdir(directory, { recursive: true });
       }
-      await writeJSON(targetPath, nextConfig, false);
+      await writeFile(targetPath, nextContents);
     }
 
     return "write";
   }
-
-  const nextContents = `${JSON.stringify(nextConfig, null, 2)}\n`;
 
   if (currentContents === nextContents) {
     changes.push({ type: "skip", path: targetPath, reason: "Already up to date." });
@@ -113,9 +129,16 @@ export function createMcpServersJsonConfig(launchCommand) {
  * @param {McpLaunchCommand} launchCommand
  * @param {boolean} dryRun
  * @param {McpConfigChange[]} changes
+ * @param {LoadFormatter} loadFormatter
  * @returns {Promise<McpConfigAction>}
  */
-export async function writeMcpServersJsonConfig(path, launchCommand, dryRun, changes) {
+export async function writeMcpServersJsonConfig(
+  path,
+  launchCommand,
+  dryRun,
+  changes,
+  loadFormatter,
+) {
   const targetPath = normalizeConfigPath(path);
   const { currentConfig, currentContents } = await readProjectJsonConfigIfPresent(targetPath);
   const mcpServers = currentConfig.mcpServers;
@@ -135,6 +158,7 @@ export async function writeMcpServersJsonConfig(path, launchCommand, dryRun, cha
     },
     dryRun,
     changes,
+    loadFormatter,
     currentContents,
   );
 }
@@ -262,9 +286,10 @@ export function createOpenCodeMcpJsonConfig(launchCommand) {
  * @param {McpLaunchCommand} launchCommand
  * @param {boolean} dryRun
  * @param {McpConfigChange[]} changes
+ * @param {LoadFormatter} loadFormatter
  * @returns {Promise<McpConfigAction>}
  */
-export async function writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes) {
+export async function writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes, loadFormatter) {
   const targetPath = normalizeConfigPath(path);
   const { currentConfig, currentContents } = await readProjectJsonConfigIfPresent(targetPath);
   const mcp = currentConfig.mcp;
@@ -292,6 +317,7 @@ export async function writeOpenCodeMcpConfig(path, launchCommand, dryRun, change
     },
     dryRun,
     changes,
+    loadFormatter,
     currentContents,
   );
 }

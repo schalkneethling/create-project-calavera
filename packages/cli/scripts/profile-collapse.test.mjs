@@ -28,6 +28,7 @@ import {
   libraryManifest,
   plainViteManifest,
   vitePlusConfig,
+  writeVitePlusFormatter,
 } from "./vite-plus-fixtures.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -93,10 +94,13 @@ async function inDirectory(directory, callback) {
 }
 
 async function managedFixture() {
-  return createTemporaryFixture("profiles-managed", {
+  const fixture = await createTemporaryFixture("profiles-managed", {
     "package.json": json(libraryManifest),
     "vite.config.ts": vitePlusConfig,
   });
+  // Installed, as in a project vp create made, so apply can format what it writes (#669).
+  await writeVitePlusFormatter(fixture.root);
+  return fixture;
 }
 
 async function unmanagedFixture() {

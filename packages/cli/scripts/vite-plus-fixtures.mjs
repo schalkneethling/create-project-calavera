@@ -29,6 +29,9 @@ export async function createTemporaryFixture(label, files) {
   };
 }
 
+/** This repository's Oxfmt command line, which the stand-in `vp fmt` runs. */
+const oxfmtBin = fileURLToPath(new URL("../bin/oxfmt", import.meta.resolve("oxfmt")));
+
 /** The vite-plus release the committed `vp create` fixtures were generated with. */
 export const vitePlusFixtureRelease = "1.0.0";
 
@@ -45,14 +48,22 @@ export function releaseFixturePath(name) {
 
 /**
  * Copies a committed `vp create` fixture into a disposable temporary directory,
- * so a test can apply to the copy without mutating the committed files.
+ * so a test can apply to the copy without mutating the committed files. Like
+ * `vp create`, which installs the project's dependencies, the copy has a
+ * vite-plus package whose `vp fmt` formats the files Calavera writes
+ * (`writeVitePlusFormatter`). Pass `{ vitePlus: false }` for a project whose
+ * dependencies are not installed.
  *
  * @param {"library" | "monorepo"} name
+ * @param {{ vitePlus?: boolean }} [options]
  */
-export async function copyReleaseFixture(name) {
+export async function copyReleaseFixture(name, { vitePlus = true } = {}) {
   const directory = await mkdtempDisposable(join(tmpdir(), `calavera-vite-plus-${name}-`));
   const root = await realpath(directory.path);
   await cp(releaseFixturePath(name), root, { recursive: true });
+  if (vitePlus) {
+    await writeVitePlusFormatter(root);
+  }
 
   return {
     root,
@@ -87,7 +98,9 @@ if (argv[0] === "add" && !argv.includes("-w") && !argv.includes("--workspace-roo
  * manifest exports `./package.json` and declares the `vp` bin as `./bin/vp`.
  * The bin records its argv and working directory as one JSON line in
  * `logPath`, then exits with `exitCode`, so a test can assert what apply ran
- * with no network access and no real install. Like `vp add` in a pnpm
+ * with no network access and no real install. `vp fmt` is the exception: it
+ * runs this repository's Oxfmt, as `writeVitePlusFormatter` does, and is not
+ * recorded, because apply formats the files it writes with it (#669). Like `vp add` in a pnpm
  * workspace, it refuses a root install without `-w` (`pnpmAddingToRootCheck`).
  * A failing bin also writes a line to standard output, which apply captures.
  * `manifest` replaces the manifest's text, to give it a shape apply has to
@@ -114,6 +127,10 @@ export async function writeVitePlusStub(directory, { logPath, exitCode = 0, mani
     `#!/usr/bin/env node
 const { appendFileSync } = require("node:fs");
 const argv = process.argv.slice(2);
+if (argv[0] === "fmt") {
+  const result = require("node:child_process").spawnSync(process.execPath, [${JSON.stringify(oxfmtBin)}, ...argv.slice(1)], { stdio: "inherit" });
+  process.exit(result.status ?? 1);
+}
 appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ argv, cwd: process.cwd() }) + "\\n");
 ${pnpmAddingToRootCheck}
 if (${exitCode} !== 0) {
@@ -149,7 +166,6 @@ export async function writeVitePlusFormatter(directory, { bin, banner, hang = fa
       exports: { "./package.json": "./package.json" },
     }),
   );
-  const oxfmt = fileURLToPath(new URL("../bin/oxfmt", import.meta.resolve("oxfmt")));
   await writeFile(
     join(packageDirectory, "bin/vp"),
     `#!/usr/bin/env node
@@ -159,7 +175,7 @@ if (command !== "fmt") {
   console.error(\`vp stub: only fmt is supported, not \${command}\`);
   process.exit(1);
 }
-${banner === undefined ? "" : `console.log(${JSON.stringify(banner)});\n`}${hang ? "await new Promise(() => setInterval(() => {}, 60_000));\n" : ""}const result = spawnSync(process.execPath, [${JSON.stringify(oxfmt)}, ...args], { stdio: "inherit" });
+${banner === undefined ? "" : `console.log(${JSON.stringify(banner)});\n`}${hang ? "await new Promise(() => setInterval(() => {}, 60_000));\n" : ""}const result = spawnSync(process.execPath, [${JSON.stringify(oxfmtBin)}, ...args], { stdio: "inherit" });
 process.exit(result.status ?? 1);
 `,
   );
