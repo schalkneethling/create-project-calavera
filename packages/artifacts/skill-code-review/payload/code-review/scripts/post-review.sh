@@ -36,15 +36,18 @@ if meta.get("mode") != "github":
 event = review.get("event", "COMMENT")
 assert event in ("APPROVE", "REQUEST_CHANGES", "COMMENT"), f"bad event {event}"
 
-# Right-side lines the diff shows, per file.
-valid, path = {}, None
+# Right-side lines the diff shows, per file. State resets at every file header, and only lines inside
+# a hunk count, so a binary or rename-only section cannot add phantom lines to the file before it.
+valid, path, in_hunk, n = {}, None, False, 0
 for line in open(f"{d}/diff.patch", encoding="utf-8", errors="replace"):
+    if line.startswith("diff --git "):
+        path, in_hunk = None, False; continue
     if line.startswith("+++ "):
         path = line[4:].strip(); path = path[2:] if path.startswith("b/") else path
-        valid.setdefault(path, set()); n = 0; continue
+        valid.setdefault(path, set()); in_hunk = False; continue
     m = re.match(r"^@@ -\d+(?:,\d+)? \+(\d+)(?:,\d+)? @@", line)
-    if m: n = int(m.group(1)); continue
-    if path is None or line.startswith(("diff ", "index ", "--- ", "\\")): continue
+    if m: n = int(m.group(1)); in_hunk = True; continue
+    if path is None or not in_hunk or line.startswith("\\"): continue
     if line.startswith("-"): continue
     valid[path].add(n); n += 1
 
@@ -61,6 +64,11 @@ for c in review.get("comments", []):
         entry["start_line"] = ok[0]; entry["start_side"] = "RIGHT"
     if (ok[0], ok[-1]) != (start, end):
         sys.stderr.write(f"post-review: {p}:{start}-{end} shrunk to {ok[0]}-{ok[-1]} (lines outside the diff)\n")
+        if "```suggestion" in entry["body"]:
+            # A suggestion replaces exactly the anchored lines; with a changed range it would replace the wrong ones.
+            entry["body"] = re.sub(r"```suggestion\n.*?```\n?", "", entry["body"], flags=re.S).rstrip() + \
+                "\n\n(A suggested replacement was removed: the comment's line range changed during the anchor check. Re-run with the exact range to include it.)"
+            sys.stderr.write(f"post-review: {p}: suggestion block removed because the range changed\n")
     comments.append(entry)
 
 body = review.get("body", "") or ""

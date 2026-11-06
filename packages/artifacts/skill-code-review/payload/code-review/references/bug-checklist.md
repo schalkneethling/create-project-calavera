@@ -14,7 +14,7 @@ Questions to ask of a change, by area. Each one is a hypothesis to test by readi
 
 ## Auth, permissions and data exposure
 
-- Is every new endpoint, handler, resolver or job behind the same auth check as its neighbours?
+- Is every new endpoint, handler, resolver or job behind the same auth check as its neighbors?
 - Does a lookup by id check that the caller owns the object (customer, order, address, card)?
 - Does a response include fields the caller should not see (other customers' data, internal ids, tokens, cost prices)?
 - Do logs or error messages include personal data, card data, tokens or secrets?

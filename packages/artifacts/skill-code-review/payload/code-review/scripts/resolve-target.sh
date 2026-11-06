@@ -23,16 +23,39 @@ die() { echo "resolve-target: $*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null || die "$1 is not on PATH"; }
 need git; need python3
 
-ROOT_TMP="${TMPDIR:-/tmp}/pr-review"
+# A private folder for this run (mktemp creates it with mode 700 and a name nobody can predict), so
+# two reviews never share a folder and another user on the host cannot plant files in it.
+new_out() { mktemp -d "${TMPDIR:-/tmp}/pr-review.$1.XXXXXX"; }
 
-# Empties and recreates the output folder. An existing folder is only replaced when it is one this
-# script made earlier (it holds meta.json), so a wrong argument can never delete a repository.
+# Reuses an explicit out-dir. An existing folder is only replaced when it is one this script made
+# earlier (it holds meta.json), so a wrong argument can never delete a repository. A worktree the
+# earlier run made is removed through its repository first; nothing else is pruned.
 fresh_out() {
   if [[ -e "$1" ]]; then
     [[ -d "$1" && -f "$1/meta.json" ]] || die "'$1' exists and is not a folder this script made; choose another out-dir"
+    if [[ -f "$1/checkout/.git" ]]; then
+      main="$(git -C "$1/checkout" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
+      [[ -n "$main" ]] && git -C "$(dirname "$main")" worktree remove --force "$1/checkout" 2>/dev/null || true
+    fi
     rm -rf "$1"
   fi
   mkdir -p "$1"
+}
+
+# Copies the base-commit version of every rule file a reviewer reads (CLAUDE.md, AGENTS.md, ...) into
+# <out>/rules/, so a pull request cannot rewrite the rules it is reviewed against. Rule files the diff
+# changes are listed in <out>/rules-changed.txt for the reviewer to read as content.
+RULE_FILES=(CLAUDE.md AGENTS.md CONTRIBUTING.md .cursorrules .greptile/rules.md .greptile/config.json .coderabbit.yaml)
+snapshot_rules() {  # <repo> <ref> <out>
+  mkdir -p "$3/rules"
+  for f in "${RULE_FILES[@]}"; do
+    if git -C "$1" cat-file -e "$2:$f" 2>/dev/null; then
+      mkdir -p "$3/rules/$(dirname "$f")"; git -C "$1" show "$2:$f" > "$3/rules/$f"
+    fi
+  done
+  : > "$3/rules-changed.txt"
+  for f in "${RULE_FILES[@]}"; do grep -q $'\t'"$f"'$' "$3/files.txt" 2>/dev/null && echo "$f" >> "$3/rules-changed.txt"; done
+  true
 }
 
 # Writes diff-numbered.patch: every context and added line carries its line number in the new file,
@@ -60,7 +83,6 @@ for line in open(src, encoding="utf-8", errors="replace"):
 open(dst, "w", encoding="utf-8").write("\n".join(out) + "\n")
 PY3
 }
-mkdir -p "$ROOT_TMP"
 
 [[ $# -ge 1 ]] || { sed -n '2,18p' "$0" | sed 's/^# \{0,1\}//' >&2; exit 1; }
 TARGET="$1"
@@ -69,14 +91,20 @@ TARGET="$1"
 if [[ "$TARGET" =~ ^https?://github\.com/([^/]+)/([^/]+)/pull/([0-9]+) ]] || [[ "$TARGET" =~ ^([^/ ]+)/([^# ]+)#([0-9]+)$ ]]; then
   OWNER="${BASH_REMATCH[1]}" REPO="${BASH_REMATCH[2]%.git}" NUM="${BASH_REMATCH[3]}"
   need gh
-  OUT="${2:-$ROOT_TMP/$OWNER-$REPO-$NUM}"
-  fresh_out "$OUT"
+  if [[ -n "${2:-}" ]]; then OUT="$2"; fresh_out "$OUT"; else OUT="$(new_out "$OWNER-$REPO-$NUM")"; fi
   API="repos/$OWNER/$REPO/pulls/$NUM"
 
   gh api "$API" > "$OUT/pr.json" || die "cannot read $OWNER/$REPO#$NUM (is gh logged in?)"
-  gh api -H "Accept: application/vnd.github.v3.diff" "$API" > "$OUT/diff.patch"
+  HEAD_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["head"]["sha"])' "$OUT/pr.json")"
+  BASE_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["base"]["sha"])' "$OUT/pr.json")"
+  BASE_REF_NAME="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["base"]["ref"])' "$OUT/pr.json")"
+  # Everything below is pinned to this head and base pair, so a push during collection cannot mix
+  # revisions: the diff and file list come from the compare endpoint for exactly these commits.
+  COMPARE="repos/$OWNER/$REPO/compare/$BASE_SHA...$HEAD_SHA"
+  gh api -H "Accept: application/vnd.github.v3.diff" "$COMPARE" > "$OUT/diff.patch" || die "cannot fetch the diff for $BASE_SHA...$HEAD_SHA"
   # A rename is listed as a removal of the old path and an addition of the new one, so a revert can undo it.
-  gh api --paginate "$API/files" --jq '.[] | if .status == "renamed" then "removed\t+0\t-0\t\(.previous_filename)\nadded\t+\(.additions)\t-\(.deletions)\t\(.filename)" else "\(.status)\t+\(.additions)\t-\(.deletions)\t\(.filename)" end' > "$OUT/files.txt"
+  gh api --paginate "$COMPARE" --jq '.files[] | if .status == "renamed" then "removed\t+0\t-0\t\(.previous_filename)\nadded\t+\(.additions)\t-\(.deletions)\t\(.filename)" else "\(.status)\t+\(.additions)\t-\(.deletions)\t\(.filename)" end' > "$OUT/files.txt"
+  MERGE_BASE="$(gh api "$COMPARE" --jq '.merge_base_commit.sha' 2>/dev/null || true)"
   gh api --paginate "$API/commits" --jq '.[] | "\(.sha[0:8])  \(.commit.message | split("\n") | map(select(length > 0)) | join("\n    "))"' > "$OUT/commits.txt"
   gh api --paginate "$API/comments" --jq '[.[] | {path, line, user: .user.login, body: (.body[0:400]), url: .html_url}]' > "$OUT/comments.json" 2>/dev/null || echo '[]' > "$OUT/comments.json"
   gh api --paginate "repos/$OWNER/$REPO/issues/$NUM/comments" --jq '[.[] | {user: .user.login, body: (.body[0:600])}]' > "$OUT/issue-comments.json" 2>/dev/null || echo '[]' > "$OUT/issue-comments.json"
@@ -105,11 +133,6 @@ for o, r, n in re.findall(r"(?:([\w.-]+)/([\w.-]+))?#(\d+)\b", body):
 json.dump(issues, sys.stdout, indent=2)
 PY2
 
-  HEAD_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["head"]["sha"])' "$OUT/pr.json")"
-  BASE_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["base"]["sha"])' "$OUT/pr.json")"
-  BASE_REF_NAME="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["base"]["ref"])' "$OUT/pr.json")"
-  # The merge base from the API, so no script has to fetch history to find it later.
-  MERGE_BASE="$(gh api "repos/$OWNER/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq '.merge_base_commit.sha' 2>/dev/null || true)"
   gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/check-runs" --jq '[.check_runs[] | {name, status, conclusion, url: .html_url}]' > "$OUT/checks.json" 2>/dev/null || echo '[]' > "$OUT/checks.json"
 
   # A checkout of the head commit: reuse a local clone when the current folder is one, else clone.
@@ -122,16 +145,24 @@ PY2
     [[ "$slug" == "$(printf '%s/%s' "$OWNER" "$REPO" | tr '[:upper:]' '[:lower:]')" ]] && LOCAL="$(git rev-parse --show-toplevel)"
   fi
   if [[ -n "$LOCAL" ]]; then
-    git -C "$LOCAL" worktree prune
     git -C "$LOCAL" fetch --quiet origin "pull/$NUM/head" "$BASE_REF_NAME" 2>/dev/null || true
-    git -C "$LOCAL" worktree add --quiet --detach "$CHECKOUT" "$HEAD_SHA" 2>/dev/null \
-      || git -C "$LOCAL" worktree add --quiet --detach "$CHECKOUT" FETCH_HEAD
+    git -C "$LOCAL" worktree add --quiet --detach "$CHECKOUT" "$HEAD_SHA" \
+      || die "commit $HEAD_SHA is not reachable: the pull request moved while collecting; run again"
+    RULES_REPO="$LOCAL"
   else
     git clone --quiet --depth 1 "https://github.com/$OWNER/$REPO" "$CHECKOUT"
     git -C "$CHECKOUT" fetch --quiet --depth 50 origin "pull/$NUM/head"
-    git -C "$CHECKOUT" checkout --quiet FETCH_HEAD
+    git -C "$CHECKOUT" checkout --quiet "$HEAD_SHA" \
+      || die "commit $HEAD_SHA is not reachable: the pull request moved while collecting; run again"
     git -C "$CHECKOUT" fetch --quiet --depth 50 origin "$BASE_REF_NAME" 2>/dev/null || true
+    RULES_REPO="$CHECKOUT"
   fi
+  # Rules come from the base, never from the reviewed head.
+  RULES_REF=""
+  for candidate in "$MERGE_BASE" "$BASE_SHA"; do
+    [[ -n "$candidate" ]] && git -C "$RULES_REPO" cat-file -e "$candidate^{commit}" 2>/dev/null && { RULES_REF="$candidate"; break; }
+  done
+  [[ -n "$RULES_REF" ]] && snapshot_rules "$RULES_REPO" "$RULES_REF" "$OUT"
 
   number_diff "$OUT"
   python3 - "$OUT" "$OWNER" "$REPO" "$NUM" "$CHECKOUT" "$MERGE_BASE" <<'PY'
@@ -175,8 +206,7 @@ if [[ -z "$BASE" ]]; then
 fi
 [[ -n "$BASE" ]] || die "cannot find a base branch; pass it as the third argument"
 
-OUT="${4:-$ROOT_TMP/$(basename "$REPO_ROOT")-$(echo "$BRANCH" | tr '/' '-')}"
-fresh_out "$OUT"
+if [[ -n "${4:-}" ]]; then OUT="$4"; fresh_out "$OUT"; else OUT="$(new_out "$(basename "$REPO_ROOT")-$(echo "$BRANCH" | tr '/' '-')")"; fi
 
 # Compare against the freshest base we can get, without failing offline.
 BASE_REF="$BASE"
@@ -224,9 +254,9 @@ if [[ "$CURRENT" == "$BRANCH" ]]; then
   CHECKOUT="$REPO_ROOT"
 else
   CHECKOUT="$OUT/checkout"
-  git -C "$REPO_ROOT" worktree prune
   git -C "$REPO_ROOT" worktree add --quiet --detach "$CHECKOUT" "$BRANCH_REF"
 fi
+snapshot_rules "$REPO_ROOT" "$MERGE_BASE" "$OUT"
 
 number_diff "$OUT"
 python3 - "$OUT" "$REPO_ROOT" "$BRANCH" "$BRANCH_REF" "$BASE" "$MERGE_BASE" "$DIFF_BASIS" "$CHECKOUT" "$UNCOMMITTED" <<'PY'

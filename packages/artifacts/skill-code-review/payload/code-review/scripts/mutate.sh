@@ -55,12 +55,40 @@ CHECKOUT="$(meta checkout)"; HEAD_SHA="$(meta head_sha)"; BASE="$(meta base)"; M
 MUTANT="$OUT/mutant"
 
 git -C "$CHECKOUT" worktree remove --force "$MUTANT" 2>/dev/null || true
-git -C "$CHECKOUT" worktree prune 2>/dev/null || true
 git -C "$CHECKOUT" worktree add --quiet --detach "$MUTANT" "$HEAD_SHA" || { echo "mutate: cannot create worktree" >&2; exit 1; }
-cleanup() { git -C "$CHECKOUT" worktree remove --force "$MUTANT" 2>/dev/null || true; git -C "$CHECKOUT" worktree prune 2>/dev/null || true; }
+cleanup() { git -C "$CHECKOUT" worktree remove --force "$MUTANT" 2>/dev/null || true; }
 trap cleanup EXIT
 
 cd "$MUTANT"
+# Uncommitted work the collector recorded is part of the reviewed change, so the mutant carries it too.
+if [[ -f "$OUT/uncommitted.patch" && -s "$OUT/uncommitted.patch" ]]; then
+  git apply "$OUT/uncommitted.patch" || { echo "mutate: the uncommitted changes no longer apply; rerun the collector" >&2; exit 1; }
+fi
+if [[ -f "$OUT/untracked.txt" ]]; then
+  while IFS= read -r f; do
+    [[ -n "$f" && -f "$CHECKOUT/$f" ]] || continue
+    mkdir -p "$(dirname "$f")"; cp "$CHECKOUT/$f" "$f"
+  done < "$OUT/untracked.txt"
+fi
+
+# The files the change touched: the committed diff, plus uncommitted edits and untracked files.
+CHANGED="$OUT/mutant-files.txt"
+cut -f4 "$OUT/files.txt" > "$CHANGED"
+[[ -f "$OUT/uncommitted.patch" ]] && grep -E '^\+\+\+ b/' "$OUT/uncommitted.patch" | sed 's#^+++ b/##' >> "$CHANGED"
+[[ -f "$OUT/untracked.txt" ]] && cat "$OUT/untracked.txt" >> "$CHANGED"
+sort -u -o "$CHANGED" "$CHANGED"
+
+is_test_file() {
+  [[ "$1" =~ (^|/)(test|tests|__tests__|spec|specs)(/|$) ]] || [[ "$1" =~ \.(test|spec)\.[A-Za-z0-9]+$ ]] || [[ "$1" =~ _test\.(go|py|rb|rs|ts|js)$ ]] || [[ "$1" =~ (^|/)test_[^/]+\.py$ ]]
+}
+# Test setup stays as the branch wrote it: a reverted package.json or runner config could drop the new
+# suite from the run and turn a skipped test into a green result.
+is_test_setup() {
+  case "$(basename "$1")" in
+    package.json|package-lock.json|pnpm-lock.yaml|yarn.lock|bun.lockb|jest.config.*|vitest.config.*|.mocharc*|karma.conf*|playwright.config.*|pytest.ini|pyproject.toml|setup.cfg|tox.ini|conftest.py|go.mod|go.sum|Cargo.toml|Cargo.lock) return 0 ;;
+    *) return 1 ;;
+  esac
+}
 if [[ "$MODE" == "revert" ]]; then
   # The base to revert to: the merge base the collector recorded, else the base branch tip it recorded,
   # else a local base branch. This script never fetches: the worktree shares the user's repository,
@@ -70,21 +98,21 @@ if [[ "$MODE" == "revert" ]]; then
     [[ -n "$candidate" ]] && git cat-file -e "$candidate^{commit}" 2>/dev/null && { BASE_REF="$candidate"; break; }
   done
   [[ -n "$BASE_REF" ]] || { echo "mutate: the base commit is not in this checkout; rerun the collector, which records it, or fetch $BASE in the repository first" >&2; exit 1; }
-  reverted=0
-  while IFS=$'\t' read -r status _ _ path; do
+  reverted=0; kept=""
+  while IFS= read -r path; do
     [[ -n "$path" ]] || continue
-    # Test files stay as the branch wrote them; that is the point.
-    if [[ "$path" =~ (^|/)(test|tests|__tests__|spec|specs)(/|$) ]] || [[ "$path" =~ \.(test|spec)\.[A-Za-z0-9]+$ ]] || [[ "$path" =~ _test\.(go|py|rb|rs|ts|js)$ ]] || [[ "$path" =~ (^|/)test_[^/]+\.py$ ]]; then
-      continue
-    fi
+    # Test files stay as the branch wrote them; that is the point. So does the test setup.
+    is_test_file "$path" && continue
+    if is_test_setup "$path"; then kept="$kept $path"; continue; fi
     if git cat-file -e "$BASE_REF:$path" 2>/dev/null; then
       git checkout --quiet "$BASE_REF" -- "$path"
     else
       rm -f "$path"
     fi
     reverted=$((reverted + 1))
-  done < "$OUT/files.txt"
-  echo "mutate: reverted $reverted non-test file(s) to $BASE_REF, kept the branch's tests" >&2
+  done < "$CHANGED"
+  echo "mutate: reverted $reverted non-test file(s) to $BASE_REF, kept the branch's tests${kept:+ and its test setup ($kept )}" >&2
+  echo "mutate: check that the test output names the new or changed tests; a suite that did not run them proves nothing" >&2
 elif [[ "$MODE" == "patch" ]]; then
   git apply --index "$PATCH" || { echo "mutate: patch does not apply" >&2; exit 1; }
   echo "mutate: applied $(basename "$PATCH")" >&2
@@ -93,6 +121,14 @@ else
   SED_PATH="${SED_PATH#"$CHECKOUT"/}"
   case "$SED_PATH" in /*|../*|*/../*|*/..) echo "mutate: give a path relative to the repository root, not $SED_PATH" >&2; exit 1 ;; esac
   [[ -f "$SED_PATH" ]] || { echo "mutate: no such file $SED_PATH in the worktree" >&2; exit 1; }
+  # Resolve symlinks: a linked directory or file in the branch must not lead the edit outside the worktree.
+  python3 - "$MUTANT" "$SED_PATH" <<'PY4' || exit 1
+import os, sys
+root, rel = sys.argv[1:]
+real_root = os.path.realpath(root); real = os.path.realpath(os.path.join(root, rel))
+if os.path.islink(os.path.join(root, rel)) or not real.startswith(real_root + os.sep):
+    sys.exit(f"mutate: {rel} resolves to {real}, outside the worktree; refusing to edit through a symlink")
+PY4
   # Not sed -i: BSD sed on macOS reads "-e" as a backup suffix and leaves a stray file.
   sed -e "$SED_EXPR" "$SED_PATH" > "$SED_PATH.mutant" && mv "$SED_PATH.mutant" "$SED_PATH"
   if git diff --quiet -- "$SED_PATH"; then echo "mutate: the sed expression changed nothing in $SED_PATH" >&2; exit 1; fi

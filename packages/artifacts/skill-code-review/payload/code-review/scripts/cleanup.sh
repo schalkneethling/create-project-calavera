@@ -13,7 +13,6 @@ if [[ -d "$CHECKOUT" ]] && [[ -f "$CHECKOUT/.git" ]]; then
   main="$(git -C "$CHECKOUT" rev-parse --path-format=absolute --git-common-dir 2>/dev/null || true)"
   if [[ -n "$main" ]]; then
     git -C "$(dirname "$main")" worktree remove --force "$CHECKOUT" 2>/dev/null || true
-    git -C "$(dirname "$main")" worktree prune 2>/dev/null || true
   fi
 fi
 rm -rf "$OUT"
