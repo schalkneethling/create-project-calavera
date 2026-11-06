@@ -242,18 +242,41 @@ export function planViteHookBlock({ path, contents, artifactId, line, recorded }
 }
 
 /**
- * Plans the removal of a block apply wrote for a hook the artifact no longer wires. The block goes,
- * markers included, only while it still holds what apply wrote; an edited block is a conflict, so
- * a change the person made is never deleted silently.
+ * The text of this artifact's block in a script, for a check that only reads, such as doctor.
+ * `found` is false when the script holds no block, and `reason` explains a broken marker pair.
+ *
+ * @param {string} path
+ * @param {string} contents
+ * @param {string} artifactId
+ * @returns {{ found: false } | { found: true, text: string } | { reason: string }}
+ */
+export function readViteHookBlock(path, contents, artifactId) {
+  const block = findBlock(path, contents, artifactId);
+  if ("reason" in block) return { reason: block.reason };
+  return block.startIndex === -1 ? { found: false } : { found: true, text: block.current };
+}
+
+/**
+ * Plans the removal of a block apply wrote, because the artifact no longer wires the hook or the
+ * recipe no longer selects the artifact. The block goes, markers included, only while it still
+ * holds what apply wrote; an edited block is a conflict, so a change the person made is never
+ * deleted silently.
  *
  * @param {object} options
  * @param {string} options.path
  * @param {string | undefined} options.contents
  * @param {string} options.artifactId
  * @param {string} options.recorded The command line apply wrote last, from the state record.
+ * @param {string} [options.because] Why the block goes, which a conflict message names.
  * @returns {{ type: "update" | "unchanged" | "conflict", contents?: string, reason?: string }}
  */
-export function planViteHookBlockRemoval({ path, contents, artifactId, recorded }) {
+export function planViteHookBlockRemoval({
+  path,
+  contents,
+  artifactId,
+  recorded,
+  because = `${artifactId} no longer wires this hook`,
+}) {
   if (contents === undefined) return { type: "unchanged" };
   const found = findBlock(path, contents, artifactId);
   if ("reason" in found) return { type: "conflict", reason: found.reason };
@@ -262,7 +285,7 @@ export function planViteHookBlockRemoval({ path, contents, artifactId, recorded 
   if (current !== recorded) {
     return {
       type: "conflict",
-      reason: `${path}: ${artifactId} no longer wires this hook, so Calavera would remove its block, but the block was edited since Calavera wrote it.\nCalavera wrote:\n${indent(recorded)}\nThe file now holds:\n${indent(current)}\nRemove the block yourself, both markers included, or keep it and delete its markers, and run apply again.`,
+      reason: `${path}: ${because}, so Calavera would remove its block, but the block was edited since Calavera wrote it.\nCalavera wrote:\n${indent(recorded)}\nThe file now holds:\n${indent(current)}\nRemove the block yourself, both markers included, or keep it and delete its markers, and run apply again.`,
     };
   }
   return {

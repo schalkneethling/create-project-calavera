@@ -32,6 +32,12 @@ group and each line first. Apply keeps every other key, group, and line, replace
 what it recorded writing, and stops with a conflict when you have edited its part. It
 never writes `.claude/settings.local.json`.
 
+When the recipe no longer selects the skill, apply removes the blocks and groups it
+recorded, and the dry run lists each removal first. An edited block or group is a
+conflict that names the file, and apply writes nothing until you remove or restore
+it. `doctor` reports a recorded block or group that is missing or edited, and a
+block whose script no longer exists, which makes Git refuse every commit or push.
+
 Otherwise, Calavera does not write `.claude/`, `.codex/`, editor settings, global
 agent directories, symlinks, or machine-local configuration. If a tool needs one
 of those locations, wire it up explicitly after reviewing the generated files.

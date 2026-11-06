@@ -1,6 +1,6 @@
 # ADR-0015: Determinant Gates as Calavera Artifacts in a Vite+ Project
 
-- **Status:** Accepted (2026-10-31; proposed 2026-10-22, revised 2026-10-23, amended by the owner's rulings of 2026-10-31 in Decisions 5, 6, and 16)
+- **Status:** Accepted (2026-10-31; proposed 2026-10-22, revised 2026-10-23, amended by the owner's rulings of 2026-10-31 in Decisions 5, 6, and 16, and by the owner's decision of 2026-11-05 in Decisions 5 and 16)
 - **Date:** 2026-10-22
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/743
 - **Decides:** how the Determinant gates of Increment 1 reach a project that `vp create` scaffolded.
@@ -125,6 +125,8 @@ node .agents/skills/protected-branch-guard/scripts/guard.mjs commit main
 
 **Dry run.** `dry_run_apply` and `apply --dry-run` list each of the four files with `write`, `update`, `unchanged`, or `conflict`, and show the lines or groups that will change, so the approval covers the exact text. When the current branch is the protected branch, the dry run also warns that the commit of the applied files will be refused, and tells the person to create a feature branch first.
 
+**Amended by the owner on 2026-11-05 (#802): wiring of a deselected artifact.** When a recipe no longer selects an artifact that wired the project, apply removes that artifact's unchanged blocks in `.vite-hooks/pre-commit`, `.vite-hooks/prepare-commit-msg`, and `.vite-hooks/pre-push`, markers included, and its unchanged groups in `.claude/settings.json`. The dry run lists each removal, with the text it removes, before anything is written. Apply removes only text that still matches the state record, so local edits are preserved: an edited block or group is a conflict that names the file and stops apply before it writes anything, and it is never deleted silently. The person removes or restores it, or deletes the markers of an edited block to keep it as their own, and runs apply again. A hook script or `.claude/settings.json` that apply created is left in place, empty or holding `{}`, because a file is removed only by `clean`. A group the person edited so that it no longer runs the skill's scripts is the person's own and stays. After a removal, the artifact's `aiWiring` record is dropped, because it would otherwise describe text the files no longer hold: `doctor` would report every removed block as missing, and a later apply would plan against a record of nothing. Selecting the artifact again still works, because apply writes a block or group that is absent without needing a record. `doctor` reports a recorded block or group that is missing, one that was edited, and a block whose script no longer exists, which makes Git refuse every commit or push, and each finding names the file and the remedy. This amendment covers the wiring of Decision 5; Codex wiring stays out of scope (Decision 10).
+
 ### 6. The protected branch is an input that Calavera asks for
 
 The manifest declares an input, `protectedBranch`, with a prompt, a default, and a check. The interactive CLI asks for it. The default is the current branch, read with `git symbolic-ref --short HEAD`, which on a fresh `vp create` project is the branch Git created, `main` or `master`, and which works before the first commit. On a detached HEAD there is no default, and the person must type a name. The answer must pass `git check-ref-format --branch`.
@@ -215,6 +217,10 @@ The owner's review of #745 on 2026-10-31 added four rulings:
 - On a project whose Git hooks no Vite+ dispatcher runs, apply warns and does not stop. The warning says the guard's hooks will not run and names the remedy that fits the clone: `vp config` installs the dispatcher, `vp hooks enable` turns hooks back on after `vp hooks disable`, and a `core.hooksPath` that points elsewhere must be removed first, because `vp config` leaves it alone (`node_modules/vite-plus/docs/guide/commit-hooks.md`, vite-plus 1.4.0).
 - Calavera formats the text of a rewritten JSON file in memory with the project's own `vp fmt` before the dry run (Decision 5, "Format"). The #669 ruling below still holds, because nothing is formatted after it is written.
 
+The owner decided #802 on 2026-11-05:
+
+- When a recipe no longer selects an artifact that wired the project, apply removes its unchanged blocks and groups, the dry run lists each removal first, and an edited block or group is a conflict that names the file and stops apply (Decision 5, "Wiring of a deselected artifact"). This replaces the alternative the issue offered, in which apply only reported the wiring with the command that removes it.
+
 These rulings of 2026-10-22 stand:
 
 - The `.mcp.json` that the bootstrap writes satisfies "the MCP registration" for H0.
@@ -242,7 +248,7 @@ Because `.claude/settings.json` is committed, every collaborator's Claude Code r
 
 The payload is formatted for the Oxfmt version and defaults this repository uses. Today that is `oxfmt` 0.73.0, the same version vite-plus 1.2.0 installs. If the two versions format differently, or a project sets its own `fmt` options in `vite.config.ts`, the pre-commit hook rewrites the payload, and the next apply stops with the local-edits error. No recovery path exists for that stop: Calavera has no command that removes or reinstalls an artifact (#678, the issue for a command that removes Calavera's management files), and apply refuses the rewritten directory. What a person can do today is copy the shipped files back from the extracted payload under `.calavera/packages/<id>/<version>/`, which lets the next apply pass. The next commit that stages those files rewrites them again, until the project keeps `.agents/**` out of its `staged` patterns or the two Oxfmt versions agree.
 
-Because no removal command exists (#678), a project that deletes the guard's skill directory but keeps the hook blocks makes every commit fail, because `node` cannot find the script and the dispatcher runs the hook with `sh -e`. When #678 lands, removing the artifact must remove its hook blocks and its settings groups too, because apply owns them.
+Because no removal command exists (#678), a project that deletes the guard's skill directory but keeps the hook blocks makes every commit fail, because `node` cannot find the script and the dispatcher runs the hook with `sh -e`. When #678 lands, removing the artifact must remove its hook blocks and its settings groups too, because apply owns them. _Amended 2026-11-05: apply now removes the blocks and groups of an artifact the recipe no longer selects, and `doctor` reports a block whose script is missing as an error whose remedy is apply: apply installs the skill again while the recipe selects it, and removes the block once it does not (Decision 5). `clean` still removes a stale skill directory without checking its wiring, which #829 tracks._
 
 The litmus test holds. Vite+ provides the hook dispatcher and `vp staged`, and the design uses both and writes only into the scripts Vite+ leaves to the project. The Vite+ commit-hooks guide describes no branch policy, so the guard adds to Vite+ rather than competes with it.
 

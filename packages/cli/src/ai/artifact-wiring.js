@@ -2,15 +2,17 @@
 import { execFile } from "node:child_process";
 import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
-import { promisify } from "node:util";
+import { isDeepStrictEqual, promisify } from "node:util";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 
-import { planClaudeSettings } from "./claude-settings.js";
+import { resolveAiArtifacts } from "./artifacts.js";
+import { planClaudeSettings, runsSkill } from "./claude-settings.js";
 import {
   fillInputPlaceholders,
   planViteHookBlock,
   planViteHookBlockRemoval,
+  readViteHookBlock,
   viteHookCommandProblem,
 } from "./vite-hook-blocks.js";
 
@@ -32,6 +34,7 @@ const VITE_HOOKS_DISPATCHER = ".vite-hooks/_";
  * @typedef {import("./claude-settings.js").HookGroups} HookGroups
  * @typedef {import("./claude-settings.js").HookGroupChange} HookGroupChange
  * @typedef {import("../utils/project-formatter.js").ProjectFormatter} ProjectFormatter
+ * @typedef {import("./artifacts.js").AiArtifactState} AiArtifactState
  *
  * @typedef {object} WiredArtifact A selected skill, as apply installs it.
  * @property {string} id
@@ -55,9 +58,14 @@ const VITE_HOOKS_DISPATCHER = ".vite-hooks/_";
  * @property {"vite-hook" | "claude-settings"} kind
  * @property {"write" | "update" | "unchanged"} type
  * @property {string} [block] The command line in the artifact's block, for a vite-hook change.
- * @property {string} [removedBlock] The command line of a block apply removes, because the artifact no longer wires that hook.
+ * @property {string} [removedBlock] The command line of a block apply removes, because the artifact no longer wires that hook or the recipe no longer selects the artifact.
  * @property {HookGroupChange[]} [groupChanges] The groups added, replaced, or removed, for a claude-settings change.
  * @property {boolean} [reformatted] Whether rewriting .claude/settings.json also changes the layout of text outside the groups.
+ * @property {true} [deselected] Present when apply removes the change's text because the recipe no longer selects the artifact.
+ *
+ * @typedef {object} WiringFinding What doctor reports about one recorded block or group.
+ * @property {"error" | "warning"} level
+ * @property {string} message Names the file and the remedy.
  */
 
 /** @param {string} id @returns {ArtifactWiring | undefined} */
@@ -125,16 +133,37 @@ function recordedInputs(recipe, index) {
 }
 
 /**
- * Plans the wiring of every selected artifact. Artifacts are planned in recipe order, and each one
- * plans against the text the one before it left, so two artifacts that wire the same file both
- * land in it. Any conflict stops the plan, after every file has been checked, so the error lists
- * each one.
+ * Where a skill the recipe no longer selects was installed: from the state record of installed
+ * artifacts, or, when that entry is gone, from the catalog, which installs every skill under
+ * .agents/skills/<name>.
+ *
+ * @param {string} id
+ * @param {AiArtifactState[]} installed The aiArtifacts of the state record.
+ * @returns {string | undefined}
+ */
+export function installedSkillDirectory(id, installed) {
+  const entry = installed.find(({ type, source }) => type === "skill" && source === id);
+  if (entry) return entry.path;
+  if (artifactForId(id)?.type !== "skill") return undefined;
+  return resolveAiArtifacts({ ai: [{ id }] })[0]?.path;
+}
+
+/**
+ * Plans the wiring of every selected artifact, and the removal of the wiring of every recorded
+ * artifact the recipe no longer selects (owner decision of 2026-11-05, ADR-0015, Decision 5).
+ * Selected artifacts are planned in recipe order, then the deselected ones, and each one plans
+ * against the text the one before it left, so two artifacts that wire the same file both land in
+ * it. Any conflict stops the plan, after every file has been checked, so the error lists each one.
+ *
+ * The returned records describe the wiring in the files after apply, so they replace the previous
+ * records: a deselected artifact whose wiring is removed has no record left.
  *
  * @param {object} options
  * @param {{ ai?: unknown }} options.recipe The recipe with every input value filled in.
- * @param {WiredArtifact[]} options.artifacts
+ * @param {WiredArtifact[]} options.artifacts The selected skills.
  * @param {WiringRecord[]} options.previousRecords From the state record.
  * @param {() => Promise<ProjectFormatter>} options.loadFormatter Called only when an artifact wires .claude/settings.json.
+ * @param {(id: string) => string | undefined} [options.skillDirectoryFor] Where a deselected skill was installed, so apply can tell its Claude Code groups from the person's.
  * @param {string} [options.cwd]
  * @param {(id: string) => ArtifactWiring | undefined} [options.wiringFor]
  * @returns {Promise<{ files: WiringFile[], changes: WiringChange[], records: WiringRecord[] }>}
@@ -144,6 +173,7 @@ export async function planArtifactWiring({
   artifacts,
   previousRecords,
   loadFormatter,
+  skillDirectoryFor = (id) => installedSkillDirectory(id, []),
   cwd = process.cwd(),
   wiringFor = catalogWiring,
 }) {
@@ -169,14 +199,36 @@ export async function planArtifactWiring({
     );
   };
 
-  for (const artifact of artifacts) {
+  const selected = new Set(artifacts.map(({ id }) => id));
+  // A recorded artifact the recipe no longer selects is planned with no wiring, so every block and
+  // group it wrote is removed, or is a conflict when the person edited it.
+  const planned = [
+    ...artifacts.map((artifact) => ({ artifact, deselected: false })),
+    ...previousRecords
+      .filter((record) => !selected.has(record.artifact))
+      .map((record) => ({
+        artifact: {
+          id: record.artifact,
+          index: -1,
+          skillDirectory: skillDirectoryFor(record.artifact),
+          payloadDirectory: "",
+        },
+        deselected: true,
+      })),
+  ];
+
+  for (const { artifact, deselected } of planned) {
     const previous = previousRecords.find((record) => record.artifact === artifact.id);
     // Wiring the catalog dropped still has recorded blocks and groups to remove.
-    const wiring = wiringFor(artifact.id) ?? (previous ? {} : undefined);
+    /** @type {ArtifactWiring | undefined} */
+    const wiring = deselected ? {} : (wiringFor(artifact.id) ?? (previous ? {} : undefined));
     if (!wiring) continue;
     const inputs = recordedInputs(recipe, artifact.index);
     /** @type {WiringRecord} */
     const record = { artifact: artifact.id };
+    const because = deselected
+      ? `the recipe no longer selects ${artifact.id}`
+      : `${artifact.id} no longer wires this hook`;
 
     // A hook the artifact wired before but no longer does loses its block, so it stops running.
     for (const [hook, recorded] of Object.entries(previous?.viteHooks ?? {})) {
@@ -188,6 +240,7 @@ export async function planArtifactWiring({
         contents: file.contents,
         artifactId: artifact.id,
         recorded,
+        because,
       });
       if (plan.type === "conflict") {
         conflicts.push(/** @type {string} */ (plan.reason));
@@ -199,13 +252,16 @@ export async function planArtifactWiring({
           kind: "vite-hook",
           type: "update",
           removedBlock: recorded,
+          ...(deselected ? { deselected } : {}),
         });
       }
     }
 
     for (const [hook, template] of Object.entries(wiring.viteHooks ?? {})) {
       const line = fillInputPlaceholders(template, inputs);
-      const problem = viteHookCommandProblem(line, artifact.skillDirectory);
+      // A deselected artifact is planned with no hooks, so only a selected one, whose skill
+      // directory is always known, reaches this loop.
+      const problem = viteHookCommandProblem(line, /** @type {string} */ (artifact.skillDirectory));
       if (problem) {
         throw new Error(`${artifact.id} declares a ${hook} hook that Calavera refuses: ${problem}`);
       }
@@ -258,6 +314,12 @@ export async function planArtifactWiring({
         }
         fragment = fillFragment(JSON.parse(fragmentText), inputs);
       }
+      // Only a deselected artifact that neither the state record nor the catalog knows lacks one.
+      if (artifact.skillDirectory === undefined) {
+        throw new Error(
+          `Calavera would remove the ${CLAUDE_SETTINGS_PATH} groups it recorded for ${artifact.id}, because the recipe no longer selects it, but neither the state record nor this version of Calavera says where ${artifact.id} was installed, so Calavera cannot tell its groups from yours. Run apply with a version of Calavera that knows ${artifact.id}, or remove the groups that run its scripts from ${CLAUDE_SETTINGS_PATH} and its entry from aiWiring in .calavera/state.json yourself.`,
+        );
+      }
       formatter ??= await loadFormatter();
       const plan = await planClaudeSettings({
         path: CLAUDE_SETTINGS_PATH,
@@ -267,10 +329,12 @@ export async function planArtifactWiring({
         recorded: previous?.claudeCode,
         skillDirectory: artifact.skillDirectory,
         formatter,
+        deselected,
       });
       if (plan.type === "conflict") {
         conflicts.push(/** @type {string} */ (plan.reason));
-      } else {
+      } else if (!(deselected && plan.type === "unchanged")) {
+        // A deselected artifact whose groups are already gone has nothing to report.
         file.contents = plan.contents;
         // An artifact that no longer declares groups records none.
         if (plan.groups && Object.keys(plan.groups).length > 0) record.claudeCode = plan.groups;
@@ -281,11 +345,13 @@ export async function planArtifactWiring({
           type: plan.type,
           groupChanges: plan.changes,
           reformatted: plan.reformatted ?? false,
+          ...(deselected ? { deselected } : {}),
         });
       }
     }
 
-    records.push(record);
+    // The wiring of a deselected artifact is gone after apply, and so is its record.
+    if (!deselected) records.push(record);
   }
 
   if (conflicts.length > 0) {
@@ -323,6 +389,136 @@ export async function writeArtifactWiring(files, cwd = process.cwd()) {
   }
 }
 
+/** @param {unknown} value @returns {value is Record<string, unknown>} */
+function isObject(value) {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+/**
+ * What doctor reports about the wiring apply recorded: a block or group that is missing, one that
+ * was edited, and a block whose script is missing, which makes Git refuse every commit or push.
+ * Each finding names the file and the remedy, and the remedy depends on whether the recipe still
+ * selects the artifact: apply writes the wiring of a selected artifact again, and removes the
+ * wiring of a deselected one. Doctor only reads; it never changes a file.
+ *
+ * @param {object} options
+ * @param {WiringRecord[]} options.records The aiWiring of the state record.
+ * @param {Set<string>} options.selected The artifacts the recipe selects.
+ * @param {(id: string) => string | undefined} options.skillDirectoryFor Where each artifact's skill is installed.
+ * @param {string} [options.cwd]
+ * @returns {Promise<WiringFinding[]>}
+ */
+export async function artifactWiringFindings({
+  records,
+  selected,
+  skillDirectoryFor,
+  cwd = process.cwd(),
+}) {
+  const apply = "create-project-calavera apply";
+  /** @type {WiringFinding[]} */
+  const findings = [];
+  /** @param {string} message */
+  const warn = (message) => findings.push({ level: "warning", message });
+
+  for (const { artifact: id, viteHooks, claudeCode } of records) {
+    const isSelected = selected.has(id);
+    const deselectedNote = `the recipe no longer selects ${id}`;
+    const directory = skillDirectoryFor(id);
+
+    for (const [hook, recorded] of Object.entries(viteHooks ?? {})) {
+      const path = `.vite-hooks/${hook}`;
+      const contents = await readIfPresent(resolve(cwd, path));
+      const block =
+        contents === undefined
+          ? /** @type {const} */ ({ found: false })
+          : readViteHookBlock(path, contents, id);
+      if ("reason" in block) {
+        warn(block.reason);
+      } else if (!block.found) {
+        warn(
+          isSelected
+            ? `${path}: the ${id} block that Calavera recorded is missing, so Git does not run it. Run ${apply} to write it again; the dry run shows it first.`
+            : `${path}: the ${id} block that Calavera recorded is missing, and ${deselectedNote}, so nothing needs to run there. Run ${apply} to drop the record.`,
+        );
+      } else if (block.text !== recorded) {
+        warn(
+          isSelected
+            ? `${path}: the ${id} block was edited since Calavera wrote it, so the next apply stops with a conflict. Restore it to "${recorded}", or remove the block, both markers included, and run ${apply} to write it again.`
+            : `${path}: the ${id} block was edited since Calavera wrote it, and ${deselectedNote}, so the next apply stops with a conflict instead of removing it. Restore it to "${recorded}" so apply removes it, or remove the block yourself, both markers included, or delete its markers to keep it as your own, and run ${apply}.`,
+        );
+      } else {
+        // The state file can be edited by hand, so the recorded line is checked again before its
+        // second word is read as a script path inside the skill directory.
+        const problem =
+          directory === undefined
+            ? `doctor does not know where ${id} is installed`
+            : viteHookCommandProblem(recorded, directory);
+        const script = recorded.split(" ")[1];
+        if (problem !== undefined) {
+          warn(
+            `${path}: the ${id} block holds what Calavera recorded, but the record is not a command Calavera writes: ${problem} Check the block and .calavera/state.json before you run ${apply}.`,
+          );
+        } else if (script !== undefined && !(await exists(resolve(cwd, script)))) {
+          findings.push({
+            level: "error",
+            message: `${path}: the ${id} block runs ${script}, which does not exist, so the ${hook} hook fails and Git refuses every ${hook === "pre-push" ? "push" : "commit"}. ${isSelected ? await missingScriptRemedy(script, directory, apply, cwd) : `Because ${deselectedNote}, ${apply} removes the block; the dry run lists the removal first.`}`,
+          });
+        }
+      }
+    }
+
+    if (!claudeCode) continue;
+    const path = CLAUDE_SETTINGS_PATH;
+    const contents = await readIfPresent(resolve(cwd, path));
+    /** @type {Record<string, unknown>} */
+    let hooks = {};
+    if (contents !== undefined) {
+      try {
+        const settings = JSON.parse(contents);
+        if (isObject(settings) && isObject(settings.hooks)) hooks = settings.hooks;
+      } catch (error) {
+        warn(
+          `${path} is not valid JSON (${error instanceof Error ? error.message : String(error)}), so doctor cannot check the ${id} groups Calavera recorded there, and the next apply stops. Fix the JSON and run doctor again.`,
+        );
+        continue;
+      }
+    }
+    for (const [event, groups] of Object.entries(claudeCode)) {
+      const present = Array.isArray(hooks[event]) ? /** @type {unknown[]} */ (hooks[event]) : [];
+      const recorded = Array.isArray(groups) ? groups : [];
+      const missing = recorded.filter(
+        (group) => !present.some((candidate) => isDeepStrictEqual(candidate, group)),
+      );
+      if (missing.length === 0) continue;
+      // A group that runs the skill but matches no recorded group is the recorded one, edited.
+      const edited =
+        directory === undefined
+          ? []
+          : present.filter(
+              (group) =>
+                runsSkill(group, directory) &&
+                !recorded.some((candidate) => isDeepStrictEqual(candidate, group)),
+            );
+      const wrote = JSON.stringify(missing[0]);
+      if (edited.length > 0) {
+        warn(
+          isSelected
+            ? `${path}: a ${event} group that runs ${directory}/ was edited since Calavera wrote it, so the next apply stops with a conflict. Restore it to ${wrote}, or remove that group, and run ${apply} to write it again.`
+            : `${path}: a ${event} group that runs ${directory}/ was edited since Calavera wrote it, and ${deselectedNote}, so the next apply stops with a conflict instead of removing it. Restore it to ${wrote} so apply removes it, or remove that group yourself, and run ${apply}.`,
+        );
+      } else {
+        warn(
+          isSelected
+            ? `${path}: the ${event} group for ${id} that Calavera recorded is missing, so Claude Code does not run it. Run ${apply} to add it again; the dry run shows it first.`
+            : `${path}: the ${event} group for ${id} that Calavera recorded is missing, and ${deselectedNote}, so nothing needs to run there. Run ${apply} to drop the record.`,
+        );
+      }
+    }
+  }
+
+  return findings;
+}
+
 /**
  * @param {string} cwd
  * @param {string[]} args
@@ -346,6 +542,25 @@ async function exists(path) {
   } catch {
     return false;
   }
+}
+
+/**
+ * The remedy for a selected artifact's missing hook script. Apply installs the skill again only
+ * when its folder is gone: a folder that is still there but no longer matches the hash Calavera
+ * recorded counts as locally edited, and apply refuses to overwrite it. So with the folder still
+ * there, the remedy restores the one script, which keeps the person's other changes.
+ *
+ * @param {string} script The missing script, relative to the project root.
+ * @param {string | undefined} directory The skill folder, relative to the project root.
+ * @param {string} apply The apply command.
+ * @param {string} cwd
+ * @returns {Promise<string>}
+ */
+async function missingScriptRemedy(script, directory, apply, cwd) {
+  if (directory === undefined || !(await exists(resolve(cwd, directory)))) {
+    return `Run ${apply} to install the skill again.`;
+  }
+  return `${directory} is still there, so apply counts the missing file as a local edit and does not install the skill again. Restore the script with git checkout HEAD -- ${script}, which keeps any other changes in that folder. If the script was never committed, delete ${directory} and run ${apply} to install the skill again; that discards any other changes in that folder.`;
 }
 
 /**

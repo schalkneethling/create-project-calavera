@@ -1,6 +1,13 @@
 // @ts-check
+import artifactSchema from "../schemas/calavera-artifact.schema.json" with { type: "json" };
 import { isNotEmptyString, isPlainObject, isStringArray } from "./utils/guards.js";
 import { assertSafeRelativePath } from "./utils/fs.js";
+
+// The hooks a manifest may wire. A recorded hook name becomes a path under .vite-hooks/, so a
+// name from a damaged or hand-edited state file must not reach a file outside it.
+const VITE_HOOK_NAMES = new Set(
+  artifactSchema.properties.wiring.properties.viteHooks.propertyNames.enum,
+);
 
 /**
  * @typedef {import("./ai/artifacts.js").AiArtifactState} AiArtifactState
@@ -129,7 +136,9 @@ function normalizeAiWiring(value) {
         isNotEmptyString(record.artifact) &&
         (record.viteHooks === undefined ||
           (isPlainObject(record.viteHooks) &&
-            Object.values(record.viteHooks).every(isNotEmptyString))) &&
+            Object.entries(record.viteHooks).every(
+              ([hook, line]) => VITE_HOOK_NAMES.has(hook) && isNotEmptyString(line),
+            ))) &&
         (record.claudeCode === undefined || isPlainObject(record.claudeCode)),
     )
   ) {
