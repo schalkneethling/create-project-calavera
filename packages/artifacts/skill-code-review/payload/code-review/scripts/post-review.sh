@@ -77,4 +77,8 @@ META="$DIR/meta.json"
 OWNER="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["owner"])' "$META")"
 REPO="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["repo"])' "$META")"
 NUM="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["number"])' "$META")"
-gh api -X POST "repos/$OWNER/$REPO/pulls/$NUM/reviews" --input "$DIR/payload.json" --jq '.html_url'
+if ! gh api -X POST "repos/$OWNER/$REPO/pulls/$NUM/reviews" --input "$DIR/payload.json" --jq '.html_url'; then
+  echo "post-review: GitHub refused the post. The checked review is in $DIR/payload.json; to send it with your own login:" >&2
+  echo "  gh api repos/$OWNER/$REPO/pulls/$NUM/reviews --method POST --input $DIR/payload.json" >&2
+  exit 1
+fi

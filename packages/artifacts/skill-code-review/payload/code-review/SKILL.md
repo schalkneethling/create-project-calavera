@@ -225,6 +225,12 @@ A review posted under the user's name reads as the user's own words. So:
 
 4. After the yes: `bash ${CLAUDE_SKILL_DIR}/scripts/post-review.sh <out-dir>/review.json`. It prints the review URL. Give the user that link.
 
+If GitHub refuses the post because this session has no write access to the repository (common in a cloud session, where the repository was attached read-only), do not look for another way to post. The poster has already written the checked payload to `<out-dir>/payload.json`. Give the user that path and the one command to send it with their own login:
+
+```bash
+gh api repos/<owner>/<repo>/pulls/<number>/reviews --method POST --input <out-dir>/payload.json
+```
+
 Each comment takes `line`, or `start_line` and `line` for a range. The poster checks every anchor against the diff first: a range partly outside the diff is shrunk to its lines inside it, and a comment with no line in the diff is moved into the top comment under "Outside the diff". Run it with `--dry-run` to see the payload before the yes if anything looks off.
 
 On a re-review of a PR you or someone else already reviewed: keep the wording of a finding that is still open, say "still open" rather than restating it, and do not raise a thread a person resolved unless the code got worse.
