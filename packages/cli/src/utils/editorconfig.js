@@ -39,7 +39,7 @@ export function renderEditorConfig(settings) {
 }
 
 /**
- * The `.editorconfig` properties Oxfmt 0.74 reads, with the value Oxfmt uses when a property is
+ * The `.editorconfig` properties Oxfmt reads, with the value Oxfmt uses when a property is
  * not set. Oxfmt's configuration schema names each one in its "Overrides `.editorconfig.…`" notes.
  */
 const OXFMT_DEFAULTS = Object.freeze({
