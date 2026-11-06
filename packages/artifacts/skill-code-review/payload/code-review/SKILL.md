@@ -223,7 +223,7 @@ A review posted under the user's name reads as the user's own words. So:
 { "event": "REQUEST_CHANGES", "body": "...", "comments": [ { "path": "src/x.ts", "line": 88, "side": "RIGHT", "body": "..." } ] }
 ````
 
-4. After the yes: `${CLAUDE_SKILL_DIR}/scripts/post-review.sh <out-dir>/review.json`. It prints the review URL. Give the user that link.
+4. After the yes: `bash ${CLAUDE_SKILL_DIR}/scripts/post-review.sh <out-dir>/review.json`. It prints the review URL. Give the user that link.
 
 Each comment takes `line`, or `start_line` and `line` for a range. The poster checks every anchor against the diff first: a range partly outside the diff is shrunk to its lines inside it, and a comment with no line in the diff is moved into the top comment under "Outside the diff". Run it with `--dry-run` to see the payload before the yes if anything looks off.
 
@@ -231,7 +231,7 @@ On a re-review of a PR you or someone else already reviewed: keep the wording of
 
 ## 7. Clean up
 
-When the review is done and posted or not, run `${CLAUDE_SKILL_DIR}/scripts/cleanup.sh <out-dir>` to remove the worktree or clone. It refuses any folder the collector did not make. Skip this if the user may want to ask follow-up questions about the code; then say where the checkout is.
+When the review is done and posted or not, run `bash ${CLAUDE_SKILL_DIR}/scripts/cleanup.sh <out-dir>` to remove the worktree or clone. It refuses any folder the collector did not make. Skip this if the user may want to ask follow-up questions about the code; then say where the checkout is.
 
 ## When the user asks a follow-up
 
