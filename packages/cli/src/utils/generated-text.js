@@ -32,10 +32,13 @@ export async function formatGeneratedText(path, text, loadFormatter) {
     const formatted = await formatter.format(path, text);
     // Like writeJSON, a line that vite.config.ts prints arrives before the formatted text. Every
     // Markdown file Calavera generates starts with a line the formatter keeps as it is, a heading
-    // or an HTML comment, so formatted text that starts differently holds something else.
+    // or an HTML comment, so formatted text that starts differently holds something else. Only the
+    // line's text is compared, because a project whose .editorconfig sets end_of_line = crlf gets
+    // that line back followed by "\r\n", not "\n".
     const firstLine = text.split("\n", 1)[0] ?? "";
-    if (!formatted.startsWith(`${firstLine}\n`)) {
-      const start = formatted.trimStart().split("\n", 1)[0]?.slice(0, 120) ?? "";
+    const formattedFirstLine = formatted.split(/\r?\n/, 1)[0];
+    if (formattedFirstLine !== firstLine || formattedFirstLine.length === formatted.length) {
+      const start = formatted.trimStart().split(/\r?\n/, 1)[0]?.slice(0, 120) ?? "";
       throw new Error(
         `${formatter.description} returned text for ${path} that does not start with the line Calavera sent, "${firstLine}". It begins: "${start}". Make sure vite.config.ts prints nothing when vp fmt loads it, then run Calavera again.`,
       );

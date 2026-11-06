@@ -38,6 +38,7 @@ import {
   planArtifactWiring,
   writeArtifactWiring,
 } from "./ai/artifact-wiring.js";
+import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { loadProjectFormatter } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
@@ -1386,16 +1387,7 @@ function createHtmlValidateWrapper() {
 }
 
 function createEditorConfig() {
-  return `root = true
-
-[*]
-charset = utf-8
-end_of_line = lf
-insert_final_newline = true
-indent_style = space
-indent_size = 2
-trim_trailing_whitespace = true
-`;
+  return renderEditorConfig(CALAVERA_EDITORCONFIG);
 }
 
 function createAgentBootstrapGuidanceBody() {
@@ -2073,9 +2065,12 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
  *
  * @param {string} directory
  * @param {"managed" | "unmanaged" | "unknown"} [vitePlusStatus]
+ * @param {{ editorConfig?: import("./utils/editorconfig.js").EditorConfigSettings }} [options]
+ *   `editorConfig` is the `.editorconfig` the same run writes, so formatting stops when it would
+ *   change the settings the formatter uses.
  * @returns {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>}
  */
-function projectFormatterLoader(directory, vitePlusStatus) {
+function projectFormatterLoader(directory, vitePlusStatus, options = {}) {
   /** @type {Promise<import("./utils/project-formatter.js").ProjectFormatter> | undefined} */
   let formatter;
   return () =>
@@ -2083,6 +2078,7 @@ function projectFormatterLoader(directory, vitePlusStatus) {
       loadProjectFormatter(
         directory,
         vitePlusStatus ?? (await detectVitePlus(directory)).status,
+        options,
       ))());
 }
 
@@ -2575,7 +2571,13 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   // #669 and ADR-0015, Decision 5: the text of every file Calavera generates comes from the
   // project's formatter, before anything is written, so the dry run shows the bytes apply writes
   // and the project's own vp check accepts them. The formatter loads only when a file needs it.
-  const loadFormatter = projectFormatterLoader(process.cwd(), vitePlusDetection.status);
+  // When apply also writes Calavera's .editorconfig, formatting stops if that file would change the
+  // settings the formatter uses, because the formatter can only read the settings on disk.
+  const loadFormatter = projectFormatterLoader(process.cwd(), vitePlusDetection.status, {
+    editorConfig: integrations.some(({ id }) => id === "editorconfig")
+      ? CALAVERA_EDITORCONFIG
+      : undefined,
+  });
   const managedFilePlans = await formatManagedFilePlans(
     plannedManagedFiles(integrations, recipe.integrationOptions),
     loadFormatter,

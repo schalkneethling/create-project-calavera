@@ -4,18 +4,24 @@
 // after writing it, because the managed-file comparison relies on the bytes it wrote.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile, stat, writeFile } from "node:fs/promises";
+import { cp, readdir, readFile, stat, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 
 import { agentBootstrap, applyRecipeObject } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
+import {
+  CALAVERA_EDITORCONFIG,
+  editorConfigFormattingChange,
+  renderEditorConfig,
+} from "../src/utils/editorconfig.js";
 import { formatGeneratedText } from "../src/utils/generated-text.js";
 import { loadProjectFormatter } from "../src/utils/project-formatter.js";
 import {
   copyReleaseFixture,
   createTemporaryFixture,
   json,
+  releaseFixturePath,
   writeVitePlusFormatter,
 } from "./vite-plus-fixtures.mjs";
 
@@ -228,5 +234,89 @@ test("formatGeneratedText formats JSON and Markdown only, and refuses Markdown t
   await assert.rejects(
     formatGeneratedText("docs/notes.md", "# Notes\n", async () => noisy),
     /returned text for docs\/notes\.md that does not start with the line Calavera sent, "# Notes"\. It begins: "dotenv: injected 2 variables"\. Make sure vite\.config\.ts prints nothing/,
+  );
+});
+
+test("Given a Vite+ project whose .editorconfig asks for CRLF line endings, when Calavera formats Markdown, then it keeps the formatter's CRLF text", async () => {
+  await using project = await createTemporaryFixture("generated-text-crlf", {
+    ".editorconfig": "root = true\n\n[*]\nend_of_line = crlf\n",
+  });
+  await writeVitePlusFormatter(project.root);
+  const formatter = await loadProjectFormatter(project.root, "managed");
+
+  assert.equal(
+    await formatGeneratedText("docs/notes.md", "# Notes\n\nText.\n", async () => formatter),
+    "# Notes\r\n\r\nText.\r\n",
+  );
+});
+
+test("Given a Vite+ project inside a folder whose .editorconfig sets four-space indentation, when Calavera applies its .editorconfig, then the dry run and apply stop, and apply succeeds once the project has Calavera's .editorconfig", async () => {
+  await using parent = await createTemporaryFixture("parent-editorconfig", {
+    ".editorconfig": "root = true\n\n[*]\nindent_style = space\nindent_size = 4\n",
+  });
+  const root = join(parent.root, "library");
+  await cp(releaseFixturePath("library"), root, { recursive: true });
+  await writeVitePlusFormatter(root);
+  const before = await readdir(root);
+  const stop = new RegExp(
+    `Calavera's \\.editorconfig would change how vp fmt formats \\S+: indent_size is 4 now \\(from ${RegExp.escape(join(parent.root, ".editorconfig"))}\\) and 2 after apply\\.`,
+  );
+
+  await inDirectory(root, async () => {
+    await assert.rejects(applyRecipeObject(recipe, { ...applyOptions, dryRun: true }), stop);
+    await assert.rejects(applyRecipeObject(recipe, applyOptions), stop);
+  });
+  assert.deepEqual(await readdir(root), before, "apply wrote files before it stopped");
+
+  // The remedy the error names: the project's own .editorconfig, which apply then adopts.
+  await writeFile(join(root, ".editorconfig"), renderEditorConfig(CALAVERA_EDITORCONFIG));
+  await inDirectory(root, () => applyRecipeObject(recipe, applyOptions));
+  const check = vpFmt(root, ["--check"]);
+  assert.equal(check.status, 0, `vp fmt --check failed:\n${check.stdout}${check.stderr}`);
+});
+
+test("editorConfigFormattingChange reads the .editorconfig files Oxfmt reads and compares the settings Oxfmt uses", async () => {
+  await using parent = await createTemporaryFixture("editorconfig-change", {
+    ".editorconfig": "[*.md]\nmax_line_length = 80\n",
+    "project/docs/.editorconfig": "root = true\n\n[*]\nindent_size = 8\n",
+    "project/.editorconfig": "[*]\ntab_width = 4\nindent_size = unset\n",
+  });
+  const project = join(parent.root, "project");
+
+  // tab_width stands in for the unset indent_size, as Oxfmt falls back to it.
+  assert.deepEqual(
+    await editorConfigFormattingChange(project, "knip.json", CALAVERA_EDITORCONFIG),
+    {
+      property: "indent_size",
+      current: 4,
+      planned: 2,
+      sources: [join(project, ".editorconfig")],
+    },
+  );
+
+  await writeFile(join(project, ".editorconfig"), "[*]\nend_of_line = lf\n");
+  // docs/.editorconfig is ignored, because Oxfmt reads only from the project root upward, and the
+  // parent's [*.md] section reaches the Markdown file only.
+  assert.equal(
+    await editorConfigFormattingChange(project, "docs/x.json", CALAVERA_EDITORCONFIG),
+    undefined,
+  );
+  assert.equal(
+    (await editorConfigFormattingChange(project, "docs/x.md", CALAVERA_EDITORCONFIG))?.property,
+    "max_line_length",
+  );
+
+  // Calavera's own file at the project root is marked root = true, so nothing above it counts.
+  await writeFile(join(project, ".editorconfig"), renderEditorConfig(CALAVERA_EDITORCONFIG));
+  assert.equal(
+    await editorConfigFormattingChange(project, "docs/x.md", CALAVERA_EDITORCONFIG),
+    undefined,
+  );
+});
+
+test("renderEditorConfig writes the .editorconfig Calavera has always written", () => {
+  assert.equal(
+    renderEditorConfig(CALAVERA_EDITORCONFIG),
+    "root = true\n\n[*]\ncharset = utf-8\nend_of_line = lf\ninsert_final_newline = true\nindent_style = space\nindent_size = 2\ntrim_trailing_whitespace = true\n",
   );
 });

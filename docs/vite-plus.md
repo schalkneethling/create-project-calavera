@@ -170,6 +170,16 @@ also formats the JSON and Markdown files it writes with the project's own
 written. In a project Vite+ does not manage, those files are written
 unformatted.
 
+Oxfmt also reads indentation, line endings, the final newline, line length,
+and quote style from the nearest `.editorconfig` at or above the project root.
+When the recipe includes `editorconfig`, apply writes Calavera's
+`.editorconfig`, but the formatter can only read the settings already on
+disk. So if a `.editorconfig` in the project root or a parent folder sets any
+of those differently from Calavera's, the dry run and `apply` stop and name
+the file and the setting. Save Calavera's `.editorconfig`, which the error
+prints, in the project root, or leave `editorconfig` out of the recipe, then
+run `apply` again.
+
 The dry run makes the same decision. `apply --dry-run` prints, for example,
 `Dev dependency install command: vp add -D knip`, followed by the exact
 command apply runs, or by the reason apply would stop. `dry_run_apply` and
