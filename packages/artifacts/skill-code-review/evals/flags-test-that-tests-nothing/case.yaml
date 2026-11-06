@@ -1,0 +1,13 @@
+schema_version: "1.1"
+name: flags-test-that-tests-nothing
+expected_outcome: |
+  The validation code is correct. The new test "rejects a zero amount" is not:
+  it makes the gateway throw, so issueRefund rejects on main too, with the
+  validation reverted. The report proves this with the mutation script
+  (tests still pass with the change reverted) and reports it as a P1 finding
+  on the test, citing src/refunds/service.test.js at the new test, with a
+  fix (make the gateway succeed so only the validation can reject). It does
+  not report the validation code itself as a bug, and the verdict is
+  "Fix 1 before merge".
+context:
+  scaffold_script: place-files.sh

@@ -1,0 +1,9 @@
+schema_version: "1.1"
+name: clean-docs-branch-merges
+expected_outcome: |
+  The branch only adds a correct Setup section to the README. The report says
+  Verdict: Merge with Risk: Low, has no findings (or says none were found), and
+  does not pad the report with a "Checked and fine" list or invented P2s. The
+  whole report is short: under about 15 lines.
+context:
+  scaffold_script: place-files.sh

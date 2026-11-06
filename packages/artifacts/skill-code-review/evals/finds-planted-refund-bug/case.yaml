@@ -1,0 +1,16 @@
+schema_version: "1.1"
+name: finds-planted-refund-bug
+expected_outcome: |
+  The report opens with "## Review:" and a Verdict line that says the change
+  must be fixed before merge. It contains a P0 or P1 finding on the retry loop
+  in src/refunds/service.js: the idempotency key includes the attempt number,
+  so a retry after a timed-out but successful gateway call refunds the customer
+  twice. The finding names the file and a line inside the loop and gives a fix
+  (one key per refund, not per attempt). It also flags, as P1 or P2, that the
+  old refundedAt guard is gone, so a second full refund of an already refunded
+  order passes the amount check only by accident of refundedCents. It does not
+  report the boolean named "retries" as a finding, because --nits was not
+  passed. It does not invent style findings. Every path:line it cites exists in
+  the branch.
+context:
+  scaffold_script: place-files.sh
