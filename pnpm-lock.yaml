@@ -13,7 +13,7 @@ importers:
         version: 3.0.3
       '@schalkneethling/stylelint-plugin-css-property-type-validator':
         specifier: 0.1.0-beta.1
-        version: 0.1.0-beta.1(stylelint@17.16.0(typescript@7.0.2))
+        version: 0.1.0-beta.1(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2))
       '@stryker-mutator/api':
         specifier: 10.1.1
         version: 10.1.1
@@ -63,20 +63,20 @@ importers:
         specifier: 7.8.6
         version: 7.8.6
       skills:
-        specifier: 1.7.4
-        version: 1.7.4
+        specifier: 1.7.6
+        version: 1.7.6
       stylelint:
         specifier: ^17.16.0
-        version: 17.16.0(typescript@7.0.2)
+        version: 17.16.0(supports-color@10.2.2)(typescript@7.0.2)
       stylelint-config-standard:
         specifier: ^40.0.0
-        version: 40.0.0(stylelint@17.16.0(typescript@7.0.2))
+        version: 40.0.0(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2))
       stylelint-order:
         specifier: ^8.1.3
-        version: 8.1.3(stylelint@17.16.0(typescript@7.0.2))
+        version: 8.1.3(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2))
       stylelint-plugin-use-baseline:
         specifier: ^1.4.8
-        version: 1.4.8(stylelint@17.16.0(typescript@7.0.2))
+        version: 1.4.8(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2))
       typescript:
         specifier: ^7.0.2
         version: 7.0.2
@@ -133,7 +133,7 @@ importers:
         version: 7.0.0
       pacote:
         specifier: 22.0.1
-        version: 22.0.1
+        version: 22.0.1(supports-color@10.2.2)
       semver:
         specifier: 7.8.6
         version: 7.8.6
@@ -188,7 +188,7 @@ importers:
         version: 1.8.1
       '@modelcontextprotocol/sdk':
         specifier: ^1.32.2
-        version: 1.32.2(zod@4.6.7)
+        version: 1.32.2(supports-color@10.2.2)(zod@4.6.7)
       '@schalkneethling/calavera-artifact-core':
         specifier: workspace:^
         version: link:../artifact-core
@@ -3011,8 +3011,8 @@ packages:
   sisteransi@1.0.5:
     resolution: {integrity: sha512-bLGGlR1QxBcynn2d5YmDX4MGjlZvy2MRBDRNHLJ8VI6l6+9FUiyTFNJ0IveOSP0bcXgVDPRcfGqA0pjaqUpfVg==}
 
-  skills@1.7.4:
-    resolution: {integrity: sha512-lHZJksE8UImNAr+LL6unqq7jERjdFw5EJasm17srycwL7rXHGdCmgu1L1ttLxUO9i3rdH+QQig+px0icHqLmRw==}
+  skills@1.7.6:
+    resolution: {integrity: sha512-dAee29yRGin7ub6VHwmifLEfHrysGD41yq4RkY0gg7QQh0wyQKWfhiORGb/r6uNpKWc9A1GY8yowV07Lh+4rCg==}
     engines: {node: '>=22.20.0'}
     hasBin: true
 
@@ -3948,18 +3948,18 @@ snapshots:
       tinyglobby: 0.2.17
       yaml: 2.9.1
 
-  '@modelcontextprotocol/sdk@1.32.2(zod@4.6.7)':
+  '@modelcontextprotocol/sdk@1.32.2(supports-color@10.2.2)(zod@4.6.7)':
     dependencies:
       '@hono/node-server': 2.1.5(hono@4.13.14)
       ajv: 8.20.0
-      ajv-formats: 3.0.1(ajv@8.20.0)
+      ajv-formats: 3.0.1
       content-type: 1.0.5
       cors: 2.8.6
       cross-spawn: 7.0.6
       eventsource: 3.0.7
       eventsource-parser: 3.1.1
-      express: 5.3.0
-      express-rate-limit: 8.7.1(express@5.3.0)
+      express: 5.3.0(supports-color@10.2.2)
+      express-rate-limit: 8.7.1(express@5.3.0(supports-color@10.2.2))(supports-color@10.2.2)
       hono: 4.13.14
       jose: 6.2.13
       json-schema-typed: 8.0.2
@@ -3989,13 +3989,13 @@ snapshots:
       '@nodelib/fs.scandir': 2.1.5
       fastq: 1.20.3
 
-  '@npmcli/agent@5.0.2':
+  '@npmcli/agent@5.0.2(supports-color@10.2.2)':
     dependencies:
       agent-base: 9.0.0
-      http-proxy-agent: 9.1.0
-      https-proxy-agent: 9.1.0
+      http-proxy-agent: 9.1.0(supports-color@10.2.2)
+      https-proxy-agent: 9.1.0(supports-color@10.2.2)
       lru-cache: 11.5.3
-      socks-proxy-agent: 10.1.0
+      socks-proxy-agent: 10.1.0(supports-color@10.2.2)
     transitivePeerDependencies:
       - kerberos
       - supports-color
@@ -4343,10 +4343,10 @@ snapshots:
     dependencies:
       css-tree: 3.2.1
 
-  '@schalkneethling/stylelint-plugin-css-property-type-validator@0.1.0-beta.1(stylelint@17.16.0(typescript@7.0.2))':
+  '@schalkneethling/stylelint-plugin-css-property-type-validator@0.1.0-beta.1(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2))':
     dependencies:
       '@schalkneethling/css-property-type-validator-core': 0.11.2
-      stylelint: 17.16.0(typescript@7.0.2)
+      stylelint: 17.16.0(supports-color@10.2.2)(typescript@7.0.2)
 
   '@sec-ant/readable-stream@0.4.1': {}
 
@@ -4362,22 +4362,22 @@ snapshots:
 
   '@sigstore/protobuf-specs@0.5.2': {}
 
-  '@sigstore/sign@5.0.0':
+  '@sigstore/sign@5.0.0(supports-color@10.2.2)':
     dependencies:
       '@gar/promise-retry': 1.0.3
       '@sigstore/bundle': 5.0.0
       '@sigstore/core': 4.0.1
       '@sigstore/protobuf-specs': 0.5.2
-      make-fetch-happen: 16.0.1
+      make-fetch-happen: 16.0.1(supports-color@10.2.2)
       proc-log: 7.0.0
     transitivePeerDependencies:
       - kerberos
       - supports-color
 
-  '@sigstore/tuf@5.0.0':
+  '@sigstore/tuf@5.0.0(supports-color@10.2.2)':
     dependencies:
       '@sigstore/protobuf-specs': 0.5.2
-      tuf-js: 6.0.0
+      tuf-js: 6.0.0(supports-color@10.2.2)
     transitivePeerDependencies:
       - supports-color
 
@@ -4631,8 +4631,8 @@ snapshots:
 
   agent-base@9.0.0: {}
 
-  ajv-formats@3.0.1(ajv@8.20.0):
-    optionalDependencies:
+  ajv-formats@3.0.1:
+    dependencies:
       ajv: 8.20.0
 
   ajv@8.20.0:
@@ -4662,11 +4662,11 @@ snapshots:
 
   baseline-browser-mapping@2.11.35: {}
 
-  body-parser@2.4.0:
+  body-parser@2.4.0(supports-color@10.2.2):
     dependencies:
       bytes: 3.1.2
       content-type: 2.1.0
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       http-errors: 2.0.1
       iconv-lite: 0.7.3
       on-finished: 2.4.2
@@ -4794,9 +4794,11 @@ snapshots:
 
   cssesc@3.0.0: {}
 
-  debug@4.4.3:
+  debug@4.4.3(supports-color@10.2.2):
     dependencies:
       ms: 2.1.3
+    optionalDependencies:
+      supports-color: 10.2.2
 
   delayed-stream@1.0.0: {}
 
@@ -4903,28 +4905,28 @@ snapshots:
 
   exponential-backoff@3.1.3: {}
 
-  express-rate-limit@8.7.1(express@5.3.0):
+  express-rate-limit@8.7.1(express@5.3.0(supports-color@10.2.2))(supports-color@10.2.2):
     dependencies:
-      debug: 4.4.3
-      express: 5.3.0
+      debug: 4.4.3(supports-color@10.2.2)
+      express: 5.3.0(supports-color@10.2.2)
       ip-address: 10.7.5
     transitivePeerDependencies:
       - supports-color
 
-  express@5.3.0:
+  express@5.3.0(supports-color@10.2.2):
     dependencies:
       accepts: 2.0.0
-      body-parser: 2.4.0
+      body-parser: 2.4.0(supports-color@10.2.2)
       content-disposition: 2.0.1
       content-type: 2.1.0
       cookie: 0.7.2
       cookie-signature: 1.2.2
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       depd: 2.0.0
       encodeurl: 2.0.0
       escape-html: 1.0.3
       etag: 1.8.1
-      finalhandler: 2.1.1
+      finalhandler: 2.1.1(supports-color@10.2.2)
       fresh: 2.0.0
       http-errors: 2.0.1
       merge-descriptors: 2.0.0
@@ -4935,9 +4937,9 @@ snapshots:
       proxy-addr: 2.0.8
       qs: 6.17.0
       range-parser: 1.3.0
-      router: 2.2.0
-      send: 1.2.1
-      serve-static: 2.2.1
+      router: 2.2.0(supports-color@10.2.2)
+      send: 1.2.1(supports-color@10.2.2)
+      serve-static: 2.2.1(supports-color@10.2.2)
       statuses: 2.0.2
       type-is: 2.1.0
       vary: 1.1.2
@@ -4992,9 +4994,9 @@ snapshots:
     dependencies:
       to-regex-range: 5.0.1
 
-  finalhandler@2.1.1:
+  finalhandler@2.1.1(supports-color@10.2.2):
     dependencies:
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       encodeurl: 2.0.0
       escape-html: 1.0.3
       on-finished: 2.4.2
@@ -5168,19 +5170,19 @@ snapshots:
       statuses: 2.0.2
       toidentifier: 1.0.1
 
-  http-proxy-agent@9.1.0:
+  http-proxy-agent@9.1.0(supports-color@10.2.2):
     dependencies:
       agent-base: 9.0.0
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       proxy-agent-negotiate: 1.1.0
     transitivePeerDependencies:
       - kerberos
       - supports-color
 
-  https-proxy-agent@9.1.0:
+  https-proxy-agent@9.1.0(supports-color@10.2.2):
     dependencies:
       agent-base: 9.0.0
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       proxy-agent-negotiate: 1.1.0
     transitivePeerDependencies:
       - kerberos
@@ -5366,10 +5368,10 @@ snapshots:
 
   lru-cache@11.5.3: {}
 
-  make-fetch-happen@16.0.1:
+  make-fetch-happen@16.0.1(supports-color@10.2.2):
     dependencies:
       '@gar/promise-retry': 1.0.3
-      '@npmcli/agent': 5.0.2
+      '@npmcli/agent': 5.0.2(supports-color@10.2.2)
       '@npmcli/redact': 5.0.0
       cacache: 21.0.1
       http-cache-semantics: 4.3.0
@@ -5532,11 +5534,11 @@ snapshots:
       npm-package-arg: 14.0.0
       semver: 7.8.6
 
-  npm-registry-fetch@20.0.1:
+  npm-registry-fetch@20.0.1(supports-color@10.2.2):
     dependencies:
       '@npmcli/redact': 5.0.0
       jsonparse: 1.3.1
-      make-fetch-happen: 16.0.1
+      make-fetch-happen: 16.0.1(supports-color@10.2.2)
       minipass: 7.1.3
       minipass-fetch: 6.0.0
       minizlib: 3.1.0
@@ -5663,7 +5665,7 @@ snapshots:
 
   package-manager-detector@1.9.0: {}
 
-  pacote@22.0.1:
+  pacote@22.0.1(supports-color@10.2.2):
     dependencies:
       '@gar/promise-retry': 1.0.3
       '@npmcli/git': 8.0.0
@@ -5677,9 +5679,9 @@ snapshots:
       npm-package-arg: 14.0.0
       npm-packlist: 11.3.0
       npm-pick-manifest: 12.0.0
-      npm-registry-fetch: 20.0.1
+      npm-registry-fetch: 20.0.1(supports-color@10.2.2)
       proc-log: 7.0.0
-      sigstore: 5.0.0
+      sigstore: 5.0.0(supports-color@10.2.2)
       ssri: 14.0.0
       tar: 7.5.22
     transitivePeerDependencies:
@@ -5841,9 +5843,9 @@ snapshots:
       '@rolldown/binding-win32-arm64-msvc': 1.2.15
       '@rolldown/binding-win32-x64-msvc': 1.2.15
 
-  router@2.2.0:
+  router@2.2.0(supports-color@10.2.2):
     dependencies:
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       depd: 2.0.0
       is-promise: 4.0.0
       parseurl: 1.3.3
@@ -5867,9 +5869,9 @@ snapshots:
 
   semver@7.8.6: {}
 
-  send@1.2.1:
+  send@1.2.1(supports-color@10.2.2):
     dependencies:
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       encodeurl: 2.0.0
       escape-html: 1.0.3
       etag: 1.8.1
@@ -5883,12 +5885,12 @@ snapshots:
     transitivePeerDependencies:
       - supports-color
 
-  serve-static@2.2.1:
+  serve-static@2.2.1(supports-color@10.2.2):
     dependencies:
       encodeurl: 2.0.0
       escape-html: 1.0.3
       parseurl: 1.3.3
-      send: 1.2.1
+      send: 1.2.1(supports-color@10.2.2)
     transitivePeerDependencies:
       - supports-color
 
@@ -5932,13 +5934,13 @@ snapshots:
 
   signal-exit@4.1.0: {}
 
-  sigstore@5.0.0:
+  sigstore@5.0.0(supports-color@10.2.2):
     dependencies:
       '@sigstore/bundle': 5.0.0
       '@sigstore/core': 4.0.1
       '@sigstore/protobuf-specs': 0.5.2
-      '@sigstore/sign': 5.0.0
-      '@sigstore/tuf': 5.0.0
+      '@sigstore/sign': 5.0.0(supports-color@10.2.2)
+      '@sigstore/tuf': 5.0.0(supports-color@10.2.2)
       '@sigstore/verify': 4.1.2
     transitivePeerDependencies:
       - kerberos
@@ -5946,7 +5948,7 @@ snapshots:
 
   sisteransi@1.0.5: {}
 
-  skills@1.7.4:
+  skills@1.7.6:
     dependencies:
       tar: 7.5.22
       yaml: 2.9.1
@@ -5963,10 +5965,10 @@ snapshots:
 
   smol-toml@1.9.1: {}
 
-  socks-proxy-agent@10.1.0:
+  socks-proxy-agent@10.1.0(supports-color@10.2.2):
     dependencies:
       agent-base: 9.0.0
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       socks: 2.8.10
     transitivePeerDependencies:
       - supports-color
@@ -6018,30 +6020,30 @@ snapshots:
 
   strip-json-comments@5.0.3: {}
 
-  stylelint-config-recommended@18.0.0(stylelint@17.16.0(typescript@7.0.2)):
+  stylelint-config-recommended@18.0.0(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2)):
     dependencies:
-      stylelint: 17.16.0(typescript@7.0.2)
+      stylelint: 17.16.0(supports-color@10.2.2)(typescript@7.0.2)
 
-  stylelint-config-standard@40.0.0(stylelint@17.16.0(typescript@7.0.2)):
+  stylelint-config-standard@40.0.0(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2)):
     dependencies:
-      stylelint: 17.16.0(typescript@7.0.2)
-      stylelint-config-recommended: 18.0.0(stylelint@17.16.0(typescript@7.0.2))
+      stylelint: 17.16.0(supports-color@10.2.2)(typescript@7.0.2)
+      stylelint-config-recommended: 18.0.0(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2))
 
-  stylelint-order@8.1.3(stylelint@17.16.0(typescript@7.0.2)):
+  stylelint-order@8.1.3(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2)):
     dependencies:
       postcss: 8.5.32
       postcss-sorting: 10.0.0(postcss@8.5.32)
-      stylelint: 17.16.0(typescript@7.0.2)
+      stylelint: 17.16.0(supports-color@10.2.2)(typescript@7.0.2)
 
-  stylelint-plugin-use-baseline@1.4.8(stylelint@17.16.0(typescript@7.0.2)):
+  stylelint-plugin-use-baseline@1.4.8(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2)):
     dependencies:
       css-tree: 3.2.1
       is-plain-object: 5.1.0
       postcss: 8.5.31
       postcss-value-parser: 4.2.0
-      stylelint: 17.16.0(typescript@7.0.2)
+      stylelint: 17.16.0(supports-color@10.2.2)(typescript@7.0.2)
 
-  stylelint@17.16.0(typescript@7.0.2):
+  stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2):
     dependencies:
       '@csstools/css-calc': 3.4.3(@csstools/css-parser-algorithms@4.0.2(@csstools/css-tokenizer@4.0.2))(@csstools/css-tokenizer@4.0.2)
       '@csstools/css-parser-algorithms': 4.0.2(@csstools/css-tokenizer@4.0.2)
@@ -6054,7 +6056,7 @@ snapshots:
       cosmiconfig: 9.0.2(typescript@7.0.2)
       css-functions-list: 3.3.3
       css-tree: 3.2.1
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
       fast-glob: 3.3.3
       fastest-levenshtein: 1.0.16
       file-entry-cache: 11.1.5
@@ -6138,11 +6140,11 @@ snapshots:
 
   tslib@2.9.1: {}
 
-  tuf-js@6.0.0:
+  tuf-js@6.0.0(supports-color@10.2.2):
     dependencies:
       '@gar/promise-retry': 1.0.3
       '@tufjs/models': 5.0.0
-      debug: 4.4.3
+      debug: 4.4.3(supports-color@10.2.2)
     transitivePeerDependencies:
       - supports-color
 
