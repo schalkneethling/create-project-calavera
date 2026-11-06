@@ -30,11 +30,11 @@ No arguments and the current folder is a git repository: review the current bran
 
 ## 2. Collect the change
 
-Run the collector. The scripts live beside this file: `${CLAUDE_SKILL_DIR}` is the folder that holds this SKILL.md (Claude Code fills it in; in a Calavera project it is `.agents/skills/code-review`). It writes everything into one folder, `<out-dir>` from here on, and prints that folder's path on its last line:
+Run the collector with `bash`, so it works whether or not the file is marked executable. The scripts live beside this file: `${CLAUDE_SKILL_DIR}` is the folder that holds this SKILL.md (Claude Code fills it in; in a Calavera project it is `.agents/skills/code-review`). It writes everything into one folder, `<out-dir>` from here on, and prints that folder's path on its last line:
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/resolve-target.sh <url>                       # PR shape
-${CLAUDE_SKILL_DIR}/scripts/resolve-target.sh <folder> <branch> [base]    # branch shape
+bash ${CLAUDE_SKILL_DIR}/scripts/resolve-target.sh <url>                       # PR shape
+bash ${CLAUDE_SKILL_DIR}/scripts/resolve-target.sh <folder> <branch> [base]    # branch shape
 ```
 
 In that folder:
@@ -115,9 +115,9 @@ Reading a test tells you what it looks like. Running it against a broken version
 `<out-dir>` below is always the folder the collector printed, never the repository.
 
 ```bash
-${CLAUDE_SKILL_DIR}/scripts/mutate.sh <out-dir> --revert                          # base code, branch tests
-${CLAUDE_SKILL_DIR}/scripts/mutate.sh <out-dir> --sed <path> '<sed expression>'  # one targeted mutation, path relative to the repository root
-${CLAUDE_SKILL_DIR}/scripts/mutate.sh <out-dir> --patch <file.diff>              # same, from a diff
+bash ${CLAUDE_SKILL_DIR}/scripts/mutate.sh <out-dir> --revert                          # base code, branch tests
+bash ${CLAUDE_SKILL_DIR}/scripts/mutate.sh <out-dir> --sed <path> '<sed expression>'  # one targeted mutation, path relative to the repository root
+bash ${CLAUDE_SKILL_DIR}/scripts/mutate.sh <out-dir> --patch <file.diff>              # same, from a diff
 ```
 
 - **Always run `--revert` when the diff adds or changes tests.** It restores every non-test file to its base version and keeps the branch's tests. A new or changed test that still passes was not testing the change. That is a P1 on the test: it certifies behavior it does not check, which is worse than no test. Quote the `TESTS_EXIT` line and the passing test's name as evidence.
