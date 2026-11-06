@@ -215,8 +215,8 @@ Verdict rules: any P0 or P1 means "Fix N before merge". Three or more P1s, or a 
 
 A review posted under the user's name reads as the user's own words. So:
 
-1. Build the review from the report. One inline comment per finding, anchored to the finding's file and line on the head commit, with the same title, body and fix. The top comment holds only the verdict line and asks that have no line. It never restates what the PR does: the author wrote that in the description, and a review that repeats it reads as padding. Do not repeat inline points there. Nits and P2s that were not in the report are not posted.
-2. Choose the event: `REQUEST_CHANGES` when there is a P0 or P1, `APPROVE` when there are no findings, `COMMENT` otherwise.
+1. Build the review from the report. One inline comment per finding, anchored to the finding's file and line on the head commit, with the same title, body and fix. The top comment holds only the verdict line and asks that have no line; for an approval with inline P2s or nits, one line such as "Approving, with one nit inline." It never restates what the PR does: the author wrote that in the description, and a review that repeats it reads as padding. Do not repeat inline points there. Nits and P2s that were not in the report are not posted.
+2. Choose the event: `REQUEST_CHANGES` when there is a P0 or P1. `APPROVE` otherwise, including when only P2s or nits remain: they are not blockers, and an approval with the small things inline tells the author exactly where they stand. Use `COMMENT` only when the user asks not to approve, or the PR is a draft.
 3. Write it to `review.json` in `<out-dir>` in this shape, then **show the user the exact text and wait for a yes**. One yes is for one post.
 
 ```json
