@@ -18,6 +18,7 @@ import { snapshotDirectory as snapshot } from "./project-snapshot.mjs";
 
 const id = "skill-protected-branch-guard";
 const skillDirectory = ".agents/skills/protected-branch-guard";
+const script = `${skillDirectory}/scripts/guard.mjs`;
 const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const line = (/** @type {string} */ mode) =>
   `node ${skillDirectory}/scripts/guard.mjs ${mode} main`;
@@ -83,6 +84,17 @@ async function inWiredProject(callback) {
 async function doctorIssues() {
   const output = execFileSync(process.execPath, [cli, "doctor", "--json"], { encoding: "utf8" });
   return JSON.parse(output).issues;
+}
+
+/**
+ * The messages of doctor's errors about a block whose script does not exist.
+ *
+ * @returns {Promise<string[]>}
+ */
+async function missingScriptErrors() {
+  return (await doctorIssues())
+    .filter(({ level, message }) => level === "error" && message.includes("does not exist"))
+    .map(({ message }) => message);
 }
 
 test("Given a project where the guard was applied and wired, when the recipe drops skill-protected-branch-guard and dry_run_apply runs, then it lists the removal of each unchanged block and group and writes nothing", async () => {
@@ -297,8 +309,8 @@ test("Given an edited block and an edited group, doctor names each file and the 
   });
 });
 
-test("Given the skill directory deleted by hand, doctor reports each block whose script is missing as an error with the remedy", async () => {
-  await inWiredProject(async () => {
+test("Given the skill directory deleted by hand, doctor reports each block whose script is missing as an error with the remedy, and apply repairs it", async () => {
+  await inWiredProject(async (registry) => {
     await rm(skillDirectory, { recursive: true });
 
     const issues = (await doctorIssues()).filter(({ message }) => message.includes("not exist"));
@@ -312,6 +324,64 @@ test("Given the skill directory deleted by hand, doctor reports each block whose
         /runs \.agents\/skills\/protected-branch-guard\/scripts\/guard\.mjs, which does not exist[\s\S]*Run create-project-calavera apply to install the skill again/,
       );
     }
+
+    // The remedy works: with the folder gone, apply installs the skill again.
+    await callMcpTool("apply_recipe", { recipe: guardRecipe(), noInstall: true }, registry);
+    assert.deepEqual(await missingScriptErrors(), []);
+  });
+});
+
+test("Given only the guard's script deleted from a committed skill folder, apply refuses to reinstall the skill, and doctor's remedy restores the script from Git", async () => {
+  await inWiredProject(async (registry) => {
+    git(["add", "--all"]);
+    // The identity and signing settings are fixed here, so the commit does not depend on the
+    // machine's global Git configuration.
+    git([
+      "-c",
+      "user.name=Calavera",
+      "-c",
+      "user.email=calavera@example.com",
+      "-c",
+      "commit.gpgsign=false",
+      "commit",
+      "--quiet",
+      "--message=Apply the guard",
+    ]);
+    await rm(script);
+
+    const errors = await missingScriptErrors();
+    assert.equal(errors.length, 3);
+    for (const message of errors) {
+      assert.match(
+        message,
+        /\.agents\/skills\/protected-branch-guard is still there, so apply counts the missing file as a local edit and does not install the skill again\. Restore the script with git checkout HEAD -- \.agents\/skills\/protected-branch-guard\/scripts\/guard\.mjs, which keeps any other changes in that folder\./,
+      );
+    }
+    // Why the remedy is not "run apply": the changed folder is a conflict.
+    await assert.rejects(
+      callMcpTool("apply_recipe", { recipe: guardRecipe(), noInstall: true }, registry),
+      /Refusing to overwrite existing AI artifact: \.agents\/skills\/protected-branch-guard\. It appears to have local edits/,
+    );
+
+    git(["checkout", "HEAD", "--", script]);
+    assert.deepEqual(await missingScriptErrors(), []);
+  });
+});
+
+test("Given only the guard's script deleted from a skill folder that was never committed, doctor's other remedy deletes the folder so apply installs the skill again", async () => {
+  await inWiredProject(async (registry) => {
+    await rm(script);
+
+    for (const message of await missingScriptErrors()) {
+      assert.match(
+        message,
+        /If the script was never committed, delete \.agents\/skills\/protected-branch-guard and run create-project-calavera apply to install the skill again; that discards any other changes in that folder\./,
+      );
+    }
+
+    await rm(skillDirectory, { recursive: true });
+    await callMcpTool("apply_recipe", { recipe: guardRecipe(), noInstall: true }, registry);
+    assert.deepEqual(await missingScriptErrors(), []);
   });
 });
 

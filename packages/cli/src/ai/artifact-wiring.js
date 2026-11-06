@@ -461,7 +461,7 @@ export async function artifactWiringFindings({
         } else if (script !== undefined && !(await exists(resolve(cwd, script)))) {
           findings.push({
             level: "error",
-            message: `${path}: the ${id} block runs ${script}, which does not exist, so the ${hook} hook fails and Git refuses every ${hook === "pre-push" ? "push" : "commit"}. ${isSelected ? `Run ${apply} to install the skill again.` : `Because ${deselectedNote}, ${apply} removes the block; the dry run lists the removal first.`}`,
+            message: `${path}: the ${id} block runs ${script}, which does not exist, so the ${hook} hook fails and Git refuses every ${hook === "pre-push" ? "push" : "commit"}. ${isSelected ? await missingScriptRemedy(script, directory, apply, cwd) : `Because ${deselectedNote}, ${apply} removes the block; the dry run lists the removal first.`}`,
           });
         }
       }
@@ -542,6 +542,25 @@ async function exists(path) {
   } catch {
     return false;
   }
+}
+
+/**
+ * The remedy for a selected artifact's missing hook script. Apply installs the skill again only
+ * when its folder is gone: a folder that is still there but no longer matches the hash Calavera
+ * recorded counts as locally edited, and apply refuses to overwrite it. So with the folder still
+ * there, the remedy restores the one script, which keeps the person's other changes.
+ *
+ * @param {string} script The missing script, relative to the project root.
+ * @param {string | undefined} directory The skill folder, relative to the project root.
+ * @param {string} apply The apply command.
+ * @param {string} cwd
+ * @returns {Promise<string>}
+ */
+async function missingScriptRemedy(script, directory, apply, cwd) {
+  if (directory === undefined || !(await exists(resolve(cwd, directory)))) {
+    return `Run ${apply} to install the skill again.`;
+  }
+  return `${directory} is still there, so apply counts the missing file as a local edit and does not install the skill again. Restore the script with git checkout HEAD -- ${script}, which keeps any other changes in that folder. If the script was never committed, delete ${directory} and run ${apply} to install the skill again; that discards any other changes in that folder.`;
 }
 
 /**
