@@ -86,7 +86,7 @@ export function createDependabotConfig(ecosystems) {
 /** @param {ReturnType<typeof createRepositoryControlsConfig>} config */
 function createRepositoryControlsDocumentation(config) {
   const release = config.releaseEnvironment
-    ? `\n- In **Settings → Environments → ${config.releaseEnvironment.name}**, disable administrator bypass.\n`
+    ? `\n- In **Settings → Environments → ${config.releaseEnvironment.name}**, disable administrator bypass.`
     : "";
   const codeqlRequired = Boolean(config.mainRuleset.codeScanning);
   const querySuite = config.security.codeqlDefaultSetup.querySuite;
@@ -149,6 +149,7 @@ ${codeqlPartialApply}
 ## Manual controls
 
 - In **Settings → Advanced Security**, enable Dependabot malware alerts.${release}
+
 The generated script verifies the repository identity before planning or applying changes. Unsupported GitHub plan features are reported separately from drift.
 `;
 }

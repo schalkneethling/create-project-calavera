@@ -5,6 +5,8 @@ import { dirname, join } from "node:path";
 
 import { execa } from "execa";
 
+import { editorConfigFormattingChange, renderEditorConfig } from "./editorconfig.js";
+
 // A file Calavera writes into a Vite+ project must already be in the shape `vp check` expects, or
 // the project fails its own check right after apply (#669). Formatting it after the write would
 // change bytes the dry run never showed, so Calavera formats in memory, before the dry run: it
@@ -35,13 +37,16 @@ const unformatted = {
  *
  * @param {string} projectDirectory
  * @param {"managed" | "unmanaged" | "unknown"} vitePlusStatus From detectVitePlus. Only "managed" counts as a Vite+ project.
- * @param {{ timeout?: number }} [options] How long one vp fmt run may take, in milliseconds.
+ * @param {{ timeout?: number, editorConfig?: import("./editorconfig.js").EditorConfigSettings }} [options]
+ *   `timeout` is how long one vp fmt run may take, in milliseconds. `editorConfig` is the
+ *   `.editorconfig` the same run writes at the project root; formatting a file stops when that
+ *   file would change the settings Oxfmt formats it with.
  * @returns {Promise<ProjectFormatter>}
  */
 export async function loadProjectFormatter(
   projectDirectory,
   vitePlusStatus,
-  { timeout = 60_000 } = {},
+  { timeout = 60_000, editorConfig } = {},
 ) {
   if (vitePlusStatus !== "managed") return unformatted;
 
@@ -71,6 +76,9 @@ export async function loadProjectFormatter(
   return {
     description,
     async format(path, text) {
+      if (editorConfig) {
+        await assertEditorConfigKeepsSettings(projectDirectory, path, editorConfig);
+      }
       // vp is a Node script; Calavera's own Node runs it, so no shell or PATH lookup is involved.
       const result = await execa(process.execPath, [vp, "fmt", `--stdin-filepath=${path}`], {
         cwd: projectDirectory,
@@ -96,4 +104,25 @@ export async function loadProjectFormatter(
       return result.stdout;
     },
   };
+}
+
+/**
+ * Stops when writing `editorConfig` would change the settings Oxfmt formats `path` with. The
+ * formatted text would then fail `vp fmt --check` right after apply, and the next apply would
+ * rewrite the file.
+ *
+ * @param {string} projectDirectory
+ * @param {string} path
+ * @param {import("./editorconfig.js").EditorConfigSettings} editorConfig
+ */
+async function assertEditorConfigKeepsSettings(projectDirectory, path, editorConfig) {
+  const change = await editorConfigFormattingChange(projectDirectory, path, editorConfig);
+  if (!change) return;
+  const read =
+    change.sources.length > 0
+      ? `from ${change.sources.join(" and ")}`
+      : "because no .editorconfig sets it";
+  throw new Error(
+    `Calavera's .editorconfig would change how vp fmt formats ${path}: ${change.property} is ${String(change.current)} now (${read}) and ${String(change.planned)} after apply. Calavera formats the files it writes before it writes any of them, so it cannot use settings that do not exist yet. Save this as .editorconfig in the project root, or leave editorconfig out of the recipe, then run Calavera again:\n\n${renderEditorConfig(editorConfig)}`,
+  );
 }

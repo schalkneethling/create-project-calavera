@@ -12,13 +12,13 @@ import { fileURLToPath } from "node:url";
 import { callMcpTool } from "../src/mcp.js";
 import { textHash } from "../src/utils/hash.js";
 import { writeMcpServersJsonConfig } from "../src/utils/mcp-config.js";
+import { loadProjectFormatter } from "../src/utils/project-formatter.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { isRemovedToolchainId } from "./removed-toolchain-ids.mjs";
 import {
   copyReleaseFixture,
   createTemporaryFixture,
   readStubInvocations,
-  writeVitePlusFormatter,
   writeVitePlusStub,
 } from "./vite-plus-fixtures.mjs";
 
@@ -249,13 +249,13 @@ function plannedScripts(changes) {
 async function runFlow({ directory, integrations, quality, guard }, root) {
   const project = join(root, directory);
   await seedViteHooks(root);
-  // Apply formats .claude/settings.json through the project's own vp, which the
-  // fixtures do not install. This stand-in hands `vp fmt` to the repository's Oxfmt.
-  await writeVitePlusFormatter(root);
   // The bootstrap's registration step, with the writer `--init --mcp-harness
-  // claude-code` calls, so the flow starts from the file the bootstrap wrote.
+  // claude-code` calls and the project's own vp fmt it formats with, so the flow
+  // starts from the file the bootstrap wrote. copyReleaseFixture installs that vp.
   await inDirectory(project, () =>
-    writeMcpServersJsonConfig(".mcp.json", bootstrapLaunchCommand, false, []),
+    writeMcpServersJsonConfig(".mcp.json", bootstrapLaunchCommand, false, [], () =>
+      loadProjectFormatter(project, "managed"),
+    ),
   );
   const before = await snapshotTree(root);
   const manifestPath = join(directory, "package.json");
@@ -697,7 +697,6 @@ test(`vp create ${memberCase?.name}: Given the guard in a workspace member, when
   assert.ok(memberCase);
   await using fixture = await copyRepositoryFixture(memberCase.fixture);
   await seedViteHooks(fixture.root);
-  await writeVitePlusFormatter(fixture.root);
   const before = await snapshotTree(fixture.root);
 
   await inDirectory(join(fixture.root, memberCase.directory), async () => {

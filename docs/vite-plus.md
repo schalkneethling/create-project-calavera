@@ -163,8 +163,22 @@ Node.js, so it does not need `vp` on `PATH` and never runs a globally
 installed `vp` of another version (ADR-0012, Decision 2). Calavera decides the
 install command and locates the bin before `apply` writes anything, including
 a new `package.json`. If the project's vite-plus is not installed, or cannot
-be used, `apply` stops at that point; install the project's dependencies, or
-run `apply --no-install` and add the development dependencies yourself.
+be used, `apply` stops at that point; install the project's dependencies, then
+run `apply` again. `apply --no-install` does not get around this, because Calavera
+also formats the JSON and Markdown files it writes with the project's own
+`vp fmt`, in memory and before the dry run, so the files pass `vp check` as
+written. In a project Vite+ does not manage, those files are written
+unformatted.
+
+Oxfmt also reads indentation, line endings, the final newline, line length,
+and quote style from the nearest `.editorconfig` at or above the project root.
+When the recipe includes `editorconfig`, apply writes Calavera's
+`.editorconfig`, but the formatter can only read the settings already on
+disk. So if a `.editorconfig` in the project root or a parent folder sets any
+of those differently from Calavera's, the dry run and `apply` stop and name
+the file and the setting. Save Calavera's `.editorconfig`, which the error
+prints, in the project root, or leave `editorconfig` out of the recipe, then
+run `apply` again.
 
 The dry run makes the same decision. `apply --dry-run` prints, for example,
 `Dev dependency install command: vp add -D knip`, followed by the exact
