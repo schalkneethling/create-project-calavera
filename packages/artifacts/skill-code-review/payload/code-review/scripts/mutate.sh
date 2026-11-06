@@ -45,13 +45,14 @@ trap cleanup EXIT
 
 cd "$MUTANT"
 if [[ "$MODE" == "revert" ]]; then
-  # The base to revert to: the merge base when we can find one, else the base branch tip.
-  BASE_REF="$(meta merge_base)"
-  if [[ -z "$BASE_REF" ]]; then
-    git fetch --quiet --depth 200 origin "$BASE" 2>/dev/null || true
-    BASE_REF="$(git merge-base FETCH_HEAD HEAD 2>/dev/null || git rev-parse FETCH_HEAD 2>/dev/null || true)"
-  fi
-  [[ -n "$BASE_REF" ]] || { echo "mutate: cannot find the base commit to revert to" >&2; exit 1; }
+  # The base to revert to: the merge base the collector recorded, else the base branch tip it recorded,
+  # else a local base branch. This script never fetches: the worktree shares the user's repository,
+  # and a fetch with --depth there would make that repository shallow.
+  BASE_REF=""
+  for candidate in "$(meta merge_base)" "$(meta base_sha)" "origin/$BASE" "$BASE"; do
+    [[ -n "$candidate" ]] && git cat-file -e "$candidate^{commit}" 2>/dev/null && { BASE_REF="$candidate"; break; }
+  done
+  [[ -n "$BASE_REF" ]] || { echo "mutate: the base commit is not in this checkout; rerun the collector, which records it, or fetch $BASE in the repository first" >&2; exit 1; }
   reverted=0
   while IFS=$'\t' read -r status _ _ path; do
     [[ -n "$path" ]] || continue

@@ -106,30 +106,37 @@ json.dump(issues, sys.stdout, indent=2)
 PY2
 
   HEAD_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["head"]["sha"])' "$OUT/pr.json")"
+  BASE_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["base"]["sha"])' "$OUT/pr.json")"
+  BASE_REF_NAME="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["base"]["ref"])' "$OUT/pr.json")"
+  # The merge base from the API, so no script has to fetch history to find it later.
+  MERGE_BASE="$(gh api "repos/$OWNER/$REPO/compare/$BASE_SHA...$HEAD_SHA" --jq '.merge_base_commit.sha' 2>/dev/null || true)"
   gh api "repos/$OWNER/$REPO/commits/$HEAD_SHA/check-runs" --jq '[.check_runs[] | {name, status, conclusion, url: .html_url}]' > "$OUT/checks.json" 2>/dev/null || echo '[]' > "$OUT/checks.json"
 
   # A checkout of the head commit: reuse a local clone when the current folder is one, else clone.
   CHECKOUT="$OUT/checkout"
   LOCAL=""
   if git rev-parse --show-toplevel >/dev/null 2>&1; then
+    # Compare owner/repo exactly: strip the host, an optional .git, and case.
     url="$(git remote get-url origin 2>/dev/null || true)"
-    [[ "$url" == *"$OWNER/$REPO"* ]] && LOCAL="$(git rev-parse --show-toplevel)"
+    slug="$(printf '%s' "$url" | sed -E 's#^(https?://|ssh://)?(git@)?github\.com[:/]##; s#\.git/?$##; s#/$##' | tr '[:upper:]' '[:lower:]')"
+    [[ "$slug" == "$(printf '%s/%s' "$OWNER" "$REPO" | tr '[:upper:]' '[:lower:]')" ]] && LOCAL="$(git rev-parse --show-toplevel)"
   fi
   if [[ -n "$LOCAL" ]]; then
     git -C "$LOCAL" worktree prune
-    git -C "$LOCAL" fetch --quiet origin "pull/$NUM/head" 2>/dev/null || true
+    git -C "$LOCAL" fetch --quiet origin "pull/$NUM/head" "$BASE_REF_NAME" 2>/dev/null || true
     git -C "$LOCAL" worktree add --quiet --detach "$CHECKOUT" "$HEAD_SHA" 2>/dev/null \
       || git -C "$LOCAL" worktree add --quiet --detach "$CHECKOUT" FETCH_HEAD
   else
     git clone --quiet --depth 1 "https://github.com/$OWNER/$REPO" "$CHECKOUT"
     git -C "$CHECKOUT" fetch --quiet --depth 50 origin "pull/$NUM/head"
     git -C "$CHECKOUT" checkout --quiet FETCH_HEAD
+    git -C "$CHECKOUT" fetch --quiet --depth 50 origin "$BASE_REF_NAME" 2>/dev/null || true
   fi
 
   number_diff "$OUT"
-  python3 - "$OUT" "$OWNER" "$REPO" "$NUM" "$CHECKOUT" <<'PY'
+  python3 - "$OUT" "$OWNER" "$REPO" "$NUM" "$CHECKOUT" "$MERGE_BASE" <<'PY'
 import json, sys
-out, owner, repo, num, checkout = sys.argv[1:]
+out, owner, repo, num, checkout, merge_base = sys.argv[1:]
 pr = json.load(open(f"{out}/pr.json"))
 meta = {
   "mode": "github",
@@ -138,7 +145,8 @@ meta = {
   "title": pr["title"], "body": pr.get("body") or "",
   "author": pr["user"]["login"], "draft": pr.get("draft", False),
   "labels": [l["name"] for l in pr.get("labels", [])],
-  "base": pr["base"]["ref"], "head": pr["head"]["ref"], "head_sha": pr["head"]["sha"],
+  "base": pr["base"]["ref"], "base_sha": pr["base"]["sha"], "head": pr["head"]["ref"], "head_sha": pr["head"]["sha"],
+  "merge_base": merge_base,
   "additions": pr["additions"], "deletions": pr["deletions"], "changed_files": pr["changed_files"],
   "checkout": checkout,
 }
