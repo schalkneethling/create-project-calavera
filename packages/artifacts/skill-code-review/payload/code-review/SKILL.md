@@ -56,7 +56,21 @@ If the script fails, show its error and stop. Do not guess at a diff from memory
 
 `meta.json` also says whether the PR is a draft (say "Draft" after the verdict, then review it as usual) and, in branch shape, `diff_basis`: `tip-to-tip` means no common history was found, so the diff may include unrelated commits from the base. Say so in the report.
 
-Read the diff in full. For a diff over about 2,000 lines, read `files.txt` first, then the diff file by file, source before tests, tests before docs and generated code.
+Read the diff in full, source before tests, tests before docs and generated code.
+
+### Size the review before you read the diff
+
+Not every change needs every step. A two-line fix read with a 50-file process wastes the author's time twice: once waiting, once reading a report longer than the change. Read `files.txt` and the counts in `meta.json`, then pick a tier:
+
+| Tier      | Looks like                                                        | What you do                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| --------- | ----------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| **Tiny**  | Up to 2 files and about 30 changed lines, or docs and config only | Read the whole diff. Check each claim or value against the code it refers to. Follow only the symbols the diff touches. Skip the checklist and the mutation step unless a test changed. The report is the verdict line, one sentence, and findings: under ten lines when clean. No "Also worth knowing" unless CI failed.                                                                                                                                                                                          |
+| **Small** | Up to about 10 files and 300 lines                                | The full process in sections 3 and 4: intent, house rules, callers for every changed symbol, hypotheses, mutation when tests or tested code changed.                                                                                                                                                                                                                                                                                                                                                               |
+| **Large** | More than about 10 files or 300 lines                             | Triage first. Sort the files into risky (money, auth, data, migrations, public contracts, concurrency), ordinary, and mechanical (generated code, lockfiles, renames, formatting, moved files). Give risky files the full process, ordinary files a correctness read, mechanical files a spot check for anything that is not mechanical. Add a "Start with" line naming the two or three files a person should read first. If the diff is really several unrelated changes, say so in one line and name the split. |
+
+Risk beats size. A two-line change in a payment path, an auth check, a migration or a retry loop is reviewed as Small with the full process, and the report says Risk High. A 40-file rename with no logic change is Large by count but mechanical by nature: say so, spot-check, and keep the report short.
+
+The tier is for you, not the reader. It does not appear in the report; the length and depth of the report are how it shows.
 
 ## 3. Understand before you judge
 
@@ -157,7 +171,7 @@ Use exactly this shape. Leave out any section that would be empty.
 <One sentence: what the change does.>
 <If --focus: one sentence on the focus area.>
 <If issues.json has an issue: "**Linked issue:** [org/repo#12](url). Meets: a, b. Does not meet: c. Needs a person: d.">
-<If more than about ten files changed: "**Start with:** `path`, `path`." The two or three files a person should read first.>
+<Large tier: "**Start with:** `path`, `path`." The two or three files a person should read first. One more line if the change should be split.>
 
 ### Findings (2)
 
