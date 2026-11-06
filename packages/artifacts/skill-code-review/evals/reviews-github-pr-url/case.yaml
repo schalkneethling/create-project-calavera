@@ -1,0 +1,11 @@
+schema_version: "1.1"
+name: reviews-github-pr-url
+expected_outcome: |
+  Needs gh logged in; the pull request is public. The
+  skill collects the PR with resolve-target.sh (no hand-rolled gh pr diff),
+  reads the diff and the checkout, and writes a report that starts with
+  "## Review:" and links the PR as [schalkneethling/create-project-calavera#815](url).
+  Findings, if any, are about the content of the PR (a one-file .gitignore change)
+  and each cites a path and line that exist in the PR's files. Nothing is
+  posted to GitHub: no gh api POST and no post-review.sh call, because --post
+  was not passed.
