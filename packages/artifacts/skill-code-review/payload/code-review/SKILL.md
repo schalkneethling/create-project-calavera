@@ -170,7 +170,7 @@ Use exactly this shape. Leave out any section that would be empty.
 ## Review: <title> ([owner/repo#N](url)) ← branch shape: "## Review: <branch> against <base> in <folder>"
 
 **Verdict:** Merge | Fix 2 before merge | Needs rework · **Risk:** Low | Medium | High | Critical
-<One sentence: what the change does.>
+<One sentence on what the change does, only when the reader has nothing else: branch shape, or a PR whose description is empty or does not say. A PR with a description that says what it does gets no summary; the reader has read it.>
 <If --focus: one sentence on the focus area.>
 <If issues.json has an issue: "**Linked issue:** [org/repo#12](url). Meets: a, b. Does not meet: c. Needs a person: d.">
 <Large tier: "**Start with:** `path`, `path`." The two or three files a person should read first. One more line if the change should be split.>
@@ -215,7 +215,7 @@ Verdict rules: any P0 or P1 means "Fix N before merge". Three or more P1s, or a 
 
 A review posted under the user's name reads as the user's own words. So:
 
-1. Build the review from the report. One inline comment per finding, anchored to the finding's file and line on the head commit, with the same title, body and fix. The top comment holds only the verdict line and asks that have no line. Do not repeat inline points there. Nits and P2s that were not in the report are not posted.
+1. Build the review from the report. One inline comment per finding, anchored to the finding's file and line on the head commit, with the same title, body and fix. The top comment holds only the verdict line and asks that have no line. It never restates what the PR does: the author wrote that in the description, and a review that repeats it reads as padding. Do not repeat inline points there. Nits and P2s that were not in the report are not posted.
 2. Choose the event: `REQUEST_CHANGES` when there is a P0 or P1, `APPROVE` when there are no findings, `COMMENT` otherwise.
 3. Write it to `review.json` in `<out-dir>` in this shape, then **show the user the exact text and wait for a yes**. One yes is for one post.
 
