@@ -41,6 +41,8 @@ import {
   planArtifactWiring,
   writeArtifactWiring,
 } from "./ai/artifact-wiring.js";
+import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
+import { formatGeneratedText } from "./utils/generated-text.js";
 import { loadProjectFormatter } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
 
@@ -178,7 +180,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ severity: "info" | "warning" | "error", kind: string, message: string, path?: string }} ProjectInspectionFinding
  * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus: VitePlusDetection }} ProjectInspection
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
- * @typedef {{ reownManagedFiles?: string[] }} ProjectInspectionOptions
+ * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter.
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], staleQualityValues: string[] }} ScriptPlan staleQualityValues are quality values an earlier release wrote, which apply removes because the plan omits quality
  * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
@@ -818,8 +820,10 @@ async function planDevDependencyInstall(
     );
     return { command, spawn, problem: undefined, notes };
   } catch (error) {
+    // --no-install does not get around this: apply formats the files it writes with the same vp
+    // (#669), so the project's dependencies must be installed either way.
     const problem = new Error(
-      `Vite+ manages this project, so Calavera installs development dependencies with the project's own vp add, but ${error instanceof Error ? error.message : String(error)}. Install the project's dependencies, then run apply again; or run apply with --no-install and add these development dependencies yourself: ${dependencies.join(", ")}. Calavera stopped before writing anything.`,
+      `Vite+ manages this project, so Calavera installs development dependencies with the project's own vp add, but ${error instanceof Error ? error.message : String(error)}. Install the project's dependencies, then run apply again. Calavera stopped before writing anything.`,
       { cause: error },
     );
     notes.push(`Apply with the install stops before writing anything: ${problem.message}`);
@@ -1386,16 +1390,7 @@ function createHtmlValidateWrapper() {
 }
 
 function createEditorConfig() {
-  return `root = true
-
-[*]
-charset = utf-8
-end_of_line = lf
-insert_final_newline = true
-indent_style = space
-indent_size = 2
-trim_trailing_whitespace = true
-`;
+  return renderEditorConfig(CALAVERA_EDITORCONFIG);
 }
 
 function createAgentBootstrapGuidanceBody() {
@@ -1420,14 +1415,19 @@ MCP setup notes live in \`${AGENT_BOOTSTRAP_MCP_FILE}\`.
 `;
 }
 
+// A blank line separates each marker from the guidance, because Markdown formatters such as Oxfmt
+// add one between an HTML comment and the heading that follows it (#669).
 function createAgentBootstrapGuidance() {
   return `${AGENT_BOOTSTRAP_MARKER}
+
 ${createAgentBootstrapGuidanceBody()}`;
 }
 
 function createAgentBootstrapGuidanceSection() {
   return `${AGENT_BOOTSTRAP_SECTION_START}
+
 ${createAgentBootstrapGuidanceBody().trimEnd()}
+
 ${AGENT_BOOTSTRAP_SECTION_END}
 `;
 }
@@ -1915,19 +1915,6 @@ async function managedFileUnchanged(path, contents, previousState) {
 }
 
 /**
- * @param {string} path
- * @param {unknown} value
- * @returns {Promise<boolean>}
- */
-async function jsonFileUnchanged(path, value) {
-  if (!(await fileExists(path))) {
-    return false;
-  }
-
-  return (await readFile(path, "utf8")) === `${JSON.stringify(value, null, 2)}\n`;
-}
-
-/**
  * @param {{ path: string, contents: string }[]} filePlans
  * @param {CalaveraState} previousState
  * @param {Set<string>} reownManagedFiles
@@ -2024,33 +2011,6 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState, 
 }
 
 /**
- * @param {string} path
- * @param {unknown} value
- * @param {boolean} dryRun
- * @param {Change[]} changes
- * @param {CalaveraState} previousState
- * @param {Set<string>} reownManagedFiles
- * @returns {Promise<ManagedFileState>}
- */
-async function writeManagedJSONFile(
-  path,
-  value,
-  dryRun,
-  changes,
-  previousState,
-  reownManagedFiles,
-) {
-  return writeManagedFile(
-    path,
-    `${JSON.stringify(value, null, 2)}\n`,
-    dryRun,
-    changes,
-    previousState,
-    reownManagedFiles,
-  );
-}
-
-/**
  * @param {Integration[]} integrations
  * @param {Record<string, unknown>} [integrationOptions]
  * @returns {{ path: string, contents: string }[]}
@@ -2099,6 +2059,47 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
   }
 
   return plans;
+}
+
+/**
+ * Returns a function that loads the formatter for the files Calavera writes in `directory` the
+ * first time a file needs it, and the same formatter after that. Without `vitePlusStatus`, the
+ * project is detected when the formatter loads.
+ *
+ * @param {string} directory
+ * @param {"managed" | "unmanaged" | "unknown"} [vitePlusStatus]
+ * @param {{ editorConfig?: import("./utils/editorconfig.js").EditorConfigSettings }} [options]
+ *   `editorConfig` is the `.editorconfig` the same run writes, so formatting stops when it would
+ *   change the settings the formatter uses.
+ * @returns {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>}
+ */
+function projectFormatterLoader(directory, vitePlusStatus, options = {}) {
+  /** @type {Promise<import("./utils/project-formatter.js").ProjectFormatter> | undefined} */
+  let formatter;
+  return () =>
+    (formatter ??= (async () =>
+      loadProjectFormatter(
+        directory,
+        vitePlusStatus ?? (await detectVitePlus(directory)).status,
+        options,
+      ))());
+}
+
+/**
+ * The managed files with the text apply writes: each JSON and Markdown file formatted by the
+ * project's formatter (#669).
+ *
+ * @param {{ path: string, contents: string }[]} plans
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ * @returns {Promise<{ path: string, contents: string }[]>}
+ */
+async function formatManagedFilePlans(plans, loadFormatter) {
+  return Promise.all(
+    plans.map(async (plan) => ({
+      ...plan,
+      contents: await formatGeneratedText(plan.path, plan.contents, loadFormatter),
+    })),
+  );
 }
 
 /**
@@ -2450,7 +2451,8 @@ export async function inspectProject(recipe, options = {}) {
     });
   }
 
-  for (const filePlan of plannedManagedFiles(integrations, recipe?.integrationOptions)) {
+  for (const filePlan of options.managedFilePlans ??
+    plannedManagedFiles(integrations, recipe?.integrationOptions)) {
     const finding = await inspectManagedFilePlan(filePlan, previousState, reownManagedFiles);
 
     if (finding) {
@@ -2569,6 +2571,33 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     throw installPlan.problem;
   }
 
+  // #669 and ADR-0015, Decision 5: the text of every file Calavera generates comes from the
+  // project's formatter, before anything is written, so the dry run shows the bytes apply writes
+  // and the project's own vp check accepts them. The formatter loads only when a file needs it.
+  // When apply also writes Calavera's .editorconfig, formatting stops if that file would change the
+  // settings the formatter uses, because the formatter can only read the settings on disk.
+  const loadFormatter = projectFormatterLoader(process.cwd(), vitePlusDetection.status, {
+    editorConfig: integrations.some(({ id }) => id === "editorconfig")
+      ? CALAVERA_EDITORCONFIG
+      : undefined,
+  });
+  const managedFilePlans = await formatManagedFilePlans(
+    plannedManagedFiles(integrations, recipe.integrationOptions),
+    loadFormatter,
+  );
+  // A value the person typed is recorded in the recipe, so a later apply does not ask again.
+  // Only an explicit writeConfig: false skips that.
+  const answered = artifactInputs.some(({ source }) => source === "prompt");
+  const configPath = resolve(applyOptions.config ?? "calavera.config.json");
+  const configText =
+    applyOptions.writeConfig || (answered && applyOptions.writeConfig !== false)
+      ? await formatGeneratedText(
+          relative(process.cwd(), configPath),
+          `${JSON.stringify(recipe, null, 2)}\n`,
+          loadFormatter,
+        )
+      : undefined;
+
   const packageJSON = await ensurePackageJSON(
     packageManager,
     applyOptions.dryRun,
@@ -2577,6 +2606,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   );
   const projectInspection = await inspectProject(recipe, {
     reownManagedFiles: applyOptions.reownManagedFiles,
+    managedFilePlans,
   });
   const scriptPlan = buildScripts(recipe, integrations, packageManager, vitePlusQuality);
   const { scripts, omittedScripts, omittedQualitySteps, staleQualityValues } = scriptPlan;
@@ -2590,16 +2620,13 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     staleQualityValues,
     omittedScripts,
   );
-  const managedFilePlans = plannedManagedFiles(integrations, recipe.integrationOptions);
   const usesVarlock = integrations.some(({ id }) => id === "varlock");
   const varlockFilePlans = usesVarlock ? await planVarlockProjectFiles() : [];
 
   await assertSafeManagedFileWrites(managedFilePlans, previousState, reownManagedFiles);
 
   // ADR-0015, Decision 5: the wiring of every selected skill is planned before anything is
-  // written. The project's formatter is loaded only for wiring that rewrites a JSON file.
-  /** @type {Promise<import("./utils/project-formatter.js").ProjectFormatter> | undefined} */
-  let formatter;
+  // written. Wiring that rewrites a JSON file uses the same formatter as the managed files.
   /** @param {Map<string, string>} sources */
   const planWiring = (sources) =>
     planArtifactWiring({
@@ -2614,8 +2641,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
         })),
       previousRecords: previousState.aiWiring,
       skillDirectoryFor: (id) => installedSkillDirectory(id, previousState.aiArtifacts),
-      loadFormatter: () =>
-        (formatter ??= loadProjectFormatter(process.cwd(), vitePlusDetection.status)),
+      loadFormatter,
     });
 
   // Before an auto-install commits, check every selected artifact and its wiring against the
@@ -2659,19 +2685,20 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     vitePlusStatus: vitePlusDetection.status,
   });
 
-  // A value the person typed is recorded in the recipe, so a later apply does not ask again.
-  // Only an explicit writeConfig: false skips that.
-  const answered = artifactInputs.some(({ source }) => source === "prompt");
-  if (applyOptions.writeConfig || (answered && applyOptions.writeConfig !== false)) {
-    const configPath = resolve(applyOptions.config ?? "calavera.config.json");
-    const configUnchanged = previouslyApplied && (await jsonFileUnchanged(configPath, recipe));
+  if (configText !== undefined) {
+    const configUnchanged =
+      previouslyApplied &&
+      (await fileExists(configPath)) &&
+      (await readFile(configPath, "utf8")) === configText;
     changes.push({
       type: configUnchanged ? "unchanged" : "write",
       path: relative(process.cwd(), configPath),
       action: "write",
       ownership: "project",
     });
-    await writeJSON(configPath, recipe, applyOptions.dryRun || configUnchanged);
+    if (!applyOptions.dryRun && !configUnchanged) {
+      await writeFile(configPath, configText);
+    }
   }
 
   // ADR-0013, Decision 6: only after an earlier apply is a script under its
@@ -2740,106 +2767,18 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     ...(omittedQualitySteps.length > 0 ? { omittedQualitySteps } : {}),
   });
 
-  if (integrations.some((integration) => integration.id === "editorconfig")) {
+  // plannedManagedFiles lists every managed file in the order apply writes it.
+  for (const plan of managedFilePlans) {
     managedFiles.push(
       await writeManagedFile(
-        ".editorconfig",
-        createEditorConfig(),
+        plan.path,
+        plan.contents,
         applyOptions.dryRun,
         changes,
         previousState,
         reownManagedFiles,
       ),
     );
-  }
-
-  if (integrations.some((integration) => integration.id === "stylelint")) {
-    managedFiles.push(
-      await writeManagedJSONFile(
-        ".stylelintrc.json",
-        createStylelintConfig(integrations, recipe.integrationOptions),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
-  if (integrations.some((integration) => integration.id === "html-validate")) {
-    managedFiles.push(
-      await writeManagedJSONFile(
-        ".htmlvalidate.json",
-        createHtmlValidateConfig(integrations),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-    managedFiles.push(
-      await writeManagedFile(
-        ".htmlvalidateignore",
-        HTML_VALIDATE_IGNORE,
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-    managedFiles.push(
-      await writeManagedFile(
-        HTML_VALIDATE_WRAPPER_PATH,
-        createHtmlValidateWrapper(),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
-  if (integrations.some((integration) => integration.id === "react-doctor")) {
-    managedFiles.push(
-      await writeManagedJSONFile(
-        "react-doctor.config.json",
-        createReactDoctorConfig(),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
-  if (integrations.some((integration) => integration.id === "knip")) {
-    managedFiles.push(
-      await writeManagedJSONFile(
-        "knip.json",
-        createKnipConfig(),
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-
-  if (integrations.some((integration) => integration.id === GITHUB_REPOSITORY_CONTROLS_ID)) {
-    for (const file of githubRepositoryControlManagedFiles(
-      recipe.integrationOptions?.[GITHUB_REPOSITORY_CONTROLS_ID],
-    )) {
-      managedFiles.push(
-        await writeManagedFile(
-          file.path,
-          file.contents,
-          applyOptions.dryRun,
-          changes,
-          previousState,
-          reownManagedFiles,
-        ),
-      );
-    }
   }
 
   await applyVarlockProjectFiles(varlockFilePlans, applyOptions.dryRun, changes);
@@ -3130,9 +3069,16 @@ async function resolveAgentBootstrapMcpHarness(options) {
  * @param {{ command: string, args: string[] }} launchCommand
  * @param {boolean} dryRun
  * @param {Change[]} changes
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
  * @returns {Promise<{ harness: McpHarness, action: "manual" | "write" | "update" | "skip", path?: string, reason?: string }>}
  */
-async function writeAgentBootstrapMcpConfig(harness, launchCommand, dryRun, changes) {
+async function writeAgentBootstrapMcpConfig(
+  harness,
+  launchCommand,
+  dryRun,
+  changes,
+  loadFormatter,
+) {
   const path = projectMcpConfigPath(harness);
 
   if (!path) {
@@ -3151,13 +3097,19 @@ async function writeAgentBootstrapMcpConfig(harness, launchCommand, dryRun, chan
     switch (harness) {
       case "claude-code":
       case "cursor":
-        action = await writeMcpServersJsonConfig(path, launchCommand, dryRun, changes);
+        action = await writeMcpServersJsonConfig(
+          path,
+          launchCommand,
+          dryRun,
+          changes,
+          loadFormatter,
+        );
         break;
       case "codex":
         action = await writeCodexMcpConfig(path, launchCommand, dryRun, changes);
         break;
       case "opencode":
-        action = await writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes);
+        action = await writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes, loadFormatter);
         break;
       default:
         action = "skip";
@@ -3204,14 +3156,55 @@ function upsertAgentBootstrapGuidanceSection(contents, section) {
 }
 
 /**
+ * @typedef {{ file: string, section: string, fallback: string }} AgentBootstrapGuidanceText The
+ *   guidance as a whole AGENTS.md, as the marked section Calavera adds to an existing AGENTS.md,
+ *   and as the fallback file, each formatted by the project's formatter.
+ */
+
+/**
+ * Formats every form of the agent guidance before anything is written, so a project whose
+ * formatter cannot run stops with nothing written (#669). The section is formatted on its own,
+ * because the rest of an existing AGENTS.md belongs to the person who wrote it.
+ *
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ * @returns {Promise<AgentBootstrapGuidanceText>}
+ */
+async function formatAgentBootstrapGuidance(loadFormatter) {
+  const [file, section, fallback] = await Promise.all([
+    formatGeneratedText(
+      AGENT_BOOTSTRAP_GUIDANCE_FILE,
+      createAgentBootstrapGuidance(),
+      loadFormatter,
+    ),
+    formatGeneratedText(
+      AGENT_BOOTSTRAP_GUIDANCE_FILE,
+      createAgentBootstrapGuidanceSection(),
+      loadFormatter,
+    ),
+    formatGeneratedText(
+      AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+      createAgentBootstrapGuidance(),
+      loadFormatter,
+    ),
+  ]);
+  return { file, section, fallback };
+}
+
+/**
  * @param {string} currentGuidance
  * @param {boolean} dryRun
  * @param {Change[]} changes
  * @param {CliOptions} options
+ * @param {AgentBootstrapGuidanceText} guidanceText
  */
-async function handleExistingAgentBootstrapGuidance(currentGuidance, dryRun, changes, options) {
-  const guidance = createAgentBootstrapGuidance();
-  const guidanceSection = createAgentBootstrapGuidanceSection();
+async function handleExistingAgentBootstrapGuidance(
+  currentGuidance,
+  dryRun,
+  changes,
+  options,
+  guidanceText,
+) {
+  const guidanceSection = guidanceText.section;
 
   if (currentGuidance.includes(AGENT_BOOTSTRAP_SECTION_START)) {
     const nextGuidance = upsertAgentBootstrapGuidanceSection(currentGuidance, guidanceSection);
@@ -3264,7 +3257,7 @@ async function handleExistingAgentBootstrapGuidance(currentGuidance, dryRun, cha
 
   await writeBootstrapTextFile(
     AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
-    guidance,
+    guidanceText.fallback,
     dryRun,
     changes,
     "Existing fallback Calavera guidance differs and was left unchanged.",
@@ -3274,9 +3267,10 @@ async function handleExistingAgentBootstrapGuidance(currentGuidance, dryRun, cha
 /**
  * @param {CliOptions} options
  * @param {Change[]} changes
+ * @param {AgentBootstrapGuidanceText} guidanceText
  */
-async function writeAgentBootstrapGuidance(options, changes) {
-  const guidance = createAgentBootstrapGuidance();
+async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
+  const guidance = guidanceText.file;
 
   if (!(await fileExists(AGENT_BOOTSTRAP_GUIDANCE_FILE))) {
     await writeBootstrapTextFile(
@@ -3300,7 +3294,13 @@ async function writeAgentBootstrapGuidance(options, changes) {
     return;
   }
 
-  await handleExistingAgentBootstrapGuidance(currentGuidance, options.dryRun, changes, options);
+  await handleExistingAgentBootstrapGuidance(
+    currentGuidance,
+    options.dryRun,
+    changes,
+    options,
+    guidanceText,
+  );
 }
 
 /**
@@ -3330,6 +3330,21 @@ export async function agentBootstrap(options = {}) {
 
   await assertBootstrapDirectoryAvailable(".calavera");
 
+  // #669: the Markdown Calavera writes is formatted by the project's formatter before anything is
+  // written, so a Vite+ project's vp check accepts it, and a project whose formatter cannot load
+  // stops with nothing written. The MCP JSON is formatted when it is planned, after the guidance
+  // is written; the formatter has already run by then, but a failure there leaves AGENTS.md in
+  // place and is reported as a manual MCP setup.
+  const loadFormatter = projectFormatterLoader(process.cwd());
+  const [guidanceText, mcpInstructions] = await Promise.all([
+    formatAgentBootstrapGuidance(loadFormatter),
+    formatGeneratedText(
+      AGENT_BOOTSTRAP_MCP_FILE,
+      createAgentBootstrapMcpInstructions(packageManager),
+      loadFormatter,
+    ),
+  ]);
+
   const previousState = await readStateIfPresent();
   const aiResult = await buildAiApplyResult(
     AGENT_BOOTSTRAP_SKILL_RECIPE,
@@ -3340,19 +3355,20 @@ export async function agentBootstrap(options = {}) {
   /** @type {Change[]} */
   const changes = [...aiResult.changes];
 
-  await writeAgentBootstrapGuidance(bootstrapOptions, changes);
+  await writeAgentBootstrapGuidance(bootstrapOptions, changes, guidanceText);
   const mcpHarness = await resolveAgentBootstrapMcpHarness(bootstrapOptions);
   const mcp = await writeAgentBootstrapMcpConfig(
     mcpHarness,
     launchCommand,
     bootstrapOptions.dryRun,
     changes,
+    loadFormatter,
   );
 
   if (mcp.action === "manual") {
     await writeBootstrapTextFile(
       AGENT_BOOTSTRAP_MCP_FILE,
-      createAgentBootstrapMcpInstructions(packageManager),
+      mcpInstructions,
       bootstrapOptions.dryRun,
       changes,
       "Existing Calavera MCP setup notes differ and were left unchanged.",
@@ -4154,7 +4170,15 @@ export async function initRecipe(options) {
   const validation = validateRecipeResponse(recipe);
   const explanation = explainRecipeResponse(recipe);
 
-  await writeJSON(options.config, recipe, options.dryRun);
+  // #669: formatted as apply formats it, so a Vite+ project's vp check accepts the recipe file.
+  const configText = await formatGeneratedText(
+    relative(process.cwd(), resolve(options.config)),
+    `${JSON.stringify(recipe, null, 2)}\n`,
+    projectFormatterLoader(process.cwd()),
+  );
+  if (!options.dryRun) {
+    await writeFile(options.config, configText);
+  }
 
   if (!options.json) {
     note(formatRecipeSummary(recipe, explanation), "Recipe summary");

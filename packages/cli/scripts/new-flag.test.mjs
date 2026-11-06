@@ -32,7 +32,8 @@ const fixturesUrl = pathToFileURL(
  * The runner stub. It records its argv, cwd, VP_CLI_BIN, and PATH, strips the
  * runner's own arguments to find what \`vp create\` receives, then acts on STUB_MODE:
  * `scaffold` writes a Vite+ project into the `--directory` target (or
- * STUB_TARGET), `unmanaged` writes a manifest without vite-plus, `unknown`
+ * STUB_TARGET) and, as `vp create` installs dependencies, a vite-plus whose
+ * `vp fmt` formats what the bootstrap writes (#669), `unmanaged` writes a manifest without vite-plus, `unknown`
  * writes an unparseable manifest, `nothing` exits zero having written nothing,
  * and `fail` writes a partial manifest and exits 1. STUB_EXTRA names a second
  * directory that also receives a Vite+ manifest.
@@ -40,7 +41,7 @@ const fixturesUrl = pathToFileURL(
 const stubSource = `#!/usr/bin/env node
 import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
 import { basename, join, resolve } from "node:path";
-import { json, libraryManifest, plainViteManifest, vitePlusConfig } from ${JSON.stringify(fixturesUrl.href)};
+import { json, libraryManifest, plainViteManifest, vitePlusConfig, writeVitePlusFormatter } from ${JSON.stringify(fixturesUrl.href)};
 
 const argv = process.argv.slice(2);
 appendFileSync(
@@ -82,6 +83,7 @@ const scaffoldManifest = process.env.STUB_PACKAGE_MANAGER
 switch (process.env.STUB_MODE) {
   case "scaffold":
     writeProject(target, json(scaffoldManifest), true);
+    await writeVitePlusFormatter(target);
     break;
   case "unmanaged":
     writeProject(target, json(plainViteManifest), false);
@@ -947,14 +949,15 @@ test("--new --config copies the recipe byte for byte after the managed check and
   assert.equal(await readFile(copied, "utf8"), recipeSource);
   assert.equal(await readFile(join(target, "package.json"), "utf8"), json(libraryManifest));
   assert.equal(await readFile(join(target, "vite.config.ts"), "utf8"), vitePlusConfig);
-  // Vite+ wrote package.json and vite.config.ts; the bootstrap wrote the
-  // agent files; the recipe copy is the only other addition.
+  // Vite+ wrote package.json and vite.config.ts and installed node_modules; the
+  // bootstrap wrote the agent files; the recipe copy is the only other addition.
   assert.deepEqual((await readdir(target)).sort(), [
     ".agents",
     ".calavera",
     ".coderabbit.yaml",
     "AGENTS.md",
     "calavera.config.json",
+    "node_modules",
     "package.json",
     "vite.config.ts",
   ]);
