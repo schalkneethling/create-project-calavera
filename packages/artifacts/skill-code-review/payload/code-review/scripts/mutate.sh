@@ -19,6 +19,23 @@
 # of test output. Exit code is 0 when the mutation ran, regardless of the test result.
 set -uo pipefail
 
+# Runs a command with a time limit. GNU timeout where it exists (Linux, or coreutils on macOS as
+# gtimeout); otherwise a watcher process, so the script also works on a stock macOS.
+run_with_limit() {
+  local seconds="$1" cmd="$2"
+  if command -v timeout >/dev/null 2>&1; then timeout "$seconds" bash -c "$cmd"
+  elif command -v gtimeout >/dev/null 2>&1; then gtimeout "$seconds" bash -c "$cmd"
+  else
+    # Job control gives the command its own process group, so the limit also stops its children.
+    set -m; bash -c "$cmd" & local pid=$!; set +m
+    # The watcher closes stdout, or a caller capturing output would wait for it instead of the command.
+    ( sleep "$seconds"; kill -TERM -- "-$pid" 2>/dev/null ) >/dev/null 2>&1 & local watcher=$!
+    wait "$pid"; local code=$?
+    kill "$watcher" 2>/dev/null; wait "$watcher" 2>/dev/null
+    return "$code"
+  fi
+}
+
 OUT="${1:?give the folder resolve-target.sh printed}"; shift
 MODE="" PATCH="" TEST_CMD="" SED_PATH="" SED_EXPR=""
 while [[ $# -gt 0 ]]; do
@@ -76,7 +93,8 @@ else
   SED_PATH="${SED_PATH#"$CHECKOUT"/}"
   case "$SED_PATH" in /*|../*|*/../*|*/..) echo "mutate: give a path relative to the repository root, not $SED_PATH" >&2; exit 1 ;; esac
   [[ -f "$SED_PATH" ]] || { echo "mutate: no such file $SED_PATH in the worktree" >&2; exit 1; }
-  sed -i -e "$SED_EXPR" "$SED_PATH"
+  # Not sed -i: BSD sed on macOS reads "-e" as a backup suffix and leaves a stray file.
+  sed -e "$SED_EXPR" "$SED_PATH" > "$SED_PATH.mutant" && mv "$SED_PATH.mutant" "$SED_PATH"
   if git diff --quiet -- "$SED_PATH"; then echo "mutate: the sed expression changed nothing in $SED_PATH" >&2; exit 1; fi
   echo "mutate: mutated $SED_PATH:" >&2; git diff --no-color -U0 -- "$SED_PATH" | grep '^[-+][^-+]' >&2
 fi
@@ -92,6 +110,6 @@ fi
 [[ -d "$CHECKOUT/node_modules" && ! -e node_modules ]] && ln -s "$CHECKOUT/node_modules" node_modules
 
 echo "mutate: running: $TEST_CMD" >&2
-output="$(timeout 600 bash -c "$TEST_CMD" 2>&1)"; code=$?
+output="$(run_with_limit 600 "$TEST_CMD" 2>&1)"; code=$?
 echo "TESTS_EXIT=$code"
 echo "$output" | tail -60
