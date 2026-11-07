@@ -72,10 +72,11 @@ Section 0 of the sequencing map is now a skeleton for the next increment. The ow
 - `clean` is intentional: it removes an artifact's wiring when that wiring is untouched, under the same rules as apply. Decided by Schalk on 2026-11-07 (recorded on #829).
 - #749 ran on Opus 5.5 at high effort, not Fable. Decided by Schalk on 2026-11-07.
 - The next release also includes these fixes outside Increment 1: #829, #795 (item 1), #830, #792, #790, #784, and #837. Approved by Schalk on 2026-11-07.
+- The Stryker integration work (#733, #734, #735, #736) joins the next increment. Decided by Schalk on 2026-11-07 (sequencing map Section 0).
 
 ## Next session starts with
 
-- Review the Section 0 skeleton in `docs/cross-repo/sequencing-map.md` and decide what the next increment contains. Nothing from the next increment starts before then.
+- Finish the Section 0 skeleton in `docs/cross-repo/sequencing-map.md` with the owner: the Stryker work is in the next increment; its name, goal, exit condition, the rest of its issues, and "explicitly not now" are still to be decided.
 - Decide #846 (the guard's `protectedBranch` default). Triage the friction issues listed above; #843 is the only p1, because it makes `pnpm quality` fail after apply.
 - Deferred decisions: #673 (should the `--init` bootstrap install the Calavera skill when the recipe leaves it out) and #676 (should `--new` choose its runner from the launching package manager).
 - #669 is delivered in 6.1.0 (PR #831), so it is not pending.
