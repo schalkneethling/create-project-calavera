@@ -1,0 +1,201 @@
+{
+  "approvalBoundary": "Review this dry-run result with the user before calling apply_recipe. No files were changed.",
+  "result": {
+    "command": "apply",
+    "dryRun": true,
+    "packageManager": "pnpm",
+    "dependencies": ["knip"],
+    "installCommand": "vp add -D -w knip",
+    "installNotes": [
+      "Vite+ runs this with the package manager the project pins; apply runs it as: ~/.vite-plus/js_runtime/node/26.13.0/bin/node <scratch>/h0/node_modules/.pnpm/vite-plus@1.5.0_@types+node@26.6.6_@vitest+ui@5.1.0_jiti@2.7.0_typescript@7.0.2_yaml@2.9.1/node_modules/vite-plus/bin/vp add -D -w knip"
+    ],
+    "integrations": ["editorconfig", "knip", "github-repository-controls"],
+    "projectInspection": {
+      "packageManager": "pnpm",
+      "files": [
+        "package.json",
+        "calavera.config.json",
+        "pnpm-lock.yaml",
+        ".editorconfig",
+        ".github/repository-controls.json",
+        ".github/dependabot.yml",
+        "scripts/repository-controls.mjs",
+        "docs/repository-controls.md",
+        "knip.json",
+        "vite.config.ts"
+      ],
+      "findings": [
+        {
+          "severity": "info",
+          "kind": "package-manager",
+          "message": "Detected pnpm as the project package manager."
+        },
+        {
+          "severity": "info",
+          "kind": "vite-plus-managed",
+          "path": "package.json",
+          "message": "This project is managed by Vite+, matched via the vite-plus-dependency signal at package.json. Corroborating signals: vite-plus-config-import, vite-plus-core-pin, vp-scripts."
+        }
+      ],
+      "vitePlus": {
+        "status": "managed",
+        "signal": "vite-plus-dependency",
+        "manifestPath": "package.json",
+        "corroborating": ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"]
+      }
+    },
+    "vitePlus": {
+      "status": "managed",
+      "signalConflict": false,
+      "lines": [
+        "Vite+ detection: managed. This project is vp-managed (vite-plus-dependency signal at package.json).",
+        "JavaScript and TypeScript linting, formatting, type-checking, and testing are provided by Vite+, not by Calavera."
+      ]
+    },
+    "changes": [
+      {
+        "type": "unchanged",
+        "path": "package.json",
+        "action": "update",
+        "ownership": "project",
+        "scripts": ["knip", "repo:controls:check", "repo:controls:apply", "quality"],
+        "omittedScripts": [
+          {
+            "script": "lint:styles",
+            "reason": "lint:styles was requested by the recipe's lint flag, but no CSS linting integration is selected."
+          },
+          {
+            "script": "lint:styles:fix",
+            "reason": "lint:styles:fix was requested by the recipe's lint:fix flag, but no fix-capable CSS linting integration is selected."
+          }
+        ],
+        "removedDefaultTestScript": false
+      },
+      { "type": "unchanged", "path": ".editorconfig", "action": "write", "ownership": "calavera" },
+      { "type": "unchanged", "path": "knip.json", "action": "write", "ownership": "calavera" },
+      {
+        "type": "unchanged",
+        "path": ".github/repository-controls.json",
+        "action": "write",
+        "ownership": "calavera"
+      },
+      {
+        "type": "unchanged",
+        "path": ".github/dependabot.yml",
+        "action": "write",
+        "ownership": "calavera"
+      },
+      {
+        "type": "unchanged",
+        "path": "scripts/repository-controls.mjs",
+        "action": "write",
+        "ownership": "calavera"
+      },
+      {
+        "type": "unchanged",
+        "path": "docs/repository-controls.md",
+        "action": "write",
+        "ownership": "calavera"
+      },
+      {
+        "type": "unchanged",
+        "path": ".vite-hooks/pre-commit",
+        "action": "update",
+        "ownership": "project"
+      },
+      {
+        "type": "unchanged",
+        "path": ".vite-hooks/prepare-commit-msg",
+        "action": "update",
+        "ownership": "project"
+      },
+      {
+        "type": "unchanged",
+        "path": ".vite-hooks/pre-push",
+        "action": "update",
+        "ownership": "project"
+      },
+      {
+        "type": "unchanged",
+        "path": ".claude/settings.json",
+        "action": "update",
+        "ownership": "project"
+      }
+    ],
+    "scriptChanges": [],
+    "pointers": ["Installed skills are available under .agents/skills/."],
+    "autoInstalledArtifacts": [],
+    "artifactRegistries": [],
+    "artifactWarnings": [],
+    "artifactInputs": [
+      {
+        "artifact": "skill-protected-branch-guard",
+        "index": 1,
+        "name": "protectedBranch",
+        "value": "master",
+        "source": "recorded"
+      }
+    ],
+    "wiringChanges": [
+      {
+        "artifact": "skill-protected-branch-guard",
+        "path": ".vite-hooks/pre-commit",
+        "kind": "vite-hook",
+        "type": "unchanged",
+        "block": "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit master"
+      },
+      {
+        "artifact": "skill-protected-branch-guard",
+        "path": ".vite-hooks/prepare-commit-msg",
+        "kind": "vite-hook",
+        "type": "unchanged",
+        "block": "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit master"
+      },
+      {
+        "artifact": "skill-protected-branch-guard",
+        "path": ".vite-hooks/pre-push",
+        "kind": "vite-hook",
+        "type": "unchanged",
+        "block": "node .agents/skills/protected-branch-guard/scripts/guard.mjs pre-push master"
+      },
+      {
+        "artifact": "skill-protected-branch-guard",
+        "path": ".claude/settings.json",
+        "kind": "claude-settings",
+        "type": "unchanged",
+        "groupChanges": [],
+        "reformatted": false
+      }
+    ],
+    "wiringWarnings": [],
+    "recipe": {
+      "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
+      "version": 1,
+      "profile": "minimal",
+      "packageManager": "pnpm",
+      "integrations": ["editorconfig", "knip", "github-repository-controls"],
+      "scripts": { "lint": true, "lint:fix": true, "quality": true },
+      "ai": [
+        { "id": "skill-calavera" },
+        { "id": "skill-protected-branch-guard", "inputs": { "protectedBranch": "master" } }
+      ],
+      "integrationOptions": {
+        "github-repository-controls": {
+          "repository": "schalkneethling/calavera-h0-scratch",
+          "defaultBranch": "master",
+          "requiredChecks": [],
+          "mergeMethods": ["squash"],
+          "wiki": false,
+          "projects": false,
+          "autoMerge": true,
+          "deleteBranchOnMerge": true,
+          "updateBranch": true,
+          "dependabotEcosystems": ["npm", "github-actions"],
+          "codeqlLanguages": ["actions", "javascript-typescript"],
+          "codeqlQuerySuite": "extended",
+          "releaseEnvironment": null
+        }
+      }
+    }
+  }
+}

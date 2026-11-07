@@ -1,0 +1,8 @@
+$ git --version
+git version 2.56.0
+$ git config --global --get init.defaultBranch
+exit 1
+$ git var GIT_DEFAULT_BRANCH
+master
+$ vp --version (global)
+vp v1.2.0
