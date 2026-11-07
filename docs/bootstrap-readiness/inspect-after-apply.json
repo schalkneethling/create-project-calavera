@@ -1,0 +1,34 @@
+{
+  "packageManager": "pnpm",
+  "files": [
+    "package.json",
+    "calavera.config.json",
+    "pnpm-lock.yaml",
+    ".editorconfig",
+    ".github/repository-controls.json",
+    ".github/dependabot.yml",
+    "scripts/repository-controls.mjs",
+    "docs/repository-controls.md",
+    "knip.json",
+    "vite.config.ts"
+  ],
+  "findings": [
+    {
+      "severity": "info",
+      "kind": "package-manager",
+      "message": "Detected pnpm as the project package manager."
+    },
+    {
+      "severity": "info",
+      "kind": "vite-plus-managed",
+      "path": "package.json",
+      "message": "This project is managed by Vite+, matched via the vite-plus-dependency signal at package.json. Corroborating signals: vite-plus-config-import, vite-plus-core-pin, vp-scripts."
+    }
+  ],
+  "vitePlus": {
+    "status": "managed",
+    "signal": "vite-plus-dependency",
+    "manifestPath": "package.json",
+    "corroborating": ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"]
+  }
+}
