@@ -37,15 +37,15 @@ Feature: Calavera's agent-first flow on a fresh Vite+ monorepo
 
   Scenario Outline: The guard refuses work on the protected branch and allows it on a feature branch
     Given the wired guard
-    When "<command>" runs on "master"
+    When "<on master>" runs with "master" checked out
     Then it is refused
-    And the same command succeeds on a feature branch
+    And "<on a feature branch>" succeeds with "feat/guard-check" checked out
 
     Examples:
-      | command                             |
-      | git commit --allow-empty -m x       |
-      | git commit --allow-empty --no-verify -m x |
-      | git push origin master              |
+      | on master                                 | on a feature branch                       |
+      | git commit --allow-empty -m x             | git commit --allow-empty -m x             |
+      | git commit --allow-empty --no-verify -m x | git commit --allow-empty --no-verify -m x |
+      | git push origin master                    | git push origin feat/guard-check          |
 
   Scenario: The guard does not run in a linked worktree
     Given a linked worktree of the scratch project with "master" checked out
