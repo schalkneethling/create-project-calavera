@@ -215,13 +215,14 @@ app.get("/files/:id", async (req, res) => {
   }
 
   // content-disposition 2.x no longer strips path segments, so reduce the stored
-  // display name to a bare file name first. `path.win32.basename` treats both "/"
-  // and "\\" as separators on every platform.
+  // display name to a bare file name first. `path.win32.basename` treats both the
+  // forward slash and the backslash as separators on every platform.
   const downloadName = path.win32.basename(fileRecord.displayName) || "download";
 
   // Set safe headers only after confirming that the file can be opened.
-  // `create` quotes the name and, for non-ASCII names, adds a "?"-substituted
-  // `filename` fallback plus an RFC 8187 `filename*=UTF-8''...` value.
+  // `create` quotes the name. For names with non-ASCII characters or a `%XX`
+  // sequence, it also adds an RFC 8187 `filename*=UTF-8''...` value, and a
+  // `filename` fallback that replaces each non-ASCII character with "?".
   res.setHeader("Content-Type", fileRecord.mimeType);
   res.setHeader(
     "Content-Disposition",
