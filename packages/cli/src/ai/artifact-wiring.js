@@ -1,6 +1,6 @@
 // @ts-check
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
+import { access, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 
@@ -356,7 +356,7 @@ export async function planArtifactWiring({
 
   if (conflicts.length > 0) {
     throw new Error(
-      `Calavera stopped before writing anything, because the wiring it would write conflicts with the project:\n${conflicts.map((reason) => `- ${reason}`).join("\n")}`,
+      `Calavera stopped before writing anything, because the wiring it would write or remove conflicts with the project:\n${conflicts.map((reason) => `- ${reason}`).join("\n")}`,
     );
   }
 
@@ -387,6 +387,39 @@ export async function writeArtifactWiring(files, cwd = process.cwd()) {
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, contents);
   }
+}
+
+/**
+ * The hook scripts in .vite-hooks and the Claude Code settings file that mention `directory`,
+ * with the text the planned wiring changes leave in them. Clean does not delete an artifact that
+ * one of them still runs, recorded or not (#829): a block whose markers the person deleted to keep
+ * it holds no record, but it fails as soon as its script is gone.
+ *
+ * @param {string} directory Relative to the project root, such as .agents/skills/protected-branch-guard.
+ * @param {WiringFile[]} plannedFiles The files as the planned wiring leaves them.
+ * @param {string} [cwd]
+ * @returns {Promise<string[]>}
+ */
+export async function wiringFilesThatMention(directory, plannedFiles, cwd = process.cwd()) {
+  /** @type {string[]} */
+  let hookNames = [];
+  try {
+    hookNames = (await readdir(resolve(cwd, ".vite-hooks"), { withFileTypes: true }))
+      .filter((entry) => entry.isFile())
+      .map(({ name }) => name)
+      .sort();
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code !== "ENOENT") throw error;
+  }
+  /** @type {string[]} */
+  const mentions = [];
+  for (const path of [...hookNames.map((name) => `.vite-hooks/${name}`), CLAUDE_SETTINGS_PATH]) {
+    const contents =
+      plannedFiles.find((file) => file.path === path)?.contents ??
+      (await readIfPresent(resolve(cwd, path)));
+    if (contents?.includes(`${directory}/`)) mentions.push(path);
+  }
+  return mentions;
 }
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */

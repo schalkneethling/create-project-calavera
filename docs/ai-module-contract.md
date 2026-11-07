@@ -100,7 +100,11 @@ The source hashing follows Toolkit's current behavior:
 For both generated files and AI artifacts, Calavera refuses to overwrite an
 existing destination when that destination is not recorded as Calavera-managed,
 or when the installed content no longer matches the recorded state hash. `clean`
-uses the same hashes and skips stale managed items that have local edits.
+uses the same hashes and skips stale managed items that have local edits. Apply keeps
+the record of an artifact the recipe no longer selects, so `clean` can remove its
+unedited output later. Before `clean` deletes a skill, it removes the hook blocks
+and settings groups that skill's wiring added, but only text that matches the
+record; an edited block or group stops `clean` with a conflict.
 
 ## Post-Install Pointers
 

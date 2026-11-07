@@ -3,9 +3,14 @@
 // the dry run lists each removal first, and an edited block or group is a conflict that names the
 // file and stops apply. `doctor` reports recorded wiring that is missing or edited, and a block
 // whose script is missing.
+//
+// #829: `clean` follows the same rules (owner decision of 2026-11-07), so running it before apply
+// cannot delete a skill directory that recorded wiring still runs. An apply that deselects an
+// artifact keeps its record of the installed directory, so a later `clean` removes the directory
+// when it is unedited and reports it when it was edited.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
-import { mkdtempDisposable, readFile, rm, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { access, mkdtempDisposable, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -398,5 +403,276 @@ test("Given the skill directory deleted by hand and the guard deselected, doctor
         /Because the recipe no longer selects skill-protected-branch-guard, create-project-calavera apply removes the block/,
       );
     }
+  });
+});
+
+/** @param {object} recipe */
+async function writeConfig(recipe) {
+  await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+}
+
+/**
+ * Runs `clean` in the current directory, without a terminal, and returns what it printed.
+ *
+ * @param {string[]} args
+ */
+function runClean(args) {
+  return spawnSync(process.execPath, [cli, "clean", ...args], {
+    encoding: "utf8",
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+}
+
+/** @param {string[]} args */
+function cleanJson(args) {
+  const { status, stdout, stderr } = runClean([...args, "--json"]);
+  assert.equal(status, 0, stderr);
+  return JSON.parse(stdout);
+}
+
+/** @param {string} path */
+async function exists(path) {
+  try {
+    await access(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+const wiringPaths = [...hooks.map((hook) => `.vite-hooks/${hook}`), ".claude/settings.json"];
+
+test("Given the guard applied and wired, when the recipe drops it and clean --dry-run runs before apply, then it lists the removal of each unchanged block and group with the skill directory, and writes nothing", async () => {
+  await inWiredProject(async () => {
+    await writeConfig(deselectedRecipe());
+    const before = await snapshot();
+    const result = cleanJson(["--dry-run"]);
+
+    assert.deepEqual(
+      result.wiringChanges.map(({ artifact, path, kind, removedBlock, deselected }) => [
+        artifact,
+        path,
+        kind,
+        removedBlock,
+        deselected,
+      ]),
+      [
+        [id, ".vite-hooks/pre-commit", "vite-hook", line("commit"), true],
+        [id, ".vite-hooks/prepare-commit-msg", "vite-hook", line("commit"), true],
+        [id, ".vite-hooks/pre-push", "vite-hook", line("pre-push"), true],
+        [id, ".claude/settings.json", "claude-settings", undefined, true],
+      ],
+    );
+    for (const path of wiringPaths) {
+      assert.equal(result.changes.find((change) => change.path === path)?.type, "update", path);
+    }
+    assert.equal(result.changes.find((change) => change.path === skillDirectory)?.type, "delete");
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
+test("Given the guard deselected, clean --dry-run in a terminal says why each block and group would be removed", async () => {
+  await inWiredProject(async () => {
+    await writeConfig(deselectedRecipe());
+    const { status, stdout, stderr } = runClean(["--dry-run"]);
+    assert.equal(status, 0, stderr);
+
+    for (const hook of hooks) {
+      assert.match(
+        stdout,
+        new RegExp(
+          `Would remove the ${id} block from \\.vite-hooks/${hook}, because the recipe no longer selects ${id}`,
+        ),
+      );
+    }
+    for (const event of ["SessionStart", "PreToolUse"]) {
+      assert.match(
+        stdout,
+        new RegExp(
+          `Would remove the ${event} group for ${id} from \\.claude/settings\\.json, because the recipe no longer selects ${id}`,
+        ),
+      );
+    }
+    assert.match(stdout, /Would remove \.agents\/skills\/protected-branch-guard/);
+  });
+});
+
+test("Given the guard deselected, when clean runs before apply, then the hooks it wired still run, the person's own lines remain byte-for-byte, and the skill directory and its records are gone", async () => {
+  await inWiredProject(async () => {
+    await writeConfig(deselectedRecipe());
+    const { status, stdout, stderr } = runClean(["--yes"]);
+    assert.equal(status, 0, stderr);
+    assert.match(stdout, /Removed \.agents\/skills\/protected-branch-guard/);
+    for (const path of wiringPaths) {
+      assert.match(
+        stdout,
+        new RegExp(`Removed the ${id} wiring from ${path.replaceAll(".", "\\.")}`),
+      );
+    }
+
+    assert.equal(await exists(skillDirectory), false);
+    assert.equal(await readFile(".vite-hooks/pre-commit", "utf8"), ownPreCommit);
+    assert.equal(await readFile(".claude/settings.json", "utf8"), ownSettings);
+    // The Vite+ dispatcher runs each hook script with sh -e, so a block whose script is gone
+    // would stop every commit and push.
+    for (const hook of ["prepare-commit-msg", "pre-push"]) {
+      const run = spawnSync("sh", ["-e", `.vite-hooks/${hook}`], { encoding: "utf8" });
+      assert.equal(run.status, 0, `${hook}: ${run.stderr}`);
+    }
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.deepEqual(state.aiWiring, []);
+    assert.deepEqual(
+      state.aiArtifacts.filter(({ source }) => source === id),
+      [],
+    );
+
+    const again = cleanJson(["--dry-run"]);
+    assert.deepEqual(again.changes, []);
+    assert.deepEqual(again.wiringChanges, []);
+  });
+});
+
+test("Given the guard deselected and one character edited inside a guard block, clean and its dry run stop with a conflict naming the file, and nothing is written or deleted", async () => {
+  await inWiredProject(async () => {
+    await writeConfig(deselectedRecipe());
+    await writeFile(
+      ".vite-hooks/pre-push",
+      (await readFile(".vite-hooks/pre-push", "utf8")).replace("pre-push main", "pre-push mainx"),
+    );
+    const before = await snapshot();
+
+    for (const args of [["--dry-run"], ["--yes"]]) {
+      const { status, stderr } = runClean(args);
+      assert.notEqual(status, 0, args.join(" "));
+      assert.match(
+        stderr,
+        /\.vite-hooks\/pre-push: the recipe no longer selects skill-protected-branch-guard, so Calavera would remove its block, but the block was edited since Calavera wrote it/,
+      );
+    }
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
+test("Given the guard deselected and an edited guard group, clean stops with a conflict naming the file, and nothing is written or deleted", async () => {
+  await inWiredProject(async () => {
+    await writeConfig(deselectedRecipe());
+    const settings = JSON.parse(await readFile(".claude/settings.json", "utf8"));
+    settings.hooks.SessionStart[0].hooks[0].timeout = 11;
+    await writeFile(".claude/settings.json", `${JSON.stringify(settings, null, 2)}\n`);
+    const before = await snapshot();
+
+    const { status, stderr } = runClean(["--yes"]);
+    assert.notEqual(status, 0);
+    assert.match(
+      stderr,
+      /\.claude\/settings\.json: hooks\.SessionStart holds a group that runs \.agents\/skills\/protected-branch-guard\/ and was edited since Calavera wrote it/,
+    );
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
+test("Given the guard still selected, clean plans no change to its wiring or its skill directory", async () => {
+  await inWiredProject(async () => {
+    await writeConfig(guardRecipe());
+    const result = cleanJson(["--dry-run"]);
+
+    assert.deepEqual(result.wiringChanges, []);
+    assert.deepEqual(
+      result.changes.filter(({ path }) => [...wiringPaths, skillDirectory].includes(path)),
+      [],
+    );
+  });
+});
+
+// The decision #829 asks for: an apply that deselects an artifact removes its wiring but keeps its
+// skill directory, and keeps the record of what it installed there, so `clean` can tell an
+// unedited directory, which it removes, from an edited one, which it keeps and reports.
+test("Given an apply that deselected the guard, the state keeps its installed directory, and a later clean removes the unedited directory", async () => {
+  await inWiredProject(async (registry) => {
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+
+    assert.equal(await exists(skillDirectory), true);
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.deepEqual(
+      state.aiArtifacts.filter(({ source }) => source === id).map(({ path }) => path),
+      [skillDirectory],
+    );
+
+    const dryRun = cleanJson(["--dry-run"]);
+    assert.deepEqual(
+      dryRun.changes.map(({ type, path }) => [type, path]),
+      [["delete", skillDirectory]],
+    );
+
+    const { status, stderr } = runClean(["--yes"]);
+    assert.equal(status, 0, stderr);
+    assert.equal(await exists(skillDirectory), false);
+    const after = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.deepEqual(
+      after.aiArtifacts.filter(({ source }) => source === id),
+      [],
+    );
+  });
+});
+
+test("Given an apply that deselected the guard and an edit inside its skill directory, clean keeps the directory and reports the local edit", async () => {
+  await inWiredProject(async (registry) => {
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    const skillFile = `${skillDirectory}/SKILL.md`;
+    await writeFile(skillFile, `${await readFile(skillFile, "utf8")}\nMy own note.\n`);
+    const before = await snapshot();
+
+    const result = cleanJson(["--yes"]);
+    assert.deepEqual(
+      result.changes.map(({ type, path }) => [type, path]),
+      [["skip", skillDirectory]],
+    );
+    assert.match(result.changes[0].reason, /AI artifact has local edits/);
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
+test("Given a deselected guard whose edited block the person kept by deleting its markers, clean keeps the skill directory that block still runs and says why", async () => {
+  await inWiredProject(async (registry) => {
+    await writeConfig(deselectedRecipe());
+    const edited = (await readFile(".vite-hooks/pre-push", "utf8")).replace(
+      "pre-push main",
+      "pre-push mainx",
+    );
+    // The remedy the conflict names: delete the markers to keep the block as the person's own.
+    await writeFile(".vite-hooks/pre-push", edited.replace(/^# calavera:.*\n/gm, ""));
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    const before = await snapshot();
+
+    const result = cleanJson(["--yes"]);
+    const skip = result.changes.find(({ path }) => path === skillDirectory);
+    assert.equal(skip?.type, "skip");
+    assert.match(
+      skip.reason,
+      /\.vite-hooks\/pre-push still mentions \.agents\/skills\/protected-branch-guard\//,
+    );
+    assert.equal(await exists(skillDirectory), true);
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
+test("Given the guard deselected and its skill directory edited, clean removes the wiring, keeps the directory, and keeps reporting it on the next run", async () => {
+  await inWiredProject(async () => {
+    await writeConfig(deselectedRecipe());
+    const skillFile = `${skillDirectory}/SKILL.md`;
+    await writeFile(skillFile, `${await readFile(skillFile, "utf8")}\nMy own note.\n`);
+
+    const first = cleanJson(["--yes"]);
+    assert.equal(first.wiringChanges.length, 4);
+    assert.equal(first.changes.find(({ path }) => path === skillDirectory)?.type, "skip");
+    assert.equal(await exists(skillDirectory), true);
+
+    const again = cleanJson(["--dry-run"]);
+    assert.deepEqual(
+      again.changes.map(({ type, path }) => [type, path]),
+      [["skip", skillDirectory]],
+    );
   });
 });

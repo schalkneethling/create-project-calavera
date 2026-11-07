@@ -404,7 +404,8 @@ Update managed tooling from the recipe:
 npm create project-calavera update
 ```
 
-Remove stale managed files:
+Remove stale managed files, and the hook blocks and Claude Code settings groups of
+artifacts the recipe no longer selects. Run it with `--dry-run` first to see each removal:
 
 ```bash
 npm create project-calavera clean
