@@ -55,7 +55,7 @@ Document this to the user when relevant:
 
 | Field               | Value | Reasoning                                                                                                                       |
 | ------------------- | ----- | ------------------------------------------------------------------------------------------------------------------------------- |
-| `default-days`      | 7     | Catch-all safety buffer for uncategorised updates                                                                               |
+| `default-days`      | 7     | Catch-all safety buffer for uncategorized updates                                                                               |
 | `semver-major-days` | 7     | Breaking changes warrant the longest review window                                                                              |
 | `semver-minor-days` | 3     | New features; moderate confidence, shorter delay                                                                                |
 | `semver-patch-days` | 3     | Never shorter than GitHub's own 3-day default. Security updates skip the cooldown, so this value does not delay a security fix. |
@@ -82,11 +82,11 @@ If the project uses additional package ecosystems (e.g. `pip`, `cargo`, `bundler
 `docker`, `composer`), add an additional `updates` block per ecosystem using the
 same schedule. Keep `npm` and `github-actions` blocks unchanged. Apply
 semver-specific cooldown fields only to semver-capable ecosystems; omit those
-cooldown fields for ecosystems such as `docker` and `composer`. Dependabot can
-read an image's publish date only from Docker Hub, so an image on another
-registry, such as `ghcr.io` or `gcr.io`, gets no cooldown, even with
-`default-days` set. Use the references file for additional ecosystem identifiers
-if needed.
+cooldown fields for ecosystems such as `docker` and `composer`. In dependabot-core's
+Docker update checker, an image's publish date is read only from Docker Hub, so an
+image on another registry, such as `ghcr.io` or `gcr.io`, gets no cooldown, even
+with `default-days` set. Use the references file for additional ecosystem
+identifiers if needed.
 
 ### 3. Handle directory variations
 
