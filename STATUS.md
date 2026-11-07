@@ -13,7 +13,7 @@ Checkpoint 0 passed: Schalk confirmed it on 2026-10-22 on the recorded evidence.
 3. No removed entry is reachable through the CLI, MCP, or Composer. No evidence source yet.
 4. The existing safety-property tests pass unchanged. No evidence source yet.
 
-Section 0 of the sequencing map is now a skeleton for the next increment. The owner reviews it and decides what the next increment contains. No work from the next increment has started.
+Section 0 of the sequencing map is now a skeleton for the next increment. The owner approved it on 2026-11-07 and decided that the Stryker work joins the next increment; the other fields are still to be decided. No work from the next increment has started.
 
 ## Completed this session
 
@@ -42,7 +42,7 @@ Section 0 of the sequencing map is now a skeleton for the next increment. The ow
 ## In progress
 
 - The private scratch repository `schalkneethling/calavera-h0-scratch` is not deleted yet, because `gh` lacks the `delete_repo` scope. The owner deletes it, or grants the scope and asks for the deletion.
-- The branch `750-h0-handoff` holds the H0 handoff documents (#750). No pull request is open, because the owner reviews the Section 0 skeleton first.
+- The H0 handoff documents (#750) are in review on the branch `750-h0-handoff`. The owner approved the Section 0 skeleton on 2026-11-07.
 
 ## Blocked
 
