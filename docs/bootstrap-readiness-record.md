@@ -176,4 +176,4 @@ The Knip and GitHub governance rows of `docs/catalog-audit.md` now carry evidenc
 
 The owner approved the cleanup on 2026-11-07. The scratch folders `h0`, `h0-wt`, and `h0-scratch` and the bare remote were deleted that day.
 
-The scratch GitHub repository `schalkneethling/calavera-h0-scratch` is not deleted yet. `gh repo delete` stopped with "This API operation needs the "delete_repo" scope", which only the owner can grant, with `gh auth refresh -h github.com -s delete_repo`. The repository is private and empty.
+The scratch GitHub repository `schalkneethling/calavera-h0-scratch` could not be deleted by the operator, because `gh repo delete` stopped with "This API operation needs the "delete_repo" scope". The owner deleted it on 2026-11-07.

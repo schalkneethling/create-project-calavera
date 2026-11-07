@@ -1,6 +1,9 @@
 // Issue #750: the sequencing map and STATUS.md must agree with the tracker and
-// the readiness record once handoff H0 is delivered. These checks cover the
-// statements that went stale in Increment 1, so they fail if one returns.
+// the readiness record once handoff H0 is delivered. These checks cover only
+// facts that stay true after H0 (the H0 row, the ADR-0010 and #442 status, the
+// audit count against the audit table), so they fail if a stale statement
+// returns. They do not check content that each session or increment rewrites,
+// such as Section 0 or STATUS.md's date and next steps.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -58,8 +61,6 @@ function section(text, heading, nextHeading) {
   return end === -1 ? rest : rest.slice(0, end);
 }
 
-const mergedPullRequests = [803, 828, 831, 832, 825, 815, 817];
-
 test("the H0 row reads delivered with the CLI version and date, and links the readiness record", () => {
   const row = map.split("\n").find((line) => line.startsWith("| H0 "));
   assert.ok(row, "the H0 row exists");
@@ -106,23 +107,8 @@ test("the status line carries a Revised date below the Draft 1 date", () => {
   assert.ok(revised > draft, "a Revised line follows the Draft 1 line");
 });
 
-test("Section 0 is a skeleton with the four placeholders", () => {
-  const section0 = section(map, "## 0. Current Increment", /\n## 1\. /);
-  for (const heading of ["Goal", "Exit condition", "Issues", "Explicitly not now"]) {
-    assert.match(
-      section0,
-      new RegExp(`\\*\\*${heading}:\\*\\*\\s*\\n?[^\\n]*Owner to decide`),
-      heading,
-    );
-  }
-  for (const issue of [733, 734, 735, 736]) {
-    assert.match(section0, new RegExp(`#${issue}\\b`), `Section 0 names #${issue}`);
-  }
-});
-
-test("STATUS.md names H0 as delivered with a date and is dated after the last session", () => {
+test("STATUS.md names H0 as delivered with its version and date", () => {
   assert.match(status, /^- H0: delivered 6\.1\.0 2026-11-07/m);
-  assert.match(status, /^Updated: 2026-11-07$/m);
 });
 
 test("the audit line carries one count, and it matches the audit table", () => {
@@ -140,33 +126,4 @@ test("the audit line carries one count, and it matches the audit table", () => {
 test("the timeline marks step 1, which delivered H0, as complete", () => {
   const timeline = section(map, "## 2. Timeline", /\n## 3\. /);
   assert.match(timeline, /Step 1 is complete: Increment 1 delivered H0 on 7 November 2026/);
-});
-
-test("STATUS.md lists no merged pull request as open", () => {
-  for (const number of mergedPullRequests) {
-    for (const line of status.split("\n").filter((entry) => entry.includes(`#${number}`))) {
-      assert.doesNotMatch(line, /\bopen\b|waits for review/i, `#${number} is merged: ${line}`);
-    }
-  }
-});
-
-test("'Next session starts with' names #673 and #676 as deferred and #669 as delivered", () => {
-  const next = section(status, "## Next session starts with", /\n## |$/);
-  assert.match(next, /#673/);
-  assert.match(next, /#676/);
-  const line = next.split("\n").find((entry) => entry.includes("#669"));
-  assert.ok(line, "#669 appears");
-  assert.match(line, /delivered in 6\.1\.0/);
-});
-
-test("STATUS.md links the friction issues from the readiness record", () => {
-  for (const issue of [838, 839, 840, 841, 842, 843, 844, 846]) {
-    assert.match(status, new RegExp(`#${issue}\\b`), `#${issue}`);
-  }
-  assert.match(status, /voidzero-dev\/vite-plus#3381/);
-});
-
-test("STATUS.md does not propose that Checkpoint 1 passed", () => {
-  assert.doesNotMatch(status, /checkpoint 1 (passed|is met|passes)/i);
-  assert.match(status, /Checkpoint 1/);
 });

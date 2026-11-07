@@ -41,7 +41,6 @@ Section 0 of the sequencing map is now a skeleton for the next increment. The ow
 
 ## In progress
 
-- The private scratch repository `schalkneethling/calavera-h0-scratch` is not deleted yet, because `gh` lacks the `delete_repo` scope. The owner deletes it, or grants the scope and asks for the deletion.
 - The H0 handoff documents (#750) are in review on the branch `750-h0-handoff`. The owner approved the Section 0 skeleton on 2026-11-07.
 
 ## Blocked
@@ -73,12 +72,12 @@ Section 0 of the sequencing map is now a skeleton for the next increment. The ow
 - #749 ran on Opus 5.5 at high effort, not Fable. Decided by Schalk on 2026-11-07.
 - The next release also includes these fixes outside Increment 1: #829, #795 (item 1), #830, #792, #790, #784, and #837. Approved by Schalk on 2026-11-07.
 - The Stryker integration work (#733, #734, #735, #736) joins the next increment. Decided by Schalk on 2026-11-07 (sequencing map Section 0).
+- #846 (the guard's `protectedBranch` default) is fixed in the next increment. Decided by Schalk on 2026-11-07; the choice of default source is part of that work.
+- The scratch GitHub repository from #749 was deleted by Schalk, and the #745 patches and the "745 guard scripts" stash were deleted with his approval, on 2026-11-07.
 
 ## Next session starts with
 
 - Finish the Section 0 skeleton in `docs/cross-repo/sequencing-map.md` with the owner: the Stryker work is in the next increment; its name, goal, exit condition, the rest of its issues, and "explicitly not now" are still to be decided.
-- Decide #846 (the guard's `protectedBranch` default). Triage the friction issues listed above; #843 is the only p1, because it makes `pnpm quality` fail after apply.
+- Triage the friction issues listed above; #843 is the only p1, because it makes `pnpm quality` fail after apply. #846 is already placed in the next increment.
 - Deferred decisions: #673 (should the `--init` bootstrap install the Calavera skill when the recipe leaves it out) and #676 (should `--new` choose its runner from the launching package manager).
 - #669 is delivered in 6.1.0 (PR #831), so it is not pending.
-- Delete the scratch repository `schalkneethling/calavera-h0-scratch` once `gh` has the `delete_repo` scope.
-- The saved patches in the shared Git folder (`calavera-745/`) and the Git stash "745 guard scripts" were applied in PR #803, which has merged. They can be deleted after the owner approves the list of what would go.
