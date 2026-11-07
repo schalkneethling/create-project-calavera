@@ -23,8 +23,9 @@ This section is the live plan. The briefs describe where the projects end up; th
 - #846: fix the guard's `protectedBranch` default, which is the current branch and therefore a feature branch in the documented flow. The choice of default source is part of that work.
 
 - The Stryker integration issues #733 (integrations add `.gitignore` and html-validate ignore entries), #734 (the Stryker integration), #735 (offer it in the Composer and MCP), and #736 (whether it supports `node:test` through the tap runner) are in the next increment, by the owner's decision of 2026-11-07. On 2026-10-22 the owner had decided that they wait until Increment 1 is finished, that is, until H0 is delivered (recorded on #732), and H0 is now delivered. The decision issue #732 was closed on 2026-11-05 because ADR-0014 answers it; ADR-0014 Decision 4 leaves the placement relative to Increment 1 to the owner, and the 2026-10-22 decision gives it: the Stryker work comes after H0, not inside Increment 1.
+- Approved by the owner on 2026-11-07 for the next release, outside the increment plan: #829 (`clean` removes untouched wiring, as decided on that issue), #795 (item 1), #830, #792, #790, #784, and #837.
 - #737 (remove the Stryker TypeScript 7 workaround) is blocked on a Stryker release that fixes stryker-mutator/stryker-js#6111.
-- The deferred decisions #673 and #676, the friction issues the readiness check filed, and the blocked items #671, #737, and #746 are listed in `STATUS.md`.
+- The deferred decisions #673 and #676; the friction issues the readiness check filed, #838 to #844 (#843 is the only p1); and the blocked items #671 (waits on #689), #737, and #746 (waits on the adoption trigger recorded in #744).
 
 **Explicitly not now:** Owner to decide.
 
@@ -32,7 +33,7 @@ This section is the live plan. The briefs describe where the projects end up; th
 
 - Revised by the owner on 2026-10-23 (ADR-0015): only `protected-branch-guard` was cataloged in this increment, so "the selected Determinant gates" meant the guard alone. `agent-red-test-verification` stays with the Determinant tracking issue (#744, closed on 2026-10-30; #746 holds the artifact).
 - ADR-0010 (`--new` delegates scaffolding to `vp create`) is accepted (2026-09-28, #531), with an amendment proposed on 2026-10-21 under #688 and accepted on 2026-10-23. The decision issue #442 is closed.
-- Checkpoint 1 is not claimed here. Its four criteria are in `docs/evolution-brief.md`; `STATUS.md` states which have an evidence source.
+- Checkpoint 1 is not claimed here. Its four criteria are in `docs/evolution-brief.md`. Only the first (a fresh `vp create` project is offered no JS or TS toolchain integration) has an evidence source, the readiness record; the other three have none yet.
 - Increment 1 left these out, and nothing in this section changes that: the Baseline engine API and Lightning CSS mapping (built when CSSE-015 needs them), #357 release verification extraction (before css-evolve's first publish), Playwright, a `gate` integration kind, packaging all Determinant gates, `dual-schema-validation` (when the `Diagnostic` schema exists), and the css-evolve integration (when there is a css-evolve to install).
 
 CQ1 was resolved by Increment 1: Calavera provides no JS or TS toolchain to any project; a project that has not adopted Vite+ runs `vp create` or `vp migrate` first.
@@ -41,7 +42,7 @@ CQ1 was resolved by Increment 1: Calavera provides no JS or TS toolchain to any 
 
 **Increment 2 — css-evolve bootstrapped through Calavera (Claude Code, css-evolve repository; starts when H0 is delivered; about one week).** `vp create`, then the Calavera flow above; every point of friction is a `dogfood` request back to Calavera; css-evolve Phase 0 follows on the resulting repository. Exit: css-evolve Checkpoint 0 with the added criterion that the repository was produced by Calavera and a second `apply --dry-run` reports no drift.
 
-**Increment 3 —** planned after Increment 2 from both `STATUS.md` files. Expected shape: css-evolve Phase 1 on its own until CSSE-015, at which point Calavera builds the Baseline engine API.
+**Increment 3 —** planned after Increment 2 from the records of both repositories. Expected shape: css-evolve Phase 1 on its own until CSSE-015, at which point Calavera builds the Baseline engine API.
 
 ## 1. Handoffs
 
@@ -87,7 +88,7 @@ Step 1 is complete: Increment 1 delivered H0 on 7 November 2026 (Section 1). The
 When a producer delivers a handoff:
 
 1. The producing agent updates the interface contract if any detail changed before the freeze, marks the surface frozen, and records the published version.
-2. The producing agent sets the handoff status here to `delivered <version> <date>` and records it in its `STATUS.md`.
+2. The producing agent sets the handoff status here to `delivered <version> <date>`.
 3. Schalk carries the notice to the consuming repository (or the consuming agent reads this map at session start).
 4. The consuming agent sets the status to `consumed <issue> <date>` when the consuming issue merges.
 
@@ -95,4 +96,4 @@ When a handoff is late: the producing agent records the slip and the new target 
 
 ## 5. Contacts and Escalation
 
-Schalk is the only human in the loop for both repositories. An agent that needs a decision from the other side writes a cross-repo request in its own repository under `docs/cross-repo/requests/` (template in `docs/cross-repo/request-template.md`), stops the blocked issue, records the block in `STATUS.md`, and continues with unblocked work. Requests are answered in the same folder of the requesting repository once Schalk carries the answer across.
+Schalk is the only human in the loop for both repositories. An agent that needs a decision from the other side writes a cross-repo request in its own repository under `docs/cross-repo/requests/` (template in `docs/cross-repo/request-template.md`), stops the blocked issue, records the block on that issue, and continues with unblocked work. Requests are answered in the same folder of the requesting repository once Schalk carries the answer across.

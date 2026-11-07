@@ -1,9 +1,9 @@
-// Issue #750: the sequencing map and STATUS.md must agree with the tracker and
-// the readiness record once handoff H0 is delivered. These checks cover only
-// facts that stay true after H0 (the H0 row, the ADR-0010 and #442 status, the
-// audit count against the audit table), so they fail if a stale statement
-// returns. They do not check content that each session or increment rewrites,
-// such as Section 0 or STATUS.md's date and next steps.
+// Issue #750: the sequencing map must agree with the tracker and the readiness
+// record once handoff H0 is delivered, and the audit summary must agree with
+// the audit table. These checks cover only facts that stay true after H0 (the
+// H0 row, the ADR-0010 and #442 status, the audit count), so they fail if a
+// stale statement returns. They do not check content that each increment
+// rewrites, such as Section 0.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { readFile } from "node:fs/promises";
@@ -13,11 +13,9 @@ import { fileURLToPath } from "node:url";
 
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const mapPath = join(repoRoot, "docs", "cross-repo", "sequencing-map.md");
-const statusPath = join(repoRoot, "STATUS.md");
 const auditPath = join(repoRoot, "docs", "catalog-audit.md");
 
 const map = await readFile(mapPath, "utf8");
-const status = await readFile(statusPath, "utf8");
 const audit = await readFile(auditPath, "utf8");
 
 const classifications = new Set(["keep", "delegate", "remove", "watch"]);
@@ -107,19 +105,14 @@ test("the status line carries a Revised date below the Draft 1 date", () => {
   assert.ok(revised > draft, "a Revised line follows the Draft 1 line");
 });
 
-test("STATUS.md names H0 as delivered with its version and date", () => {
-  assert.match(status, /^- H0: delivered 6\.1\.0 2026-11-07/m);
-});
-
-test("the audit line carries one count, and it matches the audit table", () => {
-  const auditLine = section(status, "## Audit", /\n## /);
-  const counts = auditLine.match(/classified: (\d+) of (\d+)/g);
-  assert.equal(counts?.length, 1, "one 'classified: N of M' count");
-  const [, classified, rows] = auditLine.match(/classified: (\d+) of (\d+)/);
+test("the audit summary's classified count matches the audit table", () => {
+  const summary = section(audit, "## 4. Summary", /\n## /);
+  const count = summary.match(/(\d+) of the table's (\d+) rows are classified/);
+  assert.ok(count, "the summary states 'N of the table's M rows are classified'");
   assert.deepEqual(
-    { rows: Number(rows), classified: Number(classified) },
+    { rows: Number(count[2]), classified: Number(count[1]) },
     auditTableCounts(),
-    "STATUS.md counts the rows the table classifies",
+    "the summary counts the rows the table classifies",
   );
 });
 
