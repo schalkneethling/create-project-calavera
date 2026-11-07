@@ -18,12 +18,12 @@ Section 0 of the sequencing map is now a skeleton for the next increment. The ow
 ## Completed this session
 
 - Releases: v6.0.0 (2026-11-04) and v6.1.0 (2026-11-06).
-- #745 (the `skill-protected-branch-guard` artifact) closed with PR #803, merged on 2026-11-04. The guard package is published as 0.1.0 (`npm view` returns it).
+- #745 (the `skill-protected-branch-guard` artifact) closed with PR #803, merged on 2026-11-04. The guard package is published as 0.1.0 (`npm view @schalkneethling/calavera-skill-protected-branch-guard version` returns it).
 - #748 (flow test for guard wiring, Knip ignore, MCP registration, and EditorConfig) closed with PR #828.
 - #669 (generated files fail `vp fmt --check` in Vite+ projects) closed with PR #831, which formats generated JSON and Markdown with the project's `vp fmt`. It shipped in 6.1.0.
 - #802 (remove a deselected artifact's wiring, and report wiring in `doctor`) closed with PR #832.
 - #824 (replace the code-review skill with the verified-findings review skill) closed with PR #825.
-- #814 and #816 (ignore `.claude/worktrees/` in `.gitignore` and in the generated Stylelint and HTML Validate configuration) closed with PRs #815 and #817. #677 was closed on 2026-11-07 as resolved by #815.
+- #814 and #816 (ignore `.claude/worktrees/` in `.gitignore` and in the generated Stylelint and HTML Validate configuration) closed with PRs #815 and #817. #677 was closed on 2026-11-06 as resolved by #815.
 - #749 (the bootstrap readiness check) closed with PR #847. It ran the published 6.1.0 and produced the friction issues below.
 
 ### Filed by the readiness check
@@ -46,7 +46,7 @@ Section 0 of the sequencing map is now a skeleton for the next increment. The ow
 
 ## Blocked
 
-- #671 (remove the exit 127 known-issue section) waits on #689. Vite+ closed voidzero-dev/vite-plus#2970 without a change, so no Vite+ release will fix it.
+- #671 (remove the exit 127 known-issue section) waits on #689. Vite+ closed voidzero-dev/vite-plus#2970 as completed on 2026-10-14 by pointing to the new `create-vite-plus` package (vite-plus PR #3028); `vp create` itself did not change, so no Vite+ release will fix the exit 127.
 - #737 waits on a Stryker release that fixes stryker-mutator/stryker-js#6111.
 - #746 (`skill-red-test-verification`) waits on the adoption trigger that ADR-0015 records in #744.
 
@@ -61,7 +61,7 @@ Section 0 of the sequencing map is now a skeleton for the next increment. The ow
 
 ## Audit
 
-- Rows classified: 16 of 37 in `docs/catalog-audit.md`; the other 21 are deferred in #449. Removals opened: 5 (#452 to #456). Merged: 5. Awaiting approval: 0.
+- Rows classified: 16 of 37 in `docs/catalog-audit.md` (rows, not catalog entries: the React best practices entry occupies two rows). The 14 reduced-scope rows were classified in Increment 1, and the Knip and GitHub governance rows were classified `keep` from the readiness check (#749). The other 21 rows are deferred in #449. Removals opened: 5 (#452 to #456). Merged: 5. Awaiting approval: 0.
 
 ## Open cross-repo requests
 

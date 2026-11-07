@@ -76,6 +76,7 @@ One row per entry. Fill every column. Add rows for anything `list_integrations` 
 Counts cover only the thirteen in-scope entries of the reduced CAL-001 scope (sequencing map Section 0). The React best practices entry is recorded as two rows, because React Doctor is not a lint plugin and Section 1 allows exactly one classification per row, so thirteen entries occupy fourteen rows.
 
 - Rows: 14 (13 in-scope entries). keep: 1. delegate: 0. remove: 11. watch: 2.
+- Added from the bootstrap readiness check (#749, 2026-11-07): the Knip and GitHub governance rows are classified `keep`, and the Varlock row is marked not exercised. With these, 16 of the table's 37 rows are classified: keep: 3. delegate: 0. remove: 11. watch: 2.
 - Removal issues proposed (five issues for eleven `remove` rows): the two TypeScript configuration rows are one catalog entry and share one issue, and every rule pack entry in the catalog includes its base integration (`includes: ["oxlint"]` or `includes: ["eslint"]`, twenty-four entries), so the packs are removed inside the base removals rather than through issues of their own:
   - CAL-012: remove Oxlint and its plugin pack entries (ADR), #452
   - CAL-013: remove Oxfmt (ADR), #453

@@ -10,7 +10,7 @@
 
 This section is the live plan. The briefs describe where the projects end up; this section says what is being worked now. It is rewritten at the end of each increment. Work only the current increment; anything else noticed becomes an issue.
 
-**The next increment is not defined yet.** Increment 1 ended when handoff H0 was delivered on 7 November 2026. The owner reviews this skeleton and decides what the next increment contains. Until then, no work from the next increment starts. Every placeholder below reads "Owner to decide" and is filled in only by the owner.
+**The next increment is not defined yet.** Increment 1 ended when handoff H0 was delivered on 7 November 2026. The owner reviews this skeleton and decides what the next increment contains. Every placeholder below reads "Owner to decide" and is filled in only by the owner.
 
 **Name:** Owner to decide.
 
@@ -20,7 +20,7 @@ This section is the live plan. The briefs describe where the projects end up; th
 
 **Issues:** Owner to decide. These facts already exist and are listed so that the owner does not have to look them up. Listing an issue here does not place it in the next increment.
 
-- The Stryker integration issues #733 (integrations add `.gitignore` and html-validate ignore entries), #734 (the Stryker integration), #735 (offer it in the Composer and MCP), and #736 (whether it supports `node:test` through the tap runner). On 2026-10-22 the owner decided that these wait until Increment 1 is finished, that is, until H0 is delivered (recorded on #732). H0 is now delivered, so the wait is over. The decision issue #732 was closed on 2026-11-05 because ADR-0014 answers it; ADR-0014 Decision 4 leaves the placement relative to Increment 1 to the owner, and the 2026-10-22 decision gives it: the Stryker work comes after H0, not inside Increment 1.
+- The Stryker integration issues #733 (integrations add `.gitignore` and html-validate ignore entries), #734 (the Stryker integration), #735 (offer it in the Composer and MCP), and #736 (whether it supports `node:test` through the tap runner). On 2026-10-22 the owner decided that these wait until Increment 1 is finished, that is, until H0 is delivered (recorded on #732). H0 is delivered, which is the condition that decision named; whether the Stryker work joins the next increment is still the owner's call. The decision issue #732 was closed on 2026-11-05 because ADR-0014 answers it; ADR-0014 Decision 4 leaves the placement relative to Increment 1 to the owner, and the 2026-10-22 decision gives it: the Stryker work comes after H0, not inside Increment 1.
 - #737 (remove the Stryker TypeScript 7 workaround) is blocked on a Stryker release that fixes stryker-mutator/stryker-js#6111.
 - The deferred decisions #673 and #676, the friction issues the readiness check filed, and the blocked items #671, #737, and #746 are listed in `STATUS.md`.
 
@@ -58,6 +58,8 @@ CQ1 was resolved by Increment 1: Calavera provides no JS or TS toolchain to any 
 ## 2. Timeline
 
 Phases run in parallel across the two repositories. Reading left to right within a row is the order of work; an arrow names the handoff that must have been delivered before the consuming issue starts.
+
+Step 1 is complete: Increment 1 delivered H0 on 7 November 2026 (Section 1). The later rows are the original plan, which the owner has not yet decided again (Section 0).
 
 | Step | Calavera repository                                                                    | css-evolve repository                                                                                                   | Handoffs                                                                                     |
 | ---- | -------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- |

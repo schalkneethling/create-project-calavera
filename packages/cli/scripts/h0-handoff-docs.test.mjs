@@ -11,9 +11,39 @@ import { fileURLToPath } from "node:url";
 const repoRoot = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
 const mapPath = join(repoRoot, "docs", "cross-repo", "sequencing-map.md");
 const statusPath = join(repoRoot, "STATUS.md");
+const auditPath = join(repoRoot, "docs", "catalog-audit.md");
 
 const map = await readFile(mapPath, "utf8");
 const status = await readFile(statusPath, "utf8");
+const audit = await readFile(auditPath, "utf8");
+
+const classifications = new Set(["keep", "delegate", "remove", "watch"]);
+
+/**
+ * Counts the rows of the audit table (Section 3) and the rows whose
+ * Classification column holds one of the four classifications.
+ *
+ * @returns {{ rows: number, classified: number }}
+ */
+function auditTableCounts() {
+  const lines = audit.split("\n");
+  const header = lines.findIndex(
+    (line) => line.startsWith("| Entry ") && line.includes("Classification"),
+  );
+  assert.notEqual(header, -1, "the audit table header exists");
+  const column =
+    header === -1
+      ? -1
+      : lines[header].split("|").findIndex((cell) => cell.trim() === "Classification");
+  let rows = 0;
+  let classified = 0;
+  for (const line of lines.slice(header + 2)) {
+    if (!line.startsWith("|")) break;
+    rows += 1;
+    if (classifications.has(line.split("|")[column].trim())) classified += 1;
+  }
+  return { rows, classified };
+}
 
 /**
  * @param {string} text
@@ -43,7 +73,11 @@ test("the map describes ADR-0010 as accepted with the amendment proposed on 2026
   const lines = map.split("\n").filter((line) => line.includes("0010"));
   assert.ok(lines.length > 0, "the map mentions ADR-0010");
   for (const line of lines) {
-    assert.doesNotMatch(line, /\(proposed\)/i, `stale status: ${line}`);
+    assert.doesNotMatch(
+      line,
+      /\(proposed\)|ADR-0010[^.]*\bis proposed\b/i,
+      `stale status: ${line}`,
+    );
   }
   assert.ok(
     lines.some(
@@ -56,6 +90,11 @@ test("the map describes ADR-0010 as accepted with the amendment proposed on 2026
 test("the map does not describe #442 as pending", () => {
   for (const line of map.split("\n").filter((entry) => entry.includes("#442"))) {
     assert.match(line, /closed/i, `#442 is closed, so the line must say so: ${line}`);
+    assert.doesNotMatch(
+      line,
+      /pending/i,
+      `#442 is closed, so the line must not call it pending: ${line}`,
+    );
   }
 });
 
@@ -86,10 +125,21 @@ test("STATUS.md names H0 as delivered with a date and is dated after the last se
   assert.match(status, /^Updated: 2026-11-07$/m);
 });
 
-test("the audit line carries one count", () => {
-  const audit = section(status, "## Audit", /\n## /);
-  assert.equal(audit.match(/classified: \d+ of \d+/g)?.length, 1, "one 'classified: N of M' count");
-  assert.doesNotMatch(audit, /fourteen|\b14\b/, "no second row or entry count");
+test("the audit line carries one count, and it matches the audit table", () => {
+  const auditLine = section(status, "## Audit", /\n## /);
+  const counts = auditLine.match(/classified: (\d+) of (\d+)/g);
+  assert.equal(counts?.length, 1, "one 'classified: N of M' count");
+  const [, classified, rows] = auditLine.match(/classified: (\d+) of (\d+)/);
+  assert.deepEqual(
+    { rows: Number(rows), classified: Number(classified) },
+    auditTableCounts(),
+    "STATUS.md counts the rows the table classifies",
+  );
+});
+
+test("the timeline marks step 1, which delivered H0, as complete", () => {
+  const timeline = section(map, "## 2. Timeline", /\n## 3\. /);
+  assert.match(timeline, /Step 1 is complete: Increment 1 delivered H0 on 7 November 2026/);
 });
 
 test("STATUS.md lists no merged pull request as open", () => {
