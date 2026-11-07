@@ -8,7 +8,7 @@ updates:
       default-days: 7
       semver-major-days: 7
       semver-minor-days: 3
-      semver-patch-days: 2
+      semver-patch-days: 3
       include:
         - "*"
     # Bumped by .github/workflows/baseline-data-refresh.yml, which also
