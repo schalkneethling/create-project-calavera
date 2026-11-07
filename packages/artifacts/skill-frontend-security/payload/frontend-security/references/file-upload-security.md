@@ -190,9 +190,10 @@ async function saveValidatedUpload(file) {
 ## Secure File Serving
 
 ```javascript
-const contentDisposition = require("content-disposition");
+const { create: createContentDisposition } = require("content-disposition"); // content-disposition 2.x
 const fs = require("node:fs");
 const fsPromises = require("node:fs/promises");
+const path = require("node:path");
 const { pipeline } = require("stream/promises");
 
 // Serve files through application, not directly
@@ -213,11 +214,18 @@ app.get("/files/:id", async (req, res) => {
     return res.status(404).send("Not found");
   }
 
+  // content-disposition 2.x no longer strips path segments, so reduce the stored
+  // display name to a bare file name first. `path.win32.basename` treats both "/"
+  // and "\\" as separators on every platform.
+  const downloadName = path.win32.basename(fileRecord.displayName) || "download";
+
   // Set safe headers only after confirming that the file can be opened.
+  // `create` quotes the name and, for non-ASCII names, adds a "?"-substituted
+  // `filename` fallback plus an RFC 8187 `filename*=UTF-8''...` value.
   res.setHeader("Content-Type", fileRecord.mimeType);
   res.setHeader(
     "Content-Disposition",
-    contentDisposition(fileRecord.displayName, { type: "attachment" }),
+    createContentDisposition(downloadName, { type: "attachment" }),
   );
   res.setHeader("X-Content-Type-Options", "nosniff");
 
