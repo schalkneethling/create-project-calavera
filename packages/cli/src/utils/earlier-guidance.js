@@ -190,6 +190,10 @@ function sha256(text) {
  */
 export function findEarlierGuidance(kind, text) {
   const unixText = text.replaceAll("\r\n", "\n");
+  // The placeholder only stands in for a version inside this module. A file that already holds it
+  // was edited: with one pin left as the placeholder, normalizing the others would produce exactly
+  // a known text and the edit would be overwritten.
+  if (unixText.includes(VERSION_PLACEHOLDER)) return undefined;
   const pins = new Set([...unixText.matchAll(PINNED_VERSION)].map((match) => match[1]));
   // A text that pins two different versions was never written by one release: only the first is
   // replaced below, so the other stays in the text and the digest cannot match.

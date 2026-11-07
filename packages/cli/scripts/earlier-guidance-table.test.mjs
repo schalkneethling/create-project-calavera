@@ -99,12 +99,12 @@ test("Given the text this checkout writes, then an earlier release's template is
     assert.deepEqual(
       findEarlierGuidance("guidance", current.agents)?.releases,
       lastGuidance.releases,
-      `AGENTS.md for ${packageManager}: add the previous text to fixtures/agent-guidance`,
+      `AGENTS.md for ${packageManager}: the text this checkout writes is not registered: add it to fixtures/agent-guidance and its digest to src/utils/earlier-guidance.js, keeping the earlier texts`,
     );
     assert.deepEqual(
       findEarlierGuidance("guidance", current.fallback)?.releases,
       lastGuidance.releases,
-      `AGENTS.calavera.md for ${packageManager}: add the previous text to fixtures/agent-guidance`,
+      `AGENTS.calavera.md for ${packageManager}: the text this checkout writes is not registered: add it to fixtures/agent-guidance and its digest to src/utils/earlier-guidance.js, keeping the earlier texts`,
     );
     const pinned = current.mcp.replaceAll(
       /create-project-calavera@\d+\.\d+\.\d+(-[0-9A-Za-z.]+)?/g,
@@ -113,7 +113,7 @@ test("Given the text this checkout writes, then an earlier release's template is
     assert.deepEqual(
       findEarlierGuidance("mcp", pinned)?.releases,
       lastMcp.releases,
-      `mcp.md for ${packageManager}: add the previous text to fixtures/agent-guidance`,
+      `mcp.md for ${packageManager}: the text this checkout writes is not registered: add it to fixtures/agent-guidance and its digest to src/utils/earlier-guidance.js, keeping the earlier texts`,
     );
   }
 });

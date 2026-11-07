@@ -366,3 +366,60 @@ test("Given a project that configures MCP for its harness, when .agents/calavera
     assert.equal(await readFile(MCP_FILE, "utf8"), olderMcp);
   });
 });
+
+test("Given an .agents/calavera/mcp.md with one pin edited into the placeholder this module hashes with, when --init runs, then it is kept", async () => {
+  const { id, releases } = epochs.mcp[epochs.mcp.length - 1];
+  const older = await mcpText(id, "npm", releases[0]);
+  const edited = older.replace(
+    `create-project-calavera@${releases[0]}`,
+    "create-project-calavera@{{version}}",
+  );
+  assert.notEqual(edited, older);
+  await inTemporaryProject("npm", async (directory) => {
+    await writeFiles(directory, { "AGENTS.md": EXISTING_AGENTS, [MCP_FILE]: edited });
+
+    const result = await agentBootstrap({ ...bootstrapOptions, packageManager: "npm" });
+
+    assert.equal(await readFile(MCP_FILE, "utf8"), edited);
+    assert.equal(changeFor(result, MCP_FILE)?.type, "skip");
+  });
+});
+
+test("Given an earlier template changed only in whitespace or encoding, when --init runs, then each file is kept", async () => {
+  const older = await guidanceText(olderGuidanceEpochs[0].id);
+  const variants = {
+    "a byte order mark": `\uFEFF${older}`,
+    "trailing space": older.replace("tooling.\n", "tooling. \n"),
+    "a missing final newline": older.trimEnd(),
+    "an extra final newline": `${older}\n`,
+    "a lone carriage return": older.replace("\n", "\r"),
+    "a tab": older.replace("- Use", "-\tUse"),
+  };
+  for (const [label, edited] of Object.entries(variants)) {
+    assert.notEqual(edited, older, label);
+    await inTemporaryProject("pnpm", async (directory) => {
+      await writeFiles(directory, { "AGENTS.md": edited });
+
+      const result = await agentBootstrap({ ...bootstrapOptions, packageManager: "pnpm" });
+
+      assert.equal(await readFile("AGENTS.md", "utf8"), edited, label);
+      assert.equal(changeFor(result, "AGENTS.md")?.type, "skip", label);
+    });
+  }
+});
+
+test("Given --agents-md=append and a whole-file AGENTS.md from an earlier release, when --init runs, then the file is replaced and no section is appended", async () => {
+  const current = await currentText("pnpm");
+  await inTemporaryProject("pnpm", async (directory) => {
+    await writeFiles(directory, { "AGENTS.md": await guidanceText(olderGuidanceEpochs[0].id) });
+
+    const result = await agentBootstrap({
+      mcpHarness: "skip",
+      packageManager: "pnpm",
+      agentsMd: "append",
+    });
+
+    assert.equal(await readFile("AGENTS.md", "utf8"), current.agents);
+    assert.equal(changeFor(result, "AGENTS.md")?.type, "update");
+  });
+});

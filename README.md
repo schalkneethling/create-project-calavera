@@ -446,9 +446,11 @@ fallback-only behavior unless `--agents-md=append` is passed.
 A guidance file that an earlier Calavera release wrote is brought up to date.
 This covers a whole-file `AGENTS.md`, `AGENTS.calavera.md`, and
 `.agents/calavera/mcp.md`. Calavera replaces the file only when its text is
-exactly the text of a published release, ignoring line endings, and the dry run
-reports it as an update. A file with any other text counts as your edit, so
-Calavera keeps it and reports that it differs.
+exactly the text of a published release, except that Windows line endings
+count as Unix ones, and the dry run reports it as an update. The version that
+`.agents/calavera/mcp.md` pins in its launch command may be any published
+version. A file with any other text counts as your edit, so Calavera keeps it
+and reports it, as before.
 
 ## MCP Server
 

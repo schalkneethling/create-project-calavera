@@ -42,7 +42,9 @@ A guidance file that an earlier Calavera release wrote (a whole-file
 `AGENTS.md`, `AGENTS.calavera.md`, or `.agents/calavera/mcp.md`) is replaced
 with the current text, because Calavera does not record these files and can
 only tell them apart from your edits by comparing their text with the text of
-every published release. Any other text is treated as your edit and kept.
+every published release, except that Windows line endings count as Unix ones.
+The version that `.agents/calavera/mcp.md` pins in its launch command may be
+any published version. Any other text is treated as your edit and kept.
 
 After any `AGENTS.md` question, interactive runs ask which project-local MCP
 host to configure. Choose exactly one of Claude Code, Codex, Cursor, OpenCode,
