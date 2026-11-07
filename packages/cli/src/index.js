@@ -4359,30 +4359,6 @@ async function doctor(options) {
 }
 
 /**
- * @param {Integration[]} integrations
- * @returns {string[]}
- */
-function expectedManagedFiles(integrations) {
-  return [
-    integrations.some((integration) => integration.id === "editorconfig") ? ".editorconfig" : null,
-    integrations.some((integration) => integration.id === "stylelint") ? ".stylelintrc.json" : null,
-    integrations.some((integration) => integration.id === "html-validate")
-      ? ".htmlvalidate.json"
-      : null,
-    integrations.some((integration) => integration.id === "html-validate")
-      ? ".htmlvalidateignore"
-      : null,
-    integrations.some((integration) => integration.id === "html-validate")
-      ? HTML_VALIDATE_WRAPPER_PATH
-      : null,
-    integrations.some((integration) => integration.id === "react-doctor")
-      ? "react-doctor.config.json"
-      : null,
-    integrations.some((integration) => integration.id === "knip") ? "knip.json" : null,
-  ].filter(isNotEmptyString);
-}
-
-/**
  * @param {CliOptions} options
  * @returns {Promise<CleanResult>}
  */
@@ -4403,7 +4379,21 @@ async function clean(options) {
     : { integrations: [] };
   const integrations = resolveRecipeIntegrations(recipe);
   const expectedAiPaths = new Set(resolveAiArtifacts(recipe).flatMap(aiArtifactOutputPaths));
-  const expectedFiles = new Set(expectedManagedFiles(integrations));
+  // #795: the files apply writes for this recipe, from apply's own planner, so a file that an
+  // integration the recipe still selects writes is never stale. A separate list of file names
+  // missed the github-repository-controls files, so clean would have deleted them.
+  /** @type {{ path: string }[]} */
+  let plannedFiles;
+  try {
+    plannedFiles = plannedManagedFiles(integrations, recipe.integrationOptions);
+  } catch (error) {
+    // Apply refuses the same recipe; clean keeps the cause and says where the recipe came from.
+    throw new Error(
+      `clean could not tell which managed files the recipe in ${options.config} still selects, so it removed nothing. Fix the recipe, then run clean again.`,
+      { cause: error },
+    );
+  }
+  const expectedFiles = new Set(plannedFiles.map(({ path }) => path));
   const staleFiles = managedFilesFromState(state).filter((file) => !expectedFiles.has(file.path));
   const staleAiArtifacts = state.aiArtifacts.filter(
     (artifact) => !expectedAiPaths.has(artifact.path),

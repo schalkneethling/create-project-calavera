@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
-import { mkdtempDisposable, readFile, writeFile } from "node:fs/promises";
+import { execFileSync, spawnSync } from "node:child_process";
+import { access, mkdtempDisposable, readFile, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { parse as parseYaml } from "yaml";
 
@@ -1533,4 +1535,124 @@ test("requireCodeqlResults must be a boolean", () => {
       }),
     /requireCodeqlResults must be a boolean/,
   );
+});
+
+// #795, item 1: clean judged staleness from a hand-written list of managed files that lacked the
+// files of github-repository-controls, so it would delete them while the recipe still selects it.
+test("Given github-repository-controls still selected and another integration removed, clean --dry-run lists only the removed integration's file", async () => {
+  const originalDirectory = process.cwd();
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-repository-controls-clean-"),
+  );
+  /** @param {string[]} integrations */
+  const recipeWith = (integrations) =>
+    buildRecipe("minimal", integrations, "npm", [], {
+      "github-repository-controls": rawOptions,
+    });
+  const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
+  /** @param {string[]} args */
+  const clean = (args) =>
+    JSON.parse(
+      execFileSync(process.execPath, [cli, "clean", ...args, "--json"], { encoding: "utf8" }),
+    );
+  try {
+    process.chdir(projectDirectory.path);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    const options = { json: true, noInstall: true, assumeYes: true };
+    await applyRecipeObject(recipeWith(["github-repository-controls", "knip"]), options);
+    const controlPaths = githubRepositoryControlManagedFiles(rawOptions).map(({ path }) => path);
+
+    const withoutKnip = recipeWith(["github-repository-controls"]);
+    await writeFile("calavera.config.json", `${JSON.stringify(withoutKnip, null, 2)}\n`);
+    // Before apply, and after the apply that drops knip, as the report in #795 ran it.
+    for (const when of ["before apply", "after apply"]) {
+      if (when === "after apply") await applyRecipeObject(withoutKnip, options);
+      assert.deepEqual(
+        clean(["--dry-run"]).changes.map(({ type, path }) => [type, path]),
+        [["delete", "knip.json"]],
+        when,
+      );
+    }
+
+    clean(["--yes"]);
+    for (const path of controlPaths) {
+      await access(path);
+    }
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.deepEqual(
+      state.managedFiles.map(({ path }) => path).toSorted(),
+      controlPaths.toSorted(),
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("Given github-repository-controls removed from the recipe, clean --dry-run lists each of its files", async () => {
+  const originalDirectory = process.cwd();
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-repository-controls-removed-"),
+  );
+  const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
+  try {
+    process.chdir(projectDirectory.path);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await applyRecipeObject(
+      buildRecipe("minimal", ["github-repository-controls"], "npm", [], {
+        "github-repository-controls": rawOptions,
+      }),
+      { json: true, noInstall: true, assumeYes: true },
+    );
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
+    );
+
+    const { changes } = JSON.parse(
+      execFileSync(process.execPath, [cli, "clean", "--dry-run", "--json"], { encoding: "utf8" }),
+    );
+    assert.deepEqual(
+      changes.map(({ type, path }) => [type, path]),
+      githubRepositoryControlManagedFiles(rawOptions).map(({ path }) => ["delete", path]),
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
+test("Given invalid github-repository-controls options in the recipe, clean stops with the cause, names the recipe, and removes nothing", async () => {
+  const originalDirectory = process.cwd();
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-repository-controls-invalid-"),
+  );
+  const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
+  try {
+    process.chdir(projectDirectory.path);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    const options = { json: true, noInstall: true, assumeYes: true };
+    await applyRecipeObject(
+      buildRecipe("minimal", ["github-repository-controls", "knip"], "npm", [], {
+        "github-repository-controls": rawOptions,
+      }),
+      options,
+    );
+    // buildRecipe validates the options, so the invalid value is written into the file by hand,
+    // as a person editing calavera.config.json would.
+    const invalid = buildRecipe("minimal", ["github-repository-controls"], "npm", [], {
+      "github-repository-controls": rawOptions,
+    });
+    invalid.integrationOptions["github-repository-controls"].repository = "bad";
+    await writeFile("calavera.config.json", `${JSON.stringify(invalid, null, 2)}\n`);
+
+    const run = spawnSync(process.execPath, [cli, "clean", "--yes"], { encoding: "utf8" });
+    assert.notEqual(run.status, 0);
+    assert.match(
+      run.stderr,
+      /clean could not tell which managed files the recipe in calavera\.config\.json still selects, so it removed nothing/,
+    );
+    assert.match(run.stderr, /repository must use owner\/name format/);
+    await access("knip.json");
+  } finally {
+    process.chdir(originalDirectory);
+  }
 });
