@@ -4,17 +4,33 @@
 // removes or replaces the block only while it holds what apply recorded, and stops on an edit.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtempDisposable, readFile, realpath, symlink, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtempDisposable,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  utimes,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { integrationCatalog } from "../src/catalog.js";
-import { ignoreLineProblem, planGitignoreBlocks } from "../src/ignore-lines.js";
+import {
+  ignoreLineProblem,
+  planGitignoreBlocks,
+  planHtmlValidateIgnoreChanges,
+} from "../src/ignore-lines.js";
 import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { normalizeState } from "../src/state.js";
+import { fixture } from "./ignore-fixture-integration.mjs";
 import { packageDirectory } from "./installed-package.mjs";
 
 // ---------------------------------------------------------------------------------------------
@@ -102,8 +118,8 @@ test("a block that already holds the declared lines is unchanged, with or withou
 });
 
 test("a block that holds the recorded lines is replaced when the catalog declares new ones", () => {
-  const previous = { integration: "stryker", lines: [".stryker-tmp/"] };
-  const contents = `${own}# calavera:stryker:start\n.stryker-tmp/\n# calavera:stryker:end\nafter/\n`;
+  const previous = { integration: "stryker", lines: [".stryker-tmp/", "reports/"] };
+  const contents = `${own}# calavera:stryker:start\n.stryker-tmp/\nreports/\n# calavera:stryker:end\nafter/\n`;
   const plan = planGitignoreBlocks({ contents, declared: [stryker], records: [previous] });
 
   assert.equal(plan.contents, `${own}${strykerBlock}after/\n`);
@@ -140,7 +156,15 @@ test("a block Calavera has no record of, holding other lines, is a conflict", ()
 
   assert.throws(
     () => planGitignoreBlocks({ contents: foreign, declared: [stryker], records: [] }),
-    /\.gitignore: the Calavera block for stryker is already in the file, and Calavera has no record of writing it/,
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.match(
+        error.message,
+        /\.gitignore: the Calavera block for stryker is already in the file, and Calavera has no record of writing it\.\nThe file now holds:\n {2}mine\//,
+      );
+      assert.doesNotMatch(error.message, /Calavera wrote:/);
+      return true;
+    },
   );
 });
 
@@ -220,6 +244,128 @@ test("with nothing declared and nothing recorded, the planner touches nothing", 
   }
 });
 
+test("without a .gitignore, every block the planner adds is a write", () => {
+  const other = { integration: "other", lines: ["tmp/"] };
+  const plan = planGitignoreBlocks({
+    contents: undefined,
+    declared: [stryker, other],
+    records: [],
+  });
+
+  assert.equal(plan.type, "write");
+  assert.deepEqual(
+    plan.changes.map(({ integration, type }) => ({ integration, type })),
+    [
+      { integration: "stryker", type: "write" },
+      { integration: "other", type: "write" },
+    ],
+  );
+});
+
+test("a record whose .gitignore is gone needs no change", () => {
+  const plan = planGitignoreBlocks({ contents: undefined, declared: [], records: [stryker] });
+
+  assert.equal(plan.contents, undefined);
+  assert.equal(plan.type, undefined);
+  assert.deepEqual(plan.records, []);
+});
+
+test("a broken marker in a block Calavera would remove is a conflict", () => {
+  assert.throws(
+    () =>
+      planGitignoreBlocks({
+        contents: `${own}# calavera:stryker:start\n.stryker-tmp/\n`,
+        declared: [],
+        records: [stryker],
+      }),
+    /\.gitignore: the Calavera block for stryker has a start marker without an end marker/,
+  );
+});
+
+test("each block is compared with its own integration's record", () => {
+  const other = { integration: "other", lines: ["tmp/"] };
+  const previous = { integration: "stryker", lines: [".stryker-tmp/"] };
+  const plan = planGitignoreBlocks({
+    contents: `${own}# calavera:stryker:start\n.stryker-tmp/\n# calavera:stryker:end\n`,
+    declared: [stryker],
+    records: [other, previous],
+  });
+
+  assert.equal(plan.contents, `${own}${strykerBlock}`);
+});
+
+test("every conflict is listed on its own line", () => {
+  const edited = (/** @type {string} */ id) =>
+    `# calavera:${id}:start\nmine/\n# calavera:${id}:end\n`;
+
+  assert.throws(
+    () =>
+      planGitignoreBlocks({
+        contents: `${edited("stryker")}${edited("other")}`,
+        declared: [stryker, { integration: "other", lines: ["tmp/"] }],
+        records: [],
+      }),
+    /there:\n- \.gitignore: the Calavera block for stryker[\s\S]*\n- \.gitignore: the Calavera block for other/,
+  );
+});
+
+test("markers that do not pair up are conflicts that say how they fail to pair", () => {
+  const cases = [
+    [
+      "# calavera:stryker:start\n# calavera:stryker:start\n# calavera:stryker:end\n",
+      /has 2 start markers and 1 end marker,/,
+    ],
+    [
+      "# calavera:stryker:start\n# calavera:stryker:end\n# calavera:stryker:end\n",
+      /has 1 start marker and 2 end markers,/,
+    ],
+    ["# calavera:stryker:end\n", /has an end marker without a start marker/],
+    [
+      "# calavera:stryker:start\n# calavera:stryker:start\n",
+      /has 2 start markers and 0 end markers,/,
+    ],
+    ["# calavera:stryker:end\n# calavera:stryker:end\n", /has 0 start markers and 2 end markers,/],
+    [
+      "# calavera:stryker:end\n# calavera:stryker:start\n",
+      /has an end marker that comes before its start marker/,
+    ],
+  ];
+  for (const [contents, message] of cases) {
+    assert.throws(
+      () => planGitignoreBlocks({ contents: String(contents), declared: [stryker], records: [] }),
+      message,
+    );
+  }
+});
+
+test("a marker with trailing spaces is still a marker", () => {
+  const contents = `# calavera:stryker:start  \n.stryker-tmp/\nreports/mutation/\n# calavera:stryker:end\t\n`;
+  const plan = planGitignoreBlocks({ contents, declared: [stryker], records: [stryker] });
+
+  assert.equal(plan.type, "unchanged");
+});
+
+test("an .htmlvalidateignore change is an update until the file holds every line of the integration", () => {
+  const integrations = [{ id: "html-validate", ignore: { htmlValidateIgnore: ["a/", "b/"] } }];
+
+  assert.deepEqual(planHtmlValidateIgnoreChanges(integrations, "a/\n"), [
+    {
+      path: ".htmlvalidateignore",
+      integration: "html-validate",
+      type: "update",
+      lines: ["a/", "b/"],
+    },
+  ]);
+  assert.deepEqual(planHtmlValidateIgnoreChanges(integrations, "a/\n  \nb/\n"), [
+    {
+      path: ".htmlvalidateignore",
+      integration: "html-validate",
+      type: "unchanged",
+      lines: ["a/", "b/"],
+    },
+  ]);
+});
+
 test("ignoreLineProblem refuses empty lines, line breaks, and Calavera markers", () => {
   assert.equal(ignoreLineProblem(".stryker-tmp/"), undefined);
   assert.equal(ignoreLineProblem("!.env.schema"), undefined);
@@ -284,29 +430,8 @@ test("the state record keeps valid gitignoreBlocks and refuses damaged ones", ()
 // `.gitignore` lines before the Stryker entry (#734), so the test adds one for this file only.
 // ---------------------------------------------------------------------------------------------
 
-const fixture = {
-  id: "ignore-fixture",
-  label: "Ignore fixture",
-  summary: "A test integration that declares ignore lines.",
-  homepage: "https://example.com",
-  group: "Test",
-  platform: "generic",
-  status: "optional",
-  dependencies: [],
-  ignore: {
-    gitignore: [".fixture-tmp/", "reports/fixture/"],
-    htmlValidateIgnore: ["reports/fixture/"],
-  },
-};
 const fixtureBlock =
   "# calavera:ignore-fixture:start\n.fixture-tmp/\nreports/fixture/\n# calavera:ignore-fixture:end\n";
-
-test.before(() => {
-  integrationCatalog.push(/** @type {any} */ (fixture));
-});
-test.after(() => {
-  integrationCatalog.splice(integrationCatalog.indexOf(/** @type {any} */ (fixture)), 1);
-});
 
 const applyOptions = { json: true, noInstall: true, assumeYes: true };
 
@@ -454,6 +579,119 @@ test("with Varlock, apply reports one .gitignore change and keeps both the block
     assert.deepEqual(
       again.changes.filter(({ path }) => path === ".gitignore"),
       [{ type: "unchanged", path: ".gitignore", action: "merge", ownership: "project" }],
+    );
+  });
+});
+
+test("apply does not rewrite a .gitignore whose blocks are unchanged", async () => {
+  await inProject(own, async () => {
+    const recipe = recipeWith(["ignore-fixture"]);
+    await applyRecipeObject(recipe, applyOptions);
+    const past = new Date("2020-01-01T00:00:00Z");
+    await utimes(".gitignore", past, past);
+
+    await applyRecipeObject(recipe, applyOptions);
+
+    assert.equal((await stat(".gitignore")).mtimeMs, past.getTime());
+  });
+});
+
+test("without html-validate, apply plans no .htmlvalidateignore lines", async () => {
+  await inProject(undefined, async () => {
+    const dryRun = await applyRecipeObject(recipeWith(["ignore-fixture", "editorconfig"]), {
+      ...applyOptions,
+      dryRun: true,
+    });
+
+    assert.deepEqual(
+      dryRun.ignoreChanges.filter(({ path }) => path === ".htmlvalidateignore"),
+      [],
+    );
+  });
+});
+
+test("with Varlock, the block is written when Varlock merges no .gitignore lines", async () => {
+  await inProject(own, async () => {
+    await applyRecipeObject(recipeWith(["varlock"]), applyOptions);
+    const afterVarlock = await readFile(".gitignore", "utf8");
+    // Varlock still plans .env.schema, but not .gitignore, whose lines are already there.
+    await rm(".env.schema");
+
+    await applyRecipeObject(recipeWith(["ignore-fixture", "varlock"]), applyOptions);
+
+    assert.equal(await readFile(".gitignore", "utf8"), `${afterVarlock}${fixtureBlock}`);
+  });
+});
+
+test("with Varlock and no .gitignore, Varlock writes its section as before", async () => {
+  await inProject(undefined, async () => {
+    await applyRecipeObject(recipeWith(["varlock"]), applyOptions);
+
+    assert.match(await readFile(".gitignore", "utf8"), /^# Varlock\n/);
+  });
+});
+
+const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
+const fixtureModule = new URL("./ignore-fixture-integration.mjs", import.meta.url).href;
+
+/**
+ * Runs `apply --dry-run` for `integrations` in the CLI, with the test integration in its catalog,
+ * and returns what it printed.
+ *
+ * @param {string} directory
+ * @param {string[]} integrations
+ */
+async function cliDryRun(directory, integrations) {
+  await writeFile("calavera.config.json", `${JSON.stringify(recipeWith(integrations), null, 2)}\n`);
+  const run = spawnSync(
+    process.execPath,
+    ["--import", fixtureModule, cli, "apply", "--dry-run", "--yes", "--no-install"],
+    { cwd: directory, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" } },
+  );
+  assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
+  return `${run.stdout}${run.stderr}`;
+}
+
+test("the CLI dry run prints every line apply adds, keeps, replaces, or removes", async () => {
+  const oldBlock =
+    "# calavera:ignore-fixture:start\n.fixture-tmp/\n# calavera:ignore-fixture:end\n";
+  await inProject(`${own}${oldBlock}`, async (directory) => {
+    await mkdir(".calavera");
+    await writeFile(
+      ".calavera/state.json",
+      `${JSON.stringify({
+        version: 1,
+        integrations: ["ignore-fixture"],
+        managedFiles: [],
+        gitignoreBlocks: [{ integration: "ignore-fixture", lines: [".fixture-tmp/"] }],
+      })}\n`,
+    );
+
+    const replace = await cliDryRun(directory, ["ignore-fixture", "html-validate"]);
+    assert.match(
+      replace,
+      /Would replace the ignore-fixture block in \.gitignore: "\.fixture-tmp\/" with "\.fixture-tmp\/", "reports\/fixture\/"/,
+    );
+    assert.match(
+      replace,
+      /Would add the ignore-fixture lines to \.htmlvalidateignore: "reports\/fixture\/"/,
+    );
+
+    await applyRecipeObject(recipeWith(["ignore-fixture", "html-validate"]), applyOptions);
+    const unchanged = await cliDryRun(directory, ["ignore-fixture", "html-validate"]);
+    assert.match(
+      unchanged,
+      /\.gitignore already holds the ignore-fixture block: "\.fixture-tmp\/", "reports\/fixture\/"/,
+    );
+
+    const removal = await cliDryRun(directory, ["html-validate"]);
+    assert.match(
+      removal,
+      /Would remove the ignore-fixture block from \.gitignore, because ignore-fixture no longer adds lines to it: "\.fixture-tmp\/", "reports\/fixture\/"/,
+    );
+    assert.match(
+      removal,
+      /Would remove from \.htmlvalidateignore, because no selected integration declares them: "reports\/fixture\/"/,
     );
   });
 });

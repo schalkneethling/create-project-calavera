@@ -1,0 +1,21 @@
+// A test integration that declares ignore lines (ADR-0016). No catalog entry declares `.gitignore`
+// lines before the Stryker entry (#734), so importing this module adds one to the catalog of the
+// importing process: a test file imports it, and a CLI child process loads it with `node --import`.
+import { integrationCatalog } from "../src/catalog.js";
+
+export const fixture = {
+  id: "ignore-fixture",
+  label: "Ignore fixture",
+  summary: "A test integration that declares ignore lines.",
+  homepage: "https://example.com",
+  group: "Test",
+  platform: "generic",
+  status: "optional",
+  dependencies: [],
+  ignore: {
+    gitignore: [".fixture-tmp/", "reports/fixture/"],
+    htmlValidateIgnore: ["reports/fixture/"],
+  },
+};
+
+integrationCatalog.push(/** @type {any} */ (fixture));
