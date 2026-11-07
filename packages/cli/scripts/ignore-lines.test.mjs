@@ -352,7 +352,10 @@ test("apply keeps the person's .gitignore lines in order and appends the integra
     assert.ok(
       dryRun.changes.some(
         ({ type, path, action, ownership }) =>
-          type === "update" && path === ".gitignore" && action === "merge" && ownership === "project",
+          type === "update" &&
+          path === ".gitignore" &&
+          action === "merge" &&
+          ownership === "project",
       ),
     );
     assert.equal(await readFile(".gitignore", "utf8"), own);

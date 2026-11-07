@@ -12,6 +12,7 @@ const VITE_HOOK_NAMES = new Set(
 /**
  * @typedef {import("./ai/artifacts.js").AiArtifactState} AiArtifactState
  * @typedef {import("./ai/artifact-wiring.js").WiringRecord} WiringRecord
+ * @typedef {import("./ignore-lines.js").IgnoreLines} IgnoreLines
  *
  * @typedef {object} ManagedFileState
  * @property {string} path
@@ -25,6 +26,7 @@ const VITE_HOOK_NAMES = new Set(
  * @property {ManagedFileState[]} managedFiles
  * @property {AiArtifactState[]} aiArtifacts
  * @property {WiringRecord[]} aiWiring The hook lines and settings groups apply wrote for each artifact (ADR-0015, Decision 5).
+ * @property {IgnoreLines[]} gitignoreBlocks The lines apply wrote in each integration's .gitignore block (ADR-0016).
  */
 
 /**
@@ -38,6 +40,7 @@ export function createEmptyState() {
     managedFiles: [],
     aiArtifacts: [],
     aiWiring: [],
+    gitignoreBlocks: [],
   };
 }
 
@@ -149,6 +152,33 @@ function normalizeAiWiring(value) {
 }
 
 /**
+ * Checks the shape of the .gitignore block records. A recorded line is only compared with the
+ * file, never written, so a damaged record can at worst make apply report a conflict.
+ *
+ * @param {unknown} value
+ * @returns {IgnoreLines[]}
+ */
+function normalizeGitignoreBlocks(value) {
+  if (value === undefined) {
+    return [];
+  }
+
+  if (
+    !Array.isArray(value) ||
+    !value.every(
+      (record) =>
+        isPlainObject(record) &&
+        isNotEmptyString(record.integration) &&
+        isStringArray(record.lines),
+    )
+  ) {
+    throw new Error("Calavera state contains invalid gitignoreBlocks entries.");
+  }
+
+  return /** @type {IgnoreLines[]} */ (value);
+}
+
+/**
  * Normalize persisted state once at the boundary. Legacy state files with only
  * `files` are migrated to the current `managedFiles` shape in memory.
  *
@@ -178,6 +208,7 @@ export function normalizeState(rawState) {
     managedFiles,
     aiArtifacts: normalizeAiArtifacts(rawState.aiArtifacts),
     aiWiring: normalizeAiWiring(rawState.aiWiring),
+    gitignoreBlocks: normalizeGitignoreBlocks(rawState.gitignoreBlocks),
   };
 }
 

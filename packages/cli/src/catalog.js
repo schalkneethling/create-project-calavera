@@ -39,6 +39,10 @@ export const integrationCatalog = [
       extends: ["html-validate:recommended", "html-validate:document"],
       rules: {},
     },
+    // ADR-0016: the lines of the managed .htmlvalidateignore. Another integration's lines follow.
+    ignore: {
+      htmlValidateIgnore: ["node_modules/", "dist/", "coverage/", ".claude/worktrees/"],
+    },
   },
   {
     id: "varlock",

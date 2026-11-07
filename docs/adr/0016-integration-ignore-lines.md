@@ -65,7 +65,7 @@ Blocks are appended in catalog order. Apply does not remove a line from a block 
 
 ### 4. Removal
 
-When the recipe no longer selects an integration, or the integration no longer declares `gitignore` lines, apply removes its block, markers included, only while the block still holds the recorded lines. An edited block is a conflict, not a silent deletion. The person removes the block themselves, or deletes its markers to keep the lines as their own, and runs apply again. A block the person already removed needs nothing. After apply, the record lists only the blocks that remain. Removing a block takes out exactly the lines apply added, so a file that ended with a line break before the block was added is byte-for-byte what it was.
+When the recipe no longer selects an integration, or the integration no longer declares `gitignore` lines, apply removes its block, markers included, only while the block still holds the recorded lines. An edited block is a conflict, not a silent deletion. The person removes the block themselves, or deletes its markers to keep the lines as their own, and runs apply again. A block the person already removed needs nothing. After apply, the record lists only the blocks that remain. Removing a block takes out exactly the lines apply added, so a file that ended with a line break before the block was added is byte-for-byte what it was. A `.gitignore` that apply created stays in place, even when it is left empty, because only `clean` removes a file.
 
 For `.htmlvalidateignore`, apply writes the file from the integrations the recipe selects, so a deselected integration's lines are gone after the next apply.
 
