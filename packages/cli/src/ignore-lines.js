@@ -123,10 +123,11 @@ export function planGitignoreBlocks({ contents, declared, records }) {
       );
       continue;
     }
-    text = [
-      ...found.lines.slice(0, found.startIndex),
-      ...found.lines.slice(found.endIndex + 1),
-    ].join("\n");
+    const after = found.lines.slice(found.endIndex + 1);
+    // When the end marker is the file's last line and has no line break, the line before the block
+    // still owns the line break that separated the two, so it keeps it.
+    if (after.length === 0 && found.startIndex > 0) after.push("");
+    text = [...found.lines.slice(0, found.startIndex), ...after].join("\n");
     changes.push({
       path: GITIGNORE_PATH,
       integration: record.integration,
@@ -164,9 +165,12 @@ export function planGitignoreBlocks({ contents, declared, records }) {
     } else if (found.current === wanted) {
       changes.push({ path: GITIGNORE_PATH, integration, type: "unchanged", lines });
     } else if (recorded !== undefined && found.current === recorded.lines.join("\n")) {
+      // The new lines take the line ending of the block's own start marker, so a block keeps one
+      // line ending even in a file that mixes them.
+      const blockCr = found.lines[found.startIndex]?.endsWith("\r") ? "\r" : "";
       text = [
         ...found.lines.slice(0, found.startIndex + 1),
-        ...lines.map((line) => `${line}${found.cr}`),
+        ...lines.map((line) => `${line}${blockCr}`),
         ...found.lines.slice(found.endIndex),
       ].join("\n");
       changes.push({

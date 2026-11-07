@@ -5,6 +5,9 @@ import { assertSafeRelativePath } from "./utils/fs.js";
 
 // The hooks a manifest may wire. A recorded hook name becomes a path under .vite-hooks/, so a
 // name from a damaged or hand-edited state file must not reach a file outside it.
+// A recorded integration id is printed in the dry run, so a damaged or hand-edited state file must
+// not carry control characters into the approval boundary. Catalog ids are lowercase kebab case.
+const INTEGRATION_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 const VITE_HOOK_NAMES = new Set(
   artifactSchema.properties.wiring.properties.viteHooks.propertyNames.enum,
 );
@@ -168,7 +171,8 @@ function normalizeGitignoreBlocks(value) {
     !value.every(
       (record) =>
         isPlainObject(record) &&
-        isNotEmptyString(record.integration) &&
+        typeof record.integration === "string" &&
+        INTEGRATION_ID.test(record.integration) &&
         isStringArray(record.lines),
     )
   ) {

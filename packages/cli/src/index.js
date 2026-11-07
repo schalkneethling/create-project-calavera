@@ -284,8 +284,6 @@ const AGENT_BOOTSTRAP_SKILL_RECIPE = {
 const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/", import.meta.url));
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
-// .claude/worktrees/ holds agent worktrees, which are full checkouts of other branches. Their
-// files belong to those branches, so this project's lint run must not report their errors.
 const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer

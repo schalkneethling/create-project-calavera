@@ -204,6 +204,35 @@ test("a recorded block whose integration is no longer declared is removed, givin
   assert.deepEqual(plan.records, []);
 });
 
+test("removing a block at the end of a file without a final line break keeps the line before it intact", () => {
+  for (const [before, eol] of [
+    ["a\n", "\n"],
+    ["a\r\n", "\r\n"],
+  ]) {
+    const block = strykerBlock.replaceAll("\n", eol).slice(0, -eol.length);
+    const plan = planGitignoreBlocks({
+      contents: `${before}${block}`,
+      declared: [],
+      records: [stryker],
+    });
+    assert.equal(plan.contents, before);
+  }
+  // A file that held only the block, without a final line break, is left empty.
+  assert.equal(
+    planGitignoreBlocks({ contents: strykerBlock.slice(0, -1), declared: [], records: [stryker] })
+      .contents,
+    "",
+  );
+});
+
+test("a replaced block keeps the line ending of its own markers", () => {
+  const previous = { integration: "stryker", lines: [".stryker-tmp/"] };
+  const contents = "a\r\nb\r\n# calavera:stryker:start\n.stryker-tmp/\n# calavera:stryker:end\n";
+  const plan = planGitignoreBlocks({ contents, declared: [stryker], records: [previous] });
+
+  assert.equal(plan.contents, `a\r\nb\r\n${strykerBlock}`);
+});
+
 test("removing one integration's block keeps the other integration's block", () => {
   const other = { integration: "other", lines: ["tmp/"] };
   const otherBlock = "# calavera:other:start\ntmp/\n# calavera:other:end\n";
@@ -417,6 +446,8 @@ test("the state record keeps valid gitignoreBlocks and refuses damaged ones", ()
     [{ integration: "", lines: [] }],
     [{ integration: "stryker" }],
     [{ integration: "stryker", lines: [1] }],
+    [{ integration: "stryker\u001b[2J", lines: [] }],
+    [{ integration: "Stryker", lines: [] }],
   ]) {
     assert.throws(
       () => normalizeState({ gitignoreBlocks }),

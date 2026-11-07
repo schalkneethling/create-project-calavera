@@ -93,7 +93,7 @@ No C8 test changes.
 
 `.gitignore` becomes a file that apply may stop on. Before this ADR, apply never refused because of `.gitignore`.
 
-`doctor` does not yet report a missing or edited block, and `clean` does not remove blocks. Both would follow the wiring behavior that ADR-0015 Decision 5 and #829 describe for hook blocks, and they are left to follow-up issues.
+`doctor` does not yet report a missing or edited block, and `clean` does not remove blocks. Both would follow the wiring behavior that ADR-0015 Decision 5 and #829 describe for hook blocks, and they are left to #857 (`doctor`) and #858 (`clean`).
 
 ## Alternatives considered
 
