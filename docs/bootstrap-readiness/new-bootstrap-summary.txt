@@ -1,0 +1,38 @@
+Calavera will run Vite+ to scaffold a new project:
+  Command: pnpm dlx --package vite-plus vp create vite:monorepo --directory h0 --no-interactive --git --package-manager pnpm
+  Working directory: <scratch>
+- The runner may download Vite+ before it starts.
+- Vite+ asks its own questions (template, target directory, and the rest) unless the forwarded flags answer them. Calavera does not answer them.
+- Vite+ uses pnpm as the project's package manager unless --package-manager is forwarded after --new. Inside an existing workspace, Vite+ uses that workspace's package manager instead, even when --package-manager is forwarded.
+- Vite+ installs the project's dependencies. This needs network access, can take minutes, and cannot be skipped.
+- If the target directory Vite+ is given is not empty, Vite+ may offer to remove its contents. That choice is Vite+'s.
+- Calavera's dry run does not preview what Vite+ writes, and Calavera does not undo it if the scaffold fails.
+- After a successful scaffold, Calavera runs the --init agent bootstrap in the new directory.
+◇ Scaffolded h0 with Vite+ monorepo
+• Node 26.13.0  pnpm 12.18.0
+✓ Dependencies installed in 1.5s
+→ Git (optional): git -C h0 add -A && git -C h0 commit -m "chore: initial commit"
+→ Next: cd h0 && pnpm exec vp run
+Done in 3.4s using pnpm v12.9.1
+Vite+ scaffolded <scratch>/h0. Vite+ detection: managed.
+Calavera agent bootstrap complete.
+Wrote .agents/skills/calavera
+Wrote .coderabbit.yaml
+Skipped AGENTS.md: Existing AGENTS.md left unchanged; Calavera guidance was written separately.
+Wrote AGENTS.calavera.md
+Wrote .mcp.json
+Installed skills are available under .agents/skills/.
+Agent guidance: AGENTS.calavera.md for manual merge with AGENTS.md
+MCP setup: .mcp.json
+MCP auto-config write: .mcp.json
+Review the files above to confirm what Calavera changed or skipped.
+Next prompt: Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.
+Your project needs a recipe before Calavera changes anything.
+  Either: open <scratch>/h0 in your agent and use the prompt above.
+  Or: compose one at https://calavera.schalkneethling.com/ and save
+      calavera.config.json into <scratch>/h0, then:
+        cd <scratch>/h0
+        pnpm dlx create-project-calavera apply --dry-run
+        pnpm dlx create-project-calavera apply
+Done in 4.6s using pnpm v12.9.1
+exit 0

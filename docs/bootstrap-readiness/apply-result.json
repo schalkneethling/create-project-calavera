@@ -1,0 +1,262 @@
+{
+  "approvalBoundary": "apply_recipe is intended for use only after explicit user approval of dry_run_apply output.",
+  "configWritten": "<scratch>/h0/calavera.config.json",
+  "result": {
+    "command": "apply",
+    "dryRun": false,
+    "packageManager": "pnpm",
+    "dependencies": ["knip"],
+    "installCommand": "vp add -D -w knip",
+    "installNotes": [
+      "Vite+ runs this with the package manager the project pins; apply runs it as: ~/.vite-plus/js_runtime/node/26.13.0/bin/node <scratch>/h0/node_modules/.pnpm/vite-plus@1.5.0_@types+node@26.6.6_@vitest+ui@5.1.0_typescript@7.0.2/node_modules/vite-plus/bin/vp add -D -w knip"
+    ],
+    "integrations": ["editorconfig", "knip", "github-repository-controls"],
+    "projectInspection": {
+      "packageManager": "pnpm",
+      "files": ["package.json", "pnpm-lock.yaml", "vite.config.ts"],
+      "findings": [
+        {
+          "severity": "info",
+          "kind": "package-manager",
+          "message": "Detected pnpm as the project package manager."
+        },
+        {
+          "severity": "info",
+          "kind": "vite-plus-managed",
+          "path": "package.json",
+          "message": "This project is managed by Vite+, matched via the vite-plus-dependency signal at package.json. Corroborating signals: vite-plus-config-import, vite-plus-core-pin, vp-scripts."
+        }
+      ],
+      "vitePlus": {
+        "status": "managed",
+        "signal": "vite-plus-dependency",
+        "manifestPath": "package.json",
+        "corroborating": ["vite-plus-config-import", "vite-plus-core-pin", "vp-scripts"]
+      }
+    },
+    "vitePlus": {
+      "status": "managed",
+      "signalConflict": false,
+      "lines": [
+        "Vite+ detection: managed. This project is vp-managed (vite-plus-dependency signal at package.json).",
+        "JavaScript and TypeScript linting, formatting, type-checking, and testing are provided by Vite+, not by Calavera."
+      ]
+    },
+    "changes": [
+      {
+        "type": "write",
+        "path": "calavera.config.json",
+        "action": "write",
+        "ownership": "project"
+      },
+      {
+        "type": "update",
+        "path": "package.json",
+        "action": "update",
+        "ownership": "project",
+        "scripts": ["knip", "repo:controls:check", "repo:controls:apply", "quality"],
+        "omittedScripts": [
+          {
+            "script": "lint:styles",
+            "reason": "lint:styles was requested by the recipe's lint flag, but no CSS linting integration is selected."
+          },
+          {
+            "script": "lint:styles:fix",
+            "reason": "lint:styles:fix was requested by the recipe's lint:fix flag, but no fix-capable CSS linting integration is selected."
+          }
+        ],
+        "removedDefaultTestScript": false
+      },
+      { "type": "write", "path": ".editorconfig", "action": "write", "ownership": "calavera" },
+      { "type": "write", "path": "knip.json", "action": "write", "ownership": "calavera" },
+      {
+        "type": "write",
+        "path": ".github/repository-controls.json",
+        "action": "write",
+        "ownership": "calavera"
+      },
+      {
+        "type": "write",
+        "path": ".github/dependabot.yml",
+        "action": "write",
+        "ownership": "calavera"
+      },
+      {
+        "type": "write",
+        "path": "scripts/repository-controls.mjs",
+        "action": "write",
+        "ownership": "calavera"
+      },
+      {
+        "type": "write",
+        "path": "docs/repository-controls.md",
+        "action": "write",
+        "ownership": "calavera"
+      },
+      {
+        "type": "write",
+        "path": ".agents/skills/protected-branch-guard",
+        "category": "ai",
+        "aiType": "skill",
+        "name": "protected-branch-guard"
+      },
+      {
+        "type": "update",
+        "path": ".vite-hooks/pre-commit",
+        "action": "update",
+        "ownership": "project"
+      },
+      {
+        "type": "write",
+        "path": ".vite-hooks/prepare-commit-msg",
+        "action": "write",
+        "ownership": "project"
+      },
+      {
+        "type": "write",
+        "path": ".vite-hooks/pre-push",
+        "action": "write",
+        "ownership": "project"
+      },
+      {
+        "type": "write",
+        "path": ".claude/settings.json",
+        "action": "write",
+        "ownership": "project"
+      }
+    ],
+    "scriptChanges": [
+      { "script": "knip", "value": "knip" },
+      { "script": "repo:controls:check", "value": "node scripts/repository-controls.mjs" },
+      { "script": "repo:controls:apply", "value": "node scripts/repository-controls.mjs --apply" },
+      { "script": "quality", "value": "vp check && vp run -r test && pnpm knip" }
+    ],
+    "pointers": ["Installed skills are available under .agents/skills/."],
+    "autoInstalledArtifacts": [
+      {
+        "id": "skill-calavera",
+        "type": "skill",
+        "package": "@schalkneethling/calavera-skill-calavera",
+        "version": "0.2.4",
+        "resolved": "https://registry.npmjs.org/@schalkneethling/calavera-skill-calavera/-/calavera-skill-calavera-0.2.4.tgz",
+        "integrity": "sha512-CehjKbdYdD1XW+5d2TEsj+8PtlEzV+1wWgsVBMrfGG9exyAXcAEgujgbxx8XIy4Bme+LlRKqzHgHh6pXwBpGFw==",
+        "tag": "latest",
+        "manifestVersion": 1,
+        "destination": ".agents/skills/calavera",
+        "payloadHash": "cd1b6df4b23b8aad791b9730de6f0f30bfebb6f06496666d44101edbe8234b60"
+      },
+      {
+        "id": "skill-protected-branch-guard",
+        "type": "skill",
+        "package": "@schalkneethling/calavera-skill-protected-branch-guard",
+        "version": "0.1.0",
+        "resolved": "https://registry.npmjs.org/@schalkneethling/calavera-skill-protected-branch-guard/-/calavera-skill-protected-branch-guard-0.1.0.tgz",
+        "integrity": "sha512-c85Azbg9LycKVBS3F93PSDLbzR5wISIkGoIpElnMCa7px6i0/6xPYKyDEfQgSO0o8HXfRqy8oiZEUpoIIZSwAw==",
+        "tag": "latest",
+        "manifestVersion": 1,
+        "destination": ".agents/skills/protected-branch-guard",
+        "payloadHash": "0970e47a8fab0a9ff4048bd6d81ba65ceed8683f4dff5bf477101ca3e0ec7aff"
+      }
+    ],
+    "artifactRegistries": [{ "origin": "https://registry.npmjs.org", "source": "default" }],
+    "artifactWarnings": [],
+    "artifactInputs": [
+      {
+        "artifact": "skill-protected-branch-guard",
+        "index": 1,
+        "name": "protectedBranch",
+        "value": "master",
+        "source": "recorded"
+      }
+    ],
+    "wiringChanges": [
+      {
+        "artifact": "skill-protected-branch-guard",
+        "path": ".vite-hooks/pre-commit",
+        "kind": "vite-hook",
+        "type": "update",
+        "block": "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit master"
+      },
+      {
+        "artifact": "skill-protected-branch-guard",
+        "path": ".vite-hooks/prepare-commit-msg",
+        "kind": "vite-hook",
+        "type": "write",
+        "block": "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit master"
+      },
+      {
+        "artifact": "skill-protected-branch-guard",
+        "path": ".vite-hooks/pre-push",
+        "kind": "vite-hook",
+        "type": "write",
+        "block": "node .agents/skills/protected-branch-guard/scripts/guard.mjs pre-push master"
+      },
+      {
+        "artifact": "skill-protected-branch-guard",
+        "path": ".claude/settings.json",
+        "kind": "claude-settings",
+        "type": "write",
+        "groupChanges": [
+          {
+            "event": "SessionStart",
+            "action": "add",
+            "group": {
+              "hooks": [
+                {
+                  "type": "command",
+                  "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/protected-branch-guard/scripts/guard.mjs\" session-start master",
+                  "timeout": 10
+                }
+              ]
+            }
+          },
+          {
+            "event": "PreToolUse",
+            "action": "add",
+            "group": {
+              "matcher": "Write|Edit|MultiEdit|NotebookEdit",
+              "hooks": [
+                {
+                  "type": "command",
+                  "command": "node \"$CLAUDE_PROJECT_DIR/.agents/skills/protected-branch-guard/scripts/guard.mjs\" claude-pre-tool-use master",
+                  "timeout": 10
+                }
+              ]
+            }
+          }
+        ],
+        "reformatted": false
+      }
+    ],
+    "wiringWarnings": [],
+    "recipe": {
+      "$schema": "https://calavera.schalkneethling.com/calavera.config.schema.json",
+      "version": 1,
+      "profile": "minimal",
+      "packageManager": "pnpm",
+      "integrations": ["editorconfig", "knip", "github-repository-controls"],
+      "scripts": { "lint": true, "lint:fix": true, "quality": true },
+      "ai": [
+        { "id": "skill-calavera" },
+        { "id": "skill-protected-branch-guard", "inputs": { "protectedBranch": "master" } }
+      ],
+      "integrationOptions": {
+        "github-repository-controls": {
+          "repository": "schalkneethling/calavera-h0-scratch",
+          "defaultBranch": "master",
+          "requiredChecks": [],
+          "mergeMethods": ["squash"],
+          "wiki": false,
+          "projects": false,
+          "autoMerge": true,
+          "deleteBranchOnMerge": true,
+          "updateBranch": true,
+          "dependabotEcosystems": ["npm", "github-actions"],
+          "codeqlLanguages": ["actions", "javascript-typescript"],
+          "codeqlQuerySuite": "extended",
+          "releaseEnvironment": null
+        }
+      }
+    }
+  }
+}

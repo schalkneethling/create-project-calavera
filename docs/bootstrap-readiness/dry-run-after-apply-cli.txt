@@ -1,0 +1,33 @@
+Calavera apply dry run complete. No files were changed.
+Package manager: pnpm
+Integrations: editorconfig, knip, github-repository-controls
+Dev dependencies: knip
+Dev dependency install command: vp add -D -w knip
+Vite+ runs this with the package manager the project pins; apply runs it as: ~/.vite-plus/js_runtime/node/26.13.0/bin/node <scratch>/h0/node_modules/.pnpm/vite-plus@1.5.0_@types+node@26.6.6_@vitest+ui@5.1.0_jiti@2.7.0_typescript@7.0.2_yaml@2.9.1/node_modules/vite-plus/bin/vp add -D -w knip
+Vite+ detection: managed. This project is vp-managed (vite-plus-dependency signal at package.json).
+JavaScript and TypeScript linting, formatting, type-checking, and testing are provided by Vite+, not by Calavera.
+Inspection info: Detected pnpm as the project package manager.
+Inspection info: This project is managed by Vite+, matched via the vite-plus-dependency signal at package.json. Corroborating signals: vite-plus-config-import, vite-plus-core-pin, vp-scripts.
+Input: skill-protected-branch-guard protectedBranch = master (recorded in the recipe)
+.vite-hooks/pre-commit already holds the skill-protected-branch-guard block: "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit master"
+.vite-hooks/prepare-commit-msg already holds the skill-protected-branch-guard block: "node .agents/skills/protected-branch-guard/scripts/guard.mjs commit master"
+.vite-hooks/pre-push already holds the skill-protected-branch-guard block: "node .agents/skills/protected-branch-guard/scripts/guard.mjs pre-push master"
+.claude/settings.json already holds the skill-protected-branch-guard hook groups
+Unchanged package.json
+Scripts already set: knip, repo:controls:check, repo:controls:apply, quality
+Would omit script lint:styles: lint:styles was requested by the recipe's lint flag, but no CSS linting integration is selected.
+Would omit script lint:styles:fix: lint:styles:fix was requested by the recipe's lint:fix flag, but no fix-capable CSS linting integration is selected.
+Unchanged .editorconfig
+Unchanged knip.json
+Unchanged .github/repository-controls.json
+Unchanged .github/dependabot.yml
+Unchanged scripts/repository-controls.mjs
+Unchanged docs/repository-controls.md
+Unchanged .vite-hooks/pre-commit
+Unchanged .vite-hooks/prepare-commit-msg
+Unchanged .vite-hooks/pre-push
+Unchanged .claude/settings.json
+Nothing to change: the project already matches this recipe.
+Pointer: Installed skills are available under .agents/skills/.
+Done in 622ms using pnpm v12.9.1
+exit 0
