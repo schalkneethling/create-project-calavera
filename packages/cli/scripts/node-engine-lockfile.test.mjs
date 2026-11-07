@@ -1,6 +1,6 @@
 // Drift test for the supported Node.js range (#792). `engines.node` of the CLI
-// must be at least as narrow as the `engines.node` of every package that
-// `npm install create-project-calavera` puts on disk. Without this test, a
+// must be at least as narrow as the `engines.node` of every package in the
+// locked production dependency tree of the CLI. Without this test, a
 // dependency update that raises its floor passes CI, because pnpm only warns
 // about an engine mismatch unless `engine-strict` is set (see #789, where
 // pacote 22 required a later Node.js than the CLI declared).
@@ -12,7 +12,13 @@
 // own importer, because the published CLI installs it as a regular package.
 // Development dependencies of the repository are not checked, because users do
 // not install them.
+//
+// Limit: the published CLI ships without a lockfile, so a user's install
+// resolves each range afresh and can pick a newer release than the locked one.
+// This test checks the locked versions only; it cannot see a floating release
+// that raises its floor.
 import assert from "node:assert/strict";
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { posix } from "node:path";
 import test from "node:test";
@@ -43,16 +49,15 @@ function lowestVersionPerLine(range) {
  * Splits a lockfile reference such as `1.32.2(supports-color@10.2.2)(zod@4.6.7)`
  * into the key of its entry in `packages` (`name@1.32.2`) and in `snapshots`
  * (the whole reference). The parenthesized part records resolved peer
- * dependencies and exists only in `snapshots`. An alias reference such as
- * `npm:real-name@1.0.0` points at the real package.
+ * dependencies and exists only in `snapshots`. An alias reference, which pnpm
+ * writes as the real package's `real-name@1.0.0` instead of a bare version,
+ * points at the real package.
  *
  * @param {string} name
  * @param {string} reference
  */
 function lockfileKeys(name, reference) {
-  const snapshotKey = reference.startsWith("npm:")
-    ? reference.slice("npm:".length)
-    : `${name}@${reference}`;
+  const snapshotKey = /^\d/u.test(reference) ? `${name}@${reference}` : reference;
 
   return { snapshotKey, packageKey: snapshotKey.replace(/\(.*$/u, "") };
 }
@@ -63,11 +68,14 @@ function lockfileKeys(name, reference) {
  *
  * @param {any} lockfile
  * @param {string} rootImporter Importer path, such as `packages/cli`.
+ * @param {(importerPath: string) => string | undefined} [readWorkspaceEngines]
+ *   Reads `engines.node` from the `package.json` of a workspace package that
+ *   the tree links to; the lockfile does not record it.
  * @returns {Map<string, { engines: string | undefined, path: string[] }>}
  *   Package key (`name@version`) to its declared `engines.node` and the first
  *   chain of dependencies that reaches it from the root.
  */
-function productionTree(lockfile, rootImporter) {
+function productionTree(lockfile, rootImporter, readWorkspaceEngines = () => undefined) {
   /** @type {Map<string, { engines: string | undefined, path: string[] }>} */
   const found = new Map();
   const seenImporters = new Set();
@@ -88,10 +96,15 @@ function productionTree(lockfile, rootImporter) {
     for (const group of [importer.dependencies, importer.optionalDependencies]) {
       for (const [name, { version }] of Object.entries(group ?? {})) {
         if (version.startsWith("link:")) {
-          enqueueImporter(
-            posix.normalize(posix.join(importerPath, version.slice("link:".length))),
-            [...path, name],
-          );
+          const linked = posix.normalize(posix.join(importerPath, version.slice("link:".length)));
+
+          // The published CLI installs the workspace package itself, so its own
+          // `engines.node` counts too.
+          found.set(`${name}@workspace:${linked}`, {
+            engines: readWorkspaceEngines(linked),
+            path: [...path, name],
+          });
+          enqueueImporter(linked, [...path, name]);
         } else {
           queue.push({ name, reference: version, path: [...path, name] });
         }
@@ -167,21 +180,39 @@ function engineViolations(tree, version) {
   return violations;
 }
 
-const lockfile = parse(await readFile(new URL("../../../pnpm-lock.yaml", import.meta.url), "utf8"));
-const tree = productionTree(lockfile, CLI_IMPORTER);
+const repositoryRoot = new URL("../../../", import.meta.url);
+const lockfile = parse(await readFile(new URL("pnpm-lock.yaml", repositoryRoot), "utf8"));
+const tree = productionTree(lockfile, CLI_IMPORTER, (importerPath) => {
+  const manifest = JSON.parse(
+    readFileSync(new URL(`${importerPath}/package.json`, repositoryRoot), "utf8"),
+  );
 
-test("the production tree reaches the direct and the transitive dependencies of the CLI", () => {
+  return manifest.engines?.node;
+});
+
+test("the production tree contains every dependency that a published manifest declares", () => {
   const names = new Set([...tree.keys()].map((key) => key.slice(0, key.lastIndexOf("@"))));
+  const workspaceDirectories = [...tree.keys()]
+    .filter((key) => key.includes("@workspace:"))
+    .map((key) => key.slice(key.indexOf("@workspace:") + "@workspace:".length));
 
-  // A direct dependency of the CLI itself.
-  assert.ok(names.has("zod"));
-  // A direct dependency of a workspace package, reached through `link:`.
-  assert.ok(names.has("pacote"));
+  // `packages/cli` plus the workspace packages it links to (artifact-core and
+  // baseline-core at the time of writing).
+  assert.ok(workspaceDirectories.length > 0);
+  for (const directory of [CLI_IMPORTER, ...workspaceDirectories]) {
+    const manifest = JSON.parse(
+      readFileSync(new URL(`${directory}/package.json`, repositoryRoot), "utf8"),
+    );
+
+    for (const dependency of Object.keys(manifest.dependencies ?? {})) {
+      assert.ok(
+        names.has(dependency) || manifest.dependencies[dependency].startsWith("workspace:"),
+        `${dependency} (from ${directory}) is missing from the tree`,
+      );
+    }
+  }
   // A dependency of a dependency, so the walk is not one level deep.
   assert.ok([...tree.values()].some(({ path }) => path.length > 2));
-  // Development dependencies of the repository are not part of the tree.
-  assert.equal(names.has("stryker-mutator"), false);
-  assert.equal(names.has("@stryker-mutator/core"), false);
 });
 
 test("the walk handles links, aliases, peer suffixes, optional dependencies, and cycles", () => {
@@ -191,7 +222,7 @@ test("the walk handles links, aliases, peer suffixes, optional dependencies, and
         dependencies: {
           lib: { version: "link:../lib" },
           peered: { version: "1.0.0(peer@2.0.0)" },
-          aliased: { version: "npm:real@3.0.0" },
+          aliased: { version: "real@3.0.0" },
         },
         devDependencies: { devOnly: { version: "9.0.0" } },
       },
@@ -216,6 +247,7 @@ test("the walk handles links, aliases, peer suffixes, optional dependencies, and
 
   assert.deepEqual([...walked.keys()].sort(), [
     "cyclic@1.0.0",
+    "lib@workspace:packages/lib",
     "optional@1.0.0",
     "peer@2.0.0",
     "peered@1.0.0",
@@ -225,6 +257,14 @@ test("the walk handles links, aliases, peer suffixes, optional dependencies, and
     "real@3.0.0 requires Node.js >=22 (reached through aliased)",
   ]);
   assert.deepEqual(engineViolations(walked, "22.0.0"), []);
+
+  // A linked workspace package reports its own engines.node from its manifest.
+  const withWorkspaceEngines = productionTree(synthetic, "packages/app", () => ">=30");
+
+  assert.deepEqual(engineViolations(withWorkspaceEngines, "30.0.0"), []);
+  assert.deepEqual(engineViolations(withWorkspaceEngines, "22.0.0"), [
+    "lib@workspace:packages/lib requires Node.js >=30 (reached through lib)",
+  ]);
 });
 
 test("the lowest allowed version per supported line is found from the range", () => {
