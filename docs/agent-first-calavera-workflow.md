@@ -38,6 +38,12 @@ whether to append marked Calavera guidance directly to that file or write
 `AGENTS.calavera.md` for manual merging. Scripted runs keep `AGENTS.md`
 unchanged unless `--agents-md=append` is passed.
 
+A guidance file that an earlier Calavera release wrote (a whole-file
+`AGENTS.md`, `AGENTS.calavera.md`, or `.agents/calavera/mcp.md`) is replaced
+with the current text, because Calavera does not record these files and can
+only tell them apart from your edits by comparing their text with the text of
+every published release. Any other text is treated as your edit and kept.
+
 After any `AGENTS.md` question, interactive runs ask which project-local MCP
 host to configure. Choose exactly one of Claude Code, Codex, Cursor, OpenCode,
 or skip/manual. Calavera never writes global/user MCP config.
