@@ -12,6 +12,7 @@ import {
   artifactWiringWarnings,
   installedSkillDirectory,
   planArtifactWiring,
+  wiringFilesThatMention,
   writeArtifactWiring,
 } from "../src/ai/artifact-wiring.js";
 import { normalizeState } from "../src/state.js";
@@ -684,4 +685,53 @@ test("Given intact blocks whose script is missing, doctor reports an error per b
   await mkdir(join(project.root, skillDirectory, "scripts"), { recursive: true });
   await writeFile(join(project.root, skillDirectory, "scripts/guard.mjs"), "");
   assert.deepEqual(await findings(new Set([id])), []);
+});
+
+// #829: clean keeps an artifact that a hook script or the settings file still mentions.
+test("wiringFilesThatMention lists, in order, each hook script and the settings file that mention the directory, read as the planned wiring leaves them", async () => {
+  await using project = await createTemporaryFixture("wiring-mentions", {
+    ".vite-hooks/pre-push": `node ${skillDirectory}/scripts/guard.mjs pre-push main\n`,
+    ".vite-hooks/commit-msg": `node ${skillDirectory}/scripts/guard.mjs commit main\n`,
+    ".vite-hooks/pre-commit": "vp staged\n",
+    ".vite-hooks/post-merge": `node ${skillDirectory}-extra/run.mjs\n`,
+    ".vite-hooks/_/pre-push": `node ${skillDirectory}/scripts/guard.mjs\n`,
+    ".claude/settings.json": JSON.stringify({ command: `node ${skillDirectory}/x.mjs` }),
+  });
+
+  assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], project.root), [
+    ".vite-hooks/commit-msg",
+    ".vite-hooks/pre-push",
+    ".claude/settings.json",
+  ]);
+  // A planned file counts as the text it will hold, whether that removes a mention or adds one.
+  assert.deepEqual(
+    await wiringFilesThatMention(
+      skillDirectory,
+      [
+        { path: ".vite-hooks/commit-msg", type: "update", contents: "" },
+        { path: ".vite-hooks/pre-commit", type: "update", contents: `${skillDirectory}/a\n` },
+      ],
+      project.root,
+    ),
+    [".vite-hooks/pre-commit", ".vite-hooks/pre-push", ".claude/settings.json"],
+  );
+});
+
+test("wiringFilesThatMention reads only the settings file when .vite-hooks is missing, and reports other read errors", async () => {
+  await using bare = await createTemporaryFixture("wiring-mentions-bare", {
+    ".claude/settings.json": `"${skillDirectory}/x.mjs"`,
+  });
+  assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], bare.root), [
+    ".claude/settings.json",
+  ]);
+
+  await using empty = await createTemporaryFixture("wiring-mentions-empty", {});
+  assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], empty.root), []);
+
+  await using broken = await createTemporaryFixture("wiring-mentions-broken", {
+    ".vite-hooks": "not a directory\n",
+  });
+  await assert.rejects(wiringFilesThatMention(skillDirectory, [], broken.root), {
+    code: "ENOTDIR",
+  });
 });

@@ -401,16 +401,17 @@ export async function writeArtifactWiring(files, cwd = process.cwd()) {
  * @returns {Promise<string[]>}
  */
 export async function wiringFilesThatMention(directory, plannedFiles, cwd = process.cwd()) {
-  /** @type {string[]} */
-  let hookNames = [];
-  try {
-    hookNames = (await readdir(resolve(cwd, ".vite-hooks"), { withFileTypes: true }))
-      .filter((entry) => entry.isFile())
-      .map(({ name }) => name)
-      .sort();
-  } catch (error) {
-    if (/** @type {NodeJS.ErrnoException} */ (error).code !== "ENOENT") throw error;
-  }
+  const entries = await readdir(resolve(cwd, ".vite-hooks"), { withFileTypes: true }).catch(
+    (error) => {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return [];
+      throw error;
+    },
+  );
+  // Sorted, because readdir's order depends on the file system.
+  const hookNames = entries
+    .filter((entry) => entry.isFile())
+    .map(({ name }) => name)
+    .sort();
   /** @type {string[]} */
   const mentions = [];
   for (const path of [...hookNames.map((name) => `.vite-hooks/${name}`), CLAUDE_SETTINGS_PATH]) {
