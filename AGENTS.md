@@ -15,7 +15,7 @@ Calavera is what runs after `vp create`: Baseline target, CSS verification (css-
 
 ## Session start (read, do not import)
 
-1. `STATUS.md` — where the last session stopped.
+1. Where the last session stopped: `gh pr list`, `git status`, `git worktree list`, and `git stash list`. The tracker and the files below are the record; there is no separate status file.
 2. `docs/cross-repo/sequencing-map.md` Section 0 — the current increment. Work only that; anything else you notice becomes an issue.
 3. `docs/cross-repo/requests/` — open requests and responses.
 4. `docs/evolution-brief.md` — decisions, spikes, phases, checkpoints. Consult when a decision's rationale or an issue's acceptance criteria are needed.
@@ -30,16 +30,16 @@ Calavera is what runs after `vp create`: Baseline target, CSS verification (css-
 - Metadata before code: change catalog metadata first; scripts, managed files, diagnostics, guidance only where metadata cannot express the need.
 - One issue, one PR, one primary review question named in the description. Test first. `vp` is the command runner.
 - Frozen surfaces in the interface contract change only via a cross-repo request and a version bump.
-- Needs from css-evolve are never worked around: write `docs/cross-repo/requests/YYYY-MM-DD-<slug>.md` from `docs/cross-repo/request-template.md`, mark the issue blocked in `STATUS.md`, continue with unblocked work.
+- Needs from css-evolve are never worked around: write `docs/cross-repo/requests/YYYY-MM-DD-<slug>.md` from `docs/cross-repo/request-template.md`, comment on the issue that it is blocked and link the request, continue with unblocked work.
 - Halt at every `CHECKPOINT` and at the increment exit condition; summarize evidence and stop. Do not reopen settled decisions in a PR; open a decision issue.
 - Prose and docs: MDN style guide, American spelling, no contractions in body prose.
 
 ## Session end
 
-Rewrite `STATUS.md` (do not append) following its existing headings. Record delivered handoffs there and in the sequencing map.
+Record decisions on the issue they belong to, and delivered handoffs in the sequencing map. End with a summary for the owner that names anything left only on this machine: unmerged worktrees, stashes, and saved patches.
 
-- Before your session ends, check whether the pull request for your branch has merged with `gh pr view <branch> --json state`. A squash-merged branch does not appear in `git branch --merged`. If it has merged, change to the main worktree, run `git worktree remove <path>`, and delete the local branch with `git branch -D <branch>`. Do not run `git worktree prune`, because it also removes entries for worktrees that other sessions and tools created. If it has not merged, leave the worktree in place and record its path in the handoff.
-- Never record a path under `/tmp` in a stash message, `STATUS.md`, or a handoff, because `/tmp` can be cleared on restart. Save patches in the shared Git folder instead, which `git rev-parse --git-common-dir` prints. In a linked worktree, `.git` is a file, not a folder.
+- Before your session ends, check whether the pull request for your branch has merged with `gh pr view <branch> --json state`. A squash-merged branch does not appear in `git branch --merged`. If it has merged, change to the main worktree, run `git worktree remove <path>`, and delete the local branch with `git branch -D <branch>`. Do not run `git worktree prune`, because it also removes entries for worktrees that other sessions and tools created. If it has not merged, leave the worktree in place and name its path in the summary.
+- Never record a path under `/tmp` in a stash message, an issue, or the summary, because `/tmp` can be cleared on restart. Save patches in the shared Git folder instead, which `git rev-parse --git-common-dir` prints. In a linked worktree, `.git` is a file, not a folder.
 
 ## Issues and labels
 
