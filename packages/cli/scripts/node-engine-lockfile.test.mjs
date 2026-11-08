@@ -63,6 +63,26 @@ function lockfileKeys(name, reference) {
 }
 
 /**
+ * The key under which `productionTree` records a dependency of an importer:
+ * `name@workspace:<directory>` for a `link:` reference, otherwise the package
+ * key (`name@version`) of the resolved package, which for an alias is the real
+ * package's name.
+ *
+ * @param {string} importerPath
+ * @param {string} name
+ * @param {string} version The importer's `version` field from the lockfile.
+ */
+function importerDependencyKey(importerPath, name, version) {
+  if (version.startsWith("link:")) {
+    const linked = posix.normalize(posix.join(importerPath, version.slice("link:".length)));
+
+    return `${name}@workspace:${linked}`;
+  }
+
+  return lockfileKeys(name, version).packageKey;
+}
+
+/**
  * Walks the production dependency tree of an importer in a parsed
  * `pnpm-lock.yaml`.
  *
@@ -79,6 +99,10 @@ function productionTree(lockfile, rootImporter, readWorkspaceEngines = () => und
   /** @type {Map<string, { engines: string | undefined, path: string[] }>} */
   const found = new Map();
   const seenImporters = new Set();
+  // Visited by snapshot key, not package key: two snapshots of one version
+  // that resolve different peers can have different dependencies, and each
+  // must be walked.
+  const seenSnapshots = new Set();
   /** @type {{ name: string, reference: string, path: string[] }[]} */
   const queue = [];
 
@@ -96,14 +120,12 @@ function productionTree(lockfile, rootImporter, readWorkspaceEngines = () => und
     for (const group of [importer.dependencies, importer.optionalDependencies]) {
       for (const [name, { version }] of Object.entries(group ?? {})) {
         if (version.startsWith("link:")) {
-          const linked = posix.normalize(posix.join(importerPath, version.slice("link:".length)));
+          const key = importerDependencyKey(importerPath, name, version);
+          const linked = key.slice(key.indexOf("@workspace:") + "@workspace:".length);
 
           // The published CLI installs the workspace package itself, so its own
           // `engines.node` counts too.
-          found.set(`${name}@workspace:${linked}`, {
-            engines: readWorkspaceEngines(linked),
-            path: [...path, name],
-          });
+          found.set(key, { engines: readWorkspaceEngines(linked), path: [...path, name] });
           enqueueImporter(linked, [...path, name]);
         } else {
           queue.push({ name, reference: version, path: [...path, name] });
@@ -120,9 +142,10 @@ function productionTree(lockfile, rootImporter, readWorkspaceEngines = () => und
     );
     const { snapshotKey, packageKey } = lockfileKeys(name, reference);
 
-    if (found.has(packageKey)) {
+    if (seenSnapshots.has(snapshotKey)) {
       continue;
     }
+    seenSnapshots.add(snapshotKey);
 
     const metadata = lockfile.packages[packageKey];
     const snapshot = lockfile.snapshots[snapshotKey];
@@ -135,7 +158,11 @@ function productionTree(lockfile, rootImporter, readWorkspaceEngines = () => und
       `pnpm-lock.yaml has no \`snapshots\` entry for ${snapshotKey} (${path.join(" > ")})`,
     );
 
-    found.set(packageKey, { engines: metadata.engines?.node, path });
+    // Keep the first chain that reaches the package; a later snapshot of the
+    // same version has the same `engines.node`.
+    if (!found.has(packageKey)) {
+      found.set(packageKey, { engines: metadata.engines?.node, path });
+    }
 
     for (const group of [snapshot.dependencies, snapshot.optionalDependencies]) {
       for (const [dependencyName, dependencyReference] of Object.entries(group ?? {})) {
@@ -180,6 +207,28 @@ function engineViolations(tree, version) {
   return violations;
 }
 
+/**
+ * The dependencies that an importer's manifest declares but the tree does not
+ * contain. Each is matched through the importer's resolved reference in the
+ * lockfile, so an alias (`"aliased": "npm:real@^3"`) is found under the real
+ * package and a `workspace:` dependency under its linked directory.
+ *
+ * @param {any} lockfile
+ * @param {ReturnType<typeof productionTree>} tree
+ * @param {string} importerPath
+ * @param {{ dependencies?: Record<string, string> }} manifest
+ * @returns {string[]}
+ */
+function declaredDependenciesMissingFromTree(lockfile, tree, importerPath, manifest) {
+  const resolved = lockfile.importers[importerPath]?.dependencies ?? {};
+
+  return Object.keys(manifest.dependencies ?? {}).filter((name) => {
+    const entry = resolved[name];
+
+    return !entry || !tree.has(importerDependencyKey(importerPath, name, entry.version));
+  });
+}
+
 const repositoryRoot = new URL("../../../", import.meta.url);
 const lockfile = parse(await readFile(new URL("pnpm-lock.yaml", repositoryRoot), "utf8"));
 const tree = productionTree(lockfile, CLI_IMPORTER, (importerPath) => {
@@ -191,7 +240,6 @@ const tree = productionTree(lockfile, CLI_IMPORTER, (importerPath) => {
 });
 
 test("the production tree contains every dependency that a published manifest declares", () => {
-  const names = new Set([...tree.keys()].map((key) => key.slice(0, key.lastIndexOf("@"))));
   const workspaceDirectories = [...tree.keys()]
     .filter((key) => key.includes("@workspace:"))
     .map((key) => key.slice(key.indexOf("@workspace:") + "@workspace:".length));
@@ -204,12 +252,11 @@ test("the production tree contains every dependency that a published manifest de
       readFileSync(new URL(`${directory}/package.json`, repositoryRoot), "utf8"),
     );
 
-    for (const dependency of Object.keys(manifest.dependencies ?? {})) {
-      assert.ok(
-        names.has(dependency) || manifest.dependencies[dependency].startsWith("workspace:"),
-        `${dependency} (from ${directory}) is missing from the tree`,
-      );
-    }
+    assert.deepEqual(
+      declaredDependenciesMissingFromTree(lockfile, tree, directory, manifest),
+      [],
+      `dependencies of ${directory} are missing from the tree`,
+    );
   }
   // A dependency of a dependency, so the walk is not one level deep.
   assert.ok([...tree.values()].some(({ path }) => path.length > 2));
@@ -264,6 +311,58 @@ test("the walk handles links, aliases, peer suffixes, optional dependencies, and
   assert.deepEqual(engineViolations(withWorkspaceEngines, "30.0.0"), []);
   assert.deepEqual(engineViolations(withWorkspaceEngines, "22.0.0"), [
     "lib@workspace:packages/lib requires Node.js >=30 (reached through lib)",
+  ]);
+
+  // Declared dependencies are matched through the lockfile, so the alias is
+  // found under `real` and the workspace dependency under its directory.
+  assert.deepEqual(
+    declaredDependenciesMissingFromTree(synthetic, walked, "packages/app", {
+      dependencies: { lib: "workspace:*", peered: "^1.0.0", aliased: "npm:real@^3.0.0" },
+    }),
+    [],
+  );
+  assert.deepEqual(
+    declaredDependenciesMissingFromTree(synthetic, walked, "packages/app", {
+      dependencies: { absent: "^1.0.0" },
+    }),
+    ["absent"],
+  );
+});
+
+test("two snapshots of one version with different peers are both walked", () => {
+  const synthetic = {
+    importers: {
+      "packages/app": {
+        dependencies: {
+          first: { version: "1.0.0" },
+          second: { version: "1.0.0" },
+        },
+      },
+    },
+    packages: {
+      "first@1.0.0": {},
+      "second@1.0.0": {},
+      "shared@1.0.0": {},
+      "peer@1.0.0": {},
+      "peer@2.0.0": {},
+      "only-with-peer-2@1.0.0": { engines: { node: ">=30" } },
+    },
+    snapshots: {
+      "first@1.0.0": { dependencies: { shared: "1.0.0(peer@1.0.0)" } },
+      "second@1.0.0": { dependencies: { shared: "1.0.0(peer@2.0.0)" } },
+      "shared@1.0.0(peer@1.0.0)": { dependencies: { peer: "1.0.0" } },
+      "shared@1.0.0(peer@2.0.0)": {
+        dependencies: { peer: "2.0.0", "only-with-peer-2": "1.0.0" },
+      },
+      "peer@1.0.0": {},
+      "peer@2.0.0": {},
+      "only-with-peer-2@1.0.0": {},
+    },
+  };
+  const walked = productionTree(synthetic, "packages/app");
+
+  assert.deepEqual(engineViolations(walked, "24.0.0"), [
+    "only-with-peer-2@1.0.0 requires Node.js >=30 (reached through second > shared > only-with-peer-2)",
   ]);
 });
 
