@@ -5,7 +5,9 @@ import { join } from "node:path";
 
 /**
  * Maps every directory below `directory` to "directory", every symbolic link to its target, without
- * following it, and every file to a hash of its contents.
+ * following it, and every file to a hash of its contents. A link's target is hashed only when it is
+ * inside `directory`, as its own entry, so a change to a file outside `directory` that a link
+ * points to is not detected.
  *
  * @param {string} [directory]
  * @returns {Promise<Record<string, string>>}
