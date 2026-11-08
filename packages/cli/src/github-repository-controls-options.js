@@ -73,7 +73,11 @@ function normalizeStringArray(name, value, fallback, allowed) {
   return unique;
 }
 
-/** @param {unknown} value @param {string} defaultBranch */
+/**
+ * @param {unknown} value
+ * @param {string | undefined} defaultBranch Undefined until the recipe records it, which leaves
+ *   omitted branches omitted, so they follow the value apply fills in.
+ */
 function normalizeReleaseEnvironment(value, defaultBranch) {
   if (value === undefined || value === false || value === null) return null;
   assertPlainObject("github-repository-controls.releaseEnvironment", value);
@@ -105,12 +109,17 @@ function normalizeReleaseEnvironment(value, defaultBranch) {
       "github-repository-controls.releaseEnvironment.reviewers must contain at least one GitHub login.",
     );
   }
-  const branches = normalizeStringArray(
-    "github-repository-controls.releaseEnvironment.branches",
-    value.branches,
-    [defaultBranch],
-  );
-  if (branches.length === 0) {
+  const requestedBranches =
+    value.branches === undefined && defaultBranch !== undefined ? [defaultBranch] : value.branches;
+  const branches =
+    requestedBranches === undefined
+      ? undefined
+      : normalizeStringArray(
+          "github-repository-controls.releaseEnvironment.branches",
+          requestedBranches,
+          [],
+        );
+  if (branches?.length === 0) {
     throw new Error(
       "github-repository-controls.releaseEnvironment.branches must contain at least one branch.",
     );
@@ -128,7 +137,7 @@ function normalizeReleaseEnvironment(value, defaultBranch) {
       value.preventSelfReview,
       false,
     ),
-    branches,
+    ...(branches === undefined ? {} : { branches }),
   };
 }
 
@@ -156,11 +165,12 @@ export function normalizeGithubRepositoryControlsOptions(value) {
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository)) {
     throw new Error("github-repository-controls.repository must use owner/name format.");
   }
-  const defaultBranch = normalizeString(
-    "github-repository-controls.defaultBranch",
-    value.defaultBranch,
-    "main",
-  );
+  // #844: there is no fixed fallback. Apply fills an omitted defaultBranch from the repository's
+  // default branch and reports where it came from (see integration-inputs.js).
+  const defaultBranch =
+    value.defaultBranch === undefined
+      ? undefined
+      : normalizeString("github-repository-controls.defaultBranch", value.defaultBranch, "");
   const mergeMethods = normalizeStringArray(
     "github-repository-controls.mergeMethods",
     value.mergeMethods,
@@ -195,7 +205,7 @@ export function normalizeGithubRepositoryControlsOptions(value) {
 
   return {
     repository,
-    defaultBranch,
+    ...(defaultBranch === undefined ? {} : { defaultBranch }),
     requiredChecks: normalizeStringArray(
       "github-repository-controls.requiredChecks",
       value.requiredChecks,

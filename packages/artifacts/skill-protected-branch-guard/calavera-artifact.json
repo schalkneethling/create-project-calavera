@@ -11,7 +11,7 @@
   "inputs": {
     "protectedBranch": {
       "prompt": "Which branch should the guard protect from direct commits and pushes?",
-      "default": "current-branch",
+      "default": "repository-default-branch",
       "check": "branch-name"
     }
   },

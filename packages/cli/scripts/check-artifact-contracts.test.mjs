@@ -213,7 +213,7 @@ const wiredSkillManifest = Object.freeze({
   inputs: {
     protectedBranch: {
       prompt: "Which branch should the guard protect?",
-      default: "current-branch",
+      default: "repository-default-branch",
       check: "branch-name",
     },
   },
@@ -274,6 +274,18 @@ test("artifact manifest rejects inputs and wiring it cannot honor", () => {
     {
       ...wiredSkillManifest,
       inputs: { protectedBranch: { prompt: "x", check: "branch-name", default: "main" } },
+    },
+    "/inputs/protectedBranch/default",
+  );
+  // #846: the default kind current-branch was replaced, because the default is never the current
+  // branch.
+  assertInvalidAt(
+    validate,
+    {
+      ...wiredSkillManifest,
+      inputs: {
+        protectedBranch: { prompt: "x", check: "branch-name", default: "current-branch" },
+      },
     },
     "/inputs/protectedBranch/default",
   );

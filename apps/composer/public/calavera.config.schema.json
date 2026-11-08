@@ -215,9 +215,9 @@
           "pattern": "^[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+$"
         },
         "defaultBranch": {
+          "description": "The branch GitHub treats as the default branch. When the recipe omits it, Calavera suggests the repository's default branch and apply requires the value to be recorded.",
           "type": "string",
-          "minLength": 1,
-          "default": "main"
+          "minLength": 1
         },
         "requiredChecks": {
           "type": "array",

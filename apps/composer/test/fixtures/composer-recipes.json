@@ -48,7 +48,6 @@
       },
       "github-repository-controls": {
         "repository": "octocat/example",
-        "defaultBranch": "main",
         "requiredChecks": ["quality", "build"],
         "mergeMethods": ["squash"],
         "wiki": false,
@@ -106,7 +105,6 @@
       },
       "github-repository-controls": {
         "repository": "octocat/example",
-        "defaultBranch": "main",
         "requiredChecks": ["quality", "build"],
         "mergeMethods": ["squash"],
         "wiki": false,

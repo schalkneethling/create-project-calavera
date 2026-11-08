@@ -1,12 +1,12 @@
 # ADR-0015: Determinant Gates as Calavera Artifacts in a Vite+ Project
 
-- **Status:** Accepted (2026-10-31; proposed 2026-10-22, revised 2026-10-23, amended by the owner's rulings of 2026-10-31 in Decisions 5, 6, and 16, and by the owner's decision of 2026-11-05 in Decisions 5 and 16)
+- **Status:** Accepted (2026-10-31; proposed 2026-10-22, revised 2026-10-23, amended by the owner's rulings of 2026-10-31 in Decisions 5, 6, and 16, by the owner's decision of 2026-11-05 in Decisions 5 and 16, and by the owner's decision of 2026-11-08 in Decisions 6 and 16 (#846))
 - **Date:** 2026-10-22
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/743
 - **Decides:** how the Determinant gates of Increment 1 reach a project that `vp create` scaffolded.
   - `protected-branch-guard` is copied into a skill artifact. Apply writes the skill directory under `.agents/skills/` and, through new manifest metadata, wires it into the project: a marked block in each of `.vite-hooks/pre-commit`, `.vite-hooks/prepare-commit-msg`, and `.vite-hooks/pre-push`, and owned entries in `.claude/settings.json`. The dry run lists every one of these writes before the person approves them.
   - Calavera never sets `core.hooksPath`. Vite+ keeps the dispatcher, and Calavera writes only into the project-owned scripts that the dispatcher runs.
-  - The protected branch is an input of the artifact. Calavera asks for it, offers the current branch as the default, and records the answer in the recipe. The hook lines and the Claude Code entries carry it as an argument.
+  - The protected branch is an input of the artifact. Calavera asks for it, offers the repository's default branch as the default, and records the answer in the recipe. The hook lines and the Claude Code entries carry it as an argument.
   - The copied scripts are linted, formatted, and tested with the rest of this repository, and the copy fixes the defects this ADR's review of the scripts found.
   - `agent-red-test-verification` is deferred from Increment 1. Tracking issue #744 records why and what would bring it back.
   - The C8 safety properties (`docs/evolution-brief.md`, Section 3) are not weakened. This ADR extends where the CLI writes, and Decision 9 states how each property holds for the new writes.
@@ -135,6 +135,8 @@ The answer is recorded in the recipe, on the artifact's entry, as in `{ "id": "s
 
 **Amended by the owner on 2026-10-31.** A value from the default is never written without approval. `dry_run_apply` and `apply --dry-run` fill it in, report it with its source, and return the recipe that records it in `result.recipe`. `apply_recipe` and any other apply that cannot ask the person refuse an input the recipe does not record, name each one with the value the dry run would use, and write nothing. The agent therefore passes the dry run's recipe to `apply_recipe`, so the branch cannot change between the approval and the apply, for example when the person creates a feature branch in between. An interactive `apply` asks and records the answer, and `init` records the value it used, saying so when it was the default. This replaces "A non-interactive run without a recorded value uses the default" above for apply.
 
+**Amended by the owner on 2026-11-08 (#846): where the default comes from.** The default is the repository's default branch, not the current branch. Calavera proposes the first of these that gives an answer: the branch `refs/remotes/origin/HEAD` points to, read with `git symbolic-ref --quiet refs/remotes/origin/HEAD`, when origin has that branch; the branch `git var GIT_DEFAULT_BRANCH` names, when the repository has a local branch of that name or has no commits and is on that branch; and the repository's only local branch, when it has exactly one. Otherwise there is no default, and the person must type a name, as on a detached HEAD before: the interactive CLI asks with nothing suggested, `compose_recipe` reports why there is no default, and a run that cannot ask stops and names the missing input. The current branch was the wrong source, because the documented flow commits the scaffold and then runs Calavera from a feature branch, so the default protected the feature branch and left the branch Git created open. `git var GIT_DEFAULT_BRANCH` alone describes the machine, not the repository, so it counts only when a branch of that name exists. Git does not record which branch the first commit was made on, and the reflog entry that says so is missing in a clone and expires. A Git failure other than a missing ref keeps Git's error output in the reason, so it cannot read as having no default. `compose_recipe` and the dry run report the source of the default. When the recipe also selects `github-repository-controls`, its `defaultBranch` uses the same rule and loses its fixed fallback, `main`; `apply_recipe` refuses a recipe that does not record it, as it refuses an unrecorded artifact input; and the dry run warns, without stopping, when the recorded `protectedBranch` and `defaultBranch` differ, because a project can protect a release branch on purpose. The manifest's default kind `current-branch` is replaced by `repository-default-branch`, with no schema version change. This replaces "The default is the current branch" and "On a detached HEAD there is no default" above; a detached HEAD now gets a default when one of the sources answers.
+
 Apply then writes the name as the last argument of every guard command it places (Decision 5). The lines are committed, so every clone and every CI job reads the same name, and a reviewer sees it. The prompt replaces detection as the source of the value: the first version rejected detection because a detected name is not one anyone chose, and a default that the person confirms is chosen.
 
 ### 7. The changes to the copied script
@@ -221,6 +223,12 @@ The owner decided #802 on 2026-11-05:
 
 - When a recipe no longer selects an artifact that wired the project, apply removes its unchanged blocks and groups, the dry run lists each removal first, and an edited block or group is a conflict that names the file and stops apply (Decision 5, "Wiring of a deselected artifact"). This replaces the alternative the issue offered, in which apply only reported the wiring with the command that removes it.
 
+The owner decided #846 on 2026-11-08:
+
+- The default for `protectedBranch`, and for `github-repository-controls.defaultBranch` (#844), is the repository's default branch: the remote's default from `origin/HEAD`, then the branch `git var GIT_DEFAULT_BRANCH` names when it exists, then the only local branch, and otherwise no default (Decision 6). The literal `main` fallback for `defaultBranch` is removed. This replaces the 2026-10-23 ruling "with the current branch as the default".
+- `apply_recipe` refuses a recipe that selects `github-repository-controls` but does not record `defaultBranch`, consistent with the 2026-10-31 ruling on unrecorded artifact inputs.
+- The schema's default kind `current-branch` is replaced by an accurately named value, with no schema version change. The change ships with the artifact's changeset.
+
 These rulings of 2026-10-22 stand:
 
 - The `.mcp.json` that the bootstrap writes satisfies "the MCP registration" for H0.
@@ -264,7 +272,7 @@ The litmus test holds. Vite+ provides the hook dispatcher and `vp staged`, and t
 
 **Replace the whole hook script, or the whole settings file.** Rejected by C8. Both files belong to the project and can hold other lines and entries, which a whole-file write would overwrite.
 
-**Detect the default branch without asking.** Rejected. A fresh `vp create` repository has no remote, `git var GIT_DEFAULT_BRANCH` describes the machine, and `refs/remotes/origin/HEAD` appears only after a clone or a fetch. The current branch is a good default but not a choice until the person confirms it.
+**Detect the default branch without asking.** Rejected. A fresh `vp create` repository has no remote, `git var GIT_DEFAULT_BRANCH` describes the machine, and `refs/remotes/origin/HEAD` appears only after a clone or a fetch. The current branch is a good default but not a choice until the person confirms it. _Amended 2026-11-08: detection is now the source of the suggested value (Decision 6), and the person still confirms it. Each source is accepted only when the repository holds the branch it names, which answers the objection that `git var GIT_DEFAULT_BRANCH` describes the machine._
 
 **Read the protected branch from a Git configuration key.** Rejected. `.git/config` is never committed, while the hook lines are. A key would make every fresh clone, every CI job, and every cloud sandbox refuse all commits until someone set it there, and `CI=true vp config` still installs the dispatcher, so CI jobs would run the guard. A wrong but valid value would protect nothing without any sign of it, and no reviewer could see it, because it lives outside the repository.
 

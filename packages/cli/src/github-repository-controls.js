@@ -157,6 +157,13 @@ The generated script verifies the repository identity before planning or applyin
 /** @param {unknown} rawOptions */
 export function githubRepositoryControlManagedFiles(rawOptions) {
   const options = normalizeGithubRepositoryControlsOptions(rawOptions);
+  // Apply fills defaultBranch before it plans any file (#844), so a missing value here is a bug in
+  // the caller, and a file without it would describe no branch to GitHub.
+  if (options.defaultBranch === undefined) {
+    throw new Error(
+      "integrationOptions.github-repository-controls.defaultBranch has no value, so Calavera cannot plan .github/repository-controls.json. Record the repository's default branch there, then run apply again.",
+    );
+  }
   const config = createRepositoryControlsConfig(options);
   return [
     {

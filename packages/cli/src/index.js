@@ -33,6 +33,7 @@ import {
   assertRootOnlyIntegrationsAtRepositoryRoot,
 } from "./repository-root.js";
 import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
+import { defaultBranchWarnings, resolveIntegrationInputs } from "./integration-inputs.js";
 import {
   artifactWiringFindings,
   artifactWiringWarnings,
@@ -203,11 +204,14 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {ArtifactRegistryReport[]} artifactRegistries The registry (protocol, host, and port, such as https://registry.npmjs.org) the auto-installed artifacts resolve from, and the npm configuration it comes from, such as the project .npmrc; empty when nothing resolves.
  * @property {string[]} artifactWarnings Notes on npm configuration Calavera ignored while resolving the auto-installed artifacts. They never contain a value.
  * @property {ResolvedInput[]} artifactInputs Each input a selected artifact declares, with the value apply uses and where it came from.
+ * @property {ResolvedIntegrationInput[]} integrationInputs Each integration option Calavera suggests a value for, such as github-repository-controls.defaultBranch, with the value apply uses and where it came from.
+ * @property {string[]} inputWarnings Input values that disagree, such as a protected branch that is not the default branch github-repository-controls describes. They never stop apply.
  * @property {WiringChange[]} wiringChanges Each hook block and settings group apply writes into the project for a selected artifact, so the approval boundary shows the exact text.
  * @property {string[]} wiringWarnings Why written wiring would not act yet, such as Git hooks that no dispatcher runs, with the remedy. They never stop apply.
  * @property {Recipe} recipe The recipe apply used, with every artifact input filled in. After a dry run, pass this recipe to apply, so the values cannot change between approval and apply.
  *
  * @typedef {import("./ai/artifact-inputs.js").ResolvedInput} ResolvedInput
+ * @typedef {import("./integration-inputs.js").ResolvedIntegrationInput} ResolvedIntegrationInput
  * @typedef {import("./ai/artifact-wiring.js").WiringChange} WiringChange
  *
  * @typedef {object} CleanResult
@@ -229,6 +233,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {{ ok: boolean, recipe?: Recipe, errors?: string[] }} validation
  * @property {{ integrations: unknown[], dependencies: string[], aiArtifacts: unknown[] }} explanation
  * @property {ResolvedInput[]} artifactInputs Each input a selected artifact declares, with the value the recipe records and where it came from. A value from the default was recorded without anyone choosing it.
+ * @property {ResolvedIntegrationInput[]} integrationInputs Each integration option Calavera suggests a value for, with the value the recipe records and where it came from.
  * @property {ApplyResult} [applyDryRun]
  * @property {ApplyResult} [applyResult]
  *
@@ -2451,8 +2456,30 @@ export async function inspectProject(recipe, options = {}) {
     });
   }
 
+  // Inspection is read-only and does not resolve inputs, so a recipe that does not record
+  // defaultBranch yet (#844) cannot plan the repository-controls files; say so instead of stopping.
+  const repositoryControls = /** @type {{ defaultBranch?: unknown } | undefined} */ (
+    recipe?.integrationOptions?.[GITHUB_REPOSITORY_CONTROLS_ID]
+  );
+  const unplannedRepositoryControls =
+    !options.managedFilePlans &&
+    integrationIds.has(GITHUB_REPOSITORY_CONTROLS_ID) &&
+    repositoryControls?.defaultBranch === undefined;
+  if (unplannedRepositoryControls) {
+    findings.push({
+      severity: "info",
+      kind: "unresolved-input",
+      message: `The recipe records no integrationOptions.${GITHUB_REPOSITORY_CONTROLS_ID}.defaultBranch, so inspection does not compare the ${GITHUB_REPOSITORY_CONTROLS_ID} files. The dry run fills it from the repository's default branch and reports where the value came from.`,
+    });
+  }
+
   for (const filePlan of options.managedFilePlans ??
-    plannedManagedFiles(integrations, recipe?.integrationOptions)) {
+    plannedManagedFiles(
+      unplannedRepositoryControls
+        ? integrations.filter(({ id }) => id !== GITHUB_REPOSITORY_CONTROLS_ID)
+        : integrations,
+      recipe?.integrationOptions,
+    )) {
     const finding = await inspectManagedFilePlan(filePlan, previousState, reownManagedFiles);
 
     if (finding) {
@@ -2512,21 +2539,54 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     reownManagedFiles: [],
     ...options,
   };
-  // ADR-0015, Decision 6: every input a selected artifact declares has a value before anything is
-  // planned. An interactive run asks; any other run uses the default and reports it.
-  const ask = canPrompt(applyOptions) ? promptForArtifactInput : undefined;
-  const { recipe, inputs: artifactInputs } = await resolveArtifactInputs(recipeInput, { ask });
-  // Owner ruling of 2026-10-31, stricter than Decision 6: a value nobody chose is shown by the dry
-  // run, and apply writes only a value the recipe records or the person typed, so the value
-  // cannot change between the approval and the apply.
-  const unrecorded = artifactInputs.filter(({ source }) => source === "default");
-  if (!applyOptions.dryRun && unrecorded.length > 0) {
+  // A recipe that cannot apply in this directory stops before anyone is asked for an input value.
+  // These checks read only the selections and the package manager, which inputs do not change.
+  const integrations = resolveRecipeIntegrations(recipeInput);
+  const detectedPackageJSON = await readPackageJSONIfPresent();
+  const packageManager = resolveApplyPackageManager(recipeInput, applyOptions, detectedPackageJSON);
+  assertRootOnlyIntegrationsAtRepositoryRoot(integrations, process.cwd(), packageManager);
+  assertGitHookArtifactsAtRepositoryRoot(
+    gitHookArtifactIds(recipeInput),
+    process.cwd(),
+    packageManager,
+  );
+  // ADR-0015, Decision 6: every input a selected artifact declares, and every integration option
+  // Calavera suggests a value for (#844), has a value before anything is planned. An interactive
+  // run asks; any other run uses the default and reports it.
+  const interactive = canPrompt(applyOptions);
+  const { recipe: recipeWithArtifactInputs, inputs: artifactInputs } = await resolveArtifactInputs(
+    recipeInput,
+    { ask: interactive ? promptForArtifactInput : undefined },
+  );
+  const { recipe, inputs: integrationInputs } = await resolveIntegrationInputs(
+    recipeWithArtifactInputs,
+    { ask: interactive ? promptForIntegrationInput : undefined },
+  );
+  // Owner rulings of 2026-10-31 and 2026-11-08 (#846), stricter than Decision 6: a value nobody
+  // chose is shown by the dry run, and apply writes only a value the recipe records or the person
+  // typed, so the value cannot change between the approval and the apply.
+  const unrecordedArtifactInputs = artifactInputs.filter(({ source }) => source === "default");
+  const unrecordedIntegrationInputs = integrationInputs.filter(
+    ({ source }) => source === "default",
+  );
+  if (
+    !applyOptions.dryRun &&
+    unrecordedArtifactInputs.length + unrecordedIntegrationInputs.length > 0
+  ) {
+    const kinds = [
+      unrecordedArtifactInputs.length > 0 ? "artifact" : undefined,
+      unrecordedIntegrationInputs.length > 0 ? "integration" : undefined,
+    ].filter(Boolean);
     throw new Error(
       [
-        "Calavera stopped before writing anything, because the recipe records no value for these artifact inputs, and apply only writes a value that was approved:",
-        ...unrecorded.map(
+        `Calavera stopped before writing anything, because the recipe records no value for these ${kinds.join(" and ")} inputs, and apply only writes a value that was approved:`,
+        ...unrecordedArtifactInputs.map(
           ({ artifact, index, name, value }) =>
             `- ${artifact} needs ${name}; the dry run would use ${value}. Record it as ai[${index}].inputs.${name}.`,
+        ),
+        ...unrecordedIntegrationInputs.map(
+          ({ integration, name, path, value }) =>
+            `- ${integration} needs ${name}; the dry run would use ${value}. Record it as ${path}.`,
         ),
         "Run the dry run and apply the recipe it returns, which records each value, or run apply in a terminal without --yes or --json, where Calavera asks for each value.",
       ].join("\n"),
@@ -2537,14 +2597,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   // that are unchanged; on a first apply the whole plan is new.
   const previouslyApplied = await fileExists(STATE_FILE);
   const reownManagedFiles = normalizeManagedFilePathSet(applyOptions.reownManagedFiles ?? []);
-  const integrations = resolveRecipeIntegrations(recipe);
   const dependencyList = unique(
     integrations.flatMap((integration) => integration.dependencies ?? []),
   );
-  const detectedPackageJSON = await readPackageJSONIfPresent();
-  const packageManager = resolveApplyPackageManager(recipe, applyOptions, detectedPackageJSON);
-  assertRootOnlyIntegrationsAtRepositoryRoot(integrations, process.cwd(), packageManager);
-  assertGitHookArtifactsAtRepositoryRoot(gitHookArtifactIds(recipe), process.cwd(), packageManager);
   // The install and the quality script are planned before anything is
   // written, including package.json, from one detection, so the dry run and
   // the apply that follows it name the same command and write the same
@@ -2587,7 +2642,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   );
   // A value the person typed is recorded in the recipe, so a later apply does not ask again.
   // Only an explicit writeConfig: false skips that.
-  const answered = artifactInputs.some(({ source }) => source === "prompt");
+  const answered = [...artifactInputs, ...integrationInputs].some(
+    ({ source }) => source === "prompt",
+  );
   const configPath = resolve(applyOptions.config ?? "calavera.config.json");
   const configText =
     applyOptions.writeConfig || (answered && applyOptions.writeConfig !== false)
@@ -2856,6 +2913,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     artifactRegistries: artifactPlan.registries,
     artifactWarnings: artifactPlan.warnings,
     artifactInputs,
+    integrationInputs,
+    inputWarnings: defaultBranchWarnings(recipe),
     wiringChanges: wiringPlan.changes,
     wiringWarnings,
     recipe,
@@ -3918,6 +3977,10 @@ function formatApplySummary(result) {
     ...result.artifactInputs.map(
       (input) => `${style("bold", "Input")}: ${formatArtifactInput(input)}`,
     ),
+    ...result.integrationInputs.map(
+      (input) => `${style("bold", "Input")}: ${formatIntegrationInput(input)}`,
+    ),
+    ...result.inputWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
     ...result.wiringChanges
       .flatMap(formatWiringChange)
       .map((line) => `${style("bold", "Wiring")}: ${line}`),
@@ -3927,14 +3990,28 @@ function formatApplySummary(result) {
 }
 
 /** @param {ResolvedInput} input */
-function formatArtifactInput({ artifact, name, value, source }) {
+function formatArtifactInput({ artifact, name, ...input }) {
+  return `${artifact} ${name} = ${formatInputValue(input)}`;
+}
+
+/** @param {ResolvedIntegrationInput} input */
+function formatIntegrationInput({ integration, name, ...input }) {
+  return `${integration} ${name} = ${formatInputValue(input)}`;
+}
+
+/**
+ * The value and where it came from. A default names what Git showed, so the person can tell
+ * whether it is the branch they mean before they approve it (#846).
+ *
+ * @param {import("./ai/artifact-inputs.js").InputValue} input
+ */
+function formatInputValue({ value, source, defaultSource }) {
   const origin = {
     recorded: "recorded in the recipe",
     prompt: "your answer",
-    default:
-      "the default, because the recipe records no value; apply needs it recorded in the recipe",
+    default: `the default${defaultSource ? ` (${defaultSource.detail})` : ""}, because the recipe records no value; apply needs it recorded in the recipe`,
   }[source];
-  return `${artifact} ${name} = ${value} (${origin})`;
+  return `${value} (${origin})`;
 }
 
 /**
@@ -3995,10 +4072,26 @@ function canPrompt(options) {
 }
 
 /** @type {import("./ai/artifact-inputs.js").AskForInput} */
-async function promptForArtifactInput({ artifact, name, prompt, defaultValue, error }) {
+function promptForArtifactInput({ artifact, name, ...request }) {
+  return promptForInputValue(request, `${artifact}, ${name}`);
+}
+
+/** @type {import("./integration-inputs.js").AskForIntegrationInput} */
+function promptForIntegrationInput({ integration, name, ...request }) {
+  return promptForInputValue(request, `${integration}, ${name}`);
+}
+
+/**
+ * Asks for one input value. With no default, nothing is suggested (#846).
+ *
+ * @param {{ prompt: string, defaultValue: string | undefined, error: string | undefined }} request
+ * @param {string} label Who declares the input, such as "skill-protected-branch-guard, protectedBranch".
+ * @returns {Promise<string>}
+ */
+async function promptForInputValue({ prompt, defaultValue, error }, label) {
   if (error) logger.warn(error);
   const answer = await text({
-    message: `${prompt} (${artifact}, ${name})`,
+    message: `${prompt} (${label})`,
     ...(defaultValue ? { defaultValue, placeholder: defaultValue } : {}),
   });
   exitIfCancel(answer);
@@ -4158,14 +4251,19 @@ export async function initRecipe(options) {
   const integrations = await promptForIntegrations(options, profile);
   const aiArtifacts = await promptForAiArtifacts(options);
   // The recipe written below records every input, so apply neither asks again nor refuses it.
-  const { recipe, inputs: artifactInputs } = await resolveArtifactInputs(
+  const interactive = canPrompt(options);
+  const { recipe: recipeWithArtifactInputs, inputs: artifactInputs } = await resolveArtifactInputs(
     composeRecipe({
       profile,
       packageManager,
       tools: integrations,
       aiArtifacts,
     }),
-    { ask: canPrompt(options) ? promptForArtifactInput : undefined },
+    { ask: interactive ? promptForArtifactInput : undefined },
+  );
+  const { recipe, inputs: integrationInputs } = await resolveIntegrationInputs(
+    recipeWithArtifactInputs,
+    { ask: interactive ? promptForIntegrationInput : undefined },
   );
   const validation = validateRecipeResponse(recipe);
   const explanation = explainRecipeResponse(recipe);
@@ -4189,6 +4287,13 @@ export async function initRecipe(options) {
     )) {
       logger.info(
         `Input: ${artifact} ${name} = ${value}, the default, recorded as ai[${index}].inputs.${name} in ${options.config}. Change it there if it is wrong.`,
+      );
+    }
+    for (const { integration, name, value, path } of integrationInputs.filter(
+      ({ source }) => source === "default",
+    )) {
+      logger.info(
+        `Input: ${integration} ${name} = ${value}, the default, recorded as ${path} in ${options.config}. Change it there if it is wrong.`,
       );
     }
   }
@@ -4248,6 +4353,7 @@ export async function initRecipe(options) {
     validation,
     explanation,
     artifactInputs,
+    integrationInputs,
     applyDryRun,
     applyResult,
   };
@@ -4835,6 +4941,14 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.info(`Input: ${formatArtifactInput(input)}`);
     }
 
+    for (const input of result.integrationInputs) {
+      logger.info(`Input: ${formatIntegrationInput(input)}`);
+    }
+
+    for (const warning of result.inputWarnings) {
+      logger.warn(warning);
+    }
+
     for (const line of result.wiringChanges.flatMap(formatWiringChange)) {
       logger.info(line);
     }
@@ -4951,6 +5065,14 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   if (result.command === "apply") {
     for (const input of result.artifactInputs) {
       logger.info(`Input: ${formatArtifactInput(input)}`);
+    }
+
+    for (const input of result.integrationInputs) {
+      logger.info(`Input: ${formatIntegrationInput(input)}`);
+    }
+
+    for (const warning of result.inputWarnings) {
+      logger.warn(warning);
     }
 
     for (const warning of result.artifactWarnings) {

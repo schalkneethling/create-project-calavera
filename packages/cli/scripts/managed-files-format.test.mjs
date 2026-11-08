@@ -30,7 +30,7 @@ const recipe = buildRecipe(
   ["editorconfig", "stylelint", "html-validate", "knip", "github-repository-controls"],
   "pnpm",
   [],
-  { "github-repository-controls": { repository: "example/library" } },
+  { "github-repository-controls": { repository: "example/library", defaultBranch: "main" } },
 );
 const applyOptions = {
   json: true,

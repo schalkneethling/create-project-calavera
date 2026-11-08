@@ -64,8 +64,8 @@
             "minLength": 1
           },
           "default": {
-            "description": "How Calavera finds the suggested value. current-branch reads git symbolic-ref --short HEAD and has no value on a detached HEAD.",
-            "enum": ["current-branch"]
+            "description": "How Calavera finds the suggested value. repository-default-branch is the repository's default branch, never the current branch: the branch refs/remotes/origin/HEAD points to; otherwise the branch git var GIT_DEFAULT_BRANCH names, when the repository has a local branch of that name or has no commits yet and is on it; otherwise the only local branch. When none of these answers, there is no suggested value.",
+            "enum": ["repository-default-branch"]
           },
           "check": {
             "description": "How Calavera validates the value. branch-name requires a name that git check-ref-format --branch accepts unchanged.",

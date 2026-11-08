@@ -11,13 +11,16 @@ import {
   describeArtifactInputs,
   resolveArtifactInputs,
 } from "../src/ai/artifact-inputs.js";
+import { isolateGitConfiguration } from "./git-isolation.mjs";
 
 const execFileAsync = promisify(execFile);
+// #846: the default depends on init.defaultBranch, so no machine configuration may reach Git.
+isolateGitConfiguration();
 
 const declarations = {
   protectedBranch: {
     prompt: "Which branch should the guard protect?",
-    default: "current-branch",
+    default: "repository-default-branch",
     check: "branch-name",
   },
 };
@@ -53,7 +56,7 @@ function recipe(item) {
   return { version: 1, ai: [{ id: "skill-project-goal" }, item] };
 }
 
-test("Given a repository on master and no recorded value, when apply runs without a prompt, then the current branch is used and reported as the default", async (t) => {
+test("Given a fresh repository on master and no recorded value, when apply runs without a prompt, then the repository's default branch is used and reported as the default with its source", async (t) => {
   const cwd = await repository(t, "master");
   const result = await resolveArtifactInputs(recipe({ id: "skill-protected-branch-guard" }), {
     cwd,
@@ -72,8 +75,32 @@ test("Given a repository on master and no recorded value, when apply runs withou
       name: "protectedBranch",
       value: "master",
       source: "default",
+      defaultSource: {
+        rule: "git-default-branch",
+        detail:
+          "git var GIT_DEFAULT_BRANCH names master, and the repository has no commits yet and is on master",
+      },
     },
   ]);
+});
+
+test("Given the documented flow, the scaffold committed on master and a feature branch checked out, when inputs are described and resolved, then the default is master and never the feature branch", async (t) => {
+  const cwd = await repository(t, "master");
+  await git(cwd, ["commit", "--quiet", "--allow-empty", "-m", "scaffold"]);
+  await git(cwd, ["switch", "--quiet", "-c", "chore/calavera-setup"]);
+
+  const [described] = await describeArtifactInputs(recipe({ id: "skill-protected-branch-guard" }), {
+    cwd,
+    declarationsFor,
+  });
+  assert.equal(described.default, "master");
+  assert.equal(described.defaultSource.rule, "git-default-branch");
+
+  const result = await resolveArtifactInputs(recipe({ id: "skill-protected-branch-guard" }), {
+    cwd,
+    declarationsFor,
+  });
+  assert.equal(result.recipe.ai[1].inputs.protectedBranch, "master");
 });
 
 test("Given a recorded value, when inputs resolve, then the recorded value is kept and nobody is asked", async (t) => {
@@ -112,15 +139,44 @@ test("Given an interactive run on branch master, when apply prompts, then the de
   assert.equal(result.inputs[0].source, "prompt");
 });
 
-test("Given a detached HEAD and a non-interactive run, when inputs resolve, then apply stops and names protectedBranch", async (t) => {
+test("Given no source for a default and a non-interactive run, when inputs resolve, then apply stops, says why, and names protectedBranch", async (t) => {
   const cwd = await repository(t, "main");
   await git(cwd, ["commit", "--quiet", "--allow-empty", "-m", "initial"]);
+  await git(cwd, ["branch", "feat"]);
   await git(cwd, ["checkout", "--quiet", "--detach"]);
 
   await assert.rejects(
     resolveArtifactInputs(recipe({ id: "skill-protected-branch-guard" }), { cwd, declarationsFor }),
-    /skill-protected-branch-guard needs the input protectedBranch .* HEAD is detached.* ai\[1\]\.inputs\.protectedBranch/,
+    /skill-protected-branch-guard needs the input protectedBranch .* no source names the repository's default branch: .* Record the value as ai\[1\]\.inputs\.protectedBranch/,
   );
+});
+
+test("Given no source for a default and an interactive run, when apply prompts, then nothing is suggested", async (t) => {
+  const cwd = await repository(t, "main");
+  await git(cwd, ["switch", "--quiet", "-c", "chore/calavera-setup"]);
+  const requests = [];
+
+  const result = await resolveArtifactInputs(recipe({ id: "skill-protected-branch-guard" }), {
+    cwd,
+    declarationsFor,
+    ask: async (request) => {
+      requests.push(request);
+      return "main";
+    },
+  });
+
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].defaultValue, undefined);
+  assert.equal(requests[0].artifact, "skill-protected-branch-guard");
+  assert.equal(requests[0].index, 1);
+  assert.equal(requests[0].name, "protectedBranch");
+  assert.deepEqual(result.inputs[0], {
+    artifact: "skill-protected-branch-guard",
+    index: 1,
+    name: "protectedBranch",
+    value: "main",
+    source: "prompt",
+  });
 });
 
 test("Given a recorded value Git refuses, when inputs resolve, then apply stops and names the recipe entry", async (t) => {
@@ -144,7 +200,7 @@ test("Given a directory outside Git, when inputs resolve without a prompt, then 
       cwd,
       declarationsFor,
     }),
-    /git symbolic-ref --short HEAD failed: .*not a git repository/i,
+    /Calavera has no default because git symbolic-ref --quiet refs\/remotes\/origin\/HEAD failed: fatal: not a git repository/i,
   );
 });
 
@@ -159,8 +215,9 @@ test("branch-name check refuses shell metacharacters, option-like names, and nam
   }
 });
 
-test("Given a recipe, when inputs are described for an agent, then each declared input shows its recorded value and default", async (t) => {
+test("Given a recipe, when inputs are described for an agent, then each declared input shows its recorded value, its default, and where the default came from", async (t) => {
   const cwd = await repository(t, "trunk");
+  await git(cwd, ["commit", "--quiet", "--allow-empty", "-m", "initial"]);
 
   assert.deepEqual(
     await describeArtifactInputs(recipe({ id: "skill-protected-branch-guard" }), {
@@ -176,10 +233,22 @@ test("Given a recipe, when inputs are described for an agent, then each declared
         check: "branch-name",
         recorded: null,
         default: "trunk",
+        defaultSource: {
+          rule: "only-local-branch",
+          detail: "trunk is the repository's only local branch",
+        },
         defaultUnavailable: null,
       },
     ],
   );
+  const unborn = await repository(t, "trunk");
+  const [described] = await describeArtifactInputs(recipe({ id: "skill-protected-branch-guard" }), {
+    cwd: unborn,
+    declarationsFor,
+  });
+  assert.equal(described.default, null);
+  assert.equal(described.defaultSource, null);
+  assert.match(described.defaultUnavailable, /^no source names the repository's default branch: /);
   assert.deepEqual(
     await describeArtifactInputs({ ai: [{ id: "skill-project-goal" }] }, { cwd }),
     [],
