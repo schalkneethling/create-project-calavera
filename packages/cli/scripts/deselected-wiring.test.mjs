@@ -10,7 +10,15 @@
 // when it is unedited and reports it when it was edited.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { access, mkdtempDisposable, readFile, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtempDisposable,
+  readFile,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -651,7 +659,7 @@ test("Given a deselected guard whose edited block the person kept by deleting it
     assert.equal(skip?.type, "skip");
     assert.match(
       skip.reason,
-      /\.vite-hooks\/pre-push still mentions \.agents\/skills\/protected-branch-guard\//,
+      /\.vite-hooks\/pre-push still mentions \.agents\/skills\/protected-branch-guard after clean/,
     );
     assert.equal(await exists(skillDirectory), true);
     assert.deepEqual(await snapshot(), before);
@@ -674,5 +682,123 @@ test("Given the guard deselected and its skill directory edited, clean removes t
       again.changes.map(({ type, path }) => [type, path]),
       [["skip", skillDirectory]],
     );
+  });
+});
+
+// Greptile review of #856: a hook script that the person keeps through a symbolic link still runs
+// with sh -e, so clean must read it through the link before it deletes the skill directory.
+test("Given a deselected guard whose script a symbolically linked hook still runs, clean keeps the skill directory and names the link", async () => {
+  await inWiredProject(async (registry) => {
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    await mkdir("scripts");
+    await writeFile("scripts/post-merge.sh", `#!/bin/sh\n${line("pre-push")}\n`);
+    await symlink("../scripts/post-merge.sh", ".vite-hooks/post-merge");
+    const before = await snapshot();
+
+    const result = cleanJson(["--yes"]);
+    const skip = result.changes.find(({ path }) => path === skillDirectory);
+    assert.equal(skip?.type, "skip");
+    assert.match(
+      skip.reason,
+      /\.vite-hooks\/post-merge still mentions \.agents\/skills\/protected-branch-guard after clean/,
+    );
+    assert.equal(await exists(script), true);
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
+test("Given a deselected guard and a hook that is a broken symbolic link, clean keeps the skill directory, because it cannot read what the link would run", async () => {
+  await inWiredProject(async (registry) => {
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    await symlink("../scripts/missing.sh", ".vite-hooks/post-merge");
+    const before = await snapshot();
+
+    const result = cleanJson(["--yes"]);
+    const skip = result.changes.find(({ path }) => path === skillDirectory);
+    assert.equal(skip?.type, "skip");
+    assert.match(
+      skip.reason,
+      /\.vite-hooks\/post-merge is a symbolic link that Calavera cannot follow, so it cannot tell whether it runs \.agents\/skills\/protected-branch-guard/,
+    );
+    assert.equal(await exists(script), true);
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
+const hookId = "hook-block-dangerous-commands";
+const hookScript = ".agents/hooks/claude-code/block-dangerous-commands.mjs";
+const hookFragment = ".agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json";
+
+/**
+ * Runs `callback` in a new project where block-dangerous-commands was applied, then deselected
+ * by a second apply, which keeps the record of the installed hook script.
+ *
+ * @param {() => Promise<void>} callback
+ */
+async function inProjectWithDeselectedHook(callback) {
+  await using project = await mkdtempDisposable(join(tmpdir(), "calavera-deselected-hook-"));
+  const originalDirectory = process.cwd();
+  process.chdir(project.path);
+
+  try {
+    git(["init", "--quiet", "--initial-branch=main"]);
+    git(["switch", "--quiet", "-c", "856-deselect-hook"]);
+    await writeFile("package.json", `${JSON.stringify({ name: "fixture" }, null, 2)}\n`);
+    const registry = stubRegistry(new Map([[hookId, "0.4.0"]]));
+    const hookRecipe = { ...buildRecipe("minimal", [], "npm"), ai: [{ id: hookId }] };
+    await callMcpTool("apply_recipe", { recipe: hookRecipe, noInstall: true }, registry);
+    assert.equal(await exists(hookScript), true);
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    await callback();
+  } finally {
+    process.chdir(originalDirectory);
+  }
+}
+
+// Greptile review of #856: a hook artifact is a file, not a directory. When the person runs it from
+// .claude/settings.json, as its README documents, clean must not delete it.
+test("Given an apply that deselected block-dangerous-commands while .claude/settings.json still runs it, clean keeps the hook script and names the settings file", async () => {
+  await inProjectWithDeselectedHook(async () => {
+    await mkdir(".claude", { recursive: true });
+    await writeFile(
+      ".claude/settings.json",
+      `${JSON.stringify(
+        {
+          hooks: {
+            PreToolUse: [
+              { matcher: "Bash", hooks: [{ type: "command", command: `node ${hookScript}` }] },
+            ],
+          },
+        },
+        null,
+        2,
+      )}\n`,
+    );
+    const script = await readFile(hookScript, "utf8");
+    const settings = await readFile(".claude/settings.json", "utf8");
+
+    const result = cleanJson(["--yes"]);
+    const skip = result.changes.find(({ path }) => path === hookScript);
+    assert.equal(skip?.type, "skip");
+    assert.match(
+      skip.reason,
+      /\.claude\/settings\.json still mentions \.agents\/hooks\/claude-code\/block-dangerous-commands\.mjs after clean/,
+    );
+    assert.equal(await readFile(hookScript, "utf8"), script);
+    assert.equal(await readFile(".claude/settings.json", "utf8"), settings);
+    // The settings fragment is recorded on its own, and nothing runs it: it is the text a person
+    // copies into their settings. So clean still removes it when it is unedited.
+    assert.equal(result.changes.find(({ path }) => path === hookFragment)?.type, "delete");
+  });
+});
+
+test("Given an apply that deselected block-dangerous-commands and nothing that runs it, clean removes the unedited hook script", async () => {
+  await inProjectWithDeselectedHook(async () => {
+    const result = cleanJson(["--yes"]);
+    assert.equal(result.changes.find(({ path }) => path === hookScript)?.type, "delete");
+    assert.equal(await exists(hookScript), false);
   });
 });

@@ -4488,12 +4488,18 @@ async function clean(options) {
 
     // A hook script or settings group that runs the artifact's scripts without a record, such as a
     // block whose markers the person deleted to keep it, would fail once the files are gone.
-    const runners = await wiringFilesThatMention(artifact.path, wiringPlan.files);
-    if (runners.length > 0) {
-      staleAiArtifactsWithLocalEdits.push({
-        ...artifact,
-        reason: `${runners.join(" and ")} still mention${runners.length === 1 ? "s" : ""} ${artifact.path}/ after clean, so deleting it would break what runs there. Remove those lines or groups, then run clean again.`,
-      });
+    // A link that cannot be followed is kept for the same reason: what it would run is unknown.
+    const { mentions, unresolved } = await wiringFilesThatMention(artifact.path, wiringPlan.files);
+    if (mentions.length > 0 || unresolved.length > 0) {
+      const reasons = [
+        mentions.length > 0
+          ? `${mentions.join(" and ")} still mention${mentions.length === 1 ? "s" : ""} ${artifact.path} after clean, so deleting it would break what runs there. Remove those lines or groups, then run clean again.`
+          : "",
+        unresolved.length > 0
+          ? `${unresolved.join(" and ")} ${unresolved.length === 1 ? "is a symbolic link" : "are symbolic links"} that Calavera cannot follow, so it cannot tell whether ${unresolved.length === 1 ? "it runs" : "they run"} ${artifact.path}. Repair or remove ${unresolved.length === 1 ? "that link" : "those links"}, then run clean again.`
+          : "",
+      ].filter(isNotEmptyString);
+      staleAiArtifactsWithLocalEdits.push({ ...artifact, reason: reasons.join(" ") });
       continue;
     }
 

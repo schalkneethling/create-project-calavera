@@ -1,6 +1,6 @@
 // @ts-check
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { access, lstat, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 
@@ -390,37 +390,89 @@ export async function writeArtifactWiring(files, cwd = process.cwd()) {
 }
 
 /**
- * The hook scripts in .vite-hooks and the Claude Code settings file that mention `directory`,
+ * The hook scripts in .vite-hooks and the Claude Code settings file that mention `artifactPath`,
  * with the text the planned wiring changes leave in them. Clean does not delete an artifact that
  * one of them still runs, recorded or not (#829): a block whose markers the person deleted to keep
  * it holds no record, but it fails as soon as its script is gone.
  *
- * @param {string} directory Relative to the project root, such as .agents/skills/protected-branch-guard.
+ * A hook script kept through a symbolic link still runs, so the scan follows links, wherever they
+ * point. A link that cannot be followed (its target is missing, or the links form a loop) is listed
+ * in `unresolved`, because Calavera cannot read what it would run, and clean must keep the artifact
+ * rather than read the link as mentioning nothing.
+ *
+ * @param {string} artifactPath Relative to the project root: a skill directory, such as
+ *   .agents/skills/protected-branch-guard, or a file, such as a hook script.
  * @param {WiringFile[]} plannedFiles The files as the planned wiring leaves them.
  * @param {string} [cwd]
- * @returns {Promise<string[]>}
+ * @returns {Promise<{ mentions: string[], unresolved: string[] }>}
  */
-export async function wiringFilesThatMention(directory, plannedFiles, cwd = process.cwd()) {
+export async function wiringFilesThatMention(artifactPath, plannedFiles, cwd = process.cwd()) {
   const entries = await readdir(resolve(cwd, ".vite-hooks"), { withFileTypes: true }).catch(
     (error) => {
       if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return [];
       throw error;
     },
   );
-  // Sorted, because readdir's order depends on the file system.
+  // Sorted, because readdir's order depends on the file system. A link is read below, which
+  // follows it; one that resolves to a directory is skipped there, because Git runs only files.
   const hookNames = entries
-    .filter((entry) => entry.isFile())
+    .filter((entry) => entry.isFile() || entry.isSymbolicLink())
     .map(({ name }) => name)
     .sort();
   /** @type {string[]} */
   const mentions = [];
+  /** @type {string[]} */
+  const unresolved = [];
   for (const path of [...hookNames.map((name) => `.vite-hooks/${name}`), CLAUDE_SETTINGS_PATH]) {
-    const contents =
-      plannedFiles.find((file) => file.path === path)?.contents ??
-      (await readIfPresent(resolve(cwd, path)));
-    if (contents?.includes(`${directory}/`)) mentions.push(path);
+    const planned = plannedFiles.find((file) => file.path === path);
+    const read = planned
+      ? { contents: planned.contents }
+      : await readThroughLinks(resolve(cwd, path));
+    if (read.unresolved) unresolved.push(path);
+    else if (read.contents !== undefined && mentionsPath(read.contents, artifactPath)) {
+      mentions.push(path);
+    }
   }
-  return mentions;
+  return { mentions, unresolved };
+}
+
+/**
+ * Reads `path`, following symbolic links. A missing file or a directory reads as no contents, and a
+ * link that cannot be followed reads as unresolved. Other errors propagate, which stops clean.
+ *
+ * @param {string} path
+ * @returns {Promise<{ contents?: string, unresolved?: true }>}
+ */
+async function readThroughLinks(path) {
+  try {
+    return { contents: await readFile(path, "utf8") };
+  } catch (error) {
+    const { code } = /** @type {NodeJS.ErrnoException} */ (error);
+    if (code === "EISDIR") return {};
+    if (code !== "ENOENT" && code !== "ELOOP") throw error;
+    const isLink = await lstat(path).then(
+      (stats) => stats.isSymbolicLink(),
+      () => false,
+    );
+    return isLink ? { unresolved: true } : {};
+  }
+}
+
+/**
+ * Whether `text` names `path`: the path followed by the end of the text or by a character that
+ * cannot continue a file name, such as a slash, a space, or a quote. A directory therefore matches
+ * every path under it, and a file matches its own name but not a longer one that starts with it,
+ * such as guard.mjs.bak or guard.mjsx.
+ *
+ * @param {string} text
+ * @param {string} path
+ */
+function mentionsPath(text, path) {
+  for (let at = text.indexOf(path); at !== -1; at = text.indexOf(path, at + 1)) {
+    const next = text.charAt(at + path.length);
+    if (!/[\w.-]/.test(next)) return true;
+  }
+  return false;
 }
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */
