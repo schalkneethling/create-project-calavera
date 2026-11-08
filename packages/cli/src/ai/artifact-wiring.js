@@ -410,8 +410,9 @@ export async function writeArtifactWiring(files, cwd = process.cwd()) {
  * A hook script kept through a symbolic link still runs, so the scan follows links, wherever they
  * point, and a hook that links to the artifact, or into its directory, counts as a mention. A link
  * that cannot be followed (its target is missing, runs through a file, or the links form a loop) is
- * listed in `unresolved`, because Calavera cannot read what it would run, and clean must keep the
- * artifact rather than read the link as mentioning nothing.
+ * listed in `unresolved`, and a file Calavera has no permission to read is listed in `unreadable`
+ * with the error code, because Calavera cannot see what either would run, and clean must keep the
+ * artifact rather than read them as mentioning nothing.
  *
  * The scan matches text, so it does not see a path that a script builds, such as through `cd`, a
  * glob, or a file the script sources. ADR-0015 records that limit.
@@ -420,7 +421,7 @@ export async function writeArtifactWiring(files, cwd = process.cwd()) {
  *   .agents/skills/protected-branch-guard, or a file, such as a hook script.
  * @param {WiringFile[]} plannedFiles The files as the planned wiring leaves them.
  * @param {string} [cwd]
- * @returns {Promise<{ mentions: string[], unresolved: string[] }>}
+ * @returns {Promise<{ mentions: string[], unresolved: string[], unreadable: { path: string, code: string }[] }>}
  */
 export async function wiringFilesThatMention(artifactPath, plannedFiles, cwd = process.cwd()) {
   // The state records paths built with path.join, which uses backslashes on Windows, but scripts
@@ -440,6 +441,8 @@ export async function wiringFilesThatMention(artifactPath, plannedFiles, cwd = p
   const mentions = [];
   /** @type {string[]} */
   const unresolved = [];
+  /** @type {{ path: string, code: string }[]} */
+  const unreadable = [];
   for (const path of [...hookPaths, CLAUDE_SETTINGS_PATH, CLAUDE_LOCAL_SETTINGS_PATH]) {
     const planned = plannedFiles.find((file) => file.path === path);
     const read = planned
@@ -447,6 +450,10 @@ export async function wiringFilesThatMention(artifactPath, plannedFiles, cwd = p
       : await readThroughLinks(resolve(cwd, path));
     if (read.unresolved) {
       unresolved.push(path);
+      continue;
+    }
+    if (read.unreadable) {
+      unreadable.push({ path, code: read.unreadable });
       continue;
     }
     if (read.contents === undefined) continue;
@@ -459,7 +466,7 @@ export async function wiringFilesThatMention(artifactPath, plannedFiles, cwd = p
       : mentionsPath(read.contents, wanted);
     if (linksIntoArtifact || named) mentions.push(path);
   }
-  return { mentions, unresolved };
+  return { mentions, unresolved, unreadable };
 }
 
 /** @param {string} path */
@@ -470,25 +477,26 @@ function toSlashes(path) {
 /**
  * Reads the regular file at `path`, following symbolic links, with the path it resolves to. A
  * missing file, a directory, a named pipe, or a device reads as no contents: Git runs only regular
- * files, and reading a pipe waits forever. A link that cannot be followed reads as unresolved.
- * Other errors propagate, which stops clean.
+ * files, and reading a pipe waits forever. A link that cannot be followed reads as unresolved, and
+ * a file Calavera has no permission to read reads as unreadable, with the error code. Other errors
+ * propagate, which stops clean.
  *
  * @param {string} path
- * @returns {Promise<{ contents?: string, realPath?: string, unresolved?: true }>}
+ * @returns {Promise<{ contents?: string, realPath?: string, unresolved?: true, unreadable?: string }>}
  */
 async function readThroughLinks(path) {
-  let stats;
   try {
-    stats = await stat(path);
+    const stats = await stat(path);
+    if (!stats.isFile()) return {};
+    return { contents: await readFile(path, "utf8"), realPath: await realpath(path) };
   } catch (error) {
     const { code } = /** @type {NodeJS.ErrnoException} */ (error);
+    if (code === "EACCES" || code === "EPERM") return { unreadable: code };
     if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "ELOOP") throw error;
     // lstat fails when nothing is at the path at all, which reads as a missing file.
     const link = await lstat(path).catch(() => undefined);
     return link?.isSymbolicLink() ? { unresolved: true } : {};
   }
-  if (!stats.isFile()) return {};
-  return { contents: await readFile(path, "utf8"), realPath: await realpath(path) };
 }
 
 /**
@@ -512,7 +520,7 @@ function settingsMentionPath(text, path) {
 }
 
 /**
- * Every string in a parsed JSON value, keys included.
+ * Every string value in parsed JSON. Keys are left out, because Claude Code runs only values.
  *
  * @param {unknown} value
  * @returns {string[]}
@@ -520,9 +528,7 @@ function settingsMentionPath(text, path) {
 function jsonStrings(value) {
   if (typeof value === "string") return [value];
   if (Array.isArray(value)) return value.flatMap(jsonStrings);
-  if (isObject(value)) {
-    return Object.entries(value).flatMap(([key, entry]) => [key, ...jsonStrings(entry)]);
-  }
+  if (isObject(value)) return Object.values(value).flatMap(jsonStrings);
   return [];
 }
 

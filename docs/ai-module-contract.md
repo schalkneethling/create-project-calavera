@@ -106,6 +106,13 @@ unedited output later. Before `clean` deletes a skill, it removes the hook block
 and settings groups that skill's wiring added, but only text that matches the
 record; an edited block or group stops `clean` with a conflict.
 
+`clean` also keeps an unedited artifact that a hook script, `.claude/settings.json`,
+or `.claude/settings.local.json` still mentions, or that a hook it cannot follow or
+read may run. Each item `clean` keeps is a `skip` change whose `reason` says why and
+what to do, and whose `skipReasons` lists the reasons as codes: `local-edits`,
+`legacy-state`, `still-mentioned`, `unfollowable-link`, and `unreadable`. The
+summary message names the kept items for each reason, with the action.
+
 ## Post-Install Pointers
 
 `apply` returns post-install pointers in both human-readable output and JSON

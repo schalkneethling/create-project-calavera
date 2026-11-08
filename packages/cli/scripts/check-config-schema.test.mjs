@@ -3235,6 +3235,10 @@ test("clean human output reports planned and completed deletes and locally edite
     const skipOnlyJsonResult = JSON.parse(skipOnlyJsonStdout);
 
     assert.equal(Object.hasOwn(skipOnlyJsonResult, "dryRun"), false);
+    assert.deepEqual(
+      skipOnlyJsonResult.changes.map(({ type, path, skipReasons }) => [type, path, skipReasons]),
+      [["skip", editedPath, ["local-edits"]]],
+    );
 
     const { stdout: skipOnlyDryRunStdout } = await execFileAsync(
       process.execPath,
@@ -3244,9 +3248,12 @@ test("clean human output reports planned and completed deletes and locally edite
 
     assert.match(
       skipOnlyDryRunStdout,
-      /No stale managed items were safe to remove\. Some stale items have local edits\./,
+      /No stale managed items were safe to remove\. Kept knip\.json, because it has local edits\. Clean keeps your version\. To have clean remove an item, restore the content Calavera wrote, or delete the item yourself\./,
     );
-    assert.match(skipOnlyDryRunStdout, /Would skip knip\.json: Managed file has local edits/);
+    assert.match(
+      skipOnlyDryRunStdout,
+      /Would skip knip\.json: Managed file has local edits \(installed=[0-9a-f]+, state=[0-9a-f]+\)\. Clean keeps your version\. To have clean remove it, restore the content Calavera wrote, or delete it yourself\./,
+    );
     assert.doesNotMatch(skipOnlyDryRunStdout, /^Skipped knip\.json:/m);
     assert.equal(await readFile(safePath, "utf8"), safeContents);
     assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
@@ -3274,11 +3281,69 @@ test("clean human output reports planned and completed deletes and locally edite
       { env: environment },
     );
 
-    assert.match(cleanStdout, /Removed stale managed files\./);
+    assert.match(
+      cleanStdout,
+      /Removed stale managed files\. Kept knip\.json, because it has local edits\./,
+    );
     assert.match(cleanStdout, /Removed \.editorconfig/);
     assert.match(cleanStdout, /Skipped knip\.json: Managed file has local edits/);
     await assertPathMissing(safePath);
     assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+test("clean says why it keeps a managed file whose record has no hash, and what to run", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-clean-legacy-"));
+  const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
+
+  try {
+    process.chdir(projectDirectory);
+    await mkdir(".calavera");
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
+    );
+    await writeFile("knip.json", "{}\n");
+    await writeFile(
+      ".calavera/state.json",
+      `${JSON.stringify(
+        {
+          version: 1,
+          profile: "minimal",
+          integrations: [],
+          files: ["knip.json"],
+          managedFiles: [{ path: "knip.json" }],
+          aiArtifacts: [],
+        },
+        null,
+        2,
+      )}\n`,
+    );
+
+    const { stdout } = await execFileAsync(
+      process.execPath,
+      [cliPath, "clean", "--dry-run", "--json"],
+      { env: { ...process.env, NO_COLOR: "1" } },
+    );
+    const result = JSON.parse(stdout);
+
+    assert.deepEqual(
+      result.changes.map(({ type, path, skipReasons }) => [type, path, skipReasons]),
+      [["skip", "knip.json", ["legacy-state"]]],
+    );
+    assert.equal(
+      result.changes[0].reason,
+      "Managed file has a record from an older Calavera without a hash, so clean cannot tell whether you edited it. Run create-project-calavera apply, then run clean again.",
+    );
+    assert.equal(
+      result.message,
+      "No stale managed items were safe to remove. Kept knip.json, because its record, from an older Calavera, has no hash. Run create-project-calavera apply, then run clean again.",
+    );
+    assert.equal(await readFile("knip.json", "utf8"), "{}\n");
   } finally {
     process.chdir(originalDirectory);
     await rm(projectDirectory, { force: true, recursive: true });

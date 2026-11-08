@@ -12,6 +12,7 @@ import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
 import {
   access,
+  chmod,
   mkdir,
   mkdtempDisposable,
   readFile,
@@ -800,5 +801,85 @@ test("Given an apply that deselected block-dangerous-commands and nothing that r
     const result = cleanJson(["--yes"]);
     assert.equal(result.changes.find(({ path }) => path === hookScript)?.type, "delete");
     assert.equal(await exists(hookScript), false);
+  });
+});
+
+// Owner decision on #856: when clean keeps stale items, its summary says why for each reason and
+// what the person can do, and the JSON output tells the reasons apart with `skipReasons`.
+test("Given an apply that deselected the guard, clean names each reason it keeps the skill directory, with the action, in its summary and in JSON", async () => {
+  await inWiredProject(async (registry) => {
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+
+    const keptFor = () => {
+      const result = cleanJson(["--dry-run"]);
+      const skip = result.changes.find(({ path }) => path === skillDirectory);
+      return { message: result.message, reason: skip?.reason, skipReasons: skip?.skipReasons };
+    };
+
+    // Still mentioned by a hook script.
+    await writeFile(".vite-hooks/post-merge", `${line("pre-push")}\n`);
+    assert.deepEqual(keptFor(), {
+      message: `No stale managed items were safe to remove. Kept ${skillDirectory}, because a hook script or Claude Code settings file still mentions it. Remove the lines or groups that run them from the files each item's reason names, then run clean again.`,
+      reason: `.vite-hooks/post-merge still mentions ${skillDirectory} after clean, so deleting it would break what runs there. Remove those lines or groups, then run clean again.`,
+      skipReasons: ["still-mentioned"],
+    });
+    await rm(".vite-hooks/post-merge");
+
+    // A link that cannot be followed.
+    await symlink("../scripts/missing.sh", ".vite-hooks/post-merge");
+    assert.deepEqual(keptFor(), {
+      message: `No stale managed items were safe to remove. Kept ${skillDirectory}, because a hook is a symbolic link that Calavera cannot follow. Repair or remove the links each item's reason names, then run clean again.`,
+      reason: `.vite-hooks/post-merge is a symbolic link that Calavera cannot follow, so it cannot tell whether it runs ${skillDirectory}. Repair or remove that link, then run clean again.`,
+      skipReasons: ["unfollowable-link"],
+    });
+    await rm(".vite-hooks/post-merge");
+
+    // A file Calavera cannot read.
+    await writeFile(".vite-hooks/post-merge", "vp install\n");
+    await chmod(".vite-hooks/post-merge", 0o000);
+    try {
+      assert.deepEqual(keptFor(), {
+        message: `No stale managed items were safe to remove. Kept ${skillDirectory}, because Calavera cannot read a hook script or settings file that may run it. Make the files each item's reason names readable, then run clean again.`,
+        reason: `Calavera cannot read .vite-hooks/post-merge (EACCES), so it cannot tell whether it runs ${skillDirectory}. Make that file readable, then run clean again.`,
+        skipReasons: ["unreadable"],
+      });
+    } finally {
+      await chmod(".vite-hooks/post-merge", 0o644);
+    }
+    await rm(".vite-hooks/post-merge");
+
+    // Local edits.
+    const skillFile = `${skillDirectory}/SKILL.md`;
+    await writeFile(skillFile, `${await readFile(skillFile, "utf8")}\nMy own note.\n`);
+    const edited = keptFor();
+    assert.equal(
+      edited.message,
+      `No stale managed items were safe to remove. Kept ${skillDirectory}, because it has local edits. Clean keeps your version. To have clean remove an item, restore the content Calavera wrote, or delete the item yourself.`,
+    );
+    assert.match(
+      edited.reason ?? "",
+      /^AI artifact has local edits \(installed=[^,]+, state=[^)]+\)\. Clean keeps your version\. To have clean remove it, restore the content Calavera wrote, or delete it yourself\.$/,
+    );
+    assert.deepEqual(edited.skipReasons, ["local-edits"]);
+  });
+});
+
+test("Given a guard kept for two reasons and another item kept for a third, clean lists every reason, and each item keeps all of its reasons", async () => {
+  await inWiredProject(async (registry) => {
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    await writeFile(".vite-hooks/post-merge", `${line("pre-push")}\n`);
+    await symlink("../scripts/missing.sh", ".vite-hooks/post-checkout");
+
+    const result = cleanJson(["--yes"]);
+    const skip = result.changes.find(({ path }) => path === skillDirectory);
+    assert.deepEqual(skip?.skipReasons, ["still-mentioned", "unfollowable-link"]);
+    assert.match(
+      result.message,
+      /because a hook script or Claude Code settings file still mentions it\./,
+    );
+    assert.match(result.message, /because a hook is a symbolic link that Calavera cannot follow\./);
+    assert.equal(await exists(script), true);
   });
 });
