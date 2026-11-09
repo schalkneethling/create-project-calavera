@@ -392,7 +392,7 @@ test("Given an earlier template changed only in whitespace or encoding, when --i
     "trailing space": older.replace("tooling.\n", "tooling. \n"),
     "a missing final newline": older.trimEnd(),
     "an extra final newline": `${older}\n`,
-    "a lone carriage return": older.replace("\n", "\r"),
+    "a lone carriage return": older.replaceAll("\n", "\r"),
     "a tab": older.replace("- Use", "-\tUse"),
   };
   for (const [label, edited] of Object.entries(variants)) {
