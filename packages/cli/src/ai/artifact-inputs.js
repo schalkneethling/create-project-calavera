@@ -120,7 +120,7 @@ export async function checkInputValue(check, value, cwd) {
   }
 
   if (!SHELL_SAFE_BRANCH_NAME.test(value) || value.startsWith("-")) {
-    return `"${value}" is not a branch name Calavera accepts. Use only letters, digits, ".", "_", "-", and "/", and do not start with "-", because Calavera writes the name into hook commands that a shell runs.`;
+    return `"${value}" is not a branch name Calavera accepts. Use only letters, digits, ".", "_", "-", and "/", and do not start with "-". Calavera holds every branch input to the characters that are safe in a hook command a shell runs, such as the guard's.`;
   }
 
   try {

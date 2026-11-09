@@ -60,14 +60,16 @@ function branchName(ref) {
 
 /**
  * The repository's default branch (ADR-0015, Decision 6, as amended on 2026-11-08). It is the
- * first of these that answers, and never the current branch:
+ * first of these that answers. The current branch is not one of the sources:
  *
  * 1. The branch `refs/remotes/origin/HEAD` points to, when origin has that branch.
  * 2. The branch `git var GIT_DEFAULT_BRANCH` names, when the repository has a local branch of that
  *    name, or has no commits yet and HEAD names that branch.
  * 3. The repository's only local branch.
  *
- * Otherwise there is no default, and the reason names what each source showed.
+ * Otherwise there is no default, and the reason names what each source showed. A failure of
+ * `git var` only skips step 2, because a Git release that predates GIT_DEFAULT_BRANCH rejects it,
+ * and the reason keeps Git's output when no later step answers.
  *
  * @param {string} cwd
  * @param {{ env?: NodeJS.ProcessEnv }} [options]
@@ -111,34 +113,8 @@ async function findDefaultBranch(run) {
     };
   }
 
-  const gitDefault = await run(["var", "GIT_DEFAULT_BRANCH"]);
-  if (!gitDefault) {
-    notes.push("git var GIT_DEFAULT_BRANCH has no value");
-  } else if (localBranches.includes(gitDefault)) {
-    return {
-      value: gitDefault,
-      source: "git-default-branch",
-      detail: `git var GIT_DEFAULT_BRANCH names ${gitDefault}, and the repository has a local branch ${gitDefault}`,
-    };
-  } else if (localBranches.length === 0) {
-    // With no local branch, HEAD can only name a branch that has no commits yet.
-    const head = await run(["symbolic-ref", "--quiet", "HEAD"]);
-    const current = head === undefined ? undefined : branchName(head);
-    if (current === gitDefault) {
-      return {
-        value: current,
-        source: "git-default-branch",
-        detail: `git var GIT_DEFAULT_BRANCH names ${current}, and the repository has no commits yet and is on ${current}`,
-      };
-    }
-    notes.push(
-      `git var GIT_DEFAULT_BRANCH names ${gitDefault}, and the repository has no commits yet and ${current === undefined ? "HEAD is detached" : `is on ${current}`}`,
-    );
-  } else {
-    notes.push(
-      `git var GIT_DEFAULT_BRANCH names ${gitDefault}, and the repository has no local branch ${gitDefault}`,
-    );
-  }
+  const fromGitDefault = await gitDefaultBranch(run, localBranches, notes);
+  if (fromGitDefault) return fromGitDefault;
 
   const [onlyBranch, ...otherBranches] = localBranches;
   if (onlyBranch !== undefined && otherBranches.length === 0) {
@@ -154,4 +130,64 @@ async function findDefaultBranch(run) {
       : `the repository has ${localBranches.length} local branches (${localBranches.join(", ")}), not exactly one`,
   );
   return { reason: `no source names the repository's default branch: ${notes.join("; ")}` };
+}
+
+/**
+ * Step 2: the branch `git var GIT_DEFAULT_BRANCH` names, when the repository has it. A Git release
+ * that predates the variable rejects it, so a failure here is noted and the next step still runs.
+ *
+ * @param {(args: string[]) => Promise<string | undefined>} run
+ * @param {string[]} localBranches
+ * @param {string[]} notes What each step showed, for the reason when no step answers.
+ * @returns {Promise<DefaultBranch | undefined>}
+ */
+async function gitDefaultBranch(run, localBranches, notes) {
+  /** @type {string | undefined} */
+  let name;
+  try {
+    name = await run(["var", "GIT_DEFAULT_BRANCH"]);
+  } catch (error) {
+    if (!(error instanceof GitFailure)) throw error;
+    notes.push(error.message);
+    return undefined;
+  }
+
+  if (!name) {
+    notes.push("git var GIT_DEFAULT_BRANCH has no value");
+    return undefined;
+  }
+  if (localBranches.includes(name)) {
+    return {
+      value: name,
+      source: "git-default-branch",
+      detail: `git var GIT_DEFAULT_BRANCH names ${name}, and the repository has a local branch ${name}`,
+    };
+  }
+  if (localBranches.length > 0) {
+    notes.push(
+      `git var GIT_DEFAULT_BRANCH names ${name}, and the repository has no local branch ${name}`,
+    );
+    return undefined;
+  }
+
+  // With no local branch, HEAD either names a branch that has no commits yet or is detached.
+  const head = await run(["symbolic-ref", "--quiet", "HEAD"]);
+  if (head === undefined) {
+    notes.push(
+      `git var GIT_DEFAULT_BRANCH names ${name}, and the repository has no local branch and HEAD is detached`,
+    );
+    return undefined;
+  }
+  const current = branchName(head);
+  if (current === name) {
+    return {
+      value: name,
+      source: "git-default-branch",
+      detail: `git var GIT_DEFAULT_BRANCH names ${name}, and the repository has no commits yet and is on ${name}`,
+    };
+  }
+  notes.push(
+    `git var GIT_DEFAULT_BRANCH names ${name}, and the repository has no commits yet and is on ${current}`,
+  );
+  return undefined;
 }

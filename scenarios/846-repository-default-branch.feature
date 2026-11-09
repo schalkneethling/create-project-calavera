@@ -7,7 +7,7 @@
 # packages/cli/scripts/artifact-inputs.test.mjs, packages/cli/scripts/repository-controls-inputs.test.mjs,
 # and packages/cli/scripts/check-artifact-contracts.test.mjs.
 
-Feature: Calavera suggests the repository's default branch, never the current branch
+Feature: Calavera suggests the repository's default branch, not the current branch
 
   Background:
     Given Git has no global or system configuration except what a scenario sets

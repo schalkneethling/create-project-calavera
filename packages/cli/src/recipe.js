@@ -173,7 +173,7 @@ export const recipeToolInputDescriptions = Object.freeze({
     'Values for the inputs the artifact declares, keyed by input name, such as { protectedBranch: "main" }. compose_recipe reports each declared input with its default; confirm the value with the user before dry_run_apply.',
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
-    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default, and compose_recipe reports the repository's default branch as the suggested value.",
+    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
   baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
   baselineLimit: "Maximum number of Baseline feature search results.",

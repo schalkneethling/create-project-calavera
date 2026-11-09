@@ -284,7 +284,7 @@ test("a detached HEAD with no local branch gives no default, and the reason says
 
   assert.deepEqual(await resolve(cwd), {
     reason:
-      "no source names the repository's default branch: refs/remotes/origin/HEAD does not exist or is not a symbolic ref; git var GIT_DEFAULT_BRANCH names master, and the repository has no commits yet and HEAD is detached; the repository has no local branches",
+      "no source names the repository's default branch: refs/remotes/origin/HEAD does not exist or is not a symbolic ref; git var GIT_DEFAULT_BRANCH names master, and the repository has no local branch and HEAD is detached; the repository has no local branches",
   });
 });
 
@@ -353,7 +353,6 @@ test("a failure in a later step keeps Git's error output, and the resolver stops
       "for-each-ref --format=%(refname) refs/heads/ refs/remotes/origin/",
       "git for-each-ref --format=%(refname) refs/heads/ refs/remotes/origin/ failed: fatal: refs unreadable",
     ],
-    ["var GIT_DEFAULT_BRANCH", "git var GIT_DEFAULT_BRANCH failed: fatal: refs unreadable"],
   ]) {
     const { cwd, env } = await twoBranches(t);
     const failing = await standInGit(t, env, {
@@ -412,4 +411,27 @@ test("git var GIT_DEFAULT_BRANCH without a value is noted, and the next source s
         "no source names the repository's default branch: refs/remotes/origin/HEAD does not exist or is not a symbolic ref; git var GIT_DEFAULT_BRANCH has no value; the repository has 2 local branches (feat, master), not exactly one",
     });
   }
+});
+
+test("a Git release without GIT_DEFAULT_BRANCH skips that source: the only local branch still answers, and otherwise the reason keeps Git's output", async (t) => {
+  // Before Git learned the variable, git var printed its usage and exited 129.
+  const usage = {
+    args: "var GIT_DEFAULT_BRANCH",
+    code: 129,
+    stderr: "usage: git var (-l | <variable>)\n",
+  };
+  const { init, commit, env } = await scratch(t);
+  const cwd = await init("old-git", ["--initial-branch=master"]);
+  await commit(cwd);
+  assert.deepEqual(await resolveDefaultBranch(cwd, { env: await standInGit(t, env, usage) }), {
+    value: "master",
+    source: "only-local-branch",
+    detail: "master is the repository's only local branch",
+  });
+
+  const { cwd: two, env: twoEnv } = await twoBranches(t);
+  assert.deepEqual(await resolveDefaultBranch(two, { env: await standInGit(t, twoEnv, usage) }), {
+    reason:
+      "no source names the repository's default branch: refs/remotes/origin/HEAD does not exist or is not a symbolic ref; git var GIT_DEFAULT_BRANCH failed: usage: git var (-l | <variable>); the repository has 2 local branches (feat, master), not exactly one",
+  });
 });
