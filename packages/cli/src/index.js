@@ -52,6 +52,7 @@ import {
   planHtmlValidateIgnoreChanges,
 } from "./ignore-lines.js";
 import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
+import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { loadProjectFormatter } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
@@ -3044,14 +3045,37 @@ function mergeAiArtifactsIntoState(previousState, aiArtifacts) {
 }
 
 /**
+ * The reason a guidance file is replaced: its text is what an earlier release wrote, so the
+ * difference comes from Calavera's own template and not from the person (#830).
+ *
+ * @param {{ description: string }} earlier
+ * @returns {string}
+ */
+function earlierGuidanceUpdateReason(earlier) {
+  return `Updated because the file holds the text of an earlier Calavera release (${earlier.description}), not a local edit.`;
+}
+
+/**
+ * Writes a bootstrap file that Calavera owns when it is absent. An existing file is left alone,
+ * unless `earlierKind` is given and the file holds exactly the text an earlier release wrote
+ * (#830); any other text is a local edit and is kept, reported with `conflictReason`.
+ *
  * @param {string} path
  * @param {string} contents
  * @param {boolean} dryRun
  * @param {Change[]} changes
  * @param {string} conflictReason
+ * @param {import("./utils/earlier-guidance.js").EarlierGuidanceKind} [earlierKind]
  * @returns {Promise<boolean>}
  */
-async function writeBootstrapTextFile(path, contents, dryRun, changes, conflictReason) {
+async function writeBootstrapTextFile(
+  path,
+  contents,
+  dryRun,
+  changes,
+  conflictReason,
+  earlierKind,
+) {
   const targetPath = path.trim();
 
   if (!targetPath) {
@@ -3061,13 +3085,29 @@ async function writeBootstrapTextFile(path, contents, dryRun, changes, conflictR
   if (await fileExists(targetPath)) {
     const currentContents = await readFile(targetPath, "utf8");
 
-    changes.push({
-      type: "skip",
-      path: targetPath,
-      reason: currentContents === contents ? "Already up to date." : conflictReason,
-    });
+    if (currentContents === contents) {
+      changes.push({ type: "skip", path: targetPath, reason: "Already up to date." });
+      return true;
+    }
 
-    return currentContents === contents;
+    const earlier = earlierKind ? findEarlierGuidance(earlierKind, currentContents) : undefined;
+
+    if (earlier) {
+      changes.push({
+        type: "update",
+        path: targetPath,
+        reason: earlierGuidanceUpdateReason(earlier),
+      });
+
+      if (!dryRun) {
+        await writeFile(targetPath, contents);
+      }
+
+      return true;
+    }
+
+    changes.push({ type: "skip", path: targetPath, reason: conflictReason });
+    return false;
   }
 
   changes.push({ type: "write", path: targetPath });
@@ -3344,11 +3384,28 @@ async function handleExistingAgentBootstrapGuidance(
   }
 
   if (currentGuidance.includes(AGENT_BOOTSTRAP_MARKER)) {
+    // A whole-file AGENTS.md has the marker without the section markers. It is replaced only when
+    // it holds the text an earlier release wrote; any other text is a local edit (#830).
+    const earlier = findEarlierGuidance("guidance", currentGuidance);
+
+    if (!earlier) {
+      changes.push({
+        type: "skip",
+        path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
+        reason: "Calavera guidance already present.",
+      });
+      return;
+    }
+
     changes.push({
-      type: "skip",
+      type: "update",
       path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
-      reason: "Calavera guidance already present.",
+      reason: earlierGuidanceUpdateReason(earlier),
     });
+
+    if (!dryRun) {
+      await writeFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, guidanceText.file);
+    }
     return;
   }
 
@@ -3381,6 +3438,7 @@ async function handleExistingAgentBootstrapGuidance(
     dryRun,
     changes,
     "Existing fallback Calavera guidance differs and was left unchanged.",
+    "guidance",
   );
 }
 
@@ -3492,6 +3550,7 @@ export async function agentBootstrap(options = {}) {
       bootstrapOptions.dryRun,
       changes,
       "Existing Calavera MCP setup notes differ and were left unchanged.",
+      "mcp",
     );
   }
 
