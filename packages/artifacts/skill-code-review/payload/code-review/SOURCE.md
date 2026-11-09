@@ -1,6 +1,6 @@
 # Source
 
-This skill is copied from [`TFG-Labs/bash-claude-marketplace@db580f6`](https://github.com/TFG-Labs/bash-claude-marketplace/tree/db580f6/plugins/pr-review/skills/review), folder `plugins/pr-review/skills/review/`, by its author. That repository is private; the link is a record of the source commit, not a public page. The eval cases beside this payload come from the same folder.
+This skill is copied from [`TFG-Labs/bash-claude-marketplace@c7599d1`](https://github.com/TFG-Labs/bash-claude-marketplace/tree/c7599d1/plugins/pr-review/skills/review), folder `plugins/pr-review/skills/review/`, by its author. That repository is private; the link is a record of the source commit, not a public page. The eval cases beside this payload come from the same folder.
 
 | Marketplace file  | Calavera file     | Change                                                                                                                                                                                                                                       |
 | ----------------- | ----------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |

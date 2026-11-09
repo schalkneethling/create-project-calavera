@@ -25,7 +25,7 @@ Flags, anywhere in the arguments:
 - `--post`: after the report, post it to GitHub as a review (section 6). Only for the PR shape.
 - `--nits`: also report every P2 and Nit finding. Without it, report P0 and P1, plus at most two P2s whose fix you can write as an exact `suggestion` block (section 4).
 - `--focus "..."`: the author asked for attention on one thing. Review that first and say so in the report.
-- `--depth quick|standard|deep`: override the depth the sizing step would pick (section 2). `quick` is the tiny treatment whatever the size; `deep` is the full process on every file plus a mutation for every P0 and P1 hypothesis; `standard` is the default. Risk still beats `quick`.
+- `--depth quick|standard|deep`: override the depth the sizing step would pick (section 2). `quick` is the Tiny treatment whatever the size; `deep` is the full process on every file plus the whole checklist and a "Checked and fine" section; `standard` is the default. Risk still beats `quick`.
 
 No arguments and the current folder is a git repository: review the current branch against its base. No arguments and no repository: ask for a PR URL or a folder and branch, and stop.
 
@@ -81,13 +81,13 @@ The tier is for you, not the reader. It does not appear in the report; the lengt
 
 **When the user passes `--depth`,** it replaces the size-based choice:
 
-| `--depth`  | What you do                                                                                                                                                                                                                                                                  |
-| ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `quick`    | The Tiny treatment for the whole change, however large: read the diff, check claims against the code, follow only the touched symbols, no checklist, no mutation. For a sanity pass before the user reads the change themselves.                                             |
-| `standard` | The tier the table above gives. The default when the flag is absent.                                                                                                                                                                                                         |
-| `deep`     | The Small process on every file, whatever the size, plus: read the whole bug checklist, run one targeted mutation for every P0 and P1 hypothesis when a suite exists, and always write "Checked and fine". For a release branch or a change the user wants to be sure about. |
+| `--depth`  | What you do                                                                                                                                                                                                                                                   |
+| ---------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `quick`    | The Tiny treatment for the whole change, however large: read the diff, check claims against the code, follow only the touched symbols, no checklist, and no mutation even when a test changed. For a sanity pass before the user reads the change themselves. |
+| `standard` | The tier the table above gives. The default when the flag is absent.                                                                                                                                                                                          |
+| `deep`     | The Small process on every file, whatever the size, plus: read the whole bug checklist and always write "Checked and fine". For a release branch or a change the user wants to be sure about.                                                                 |
 
-Risk still beats `quick`: a change that touches money, auth, data, a migration or a retry loop is reviewed at `standard` even when `quick` was asked for, and the report says so in one line after the verdict: "Depth raised from quick to standard: this changes a payment path." `deep` is never lowered.
+Risk still beats `quick`: a change that touches money, auth, data, a migration or a retry loop is reviewed at `standard` even when `quick` was asked for, and the report says so in one line directly under the verdict line: "Depth raised from quick to standard: this changes a payment path." `deep` is never lowered.
 
 ## 3. Understand before you judge
 
@@ -186,9 +186,9 @@ Use exactly this shape. Leave out any section that would be empty.
 ## Review: <title> ([owner/repo#N](url)) ← branch shape: "## Review: <branch> against <base> in <folder>"
 
 **Verdict:** Merge | Fix 2 before merge | Needs rework · **Risk:** Low | Medium | High | Critical
+<If --depth quick was raised by risk: "Depth raised from quick to standard: <why>.">
 <One sentence on what the change does, only when the reader has nothing else: branch shape, or a PR whose description is empty or does not say. A PR with a description that says what it does gets no summary; the reader has read it.>
 <If --focus: one sentence on the focus area.>
-<If --depth quick was raised by risk: "Depth raised from quick to standard: <why>.">
 <If issues.json has an issue: "**Linked issue:** [org/repo#12](url). Meets: a, b. Does not meet: c. Needs a person: d.">
 <Large tier: "**Start with:** `path`, `path`." The two or three files a person should read first. One more line if the change should be split.>
 
@@ -218,7 +218,7 @@ Use exactly this shape. Leave out any section that would be empty.
 
 ### Checked and fine
 
-<Leave this out for small changes. For a risky change (migration, auth, payments), at most three bullets naming the thing a reviewer would otherwise check themselves, each with the file and line that handles it. Never a list of everything you looked at.>
+<Leave this out for small changes, unless `--depth deep` was passed. For a risky change (migration, auth, payments), at most three bullets naming the thing a reviewer would otherwise check themselves, each with the file and line that handles it. Never a list of everything you looked at.>
 
 ````
 
