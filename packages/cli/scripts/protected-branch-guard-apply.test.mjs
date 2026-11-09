@@ -11,7 +11,13 @@ import test from "node:test";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
+import { isolateGitConfiguration } from "./git-isolation.mjs";
 import { snapshotDirectory as snapshot } from "./project-snapshot.mjs";
+
+// #846: the default is the repository's default branch. These repositories start on main with no
+// commits, which is that default only where Git's own default branch is main, so the tests set it
+// instead of reading the machine's configuration.
+isolateGitConfiguration({ "init.defaultBranch": "main" });
 
 const id = "skill-protected-branch-guard";
 const line = (mode, branch) =>
@@ -55,7 +61,7 @@ function composed() {
   return { ...buildRecipe("minimal", [], "npm"), ai: [{ id }] };
 }
 
-test("compose_recipe reports the protected branch input with the current branch as its default", async () => {
+test("compose_recipe reports the protected branch input with the repository's default branch as its default", async () => {
   await inProject(async () => {
     const response = await callMcpTool("compose_recipe", {
       profile: "minimal",
@@ -81,7 +87,18 @@ test("dry_run_apply shows the wiring and the warnings, returns the recipe with t
     const { result } = await callMcpTool("dry_run_apply", { recipe: composed() }, registry);
 
     assert.deepEqual(result.artifactInputs, [
-      { artifact: id, index: 0, name: "protectedBranch", value: "main", source: "default" },
+      {
+        artifact: id,
+        index: 0,
+        name: "protectedBranch",
+        value: "main",
+        source: "default",
+        defaultSource: {
+          rule: "git-default-branch",
+          detail:
+            "git var GIT_DEFAULT_BRANCH names main, and the repository has no commits yet and is on main",
+        },
+      },
     ]);
     assert.deepEqual(result.recipe.ai, [{ id, inputs: { protectedBranch: "main" } }]);
     assert.deepEqual(

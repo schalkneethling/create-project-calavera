@@ -21,7 +21,7 @@ const recipe = buildRecipe(
   ["editorconfig", "stylelint", "knip", "github-repository-controls"],
   "npm",
   [],
-  { "github-repository-controls": { repository: "example/unchanged" } },
+  { "github-repository-controls": { repository: "example/unchanged", defaultBranch: "main" } },
 );
 
 const applyOptions = {
