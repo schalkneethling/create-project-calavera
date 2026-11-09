@@ -21,27 +21,35 @@ const LOCAL_BRANCHES = "refs/heads/";
  */
 
 /**
+ * A Git failure other than a missing ref, with Git's own error output in the message.
+ * resolveDefaultBranch turns it into the reason, so it never leaves this module.
+ */
+class GitFailure extends Error {}
+
+/**
  * Runs Git and tells a missing value apart from a failure. With --quiet, `git symbolic-ref` exits 1
  * and prints nothing when the ref does not exist or is not symbolic, and `git var` exits 1 when the
- * variable has no value. Any other exit is a failure that keeps Git's standard error.
+ * variable has no value. Any other exit throws a GitFailure that keeps Git's standard error.
  *
  * @param {string[]} args
  * @param {string} cwd
  * @param {NodeJS.ProcessEnv} env
- * @returns {Promise<{ stdout: string } | { missing: true } | { failure: string }>}
+ * @returns {Promise<string | undefined>} The output, or undefined when the value is missing.
  */
 async function git(args, cwd, env) {
   try {
     const { stdout } = await execFileAsync("git", args, { cwd, env });
-    return { stdout: stdout.trim() };
+    return stdout.trim();
   } catch (error) {
-    const { code, stderr } = /** @type {{ code?: unknown, stderr?: unknown }} */ (error);
+    // The promisified execFile attaches the standard error to every failure it reports.
+    const { code, stderr } = /** @type {{ code?: unknown, stderr: string }} */ (error);
     // The caller says that Git is missing; it must not read as a branch without a default.
     if (code === "ENOENT") throw error;
-    const output = typeof stderr === "string" ? stderr.trim() : "";
-    if (code === 1 && !output) return { missing: true };
-    const message = output || (error instanceof Error ? error.message : String(error));
-    return { failure: `git ${args.join(" ")} failed: ${message}` };
+    const output = stderr.trim();
+    if (code === 1 && !output) return undefined;
+    // Without standard error, Node.js's own description of the failure is the reason.
+    const message = output || /** @type {Error} */ (error).message.trim();
+    throw new GitFailure(`git ${args.join(" ")} failed: ${message}`);
   }
 }
 
@@ -66,31 +74,36 @@ function branchName(ref) {
  * @returns {Promise<DefaultBranch | NoDefaultBranch>}
  */
 export async function resolveDefaultBranch(cwd, { env = process.env } = {}) {
-  const originHead = await git(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"], cwd, env);
-  if ("failure" in originHead) return { reason: originHead.failure };
-  const refs = await git(
-    ["for-each-ref", "--format=%(refname)", LOCAL_BRANCHES, ORIGIN_BRANCHES],
-    cwd,
-    env,
-  );
-  if ("failure" in refs) return { reason: refs.failure };
-  const existing = new Set(("stdout" in refs ? refs.stdout : "").split("\n").filter(Boolean));
+  try {
+    return await findDefaultBranch((args) => git(args, cwd, env));
+  } catch (error) {
+    if (error instanceof GitFailure) return { reason: error.message };
+    throw error;
+  }
+}
+
+/**
+ * @param {(args: string[]) => Promise<string | undefined>} run
+ * @returns {Promise<DefaultBranch | NoDefaultBranch>}
+ */
+async function findDefaultBranch(run) {
+  const originHead = await run(["symbolic-ref", "--quiet", "refs/remotes/origin/HEAD"]);
+  const refs = await run(["for-each-ref", "--format=%(refname)", LOCAL_BRANCHES, ORIGIN_BRANCHES]);
+  const existing = new Set((refs ?? "").split("\n").filter(Boolean));
   const localBranches = [...existing]
     .filter((ref) => ref.startsWith(LOCAL_BRANCHES))
     .map(branchName);
   /** @type {string[]} */
   const notes = [];
 
-  if (!("stdout" in originHead)) {
+  if (originHead === undefined) {
     notes.push("refs/remotes/origin/HEAD does not exist or is not a symbolic ref");
-  } else if (!originHead.stdout.startsWith(ORIGIN_BRANCHES)) {
-    notes.push(
-      `refs/remotes/origin/HEAD points to ${originHead.stdout}, which is not a branch of origin`,
-    );
-  } else if (!existing.has(originHead.stdout)) {
-    notes.push(`refs/remotes/origin/HEAD points to ${originHead.stdout}, which does not exist`);
+  } else if (!originHead.startsWith(ORIGIN_BRANCHES)) {
+    notes.push(`refs/remotes/origin/HEAD points to ${originHead}, which is not a branch of origin`);
+  } else if (!existing.has(originHead)) {
+    notes.push(`refs/remotes/origin/HEAD points to ${originHead}, which does not exist`);
   } else {
-    const value = originHead.stdout.slice(ORIGIN_BRANCHES.length);
+    const value = originHead.slice(ORIGIN_BRANCHES.length);
     return {
       value,
       source: "remote-default",
@@ -98,22 +111,20 @@ export async function resolveDefaultBranch(cwd, { env = process.env } = {}) {
     };
   }
 
-  const gitDefault = await git(["var", "GIT_DEFAULT_BRANCH"], cwd, env);
-  if ("failure" in gitDefault) return { reason: gitDefault.failure };
-  if (!("stdout" in gitDefault) || !gitDefault.stdout) {
+  const gitDefault = await run(["var", "GIT_DEFAULT_BRANCH"]);
+  if (!gitDefault) {
     notes.push("git var GIT_DEFAULT_BRANCH has no value");
-  } else if (localBranches.includes(gitDefault.stdout)) {
+  } else if (localBranches.includes(gitDefault)) {
     return {
-      value: gitDefault.stdout,
+      value: gitDefault,
       source: "git-default-branch",
-      detail: `git var GIT_DEFAULT_BRANCH names ${gitDefault.stdout}, and the repository has a local branch ${gitDefault.stdout}`,
+      detail: `git var GIT_DEFAULT_BRANCH names ${gitDefault}, and the repository has a local branch ${gitDefault}`,
     };
   } else if (localBranches.length === 0) {
     // With no local branch, HEAD can only name a branch that has no commits yet.
-    const head = await git(["symbolic-ref", "--quiet", "HEAD"], cwd, env);
-    if ("failure" in head) return { reason: head.failure };
-    const current = "stdout" in head ? branchName(head.stdout) : undefined;
-    if (current === gitDefault.stdout) {
+    const head = await run(["symbolic-ref", "--quiet", "HEAD"]);
+    const current = head === undefined ? undefined : branchName(head);
+    if (current === gitDefault) {
       return {
         value: current,
         source: "git-default-branch",
@@ -121,11 +132,11 @@ export async function resolveDefaultBranch(cwd, { env = process.env } = {}) {
       };
     }
     notes.push(
-      `git var GIT_DEFAULT_BRANCH names ${gitDefault.stdout}, and the repository has no commits yet and ${current === undefined ? "HEAD is detached" : `is on ${current}`}`,
+      `git var GIT_DEFAULT_BRANCH names ${gitDefault}, and the repository has no commits yet and ${current === undefined ? "HEAD is detached" : `is on ${current}`}`,
     );
   } else {
     notes.push(
-      `git var GIT_DEFAULT_BRANCH names ${gitDefault.stdout}, and the repository has no local branch ${gitDefault.stdout}`,
+      `git var GIT_DEFAULT_BRANCH names ${gitDefault}, and the repository has no local branch ${gitDefault}`,
     );
   }
 

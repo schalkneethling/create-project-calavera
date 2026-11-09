@@ -13,7 +13,11 @@ import {
   githubRepositoryControlManagedFiles,
   normalizeGithubRepositoryControlsOptions,
 } from "../src/github-repository-controls.js";
-import { describeIntegrationInputs, resolveIntegrationInputs } from "../src/integration-inputs.js";
+import {
+  defaultBranchWarnings,
+  describeIntegrationInputs,
+  resolveIntegrationInputs,
+} from "../src/integration-inputs.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe, validateRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
@@ -350,4 +354,53 @@ test("Given a recipe without defaultBranch, when inspect_project runs, then it r
       [],
     );
   });
+});
+
+test("defaultBranchWarnings compares only a recorded input that suggests the repository's default branch", () => {
+  const controls = { "github-repository-controls": { repository: "o/r", defaultBranch: "main" } };
+  const declarations = {
+    protectedBranch: { prompt: "p", default: "repository-default-branch", check: "branch-name" },
+    releaseBranch: { prompt: "r", check: "branch-name" },
+  };
+  const declarationsFor = (/** @type {string} */ id) => (id === guard ? declarations : undefined);
+  const warn = (recipe) => defaultBranchWarnings(recipe, { declarationsFor });
+
+  // Nothing to compare: no options, or options without defaultBranch, or no artifacts.
+  assert.deepEqual(warn({ ai: [{ id: guard, inputs: { protectedBranch: "master" } }] }), []);
+  assert.deepEqual(
+    warn({
+      integrationOptions: { "github-repository-controls": { repository: "o/r" } },
+      ai: [{ id: guard, inputs: { protectedBranch: "master" } }],
+    }),
+    [],
+  );
+  assert.deepEqual(warn({ integrationOptions: controls }), []);
+
+  const warnings = warn({
+    integrationOptions: controls,
+    ai: [
+      // A legacy item, an artifact without declarations, and one without a recorded value.
+      { type: "skill", src: "skills/calavera" },
+      { id: "skill-project-goal" },
+      { id: guard },
+      // An input whose default is not the repository's default branch.
+      { id: guard, inputs: { releaseBranch: "release" } },
+      { id: guard, inputs: { protectedBranch: "main" } },
+      { id: guard, inputs: { protectedBranch: "master" } },
+    ],
+  });
+  assert.equal(warnings.length, 1);
+  assert.match(
+    warnings[0],
+    /^skill-protected-branch-guard protects master \(ai\[5\]\.inputs\.protectedBranch\)/,
+  );
+
+  // Without declarationsFor, the catalog's declarations apply, and an unknown ID has none.
+  assert.deepEqual(
+    defaultBranchWarnings({
+      integrationOptions: controls,
+      ai: [{ id: "skill-unknown" }, { id: guard, inputs: { protectedBranch: "trunk" } }],
+    }).length,
+    1,
+  );
 });

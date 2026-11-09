@@ -4,6 +4,7 @@ import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { describeInputValue, resolveInputValue } from "./ai/artifact-inputs.js";
 import { GITHUB_REPOSITORY_CONTROLS_ID } from "./github-repository-controls-options.js";
 import { normalizeIntegrationOptions } from "./recipe.js";
+import { isPlainObject } from "./utils/guards.js";
 
 /**
  * @typedef {import("@schalkneethling/calavera-artifact-core").ArtifactInput} InputDeclaration
@@ -23,7 +24,7 @@ import { normalizeIntegrationOptions } from "./recipe.js";
  *
  * @typedef {(request: IntegrationInputRequest) => Promise<string>} AskForIntegrationInput
  *
- * @typedef {{ integrations?: string[], integrationOptions?: Record<string, unknown>, ai?: unknown }} RecipeShape
+ * @typedef {{ integrations?: string[], integrationOptions?: Record<string, unknown>, ai?: unknown }} RecipeShape A recipe that recipe validation accepted.
  */
 
 /**
@@ -52,15 +53,15 @@ const INTEGRATION_INPUTS = Object.freeze({
 function declaredInputs(recipe) {
   return Object.entries(INTEGRATION_INPUTS).flatMap(([integration, declarations]) => {
     const options = recipe.integrationOptions?.[integration];
-    if (!options || typeof options !== "object") return [];
-    const recorded = /** @type {Record<string, unknown>} */ (options);
+    if (!isPlainObject(options)) return [];
+    // Recipe validation already refused a value that is not a non-empty string.
+    const recorded = /** @type {Record<string, string | undefined>} */ (options);
     return Object.entries(declarations).map(([name, declaration]) => ({
       integration,
       name,
       path: `integrationOptions.${integration}.${name}`,
       declaration,
-      recorded:
-        typeof recorded[name] === "string" ? /** @type {string} */ (recorded[name]) : undefined,
+      recorded: recorded[name],
     }));
   });
 }
@@ -144,19 +145,22 @@ export function defaultBranchWarnings(
   recipe,
   { declarationsFor = (id) => artifactForId(id)?.inputs } = {},
 ) {
-  const controls = /** @type {{ defaultBranch?: unknown } | undefined} */ (
+  const controls = /** @type {{ defaultBranch?: string } | undefined} */ (
     recipe.integrationOptions?.[GITHUB_REPOSITORY_CONTROLS_ID]
   );
   const defaultBranch = controls?.defaultBranch;
-  if (typeof defaultBranch !== "string" || !Array.isArray(recipe.ai)) return [];
+  if (defaultBranch === undefined) return [];
 
-  return recipe.ai.flatMap((item, index) => {
-    if (!item || typeof item !== "object" || typeof item.id !== "string") return [];
-    const values = /** @type {Record<string, unknown>} */ (item.inputs ?? {});
+  // Recipe validation accepted ai as a list of objects.
+  const items = /** @type {{ id?: string, inputs?: Record<string, string> }[]} */ (recipe.ai ?? []);
+  return items.flatMap((item, index) => {
+    // A legacy item names its source instead of an artifact ID, and declares no inputs.
+    if (item.id === undefined) return [];
+    const values = item.inputs ?? {};
     return Object.entries(declarationsFor(item.id) ?? {}).flatMap(([name, declaration]) => {
       const value = values[name];
       return declaration.default === "repository-default-branch" &&
-        typeof value === "string" &&
+        value !== undefined &&
         value !== defaultBranch
         ? [
             `${item.id} protects ${value} (ai[${index}].inputs.${name}), but ${GITHUB_REPOSITORY_CONTROLS_ID} describes ${defaultBranch} to GitHub as the default branch (integrationOptions.${GITHUB_REPOSITORY_CONTROLS_ID}.defaultBranch). If both mean the branch pull requests merge into, record the same branch for both.`,
