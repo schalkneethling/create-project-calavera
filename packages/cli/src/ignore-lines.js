@@ -23,7 +23,8 @@ export const HTML_VALIDATE_IGNORE_PATH = ".htmlvalidateignore";
  * @property {string} [integration] Absent when `.htmlvalidateignore` loses lines no selected integration declares.
  * @property {"write" | "update" | "unchanged"} type
  * @property {string[]} [lines] The lines the integration's part holds after apply.
- * @property {string[]} [previousLines] The lines a replaced block held.
+ * @property {string[]} [previousLines] The lines a replaced block held, or the lines `.htmlvalidateignore`
+ *   holds where apply puts the integration's lines, when the file holds them in another order.
  * @property {string[]} [removedLines] The lines apply removes.
  */
 

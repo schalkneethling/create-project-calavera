@@ -756,12 +756,22 @@ const fixtureModule = new URL("./ignore-fixture-integration.mjs", import.meta.ur
  *
  * @param {string} directory
  * @param {string[]} integrations
+ * @param {string[]} [extraArguments]
  */
-async function cliDryRun(directory, integrations) {
+async function cliDryRun(directory, integrations, extraArguments = []) {
   await writeFile("calavera.config.json", `${JSON.stringify(recipeWith(integrations), null, 2)}\n`);
   const run = spawnSync(
     process.execPath,
-    ["--import", fixtureModule, cli, "apply", "--dry-run", "--yes", "--no-install"],
+    [
+      "--import",
+      fixtureModule,
+      cli,
+      "apply",
+      "--dry-run",
+      "--yes",
+      "--no-install",
+      ...extraArguments,
+    ],
     { cwd: directory, encoding: "utf8", env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" } },
   );
   assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
@@ -808,6 +818,29 @@ test("the CLI dry run prints every line apply adds, keeps, replaces, or removes"
     assert.match(
       removal,
       /Would remove from \.htmlvalidateignore, because no selected integration declares them: "reports\/fixture\/"/,
+    );
+  });
+});
+
+test("the CLI dry run says an .htmlvalidateignore line order apply would change is a replacement", async () => {
+  await inProject(undefined, async (directory) => {
+    await applyRecipeObject(recipeWith(["html-validate"]), applyOptions);
+    const written = await readFile(".htmlvalidateignore", "utf8");
+    const reordered = written.trimEnd().split("\n").reverse();
+    await writeFile(".htmlvalidateignore", `${reordered.join("\n")}\n`);
+
+    // The person's reordering is a local edit, which apply refuses unless the file is re-owned.
+    const dryRun = await cliDryRun(
+      directory,
+      ["html-validate"],
+      ["--reown-managed-file", ".htmlvalidateignore"],
+    );
+    const quoted = (/** @type {string[]} */ lines) => lines.map((line) => `"${line}"`).join(", ");
+    assert.ok(
+      dryRun.includes(
+        `Would replace the html-validate lines in .htmlvalidateignore: ${quoted(reordered)} with ${quoted(written.trimEnd().split("\n"))}`,
+      ),
+      dryRun,
     );
   });
 });
