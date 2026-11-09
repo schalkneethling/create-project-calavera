@@ -580,6 +580,35 @@ test("Given the guard deselected and an edited guard group, clean stops with a c
   });
 });
 
+// #795 with #829: clean judges its managed files with apply's planner, which refuses invalid
+// integration options. That refusal must come before clean plans or writes the wiring removal,
+// so a recipe apply would refuse cannot rewrite a hook or settings file through clean.
+test("Given the guard deselected and invalid github-repository-controls options, clean and its dry run stop naming the recipe, and nothing is written or deleted", async () => {
+  await inWiredProject(async () => {
+    const recipe = {
+      ...buildRecipe("minimal", ["github-repository-controls"], "npm", [], {
+        "github-repository-controls": { repository: "octocat/example" },
+      }),
+      ai: [],
+    };
+    // buildRecipe validates the options, so the invalid value is written by hand, as a person
+    // editing calavera.config.json would.
+    recipe.integrationOptions["github-repository-controls"].repository = "bad";
+    await writeConfig(recipe);
+    const before = await snapshot();
+
+    for (const args of [["--dry-run"], ["--yes"]]) {
+      const { status, stderr } = runClean(args);
+      assert.notEqual(status, 0, args.join(" "));
+      assert.match(
+        stderr,
+        /clean could not tell which managed files the recipe in calavera\.config\.json still selects, so it removed nothing/,
+      );
+    }
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
 test("Given the guard still selected, clean plans no change to its wiring or its skill directory", async () => {
   await inWiredProject(async () => {
     await writeConfig(guardRecipe());
