@@ -4,9 +4,11 @@
 // file matches Vitest's default test pattern. Each case applies to a temporary copy of a
 // committed vp create fixture, never to the fixture itself.
 import assert from "node:assert/strict";
+import { execFileSync } from "node:child_process";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import { integrationCatalog } from "../src/catalog.js";
 import { callMcpTool } from "../src/mcp.js";
@@ -406,5 +408,31 @@ test("vp create library: with HTML Validate, the Stryker report folder is in .ht
       ".claude/worktrees/",
       "reports/mutation/",
     ]);
+  });
+});
+
+test("vp create library: doctor reports a missing stryker.config.json", async () => {
+  await using fixture = await copyReleaseFixture("library");
+  const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
+
+  await inDirectory(fixture.root, async () => {
+    const recipe = await composeRecipe(["stryker"]);
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+    await callMcpTool("apply_recipe", { recipe, noInstall: true });
+    const missing = (/** @type {{ issues: Array<{ message: string }> }} */ report) =>
+      report.issues.some(({ message }) =>
+        message.startsWith("Missing managed file: stryker.config.json."),
+      );
+    const doctor = () =>
+      JSON.parse(
+        execFileSync(process.execPath, [cliPath, "doctor", "--json"], {
+          encoding: "utf8",
+          env: { ...process.env, NO_COLOR: "1" },
+        }),
+      );
+
+    assert.equal(missing(doctor()), false);
+    await rm("stryker.config.json");
+    assert.equal(missing(doctor()), true);
   });
 });
