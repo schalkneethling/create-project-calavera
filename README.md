@@ -549,7 +549,9 @@ in this order:
 dependency packages, the command that installs them, the Vite+ detection
 report, project inspection findings,
 omitted script explanations,
-file ownership/action notes, and AI artifact changes that would be made. On a
+file ownership/action notes, the lines each integration adds to or removes from
+`.gitignore` and `.htmlvalidateignore` (`ignoreChanges`), and AI artifact
+changes that would be made. On a
 project where the recipe was already applied and nothing has changed since,
 every change has `type: "unchanged"`. Agents
 should present that dry-run summary to the user first. `apply_recipe` is

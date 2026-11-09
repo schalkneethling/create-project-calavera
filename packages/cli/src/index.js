@@ -42,6 +42,14 @@ import {
   wiringFilesThatMention,
   writeArtifactWiring,
 } from "./ai/artifact-wiring.js";
+import {
+  declaredIgnoreLines,
+  GITIGNORE_PATH,
+  HTML_VALIDATE_IGNORE_PATH,
+  htmlValidateIgnoreText,
+  planGitignoreBlocks,
+  planHtmlValidateIgnoreChanges,
+} from "./ignore-lines.js";
 import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { loadProjectFormatter } from "./utils/project-formatter.js";
@@ -165,6 +173,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string[]} [includes]
  * @property {{ extends?: string[], rules?: Record<string, unknown> }} [htmlValidate]
  * @property {{ extends?: string[], plugins?: string[], rules?: Record<string, unknown> }} [stylelint]
+ * @property {{ gitignore?: string[], htmlValidateIgnore?: string[] }} [ignore] The lines the integration needs in .gitignore and .htmlvalidateignore (ADR-0016).
  *
  * @typedef {object} Recipe
  * @property {string} [$schema]
@@ -206,10 +215,12 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {ResolvedInput[]} artifactInputs Each input a selected artifact declares, with the value apply uses and where it came from.
  * @property {WiringChange[]} wiringChanges Each hook block and settings group apply writes into the project for a selected artifact, so the approval boundary shows the exact text.
  * @property {string[]} wiringWarnings Why written wiring would not act yet, such as Git hooks that no dispatcher runs, with the remedy. They never stop apply.
+ * @property {IgnoreChange[]} ignoreChanges The lines each integration adds to or removes from .gitignore and .htmlvalidateignore (ADR-0016), so the approval boundary shows the exact lines.
  * @property {Recipe} recipe The recipe apply used, with every artifact input filled in. After a dry run, pass this recipe to apply, so the values cannot change between approval and apply.
  *
  * @typedef {import("./ai/artifact-inputs.js").ResolvedInput} ResolvedInput
  * @typedef {import("./ai/artifact-wiring.js").WiringChange} WiringChange
+ * @typedef {import("./ignore-lines.js").IgnoreChange} IgnoreChange
  *
  * @typedef {"local-edits" | "legacy-state" | "still-mentioned" | "unfollowable-link" | "unreadable"} CleanSkipReason Why clean kept a stale item, so a JSON reader can tell the reasons apart; `reason` says the same in words, with what to do.
  *
@@ -277,9 +288,6 @@ const AGENT_BOOTSTRAP_SKILL_RECIPE = {
 const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/", import.meta.url));
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
-// .claude/worktrees/ holds agent worktrees, which are full checkouts of other branches. Their
-// files belong to those branches, so this project's lint run must not report their errors.
-const HTML_VALIDATE_IGNORE = "node_modules/\ndist/\ncoverage/\n.claude/worktrees/\n";
 const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
@@ -1778,9 +1786,11 @@ function mergeVarlockGitignore(existing) {
 }
 
 /**
+ * @param {string} existingGitignore The .gitignore text after the integrations' blocks are planned
+ *   (ADR-0016, Decision 6), or "" when there is no .gitignore.
  * @returns {Promise<Array<{ type: "write" | "update", path: string, action: "scaffold" | "merge", contents: string }>>}
  */
-async function planVarlockProjectFiles() {
+async function planVarlockProjectFiles(existingGitignore) {
   const plans = [];
 
   if (!(await fileExists(".env.schema"))) {
@@ -1792,9 +1802,6 @@ async function planVarlockProjectFiles() {
     });
   }
 
-  const existingGitignore = (await fileExists(".gitignore"))
-    ? await readFile(".gitignore", "utf8")
-    : "";
   const gitignore = mergeVarlockGitignore(existingGitignore);
   if (gitignore !== undefined) {
     plans.push({
@@ -2038,7 +2045,7 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
       path: ".htmlvalidate.json",
       contents: `${JSON.stringify(createHtmlValidateConfig(integrations), null, 2)}\n`,
     });
-    plans.push({ path: ".htmlvalidateignore", contents: HTML_VALIDATE_IGNORE });
+    plans.push({ path: HTML_VALIDATE_IGNORE_PATH, contents: htmlValidateIgnoreText(integrations) });
     plans.push({ path: HTML_VALIDATE_WRAPPER_PATH, contents: createHtmlValidateWrapper() });
   }
 
@@ -2589,6 +2596,26 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     plannedManagedFiles(integrations, recipe.integrationOptions),
     loadFormatter,
   );
+  // ADR-0016: the integrations' .gitignore blocks are planned before anything is written, so an
+  // edited block stops the dry run and apply alike. The person's lines are never rewritten.
+  const gitignorePlan = planGitignoreBlocks({
+    contents: (await fileExists(GITIGNORE_PATH))
+      ? await readFile(GITIGNORE_PATH, "utf8")
+      : undefined,
+    declared: declaredIgnoreLines(integrations, "gitignore"),
+    records: previousState.gitignoreBlocks,
+  });
+  const ignoreChanges = [
+    ...gitignorePlan.changes,
+    ...(managedFilePlans.some(({ path }) => path === HTML_VALIDATE_IGNORE_PATH)
+      ? planHtmlValidateIgnoreChanges(
+          integrations,
+          (await fileExists(HTML_VALIDATE_IGNORE_PATH))
+            ? await readFile(HTML_VALIDATE_IGNORE_PATH, "utf8")
+            : undefined,
+        )
+      : []),
+  ];
   // A value the person typed is recorded in the recipe, so a later apply does not ask again.
   // Only an explicit writeConfig: false skips that.
   const answered = artifactInputs.some(({ source }) => source === "prompt");
@@ -2625,7 +2652,12 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     omittedScripts,
   );
   const usesVarlock = integrations.some(({ id }) => id === "varlock");
-  const varlockFilePlans = usesVarlock ? await planVarlockProjectFiles() : [];
+  const varlockFilePlans = usesVarlock
+    ? await planVarlockProjectFiles(gitignorePlan.contents ?? "")
+    : [];
+  // When Varlock merges its lines, its .gitignore text already holds the blocks, so one change
+  // reports and writes both.
+  const varlockWritesGitignore = varlockFilePlans.some(({ path }) => path === GITIGNORE_PATH);
 
   await assertSafeManagedFileWrites(managedFilePlans, previousState, reownManagedFiles);
 
@@ -2785,6 +2817,18 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     );
   }
 
+  if (gitignorePlan.type !== undefined && !varlockWritesGitignore) {
+    changes.push({
+      type: gitignorePlan.type,
+      path: GITIGNORE_PATH,
+      action: "merge",
+      ownership: "project",
+    });
+    if (!applyOptions.dryRun && gitignorePlan.type !== "unchanged") {
+      await writeFile(GITIGNORE_PATH, /** @type {string} */ (gitignorePlan.contents));
+    }
+  }
+
   await applyVarlockProjectFiles(varlockFilePlans, applyOptions.dryRun, changes);
 
   if (!applyOptions.dryRun && !packageJSONUnchanged) {
@@ -2807,6 +2851,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
         managedFiles,
         aiResult.artifacts,
         wiringPlan.records,
+        gitignorePlan.records,
       ),
       false,
     );
@@ -2862,6 +2907,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     artifactInputs,
     wiringChanges: wiringPlan.changes,
     wiringWarnings,
+    ignoreChanges,
     recipe,
   };
 }
@@ -2873,6 +2919,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
  * @param {ManagedFileState[]} managedFiles
  * @param {AiArtifactState[]} aiArtifacts The selected artifacts as apply installed them. The previous records of every other artifact are kept for clean.
  * @param {import("./ai/artifact-wiring.js").WiringRecord[]} aiWiring The wiring in the project after apply. It replaces the previous records, because apply removes the wiring of every artifact the recipe no longer selects, and a record of removed wiring would describe text the files no longer hold.
+ * @param {import("./ignore-lines.js").IgnoreLines[]} gitignoreBlocks The integrations' .gitignore blocks after apply. They replace the previous records for the same reason as `aiWiring`.
  * @returns {CalaveraState}
  */
 function mergeRecipeIntoState(
@@ -2882,6 +2929,7 @@ function mergeRecipeIntoState(
   managedFiles,
   aiArtifacts,
   aiWiring,
+  gitignoreBlocks,
 ) {
   const managedFilesByPath = new Map(
     managedFilesFromState(previousState).map((file) => [file.path, file]),
@@ -2911,6 +2959,7 @@ function mergeRecipeIntoState(
     managedFiles: nextManagedFiles,
     aiArtifacts: nextAiArtifacts,
     aiWiring,
+    gitignoreBlocks,
   };
 }
 
@@ -3934,6 +3983,9 @@ function formatApplySummary(result) {
       .flatMap(formatWiringChange)
       .map((line) => `${style("bold", "Wiring")}: ${line}`),
     ...result.wiringWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
+    ...result.ignoreChanges
+      .map(formatIgnoreChange)
+      .map((line) => `${style("bold", "Ignore")}: ${line}`),
     `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
   ].join("\n");
 }
@@ -3996,6 +4048,30 @@ function formatWiringChange({
         ]
       : []),
   ];
+}
+
+/**
+ * The line a dry run shows for one integration's part of an ignore file, so the approval covers
+ * the exact lines.
+ *
+ * @param {IgnoreChange} change
+ * @returns {string}
+ */
+function formatIgnoreChange({ path, integration, type, lines, previousLines, removedLines }) {
+  const quoted = (/** @type {string[]} */ values) => values.map(quoteScriptValue).join(", ");
+  if (removedLines !== undefined) {
+    return integration === undefined
+      ? `Would remove from ${path}, because no selected integration declares them: ${quoted(removedLines)}`
+      : `Would remove the ${integration} block from ${path}, because ${integration} no longer adds lines to it: ${quoted(removedLines)}`;
+  }
+  const what = path === GITIGNORE_PATH ? `the ${integration} block` : `the ${integration} lines`;
+  if (type === "unchanged") {
+    return `${path} already holds ${what}: ${quoted(lines ?? [])}`;
+  }
+  if (previousLines !== undefined) {
+    return `Would replace ${what} in ${path}: ${quoted(previousLines)} with ${quoted(lines ?? [])}`;
+  }
+  return `Would add ${what} to ${path}: ${quoted(lines ?? [])}`;
 }
 
 /**
@@ -5031,6 +5107,10 @@ function printResult(result, asJSON = false, commandDryRun = false) {
 
     for (const warning of result.wiringWarnings) {
       logger.warn(warning);
+    }
+
+    for (const change of result.ignoreChanges) {
+      logger.info(formatIgnoreChange(change));
     }
 
     for (const change of result.changes) {

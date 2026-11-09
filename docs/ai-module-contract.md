@@ -89,7 +89,9 @@ Calavera's managed state lives in `.calavera/state.json`. Generated files are
 tracked under `managedFiles` with their destination path and content hash. AI
 artifacts use the same safety model and are tracked under `aiArtifacts`, with
 the artifact type, name, recipe source, target, destination path, and source
-hash.
+hash. The lines apply writes in each integration's `.gitignore` block are
+tracked under `gitignoreBlocks`, so a later apply can tell its own block from
+one the user edited (ADR-0016).
 
 The source hashing follows Toolkit's current behavior:
 
