@@ -26,6 +26,7 @@ import { prepareArtifactSources, runArtifactCommand } from "./artifact-lifecycle
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   githubRepositoryControlManagedFiles,
+  normalizeGithubRepositoryControlsOptions,
   REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls.js";
 import {
@@ -4553,6 +4554,44 @@ async function doctor(options) {
 }
 
 /**
+ * The managed files the recipe still selects, for clean. The integration options are validated
+ * before the planner runs, so a recipe the person has to fix (#877) stays distinguishable from a
+ * planner failure that the recipe did not cause, such as a missing packaged template. Both stop
+ * clean and keep the underlying error as the cause.
+ * @param {Integration[]} integrations
+ * @param {Record<string, unknown> | undefined} integrationOptions
+ * @param {string} configPath
+ * @param {typeof plannedManagedFiles} [planner]
+ */
+export function planCleanManagedFiles(
+  integrations,
+  integrationOptions,
+  configPath,
+  planner = plannedManagedFiles,
+) {
+  try {
+    if (integrations.some(({ id }) => id === GITHUB_REPOSITORY_CONTROLS_ID)) {
+      normalizeGithubRepositoryControlsOptions(integrationOptions?.[GITHUB_REPOSITORY_CONTROLS_ID]);
+    }
+  } catch (error) {
+    // Apply refuses the same recipe; clean keeps the cause and says where the recipe came from.
+    throw new Error(
+      `clean could not tell which managed files the recipe in ${configPath} still selects, so it removed nothing. Fix the recipe, then run clean again.`,
+      { cause: error },
+    );
+  }
+
+  try {
+    return planner(integrations, integrationOptions);
+  } catch (error) {
+    throw new Error(
+      `clean could not plan the managed files for the recipe in ${configPath}, so it removed nothing. The recipe options are valid, so the cause is in the Calavera installation or the project, not the recipe: read the cause below, then run clean again. If it persists, reinstall create-project-calavera or report the cause in a Calavera issue.`,
+      { cause: error },
+    );
+  }
+}
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<CleanResult>}
  */
@@ -4579,17 +4618,7 @@ async function clean(options) {
   // #795: the files apply writes for this recipe, from apply's own planner, so a file that an
   // integration the recipe still selects writes is never stale. A separate list of file names
   // missed the github-repository-controls files, so clean would have deleted them.
-  /** @type {{ path: string }[]} */
-  let plannedFiles;
-  try {
-    plannedFiles = plannedManagedFiles(integrations, recipe.integrationOptions);
-  } catch (error) {
-    // Apply refuses the same recipe; clean keeps the cause and says where the recipe came from.
-    throw new Error(
-      `clean could not tell which managed files the recipe in ${options.config} still selects, so it removed nothing. Fix the recipe, then run clean again.`,
-      { cause: error },
-    );
-  }
+  const plannedFiles = planCleanManagedFiles(integrations, recipe.integrationOptions, options.config);
   const expectedFiles = new Set(plannedFiles.map(({ path }) => path));
   const staleFiles = managedFilesFromState(state).filter((file) => !expectedFiles.has(file.path));
   const staleAiArtifacts = state.aiArtifacts.filter(
