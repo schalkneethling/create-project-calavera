@@ -1,6 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -12,6 +12,7 @@ import {
   artifactWiringWarnings,
   installedSkillDirectory,
   planArtifactWiring,
+  wiringFilesThatMention,
   writeArtifactWiring,
 } from "../src/ai/artifact-wiring.js";
 import { normalizeState } from "../src/state.js";
@@ -684,4 +685,276 @@ test("Given intact blocks whose script is missing, doctor reports an error per b
   await mkdir(join(project.root, skillDirectory, "scripts"), { recursive: true });
   await writeFile(join(project.root, skillDirectory, "scripts/guard.mjs"), "");
   assert.deepEqual(await findings(new Set([id])), []);
+});
+
+// #829: clean keeps an artifact that a hook script or the settings file still mentions.
+test("wiringFilesThatMention lists, in order, each hook script and the settings file that mention the directory, read as the planned wiring leaves them", async () => {
+  await using project = await createTemporaryFixture("wiring-mentions", {
+    ".vite-hooks/pre-push": `node ${skillDirectory}/scripts/guard.mjs pre-push main\n`,
+    ".vite-hooks/commit-msg": `node ${skillDirectory}/scripts/guard.mjs commit main\n`,
+    ".vite-hooks/pre-commit": "vp staged\n",
+    ".vite-hooks/post-merge": `node ${skillDirectory}-extra/run.mjs\n`,
+    ".vite-hooks/_/pre-push": `node ${skillDirectory}/scripts/guard.mjs\n`,
+    ".claude/settings.json": JSON.stringify({ command: `node ${skillDirectory}/x.mjs` }),
+  });
+
+  assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], project.root), {
+    mentions: [".vite-hooks/commit-msg", ".vite-hooks/pre-push", ".claude/settings.json"],
+    unresolved: [],
+    unreadable: [],
+  });
+  // A planned file counts as the text it will hold, whether that removes a mention or adds one.
+  assert.deepEqual(
+    await wiringFilesThatMention(
+      skillDirectory,
+      [
+        { path: ".vite-hooks/commit-msg", type: "update", contents: "" },
+        { path: ".vite-hooks/pre-commit", type: "update", contents: `${skillDirectory}/a\n` },
+      ],
+      project.root,
+    ),
+    {
+      mentions: [".vite-hooks/pre-commit", ".vite-hooks/pre-push", ".claude/settings.json"],
+      unresolved: [],
+      unreadable: [],
+    },
+  );
+});
+
+test("wiringFilesThatMention reads only the settings file when .vite-hooks is missing, and reports other read errors", async () => {
+  await using bare = await createTemporaryFixture("wiring-mentions-bare", {
+    ".claude/settings.json": `"${skillDirectory}/x.mjs"`,
+  });
+  assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], bare.root), {
+    mentions: [".claude/settings.json"],
+    unresolved: [],
+    unreadable: [],
+  });
+
+  await using empty = await createTemporaryFixture("wiring-mentions-empty", {});
+  assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], empty.root), {
+    mentions: [],
+    unresolved: [],
+    unreadable: [],
+  });
+
+  await using broken = await createTemporaryFixture("wiring-mentions-broken", {
+    ".vite-hooks": "not a directory\n",
+  });
+  await assert.rejects(wiringFilesThatMention(skillDirectory, [], broken.root), {
+    code: "ENOTDIR",
+  });
+});
+
+// Greptile review of #856: a hook artifact is a file, such as
+// .agents/hooks/claude-code/block-dangerous-commands.mjs, so a mention ends at the file name, not
+// at a slash. A longer name that only starts with the path is a different file.
+test("wiringFilesThatMention finds a file artifact named in full, and not a longer name that starts with it", async () => {
+  const hookFile = ".agents/hooks/claude-code/block-dangerous-commands.mjs";
+  const settingsRunning = (/** @type {string} */ command) =>
+    JSON.stringify({ hooks: { PreToolUse: [{ hooks: [{ type: "command", command }] }] } });
+
+  for (const [command, expected] of /** @type {const} */ ([
+    [`node ${hookFile}`, true],
+    [`node ${hookFile} --strict`, true],
+    [`node "$CLAUDE_PROJECT_DIR"/${hookFile}`, true],
+    [`node ${hookFile}.bak`, false],
+    [`node ${hookFile}x`, false],
+    [`node ${hookFile}-old`, false],
+    [`node ${hookFile}_old`, false],
+  ])) {
+    await using project = await createTemporaryFixture("wiring-mentions-file", {
+      ".claude/settings.json": settingsRunning(command),
+    });
+    assert.deepEqual(
+      (await wiringFilesThatMention(hookFile, [], project.root)).mentions,
+      expected ? [".claude/settings.json"] : [],
+      command,
+    );
+  }
+
+  await using atEnd = await createTemporaryFixture("wiring-mentions-file-end", {
+    ".vite-hooks/pre-commit": `node ${hookFile}`,
+  });
+  assert.deepEqual((await wiringFilesThatMention(hookFile, [], atEnd.root)).mentions, [
+    ".vite-hooks/pre-commit",
+  ]);
+});
+
+// Greptile review of #856: a hook script kept through a symbolic link still runs, so the scan
+// follows links. A link Calavera cannot follow is reported, never read as "mentions nothing".
+test("wiringFilesThatMention follows symbolic links to hook scripts, wherever they point, and reports links it cannot follow", async () => {
+  await using outside = await createTemporaryFixture("wiring-mentions-outside", {
+    "pre-push.sh": `node ${skillDirectory}/scripts/guard.mjs pre-push main\n`,
+  });
+  await using project = await createTemporaryFixture("wiring-mentions-links", {
+    "scripts/commit-msg.sh": `node ${skillDirectory}/scripts/guard.mjs commit main\n`,
+    "scripts/post-merge.sh": "vp install\n",
+    "scripts/hooks-dir/README": `${skillDirectory}/\n`,
+  });
+  const hooksDirectory = join(project.root, ".vite-hooks");
+  await mkdir(hooksDirectory);
+  // Inside the project, and relative, as a person would commit it.
+  await symlink("../scripts/commit-msg.sh", join(hooksDirectory, "commit-msg"));
+  // Outside the project: Vite+ still runs it, so it still counts.
+  await symlink(join(outside.root, "pre-push.sh"), join(hooksDirectory, "pre-push"));
+  // A link to a script that does not mention the artifact.
+  await symlink("../scripts/post-merge.sh", join(hooksDirectory, "post-merge"));
+  // Git does not run a directory as a hook.
+  await symlink("../scripts/hooks-dir", join(hooksDirectory, "post-checkout"));
+
+  assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], project.root), {
+    mentions: [".vite-hooks/commit-msg", ".vite-hooks/pre-push"],
+    unresolved: [],
+    unreadable: [],
+  });
+
+  // A broken link and a loop of links: Calavera cannot read what they would run.
+  await symlink("../scripts/missing.sh", join(hooksDirectory, "pre-commit"));
+  await symlink("post-rewrite", join(hooksDirectory, "post-rewrite"));
+  await mkdir(join(project.root, ".claude"));
+  await symlink("../missing-settings.json", join(project.root, ".claude/settings.json"));
+
+  assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], project.root), {
+    mentions: [".vite-hooks/commit-msg", ".vite-hooks/pre-push"],
+    unresolved: [".vite-hooks/post-rewrite", ".vite-hooks/pre-commit", ".claude/settings.json"],
+    unreadable: [],
+  });
+});
+
+// A hook script Calavera cannot read could still run the artifact, so it is reported, with the
+// error code, instead of reading as "mentions nothing". A named pipe is not a script, and reading one waits
+// forever, so the scan does not open it.
+test("wiringFilesThatMention reports a hook script it cannot read, and does not open a named pipe", async () => {
+  await using project = await createTemporaryFixture("wiring-mentions-unreadable", {
+    ".vite-hooks/pre-push": `node ${skillDirectory}/scripts/guard.mjs pre-push main\n`,
+  });
+  execFileSync("mkfifo", [join(project.root, ".vite-hooks/post-merge")]);
+  assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], project.root), {
+    mentions: [".vite-hooks/pre-push"],
+    unresolved: [],
+    unreadable: [],
+  });
+
+  await chmod(join(project.root, ".vite-hooks/pre-push"), 0o000);
+  try {
+    assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], project.root), {
+      mentions: [],
+      unresolved: [],
+      unreadable: [{ path: ".vite-hooks/pre-push", code: "EACCES" }],
+    });
+  } finally {
+    await chmod(join(project.root, ".vite-hooks/pre-push"), 0o644);
+  }
+
+  // Without search permission on the folder, Calavera cannot even look at the files in it.
+  await chmod(join(project.root, ".vite-hooks"), 0o600);
+  try {
+    assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], project.root), {
+      mentions: [],
+      unresolved: [],
+      unreadable: [
+        { path: ".vite-hooks/post-merge", code: "EACCES" },
+        { path: ".vite-hooks/pre-push", code: "EACCES" },
+      ],
+    });
+  } finally {
+    await chmod(join(project.root, ".vite-hooks"), 0o755);
+  }
+});
+
+// The adversarial review of the Greptile fixes for #856.
+test("wiringFilesThatMention reads .claude/settings.local.json, and finds a path in settings however JSON spells it", async () => {
+  const hookFile = ".agents/hooks/claude-code/block-dangerous-commands.mjs";
+  await using local = await createTemporaryFixture("wiring-mentions-local", {
+    ".claude/settings.local.json": JSON.stringify({ command: `node ${hookFile}` }),
+  });
+  assert.deepEqual((await wiringFilesThatMention(hookFile, [], local.root)).mentions, [
+    ".claude/settings.local.json",
+  ]);
+
+  // JSON may escape a slash as \/, and Claude Code reads the same path either way.
+  await using escaped = await createTemporaryFixture("wiring-mentions-escaped", {
+    ".claude/settings.json": `{"model":null,"hooks":{"PreToolUse":[{"matcher":"Bash","hooks":[{"type":"command","command":"node ${hookFile.replaceAll("/", "\\/")}"}]}]}}`,
+  });
+  assert.deepEqual((await wiringFilesThatMention(hookFile, [], escaped.root)).mentions, [
+    ".claude/settings.json",
+  ]);
+
+  // Claude Code loads no settings from a file that is not JSON, so only its text is searched.
+  await using invalid = await createTemporaryFixture("wiring-mentions-invalid", {
+    ".claude/settings.json": `{"command":"node ${hookFile.replaceAll("/", "\\/")}"`,
+  });
+  await using invalidPlain = await createTemporaryFixture("wiring-mentions-invalid-plain", {
+    ".claude/settings.json": `{"command":"node ${hookFile}"`,
+  });
+  assert.deepEqual((await wiringFilesThatMention(hookFile, [], invalidPlain.root)).mentions, [
+    ".claude/settings.json",
+  ]);
+  // A key is not something Claude Code runs.
+  await using inKey = await createTemporaryFixture("wiring-mentions-key", {
+    ".claude/settings.json": JSON.stringify({ [`x${hookFile.replaceAll("/", "\\")}`]: 1 }),
+  });
+  assert.deepEqual((await wiringFilesThatMention(hookFile, [], inKey.root)).mentions, []);
+  assert.deepEqual(await wiringFilesThatMention(hookFile, [], invalid.root), {
+    mentions: [],
+    unresolved: [],
+    unreadable: [],
+  });
+});
+
+test("wiringFilesThatMention counts a hook that links to the artifact or into it, and matches a state path written with backslashes", async () => {
+  const hookFile = ".agents/hooks/claude-code/block-dangerous-commands.mjs";
+  await using project = await createTemporaryFixture("wiring-mentions-link-into", {
+    [hookFile]: "// the hook\n",
+    [`${skillDirectory}/scripts/guard.mjs`]: "// the guard\n",
+    "scripts/post-merge.sh": `node ${skillDirectory}/scripts/guard.mjs pre-push main\n`,
+  });
+  const hooksDirectory = join(project.root, ".vite-hooks");
+  await mkdir(hooksDirectory);
+  await symlink(`../${hookFile}`, join(hooksDirectory, "pre-commit"));
+  await symlink(`../${skillDirectory}/scripts/guard.mjs`, join(hooksDirectory, "pre-push"));
+
+  assert.deepEqual((await wiringFilesThatMention(hookFile, [], project.root)).mentions, [
+    ".vite-hooks/pre-commit",
+  ]);
+  assert.deepEqual((await wiringFilesThatMention(skillDirectory, [], project.root)).mentions, [
+    ".vite-hooks/pre-push",
+  ]);
+
+  // A planned file is the text the wiring leaves, not a link, even while the artifact exists.
+  assert.deepEqual(
+    (
+      await wiringFilesThatMention(
+        hookFile,
+        [{ path: ".vite-hooks/pre-commit", type: "update", contents: "vp staged\n" }],
+        project.root,
+      )
+    ).mentions,
+    [],
+  );
+
+  // path.join builds the recorded path, so on Windows it holds backslashes; scripts use slashes.
+  await symlink("../scripts/post-merge.sh", join(hooksDirectory, "post-merge"));
+  assert.deepEqual(
+    (await wiringFilesThatMention(skillDirectory.replaceAll("/", "\\"), [], project.root)).mentions,
+    [".vite-hooks/post-merge", ".vite-hooks/pre-push"],
+  );
+});
+
+test("wiringFilesThatMention reports a link through a regular file as unresolved, and does not read a link to a named pipe", async () => {
+  await using project = await createTemporaryFixture("wiring-mentions-notdir", {
+    "scripts/not-a-directory": "text\n",
+  });
+  const hooksDirectory = join(project.root, ".vite-hooks");
+  await mkdir(hooksDirectory);
+  await symlink("../scripts/not-a-directory/pre-push", join(hooksDirectory, "pre-push"));
+  execFileSync("mkfifo", [join(project.root, "scripts/pipe")]);
+  await symlink("../scripts/pipe", join(hooksDirectory, "post-merge"));
+
+  assert.deepEqual(await wiringFilesThatMention(skillDirectory, [], project.root), {
+    mentions: [],
+    unresolved: [".vite-hooks/pre-push"],
+    unreadable: [],
+  });
 });

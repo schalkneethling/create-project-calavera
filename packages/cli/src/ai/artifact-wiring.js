@@ -1,7 +1,16 @@
 // @ts-check
 import { execFile } from "node:child_process";
-import { access, mkdir, readFile, realpath, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+import {
+  access,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  stat,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join, resolve, sep } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
@@ -24,6 +33,9 @@ const execFileAsync = promisify(execFile);
 // dry run shows the exact lines and groups that apply then writes.
 
 const CLAUDE_SETTINGS_PATH = ".claude/settings.json";
+// The person's own Claude Code settings. Calavera never writes it, but clean reads it, because a
+// hook the person wired there fails once its script is gone.
+const CLAUDE_LOCAL_SETTINGS_PATH = ".claude/settings.local.json";
 // The directory `vp config` installs the dispatcher into when the hooks directory is .vite-hooks,
 // and the value it sets core.hooksPath to (node_modules/vite-plus/docs/guide/commit-hooks.md).
 const VITE_HOOKS_DISPATCHER = ".vite-hooks/_";
@@ -356,7 +368,7 @@ export async function planArtifactWiring({
 
   if (conflicts.length > 0) {
     throw new Error(
-      `Calavera stopped before writing anything, because the wiring it would write conflicts with the project:\n${conflicts.map((reason) => `- ${reason}`).join("\n")}`,
+      `Calavera stopped before writing anything, because the wiring it would write or remove conflicts with the project:\n${conflicts.map((reason) => `- ${reason}`).join("\n")}`,
     );
   }
 
@@ -387,6 +399,154 @@ export async function writeArtifactWiring(files, cwd = process.cwd()) {
     await mkdir(dirname(target), { recursive: true });
     await writeFile(target, contents);
   }
+}
+
+/**
+ * The hook scripts in .vite-hooks and the Claude Code settings files that mention `artifactPath`,
+ * with the text the planned wiring changes leave in them. Clean does not delete an artifact that
+ * one of them still runs, recorded or not (#829): a block whose markers the person deleted to keep
+ * it holds no record, but it fails as soon as its script is gone.
+ *
+ * A hook script kept through a symbolic link still runs, so the scan follows links, wherever they
+ * point, and a hook that links to the artifact, or into its directory, counts as a mention. A link
+ * that cannot be followed (its target is missing, runs through a file, or the links form a loop) is
+ * listed in `unresolved`, and a file Calavera has no permission to read is listed in `unreadable`
+ * with the error code, because Calavera cannot see what either would run, and clean must keep the
+ * artifact rather than read them as mentioning nothing.
+ *
+ * The scan matches text, so it does not see a path that a script builds, such as through `cd`, a
+ * glob, or a file the script sources. ADR-0015 records that limit.
+ *
+ * @param {string} artifactPath Relative to the project root: a skill directory, such as
+ *   .agents/skills/protected-branch-guard, or a file, such as a hook script.
+ * @param {WiringFile[]} plannedFiles The files as the planned wiring leaves them.
+ * @param {string} [cwd]
+ * @returns {Promise<{ mentions: string[], unresolved: string[], unreadable: { path: string, code: string }[] }>}
+ */
+export async function wiringFilesThatMention(artifactPath, plannedFiles, cwd = process.cwd()) {
+  // The state records paths built with path.join, which uses backslashes on Windows, but scripts
+  // and settings name them with slashes.
+  const wanted = toSlashes(artifactPath);
+  const artifactRealPath = await realpath(resolve(cwd, wanted)).catch(() => undefined);
+  const entries = await readdir(resolve(cwd, ".vite-hooks"), { withFileTypes: true }).catch(
+    (error) => {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return [];
+      throw error;
+    },
+  );
+  // Sorted, because readdir's order depends on the file system. Each entry is checked below, so a
+  // directory, such as the dispatcher in .vite-hooks/_, is skipped there.
+  const hookPaths = entries.map(({ name }) => `.vite-hooks/${name}`).sort();
+  /** @type {string[]} */
+  const mentions = [];
+  /** @type {string[]} */
+  const unresolved = [];
+  /** @type {{ path: string, code: string }[]} */
+  const unreadable = [];
+  for (const path of [...hookPaths, CLAUDE_SETTINGS_PATH, CLAUDE_LOCAL_SETTINGS_PATH]) {
+    const planned = plannedFiles.find((file) => file.path === path);
+    const read = planned
+      ? { contents: planned.contents }
+      : await readThroughLinks(resolve(cwd, path));
+    if (read.unresolved) {
+      unresolved.push(path);
+      continue;
+    }
+    if (read.unreadable) {
+      unreadable.push({ path, code: read.unreadable });
+      continue;
+    }
+    if (read.contents === undefined) continue;
+    const linksIntoArtifact =
+      artifactRealPath !== undefined &&
+      read.realPath !== undefined &&
+      (read.realPath === artifactRealPath || read.realPath.startsWith(`${artifactRealPath}${sep}`));
+    const named = path.startsWith(".claude/")
+      ? settingsMentionPath(read.contents, wanted)
+      : mentionsPath(read.contents, wanted);
+    if (linksIntoArtifact || named) mentions.push(path);
+  }
+  return { mentions, unresolved, unreadable };
+}
+
+/** @param {string} path */
+function toSlashes(path) {
+  return path.replaceAll("\\", "/");
+}
+
+/**
+ * Reads the regular file at `path`, following symbolic links, with the path it resolves to. A
+ * missing file, a directory, a named pipe, or a device reads as no contents: Git runs only regular
+ * files, and reading a pipe waits forever. A link that cannot be followed reads as unresolved, and
+ * a file Calavera has no permission to read reads as unreadable, with the error code. Other errors
+ * propagate, which stops clean.
+ *
+ * @param {string} path
+ * @returns {Promise<{ contents?: string, realPath?: string, unresolved?: true, unreadable?: string }>}
+ */
+async function readThroughLinks(path) {
+  try {
+    const stats = await stat(path);
+    if (!stats.isFile()) return {};
+    return { contents: await readFile(path, "utf8"), realPath: await realpath(path) };
+  } catch (error) {
+    const { code } = /** @type {NodeJS.ErrnoException} */ (error);
+    if (code === "EACCES" || code === "EPERM") return { unreadable: code };
+    if (code !== "ENOENT" && code !== "ENOTDIR" && code !== "ELOOP") throw error;
+    // lstat fails when nothing is at the path at all, which reads as a missing file.
+    const link = await lstat(path).catch(() => undefined);
+    return link?.isSymbolicLink() ? { unresolved: true } : {};
+  }
+}
+
+/**
+ * Whether a Claude Code settings file names `path`. JSON can spell the same path in more than one
+ * way, such as with each slash escaped as \/, so each string value is checked as Claude Code reads
+ * it, as well as the raw text. A file that is not JSON is searched as text only, because Claude
+ * Code loads no settings from it.
+ *
+ * @param {string} text
+ * @param {string} path
+ */
+function settingsMentionPath(text, path) {
+  if (mentionsPath(text, path)) return true;
+  let settings;
+  try {
+    settings = JSON.parse(text);
+  } catch {
+    return false;
+  }
+  return jsonStrings(settings).some((value) => mentionsPath(toSlashes(value), path));
+}
+
+/**
+ * Every string value in parsed JSON. Keys are left out, because Claude Code runs only values.
+ *
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+function jsonStrings(value) {
+  if (typeof value === "string") return [value];
+  if (Array.isArray(value)) return value.flatMap(jsonStrings);
+  if (isObject(value)) return Object.values(value).flatMap(jsonStrings);
+  return [];
+}
+
+/**
+ * Whether `text` names `path`: the path followed by the end of the text or by a character that
+ * cannot continue a file name, such as a slash, a space, or a quote. A directory therefore matches
+ * every path under it, and a file matches its own name but not a longer one that starts with it,
+ * such as guard.mjs.bak or guard.mjsx.
+ *
+ * @param {string} text
+ * @param {string} path
+ */
+function mentionsPath(text, path) {
+  for (let at = text.indexOf(path); at !== -1; at = text.indexOf(path, at + 1)) {
+    const next = text.charAt(at + path.length);
+    if (!/[\w.-]/.test(next)) return true;
+  }
+  return false;
 }
 
 /** @param {unknown} value @returns {value is Record<string, unknown>} */

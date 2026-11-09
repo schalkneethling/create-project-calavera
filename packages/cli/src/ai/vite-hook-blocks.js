@@ -4,6 +4,8 @@
 // never touches a line outside it. Vite+ owns the dispatcher under .vite-hooks/_ and runs each
 // script with `sh -e`, so a block placed first stops the commit before `vp staged` runs.
 
+import { findBlock, indent, markers } from "../utils/marked-block.js";
+
 // Placeholder names follow the input names the artifact manifest schema allows.
 const PLACEHOLDER = /\{\{([a-z][A-Za-z0-9]*)\}\}/g;
 // Every token of a hook command is held to characters a shell never treats as special, so the
@@ -82,99 +84,6 @@ export function viteHookCommandProblem(command, skillDirectory) {
     return `"${command}" passes "${option}", and an argument must not start with "-".`;
   }
   return undefined;
-}
-
-/**
- * @param {string} artifactId
- */
-function markers(artifactId) {
-  return {
-    start: `# calavera:${artifactId}:start`,
-    end: `# calavera:${artifactId}:end`,
-  };
-}
-
-/**
- * @typedef {object} FoundBlock
- * @property {string[]} lines The script's lines, each with its own carriage return, if any.
- * @property {string} cr "\r" when the script uses Windows line endings, so added lines match.
- * @property {number} startIndex The start marker's line, or -1 when the script has no block.
- * @property {number} endIndex The end marker's line, or -1 when the script has no block.
- * @property {string} current The text between the markers, without carriage returns.
- */
-
-/**
- * Finds this artifact's block in a script, or explains why its markers cannot be trusted.
- *
- * @param {string} path
- * @param {string} contents
- * @param {string} artifactId
- * @returns {FoundBlock | { reason: string }}
- */
-function findBlock(path, contents, artifactId) {
-  const { start, end } = markers(artifactId);
-  // Lines keep their own endings. A script with Windows line endings gets them on the lines
-  // Calavera adds too, and every comparison ignores the carriage return.
-  const cr = contents.includes("\r\n") ? "\r" : "";
-  const lines = contents.split("\n");
-  const bare = lines.map((text) => text.replace(/\r$/, ""));
-  const indexes = (/** @type {string} */ marker) =>
-    bare.flatMap((text, index) => (text.trimEnd() === marker ? [index] : []));
-  const starts = indexes(start);
-  const ends = indexes(end);
-
-  // A line that names this block but is not exactly a marker is one the person changed, such as
-  // an indented block inside an `if`. Inserting a second block would defeat their change.
-  const changedMarker = bare.find(
-    (text) =>
-      (text.includes(`calavera:${artifactId}:start`) ||
-        text.includes(`calavera:${artifactId}:end`)) &&
-      text.trimEnd() !== start &&
-      text.trimEnd() !== end,
-  );
-  if (changedMarker !== undefined) {
-    return {
-      reason: `${path}: a marker line was changed: "${changedMarker}". Calavera only recognizes "${start}" and "${end}" as whole lines. Restore them, or remove the block, both markers included, and run apply again.`,
-    };
-  }
-
-  if (starts.length === 0 && ends.length === 0) {
-    return { lines, cr, startIndex: -1, endIndex: -1, current: "" };
-  }
-
-  const markerProblem =
-    starts.length === 1 && ends.length === 0
-      ? "has a start marker without an end marker"
-      : starts.length === 0 && ends.length === 1
-        ? "has an end marker without a start marker"
-        : starts.length !== 1 || ends.length !== 1
-          ? `has ${starts.length} start marker${starts.length === 1 ? "" : "s"} and ${ends.length} end marker${ends.length === 1 ? "" : "s"}`
-          : /** @type {number} */ (ends[0]) < /** @type {number} */ (starts[0])
-            ? "has an end marker that comes before its start marker"
-            : undefined;
-  if (markerProblem !== undefined) {
-    return {
-      reason: `${path}: the Calavera block for ${artifactId} ${markerProblem}, so Calavera cannot tell where its block ends. Make the file hold exactly one "${start}" line followed later by one "${end}" line, or remove both markers and the lines between them, and run apply again.`,
-    };
-  }
-
-  const startIndex = /** @type {number} */ (starts[0]);
-  const endIndex = /** @type {number} */ (ends[0]);
-  return {
-    lines,
-    cr,
-    startIndex,
-    endIndex,
-    current: bare.slice(startIndex + 1, endIndex).join("\n"),
-  };
-}
-
-/** @param {string} text */
-function indent(text) {
-  return text
-    .split("\n")
-    .map((row) => `  ${row}`)
-    .join("\n");
 }
 
 /**

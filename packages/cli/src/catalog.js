@@ -39,6 +39,12 @@ export const integrationCatalog = [
       extends: ["html-validate:recommended", "html-validate:document"],
       rules: {},
     },
+    // ADR-0016: the lines of the managed .htmlvalidateignore. Another integration's lines follow.
+    // .claude/worktrees/ holds agent worktrees, which are full checkouts of other branches. Their
+    // files belong to those branches, so this project's lint run must not report their errors.
+    ignore: {
+      htmlValidateIgnore: ["node_modules/", "dist/", "coverage/", ".claude/worktrees/"],
+    },
   },
   {
     id: "varlock",

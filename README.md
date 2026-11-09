@@ -404,7 +404,8 @@ Update managed tooling from the recipe:
 npm create project-calavera update
 ```
 
-Remove stale managed files:
+Remove stale managed files, and the hook blocks and Claude Code settings groups of
+artifacts the recipe no longer selects. Run it with `--dry-run` first to see each removal:
 
 ```bash
 npm create project-calavera clean
@@ -548,7 +549,12 @@ in this order:
 dependency packages, the command that installs them, the Vite+ detection
 report, project inspection findings,
 omitted script explanations,
-file ownership/action notes, and AI artifact changes that would be made. On a
+file ownership/action notes, the lines each integration adds to or removes from
+`.gitignore` and `.htmlvalidateignore` (`ignoreChanges`), each artifact and
+integration input value with where it came from (`artifactInputs` and
+`integrationInputs`, such as the guard's `protectedBranch` and
+`github-repository-controls.defaultBranch`), warnings when those values disagree
+(`inputWarnings`), and AI artifact changes that would be made. On a
 project where the recipe was already applied and nothing has changed since,
 every change has `type: "unchanged"`. Agents
 should present that dry-run summary to the user first. `apply_recipe` is
