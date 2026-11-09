@@ -74,6 +74,34 @@ export const integrationCatalog = [
     dependencies: [],
   },
   {
+    id: "stryker",
+    label: "Stryker mutation testing",
+    summary:
+      "Stryker makes small changes to the source code and reports each change that the project's Vitest tests do not detect.",
+    homepage: "https://stryker-mutator.io",
+    group: "Mutation testing",
+    platform: "stryker",
+    status: "optional",
+    minimumCliVersion: "6.2.0",
+    // ADR-0014 Decision 2: Stryker runs the project's tests with the Vitest that vite-plus
+    // installs, so apply stops where it does not delegate to Vite+, and the dry run warns when no
+    // file matches Vitest's default test pattern.
+    runsVitestTests: true,
+    // Owner decision of 2026-11-09 on #734: a workspace root has no tests of its own for Stryker
+    // to run, so the integration applies in a single-package project or in a workspace member.
+    appliesAt: "package",
+    // The runner declares the exact core version as a peer dependency, and one install of both
+    // resolves them to the same release.
+    dependencies: ["@stryker-mutator/core", "@stryker-mutator/vitest-runner"],
+    // ADR-0016: Stryker writes its sandboxes to .stryker-tmp/ and leaves it behind after a failed
+    // run, and writes its HTML report to reports/mutation/. vp check formats both and html-validate
+    // lints the report unless they are ignored.
+    ignore: {
+      gitignore: [".stryker-tmp/", "reports/mutation/"],
+      htmlValidateIgnore: ["reports/mutation/"],
+    },
+  },
+  {
     id: "react-doctor",
     label: "React Doctor",
     summary:

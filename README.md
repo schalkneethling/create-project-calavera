@@ -195,6 +195,7 @@ Calavera includes curated integration packs grouped by outcome:
 - CSS property type validation
 - Environment variable schema and validation with [Varlock](https://varlock.dev)
 - GitHub repository governance, security settings, and drift checks
+- Mutation testing with [Stryker](https://stryker-mutator.io), for projects that Vite+ manages
 
 React Doctor is a deterministic scanner for React codebases that complements
 `vp lint` with security, performance, correctness, accessibility, bundle-size,
@@ -290,6 +291,54 @@ uses that metadata when generating `.stylelintrc.json`.
 See
 [`docs/contributing-calavera-integration-varlock.md`](docs/contributing-calavera-integration-varlock.md)
 for a contributor walkthrough based on Theo Ephraim's Varlock integration.
+
+### Stryker mutation testing
+
+The optional `stryker` integration sets up [Stryker](https://stryker-mutator.io) mutation testing.
+Stryker makes small changes to the source code, called mutants, runs the project's tests against
+each one, and reports the mutants that no test detected. It installs `@stryker-mutator/core` and
+`@stryker-mutator/vitest-runner` with `vp add -D`, writes a managed `stryker.config.json`, and adds
+a `test:mutation` script that runs `stryker run`. Run it with `vp run test:mutation`.
+
+`test:mutation` is not part of `quality`, and Calavera adds no CI job for it (ADR-0014, Decision 3).
+A mutation run takes minutes on a real project, and Stryker exits with code 0 whatever the score,
+because the config sets no `thresholds.break`. Choosing a score that fails the run is your decision;
+add `thresholds` to the config when you want one. Calavera treats that as a local edit, so a later
+apply stops instead of overwriting `stryker.config.json`.
+
+The integration needs a project that Vite+ manages, because Stryker's Vitest runner runs the Vitest
+that vite-plus installs. A dry run or apply that selects `stryker` in any other project stops before
+it writes anything, and tells you to run `vp create` or `vp migrate` first. It also stops at the
+root of a workspace, because the root has no tests of its own for Stryker to run: apply it in each
+workspace member that has tests instead. When no file matches Vitest's default test pattern,
+`**/*.{test,spec}.?(c|m)[jt]s?(x)`, the dry run warns that Stryker has no tests to run, but it does
+not stop, because the Vite config can set `test.include` to other files.
+
+```json
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "vitest",
+  "plugins": ["@stryker-mutator/vitest-runner"],
+  "tsconfigFile": "stryker-skips-tsconfig-preprocessing.json",
+  "reporters": ["clear-text", "html"]
+}
+```
+
+- `testRunner` names the Vitest runner, because Stryker's default command runner can report every
+  mutant of a slow test suite as a timeout, and Stryker counts timeouts as detected.
+- `plugins` lists the runner, because under pnpm Stryker's default plugin lookup does not find it.
+- `tsconfigFile` names a file that does not exist. This is a workaround: Stryker 10.1.1 rewrites
+  the tsconfig file with a TypeScript function that TypeScript 7 removed, and `vp create` projects
+  use TypeScript 7, so the run crashes with `ts.parseConfigFileTextToJson is not a function`
+  ([stryker-mutator/stryker-js#6111](https://github.com/stryker-mutator/stryker-js/issues/6111)).
+  A missing file makes Stryker skip that step. JSON cannot hold the `WORKAROUND` comment that marks
+  workarounds in code, so this paragraph records it, and
+  [#737](https://github.com/schalkneethling/create-project-calavera/issues/737) tracks its removal.
+
+Stryker writes its sandboxes to `.stryker-tmp/`, which a failed run leaves behind, and its HTML
+report to `reports/mutation/`. Apply lists both in a marked block in `.gitignore`, so `vp check`
+does not format them, and lists `reports/mutation/` in `.htmlvalidateignore` when the recipe also
+selects HTML Validate (ADR-0016).
 
 ### GitHub repository controls
 
