@@ -39,6 +39,7 @@ import {
   gitHookArtifactIds,
   installedSkillDirectory,
   planArtifactWiring,
+  wiringFilesThatMention,
   writeArtifactWiring,
 } from "./ai/artifact-wiring.js";
 import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
@@ -182,7 +183,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter.
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], staleQualityValues: string[] }} ScriptPlan staleQualityValues are quality values an earlier release wrote, which apply removes because the plan omits quality
- * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
+ * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
  *
@@ -210,10 +211,13 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {import("./ai/artifact-inputs.js").ResolvedInput} ResolvedInput
  * @typedef {import("./ai/artifact-wiring.js").WiringChange} WiringChange
  *
+ * @typedef {"local-edits" | "legacy-state" | "still-mentioned" | "unfollowable-link" | "unreadable"} CleanSkipReason Why clean kept a stale item, so a JSON reader can tell the reasons apart; `reason` says the same in words, with what to do.
+ *
  * @typedef {object} CleanResult
  * @property {"clean"} command
  * @property {boolean} [dryRun]
  * @property {Change[]} changes
+ * @property {WiringChange[]} wiringChanges Each hook block and settings group clean removes because the recipe no longer selects the artifact that wired it, so the dry run shows the exact text.
  * @property {string} message
  *
  * @typedef {object} DoctorResult
@@ -2867,7 +2871,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
  * @param {string | undefined} profile
  * @param {string[]} integrations
  * @param {ManagedFileState[]} managedFiles
- * @param {AiArtifactState[]} aiArtifacts
+ * @param {AiArtifactState[]} aiArtifacts The selected artifacts as apply installed them. The previous records of every other artifact are kept for clean.
  * @param {import("./ai/artifact-wiring.js").WiringRecord[]} aiWiring The wiring in the project after apply. It replaces the previous records, because apply removes the wiring of every artifact the recipe no longer selects, and a record of removed wiring would describe text the files no longer hold.
  * @returns {CalaveraState}
  */
@@ -2889,6 +2893,14 @@ function mergeRecipeIntoState(
 
   const nextManagedFiles = [...managedFilesByPath.values()];
   const preservesToolingRecipe = managedFiles.length === 0 && aiArtifacts.length > 0;
+  // #829: an artifact the recipe no longer selects keeps the record of what apply installed, as a
+  // stale managed file does, so clean can remove its output when it is unedited and report it when
+  // it was edited. Without the record, clean could not tell the output from the person's own files.
+  const selectedAiPaths = new Set(aiArtifacts.map(({ path }) => path));
+  const nextAiArtifacts = [
+    ...aiArtifacts,
+    ...previousState.aiArtifacts.filter(({ path }) => !selectedAiPaths.has(path)),
+  ];
 
   return {
     ...previousState,
@@ -2897,7 +2909,7 @@ function mergeRecipeIntoState(
     integrations: preservesToolingRecipe ? previousState.integrations : integrations,
     files: nextManagedFiles.map((file) => file.path),
     managedFiles: nextManagedFiles,
-    aiArtifacts,
+    aiArtifacts: nextAiArtifacts,
     aiWiring,
   };
 }
@@ -4393,6 +4405,7 @@ async function clean(options) {
     return {
       command: "clean",
       changes: [],
+      wiringChanges: [],
       message: "No Calavera state found. Nothing to clean.",
     };
   }
@@ -4402,7 +4415,9 @@ async function clean(options) {
     ? await readRecipe(options.config)
     : { integrations: [] };
   const integrations = resolveRecipeIntegrations(recipe);
-  const expectedAiPaths = new Set(resolveAiArtifacts(recipe).flatMap(aiArtifactOutputPaths));
+  const selectedAiArtifacts = resolveAiArtifacts(recipe);
+  const expectedAiPaths = new Set(selectedAiArtifacts.flatMap(aiArtifactOutputPaths));
+  const selectedAiIds = new Set(selectedAiArtifacts.map(({ source }) => source));
   const expectedFiles = new Set(expectedManagedFiles(integrations));
   const staleFiles = managedFilesFromState(state).filter((file) => !expectedFiles.has(file.path));
   const staleAiArtifacts = state.aiArtifacts.filter(
@@ -4410,11 +4425,11 @@ async function clean(options) {
   );
   /** @type {ManagedFileState[]} */
   const staleFilesSafeToRemove = [];
-  /** @type {Array<ManagedFileState & { reason?: string, installedHash?: string }>} */
+  /** @type {Array<ManagedFileState & { reason: string, skipReasons: CleanSkipReason[] }>} */
   const staleFilesWithLocalEdits = [];
   /** @type {AiArtifactState[]} */
   const staleAiArtifactsSafeToRemove = [];
-  /** @type {Array<AiArtifactState & { installedHash: string }>} */
+  /** @type {Array<AiArtifactState & { reason: string, skipReasons: CleanSkipReason[] }>} */
   const staleAiArtifactsWithLocalEdits = [];
 
   for (const file of staleFiles) {
@@ -4427,7 +4442,8 @@ async function clean(options) {
       staleFilesWithLocalEdits.push({
         ...file,
         reason:
-          "Managed file has legacy state without a hash; run apply before clean can remove it safely.",
+          "Managed file has a record from an older Calavera without a hash, so clean cannot tell whether you edited it. Run create-project-calavera apply, then run clean again.",
+        skipReasons: ["legacy-state"],
       });
       continue;
     }
@@ -4439,10 +4455,24 @@ async function clean(options) {
     } else {
       staleFilesWithLocalEdits.push({
         ...file,
-        installedHash,
+        reason: `Managed file has local edits (installed=${installedHash}, state=${file.hash}). ${KEEP_YOUR_VERSION}`,
+        skipReasons: ["local-edits"],
       });
     }
   }
+
+  // #829 (owner decision of 2026-11-07): clean removes the wiring of an artifact the recipe no
+  // longer selects under the same rules as apply, with the same planner. Only blocks and groups
+  // that match the record are removed, and an edited one throws a conflict here, before anything
+  // is listed or written, so clean never deletes a skill directory that recorded wiring still runs.
+  const wiringPlan = await planArtifactWiring({
+    recipe,
+    artifacts: [],
+    previousRecords: state.aiWiring.filter(({ artifact }) => !selectedAiIds.has(artifact)),
+    skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
+    loadFormatter: projectFormatterLoader(process.cwd()),
+  });
+  const changedWiringFiles = wiringPlan.files.filter(({ type }) => type !== "unchanged");
 
   for (const artifact of staleAiArtifacts) {
     if (!(await fileExists(artifact.path))) {
@@ -4452,63 +4482,94 @@ async function clean(options) {
 
     const installedHash = await hashAiInstall(artifact.type, artifact.path, artifact.target);
 
-    if (installedHash === artifact.hash) {
-      staleAiArtifactsSafeToRemove.push(artifact);
-    } else {
+    if (installedHash !== artifact.hash) {
       staleAiArtifactsWithLocalEdits.push({
         ...artifact,
-        installedHash,
+        reason: `AI artifact has local edits (installed=${installedHash}, state=${artifact.hash}). ${KEEP_YOUR_VERSION}`,
+        skipReasons: ["local-edits"],
       });
+      continue;
     }
+
+    // A hook script or settings group that runs the artifact's scripts without a record, such as a
+    // block whose markers the person deleted to keep it, would fail once the files are gone.
+    // A link that cannot be followed, or a file Calavera cannot read, keeps the artifact for the
+    // same reason: what it would run is unknown.
+    const scan = await wiringFilesThatMention(artifact.path, wiringPlan.files);
+    const kept = keptBecauseOfWiring(artifact.path, scan);
+    if (kept.skipReasons.length > 0) {
+      staleAiArtifactsWithLocalEdits.push({ ...artifact, ...kept });
+      continue;
+    }
+
+    staleAiArtifactsSafeToRemove.push(artifact);
   }
 
-  if (staleFilesSafeToRemove.length === 0 && staleAiArtifactsSafeToRemove.length === 0) {
+  if (
+    staleFilesSafeToRemove.length === 0 &&
+    staleAiArtifactsSafeToRemove.length === 0 &&
+    changedWiringFiles.length === 0
+  ) {
     return {
       command: "clean",
+      wiringChanges: [],
       changes: [
-        ...staleFilesWithLocalEdits.map((file) => ({
+        ...staleFilesWithLocalEdits.map(({ path, reason, skipReasons }) => ({
           type: "skip",
-          path: file.path,
-          reason:
-            file.reason ??
-            `Managed file has local edits (installed=${file.installedHash}, state=${file.hash}).`,
+          path,
+          reason,
+          skipReasons,
         })),
-        ...staleAiArtifactsWithLocalEdits.map((artifact) => ({
+        ...staleAiArtifactsWithLocalEdits.map(({ path, reason, skipReasons }) => ({
           type: "skip",
-          path: artifact.path,
-          reason: `AI artifact has local edits (installed=${artifact.installedHash}, state=${artifact.hash}).`,
+          path,
+          reason,
+          skipReasons,
         })),
       ],
       message:
         staleFilesWithLocalEdits.length > 0 || staleAiArtifactsWithLocalEdits.length > 0
-          ? "No stale managed items were safe to remove. Some stale items have local edits."
+          ? `No stale managed items were safe to remove. ${keptSummary([...staleFilesWithLocalEdits, ...staleAiArtifactsWithLocalEdits])}`
           : "No stale managed files found.",
     };
   }
 
   if (!options.assumeYes && !options.dryRun) {
     const staleCount = staleFilesSafeToRemove.length + staleAiArtifactsSafeToRemove.length;
+    const removals = [
+      staleCount > 0 ? `${staleCount} stale Calavera-managed item(s)` : "",
+      changedWiringFiles.length > 0
+        ? `the wiring of artifacts the recipe no longer selects from ${changedWiringFiles.length} file(s)`
+        : "",
+    ].filter(isNotEmptyString);
     const shouldClean = await confirm({
-      message: `Remove ${staleCount} stale Calavera-managed item(s)?`,
+      message: `Remove ${removals.join(" and ")}?`,
     });
 
     if (!shouldClean || isCancel(shouldClean)) {
       return {
         command: "clean",
         changes: [],
+        wiringChanges: [],
         message: "Clean cancelled.",
       };
     }
   }
 
+  /** @type {Change[]} */
   const changes = [
+    ...changedWiringFiles.map(({ path, type }) => ({
+      type,
+      path,
+      action: /** @type {const} */ ("update"),
+      ownership: /** @type {const} */ ("project"),
+    })),
     ...staleFilesSafeToRemove.map((file) => ({ type: "delete", path: file.path })),
-    ...staleFilesWithLocalEdits.map((file) => ({
+    ...staleFilesWithLocalEdits.map(({ path, reason, skipReasons }) => ({
       type: "skip",
-      path: file.path,
-      reason:
-        file.reason ??
-        `Managed file has local edits (installed=${file.installedHash}, state=${file.hash}).`,
+      path,
+      reason,
+      skipReasons,
     })),
     ...staleAiArtifactsSafeToRemove.map((artifact) => ({
       type: "delete",
@@ -4523,11 +4584,24 @@ async function clean(options) {
       category: "ai",
       aiType: artifact.type,
       name: artifact.name,
-      reason: `AI artifact has local edits (installed=${artifact.installedHash}, state=${artifact.hash}).`,
+      reason: artifact.reason,
+      skipReasons: artifact.skipReasons,
     })),
   ];
+  const kept = keptSummary([...staleFilesWithLocalEdits, ...staleAiArtifactsWithLocalEdits]);
 
   if (!options.dryRun) {
+    // A skipped item keeps its record, so the next clean still reports it, or removes it once the
+    // person restores it.
+    const keptFilePaths = new Set(staleFilesWithLocalEdits.map(({ path }) => path));
+    const keptManagedFiles = managedFilesFromState(state).filter(
+      (file) => expectedFiles.has(file.path) || keptFilePaths.has(file.path),
+    );
+    const keptAiPaths = new Set(staleAiArtifactsWithLocalEdits.map(({ path }) => path));
+
+    // The wiring goes first, so a failure part way never leaves a hook that runs a deleted script.
+    await writeArtifactWiring(wiringPlan.files);
+
     for (const file of staleFilesSafeToRemove) {
       if (await fileExists(file.path)) {
         await unlink(await assertWorkspacePath(file.path, process.cwd(), "Managed file path"));
@@ -4545,11 +4619,13 @@ async function clean(options) {
       STATE_FILE,
       {
         ...state,
-        files: managedFilesFromState(state)
-          .filter((file) => expectedFiles.has(file.path))
-          .map((file) => file.path),
-        managedFiles: managedFilesFromState(state).filter((file) => expectedFiles.has(file.path)),
-        aiArtifacts: state.aiArtifacts.filter((artifact) => expectedAiPaths.has(artifact.path)),
+        files: keptManagedFiles.map((file) => file.path),
+        managedFiles: keptManagedFiles,
+        aiArtifacts: state.aiArtifacts.filter(
+          (artifact) => expectedAiPaths.has(artifact.path) || keptAiPaths.has(artifact.path),
+        ),
+        // The records of removed wiring describe text the files no longer hold.
+        aiWiring: state.aiWiring.filter(({ artifact }) => selectedAiIds.has(artifact)),
       },
       false,
     );
@@ -4559,10 +4635,116 @@ async function clean(options) {
     command: "clean",
     dryRun: options.dryRun,
     changes,
-    message: options.dryRun
-      ? "Dry run complete. No files were removed."
-      : "Removed stale managed files.",
+    wiringChanges: wiringPlan.changes,
+    message: [
+      options.dryRun
+        ? "Dry run complete. No files were removed."
+        : staleFilesSafeToRemove.length + staleAiArtifactsSafeToRemove.length === 0
+          ? "Removed the wiring of artifacts the recipe no longer selects."
+          : changedWiringFiles.length === 0
+            ? "Removed stale managed files."
+            : "Removed stale managed files and the wiring of artifacts the recipe no longer selects.",
+      kept,
+    ]
+      .filter(isNotEmptyString)
+      .join(" "),
   };
+}
+
+// What to do about a stale item clean keeps because it was edited.
+const KEEP_YOUR_VERSION =
+  "Clean keeps your version. To have clean remove it, restore the content Calavera wrote, or delete it yourself.";
+
+/**
+ * For each reason clean keeps a stale item, the words for the summary: why, for one item and for
+ * several, then what to do. Each kept item's own `reason` names the exact file, link, or hash.
+ *
+ * @type {Record<CleanSkipReason, { one: string, several: string, action: string }>}
+ */
+const KEPT_SUMMARY = {
+  "local-edits": {
+    one: "it has local edits",
+    several: "each has local edits",
+    action:
+      "Clean keeps your version. To have clean remove an item, restore the content Calavera wrote, or delete the item yourself.",
+  },
+  "legacy-state": {
+    one: "its record, from an older Calavera, has no hash",
+    several: "each record, from an older Calavera, has no hash",
+    action: "Run create-project-calavera apply, then run clean again.",
+  },
+  "still-mentioned": {
+    one: "a hook script or Claude Code settings file still mentions it",
+    several: "a hook script or Claude Code settings file still mentions each of them",
+    action:
+      "Remove the lines or groups that run them from the files each item's reason names, then run clean again.",
+  },
+  "unfollowable-link": {
+    one: "a hook is a symbolic link that Calavera cannot follow",
+    several: "a hook is a symbolic link that Calavera cannot follow",
+    action: "Repair or remove the links each item's reason names, then run clean again.",
+  },
+  unreadable: {
+    one: "Calavera cannot read a hook script or settings file that may run it",
+    several: "Calavera cannot read a hook script or settings file that may run them",
+    action: "Make the files each item's reason names readable, then run clean again.",
+  },
+};
+
+/**
+ * One sentence for each reason clean kept stale items: which items, why, and what to do. Empty
+ * when clean kept nothing.
+ *
+ * @param {{ path: string, skipReasons: CleanSkipReason[] }[]} keptItems
+ */
+function keptSummary(keptItems) {
+  return Object.entries(KEPT_SUMMARY)
+    .map(([code, { one, several, action }]) => {
+      const paths = keptItems
+        .filter(({ skipReasons }) => skipReasons.includes(/** @type {CleanSkipReason} */ (code)))
+        .map(({ path }) => path);
+      if (paths.length === 0) return "";
+      return `Kept ${paths.join(", ")}, because ${paths.length === 1 ? one : several}. ${action}`;
+    })
+    .filter(isNotEmptyString)
+    .join(" ");
+}
+
+/**
+ * Why clean keeps an unedited stale artifact that its scan of the hook scripts and settings files
+ * cannot rule out as still running, with what to do for each reason. No reasons when nothing
+ * mentions the artifact.
+ *
+ * @param {string} artifactPath
+ * @param {Awaited<ReturnType<typeof wiringFilesThatMention>>} scan
+ * @returns {{ reason: string, skipReasons: CleanSkipReason[] }}
+ */
+function keptBecauseOfWiring(artifactPath, { mentions, unresolved, unreadable }) {
+  /** @type {CleanSkipReason[]} */
+  const skipReasons = [];
+  /** @type {string[]} */
+  const sentences = [];
+  if (mentions.length > 0) {
+    skipReasons.push("still-mentioned");
+    sentences.push(
+      `${mentions.join(" and ")} still mention${mentions.length === 1 ? "s" : ""} ${artifactPath} after clean, so deleting it would break what runs there. Remove those lines or groups, then run clean again.`,
+    );
+  }
+  if (unresolved.length > 0) {
+    const one = unresolved.length === 1;
+    skipReasons.push("unfollowable-link");
+    sentences.push(
+      `${unresolved.join(" and ")} ${one ? "is a symbolic link" : "are symbolic links"} that Calavera cannot follow, so it cannot tell whether ${one ? "it runs" : "they run"} ${artifactPath}. Repair or remove ${one ? "that link" : "those links"}, then run clean again.`,
+    );
+  }
+  if (unreadable.length > 0) {
+    const one = unreadable.length === 1;
+    skipReasons.push("unreadable");
+    sentences.push(
+      `Calavera cannot read ${unreadable.map(({ path, code }) => `${path} (${code})`).join(" and ")}, so it cannot tell whether ${one ? "it runs" : "they run"} ${artifactPath}. Make ${one ? "that file" : "those files"} readable, then run clean again.`,
+    );
+  }
+  return { reason: sentences.join(" "), skipReasons };
 }
 
 function formatHelp() {
@@ -4578,7 +4760,7 @@ Commands:
   apply                Apply the recipe in calavera.config.json
   doctor               Check whether Calavera-managed files are present
   update               Re-apply the recipe in calavera.config.json
-  clean                Remove stale Calavera-managed files when safe
+  clean                Remove stale Calavera-managed files and wiring when safe
   artifacts install    Install exact package-backed artifact selections
   artifacts status     Inspect locked artifacts offline by default
   artifacts doctor     Check installed artifacts and local edits
@@ -4669,6 +4851,14 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   if (result.command === "clean") {
     const dryRun = result.dryRun ?? commandDryRun;
     logger.info(result.message);
+
+    for (const change of result.wiringChanges) {
+      for (const line of dryRun
+        ? formatWiringChange(change)
+        : [`Removed the ${change.artifact} wiring from ${change.path}`]) {
+        logger.info(line);
+      }
+    }
 
     for (const change of result.changes) {
       if (change.type === "delete") {
