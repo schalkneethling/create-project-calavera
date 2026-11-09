@@ -89,7 +89,9 @@ Calavera's managed state lives in `.calavera/state.json`. Generated files are
 tracked under `managedFiles` with their destination path and content hash. AI
 artifacts use the same safety model and are tracked under `aiArtifacts`, with
 the artifact type, name, recipe source, target, destination path, and source
-hash.
+hash. The lines apply writes in each integration's `.gitignore` block are
+tracked under `gitignoreBlocks`, so a later apply can tell its own block from
+one the user edited (ADR-0016).
 
 The source hashing follows Toolkit's current behavior:
 
@@ -100,7 +102,18 @@ The source hashing follows Toolkit's current behavior:
 For both generated files and AI artifacts, Calavera refuses to overwrite an
 existing destination when that destination is not recorded as Calavera-managed,
 or when the installed content no longer matches the recorded state hash. `clean`
-uses the same hashes and skips stale managed items that have local edits.
+uses the same hashes and skips stale managed items that have local edits. Apply keeps
+the record of an artifact the recipe no longer selects, so `clean` can remove its
+unedited output later. Before `clean` deletes a skill, it removes the hook blocks
+and settings groups that skill's wiring added, but only text that matches the
+record; an edited block or group stops `clean` with a conflict.
+
+`clean` also keeps an unedited artifact that a hook script, `.claude/settings.json`,
+or `.claude/settings.local.json` still mentions, or that a hook it cannot follow or
+read may run. Each item `clean` keeps is a `skip` change whose `reason` says why and
+what to do, and whose `skipReasons` lists the reasons as codes: `local-edits`,
+`legacy-state`, `still-mentioned`, `unfollowable-link`, and `unreadable`. The
+summary message names the kept items for each reason, with the action.
 
 ## Post-Install Pointers
 

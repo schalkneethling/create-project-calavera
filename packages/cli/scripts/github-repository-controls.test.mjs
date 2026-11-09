@@ -1588,6 +1588,63 @@ test("Given github-repository-controls still selected and another integration re
   }
 });
 
+// #795 with #829: the expected files come from apply's planner, and a stale file that clean skips
+// for local edits keeps its record. Both decide which records the state keeps, so one clean that
+// removes an unedited stale file must still keep the four still-selected files, the edited stale
+// file, and the records of both. A clean that only skips writes no state, so EditorConfig is
+// removed alongside to make clean rewrite it.
+test("Given github-repository-controls still selected and an edited stale knip.json, clean --yes keeps both their files and their records", async () => {
+  const originalDirectory = process.cwd();
+  await using projectDirectory = await mkdtempDisposable(
+    join(tmpdir(), "calavera-repository-controls-clean-edited-"),
+  );
+  /** @param {string[]} integrations */
+  const recipeWith = (integrations) =>
+    buildRecipe("minimal", integrations, "npm", [], {
+      "github-repository-controls": rawOptions,
+    });
+  const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
+  try {
+    process.chdir(projectDirectory.path);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await applyRecipeObject(recipeWith(["github-repository-controls", "knip", "editorconfig"]), {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    });
+    const controlPaths = githubRepositoryControlManagedFiles(rawOptions).map(({ path }) => path);
+    const editedKnip = '{\n  "entry": ["src/index.js"]\n}\n';
+    await writeFile("knip.json", editedKnip);
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(recipeWith(["github-repository-controls"]), null, 2)}\n`,
+    );
+
+    const { changes } = JSON.parse(
+      execFileSync(process.execPath, [cli, "clean", "--yes", "--json"], { encoding: "utf8" }),
+    );
+    assert.deepEqual(
+      changes.map(({ type, path, skipReasons }) => [type, path, skipReasons]),
+      [
+        ["delete", ".editorconfig", undefined],
+        ["skip", "knip.json", ["local-edits"]],
+      ],
+    );
+    await assert.rejects(access(".editorconfig"));
+    assert.equal(await readFile("knip.json", "utf8"), editedKnip);
+    for (const path of controlPaths) {
+      await access(path);
+    }
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.deepEqual(
+      state.managedFiles.map(({ path }) => path).toSorted(),
+      [...controlPaths, "knip.json"].toSorted(),
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
 test("Given github-repository-controls removed from the recipe, clean --dry-run lists each of its files", async () => {
   const originalDirectory = process.cwd();
   await using projectDirectory = await mkdtempDisposable(
