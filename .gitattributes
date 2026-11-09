@@ -1,0 +1,3 @@
+# The agent guidance fixtures are byte-exact texts that earlier releases wrote.
+# Checking them out with other line endings would change their digests.
+packages/cli/fixtures/agent-guidance/** -text
