@@ -4618,7 +4618,11 @@ async function clean(options) {
   // #795: the files apply writes for this recipe, from apply's own planner, so a file that an
   // integration the recipe still selects writes is never stale. A separate list of file names
   // missed the github-repository-controls files, so clean would have deleted them.
-  const plannedFiles = planCleanManagedFiles(integrations, recipe.integrationOptions, options.config);
+  const plannedFiles = planCleanManagedFiles(
+    integrations,
+    recipe.integrationOptions,
+    options.config,
+  );
   const expectedFiles = new Set(plannedFiles.map(({ path }) => path));
   const staleFiles = managedFilesFromState(state).filter((file) => !expectedFiles.has(file.path));
   const staleAiArtifacts = state.aiArtifacts.filter(
