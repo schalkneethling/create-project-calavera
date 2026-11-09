@@ -340,6 +340,11 @@ report to `reports/mutation/`. Apply lists both in a marked block in `.gitignore
 does not format them, and lists `reports/mutation/` in `.htmlvalidateignore` when the recipe also
 selects HTML Validate (ADR-0016).
 
+The hosted Composer offers `stryker` only when the published CLI is 6.2.0 or later. It lists the
+Vite+ requirement, the `test:mutation` script, and the workspace-member scope under the Mutation
+testing heading. The `notes` of `list_integrations` and `describe_integration`, and the
+`explain_recipe` reason, in the MCP server carry the same three conditions.
+
 ### GitHub repository controls
 
 The optional `github-repository-controls` integration generates a committed desired-state policy,

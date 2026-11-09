@@ -83,6 +83,10 @@ export const integrationCatalog = [
     platform: "stryker",
     status: "optional",
     minimumCliVersion: "6.2.0",
+    // ADR-0014 Decision 3: a mutation run takes minutes, so quality never runs this script. The
+    // Composer and the MCP descriptions name it from here; apply writes it in index.js, and
+    // integration-notes.test.mjs fails if the two names differ.
+    standaloneScript: "test:mutation",
     // ADR-0014 Decision 2: Stryker runs the project's tests with the Vitest that vite-plus
     // installs, so apply stops where it does not delegate to Vite+, and the dry run warns when no
     // file matches Vitest's default test pattern.

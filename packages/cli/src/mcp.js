@@ -105,6 +105,11 @@ const integrationOutputSchema = z.looseObject({
     .optional()
     .describe("The first CLI version that accepts this integration's integrationOptions entry."),
   appliesAt: z.string().optional(),
+  notes: z
+    .array(z.string())
+    .describe(
+      "Plain-language conditions to tell the user before selecting the integration, such as that it needs a project that Vite+ manages or applies in a workspace member, not at a workspace root.",
+    ),
   includes: z.array(z.string()).optional(),
 });
 
