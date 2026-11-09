@@ -416,7 +416,7 @@ test("vp create library: doctor reports a missing stryker.config.json", async ()
   const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 
   await inDirectory(fixture.root, async () => {
-    const recipe = await composeRecipe(["stryker"]);
+    const recipe = await composeRecipe(["editorconfig", "stryker"]);
     await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
     await callMcpTool("apply_recipe", { recipe, noInstall: true });
     const missing = (/** @type {{ issues: Array<{ message: string }> }} */ report) =>
@@ -434,5 +434,32 @@ test("vp create library: doctor reports a missing stryker.config.json", async ()
     assert.equal(missing(doctor()), false);
     await rm("stryker.config.json");
     assert.equal(missing(doctor()), true);
+
+    // Without stryker in the recipe, a missing stryker.config.json is not doctor's concern.
+    const withoutStryker = await composeRecipe(["editorconfig"]);
+    await writeFile("calavera.config.json", `${JSON.stringify(withoutStryker, null, 2)}\n`);
+    assert.equal(missing(doctor()), false);
   });
+});
+
+test("an existing Stryker config of the person's own is reported, whichever name Stryker reads", async () => {
+  for (const name of ["stryker.conf.cjs", ".stryker.config.mjs", "stryker.config.json"]) {
+    await using fixture = await createTemporaryFixture("stryker-existing-config", {
+      "package.json": `${JSON.stringify({ name: "own", devDependencies: { "vite-plus": "1.5.1" } }, null, 2)}\n`,
+      [name]: "{}\n",
+    });
+
+    await inDirectory(fixture.root, async () => {
+      const inspection = await callMcpTool("inspect_project", {
+        recipe: await composeRecipe(["stryker"]),
+      });
+      assert.deepEqual(
+        inspection.findings
+          .filter(({ kind }) => kind === "existing-config")
+          .map(({ path }) => path),
+        [name],
+      );
+      assert.equal(await readFile(name, "utf8"), "{}\n");
+    });
+  }
 });
