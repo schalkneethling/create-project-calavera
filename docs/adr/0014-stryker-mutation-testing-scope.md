@@ -111,7 +111,7 @@ These were recorded on 2026-11-09, when #734 implemented the integration. The ev
 
 Decision 2 left this to #734. The project owner chose on 2026-11-09 (https://github.com/schalkneethling/create-project-calavera/issues/734#issuecomment-6748973632):
 
-- **At a workspace root, the dry run and apply stop before writing anything**, with a finding that tells the person to apply Stryker in each workspace member. At the root of a `vp create vite:monorepo` project, Stryker exits with code 1 and "No tests were executed", because the root has no tests of its own, while the `packages/utils` member scores 2 of 2 mutants killed. A workspace root is the directory for which `workspacePackagePatterns` in `packages/cli/src/index.js` finds member patterns, as the package manager in use reads them.
+- **At a workspace root, the dry run and apply stop before writing anything**, with a finding that tells the person to apply Stryker in each workspace member. At the root of a `vp create vite:monorepo` project, Stryker exits with code 1 and "No tests were executed", because the root has no tests of its own, while the `packages/utils` member scores 2 of 2 mutants killed. A workspace root is a directory whose `pnpm-workspace.yaml` or whose `package.json` `workspaces` field lists member patterns, read with `workspacePackagePatterns` in `packages/cli/src/index.js` for pnpm and for npm, Yarn, and Bun. Both files are read whatever package manager apply resolves, so a `packageManager` override cannot skip the stop.
 - **Every other project that Vite+ manages gets the setup.** The dry run warns, and does not stop, when no file matches Vitest's default test pattern, `**/*.{test,spec}.?(c|m)[jt]s?(x)` (vitest 5.1.0, `dist/config.cjs`), because a `test.include` in the Vite config can name other files, so a stop based on file names alone would be unreliable. A library with its `tests/` folder removed shows what the warning is about: Stryker exits with code 1 and "No tests were executed".
 
 The catalog expresses both: `runsVitestTests: true` for the stop where apply does not delegate to Vite+ and for the warning, and `appliesAt: "package"` for the stop at a workspace root.
@@ -131,10 +131,10 @@ The same run confirmed the other conditions in Evidence for Stryker 10.1.1: stry
 
 ## Open questions
 
-The Yarn and Bun question is answered under Resolutions. The question on monorepos is answered there too: the integration applies in workspace members, not at the root.
+The first two questions are kept as they were asked on 2026-10-22, and Resolutions answers both.
 
-- **Yarn and Bun.** Whether Yarn and Bun resolve the runner's `vitest` peer dependency to the copy that vite-plus installs was not tested. #734 decides whether version 1 refuses those package managers or tests them first.
-- **Monorepos.** The feasibility study recommends Stryker in each workspace member, not at the root. In a scratch `vp create vite:monorepo` project, `vp add -D` worked in a member, Stryker ran there with a member-level config, and `vp run -r test:mutation` ran every member that defines the script. If #734 follows that recommendation, whether #731 still blocks Stryker depends on whether #734 offers the integration at a workspace root at all.
+- **Yarn and Bun (resolved on 2026-11-09: all four package managers are supported).** Whether Yarn and Bun resolve the runner's `vitest` peer dependency to the copy that vite-plus installs was not tested. #734 decides whether version 1 refuses those package managers or tests them first.
+- **Monorepos (resolved on 2026-11-09: the integration applies in workspace members and stops at a workspace root).** The feasibility study recommends Stryker in each workspace member, not at the root. In a scratch `vp create vite:monorepo` project, `vp add -D` worked in a member, Stryker ran there with a member-level config, and `vp run -r test:mutation` ran every member that defines the script. If #734 follows that recommendation, whether #731 still blocks Stryker depends on whether #734 offers the integration at a workspace root at all.
 - **Grouped updates.** Core and runner must update together. Whether Calavera's managed Dependabot configuration (`github-repository-controls`) groups them, or the project owner does, is not decided.
 - **Vitest runner coverage with child processes.** The child-process coverage gap is known for the tap runner. The Vitest runner was not checked for the same gap.
 - **The TypeScript checker.** Stryker's TypeScript checker (#724) has the same TypeScript 7 problem and is not part of version 1.

@@ -8,6 +8,7 @@ import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import test from "node:test";
 
+import { integrationCatalog } from "../src/catalog.js";
 import { callMcpTool } from "../src/mcp.js";
 import { textHash } from "../src/utils/hash.js";
 import {
@@ -300,5 +301,110 @@ test("vp create monorepo member packages/utils: apply_recipe installs Stryker wi
       JSON.parse(await readFile("package.json", "utf8")).scripts["test:mutation"],
       "stryker run",
     );
+  });
+});
+
+test("every catalog appliesAt value is one apply acts on, and runsVitestTests is a boolean", () => {
+  for (const { id, appliesAt, runsVitestTests } of integrationCatalog) {
+    assert.ok(
+      appliesAt === undefined || ["repository-root", "package"].includes(appliesAt),
+      `${id} declares appliesAt ${appliesAt}, which apply ignores`,
+    );
+    assert.ok(
+      runsVitestTests === undefined || typeof runsVitestTests === "boolean",
+      `${id} declares runsVitestTests ${runsVitestTests}`,
+    );
+  }
+});
+
+test("vp create monorepo root: a packageManager override does not get past the workspace-root stop", async () => {
+  await using fixture = await copyReleaseFixture("monorepo");
+  const before = await snapshotTree(fixture.root);
+
+  await inDirectory(fixture.root, async () => {
+    const recipe = await composeRecipe(["stryker"]);
+    // npm reads workspaces in package.json, which the pnpm fixture does not declare.
+    await assert.rejects(
+      callMcpTool("dry_run_apply", { recipe, packageManager: "npm" }),
+      /^Error: stryker applies in each workspace member, not at the workspace root/,
+    );
+    await assert.rejects(
+      callMcpTool("apply_recipe", { recipe, packageManager: "npm", noInstall: true }),
+      /^Error: stryker applies in each workspace member, not at the workspace root/,
+    );
+  });
+
+  assert.deepEqual(await snapshotTree(fixture.root), before, "the refusal changed a file");
+});
+
+test("the root of an npm workspace that Vite+ manages stops on stryker and writes nothing", async () => {
+  await using fixture = await createTemporaryFixture("stryker-npm-workspace", {
+    "package.json": `${JSON.stringify(
+      {
+        name: "npm-workspace",
+        private: true,
+        workspaces: ["packages/*"],
+        devDependencies: { "vite-plus": "1.5.1" },
+      },
+      null,
+      2,
+    )}\n`,
+    "packages/utils/package.json": `${JSON.stringify({ name: "utils" }, null, 2)}\n`,
+    "packages/utils/tests/index.test.ts": "export {};\n",
+  });
+  const before = await snapshotTree(fixture.root);
+
+  await inDirectory(fixture.root, async () => {
+    const { recipe } = await callMcpTool("compose_recipe", {
+      profile: "minimal",
+      packageManager: "npm",
+      tools: ["stryker"],
+    });
+    const refusal =
+      "stryker applies in each workspace member, not at the workspace root, because it runs the tests of the project it is applied to and a workspace root has none of its own. The dry run and apply stop before writing anything. Apply a recipe that selects stryker from each workspace member that has Vitest tests (cd <member> && npm create project-calavera apply -- --dry-run), and remove stryker from this recipe.";
+    await assert.rejects(
+      callMcpTool("dry_run_apply", { recipe }),
+      (/** @type {unknown} */ error) => error instanceof Error && error.message === refusal,
+    );
+  });
+
+  assert.deepEqual(await snapshotTree(fixture.root), before, "the refusal changed a file");
+});
+
+test("vp create monorepo: a new member without a package.json is planned, because its workspace is managed", async () => {
+  await using fixture = await copyReleaseFixture("monorepo");
+  const member = join(fixture.root, "packages/new");
+  await mkdir(join(member, "tests"), { recursive: true });
+  await writeFile(join(member, "tests/index.test.ts"), "export {};\n");
+
+  await inDirectory(member, async () => {
+    const dryRun = await callMcpTool("dry_run_apply", { recipe: await composeRecipe(["stryker"]) });
+    assert.equal(dryRun.result.vitePlus.status, "unknown");
+    assert.ok(
+      dryRun.result.changes.some(({ path }) => path === "stryker.config.json"),
+      JSON.stringify(dryRun.result.changes),
+    );
+    assert.deepEqual(
+      dryRun.result.projectInspection.findings.filter(({ severity }) => severity === "error"),
+      [],
+    );
+  });
+});
+
+test("vp create library: with HTML Validate, the Stryker report folder is in .htmlvalidateignore", async () => {
+  await using fixture = await copyReleaseFixture("library");
+
+  await inDirectory(fixture.root, async () => {
+    await callMcpTool("apply_recipe", {
+      recipe: await composeRecipe(["html-validate", "stryker"]),
+      noInstall: true,
+    });
+    assert.deepEqual((await readFile(".htmlvalidateignore", "utf8")).trimEnd().split("\n"), [
+      "node_modules/",
+      "dist/",
+      "coverage/",
+      ".claude/worktrees/",
+      "reports/mutation/",
+    ]);
   });
 });

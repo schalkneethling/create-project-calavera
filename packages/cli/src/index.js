@@ -195,7 +195,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ severity: "info" | "warning" | "error", kind: string, message: string, path?: string }} ProjectInspectionFinding
  * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus: VitePlusDetection }} ProjectInspection
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
- * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter.
+ * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[], packageTestFindings?: ProjectInspectionFinding[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter. `packageTestFindings` holds the findings apply already planned with the package manager it resolved, so inspection reports them instead of planning them again.
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], staleQualityValues: string[] }} ScriptPlan staleQualityValues are quality values an earlier release wrote, which apply removes because the plan omits quality
  * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
@@ -517,6 +517,9 @@ async function hasVitestDefaultTestFile(directory) {
  * installs the Vitest the integration runs, and at a workspace root, which has no tests of its
  * own. A warning, which does not stop, says that no file matches Vitest's default test pattern;
  * a `test.include` in the Vite config can name other files, so that alone is no reason to stop.
+ * Whether `directory` is a workspace root is read from the files on disk for every package
+ * manager, so the stop does not depend on which package manager apply resolves. `packageManager`
+ * only names the command in the message.
  *
  * @param {Integration[]} integrations
  * @param {VitePlusDetection} detection
@@ -534,7 +537,9 @@ async function packageTestFindings(
 ) {
   /** @type {ProjectInspectionFinding[]} */
   const findings = [];
+  /** @type {boolean | undefined} */
   let workspaceRoot;
+  /** @type {boolean | undefined} */
   let hasTestFile;
 
   for (const { id, runsVitestTests, appliesAt } of integrations) {
@@ -547,14 +552,17 @@ async function packageTestFindings(
       continue;
     }
 
-    workspaceRoot ??= Boolean(
-      await workspacePackagePatterns(directory, packageJSON, packageManager),
-    );
-    if (appliesAt === "package" && workspaceRoot) {
+    if (
+      appliesAt === "package" &&
+      (workspaceRoot ??= await isWorkspaceRoot(directory, packageJSON))
+    ) {
+      const reason = runsVitestTests
+        ? ", because it runs the tests of the project it is applied to and a workspace root has none of its own"
+        : "";
       findings.push({
         severity: "error",
         kind: "workspace-root",
-        message: `${id} applies in each workspace member, not at the workspace root, because it runs the tests of the project it is applied to and a workspace root has none of its own. The dry run and apply stop before writing anything. Apply a recipe that selects ${id} from each workspace member that has Vitest tests (cd <member> && ${projectLocalCommandCatalog[packageManager].applyDryRun}), and remove ${id} from this recipe.`,
+        message: `${id} applies in each workspace member, not at the workspace root${reason}. The dry run and apply stop before writing anything. Apply a recipe that selects ${id} from each workspace member${runsVitestTests ? " that has Vitest tests" : ""} (cd <member> && ${projectLocalCommandCatalog[packageManager].applyDryRun}), and remove ${id} from this recipe.`,
       });
       continue;
     }
@@ -569,6 +577,21 @@ async function packageTestFindings(
   }
 
   return findings;
+}
+
+/**
+ * Whether `directory` is the root of a workspace for any package manager: `pnpm-workspace.yaml`
+ * lists member patterns, as pnpm reads it, or `package.json` does in `workspaces`, as npm, Yarn,
+ * and Bun read it.
+ *
+ * @param {string} directory
+ * @param {PackageJSON | undefined} packageJSON
+ */
+async function isWorkspaceRoot(directory, packageJSON) {
+  return (
+    (await workspacePackagePatterns(directory, packageJSON, "pnpm")) !== undefined ||
+    (await workspacePackagePatterns(directory, packageJSON, "npm")) !== undefined
+  );
 }
 
 /**
@@ -2514,7 +2537,9 @@ export async function inspectProject(recipe, options = {}) {
 
   const vitePlus = await detectVitePlus(process.cwd());
   findings.push(...vitePlusFindings(vitePlus));
-  if (recipe && !manifestFinding) {
+  if (options.packageTestFindings) {
+    findings.push(...options.packageTestFindings);
+  } else if (recipe && !manifestFinding) {
     findings.push(
       ...(await packageTestFindings(
         integrations,
@@ -2710,15 +2735,14 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   // that follows it name the same command and write the same script, and a project whose
   // vite-plus cannot be located stops here.
   const vitePlusDetection = await detectVitePlus(process.cwd());
-  assertNoPackageTestErrors(
-    await packageTestFindings(
-      integrations,
-      vitePlusDetection,
-      process.cwd(),
-      detectedPackageJSON,
-      packageManager,
-    ),
+  const packageTestInspection = await packageTestFindings(
+    integrations,
+    vitePlusDetection,
+    process.cwd(),
+    detectedPackageJSON,
+    packageManager,
   );
+  assertNoPackageTestErrors(packageTestInspection);
   // ADR-0015, Decision 6: every input a selected artifact declares, and every integration option
   // Calavera suggests a value for (#844), has a value before anything is planned. An interactive
   // run asks; any other run uses the default and reports it.
@@ -2848,6 +2872,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const projectInspection = await inspectProject(recipe, {
     reownManagedFiles: applyOptions.reownManagedFiles,
     managedFilePlans,
+    packageTestFindings: packageTestInspection,
   });
   const scriptPlan = buildScripts(recipe, integrations, packageManager, vitePlusQuality);
   const { scripts, omittedScripts, omittedQualitySteps, staleQualityValues } = scriptPlan;
@@ -4706,6 +4731,7 @@ async function doctor(options) {
         ? "react-doctor.config.json"
         : null,
       integrations.some((integration) => integration.id === "knip") ? "knip.json" : null,
+      integrations.some((integration) => integration.id === "stryker") ? STRYKER_CONFIG_PATH : null,
     ].filter(isNotEmptyString);
 
     for (const file of expectedFiles) {
