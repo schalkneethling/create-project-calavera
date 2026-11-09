@@ -2,8 +2,8 @@
 # These scenarios are the manual QA guide. The automated part lives in
 # packages/cli/scripts/ignore-lines.test.mjs, which adds a test integration named
 # "ignore-fixture" that declares ".fixture-tmp/" and "reports/fixture/" for .gitignore and
-# "reports/fixture/" for .htmlvalidateignore. No catalog entry declares .gitignore lines before
-# the Stryker entry (#734), so manual QA of the .gitignore scenarios waits for #734.
+# "reports/fixture/" for .htmlvalidateignore. For manual QA, the Stryker entry (#734) is the first
+# catalog entry that declares .gitignore lines; scenarios/734-stryker-integration.feature uses it.
 
 Feature: An integration adds ignore lines without overwriting the person's own lines
 

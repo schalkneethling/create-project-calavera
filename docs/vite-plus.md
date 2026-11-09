@@ -29,11 +29,16 @@ Vite+ provides the toolchain (`vp --help` and `vp create --help`, vite-plus
 
 Calavera adds, on top of that toolchain:
 
-- The integration catalog's fourteen entries: EditorConfig, Stylelint,
+- The integration catalog's fifteen entries: EditorConfig, Stylelint,
   Stylelint standard config, CSS property ordering, CSS Baseline, SCSS support,
   Stylelint stylistic rules, Logical CSS, CSS property type validation, Knip,
-  HTML Validate, Varlock, GitHub repository controls, and React Doctor
-  (`packages/cli/src/catalog.js`).
+  HTML Validate, Varlock, GitHub repository controls, Stryker mutation testing,
+  and React Doctor (`packages/cli/src/catalog.js`).
+- Mutation testing with Stryker, which neither vite-plus nor Vitest provides.
+  Stryker runs the project's Vitest tests with the Vitest that vite-plus
+  installs, so Calavera offers it only in a project that Vite+ manages, and not
+  at a workspace root (ADR-0014). It adds a `test:mutation` script and stays
+  out of `quality`.
 - AI artifacts: skills, hooks, and subagents under `.agents/`, versioned as npm
   packages and tracked for updates (`docs/evolution-brief.md` Section 3, C3).
 - MCP registration: a project-local server for Claude Code, Codex, Cursor, or

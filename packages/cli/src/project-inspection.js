@@ -23,6 +23,13 @@ export const integrationConfigFiles = Object.freeze({
   knip: ["knip.json"],
   "react-doctor": ["react-doctor.config.json"],
   stylelint: [".stylelintrc.json"],
+  // Every name Stryker 10.1.1 reads (SUPPORTED_CONFIG_FILE_NAMES), in the order it tries them, so
+  // a config of the person's own, which Stryker would read before stryker.config.json, is reported.
+  stryker: ["", "."].flatMap((prefix) =>
+    [".conf", ".config"].flatMap((suffix) =>
+      ["json", "js", "mjs", "cjs"].map((extension) => `${prefix}stryker${suffix}.${extension}`),
+    ),
+  ),
 });
 
 export const projectInspectionFiles = Object.freeze([

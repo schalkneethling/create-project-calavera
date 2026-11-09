@@ -542,8 +542,8 @@ test("the state record keeps valid gitignoreBlocks and refuses damaged ones", ()
 });
 
 // ---------------------------------------------------------------------------------------------
-// Apply, with a test integration that declares ignore lines. No catalog entry declares
-// `.gitignore` lines before the Stryker entry (#734), so the test adds one for this file only.
+// Apply, with a test integration that declares ignore lines. The test adds it for this file only,
+// so these cases do not depend on the lines a real entry such as Stryker (#734) declares.
 // ---------------------------------------------------------------------------------------------
 
 const fixtureBlock =

@@ -177,6 +177,8 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {{ extends?: string[], rules?: Record<string, unknown> }} [htmlValidate]
  * @property {{ extends?: string[], plugins?: string[], rules?: Record<string, unknown> }} [stylelint]
  * @property {{ gitignore?: string[], htmlValidateIgnore?: string[] }} [ignore] The lines the integration needs in .gitignore and .htmlvalidateignore (ADR-0016).
+ * @property {string} [appliesAt] "repository-root" for an integration that applies only at the repository root, "package" for one that applies in a single-package project or a workspace member but not at a workspace root.
+ * @property {boolean} [runsVitestTests] The integration runs the project's tests with the Vitest that vite-plus installs, so it needs a project that apply delegates to Vite+ (ADR-0014).
  *
  * @typedef {object} Recipe
  * @property {string} [$schema]
@@ -193,7 +195,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ severity: "info" | "warning" | "error", kind: string, message: string, path?: string }} ProjectInspectionFinding
  * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus: VitePlusDetection }} ProjectInspection
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
- * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter.
+ * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[], packageTestFindings?: ProjectInspectionFinding[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter. `packageTestFindings` holds the findings apply already planned with the package manager it resolved, so inspection reports them instead of planning them again.
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], staleQualityValues: string[] }} ScriptPlan staleQualityValues are quality values an earlier release wrote, which apply removes because the plan omits quality
  * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
@@ -296,6 +298,9 @@ const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/"
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
+const STRYKER_CONFIG_PATH = "stryker.config.json";
+// A file that does not exist, so Stryker skips its tsconfig preprocessing (createStrykerConfig).
+const STRYKER_SKIPPED_TSCONFIG = "stryker-skips-tsconfig-preprocessing.json";
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
 
@@ -483,6 +488,123 @@ async function vitePlusQualitySteps(detection, directory, packageJSON, packageMa
       },
     ],
   };
+}
+
+/** Vitest's default `include` and `exclude`, as vitest 5.1.0 defines them (`dist/config.cjs`). */
+const VITEST_DEFAULT_INCLUDE = "**/*.{test,spec}.?(c|m)[jt]s?(x)";
+const VITEST_DEFAULT_EXCLUDE = ["**/node_modules/**", "**/.git/**"];
+
+/**
+ * Whether a file in `directory` matches Vitest's default test pattern.
+ *
+ * @param {string} directory
+ */
+async function hasVitestDefaultTestFile(directory) {
+  for await (const _ of glob(VITEST_DEFAULT_INCLUDE, {
+    cwd: directory,
+    exclude: VITEST_DEFAULT_EXCLUDE,
+  })) {
+    return true;
+  }
+  return false;
+}
+
+/**
+ * The findings for selected integrations that run the project's Vitest tests (catalog
+ * `runsVitestTests`, ADR-0014 Decision 2) or apply only in a package (catalog
+ * `appliesAt: "package"`, the owner's decision of 2026-11-09 on #734). An error means the dry run
+ * and apply stop before anything is written: where apply does not delegate to Vite+, which
+ * installs the Vitest the integration runs, and at a workspace root, which has no tests of its
+ * own. A warning, which does not stop, says that no file matches Vitest's default test pattern;
+ * a `test.include` in the Vite config can name other files, so that alone is no reason to stop.
+ * Whether `directory` is a workspace root is read from the files on disk for every package
+ * manager, so the stop does not depend on which package manager apply resolves. `packageManager`
+ * only names the command in the message.
+ *
+ * @param {Integration[]} integrations
+ * @param {VitePlusDetection} detection
+ * @param {string} directory
+ * @param {PackageJSON | undefined} packageJSON
+ * @param {PackageManager} packageManager
+ * @returns {Promise<ProjectInspectionFinding[]>}
+ */
+async function packageTestFindings(
+  integrations,
+  detection,
+  directory,
+  packageJSON,
+  packageManager,
+) {
+  /** @type {ProjectInspectionFinding[]} */
+  const findings = [];
+  /** @type {boolean | undefined} */
+  let workspaceRoot;
+  /** @type {boolean | undefined} */
+  let hasTestFile;
+
+  for (const { id, runsVitestTests, appliesAt } of integrations) {
+    if (runsVitestTests && !delegatesToVitePlus(detection)) {
+      findings.push({
+        severity: "error",
+        kind: "vite-plus-required",
+        message: `${id} needs a project that Vite+ manages, because it runs the project's tests with the Vitest that vite-plus installs, and Vite+ does not manage this project. The dry run and apply stop before writing anything. Run vp create or vp migrate to adopt Vite+, then apply again, or remove ${id} from this recipe.`,
+      });
+      continue;
+    }
+
+    if (
+      appliesAt === "package" &&
+      (workspaceRoot ??= await isWorkspaceRoot(directory, packageJSON))
+    ) {
+      const reason = runsVitestTests
+        ? ", because it runs the tests of the project it is applied to and a workspace root has none of its own"
+        : "";
+      findings.push({
+        severity: "error",
+        kind: "workspace-root",
+        message: `${id} applies in each workspace member, not at the workspace root${reason}. The dry run and apply stop before writing anything. Apply a recipe that selects ${id} from each workspace member${runsVitestTests ? " that has Vitest tests" : ""} (cd <member> && ${projectLocalCommandCatalog[packageManager].applyDryRun}), and remove ${id} from this recipe.`,
+      });
+      continue;
+    }
+
+    if (runsVitestTests && !(hasTestFile ??= await hasVitestDefaultTestFile(directory))) {
+      findings.push({
+        severity: "warning",
+        kind: "no-vitest-test-files",
+        message: `No file in this project matches Vitest's default test pattern, "${VITEST_DEFAULT_INCLUDE}", so ${id} has no tests to run, and its run stops with an error until the project has Vitest tests. A project whose Vite config sets test.include to other files can ignore this warning.`,
+      });
+    }
+  }
+
+  return findings;
+}
+
+/**
+ * Whether `directory` is the root of a workspace for any package manager: `pnpm-workspace.yaml`
+ * lists member patterns, as pnpm reads it, or `package.json` does in `workspaces`, as npm, Yarn,
+ * and Bun read it.
+ *
+ * @param {string} directory
+ * @param {PackageJSON | undefined} packageJSON
+ */
+async function isWorkspaceRoot(directory, packageJSON) {
+  return (
+    (await workspacePackagePatterns(directory, packageJSON, "pnpm")) !== undefined ||
+    (await workspacePackagePatterns(directory, packageJSON, "npm")) !== undefined
+  );
+}
+
+/**
+ * Stops the dry run and apply, before anything is written, on the error findings of
+ * `packageTestFindings`.
+ *
+ * @param {ProjectInspectionFinding[]} findings
+ */
+function assertNoPackageTestErrors(findings) {
+  const errors = findings.filter(({ severity }) => severity === "error");
+  if (errors.length > 0) {
+    throw new Error(errors.map(({ message }) => message).join("\n"));
+  }
 }
 
 /**
@@ -1291,6 +1413,7 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   const usesKnip = has("knip");
   const usesHtmlValidate = has("html-validate");
   const usesVarlock = has("varlock");
+  const usesStryker = has("stryker");
   const usesGithubRepositoryControls = has(GITHUB_REPOSITORY_CONTROLS_ID);
 
   // --allow-empty-input keeps a project without CSS files passing (#644).
@@ -1346,6 +1469,12 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
 
   if (usesVarlock) {
     scripts["env:load"] = "varlock load";
+  }
+
+  // ADR-0014 Decision 3: a mutation run takes minutes and its score is not pass or fail, so
+  // test:mutation runs only on demand and quality never runs it.
+  if (usesStryker) {
+    scripts["test:mutation"] = "stryker run";
   }
 
   if (usesGithubRepositoryControls) {
@@ -1772,6 +1901,24 @@ function createKnipConfig() {
 }
 
 /**
+ * The managed `stryker.config.json` (#734), verified with Stryker 10.1.1 in a `vp create` library
+ * under pnpm, npm, Yarn 4, and Bun. The config names the Vitest runner, because Stryker's default
+ * command runner reports a timeout for every mutant of a slow suite and counts those as detected
+ * (ADR-0014), and lists it in `plugins`, because pnpm's strict `node_modules` layout hides it from
+ * Stryker's default plugin lookup.
+ */
+function createStrykerConfig() {
+  return {
+    $schema: "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+    testRunner: "vitest",
+    plugins: ["@stryker-mutator/vitest-runner"],
+    // WORKAROUND(@stryker-mutator/core): tsconfig preprocessing calls the TypeScript JS API, which TypeScript 7 removed, and vp create projects use TypeScript 7; a missing file skips it | upstream: https://github.com/stryker-mutator/stryker-js/issues/6111
+    tsconfigFile: STRYKER_SKIPPED_TSCONFIG,
+    reporters: ["clear-text", "html"],
+  };
+}
+
+/**
  * @param {string} existing
  * @returns {string | undefined}
  */
@@ -2067,6 +2214,13 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
     plans.push({
       path: "knip.json",
       contents: `${JSON.stringify(createKnipConfig(), null, 2)}\n`,
+    });
+  }
+
+  if (integrations.some((integration) => integration.id === "stryker")) {
+    plans.push({
+      path: STRYKER_CONFIG_PATH,
+      contents: `${JSON.stringify(createStrykerConfig(), null, 2)}\n`,
     });
   }
 
@@ -2383,6 +2537,19 @@ export async function inspectProject(recipe, options = {}) {
 
   const vitePlus = await detectVitePlus(process.cwd());
   findings.push(...vitePlusFindings(vitePlus));
+  if (options.packageTestFindings) {
+    findings.push(...options.packageTestFindings);
+  } else if (recipe && !manifestFinding) {
+    findings.push(
+      ...(await packageTestFindings(
+        integrations,
+        vitePlus,
+        process.cwd(),
+        packageJSON,
+        resolveApplyPackageManager(recipe, {}, packageJSON),
+      )),
+    );
+  }
 
   const presentLockfiles = Object.values(packageManagerLockfiles)
     .flat()
@@ -2563,6 +2730,19 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     process.cwd(),
     packageManager,
   );
+  // The install, the quality script, and the integrations that need Vite+ are planned before
+  // anything is written, including package.json, from one detection, so the dry run and the apply
+  // that follows it name the same command and write the same script, and a project whose
+  // vite-plus cannot be located stops here.
+  const vitePlusDetection = await detectVitePlus(process.cwd());
+  const packageTestInspection = await packageTestFindings(
+    integrations,
+    vitePlusDetection,
+    process.cwd(),
+    detectedPackageJSON,
+    packageManager,
+  );
+  assertNoPackageTestErrors(packageTestInspection);
   // ADR-0015, Decision 6: every input a selected artifact declares, and every integration option
   // Calavera suggests a value for (#844), has a value before anything is planned. An interactive
   // run asks; any other run uses the default and reports it.
@@ -2613,11 +2793,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const dependencyList = unique(
     integrations.flatMap((integration) => integration.dependencies ?? []),
   );
-  // The install and the quality script are planned before anything is
-  // written, including package.json, from one detection, so the dry run and
-  // the apply that follows it name the same command and write the same
-  // script, and a project whose vite-plus cannot be located stops here.
-  const vitePlusDetection = await detectVitePlus(process.cwd());
   const vitePlusQuality = await vitePlusQualitySteps(
     vitePlusDetection,
     process.cwd(),
@@ -2697,6 +2872,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const projectInspection = await inspectProject(recipe, {
     reownManagedFiles: applyOptions.reownManagedFiles,
     managedFilePlans,
+    packageTestFindings: packageTestInspection,
   });
   const scriptPlan = buildScripts(recipe, integrations, packageManager, vitePlusQuality);
   const { scripts, omittedScripts, omittedQualitySteps, staleQualityValues } = scriptPlan;
@@ -4555,6 +4731,7 @@ async function doctor(options) {
         ? "react-doctor.config.json"
         : null,
       integrations.some((integration) => integration.id === "knip") ? "knip.json" : null,
+      integrations.some((integration) => integration.id === "stryker") ? STRYKER_CONFIG_PATH : null,
     ].filter(isNotEmptyString);
 
     for (const file of expectedFiles) {
