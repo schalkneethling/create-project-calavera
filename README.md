@@ -550,8 +550,11 @@ dependency packages, the command that installs them, the Vite+ detection
 report, project inspection findings,
 omitted script explanations,
 file ownership/action notes, the lines each integration adds to or removes from
-`.gitignore` and `.htmlvalidateignore` (`ignoreChanges`), and AI artifact
-changes that would be made. On a
+`.gitignore` and `.htmlvalidateignore` (`ignoreChanges`), each artifact and
+integration input value with where it came from (`artifactInputs` and
+`integrationInputs`, such as the guard's `protectedBranch` and
+`github-repository-controls.defaultBranch`), warnings when those values disagree
+(`inputWarnings`), and AI artifact changes that would be made. On a
 project where the recipe was already applied and nothing has changed since,
 every change has `type: "unchanged"`. Agents
 should present that dry-run summary to the user first. `apply_recipe` is

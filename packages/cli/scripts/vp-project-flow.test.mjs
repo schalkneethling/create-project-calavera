@@ -292,7 +292,10 @@ async function runFlow({ directory, integrations, quality, guard }, root) {
       ...(integrations.includes("github-repository-controls")
         ? {
             integrationOptions: {
-              "github-repository-controls": { repository: "example/vp-project" },
+              "github-repository-controls": {
+                repository: "example/vp-project",
+                defaultBranch: "main",
+              },
             },
           }
         : {}),
@@ -437,7 +440,9 @@ test("vp create monorepo member packages/utils: dry_run_apply and apply_recipe r
       profile: "default",
       packageManager: "pnpm",
       tools: rootIntegrations,
-      integrationOptions: { "github-repository-controls": { repository: "example/vp-project" } },
+      integrationOptions: {
+        "github-repository-controls": { repository: "example/vp-project", defaultBranch: "main" },
+      },
     });
     const refusal = `github-repository-controls applies at the repository root, not in a workspace member. This project is ${member}; the repository root is ${fixture.root}.`;
     const refuses = (/** @type {unknown} */ error) =>
@@ -495,7 +500,10 @@ for (const flowCase of cases) {
         ...(flowCase.integrations.includes("github-repository-controls")
           ? {
               integrationOptions: {
-                "github-repository-controls": { repository: "example/vp-project" },
+                "github-repository-controls": {
+                  repository: "example/vp-project",
+                  defaultBranch: "main",
+                },
               },
             }
           : {}),

@@ -26,7 +26,8 @@ import { findRepositoryRoot } from "../src/repository-root.js";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
-const repositoryControlsOptions = { repository: "octocat/example" };
+// #844: apply refuses a recipe that does not record defaultBranch.
+const repositoryControlsOptions = { repository: "octocat/example", defaultBranch: "main" };
 const rootSentence = "Applies at the repository root.";
 
 /**

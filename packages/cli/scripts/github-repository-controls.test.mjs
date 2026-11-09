@@ -36,8 +36,10 @@ import {
   waitForCodeql,
 } from "../src/templates/repository-controls.mjs";
 
+// #844: defaultBranch has no fixed fallback, so every fixture records the branch it describes.
 const rawOptions = {
   repository: "octocat/example",
+  defaultBranch: "main",
   requiredChecks: ["quality"],
   mergeMethods: ["merge", "rebase"],
   releaseEnvironment: {
@@ -100,7 +102,10 @@ test("generated Dependabot YAML contains semantic npm and Actions entries", () =
 
 test("generated desired state keeps release protection optional", () => {
   const withoutRelease = createRepositoryControlsConfig(
-    normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    normalizeGithubRepositoryControlsOptions({
+      repository: "octocat/example",
+      defaultBranch: "main",
+    }),
   );
   assert.equal(withoutRelease.releaseEnvironment, null);
   assert.equal(withoutRelease.manualControls.disableEnvironmentAdminBypass, false);
@@ -137,7 +142,7 @@ test("the paragraph after the manual controls list stands on its own, with or wi
   const malwareAlerts = "- In **Settings → Advanced Security**, enable Dependabot malware alerts.";
   const adminBypass = "- In **Settings → Environments → release**, disable administrator bypass.";
   for (const [options, items] of [
-    [{ repository: "octocat/example" }, [malwareAlerts]],
+    [{ repository: "octocat/example", defaultBranch: "main" }, [malwareAlerts]],
     [rawOptions, [malwareAlerts, adminBypass]],
   ]) {
     const documentation = githubRepositoryControlManagedFiles(options).find(
@@ -186,7 +191,10 @@ test("GitHub API capability reads distinguish unsupported CodeQL", () => {
 
 test("planner separates drift, manual remediation, and unsupported controls", () => {
   const config = createRepositoryControlsConfig(
-    normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    normalizeGithubRepositoryControlsOptions({
+      repository: "octocat/example",
+      defaultBranch: "main",
+    }),
   );
   const desired = desiredState(config);
   const current = structuredClone(desired);
@@ -236,7 +244,10 @@ test("CodeQL normalization tolerates omitted fields and empty runner labels", ()
 
 test("desired CodeQL state normalizes omitted defaults like the GitHub response", () => {
   const config = createRepositoryControlsConfig(
-    normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    normalizeGithubRepositoryControlsOptions({
+      repository: "octocat/example",
+      defaultBranch: "main",
+    }),
   );
   config.security.codeqlDefaultSetup = {
     state: "configured",
@@ -264,7 +275,10 @@ test("desired CodeQL state normalizes omitted defaults like the GitHub response"
 
 test("planner derives both Dependabot operations from the desired state", () => {
   const config = createRepositoryControlsConfig(
-    normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    normalizeGithubRepositoryControlsOptions({
+      repository: "octocat/example",
+      defaultBranch: "main",
+    }),
   );
   const desired = desiredState(config);
   desired.security.dependabotAlerts = false;
@@ -306,7 +320,10 @@ test("GitHub API capability pagination retrieves rulesets after the first page",
 
 test("repository-state reads update a matching ruleset returned after the first page", () => {
   const config = createRepositoryControlsConfig(
-    normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    normalizeGithubRepositoryControlsOptions({
+      repository: "octocat/example",
+      defaultBranch: "main",
+    }),
   );
   const desired = desiredState(config);
   const api = {
@@ -400,7 +417,10 @@ test("CodeQL verification polling is bounded", async () => {
 
 test("generated check stays read-only and apply mutates only planned drift", async () => {
   const config = createRepositoryControlsConfig(
-    normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    normalizeGithubRepositoryControlsOptions({
+      repository: "octocat/example",
+      defaultBranch: "main",
+    }),
   );
   const desired = desiredState(config);
   let immutableEnabled = false;
@@ -480,7 +500,10 @@ test("generated check stays read-only and apply mutates only planned drift", asy
 
 test("apply uses DELETE for planned Dependabot disable operations", async () => {
   const config = createRepositoryControlsConfig(
-    normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    normalizeGithubRepositoryControlsOptions({
+      repository: "octocat/example",
+      defaultBranch: "main",
+    }),
   );
   config.security.dependabotAlerts = false;
   config.security.dependabotSecurityUpdates = false;
@@ -567,7 +590,10 @@ test("apply uses DELETE for planned Dependabot disable operations", async () => 
 
 test("runtime rejects incomplete configuration and malformed repository paths before API reads", async () => {
   const config = createRepositoryControlsConfig(
-    normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    normalizeGithubRepositoryControlsOptions({
+      repository: "octocat/example",
+      defaultBranch: "main",
+    }),
   );
   const api = { request: () => assert.fail("API must not be called") };
   const withoutManualControls = structuredClone(config);
@@ -639,7 +665,10 @@ test("Calavera apply manages repository-control files and scripts without contac
 test("CodeQL protection detects weakened thresholds and ineffective rulesets", () => {
   const desired = desiredState(
     createRepositoryControlsConfig(
-      normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+      normalizeGithubRepositoryControlsOptions({
+        repository: "octocat/example",
+        defaultBranch: "main",
+      }),
     ),
   );
   const baseline = mainRulesetPayload(desired.mainRuleset);
@@ -697,7 +726,10 @@ test("CodeQL protection detects weakened thresholds and ineffective rulesets", (
 test("ruleset updates preserve unrelated rules and scanners idempotently", () => {
   const desired = desiredState(
     createRepositoryControlsConfig(
-      normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+      normalizeGithubRepositoryControlsOptions({
+        repository: "octocat/example",
+        defaultBranch: "main",
+      }),
     ),
   );
   const existing = mainRulesetPayload(desired.mainRuleset);
@@ -728,7 +760,10 @@ test("invalid scanning policy fails before contacting GitHub", async () => {
     { alertsThreshold: "typo", securityAlertsThreshold: "all" },
   ]) {
     const config = createRepositoryControlsConfig(
-      normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+      normalizeGithubRepositoryControlsOptions({
+        repository: "octocat/example",
+        defaultBranch: "main",
+      }),
     );
     config.mainRuleset.codeScanning = codeScanning;
     await assert.rejects(
@@ -745,7 +780,10 @@ test("invalid scanning policy fails before contacting GitHub", async () => {
 test("apply repairs scanning drift and verifies the returned ruleset", async () => {
   for (const converge of [true, false]) {
     const config = createRepositoryControlsConfig(
-      normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+      normalizeGithubRepositoryControlsOptions({
+        repository: "octocat/example",
+        defaultBranch: "main",
+      }),
     );
     const desired = desiredState(config);
     let ruleset = mainRulesetPayload(desired.mainRuleset);
@@ -810,7 +848,10 @@ test("apply repairs scanning drift and verifies the returned ruleset", async () 
 test("CodeQL apply preserves additional languages and verifies the merged coverage", async () => {
   for (const preserve of [true, false]) {
     const config = createRepositoryControlsConfig(
-      normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+      normalizeGithubRepositoryControlsOptions({
+        repository: "octocat/example",
+        defaultBranch: "main",
+      }),
     );
     const original = structuredClone(config);
     const desired = desiredState(config);
@@ -1010,7 +1051,10 @@ function newRepository(desired, options = {}) {
 
 function newProjectOptions(api, lines, languages) {
   const config = createRepositoryControlsConfig(
-    normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+    normalizeGithubRepositoryControlsOptions({
+      repository: "octocat/example",
+      defaultBranch: "main",
+    }),
   );
   if (languages) config.security.codeqlDefaultSetup.languages = languages;
   return {
@@ -1025,7 +1069,10 @@ function newProjectOptions(api, lines, languages) {
 function defaultDesiredState() {
   return desiredState(
     createRepositoryControlsConfig(
-      normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+      normalizeGithubRepositoryControlsOptions({
+        repository: "octocat/example",
+        defaultBranch: "main",
+      }),
     ),
   );
 }
@@ -1441,7 +1488,10 @@ test("failure output shows each cause once and redacts GitHub tokens", () => {
 });
 
 test("CodeQL results are required through the code scanning rule by default, not a status check", () => {
-  const options = normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" });
+  const options = normalizeGithubRepositoryControlsOptions({
+    repository: "octocat/example",
+    defaultBranch: "main",
+  });
   assert.equal(options.requireCodeqlResults, true);
   assert.deepEqual(options.requiredChecks, []);
 
@@ -1489,6 +1539,7 @@ test("declining CodeQL results leaves the code scanning rule unmanaged and keeps
 
   const documentation = githubRepositoryControlManagedFiles({
     repository: "octocat/example",
+    defaultBranch: "main",
     requireCodeqlResults: false,
   }).find(({ path }) => path === "docs/repository-controls.md").contents;
   assert.doesNotMatch(documentation, /requires CodeQL results/);
@@ -1499,7 +1550,10 @@ test("declining CodeQL results leaves the code scanning rule unmanaged and keeps
 test("an unmanaged code scanning rule that already exists is no drift and stays in the ruleset", () => {
   const required = desiredState(
     createRepositoryControlsConfig(
-      normalizeGithubRepositoryControlsOptions({ repository: "octocat/example" }),
+      normalizeGithubRepositoryControlsOptions({
+        repository: "octocat/example",
+        defaultBranch: "main",
+      }),
     ),
   );
   const existing = mainRulesetPayload(required.mainRuleset);

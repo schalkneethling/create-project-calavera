@@ -11,7 +11,7 @@ const ARTIFACT_TARGETS = Object.freeze(["claude-code", "codex", "cursor", "openc
  * The optional manifest members a definition can carry. The artifact schema allows them on skills
  * only; see `inputs` and `wiring` in `calavera-artifact.schema.json`.
  *
- * @typedef {{ prompt: string, default?: "current-branch", check: "branch-name" }} ArtifactInput
+ * @typedef {{ prompt: string, default?: "repository-default-branch", check: "branch-name" }} ArtifactInput
  * @typedef {{ viteHooks?: Partial<Record<"pre-commit" | "prepare-commit-msg" | "pre-push", string>>, claudeCode?: string }} ArtifactWiring
  * @typedef {{ inputs?: Record<string, ArtifactInput>, wiring?: ArtifactWiring }} ArtifactExtensions
  */
@@ -37,7 +37,7 @@ const definitions = Object.freeze([
       inputs: {
         protectedBranch: {
           prompt: "Which branch should the guard protect from direct commits and pushes?",
-          default: "current-branch",
+          default: "repository-default-branch",
           check: "branch-name",
         },
       },

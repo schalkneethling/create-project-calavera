@@ -147,19 +147,19 @@ export const recipeToolDescriptions = Object.freeze({
   explain_recipe:
     "Explain the integrations selected by a Calavera recipe, including profile defaults and automatically included parent integrations.",
   dry_run_apply:
-    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe. Reports whether the project is managed by Vite+ and, when it is, what Vite+ provides instead of Calavera. Lists in scriptChanges each package.json script apply would add, change, or rename, with the command it will run and, for a changed or renamed script, the command it replaces; show each command to the user. Lists in wiringChanges each hook line and Claude Code hook group apply would write for a selected artifact, and in wiringWarnings why written hooks would not run yet, with the remedy; show both to the user. Returns in result.recipe the recipe with every artifact input filled in; pass that recipe to apply_recipe after approval.",
+    "Preview applying a Calavera recipe in the current project. This does not write files or install packages, and should be shown to the user before apply_recipe. Reports whether the project is managed by Vite+ and, when it is, what Vite+ provides instead of Calavera. Lists in scriptChanges each package.json script apply would add, change, or rename, with the command it will run and, for a changed or renamed script, the command it replaces; show each command to the user. Lists in wiringChanges each hook line and Claude Code hook group apply would write for a selected artifact, and in wiringWarnings why written hooks would not run yet, with the remedy; show both to the user. Lists in integrationInputs each integration option Calavera filled in, such as github-repository-controls.defaultBranch, with where the value came from, and in inputWarnings input values that disagree, such as a protected branch that is not that default branch; show both to the user. Returns in result.recipe the recipe with every artifact input and integration input filled in; pass that recipe to apply_recipe after approval.",
   apply_recipe:
-    "Apply an approved Calavera recipe in the current project. Call only after presenting dry_run_apply output and receiving explicit user approval. Pass the recipe dry_run_apply returned in result.recipe: apply_recipe refuses an artifact input the recipe does not record.",
+    "Apply an approved Calavera recipe in the current project. Call only after presenting dry_run_apply output and receiving explicit user approval. Pass the recipe dry_run_apply returned in result.recipe: apply_recipe refuses an artifact input or an integration input, such as github-repository-controls.defaultBranch, that the recipe does not record.",
   download_recipe:
     "Download a Calavera recipe as calavera.config.json. Pass a recipe from compose_recipe, or omit recipe to download the current visible composer recipe.",
 });
 
 /**
- * The Node MCP server's compose_recipe description. Only that server reports artifactInputs,
- * because a default such as the current branch needs Git; the Composer's browser tool uses
- * recipeToolDescriptions.compose_recipe, which does not promise them.
+ * The Node MCP server's compose_recipe description. Only that server reports artifactInputs and
+ * integrationInputs, because a default such as the repository's default branch needs Git; the
+ * Composer's browser tool uses recipeToolDescriptions.compose_recipe, which does not promise them.
  */
-export const mcpComposeRecipeDescription = `${recipeToolDescriptions.compose_recipe} When a selected artifact declares inputs, the response lists them in artifactInputs with their defaults; confirm each value with the user and pass it as the artifact's inputs before dry_run_apply.`;
+export const mcpComposeRecipeDescription = `${recipeToolDescriptions.compose_recipe} When a selected artifact declares inputs, the response lists them in artifactInputs with their defaults and where each default came from; confirm each value with the user and pass it as the artifact's inputs before dry_run_apply. integrationInputs lists the same for integration options Calavera suggests a value for, such as github-repository-controls.defaultBranch; pass a confirmed value in integrationOptions.`;
 
 export const recipeToolInputDescriptions = Object.freeze({
   profile: "Base Calavera tooling profile.",
@@ -173,7 +173,7 @@ export const recipeToolInputDescriptions = Object.freeze({
     'Values for the inputs the artifact declares, keyed by input name, such as { protectedBranch: "main" }. compose_recipe reports each declared input with its default; confirm the value with the user before dry_run_apply.',
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
-    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides.",
+    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
   baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
   baselineLimit: "Maximum number of Baseline feature search results.",

@@ -4,6 +4,8 @@ import { promisify } from "node:util";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 
+import { resolveDefaultBranch } from "../utils/default-branch.js";
+
 const execFileAsync = promisify(execFile);
 
 // Every input value can end up in a hook command that a shell runs, so a branch name is held to
@@ -25,22 +27,33 @@ const SHELL_SAFE_BRANCH_NAME = /^[A-Za-z0-9._/-]+$/;
  *
  * @typedef {(request: InputRequest) => Promise<string>} AskForInput
  *
- * @typedef {object} ResolvedInput
- * @property {string} artifact
- * @property {number} index
- * @property {string} name
+ * @typedef {object} DefaultSource Which rule found the default, and what Git showed it.
+ * @property {import("../utils/default-branch.js").DefaultBranchSource} rule
+ * @property {string} detail
+ *
+ * @typedef {object} InputValue
  * @property {string} value
  * @property {"recorded" | "prompt" | "default"} source Where the value came from: the recipe, the person's answer, or the default because nobody was asked.
+ * @property {DefaultSource} [defaultSource] Where the default came from, when the value is the default.
  *
- * @typedef {object} DescribedInput
- * @property {string} artifact
- * @property {number} index
- * @property {string} name
+ * @typedef {{ artifact: string, index: number, name: string } & InputValue} ResolvedInput
+ *
+ * @typedef {object} InputDescription
  * @property {string} prompt
  * @property {string} check
  * @property {string | null} recorded The value the recipe records, or null.
  * @property {string | null} default The value Calavera would use when none is recorded, or null.
+ * @property {DefaultSource | null} defaultSource Where the default came from, or null.
  * @property {string | null} defaultUnavailable Why there is no default, or null.
+ *
+ * @typedef {{ artifact: string, index: number, name: string } & InputDescription} DescribedInput
+ *
+ * @typedef {object} InputSubject Who declares an input and where the recipe records its value.
+ * @property {string} owner The artifact or integration ID.
+ * @property {string} name The input name, such as protectedBranch.
+ * @property {string} path Where the recipe records the value, such as ai[1].inputs.protectedBranch.
+ *
+ * @typedef {(request: { prompt: string, defaultValue: string | undefined, error: string | undefined }) => Promise<string>} AskForValue
  */
 
 /** @type {InputDeclarations} */
@@ -77,26 +90,21 @@ function assertGitFound(error, purpose) {
 /**
  * @param {ArtifactInput["default"]} kind
  * @param {string} cwd
- * @returns {Promise<{ value: string } | { reason: string }>}
+ * @returns {Promise<{ value: string, defaultSource: DefaultSource } | { reason: string }>}
  */
 async function readDefault(kind, cwd) {
-  if (kind !== "current-branch") {
+  if (kind !== "repository-default-branch") {
     return { reason: "the artifact declares no default" };
   }
 
   try {
-    const { stdout } = await execFileAsync("git", ["symbolic-ref", "--quiet", "--short", "HEAD"], {
-      cwd,
-    });
-    return { value: stdout.trim() };
+    const found = await resolveDefaultBranch(cwd);
+    return "reason" in found
+      ? found
+      : { value: found.value, defaultSource: { rule: found.source, detail: found.detail } };
   } catch (error) {
     assertGitFound(error, "read the default");
-    // With --quiet, a detached HEAD exits 1 and prints nothing; anything else is a Git failure.
-    const code = /** @type {{ code?: unknown }} */ (error).code;
-    const failure = commandFailure(error);
-    return code === 1 && !(/** @type {{ stderr?: string }} */ (error).stderr?.trim())
-      ? { reason: "HEAD is detached, so there is no current branch" }
-      : { reason: `git symbolic-ref --short HEAD failed: ${failure}` };
+    throw error;
   }
 }
 
@@ -112,7 +120,7 @@ export async function checkInputValue(check, value, cwd) {
   }
 
   if (!SHELL_SAFE_BRANCH_NAME.test(value) || value.startsWith("-")) {
-    return `"${value}" is not a branch name Calavera accepts. Use only letters, digits, ".", "_", "-", and "/", and do not start with "-", because Calavera writes the name into hook commands that a shell runs.`;
+    return `"${value}" is not a branch name Calavera accepts. Use only letters, digits, ".", "_", "-", and "/", and do not start with "-". Calavera holds every branch input to the characters that are safe in a hook command a shell runs, such as the guard's.`;
   }
 
   try {
@@ -143,6 +151,26 @@ function itemsWithInputs(recipe, declarationsFor) {
 }
 
 /**
+ * Describes one input for an agent: the recorded value, and the default with where it came from.
+ *
+ * @param {ArtifactInput} declaration
+ * @param {string | undefined} recorded
+ * @param {string} cwd
+ * @returns {Promise<InputDescription>}
+ */
+export async function describeInputValue(declaration, recorded, cwd) {
+  const fallback = await readDefault(declaration.default, cwd);
+  return {
+    prompt: declaration.prompt,
+    check: declaration.check,
+    recorded: recorded ?? null,
+    default: "value" in fallback ? fallback.value : null,
+    defaultSource: "value" in fallback ? fallback.defaultSource : null,
+    defaultUnavailable: "reason" in fallback ? fallback.reason : null,
+  };
+}
+
+/**
  * Reports each input the recipe's artifacts declare, with the recorded value and the default, so
  * an agent can confirm the value with the person before it runs dry_run_apply.
  *
@@ -159,16 +187,11 @@ export async function describeArtifactInputs(recipe, options = {}) {
   for (const { item, index, id, declarations } of itemsWithInputs({ ai }, declarationsFor)) {
     const recorded = /** @type {Record<string, string> | undefined} */ (item.inputs);
     for (const [name, declaration] of Object.entries(declarations)) {
-      const fallback = await readDefault(declaration.default, cwd);
       described.push({
         artifact: id,
         index,
         name,
-        prompt: declaration.prompt,
-        check: declaration.check,
-        recorded: recorded?.[name] ?? null,
-        default: "value" in fallback ? fallback.value : null,
-        defaultUnavailable: "reason" in fallback ? fallback.reason : null,
+        ...(await describeInputValue(declaration, recorded?.[name], cwd)),
       });
     }
   }
@@ -177,10 +200,64 @@ export async function describeArtifactInputs(recipe, options = {}) {
 }
 
 /**
- * Fills in every input the recipe's artifacts declare and checks each value. A recorded value is
- * kept. Otherwise `ask`, when given, asks the person with the default suggested and asks again
- * when the answer fails its check. Without `ask`, the default is used and reported as such. With
- * neither a recorded value nor a default, resolution stops and names the missing input.
+ * Fills in one input and checks its value. A recorded value is kept. Otherwise `ask`, when given,
+ * asks the person with the default suggested and asks again when the answer fails its check.
+ * Without `ask`, the default is used and reported as such. With neither a recorded value nor a
+ * default, resolution stops and names where the recipe records the value.
+ *
+ * @param {ArtifactInput} declaration
+ * @param {string | undefined} recorded
+ * @param {InputSubject} subject
+ * @param {{ cwd: string, ask?: AskForValue }} options
+ * @returns {Promise<InputValue>}
+ */
+export async function resolveInputValue(
+  declaration,
+  recorded,
+  { owner, name, path },
+  { cwd, ask },
+) {
+  if (recorded !== undefined) {
+    const problem = await checkInputValue(declaration.check, recorded, cwd);
+    if (problem) {
+      throw new Error(
+        `The recipe records ${name} for ${owner} (${path}), and Calavera refuses it: ${problem}`,
+      );
+    }
+    return { value: recorded, source: "recorded" };
+  }
+
+  const fallback = await readDefault(declaration.default, cwd);
+  const defaultValue = "value" in fallback ? fallback.value : undefined;
+
+  if (ask) {
+    /** @type {string | undefined} */
+    let error;
+    for (;;) {
+      const answer = (await ask({ prompt: declaration.prompt, defaultValue, error })).trim();
+      error = await checkInputValue(declaration.check, answer, cwd);
+      if (!error) return { value: answer, source: "prompt" };
+    }
+  }
+
+  if (!("value" in fallback)) {
+    throw new Error(
+      `${owner} needs the input ${name} ("${declaration.prompt}"), and the recipe records none. Calavera has no default because ${fallback.reason}. Record the value as ${path} in the recipe, then run apply again.`,
+    );
+  }
+
+  const problem = await checkInputValue(declaration.check, fallback.value, cwd);
+  if (problem) {
+    throw new Error(
+      `${owner} needs the input ${name}, and the recipe records none. The default Calavera found is refused: ${problem} Record the value as ${path} in the recipe, then run apply again.`,
+    );
+  }
+  return { value: fallback.value, source: "default", defaultSource: fallback.defaultSource };
+}
+
+/**
+ * Fills in every input the recipe's artifacts declare and checks each value, as
+ * resolveInputValue describes.
  *
  * @template {object} R
  * @param {R} recipe
@@ -203,59 +280,17 @@ export async function resolveArtifactInputs(recipe, options = {}) {
     const values = { ...recorded };
 
     for (const [name, declaration] of Object.entries(declarations)) {
-      const recordedValue = recorded[name];
-      if (recordedValue !== undefined) {
-        const problem = await checkInputValue(declaration.check, recordedValue, cwd);
-        if (problem) {
-          throw new Error(
-            `The recipe records ${name} for ${id} (ai[${index}].inputs.${name}), and Calavera refuses it: ${problem}`,
-          );
-        }
-        resolved.push({ artifact: id, index, name, value: recordedValue, source: "recorded" });
-        continue;
-      }
-
-      const fallback = await readDefault(declaration.default, cwd);
-      const defaultValue = "value" in fallback ? fallback.value : undefined;
-
-      if (ask) {
-        /** @type {string | undefined} */
-        let error;
-        for (;;) {
-          const answer = (
-            await ask({
-              artifact: id,
-              index,
-              name,
-              prompt: declaration.prompt,
-              defaultValue,
-              error,
-            })
-          ).trim();
-          error = await checkInputValue(declaration.check, answer, cwd);
-          if (!error) {
-            values[name] = answer;
-            resolved.push({ artifact: id, index, name, value: answer, source: "prompt" });
-            break;
-          }
-        }
-        continue;
-      }
-
-      if (defaultValue === undefined) {
-        throw new Error(
-          `${id} needs the input ${name} ("${declaration.prompt}"), and the recipe records none. Calavera has no default because ${"reason" in fallback ? fallback.reason : "none is declared"}. Record the value as ai[${index}].inputs.${name} in the recipe, then run apply again.`,
-        );
-      }
-
-      const problem = await checkInputValue(declaration.check, defaultValue, cwd);
-      if (problem) {
-        throw new Error(
-          `${id} needs the input ${name}, and the recipe records none. The default Calavera found is refused: ${problem} Record the value as ai[${index}].inputs.${name} in the recipe, then run apply again.`,
-        );
-      }
-      values[name] = defaultValue;
-      resolved.push({ artifact: id, index, name, value: defaultValue, source: "default" });
+      const input = await resolveInputValue(
+        declaration,
+        recorded[name],
+        { owner: id, name, path: `ai[${index}].inputs.${name}` },
+        {
+          cwd,
+          ask: ask && ((request) => ask({ artifact: id, index, name, ...request })),
+        },
+      );
+      values[name] = input.value;
+      resolved.push({ artifact: id, index, name, ...input });
     }
 
     ai[index] = { ...item, inputs: values };
