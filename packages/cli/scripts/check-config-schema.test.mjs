@@ -1440,6 +1440,12 @@ test("standard MCP server exposes Calavera recipe composition tools", async () =
     const toolNames = tools.map(({ name }) => name).sort();
 
     assert.deepEqual(toolNames, [...standardMcpToolNames].sort());
+    // #877: an agent reads the tool list before it calls the tool, so the description has to name
+    // the dry run field that lists the ignore-file changes.
+    const dryRunDescription = tools.find(({ name }) => name === "dry_run_apply")?.description;
+    assert.match(dryRunDescription ?? "", /ignoreChanges/);
+    assert.match(dryRunDescription ?? "", /\.gitignore/);
+    assert.match(dryRunDescription ?? "", /\.htmlvalidateignore/);
     assert.equal(
       tools.find(({ name }) => name === "inspect_project")?.description,
       recipeToolDescriptions.inspect_project,

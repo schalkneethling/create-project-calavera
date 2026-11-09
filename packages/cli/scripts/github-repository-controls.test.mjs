@@ -1811,3 +1811,32 @@ test("Given an invalid github-repository-controls recipe, clean's error tells th
     },
   );
 });
+
+test("Given a github-repository-controls recipe without defaultBranch or with non-object integrationOptions, clean's error tells the person to fix the recipe", () => {
+  const { defaultBranch: _omitted, ...withoutDefaultBranch } = rawOptions;
+  const plannerNotRun = () => assert.fail("the planner must not run for an invalid recipe");
+
+  for (const [integrations, integrationOptions, cause] of [
+    [
+      [{ id: "github-repository-controls" }],
+      { "github-repository-controls": withoutDefaultBranch },
+      /defaultBranch has no value/,
+    ],
+    [[{ id: "stylelint" }], null, /integrationOptions must be an object/],
+  ]) {
+    assert.throws(
+      () =>
+        planCleanManagedFiles(
+          integrations,
+          integrationOptions,
+          "calavera.config.json",
+          plannerNotRun,
+        ),
+      (error) => {
+        assert.match(error.message, /Fix the recipe/);
+        assert.match(error.cause.message, cause);
+        return true;
+      },
+    );
+  }
+});

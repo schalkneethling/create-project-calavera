@@ -4629,8 +4629,24 @@ export function planCleanManagedFiles(
   planner = plannedManagedFiles,
 ) {
   try {
+    if (
+      integrationOptions !== undefined &&
+      (typeof integrationOptions !== "object" ||
+        integrationOptions === null ||
+        Array.isArray(integrationOptions))
+    ) {
+      throw new TypeError("integrationOptions must be an object.");
+    }
     if (integrations.some(({ id }) => id === GITHUB_REPOSITORY_CONTROLS_ID)) {
-      normalizeGithubRepositoryControlsOptions(integrationOptions?.[GITHUB_REPOSITORY_CONTROLS_ID]);
+      const controls = normalizeGithubRepositoryControlsOptions(
+        integrationOptions?.[GITHUB_REPOSITORY_CONTROLS_ID],
+      );
+      // Apply fills an omitted defaultBranch, but clean never does, so the recipe has to record it.
+      if (controls.defaultBranch === undefined) {
+        throw new Error(
+          "integrationOptions.github-repository-controls.defaultBranch has no value. Record the repository's default branch there.",
+        );
+      }
     }
   } catch (error) {
     // Apply refuses the same recipe; clean keeps the cause and says where the recipe came from.
@@ -4644,7 +4660,7 @@ export function planCleanManagedFiles(
     return planner(integrations, integrationOptions);
   } catch (error) {
     throw new Error(
-      `clean could not plan the managed files for the recipe in ${configPath}, so it removed nothing. The recipe options are valid, so the cause is in the Calavera installation or the project, not the recipe: read the cause below, then run clean again. If it persists, reinstall create-project-calavera or report the cause in a Calavera issue.`,
+      `clean could not plan the managed files for the recipe in ${configPath}, so it removed nothing. The recipe passed clean's checks, so the cause is most likely in the Calavera installation, such as a missing or unreadable packaged template: read the cause below, then run clean again. If it persists, reinstall create-project-calavera or report the cause in a Calavera issue.`,
       { cause: error },
     );
   }

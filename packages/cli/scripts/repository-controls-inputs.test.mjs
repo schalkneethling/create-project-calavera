@@ -19,7 +19,7 @@ import {
   resolveIntegrationInputs,
 } from "../src/integration-inputs.js";
 import { callMcpTool } from "../src/mcp.js";
-import { buildRecipe, recipeToolDescriptions, validateRecipe } from "../src/recipe.js";
+import { buildRecipe, validateRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { isolateGitConfiguration } from "./git-isolation.mjs";
 import { snapshotDirectory as snapshot } from "./project-snapshot.mjs";
@@ -403,13 +403,4 @@ test("defaultBranchWarnings compares only a recorded input that suggests the rep
     }).length,
     1,
   );
-});
-
-// #877: an agent reads the tool list before it calls the tool, so the description has to name
-// every field of the dry run that the agent must show to the person.
-test("Given the dry_run_apply tool description, it names ignoreChanges and the files they change", () => {
-  const description = recipeToolDescriptions.dry_run_apply;
-  assert.match(description, /ignoreChanges/);
-  assert.match(description, /\.gitignore/);
-  assert.match(description, /\.htmlvalidateignore/);
 });
