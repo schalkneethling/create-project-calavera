@@ -221,9 +221,11 @@ export function htmlValidateIgnoreText(integrations) {
 }
 
 /**
- * What the managed `.htmlvalidateignore` gains and loses, for the dry run. An integration's lines
- * are unchanged when the file already holds every one of them. Lines the file holds that no
- * selected integration declares are removed, because apply writes the file as a whole.
+ * What the managed `.htmlvalidateignore` gains and loses, for the dry run. Apply writes the file as
+ * a whole, in catalog order with each line once, so an integration's lines are unchanged only when
+ * the file holds every one of them where apply would put them. An integration whose lines the file
+ * holds in another order is an update that reports the order the file holds. Lines the file holds
+ * that no selected integration declares are removed.
  *
  * @param {{ id: string, ignore?: Partial<Record<IgnoreFile, string[]>> }[]} integrations
  * @param {string | undefined} current The file now, or undefined when it does not exist.
@@ -234,21 +236,38 @@ export function planHtmlValidateIgnoreChanges(integrations, current) {
   const currentLines =
     current === undefined
       ? undefined
-      : new Set(current.split(/\r?\n/).filter((line) => line.trim() !== ""));
+      : [...new Set(current.split(/\r?\n/).filter((line) => line.trim() !== ""))];
+  const currentSet = new Set(currentLines);
+
+  // The lines each integration writes: a line two integrations declare belongs to the first one.
+  const claimed = new Set();
+  const written = declared.map(({ lines }) =>
+    lines.filter((line) => {
+      if (claimed.has(line)) return false;
+      claimed.add(line);
+      return true;
+    }),
+  );
+
+  // The file's lines that stay, in the order the file holds them. Where the file lacks a line,
+  // `staying` and the expected order both skip it, so one missing line does not shift the lines
+  // of the integrations after it.
+  const staying = (currentLines ?? []).filter((line) => claimed.has(line));
+  let offset = 0;
   /** @type {IgnoreChange[]} */
-  const changes = declared.map(({ integration, lines }) => ({
-    path: HTML_VALIDATE_IGNORE_PATH,
-    integration,
-    type:
-      currentLines === undefined
-        ? "write"
-        : lines.every((line) => currentLines.has(line))
-          ? "unchanged"
-          : "update",
-    lines,
-  }));
-  const planned = new Set(declared.flatMap(({ lines }) => lines));
-  const removedLines = [...(currentLines ?? [])].filter((line) => !planned.has(line));
+  const changes = declared.map(({ integration, lines }, index) => {
+    const base = { path: HTML_VALIDATE_IGNORE_PATH, integration, lines };
+    if (currentLines === undefined) return { ...base, type: "write" };
+    const expected = written[index] ?? [];
+    const length = expected.filter((line) => currentSet.has(line)).length;
+    const held = staying.slice(offset, offset + length);
+    offset += length;
+    if (!lines.every((line) => currentSet.has(line))) return { ...base, type: "update" };
+    return held.every((line, position) => line === expected[position])
+      ? { ...base, type: "unchanged" }
+      : { ...base, type: "update", previousLines: held };
+  });
+  const removedLines = (currentLines ?? []).filter((line) => !claimed.has(line));
   if (removedLines.length > 0) {
     changes.push({ path: HTML_VALIDATE_IGNORE_PATH, type: "update", removedLines });
   }

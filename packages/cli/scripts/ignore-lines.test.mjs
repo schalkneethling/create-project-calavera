@@ -22,6 +22,7 @@ import { fileURLToPath } from "node:url";
 
 import { integrationCatalog } from "../src/catalog.js";
 import {
+  htmlValidateIgnoreText,
   ignoreLineProblem,
   planGitignoreBlocks,
   planHtmlValidateIgnoreChanges,
@@ -393,6 +394,90 @@ test("an .htmlvalidateignore change is an update until the file holds every line
       lines: ["a/", "b/"],
     },
   ]);
+});
+
+test("a block that holds the recorded lines in another order is replaced when the catalog reorders them", () => {
+  const previous = { integration: "stryker", lines: ["reports/mutation/", ".stryker-tmp/"] };
+  const contents = `${own}# calavera:stryker:start\nreports/mutation/\n.stryker-tmp/\n# calavera:stryker:end\n`;
+  const plan = planGitignoreBlocks({ contents, declared: [stryker], records: [previous] });
+
+  assert.equal(plan.contents, `${own}${strykerBlock}`);
+  assert.equal(plan.type, "update");
+  assert.deepEqual(plan.changes, [
+    {
+      path: ".gitignore",
+      integration: "stryker",
+      type: "update",
+      lines: stryker.lines,
+      previousLines: previous.lines,
+    },
+  ]);
+});
+
+test("an .htmlvalidateignore change shows the old and new order when the catalog reorders an integration's lines", () => {
+  const integrations = [{ id: "html-validate", ignore: { htmlValidateIgnore: ["a/", "b/"] } }];
+  const current = "b/\na/\n";
+
+  assert.deepEqual(planHtmlValidateIgnoreChanges(integrations, current), [
+    {
+      path: ".htmlvalidateignore",
+      integration: "html-validate",
+      type: "update",
+      lines: ["a/", "b/"],
+      previousLines: ["b/", "a/"],
+    },
+  ]);
+  // The preview must describe what apply writes.
+  assert.equal(htmlValidateIgnoreText(integrations), "a/\nb/\n");
+});
+
+test("an .htmlvalidateignore change shows a reorder between integrations, because apply writes them in catalog order", () => {
+  const integrations = [
+    { id: "first", ignore: { htmlValidateIgnore: ["y/", "z/"] } },
+    { id: "second", ignore: { htmlValidateIgnore: ["x/"] } },
+  ];
+  const changes = planHtmlValidateIgnoreChanges(integrations, "x/\ny/\nz/\n");
+
+  assert.deepEqual(
+    changes.map(({ integration, type, previousLines }) => ({ integration, type, previousLines })),
+    [
+      { integration: "first", type: "update", previousLines: ["x/", "y/"] },
+      { integration: "second", type: "update", previousLines: ["z/"] },
+    ],
+  );
+  assert.equal(htmlValidateIgnoreText(integrations), "y/\nz/\nx/\n");
+});
+
+test("an .htmlvalidateignore line two integrations share counts once, where the first integration writes it", () => {
+  const integrations = [
+    { id: "first", ignore: { htmlValidateIgnore: ["y/", "z/"] } },
+    { id: "second", ignore: { htmlValidateIgnore: ["x/", "y/"] } },
+  ];
+  const current = htmlValidateIgnoreText(integrations);
+
+  assert.equal(current, "y/\nz/\nx/\n");
+  assert.deepEqual(
+    planHtmlValidateIgnoreChanges(integrations, current).map(({ type }) => type),
+    ["unchanged", "unchanged"],
+  );
+});
+
+test("a missing .htmlvalidateignore line does not make a later integration look reordered", () => {
+  const integrations = [
+    { id: "first", ignore: { htmlValidateIgnore: ["a/", "b/"] } },
+    { id: "second", ignore: { htmlValidateIgnore: ["c/"] } },
+  ];
+
+  assert.deepEqual(
+    planHtmlValidateIgnoreChanges(integrations, "a/\nc/\n").map(({ integration, type }) => ({
+      integration,
+      type,
+    })),
+    [
+      { integration: "first", type: "update" },
+      { integration: "second", type: "unchanged" },
+    ],
+  );
 });
 
 test("ignoreLineProblem refuses empty lines, line breaks, and Calavera markers", () => {
