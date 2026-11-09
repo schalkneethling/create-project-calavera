@@ -14,7 +14,7 @@ import {
   githubRepositoryControlManagedFiles,
   normalizeGithubRepositoryControlsOptions,
 } from "../src/github-repository-controls.js";
-import { applyRecipeObject } from "../src/index.js";
+import { applyRecipeObject, planCleanManagedFiles } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
 import {
   CODEQL_ATTEMPTS,
@@ -1766,4 +1766,48 @@ test("Given invalid github-repository-controls options in the recipe, clean stop
   } finally {
     process.chdir(originalDirectory);
   }
+});
+
+// #877: the two failures that stop clean must stay distinguishable, because only a recipe
+// validation failure is fixed by editing the recipe.
+test("Given a planner failure that the recipe did not cause, clean stops with a message that does not tell the person to fix the recipe, and keeps the cause", async () => {
+  const integrations = [{ id: "github-repository-controls" }];
+  const cause = new Error("Repository-controls template must be a regular file.");
+
+  assert.throws(
+    () =>
+      planCleanManagedFiles(
+        integrations,
+        { "github-repository-controls": rawOptions },
+        "calavera.config.json",
+        () => {
+          throw cause;
+        },
+      ),
+    (error) => {
+      assert.equal(error.cause, cause);
+      assert.match(error.message, /calavera\.config\.json/);
+      assert.match(error.message, /removed nothing/);
+      assert.doesNotMatch(error.message, /fix the recipe/i);
+      return true;
+    },
+  );
+});
+
+test("Given an invalid github-repository-controls recipe, clean's error tells the person to fix the recipe and keeps the validation error", async () => {
+  assert.throws(
+    () =>
+      planCleanManagedFiles(
+        [{ id: "github-repository-controls" }],
+        { "github-repository-controls": { ...rawOptions, repository: "bad" } },
+        "calavera.config.json",
+        () => assert.fail("the planner must not run for an invalid recipe"),
+      ),
+    (error) => {
+      assert.match(error.message, /recipe in calavera\.config\.json/);
+      assert.match(error.message, /Fix the recipe/);
+      assert.match(error.cause.message, /repository must use owner\/name format/);
+      return true;
+    },
+  );
 });
