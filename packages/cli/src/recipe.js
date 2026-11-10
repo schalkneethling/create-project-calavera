@@ -319,13 +319,28 @@ export function projectLocalCommandSteps(packageManager = "npm") {
 }
 
 /**
- * The sentence the catalog description and `explain_recipe` add for an
- * integration that applies only at the repository root.
+ * The sentences the catalog description, `explain_recipe`, and the Composer add for an
+ * integration, read from its catalog metadata: where it applies, whether it needs a project
+ * that Vite+ manages, and the script it adds that `quality` does not run.
  *
- * @param {{ appliesAt?: string }} integration
+ * @param {{ appliesAt?: string, runsVitestTests?: boolean, standaloneScript?: string }} integration
+ * @returns {string[]}
  */
-function repositoryRootNote(integration) {
-  return integration.appliesAt === "repository-root" ? " Applies at the repository root." : "";
+function integrationNotes({ appliesAt, runsVitestTests, standaloneScript }) {
+  return [
+    appliesAt === "repository-root" && "Applies at the repository root.",
+    runsVitestTests && "Needs a project that Vite+ manages.",
+    standaloneScript && `Adds a ${standaloneScript} script, which quality does not run.`,
+    appliesAt === "package" &&
+      "Applies in a single-package project or a workspace member, not at a workspace root.",
+  ].filter((note) => typeof note === "string");
+}
+
+/** @param {Parameters<typeof integrationNotes>[0]} integration */
+function integrationNoteSuffix(integration) {
+  return integrationNotes(integration)
+    .map((note) => ` ${note}`)
+    .join("");
 }
 
 export function listIntegrationOptions(profile) {
@@ -333,7 +348,8 @@ export function listIntegrationOptions(profile) {
     .map((integration) => ({
       ...integration,
       profiles: integrationProfiles(integration.id),
-      description: `${integration.summary} ${integration.label}. Category: ${integration.group}. Status: ${integration.status}.${repositoryRootNote(integration)}`,
+      notes: integrationNotes(integration),
+      description: `${integration.summary} ${integration.label}. Category: ${integration.group}. Status: ${integration.status}.${integrationNoteSuffix(integration)}`,
     }))
     .filter((integration) => !profile || integration.profiles.includes(profile));
 }
@@ -652,7 +668,7 @@ export function explainRecipeIntegrations(recipe) {
     homepage: integration.homepage,
     group: integration.group,
     status: integration.status,
-    reason: `${reasons.get(integration.id) ?? "Selected by the composed recipe."}${repositoryRootNote(integration)}`,
+    reason: `${reasons.get(integration.id) ?? "Selected by the composed recipe."}${integrationNoteSuffix(integration)}`,
   }));
 }
 

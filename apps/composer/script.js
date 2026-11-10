@@ -255,6 +255,16 @@ const integrationHintIds = {
   "github-repository-controls": "repository-controls-hint",
 };
 
+/**
+ * The id of the group hint that holds an integration's notes, so the integration's checkbox
+ * names them in aria-describedby.
+ *
+ * @param {string} id
+ */
+function integrationNotesId(id) {
+  return `integration-notes-${id}`;
+}
+
 /** @param {ReturnType<typeof listIntegrationOptions>[number]} integration */
 function integrationRow(integration) {
   const details = [];
@@ -267,7 +277,13 @@ function integrationRow(integration) {
     name: "integration",
     id: integration.id,
     label: integration.label,
-    describedBy: integrationHintIds[integration.id],
+    describedBy:
+      [
+        integrationHintIds[integration.id],
+        integration.notes.length > 0 ? integrationNotesId(integration.id) : undefined,
+      ]
+        .filter(Boolean)
+        .join(" ") || undefined,
     chip: element(
       "span",
       { class: `chip ${statusChipClasses[integration.status] ?? "chip-optional"}` },
@@ -345,8 +361,11 @@ function renderIntegrations() {
       element("h3", { class: "group-heading" }, [group]),
       element("ul", { class: "rows" }, items.map(integrationRow)),
     ]);
-    if (items.some(({ appliesAt }) => appliesAt === "repository-root")) {
-      section.append(element("p", { class: "hint" }, ["Applies at the repository root."]));
+    for (const { id, notes } of items) {
+      if (notes.length === 0) continue;
+      section.append(
+        element("p", { class: "hint", id: integrationNotesId(id) }, [notes.join(" ")]),
+      );
     }
     integrations.append(section);
   }

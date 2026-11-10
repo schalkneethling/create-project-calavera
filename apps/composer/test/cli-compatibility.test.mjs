@@ -235,3 +235,22 @@ test("Composer build rejects Node-only modules in its browser graph", () => {
     },
   );
 });
+
+test("stryker is offered from the CLI that added it and hidden from older ones", () => {
+  const stryker = integrationCatalog.find(({ id }) => id === "stryker");
+
+  assert.equal(stryker?.minimumCliVersion, "6.2.0");
+  assert.equal(
+    filterIntegrationsForCli(integrationCatalog, "6.1.9").some(({ id }) => id === "stryker"),
+    false,
+  );
+  assert.equal(
+    filterIntegrationsForCli(integrationCatalog, "6.2.0").some(({ id }) => id === "stryker"),
+    true,
+  );
+  assert.throws(
+    () =>
+      assertRecipeIntegrationsSupported({ integrations: ["stryker"] }, integrationCatalog, "6.1.9"),
+    /does not support: stryker/,
+  );
+});
