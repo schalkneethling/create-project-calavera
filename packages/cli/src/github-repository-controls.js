@@ -70,16 +70,61 @@ export function createRepositoryControlsConfig(options) {
   };
 }
 
-/** @param {string[]} ecosystems */
-export function createDependabotConfig(ecosystems) {
+/**
+ * The Dependabot groups the selected integrations declare for one package ecosystem, keyed by group
+ * name. GitHub configures groups per ecosystem, in that ecosystem's `updates` entry.
+ *
+ * @param {DependabotGroupDeclaration[]} integrations
+ * @param {string} ecosystem
+ * @returns {Record<string, Record<string, unknown>>}
+ */
+function declaredDependabotGroups(integrations, ecosystem) {
+  /** @type {Record<string, Record<string, unknown>>} */
+  const groups = {};
+  /** @type {Record<string, string>} */
+  const declaredBy = {};
+
+  for (const { id, dependabotGroups } of integrations) {
+    for (const [name, group] of Object.entries(dependabotGroups?.[ecosystem] ?? {})) {
+      if (name in groups) {
+        throw new Error(
+          `${declaredBy[name]} and ${id} both declare the Dependabot group "${name}" for ${ecosystem}, and Calavera cannot tell which definition to write. Rename one of the groups in the catalog.`,
+        );
+      }
+      groups[name] = group;
+      declaredBy[name] = id;
+    }
+  }
+
+  return groups;
+}
+
+/**
+ * @typedef {object} DependabotGroupDeclaration
+ * @property {string} id
+ * @property {Record<string, Record<string, Record<string, unknown>>>} [dependabotGroups] Per package
+ *   ecosystem, the groups the integration needs in the managed `.github/dependabot.yml`, in the
+ *   shape of GitHub's `groups` option (#880).
+ */
+
+/**
+ * @param {string[]} ecosystems
+ * @param {DependabotGroupDeclaration[]} [integrations] The selected integrations, which may
+ *   declare groups.
+ */
+export function createDependabotConfig(ecosystems, integrations = []) {
   return stringifyYaml({
     version: 2,
-    updates: ecosystems.map((ecosystem) => ({
-      "package-ecosystem": ecosystem,
-      directory: "/",
-      schedule: { interval: "weekly" },
-      cooldown: { "default-days": 7, include: ["*"] },
-    })),
+    updates: ecosystems.map((ecosystem) => {
+      const groups = declaredDependabotGroups(integrations, ecosystem);
+      return {
+        "package-ecosystem": ecosystem,
+        directory: "/",
+        schedule: { interval: "weekly" },
+        cooldown: { "default-days": 7, include: ["*"] },
+        ...(Object.keys(groups).length > 0 ? { groups } : {}),
+      };
+    }),
   });
 }
 
@@ -154,8 +199,12 @@ The generated script verifies the repository identity before planning or applyin
 `;
 }
 
-/** @param {unknown} rawOptions */
-export function githubRepositoryControlManagedFiles(rawOptions) {
+/**
+ * @param {unknown} rawOptions
+ * @param {DependabotGroupDeclaration[]} [integrations] The selected integrations, which may
+ *   declare Dependabot groups.
+ */
+export function githubRepositoryControlManagedFiles(rawOptions, integrations = []) {
   const options = normalizeGithubRepositoryControlsOptions(rawOptions);
   // Apply fills defaultBranch before it plans any file (#844), so a missing value here is a bug in
   // the caller, and a file without it would describe no branch to GitHub.
@@ -172,7 +221,7 @@ export function githubRepositoryControlManagedFiles(rawOptions) {
     },
     {
       path: ".github/dependabot.yml",
-      contents: createDependabotConfig(options.dependabotEcosystems),
+      contents: createDependabotConfig(options.dependabotEcosystems, integrations),
     },
     {
       path: REPOSITORY_CONTROLS_SCRIPT_PATH,

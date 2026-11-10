@@ -129,12 +129,30 @@ The first open question below is answered: all four package managers are support
 
 The same run confirmed the other conditions in Evidence for Stryker 10.1.1: stryker-mutator/stryker-js#6111 is still open, and without the `tsconfigFile` workaround the run still crashes with `ts.parseConfigFileTextToJson is not a function`. Under pnpm, a config without `plugins` still fails with "Cannot find TestRunner plugin "vitest"". The runner 10.1.1 still declares `"@stryker-mutator/core": "10.1.1"` as an exact peer dependency.
 
+### Grouped updates
+
+The third open question below is answered. The project owner decided on 2026-11-10 (https://github.com/schalkneethling/create-project-calavera/issues/880#issuecomment-6769128502) that Calavera groups the packages. When a recipe selects both `stryker` and `github-repository-controls`, the managed `.github/dependabot.yml` gets this group in its `npm` entry, so core and the Vitest runner update in one pull request:
+
+```yaml
+groups:
+  stryker:
+    patterns:
+      - "@stryker-mutator/*"
+```
+
+The reason is the exact peer dependency the Evidence section records: the runner declares `"@stryker-mutator/core": "10.1.1"`, so a pull request that bumps one package without the other cannot install. The keys come from GitHub's Dependabot options reference for `groups`: GitHub configures groups per package ecosystem, `patterns` takes names with `*` as a wildcard, and a group name starts and ends with a letter.
+
+- **The catalog declares the group.** The `stryker` entry carries `dependabotGroups: { npm: { stryker: { patterns: ["@stryker-mutator/*"] } } }`, keyed by package ecosystem because a group applies to one ecosystem. `createDependabotConfig` merges the groups of every selected integration into the matching `updates` entry and never names an integration. Two integrations that declare the same group name for one ecosystem stop the plan with an error that names both, because Dependabot would otherwise take one definition and drop the other.
+- **A recipe without `stryker` is unchanged.** Its `.github/dependabot.yml` holds the same bytes as before, which a test compares against the text the earlier release wrote.
+- **The change to the managed file follows the existing rule for changed managed content.** Calavera compares the file on disk with the hash it recorded in `.calavera/state.json`. A project whose file still matches the recorded hash gets the new text on its next apply, and a project whose file Calavera never wrote, or one that was edited, stops with the managed-file conflict. `--reown-managed-file .github/dependabot.yml` lets apply replace an edited file with Calavera's text, so the person copies any edit worth keeping out of the file first. No migration step is needed, because the state record already tracks the file.
+- **Only `npm` gets the group.** The `github-actions` entry has no Stryker packages. A recipe whose `dependabotEcosystems` leaves out `npm` writes no group, because there is no `npm` entry to hold it.
+
 ## Open questions
 
-The first two questions are kept as they were asked on 2026-10-22, and Resolutions answers both.
+The first three questions are kept as they were asked on 2026-10-22, and Resolutions answers all three.
 
 - **Yarn and Bun (resolved on 2026-11-09: all four package managers are supported).** Whether Yarn and Bun resolve the runner's `vitest` peer dependency to the copy that vite-plus installs was not tested. #734 decides whether version 1 refuses those package managers or tests them first.
 - **Monorepos (resolved on 2026-11-09: the integration applies in workspace members and stops at a workspace root).** The feasibility study recommends Stryker in each workspace member, not at the root. In a scratch `vp create vite:monorepo` project, `vp add -D` worked in a member, Stryker ran there with a member-level config, and `vp run -r test:mutation` ran every member that defines the script. If #734 follows that recommendation, whether #731 still blocks Stryker depends on whether #734 offers the integration at a workspace root at all.
-- **Grouped updates.** Core and runner must update together. Whether Calavera's managed Dependabot configuration (`github-repository-controls`) groups them, or the project owner does, is not decided.
+- **Grouped updates (resolved on 2026-11-10: Calavera groups them).** Core and runner must update together. Whether Calavera's managed Dependabot configuration (`github-repository-controls`) groups them, or the project owner does, is not decided.
 - **Vitest runner coverage with child processes.** The child-process coverage gap is known for the tap runner. The Vitest runner was not checked for the same gap.
 - **The TypeScript checker.** Stryker's TypeScript checker (#724) has the same TypeScript 7 problem and is not part of version 1.

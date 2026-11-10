@@ -104,6 +104,12 @@ export const integrationCatalog = [
       gitignore: [".stryker-tmp/", "reports/mutation/"],
       htmlValidateIgnore: ["reports/mutation/"],
     },
+    // #880, ADR-0014: the runner declares the exact core version as a peer dependency, so a pull
+    // request that bumps one of them alone cannot install. The managed .github/dependabot.yml
+    // puts both in one group.
+    dependabotGroups: {
+      npm: { stryker: { patterns: ["@stryker-mutator/*"] } },
+    },
   },
   {
     id: "react-doctor",

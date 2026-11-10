@@ -14,6 +14,7 @@ import {
   githubRepositoryControlManagedFiles,
   normalizeGithubRepositoryControlsOptions,
 } from "../src/github-repository-controls.js";
+import { integrationCatalog } from "../src/catalog.js";
 import { applyRecipeObject, planCleanManagedFiles } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
 import {
@@ -98,6 +99,109 @@ test("generated Dependabot YAML contains semantic npm and Actions entries", () =
     configuration.updates.every((update) => update.directory === "/"),
     true,
   );
+});
+
+// The bytes createDependabotConfig wrote before integrations could declare groups (#880). A recipe
+// without a declaring integration must keep producing exactly these bytes.
+const dependabotConfigWithoutGroups = `version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      include:
+        - "*"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      include:
+        - "*"
+`;
+const strykerEntry = integrationCatalog.find(({ id }) => id === "stryker");
+const ecosystems = ["npm", "github-actions"];
+
+test("generated Dependabot YAML is byte-for-byte unchanged when no integration declares a group", () => {
+  assert.equal(createDependabotConfig(ecosystems), dependabotConfigWithoutGroups);
+  assert.equal(createDependabotConfig(ecosystems, []), dependabotConfigWithoutGroups);
+  const withoutStryker = integrationCatalog.filter(({ id }) => id !== "stryker");
+  assert.equal(createDependabotConfig(ecosystems, withoutStryker), dependabotConfigWithoutGroups);
+});
+
+test("the stryker catalog entry groups @stryker-mutator/* in the npm entry only", () => {
+  const configuration = parseYaml(createDependabotConfig(ecosystems, [strykerEntry]));
+  const [npm, actions] = configuration.updates;
+
+  assert.deepEqual(npm.groups, { stryker: { patterns: ["@stryker-mutator/*"] } });
+  assert.equal("groups" in actions, false);
+  // Everything else in both entries is what a recipe without Stryker gets.
+  const { groups: _groups, ...npmWithoutGroups } = npm;
+  assert.deepEqual([npmWithoutGroups, actions], parseYaml(dependabotConfigWithoutGroups).updates);
+});
+
+test("createDependabotConfig reads group metadata from any integration, so it does not special-case stryker", () => {
+  const configuration = parseYaml(
+    createDependabotConfig(ecosystems, [
+      {
+        id: "example",
+        dependabotGroups: {
+          "github-actions": { pinned: { patterns: ["actions/*"], "update-types": ["minor"] } },
+        },
+      },
+    ]),
+  );
+  const [npm, actions] = configuration.updates;
+
+  assert.equal("groups" in npm, false);
+  assert.deepEqual(actions.groups, {
+    pinned: { patterns: ["actions/*"], "update-types": ["minor"] },
+  });
+});
+
+test("createDependabotConfig refuses two integrations that declare the same group name for one ecosystem", () => {
+  const declares = (/** @type {string} */ id) => ({
+    id,
+    dependabotGroups: { npm: { shared: { patterns: [`${id}/*`] } } },
+  });
+
+  assert.throws(
+    () => createDependabotConfig(ecosystems, [declares("first"), declares("second")]),
+    /first and second both declare the Dependabot group "shared" for npm/,
+  );
+});
+
+test("catalog dependabotGroups use only the keys and values GitHub documents", () => {
+  // https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#groups--
+  const documentedKeys = [
+    "applies-to",
+    "dependency-type",
+    "exclude-patterns",
+    "group-by",
+    "patterns",
+    "update-types",
+  ];
+  const identifier = /^[A-Za-z]([A-Za-z|_-]*[A-Za-z])?$/;
+  const declared = integrationCatalog.filter(({ dependabotGroups }) => dependabotGroups);
+  assert.ok(declared.length > 0, "no catalog entry declares dependabotGroups");
+
+  for (const { id, dependabotGroups } of declared) {
+    for (const [ecosystem, groups] of Object.entries(dependabotGroups)) {
+      assert.ok(
+        ["npm", "github-actions"].includes(ecosystem),
+        `${id} declares groups for ${ecosystem}, which Calavera does not manage`,
+      );
+      for (const [name, group] of Object.entries(groups)) {
+        assert.match(name, identifier, `${id}: ${name} is not a valid group identifier`);
+        for (const key of Object.keys(group)) {
+          assert.ok(documentedKeys.includes(key), `${id}: ${name} uses undocumented key ${key}`);
+        }
+      }
+    }
+  }
 });
 
 test("generated desired state keeps release protection optional", () => {
