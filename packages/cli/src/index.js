@@ -57,7 +57,12 @@ import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { loadProjectFormatter } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
-import { integrationDependencies, selectedTestRunner } from "./stryker-options.js";
+import {
+  integrationDependencies,
+  resolveStrykerTestRunner,
+  selectedTestRunner,
+  STRYKER_ID,
+} from "./stryker-options.js";
 
 import {
   aiArtifactOutputPaths,
@@ -138,6 +143,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {boolean} assumeYes
  * @property {boolean} apply
  * @property {boolean} [writeConfig]
+ * @property {import("./stryker-options.js").AskForTestRunner} [askForTestRunner] Replaces the terminal prompts for the Stryker test runner, so tests can answer them (#890). It is used only where apply could prompt.
  * @property {ArtifactLockEntry[]} [approvedArtifacts] Artifacts a dry run reported it would lock; apply installs them at exactly those versions.
  * @property {PackageManager} [packageManager]
  * @property {"append" | "fallback"} [agentsMd]
@@ -2837,6 +2843,10 @@ export async function applyRecipe(options) {
  * @returns {Promise<ApplyResult>}
  */
 export async function applyRecipeObject(recipeInput, options = {}, artifactServices = {}) {
+  // Read before validation, which drops a recorded default runner from the recipe (#890).
+  const recordedStrykerOptions = recipeInput?.integrationOptions?.[STRYKER_ID];
+  const recordsTestRunner =
+    isPlainObject(recordedStrykerOptions) && Object.hasOwn(recordedStrykerOptions, "testRunner");
   validateRecipe(recipeInput);
 
   const applyOptions = {
@@ -2863,7 +2873,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   // that follows it name the same command and write the same script, and a project whose
   // vite-plus cannot be located stops here.
   const vitePlusDetection = await detectVitePlus(process.cwd());
-  const packageTestInspection = await packageTestFindings(
+  const preflightTestInspection = await packageTestFindings(
     integrations,
     recipeInput.integrationOptions,
     vitePlusDetection,
@@ -2871,13 +2881,38 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     detectedPackageJSON,
     packageManager,
   );
-  assertNoPackageTestErrors(packageTestInspection);
+  assertNoPackageTestErrors(preflightTestInspection);
+  const interactive = canPrompt(applyOptions);
+  const previousState = await readStateIfPresent();
+  // #890: an interactive run asks which test runner Stryker drives, once, when the choice is new,
+  // after the stop above and before the findings that name the runner. It does not ask when the
+  // recipe records a runner, or when Calavera already manages stryker.config.json here, because
+  // the person chose then; the recipe's runner, Vitest when it records none, stays in force. Any
+  // run that cannot prompt keeps the recipe, and so Vitest.
+  const choiceIsNew =
+    !recordsTestRunner && managedFileStateForPath(previousState, STRYKER_CONFIG_PATH) === undefined;
+  const { recipe: recipeWithTestRunner, answered: testRunnerAnswered } =
+    await resolveStrykerTestRunner(recipeInput, integrations, {
+      ask:
+        interactive && choiceIsNew
+          ? (applyOptions.askForTestRunner ?? askForTestRunner)
+          : undefined,
+    });
+  const packageTestInspection = testRunnerAnswered
+    ? await packageTestFindings(
+        integrations,
+        recipeWithTestRunner.integrationOptions,
+        vitePlusDetection,
+        process.cwd(),
+        detectedPackageJSON,
+        packageManager,
+      )
+    : preflightTestInspection;
   // ADR-0015, Decision 6: every input a selected artifact declares, and every integration option
   // Calavera suggests a value for (#844), has a value before anything is planned. An interactive
   // run asks; any other run uses the default and reports it.
-  const interactive = canPrompt(applyOptions);
   const { recipe: recipeWithArtifactInputs, inputs: artifactInputs } = await resolveArtifactInputs(
-    recipeInput,
+    recipeWithTestRunner,
     { ask: interactive ? promptForArtifactInput : undefined },
   );
   const { recipe, inputs: integrationInputs } = await resolveIntegrationInputs(
@@ -2914,7 +2949,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       ].join("\n"),
     );
   }
-  const previousState = await readStateIfPresent();
   // Only a project Calavera already applied to can have a config or scripts
   // that are unchanged; on a first apply the whole plan is new.
   const previouslyApplied = await fileExists(STATE_FILE);
@@ -2981,9 +3015,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   ];
   // A value the person typed is recorded in the recipe, so a later apply does not ask again.
   // Only an explicit writeConfig: false skips that.
-  const answered = [...artifactInputs, ...integrationInputs].some(
-    ({ source }) => source === "prompt",
-  );
+  const answered =
+    testRunnerAnswered ||
+    [...artifactInputs, ...integrationInputs].some(({ source }) => source === "prompt");
   const configPath = resolve(applyOptions.config ?? "calavera.config.json");
   const configText =
     applyOptions.writeConfig || (answered && applyOptions.writeConfig !== false)
@@ -4531,6 +4565,46 @@ function promptForArtifactInput({ artifact, name, ...request }) {
   return promptForInputValue(request, `${artifact}, ${name}`);
 }
 
+/** @type {import("./stryker-options.js").AskForTestRunner} */
+const askForTestRunner = {
+  async testRunner({ runners, defaultId }) {
+    const choice = await select({
+      message: "Which test runner does the project use? Stryker runs the project's tests with it.",
+      initialValue: defaultId,
+      options: runners.map(({ id, label }) => ({
+        value: id,
+        label,
+        hint: id === defaultId ? "default" : undefined,
+      })),
+    });
+    exitIfCancel(choice);
+    return typeof choice === "string" ? choice : defaultId;
+  },
+  async testFiles({ defaultTestFiles, validate }) {
+    const answer = await text({
+      message: `Which files does the project's test script pass to node --test? Separate the paths with spaces, and write each relative to the folder that holds package.json. Press Enter to use the files node --test runs by default, shown here.`,
+      placeholder: defaultTestFiles.join(" "),
+      validate: (value) => validate(testFilePaths(value ?? "")),
+    });
+    exitIfCancel(answer);
+    return testFilePaths(typeof answer === "string" ? answer : "");
+  },
+};
+
+/**
+ * The paths in an answer to the test files prompt, separated by white space as node --test takes
+ * them, and drops the quotes a shell script puts around a glob. Commas do not separate paths,
+ * because a glob can hold them, as in `{test,spec}`.
+ *
+ * @param {string} answer
+ */
+function testFilePaths(answer) {
+  return answer
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((path) => path.replace(/^(["'])(.*)\1$/, "$2"));
+}
+
 /** @type {import("./integration-inputs.js").AskForIntegrationInput} */
 function promptForIntegrationInput({ integration, name, ...request }) {
   return promptForInputValue(request, `${integration}, ${name}`);
@@ -4716,9 +4790,15 @@ export async function initRecipe(options) {
     }),
     { ask: interactive ? promptForArtifactInput : undefined },
   );
-  const { recipe, inputs: integrationInputs } = await resolveIntegrationInputs(
-    recipeWithArtifactInputs,
-    { ask: interactive ? promptForIntegrationInput : undefined },
+  const { recipe: recipeWithIntegrationInputs, inputs: integrationInputs } =
+    await resolveIntegrationInputs(recipeWithArtifactInputs, {
+      ask: interactive ? promptForIntegrationInput : undefined,
+    });
+  // #890: the wizard hands its recipe to apply without a prompt, so it asks for the runner here.
+  const { recipe } = await resolveStrykerTestRunner(
+    recipeWithIntegrationInputs,
+    resolveRecipeIntegrations(recipeWithIntegrationInputs),
+    { ask: interactive ? askForTestRunner : undefined },
   );
   const validation = validateRecipeResponse(recipe);
   const explanation = explainRecipeResponse(recipe);

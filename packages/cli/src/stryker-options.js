@@ -117,3 +117,81 @@ export function integrationDependencies(integration, integrationOptions) {
     ...(selectedTestRunner(integration, integrationOptions)?.dependencies ?? []),
   ];
 }
+
+/**
+ * @typedef {object} TestRunnerQuestion
+ * @property {{ id: string, label: string }[]} runners The runners the catalog lists.
+ * @property {string} defaultId The preselected runner, the catalog's first, which keeps today's behavior.
+ *
+ * @typedef {object} TestFilesQuestion
+ * @property {string[]} defaultTestFiles The files the runner reads when the recipe records none.
+ * @property {(testFiles: string[]) => string | undefined} validate The reason the recipe would reject the files, or undefined.
+ *
+ * @typedef {object} AskForTestRunner
+ * @property {(question: TestRunnerQuestion) => Promise<string>} testRunner The ID of the chosen runner.
+ * @property {(question: TestFilesQuestion) => Promise<string[]>} testFiles The globs the person entered; an empty list keeps the runner's default files.
+ */
+
+/**
+ * Asks which test runner Stryker drives when the recipe selects an integration that lists
+ * `testRunners` and records no runner (#890, owner decision of 2026-11-10). The first runner is
+ * preselected, so accepting it keeps today's behavior and records nothing. A run without `ask`,
+ * which is any run that cannot prompt, never asks and keeps the recipe as it is. A recipe that
+ * records a runner, the default one included, is never asked.
+ *
+ * @template {{ integrations?: string[], integrationOptions?: Record<string, unknown> }} R
+ * @param {R} recipe A recipe that recipe validation accepted.
+ * @param {{ id: string, testRunners?: TestRunner[] }[]} integrations The integrations the recipe selects.
+ * @param {{ ask?: AskForTestRunner }} [options]
+ * @returns {Promise<{ recipe: R, answered: boolean }>} `answered` is true when the answer changed the recipe.
+ */
+export async function resolveStrykerTestRunner(recipe, integrations, { ask } = {}) {
+  const runners = integrations.find(({ id }) => id === STRYKER_ID)?.testRunners ?? [];
+  const recorded = /** @type {Record<string, unknown> | undefined} */ (
+    recipe.integrationOptions?.[STRYKER_ID]
+  );
+  const [defaultRunner] = runners;
+  if (!ask || !defaultRunner || (recorded && Object.hasOwn(recorded, "testRunner"))) {
+    return { recipe, answered: false };
+  }
+
+  const id = await ask.testRunner({
+    runners: runners.map(({ id, label }) => ({ id, label })),
+    defaultId: defaultRunner.id,
+  });
+  const runner = runners.find((candidate) => candidate.id === id);
+  if (!runner || runner === defaultRunner) {
+    return { recipe, answered: false };
+  }
+
+  const testFiles = await ask.testFiles({
+    defaultTestFiles: runner.testFiles,
+    validate: (files) => {
+      // An empty answer keeps the runner's default files, which need no checking.
+      if (files.length === 0) return undefined;
+      try {
+        normalizeStrykerOptions({ testRunner: runner.id, testFiles: files });
+      } catch (error) {
+        return error instanceof Error ? error.message : String(error);
+      }
+    },
+  });
+  // Files that equal the defaults add nothing, so they are not recorded either.
+  const entersOwnFiles =
+    testFiles.length > 0 &&
+    !(
+      testFiles.length === runner.testFiles.length &&
+      testFiles.every((glob, index) => glob === runner.testFiles[index])
+    );
+  const options = normalizeStrykerOptions({
+    testRunner: runner.id,
+    ...(entersOwnFiles ? { testFiles } : {}),
+  });
+  return {
+    recipe: {
+      ...recipe,
+      integrationOptions: { ...recipe.integrationOptions, [STRYKER_ID]: options },
+    },
+    answered: true,
+  };
+}
