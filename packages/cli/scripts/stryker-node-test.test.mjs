@@ -166,7 +166,7 @@ test("integrationOptions.stryker records only a runner other than Vitest, in the
     ...[["tests/*.test.js", ""], [5]].map((testFiles) => ({
       options: { testRunner: "node:test", testFiles },
       message:
-        "integrationOptions.stryker.testFiles must list at least one glob, and each must be a non-empty string. Record the paths that the project\'s test script passes to node --test, or remove testFiles to use the files node --test runs by default.",
+        "integrationOptions.stryker.testFiles must list at least one glob, and each must be a non-empty string. Record the paths that the project's test script passes to node --test, or remove testFiles to use the files node --test runs by default.",
     })),
     {
       options: { testRunner: "node:test", reporter: "tap", only: true },
