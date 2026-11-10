@@ -49,6 +49,9 @@
         },
         "github-repository-controls": {
           "$ref": "#/$defs/githubRepositoryControlsOptions"
+        },
+        "stryker": {
+          "$ref": "#/$defs/strykerOptions"
         }
       }
     },
@@ -140,6 +143,27 @@
             "type": "array",
             "contains": {
               "const": "github-repository-controls"
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "integrationOptions": {
+            "type": "object",
+            "required": ["stryker"]
+          }
+        },
+        "required": ["integrationOptions"]
+      },
+      "then": {
+        "properties": {
+          "integrations": {
+            "type": "array",
+            "contains": {
+              "const": "stryker"
             }
           }
         }
@@ -303,6 +327,37 @@
             }
           ],
           "default": false
+        }
+      }
+    },
+    "strykerOptions": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "testRunner": {
+          "description": "The test runner Stryker drives. vitest runs the Vitest tests that Vite+ runs. node:test runs node:test tests through Stryker's tap runner, which measures coverage inside each test file's own process, so code that a test reaches only through a child process is reported as not covered.",
+          "type": "string",
+          "enum": ["vitest", "node:test"],
+          "default": "vitest"
+        },
+        "testFiles": {
+          "description": "With testRunner node:test, the globs of the test files Stryker runs, such as the paths the project's test script passes to node --test. Without it, Stryker runs the files node --test runs by default.",
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string",
+            "minLength": 1,
+            "pattern": "^(?![/\\\\]|[A-Za-z]:)(?!(?:.*[/\\\\])?\\.\\.(?:[/\\\\]|$))"
+          }
+        }
+      },
+      "if": {
+        "required": ["testFiles"]
+      },
+      "then": {
+        "required": ["testRunner"],
+        "properties": {
+          "testRunner": { "const": "node:test" }
         }
       }
     },

@@ -1,6 +1,6 @@
 # ADR-0014: Stryker Mutation Testing as an Optional Integration for Vite+-Managed Projects
 
-- **Status:** Accepted (2026-10-22, Schalk Neethling). Decision 2's open point and the Yarn and Bun question resolved on 2026-11-09, and the grouped-updates question on 2026-11-10 (see Resolutions).
+- **Status:** Accepted (2026-10-22, Schalk Neethling). Decision 2's open point and the Yarn and Bun question resolved on 2026-11-09, and the grouped-updates question and support for `node:test` on 2026-11-10 (see Resolutions).
 - **Date:** 2026-10-22
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/732
 - **Decides:** whether Calavera may offer Stryker mutation testing as an optional integration, and on what terms. It decides that mutation testing is not a "test runner" under ADR-0009, that version 1 supports only projects that Calavera delegates to Vite+, and that Stryker runs only through a `test:mutation` script, outside `quality` and outside CI. Where the work sits relative to Increment 1 is left to the project owner. None of the C8 safety properties (brief Section 3) changes.
@@ -131,7 +131,7 @@ The same run confirmed the other conditions in Evidence for Stryker 10.1.1: stry
 
 ### Grouped updates
 
-The third open question below is answered. The project owner decided on 2026-11-10 (https://github.com/schalkneethling/create-project-calavera/issues/880#issuecomment-6769128502) that Calavera groups the packages. When a recipe selects both `stryker` and `github-repository-controls`, the managed `.github/dependabot.yml` gets this group in its `npm` entry, so core and the Vitest runner update in one pull request:
+The third open question below is answered. The project owner decided on 2026-11-10 (https://github.com/schalkneethling/create-project-calavera/issues/880#issuecomment-6769128502) that Calavera groups the packages. When a recipe selects both `stryker` and `github-repository-controls`, the managed `.github/dependabot.yml` gets this group in its `npm` entry, so core and the runner plugin, `@stryker-mutator/vitest-runner` or, for `node:test`, `@stryker-mutator/tap-runner`, update in one pull request:
 
 ```yaml
 groups:
@@ -140,7 +140,7 @@ groups:
       - "@stryker-mutator/*"
 ```
 
-The reason is the exact peer dependency the Evidence section records: the runner declares `"@stryker-mutator/core": "10.1.1"`, so a pull request that bumps one package without the other cannot install. The keys come from GitHub's Dependabot options reference for `groups`: GitHub configures groups per package ecosystem, `patterns` takes names with `*` as a wildcard, and a group name starts and ends with a letter.
+The reason is the exact peer dependency the Evidence section records: each runner plugin declares `"@stryker-mutator/core": "10.1.1"`, so a pull request that bumps one package without the other cannot install. The keys come from GitHub's Dependabot options reference for `groups`: GitHub configures groups per package ecosystem, `patterns` takes names with `*` as a wildcard, and a group name starts and ends with a letter.
 
 - **The catalog declares the group.** The `stryker` entry carries `dependabotGroups: { npm: { stryker: { patterns: ["@stryker-mutator/*"] } } }`, keyed by package ecosystem because a group applies to one ecosystem. `createDependabotConfig` merges the groups of every selected integration into the matching `updates` entry and never names an integration. Two integrations that declare the same group name for one ecosystem stop the plan with an error that names both, because the merge would otherwise keep the later definition and silently drop the earlier one.
 - **A recipe without `stryker` is unchanged.** Its `.github/dependabot.yml` holds the same bytes as before, which a test compares against the text the earlier release wrote.
@@ -148,6 +148,20 @@ The reason is the exact peer dependency the Evidence section records: the runner
 - **The group covers version updates only.** It sets no `applies-to`, and GitHub's default is `version-updates`. A Dependabot security update for one Stryker package still arrives as its own pull request.
 - **A monorepo does not get the group.** `stryker` applies in a workspace member and `github-repository-controls` applies at the repository root, so one recipe never selects both in a workspace, and the root `.github/dependabot.yml` has no Stryker group even when the members use Stryker. #889 tracks that gap.
 - **Only `npm` gets the group.** The `github-actions` entry has no Stryker packages. A recipe whose `dependabotEcosystems` leaves out `npm` writes no group, because there is no `npm` entry to hold it.
+
+### `node:test` through the tap runner
+
+Decision 2 left support for `node:test` to #736. The project owner decided on 2026-11-10 to build it (https://github.com/schalkneethling/create-project-calavera/issues/736#issuecomment-6769129037): the integration also serves a project that Vite+ manages and that tests with `node:test`, through `@stryker-mutator/tap-runner`. Decision 1's reading holds, because Stryker still uses the project's own runner and replaces nothing. Decision 2's limit also holds: the integration is offered only where apply delegates to Vite+, whichever runner the recipe names, because ADR-0009 gives no JavaScript or TypeScript tooling to a project that has not adopted Vite+. Supporting `node:test` must not become a way to scaffold a toolchain for such a project.
+
+The person chooses the runner; Calavera does not detect it. Project inspection reads no test-runner signal, and a `test` script that runs `node --test` is not a reliable one: a project can run `node --test` from another script, or run Vitest and `node:test` side by side. The recipe records the choice as `integrationOptions.stryker.testRunner`, `"vitest"` by default or `"node:test"`, and records nothing for the default, so a recipe that keeps Vitest stays valid for a CLI release that predates the option. With `"node:test"`, the recipe may also record `testFiles`, the globs the project's `test` script passes to `node --test`. The dry run names the runner and the settings it writes into `stryker.config.json`, as an `info` finding of kind `test-runner`.
+
+For `node:test`, apply installs `@stryker-mutator/core` and `@stryker-mutator/tap-runner` and writes `testRunner: "tap"`, the plugin in `plugins`, and a `tap` block. `tap.testFiles` defaults to the files `node --test` runs when it is given no paths, in Node.js 24 and 26, including the TypeScript patterns, because both strip types by default (https://nodejs.org/docs/latest-v24.x/api/test.html#running-tests-from-the-command-line). `tap.nodeArgs` is `--test-reporter=tap`, `-r {{hookFile}}`, and `{{testFile}}`, the defaults of the tap runner 10.1.1 (`dist/schema/tap-runner-options.json`), stated so that the dry run shows them. The tap runner 10.1.1 declares `"@stryker-mutator/core": "10.1.1"` as an exact peer dependency, as the Vitest runner does, and the `plugins` entry and the `tsconfigFile` workaround apply to it for the same reasons. When no file matches `tap.testFiles`, the dry run warns, and does not stop, as it does for Vitest. Recorded `testFiles` must stay inside the project, so a glob that starts with `/` or a drive letter or contains a `..` segment fails recipe validation, and the dry run warns when a test-file glob, recorded or default, matches a folder, because the tap runner runs `node` on every match.
+
+The catalog expresses the choice as metadata: the `stryker` entry lists `testRunners`, each with its Stryker plugin as `dependencies`, its value of Stryker's `testRunner` option, and its default `testFiles`. The flag `runsVitestTests` became `runsProjectTests`, because the stop and the warning now apply to whichever runner the recipe selects.
+
+In a copy of the `vp create` library fixture with a `tests/index.test.ts` that imports `../src/index.ts` with `node:test`, Stryker 10.1.1's dry run passed with the managed config, and a mutation run killed both mutants. `packages/cli/scripts/stryker-node-test.test.mjs` repeats that on every test run.
+
+**The coverage limit.** The tap runner runs each test file in a process of its own and measures coverage only inside that process. Code that a test reaches only through a child process does not count as covered by that test file. In the same fixture, with a test that ran `src/cli.ts` through `execFileSync` and checked its output, Stryker reported all three mutants as "no coverage", a score of 0, and `--coverageAnalysis off` did not change that result. Stryker runs only the test files that cover a mutant, so a mutant in code that only such tests reach is not tested at all, and a mutant that another test file covers can survive although the test file that reaches it through a child process might have killed it. #725 recorded the same limit for this repository's own Stryker setup. The README documents it, and the dry run repeats it whenever the recipe selects `node:test`.
 
 ## Open questions
 

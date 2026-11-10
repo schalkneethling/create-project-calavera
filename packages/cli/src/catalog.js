@@ -77,7 +77,7 @@ export const integrationCatalog = [
     id: "stryker",
     label: "Stryker mutation testing",
     summary:
-      "Stryker makes small changes to the source code and reports each change that the project's Vitest tests do not detect.",
+      "Stryker makes small changes to the source code and reports each change that the project's Vitest or node:test tests do not detect.",
     homepage: "https://stryker-mutator.io",
     group: "Mutation testing",
     platform: "stryker",
@@ -87,16 +87,46 @@ export const integrationCatalog = [
     // Composer and the MCP descriptions name it from here; apply writes it in index.js, and
     // integration-notes.test.mjs fails if the two names differ.
     standaloneScript: "test:mutation",
-    // ADR-0014 Decision 2: Stryker runs the project's tests with the Vitest that vite-plus
-    // installs, so apply stops where it does not delegate to Vite+, and the dry run warns when no
-    // file matches Vitest's default test pattern.
-    runsVitestTests: true,
+    // ADR-0014 Decision 2: Stryker runs the project's own tests, and Calavera offers it only in a
+    // project that Vite+ manages (ADR-0009), so apply stops where it does not delegate to Vite+,
+    // and the dry run warns when no file matches the test files of the selected runner.
+    runsProjectTests: true,
     // Owner decision of 2026-11-09 on #734: a workspace root has no tests of its own for Stryker
     // to run, so the integration applies in a single-package project or in a workspace member.
     appliesAt: "package",
-    // The runner declares the exact core version as a peer dependency, and one install of both
-    // resolves them to the same release.
-    dependencies: ["@stryker-mutator/core", "@stryker-mutator/vitest-runner"],
+    // The selected test runner's plugin is installed with core. Each runner plugin declares the
+    // exact core version as a peer dependency, and one install of both resolves them to the same
+    // release.
+    dependencies: ["@stryker-mutator/core"],
+    // integrationOptions.stryker.testRunner chooses one of these by id; the first is the default.
+    // strykerTestRunner is the value of Stryker's testRunner option, and testFiles are the files
+    // the runner reads when the project names none.
+    testRunners: [
+      {
+        id: "vitest",
+        label: "Vitest",
+        strykerTestRunner: "vitest",
+        dependencies: ["@stryker-mutator/vitest-runner"],
+        // Vitest's default include, as vitest 5.1.0 defines it (dist/config.cjs).
+        testFiles: ["**/*.{test,spec}.?(c|m)[jt]s?(x)"],
+      },
+      {
+        // #736, owner decision of 2026-11-10: for a project that Vite+ manages and that tests
+        // with node:test. The tap runner measures coverage per test file, inside that file's own
+        // process (ADR-0014, Resolutions).
+        id: "node:test",
+        label: "node:test",
+        strykerTestRunner: "tap",
+        dependencies: ["@stryker-mutator/tap-runner"],
+        // The files node --test runs when it is given no paths, in Node.js 24 and 26
+        // (https://nodejs.org/docs/latest-v24.x/api/test.html#running-tests-from-the-command-line),
+        // with the TypeScript patterns, because both strip types by default.
+        testFiles: [
+          "**/{*.test,*-test,*_test,test-*,test}.{cjs,mjs,js,cts,mts,ts}",
+          "**/test/**/*.{cjs,mjs,js,cts,mts,ts}",
+        ],
+      },
+    ],
     // ADR-0016: Stryker writes its sandboxes to .stryker-tmp/ and leaves it behind after a failed
     // run, and writes its HTML report to reports/mutation/. vp check formats both and html-validate
     // lints the report unless they are ignored.
