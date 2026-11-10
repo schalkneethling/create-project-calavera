@@ -14,6 +14,7 @@ import {
   githubRepositoryControlManagedFiles,
   normalizeGithubRepositoryControlsOptions,
 } from "../src/github-repository-controls.js";
+import { integrationCatalog } from "../src/catalog.js";
 import { applyRecipeObject, planCleanManagedFiles } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
 import {
@@ -88,7 +89,7 @@ test("repository-control options normalize an explicit repository policy", () =>
 });
 
 test("generated Dependabot YAML contains semantic npm and Actions entries", () => {
-  const configuration = parseYaml(createDependabotConfig(["npm", "github-actions"]));
+  const configuration = parseYaml(createDependabotConfig(["npm", "github-actions"], []));
   assert.equal(configuration.version, 2);
   assert.deepEqual(
     configuration.updates.map((update) => update["package-ecosystem"]),
@@ -98,6 +99,140 @@ test("generated Dependabot YAML contains semantic npm and Actions entries", () =
     configuration.updates.every((update) => update.directory === "/"),
     true,
   );
+});
+
+// The bytes createDependabotConfig wrote before integrations could declare groups (#880). A recipe
+// without a declaring integration must keep producing exactly these bytes.
+const dependabotConfigWithoutGroups = `version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      include:
+        - "*"
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    cooldown:
+      default-days: 7
+      include:
+        - "*"
+`;
+const strykerEntry = integrationCatalog.find(({ id }) => id === "stryker");
+const ecosystems = ["npm", "github-actions"];
+
+test("generated Dependabot YAML is byte-for-byte unchanged when no integration declares a group", () => {
+  assert.equal(createDependabotConfig(ecosystems, []), dependabotConfigWithoutGroups);
+  const withoutStryker = integrationCatalog.filter(({ id }) => id !== "stryker");
+  assert.equal(createDependabotConfig(ecosystems, withoutStryker), dependabotConfigWithoutGroups);
+});
+
+test("the stryker catalog entry groups @stryker-mutator/* in the npm entry only", () => {
+  const configuration = parseYaml(createDependabotConfig(ecosystems, [strykerEntry]));
+  const [npm, actions] = configuration.updates;
+
+  assert.deepEqual(npm.groups, { stryker: { patterns: ["@stryker-mutator/*"] } });
+  assert.equal("groups" in actions, false);
+  // Everything else in both entries is what a recipe without Stryker gets.
+  const { groups: _groups, ...npmWithoutGroups } = npm;
+  assert.deepEqual([npmWithoutGroups, actions], parseYaml(dependabotConfigWithoutGroups).updates);
+});
+
+test("createDependabotConfig reads group metadata from any integration, so it does not special-case stryker", () => {
+  const configuration = parseYaml(
+    createDependabotConfig(ecosystems, [
+      {
+        id: "example",
+        dependabotGroups: {
+          "github-actions": { pinned: { patterns: ["actions/*"], "update-types": ["minor"] } },
+        },
+      },
+    ]),
+  );
+  const [npm, actions] = configuration.updates;
+
+  assert.equal("groups" in npm, false);
+  assert.deepEqual(actions.groups, {
+    pinned: { patterns: ["actions/*"], "update-types": ["minor"] },
+  });
+});
+
+test("createDependabotConfig refuses two integrations that declare the same group name for one ecosystem", () => {
+  const declares = (/** @type {string} */ id) => ({
+    id,
+    dependabotGroups: { npm: { shared: { patterns: [`${id}/*`] } } },
+  });
+
+  assert.throws(
+    () => createDependabotConfig(ecosystems, [declares("first"), declares("second")]),
+    /first and second both declare the Dependabot group "shared" for npm/,
+  );
+});
+
+test("catalog dependabotGroups use only the keys and values GitHub documents", () => {
+  // https://docs.github.com/en/code-security/reference/supply-chain-security/dependabot-options-reference#groups--
+  const allowedValues = {
+    "applies-to": ["version-updates", "security-updates"],
+    "dependency-type": ["development", "production"],
+    "group-by": ["dependency-name"],
+  };
+  const listKeys = ["exclude-patterns", "patterns", "update-types"];
+  const identifier = /^[A-Za-z]([A-Za-z|_-]*[A-Za-z])?$/;
+  const declared = integrationCatalog.filter(({ dependabotGroups }) => dependabotGroups);
+  assert.ok(declared.length > 0, "no catalog entry declares dependabotGroups");
+  // The ecosystems github-repository-controls writes an updates entry for.
+  const ecosystemsCalaveraWrites = ["npm", "github-actions"];
+
+  for (const { id, dependabotGroups } of declared) {
+    for (const [ecosystem, groups] of Object.entries(dependabotGroups)) {
+      assert.ok(
+        ecosystemsCalaveraWrites.includes(ecosystem),
+        `${id} declares groups for ${ecosystem}, which Calavera does not manage`,
+      );
+      for (const [name, group] of Object.entries(groups)) {
+        assert.match(name, identifier, `${id}: ${name} is not a valid group identifier`);
+        for (const [key, value] of Object.entries(group)) {
+          const where = `${id}: ${name}.${key}`;
+          if (key in allowedValues) {
+            assert.ok(allowedValues[key].includes(value), `${where} is ${JSON.stringify(value)}`);
+          } else {
+            assert.ok(listKeys.includes(key), `${where} is not a documented key`);
+            assert.ok(
+              Array.isArray(value) && value.length > 0 && value.every((v) => typeof v === "string"),
+              `${where} must be a non-empty list of strings`,
+            );
+          }
+        }
+        if (group["update-types"]) {
+          for (const type of group["update-types"]) {
+            assert.ok(["major", "minor", "patch"].includes(type), `${id}: ${name} uses ${type}`);
+          }
+        }
+      }
+    }
+  }
+});
+
+test("no two catalog entries declare the same Dependabot group name for one ecosystem", () => {
+  const owners = new Map();
+
+  for (const { id, dependabotGroups = {} } of integrationCatalog) {
+    for (const [ecosystem, groups] of Object.entries(dependabotGroups)) {
+      for (const name of Object.keys(groups)) {
+        const key = `${ecosystem}/${name}`;
+        assert.equal(
+          owners.get(key),
+          undefined,
+          `${id} and ${owners.get(key)} both declare ${key}`,
+        );
+        owners.set(key, id);
+      }
+    }
+  }
 });
 
 test("generated desired state keeps release protection optional", () => {
@@ -118,7 +253,7 @@ test("generated desired state keeps release protection optional", () => {
 });
 
 test("generated repository-control documentation uses portable Node commands", () => {
-  const documentation = githubRepositoryControlManagedFiles(rawOptions).find(
+  const documentation = githubRepositoryControlManagedFiles(rawOptions, []).find(
     ({ path }) => path === "docs/repository-controls.md",
   ).contents;
 
@@ -129,10 +264,13 @@ test("generated repository-control documentation uses portable Node commands", (
   assert.match(documentation, /add its name to `requiredChecks` in the Calavera recipe/);
   assert.match(documentation, /apply removes them/);
   assert.match(documentation, /separate ruleset in the repository settings/);
-  const defaultSuiteDocs = githubRepositoryControlManagedFiles({
-    ...rawOptions,
-    codeqlQuerySuite: "default",
-  }).find(({ path }) => path === "docs/repository-controls.md").contents;
+  const defaultSuiteDocs = githubRepositoryControlManagedFiles(
+    {
+      ...rawOptions,
+      codeqlQuerySuite: "default",
+    },
+    [],
+  ).find(({ path }) => path === "docs/repository-controls.md").contents;
   assert.match(defaultSuiteDocs, /uses the default query suite/);
 });
 
@@ -145,7 +283,7 @@ test("the paragraph after the manual controls list stands on its own, with or wi
     [{ repository: "octocat/example", defaultBranch: "main" }, [malwareAlerts]],
     [rawOptions, [malwareAlerts, adminBypass]],
   ]) {
-    const documentation = githubRepositoryControlManagedFiles(options).find(
+    const documentation = githubRepositoryControlManagedFiles(options, []).find(
       ({ path }) => path === "docs/repository-controls.md",
     ).contents;
     const manualControls = documentation.slice(documentation.indexOf("## Manual controls"));
@@ -632,7 +770,9 @@ test("Calavera apply manages repository-control files and scripts without contac
       noInstall: true,
       assumeYes: true,
     });
-    const expectedPaths = githubRepositoryControlManagedFiles(rawOptions).map(({ path }) => path);
+    const expectedPaths = githubRepositoryControlManagedFiles(rawOptions, []).map(
+      ({ path }) => path,
+    );
     assert.deepEqual(
       dryRun.changes.filter(({ type }) => type === "write").map(({ path }) => path),
       expectedPaths,
@@ -1537,11 +1677,14 @@ test("declining CodeQL results leaves the code scanning rule unmanaged and keeps
     strict_required_status_checks_policy: true,
   });
 
-  const documentation = githubRepositoryControlManagedFiles({
-    repository: "octocat/example",
-    defaultBranch: "main",
-    requireCodeqlResults: false,
-  }).find(({ path }) => path === "docs/repository-controls.md").contents;
+  const documentation = githubRepositoryControlManagedFiles(
+    {
+      repository: "octocat/example",
+      defaultBranch: "main",
+      requireCodeqlResults: false,
+    },
+    [],
+  ).find(({ path }) => path === "docs/repository-controls.md").contents;
   assert.doesNotMatch(documentation, /requires CodeQL results/);
   assert.match(documentation, /does not manage the code scanning rule/);
   assert.match(documentation, /delete it in \*\*Settings → Rules\*\*/);
@@ -1614,7 +1757,9 @@ test("Given github-repository-controls still selected and another integration re
     await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
     const options = { json: true, noInstall: true, assumeYes: true };
     await applyRecipeObject(recipeWith(["github-repository-controls", "knip"]), options);
-    const controlPaths = githubRepositoryControlManagedFiles(rawOptions).map(({ path }) => path);
+    const controlPaths = githubRepositoryControlManagedFiles(rawOptions, []).map(
+      ({ path }) => path,
+    );
 
     const withoutKnip = recipeWith(["github-repository-controls"]);
     await writeFile("calavera.config.json", `${JSON.stringify(withoutKnip, null, 2)}\n`);
@@ -1666,7 +1811,9 @@ test("Given github-repository-controls still selected and an edited stale knip.j
       noInstall: true,
       assumeYes: true,
     });
-    const controlPaths = githubRepositoryControlManagedFiles(rawOptions).map(({ path }) => path);
+    const controlPaths = githubRepositoryControlManagedFiles(rawOptions, []).map(
+      ({ path }) => path,
+    );
     const editedKnip = '{\n  "entry": ["src/index.js"]\n}\n';
     await writeFile("knip.json", editedKnip);
     await writeFile(
@@ -1724,7 +1871,7 @@ test("Given github-repository-controls removed from the recipe, clean --dry-run 
     );
     assert.deepEqual(
       changes.map(({ type, path }) => [type, path]),
-      githubRepositoryControlManagedFiles(rawOptions).map(({ path }) => ["delete", path]),
+      githubRepositoryControlManagedFiles(rawOptions, []).map(({ path }) => ["delete", path]),
     );
   } finally {
     process.chdir(originalDirectory);

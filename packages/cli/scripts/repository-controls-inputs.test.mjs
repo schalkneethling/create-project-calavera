@@ -118,7 +118,7 @@ test("the literal main fallback is gone: a recipe without defaultBranch does not
   // A caller that plans the files without filling defaultBranch first stops instead of writing a
   // configuration that describes no branch.
   assert.throws(
-    () => githubRepositoryControlManagedFiles({ repository: "o/r" }),
+    () => githubRepositoryControlManagedFiles({ repository: "o/r" }, []),
     /integrationOptions\.github-repository-controls\.defaultBranch has no value/,
   );
   assert.throws(

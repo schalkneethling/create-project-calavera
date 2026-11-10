@@ -177,6 +177,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {{ extends?: string[], rules?: Record<string, unknown> }} [htmlValidate]
  * @property {{ extends?: string[], plugins?: string[], rules?: Record<string, unknown> }} [stylelint]
  * @property {{ gitignore?: string[], htmlValidateIgnore?: string[] }} [ignore] The lines the integration needs in .gitignore and .htmlvalidateignore (ADR-0016).
+ * @property {import("./github-repository-controls.js").DependabotGroups} [dependabotGroups] The Dependabot groups the integration needs in the managed .github/dependabot.yml when the recipe also selects github-repository-controls (#880).
  * @property {string} [appliesAt] "repository-root" for an integration that applies only at the repository root, "package" for one that applies in a single-package project or a workspace member but not at a workspace root.
  * @property {string} [standaloneScript] The package.json script the integration adds that `quality` does not run, named in the Composer and the MCP descriptions (ADR-0014 Decision 3).
  * @property {boolean} [runsVitestTests] The integration runs the project's tests with the Vitest that vite-plus installs, so it needs a project that apply delegates to Vite+ (ADR-0014).
@@ -2227,7 +2228,10 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
 
   if (integrations.some((integration) => integration.id === GITHUB_REPOSITORY_CONTROLS_ID)) {
     plans.push(
-      ...githubRepositoryControlManagedFiles(integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID]),
+      ...githubRepositoryControlManagedFiles(
+        integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID],
+        integrations,
+      ),
     );
   }
 
