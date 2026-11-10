@@ -93,7 +93,7 @@ test("test files that equal the runner's defaults are not recorded", async () =>
 
 test("test files that only partly match the runner's defaults are recorded", async () => {
   const defaults = nodeTestRunner?.testFiles ?? [];
-  for (const testFiles of [defaults.slice(0, 1), [defaults[0], "tests/*.test.js"]]) {
+  for (const testFiles of [defaults.slice(0, 1), [...defaults.slice(0, 1), "tests/*.test.js"]]) {
     const { result } = await choose({}, { runner: "node:test", testFiles });
 
     assert.deepEqual(result.recipe.integrationOptions, {
