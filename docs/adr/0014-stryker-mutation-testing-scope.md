@@ -1,6 +1,6 @@
 # ADR-0014: Stryker Mutation Testing as an Optional Integration for Vite+-Managed Projects
 
-- **Status:** Accepted (2026-10-22, Schalk Neethling). Decision 2's open point and the Yarn and Bun question resolved on 2026-11-09 (see Resolutions).
+- **Status:** Accepted (2026-10-22, Schalk Neethling). Decision 2's open point and the Yarn and Bun question resolved on 2026-11-09, and support for `node:test` added on 2026-11-10 (see Resolutions).
 - **Date:** 2026-10-22
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/732
 - **Decides:** whether Calavera may offer Stryker mutation testing as an optional integration, and on what terms. It decides that mutation testing is not a "test runner" under ADR-0009, that version 1 supports only projects that Calavera delegates to Vite+, and that Stryker runs only through a `test:mutation` script, outside `quality` and outside CI. Where the work sits relative to Increment 1 is left to the project owner. None of the C8 safety properties (brief Section 3) changes.
@@ -128,6 +128,20 @@ The first open question below is answered: all four package managers are support
 | Bun                                                              | 1.5.1        | 1             | 2 of 2 killed |
 
 The same run confirmed the other conditions in Evidence for Stryker 10.1.1: stryker-mutator/stryker-js#6111 is still open, and without the `tsconfigFile` workaround the run still crashes with `ts.parseConfigFileTextToJson is not a function`. Under pnpm, a config without `plugins` still fails with "Cannot find TestRunner plugin "vitest"". The runner 10.1.1 still declares `"@stryker-mutator/core": "10.1.1"` as an exact peer dependency.
+
+### `node:test` through the tap runner
+
+Decision 2 left support for `node:test` to #736. The project owner decided on 2026-11-10 to build it (https://github.com/schalkneethling/create-project-calavera/issues/736#issuecomment-6769129037): the integration also serves a project that Vite+ manages and that tests with `node:test`, through `@stryker-mutator/tap-runner`. Decision 1's reading holds, because Stryker still uses the project's own runner and replaces nothing. Decision 2's limit also holds: the integration is offered only where apply delegates to Vite+, whichever runner the recipe names, because ADR-0009 gives no JavaScript or TypeScript tooling to a project that has not adopted Vite+. Supporting `node:test` must not become a way to scaffold a toolchain for such a project.
+
+The person chooses the runner; Calavera does not detect it. Project inspection reads no test-runner signal, and a `test` script that runs `node --test` is not a reliable one: a project can run `node --test` from another script, or run Vitest and `node:test` side by side. The recipe records the choice as `integrationOptions.stryker.testRunner`, `"vitest"` by default or `"node:test"`, and records nothing for the default, so a recipe that keeps Vitest stays valid for a CLI release that predates the option. With `"node:test"`, the recipe may also record `testFiles`, the globs the project's `test` script passes to `node --test`. The dry run names the runner and the settings it writes into `stryker.config.json`, as an `info` finding of kind `test-runner`.
+
+For `node:test`, apply installs `@stryker-mutator/core` and `@stryker-mutator/tap-runner` and writes `testRunner: "tap"`, the plugin in `plugins`, and a `tap` block. `tap.testFiles` defaults to the files `node --test` runs when it is given no paths, in Node.js 24 and 26, including the TypeScript patterns, because both strip types by default (https://nodejs.org/docs/latest-v24.x/api/test.html#running-tests-from-the-command-line). `tap.nodeArgs` is `--test-reporter=tap`, `-r {{hookFile}}`, and `{{testFile}}`, the defaults of the tap runner 10.1.1 (`dist/schema/tap-runner-options.json`), stated so that the dry run shows them. The tap runner 10.1.1 declares `"@stryker-mutator/core": "10.1.1"` as an exact peer dependency, as the Vitest runner does, and the `plugins` entry and the `tsconfigFile` workaround apply to it for the same reasons. When no file matches `tap.testFiles`, the dry run warns, and does not stop, as it does for Vitest.
+
+The catalog expresses the choice as metadata: the `stryker` entry lists `testRunners`, each with its Stryker plugin as `dependencies`, its value of Stryker's `testRunner` option, and its default `testFiles`. The flag `runsVitestTests` became `runsProjectTests`, because the stop and the warning now apply to whichever runner the recipe selects.
+
+In a copy of the `vp create` library fixture with a `tests/index.test.ts` that imports `../src/index.ts` with `node:test`, Stryker 10.1.1's dry run passed with the managed config, and a mutation run killed both mutants. `packages/cli/scripts/stryker-node-test.test.mjs` repeats that on every test run.
+
+**The coverage limit.** The tap runner runs each test file in a process of its own and measures coverage only inside that process. Code that a test reaches only through a child process does not count as covered by that test file. In the same fixture, with a test that ran `src/cli.ts` through `execFileSync` and checked its output, Stryker reported all three mutants as "no coverage", a score of 0, and `--coverageAnalysis off` did not change that result. Stryker runs only the test files that cover a mutant, so a mutant in code that only such tests reach is not tested at all, and a mutant that another test file covers can survive although the test file that reaches it through a child process might have killed it. #725 recorded the same limit for this repository's own Stryker setup. The README documents it, and the dry run repeats it whenever the recipe selects `node:test`.
 
 ## Open questions
 

@@ -297,8 +297,10 @@ for a contributor walkthrough based on Theo Ephraim's Varlock integration.
 The optional `stryker` integration sets up [Stryker](https://stryker-mutator.io) mutation testing.
 Stryker makes small changes to the source code, called mutants, runs the project's tests against
 each one, and reports the mutants that no test detected. It installs `@stryker-mutator/core` and
-`@stryker-mutator/vitest-runner` with `vp add -D`, writes a managed `stryker.config.json`, and adds
-a `test:mutation` script that runs `stryker run`. Run it with `vp run test:mutation`.
+the Stryker runner plugin for the project's test runner with `vp add -D`, writes a managed
+`stryker.config.json`, and adds a `test:mutation` script that runs `stryker run`. Run it with
+`vp run test:mutation`. Stryker drives Vitest by default; a project that tests with `node:test`
+selects the tap runner instead (see [Projects that test with `node:test`](#projects-that-test-with-nodetest)).
 
 `test:mutation` is not part of `quality`, and Calavera adds no CI job for it (ADR-0014, Decision 3).
 A mutation run takes minutes on a real project, and Stryker exits with code 0 whatever the score,
@@ -306,13 +308,17 @@ because the config sets no `thresholds.break`. Choosing a score that fails the r
 add `thresholds` to the config when you want one. Calavera treats that as a local edit, so a later
 apply stops instead of overwriting `stryker.config.json`.
 
-The integration needs a project that Vite+ manages, because Stryker's Vitest runner runs the Vitest
-that vite-plus installs. A dry run or apply that selects `stryker` in any other project stops before
+The integration needs a project that Vite+ manages, because Calavera provides no JavaScript or
+TypeScript tooling to a project that has not adopted Vite+ (ADR-0009), and Stryker's Vitest runner
+runs the Vitest that vite-plus installs. A dry run or apply that selects `stryker` in any other project stops before
 it writes anything, and tells you to run `vp create` or `vp migrate` first. It also stops at the
 root of a workspace, because the root has no tests of its own for Stryker to run: apply it in each
 workspace member that has tests instead. When no file matches Vitest's default test pattern,
 `**/*.{test,spec}.?(c|m)[jt]s?(x)`, the dry run warns that Stryker has no tests to run, but it does
-not stop, because the Vite config can set `test.include` to other files.
+not stop, because the Vite config can set `test.include` to other files. The dry run also names the
+test runner and the settings it writes into `stryker.config.json`.
+
+With the default Vitest runner, the managed config is:
 
 ```json
 {
@@ -334,6 +340,74 @@ not stop, because the Vite config can set `test.include` to other files.
   A missing file makes Stryker skip that step. JSON cannot hold the `WORKAROUND` comment that marks
   workarounds in code, so this paragraph records it, and
   [#737](https://github.com/schalkneethling/create-project-calavera/issues/737) tracks its removal.
+
+#### Projects that test with `node:test`
+
+A project that Vite+ manages and that tests with `node:test` instead of Vitest selects Stryker's tap
+runner in the recipe. The option exists only for such projects: Calavera still stops on a project
+that has not adopted Vite+, whichever runner the recipe names.
+
+```json
+{
+  "integrations": ["stryker"],
+  "integrationOptions": {
+    "stryker": { "testRunner": "node:test" }
+  }
+}
+```
+
+Apply then installs `@stryker-mutator/core` and `@stryker-mutator/tap-runner` instead of the Vitest
+runner, and writes this `stryker.config.json`:
+
+```json
+{
+  "$schema": "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+  "testRunner": "tap",
+  "plugins": ["@stryker-mutator/tap-runner"],
+  "tap": {
+    "testFiles": [
+      "**/{*.test,*-test,*_test,test-*,test}.{cjs,mjs,js,cts,mts,ts}",
+      "**/test/**/*.{cjs,mjs,js,cts,mts,ts}"
+    ],
+    "nodeArgs": ["--test-reporter=tap", "-r", "{{hookFile}}", "{{testFile}}"]
+  },
+  "tsconfigFile": "stryker-skips-tsconfig-preprocessing.json",
+  "reporters": ["clear-text", "html"]
+}
+```
+
+- `tap.testFiles` lists the files that `node --test` runs when it is given no paths, in Node.js 24
+  and 26, including TypeScript files, because both strip types by default. If the project's `test`
+  script passes other paths to `node --test`, record those globs in
+  `integrationOptions.stryker.testFiles`, and apply writes them instead. `testFiles` is accepted
+  only with `"testRunner": "node:test"`, because Stryker's Vitest runner reads the test files from
+  the Vite config.
+- `tap.nodeArgs` starts with `--test-reporter=tap`, because the tap runner reads each test file's
+  results as TAP output. Stryker then loads its coverage hook (`-r {{hookFile}}`) and runs the test
+  file (`{{testFile}}`). These are the runner's defaults in 10.1.1; the config states them so that
+  the dry run shows what runs.
+- `testRunner`, `plugins`, and `tsconfigFile` are set for the same reasons as with Vitest.
+
+When no file matches `tap.testFiles`, the dry run warns that Stryker has no tests to run, and
+`stryker run` stops with "No tests were executed" until it finds one.
+
+The tap runner has a coverage limit. It runs each test file in a process of its own and measures
+coverage only inside that process. Code that a test reaches only through a child process, such as a
+test that runs the project's command-line entry point with `execFile`, does not count as covered by
+that test file, even when the test checks the output. Stryker runs only the test files that cover a
+mutant, which has two effects:
+
+- A mutant in code that only such tests reach is reported as "no coverage", and Stryker does not
+  test it.
+- A mutant that another test file covers runs only against that file. If that file does not kill
+  it, Stryker reports it as survived, although the test file that reaches it through a child
+  process might have killed it.
+
+Check those mutants by hand. Running with `--coverageAnalysis off` did not change the result with
+Stryker 10.1.1. The dry run repeats this limit when the recipe selects `node:test`.
+
+Switching a recipe from one runner to the other rewrites `stryker.config.json` and installs the
+other runner plugin. Apply does not uninstall the plugin it installed before.
 
 Stryker writes its sandboxes to `.stryker-tmp/`, which a failed run leaves behind, and its HTML
 report to `reports/mutation/`. Apply lists both in a marked block in `.gitignore`, so `vp check`

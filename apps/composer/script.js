@@ -1019,6 +1019,23 @@ function registerWebMcpTools() {
                   quality: { type: "boolean" },
                 },
               },
+              stryker: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  testRunner: {
+                    type: "string",
+                    enum: listIntegrationOptions()
+                      .find(({ id }) => id === "stryker")
+                      ?.testRunners?.map(({ id }) => id),
+                  },
+                  testFiles: {
+                    type: "array",
+                    minItems: 1,
+                    items: { type: "string", minLength: 1 },
+                  },
+                },
+              },
               "github-repository-controls": {
                 type: "object",
                 additionalProperties: false,

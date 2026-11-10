@@ -1,0 +1,7 @@
+---
+"create-project-calavera": minor
+---
+
+The `stryker` integration now also runs the tests of a project that tests with `node:test`, through Stryker's tap runner (#736). Set `integrationOptions.stryker.testRunner` to `"node:test"` in the recipe. Apply then installs `@stryker-mutator/core` and `@stryker-mutator/tap-runner` with `vp add -D`, and writes a `stryker.config.json` that sets `testRunner` to `"tap"`, lists the plugin, and sets `tap.testFiles` and `tap.nodeArgs`. `tap.testFiles` defaults to the files `node --test` runs when it is given no paths; record other globs in `integrationOptions.stryker.testFiles`. Vitest stays the default, and a recipe that keeps it records no option. The integration still needs a project that Vite+ manages, whichever runner the recipe names.
+
+The dry run and `inspect_project` now name the runner and the settings it writes, as an `info` finding of kind `test-runner`, and warn, without stopping, when no file matches the runner's test files. For `node:test`, the finding also states the tap runner's coverage limit: code that a test reaches only through a child process does not count as covered, so Stryker reports a mutant there as not covered, or as survived when another test file covers it. `list_integrations` and `describe_integration` list the runners in `testRunners`, and `explain_recipe` lists the runner plugin the recipe selects in `dependencies`.

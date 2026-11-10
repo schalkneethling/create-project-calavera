@@ -36,9 +36,11 @@ Calavera adds, on top of that toolchain:
   and React Doctor (`packages/cli/src/catalog.js`).
 - Mutation testing with Stryker, which neither vite-plus nor Vitest provides.
   Stryker runs the project's Vitest tests with the Vitest that vite-plus
-  installs, so Calavera offers it only in a project that Vite+ manages, and not
-  at a workspace root (ADR-0014). It adds a `test:mutation` script and stays
-  out of `quality`.
+  installs, or, when the recipe sets `integrationOptions.stryker.testRunner` to
+  `node:test`, the project's `node:test` tests through Stryker's tap runner.
+  Calavera offers it only in a project that Vite+ manages, whichever runner the
+  recipe names, and not at a workspace root (ADR-0009, ADR-0014). It adds a
+  `test:mutation` script and stays out of `quality`.
 - AI artifacts: skills, hooks, and subagents under `.agents/`, versioned as npm
   packages and tracked for updates (`docs/evolution-brief.md` Section 3, C3).
 - MCP registration: a project-local server for Claude Code, Codex, Cursor, or

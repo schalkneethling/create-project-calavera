@@ -6,6 +6,7 @@ import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   normalizeGithubRepositoryControlsOptions,
 } from "./github-repository-controls-options.js";
+import { integrationDependencies, normalizeStrykerOptions, STRYKER_ID } from "./stryker-options.js";
 import {
   assertKnownValue,
   assertObjectArray,
@@ -173,7 +174,7 @@ export const recipeToolInputDescriptions = Object.freeze({
     'Values for the inputs the artifact declares, keyed by input name, such as { protectedBranch: "main" }. compose_recipe reports each declared input with its default; confirm the value with the user before dry_run_apply.',
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
-    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from.",
+    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from; Stryker accepts testRunner, vitest by default or node:test for a project that tests with node:test, and, with node:test, testFiles, the globs the project's test script passes to node --test.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
   baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
   baselineLimit: "Maximum number of Baseline feature search results.",
@@ -323,13 +324,13 @@ export function projectLocalCommandSteps(packageManager = "npm") {
  * integration, read from its catalog metadata: where it applies, whether it needs a project
  * that Vite+ manages, and the script it adds that `quality` does not run.
  *
- * @param {{ appliesAt?: string, runsVitestTests?: boolean, standaloneScript?: string }} integration
+ * @param {{ appliesAt?: string, runsProjectTests?: boolean, standaloneScript?: string }} integration
  * @returns {string[]}
  */
-function integrationNotes({ appliesAt, runsVitestTests, standaloneScript }) {
+function integrationNotes({ appliesAt, runsProjectTests, standaloneScript }) {
   return [
     appliesAt === "repository-root" && "Applies at the repository root.",
-    runsVitestTests && "Needs a project that Vite+ manages.",
+    runsProjectTests && "Needs a project that Vite+ manages.",
     standaloneScript && `Adds a ${standaloneScript} script, which quality does not run.`,
     appliesAt === "package" &&
       "Applies in a single-package project or a workspace member, not at a workspace root.",
@@ -547,7 +548,12 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
   }
 
   assertPlainObject("integrationOptions", integrationOptions);
-  const supportedIds = ["stylelint-baseline", "html-validate", GITHUB_REPOSITORY_CONTROLS_ID];
+  const supportedIds = [
+    "stylelint-baseline",
+    "html-validate",
+    GITHUB_REPOSITORY_CONTROLS_ID,
+    STRYKER_ID,
+  ];
   const unknownIds = Object.keys(integrationOptions).filter((id) => !supportedIds.includes(id));
 
   if (unknownIds.length > 0) {
@@ -630,6 +636,16 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
     throw new Error(
       "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.",
     );
+  }
+
+  if (Object.hasOwn(integrationOptions, STRYKER_ID)) {
+    if (!resolvedIds.has(STRYKER_ID)) {
+      throw new Error(`integrationOptions.${STRYKER_ID} requires the ${STRYKER_ID} integration.`);
+    }
+    const strykerOptions = normalizeStrykerOptions(integrationOptions[STRYKER_ID]);
+    if (strykerOptions) {
+      normalized[STRYKER_ID] = strykerOptions;
+    }
   }
 
   return Object.keys(normalized).length > 0 ? normalized : undefined;
@@ -794,7 +810,9 @@ export function validateRecipeResponse(recipe) {
 export function dependencyListForRecipe(recipe) {
   return [
     ...new Set(
-      resolveRecipeIntegrations(recipe).flatMap((integration) => integration.dependencies ?? []),
+      resolveRecipeIntegrations(recipe).flatMap((integration) =>
+        integrationDependencies(integration, recipe.integrationOptions),
+      ),
     ),
   ];
 }

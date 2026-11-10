@@ -1,5 +1,5 @@
 // Issue #735: the Composer and the MCP server say where an integration works. The notes come
-// from catalog metadata (`appliesAt`, `runsVitestTests`, `standaloneScript`), so a client that
+// from catalog metadata (`appliesAt`, `runsProjectTests`, `standaloneScript`), so a client that
 // lists or describes an integration reads the Vite+ requirement, the `test:mutation` script, and
 // the workspace-member scope without reading the README.
 import assert from "node:assert/strict";
@@ -39,8 +39,8 @@ test("github-repository-controls keeps only its repository-root note", () => {
 
 test("an integration without placement metadata has no notes", () => {
   const withoutMetadata = integrationCatalog.filter(
-    ({ appliesAt, runsVitestTests, standaloneScript }) =>
-      !appliesAt && !runsVitestTests && !standaloneScript,
+    ({ appliesAt, runsProjectTests, standaloneScript }) =>
+      !appliesAt && !runsProjectTests && !standaloneScript,
   );
 
   assert.ok(withoutMetadata.length > 0);
