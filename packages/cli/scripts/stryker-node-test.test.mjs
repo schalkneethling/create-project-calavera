@@ -16,6 +16,7 @@ import Ajv2020 from "ajv/dist/2020.js";
 import { integrationCatalog } from "../src/catalog.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
+import { integrationDependencies, selectedTestRunner } from "../src/stryker-options.js";
 import { textHash } from "../src/utils/hash.js";
 import {
   copyReleaseFixture,
@@ -162,11 +163,28 @@ test("integrationOptions.stryker records only a runner other than Vitest, in the
       options: { testRunner: "node:test", reporter: "tap" },
       message: "Unknown integrationOptions.stryker fields: reporter.",
     },
-    ...["/srv/**/*.test.js", "../shared/*.test.js", "tests/../../x.test.js"].map((glob) => ({
+    ...[["tests/*.test.js", ""], [5]].map((testFiles) => ({
+      options: { testRunner: "node:test", testFiles },
+      message:
+        "integrationOptions.stryker.testFiles must list at least one glob, and each must be a non-empty string. Record the paths that the project\'s test script passes to node --test, or remove testFiles to use the files node --test runs by default.",
+    })),
+    {
+      options: { testRunner: "node:test", reporter: "tap", only: true },
+      message: "Unknown integrationOptions.stryker fields: reporter, only.",
+    },
+    ...[
+      "/srv/**/*.test.js",
+      "C:/work/*.test.js",
+      "../shared/*.test.js",
+      "tests/../../x.test.js",
+    ].map((glob) => ({
       options: { testRunner: "node:test", testFiles: ["tests/*.test.js", glob] },
       message: `integrationOptions.stryker.testFiles must stay inside the project, but ${JSON.stringify(glob)} starts at the file system root or leaves the project through "..". Write each glob relative to the folder that holds package.json, such as "tests/**/*.test.ts".`,
     })),
   ];
+  assert.throws(() => build("node:test"), {
+    message: "integrationOptions.stryker must be an object.",
+  });
   for (const { options, message } of rejected) {
     assert.throws(() => build(options), { message });
     const recipe = {
@@ -380,7 +398,7 @@ test("vp create library: a testFiles glob that matches a folder warns, because t
       {
         severity: "warning",
         message:
-          'integrationOptions.stryker.testFiles matches the folder "checks", and Stryker\'s tap runner runs node on every match, so its run stops with an error. Change the globs so that they match only test files, such as "checks/**/*.test.*".',
+          'The globs in integrationOptions.stryker.testFiles match the folder "checks", and Stryker\'s tap runner runs node on every match, so its run stops with an error. Change the globs so that they match only test files, such as "checks/**/*.test.*".',
       },
     ]);
     assert.deepEqual(findingsOf(findings, "no-node-test-files"), []);
@@ -393,6 +411,43 @@ test("vp create library: a testFiles glob that matches a folder warns, because t
     const clean = await callMcpTool("dry_run_apply", { recipe: filesOnly });
     assert.deepEqual(
       clean.result.projectInspection.findings.filter(({ severity }) => severity === "warning"),
+      [],
+    );
+  });
+});
+
+test("an integration without testRunners selects no runner and installs only its own dependencies", () => {
+  const knip = integrationCatalog.find(({ id }) => id === "knip");
+  assert.equal(selectedTestRunner(knip, { knip: { testRunner: "node:test" } }), undefined);
+  assert.deepEqual(integrationDependencies(knip, {}), ["knip"]);
+});
+
+test("vp create library: a folder that matches the default node:test files warns, and the same folder does not warn for Vitest", async () => {
+  await using fixture = await copyReleaseFixture("library");
+
+  await inDirectory(fixture.root, async () => {
+    await mkdir("tests/odd.test.js", { recursive: true });
+    await writeFile("tests/index.test.ts", nodeTestIndex);
+
+    const nodeTest = await callMcpTool("dry_run_apply", {
+      recipe: await composeRecipe(["stryker"]),
+    });
+    assert.deepEqual(
+      findingsOf(nodeTest.result.projectInspection.findings, "node-test-files-folder"),
+      [
+        {
+          severity: "warning",
+          message:
+            'The files node --test runs by default match the folder "tests/odd.test.js", and Stryker\'s tap runner runs node on every match, so its run stops with an error. Rename the folder, or record globs that match only test files in integrationOptions.stryker.testFiles, such as "tests/odd.test.js/**/*.test.*".',
+        },
+      ],
+    );
+
+    const vitest = await callMcpTool("dry_run_apply", {
+      recipe: await composeRecipe(["stryker"], { testRunner: "vitest" }),
+    });
+    assert.deepEqual(
+      findingsOf(vitest.result.projectInspection.findings, "node-test-files-folder"),
       [],
     );
   });

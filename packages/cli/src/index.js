@@ -588,6 +588,28 @@ function noTestFilesFinding(id, runner) {
 }
 
 /**
+ * The warning for a test-file glob that matches a folder, which the tap runner would run with
+ * node, so its run would fail.
+ *
+ * @param {string} id
+ * @param {import("./stryker-options.js").SelectedTestRunner} runner
+ * @param {string} folder
+ * @returns {ProjectInspectionFinding}
+ */
+function testFilesFolderFinding(id, runner, folder) {
+  const outcome = `match the folder ${JSON.stringify(folder)}, and Stryker's tap runner runs node on every match, so its run stops with an error.`;
+  const example = JSON.stringify(`${folder}/**/*.test.*`);
+  return {
+    severity: "warning",
+    kind: "node-test-files-folder",
+    message:
+      runner.testFilesSource === "recipe"
+        ? `The globs in integrationOptions.${id}.testFiles ${outcome} Change the globs so that they match only test files, such as ${example}.`
+        : `The files node --test runs by default ${outcome} Rename the folder, or record globs that match only test files in integrationOptions.${id}.testFiles, such as ${example}.`,
+  };
+}
+
+/**
  * The findings for selected integrations that run the project's tests (catalog
  * `runsProjectTests`, ADR-0014 Decision 2) or apply only in a package (catalog
  * `appliesAt: "package"`, the owner's decision of 2026-11-09 on #734). An error means the dry run
@@ -651,17 +673,12 @@ async function packageTestFindings(
 
     if (runsProjectTests && runner) {
       findings.push({ severity: "info", kind: "test-runner", message: testRunnerNote(id, runner) });
-      // Only globs the recipe records are searched for folders: the default patterns name files.
-      const findFolder = runner.testFilesSource === "recipe";
+      // Only the tap runner runs node on every match; Vitest finds its own test files.
       const { hasFile, folder } = await matchTestFiles(directory, runner.testFiles, {
-        findFolder,
+        findFolder: runner.strykerTestRunner === "tap",
       });
       if (folder !== undefined) {
-        findings.push({
-          severity: "warning",
-          kind: "node-test-files-folder",
-          message: `integrationOptions.${id}.testFiles matches the folder ${JSON.stringify(folder)}, and Stryker's tap runner runs node on every match, so its run stops with an error. Change the globs so that they match only test files, such as ${JSON.stringify(`${folder}/**/*.test.*`)}.`,
-        });
+        findings.push(testFilesFolderFinding(id, runner, folder));
       }
       if (!hasFile) {
         findings.push(noTestFilesFinding(id, runner));
