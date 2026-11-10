@@ -352,13 +352,17 @@ You can choose the runner without editing the recipe by hand:
 
 - In the Composer, selecting Stryker shows a test runner control. Vitest is preselected and records
   nothing in the recipe; choosing `node:test` records `integrationOptions.stryker.testRunner`.
-- In an interactive `create-project-calavera apply` or `init`, Calavera asks which runner the project
-  uses when the recipe selects `stryker` and records no `testRunner`. Vitest is preselected, so pressing
-  Enter keeps the default. After you choose `node:test`, Calavera asks for the paths that the
-  project's test script passes to `node --test`; an empty answer keeps the files that `node --test`
-  runs by default and records no `testFiles`. Both commands record your answers in
-  `calavera.config.json`.
-  A run with `--yes` or `--json`, or without a terminal, never asks and keeps Vitest.
+- In an interactive `create-project-calavera apply`, Calavera asks which runner the project uses
+  once, when the choice is new: the recipe selects `stryker`, records no `testRunner`, and Calavera
+  does not yet manage a `stryker.config.json` in the project. A recipe that records a runner, `"vitest"`
+  included, is never asked, and neither is a project where Calavera already manages
+  `stryker.config.json`; then apply keeps the runner the recipe selects, Vitest when it records none.
+  The interactive `init` wizard asks whenever the recipe it composes selects `stryker`, because the
+  recipe it writes is where the answer is recorded. Vitest is preselected, so pressing Enter keeps the
+  default. After you choose `node:test`, Calavera asks for the paths that the project's test script
+  passes to `node --test`; an empty answer keeps the files that `node --test` runs by default and
+  records no `testFiles`. Both commands record your answers in `calavera.config.json`. A run with
+  `--yes` or `--json`, or without a terminal, never asks and keeps Vitest.
 - The Calavera skill tells an agent to confirm the runner with you before the dry run.
 
 ```json

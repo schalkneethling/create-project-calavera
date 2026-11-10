@@ -31,6 +31,11 @@ Feature: Choosing the Stryker test runner without editing calavera.config.json
     When the person runs "apply --dry-run" in a terminal
     Then Calavera does not ask for the test runner
 
+  Scenario: A project that already has stryker applied is not asked again
+    Given a project where Calavera manages stryker.config.json, and a recipe that selects "stryker" and records no test runner
+    When the person runs "apply --dry-run" in a terminal
+    Then Calavera does not ask for the test runner, and the dry run uses the runner the recipe selects, Vitest when it records none
+
   Scenario: A run that cannot prompt keeps Vitest
     Given a recipe that selects "stryker" and records no test runner
     When the person runs "apply --dry-run --yes", or with "--json", or without a terminal

@@ -61,6 +61,7 @@ import {
   integrationDependencies,
   resolveStrykerTestRunner,
   selectedTestRunner,
+  STRYKER_ID,
 } from "./stryker-options.js";
 
 import {
@@ -142,6 +143,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {boolean} assumeYes
  * @property {boolean} apply
  * @property {boolean} [writeConfig]
+ * @property {import("./stryker-options.js").AskForTestRunner} [askForTestRunner] Replaces the terminal prompts for the Stryker test runner, so tests can answer them (#890). It is used only where apply could prompt.
  * @property {ArtifactLockEntry[]} [approvedArtifacts] Artifacts a dry run reported it would lock; apply installs them at exactly those versions.
  * @property {PackageManager} [packageManager]
  * @property {"append" | "fallback"} [agentsMd]
@@ -2841,6 +2843,10 @@ export async function applyRecipe(options) {
  * @returns {Promise<ApplyResult>}
  */
 export async function applyRecipeObject(recipeInput, options = {}, artifactServices = {}) {
+  // Read before validation, which drops a recorded default runner from the recipe (#890).
+  const recordedStrykerOptions = recipeInput?.integrationOptions?.[STRYKER_ID];
+  const recordsTestRunner =
+    isPlainObject(recordedStrykerOptions) && Object.hasOwn(recordedStrykerOptions, "testRunner");
   validateRecipe(recipeInput);
 
   const applyOptions = {
@@ -2877,11 +2883,20 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   );
   assertNoPackageTestErrors(preflightTestInspection);
   const interactive = canPrompt(applyOptions);
-  // #890: an interactive run asks which test runner Stryker drives, after the stop above and
-  // before the findings that name the runner. Any other run keeps the recipe, and so Vitest.
+  const previousState = await readStateIfPresent();
+  // #890: an interactive run asks which test runner Stryker drives, once, when the choice is new,
+  // after the stop above and before the findings that name the runner. It does not ask when the
+  // recipe records a runner, or when Calavera already manages stryker.config.json here, because
+  // the person chose then; the recipe's runner, Vitest when it records none, stays in force. Any
+  // run that cannot prompt keeps the recipe, and so Vitest.
+  const choiceIsNew =
+    !recordsTestRunner && managedFileStateForPath(previousState, STRYKER_CONFIG_PATH) === undefined;
   const { recipe: recipeWithTestRunner, answered: testRunnerAnswered } =
     await resolveStrykerTestRunner(recipeInput, integrations, {
-      ask: interactive ? askForTestRunner : undefined,
+      ask:
+        interactive && choiceIsNew
+          ? (applyOptions.askForTestRunner ?? askForTestRunner)
+          : undefined,
     });
   const packageTestInspection = testRunnerAnswered
     ? await packageTestFindings(
@@ -2934,7 +2949,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       ].join("\n"),
     );
   }
-  const previousState = await readStateIfPresent();
   // Only a project Calavera already applied to can have a config or scripts
   // that are unchanged; on a first apply the whole plan is new.
   const previouslyApplied = await fileExists(STATE_FILE);

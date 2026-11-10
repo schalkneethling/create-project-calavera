@@ -5,8 +5,10 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { integrationCatalog } from "../src/catalog.js";
+import { applyRecipeObject } from "../src/index.js";
 import { buildRecipe, resolveRecipeIntegrations } from "../src/recipe.js";
 import { resolveStrykerTestRunner } from "../src/stryker-options.js";
+import { copyReleaseFixture } from "./vite-plus-fixtures.mjs";
 
 const stryker = integrationCatalog.find(({ id }) => id === "stryker");
 const defaultRunner = stryker?.testRunners?.[0];
@@ -153,4 +155,122 @@ test("a recipe that does not select stryker is never asked", async () => {
 
   assert.equal(runnerQuestions.length, 0);
   assert.deepEqual(result, { recipe, answered: false });
+});
+
+// The same choice through applyRecipeObject, which normalizes the recipe, reads the state file,
+// and decides whether the run can prompt. A test sets process.stdin.isTTY, so only the prompt
+// itself is replaced.
+
+const vitestRunnerDependencies = ["@stryker-mutator/core", "@stryker-mutator/vitest-runner"];
+const tapRunnerDependencies = ["@stryker-mutator/core", "@stryker-mutator/tap-runner"];
+
+/**
+ * Runs `callback` in `directory`, with `process.stdin.isTTY` set to `terminal`.
+ *
+ * @template T
+ * @param {string} directory
+ * @param {boolean} terminal
+ * @param {() => Promise<T>} callback
+ * @returns {Promise<T>}
+ */
+async function inProject(directory, terminal, callback) {
+  const originalDirectory = process.cwd();
+  const original = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  process.chdir(directory);
+  Object.defineProperty(process.stdin, "isTTY", { value: terminal, configurable: true });
+
+  try {
+    return await callback();
+  } finally {
+    process.chdir(originalDirectory);
+    if (original) Object.defineProperty(process.stdin, "isTTY", original);
+    else delete (/** @type {any} */ (process.stdin).isTTY);
+  }
+}
+
+/**
+ * Applies a recipe, counting the questions asked. The terminal answers "node:test".
+ *
+ * @param {string} directory
+ * @param {Record<string, unknown>} recipe
+ * @param {{ terminal?: boolean, options?: Record<string, unknown> }} [setup]
+ */
+async function applyAsking(directory, recipe, { terminal = true, options = {} } = {}) {
+  let asked = 0;
+  const result = await inProject(directory, terminal, () =>
+    applyRecipeObject(
+      structuredClone(recipe),
+      {
+        dryRun: true,
+        noInstall: true,
+        askForTestRunner: {
+          testRunner: async () => {
+            asked += 1;
+            return "node:test";
+          },
+          testFiles: async () => [],
+        },
+        ...options,
+      },
+      {},
+    ),
+  );
+  return { asked, result };
+}
+
+test("an interactive apply asks for the runner of a first-time stryker selection and uses the answer", async () => {
+  await using fixture = await copyReleaseFixture("library");
+  const recipe = buildRecipe("minimal", ["stryker"], "pnpm");
+
+  const { asked, result } = await applyAsking(fixture.root, recipe);
+
+  assert.equal(asked, 1);
+  assert.deepEqual(result.dependencies, tapRunnerDependencies);
+  assert.deepEqual(
+    result.changes.find(({ path }) => path === "calavera.config.json")?.type,
+    "write",
+    "apply records the answer in the recipe file",
+  );
+});
+
+test("a recipe that records testRunner vitest is not asked, because normalization drops that default", async () => {
+  await using fixture = await copyReleaseFixture("library");
+  const recipe = {
+    ...buildRecipe("minimal", ["stryker"], "pnpm"),
+    integrationOptions: { stryker: { testRunner: "vitest" } },
+  };
+
+  const { asked, result } = await applyAsking(fixture.root, recipe);
+
+  assert.equal(asked, 0);
+  assert.deepEqual(result.dependencies, vitestRunnerDependencies);
+});
+
+test("a project that already has stryker applied is not asked, and keeps the runner the recipe selects", async () => {
+  await using fixture = await copyReleaseFixture("library");
+  const recipe = buildRecipe("minimal", ["stryker"], "pnpm");
+  await inProject(fixture.root, false, () =>
+    applyRecipeObject(structuredClone(recipe), { noInstall: true, assumeYes: true }, {}),
+  );
+
+  const { asked, result } = await applyAsking(fixture.root, recipe);
+
+  assert.equal(asked, 0);
+  assert.deepEqual(result.dependencies, vitestRunnerDependencies);
+});
+
+test("a run that cannot prompt never asks, with or without a terminal", async () => {
+  await using fixture = await copyReleaseFixture("library");
+  const recipe = buildRecipe("minimal", ["stryker"], "pnpm");
+
+  for (const setup of [
+    { terminal: false },
+    { terminal: true, options: { assumeYes: true } },
+    { terminal: true, options: { json: true } },
+  ]) {
+    const { asked, result } = await applyAsking(fixture.root, recipe, setup);
+
+    assert.equal(asked, 0, JSON.stringify(setup));
+    assert.deepEqual(result.dependencies, vitestRunnerDependencies, JSON.stringify(setup));
+  }
 });
