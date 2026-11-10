@@ -519,7 +519,9 @@ async function matchTestFiles(directory, patterns, { findFolder }) {
     withFileTypes: true,
   })) {
     if (entry.isDirectory()) {
-      folder ??= relative(directory, resolve(directory, entry.parentPath, entry.name));
+      if (findFolder) {
+        folder ??= relative(directory, resolve(directory, entry.parentPath, entry.name));
+      }
     } else {
       hasFile = true;
     }

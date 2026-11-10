@@ -443,6 +443,8 @@ test("vp create library: a folder that matches the default node:test files warns
       ],
     );
 
+    // With the folder as the only match, Vitest's search reaches it whatever the walk order.
+    await rm("tests/index.test.ts");
     const vitest = await callMcpTool("dry_run_apply", {
       recipe: await composeRecipe(["stryker"], { testRunner: "vitest" }),
     });
