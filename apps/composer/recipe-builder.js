@@ -43,8 +43,15 @@ function baselineAvailability(available) {
  * @param {{ available: unknown, severity: unknown } | undefined} baseline
  * @param {{ repository: unknown, requiredChecks: string[], requireCodeqlResults?: boolean } | undefined} repositoryControls
  * @param {{ quality: boolean } | undefined} htmlValidate
+ * @param {{ testRunner?: string } | undefined} stryker
  */
-function composerIntegrationOptions(integrations, baseline, repositoryControls, htmlValidate) {
+function composerIntegrationOptions(
+  integrations,
+  baseline,
+  repositoryControls,
+  htmlValidate,
+  stryker,
+) {
   const hasBaseline = integrations.includes("stylelint-baseline");
   const hasRepositoryControls = integrations.includes("github-repository-controls");
   // Only the non-default choice is recorded, so a recipe that keeps lint:html
@@ -52,7 +59,12 @@ function composerIntegrationOptions(integrations, baseline, repositoryControls, 
   const leavesHtmlOutOfQuality =
     integrations.includes("html-validate") && htmlValidate?.quality === false;
 
-  if (!hasBaseline && !hasRepositoryControls && !leavesHtmlOutOfQuality) return undefined;
+  // The recipe drops the catalog's default runner, so only another choice is recorded.
+  const namesRunner = integrations.includes("stryker") && stryker?.testRunner !== undefined;
+
+  if (!hasBaseline && !hasRepositoryControls && !leavesHtmlOutOfQuality && !namesRunner) {
+    return undefined;
+  }
 
   return {
     ...(hasBaseline
@@ -64,6 +76,7 @@ function composerIntegrationOptions(integrations, baseline, repositoryControls, 
         }
       : {}),
     ...(leavesHtmlOutOfQuality ? { "html-validate": { quality: false } } : {}),
+    ...(namesRunner ? { stryker: { testRunner: stryker?.testRunner } } : {}),
     ...(hasRepositoryControls
       ? {
           "github-repository-controls": {
@@ -107,6 +120,7 @@ function composerAiItems(aiArtifacts) {
  *   baseline?: { available: unknown, severity: unknown },
  *   repositoryControls?: { repository: unknown, requiredChecks: string[], requireCodeqlResults?: boolean },
  *   htmlValidate?: { quality: boolean },
+ *   stryker?: { testRunner?: string },
  * }} selection
  */
 export function composerRecipe({
@@ -117,13 +131,14 @@ export function composerRecipe({
   baseline,
   repositoryControls,
   htmlValidate,
+  stryker,
 }) {
   return buildRecipe(
     profile,
     integrations,
     packageManager || undefined,
     composerAiItems(aiArtifacts),
-    composerIntegrationOptions(integrations, baseline, repositoryControls, htmlValidate),
+    composerIntegrationOptions(integrations, baseline, repositoryControls, htmlValidate, stryker),
   );
 }
 

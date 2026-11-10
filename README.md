@@ -348,6 +348,19 @@ A project that Vite+ manages and that tests with `node:test` instead of Vitest s
 runner in the recipe. The option exists only for such projects: Calavera still stops on a project
 that has not adopted Vite+, whichever runner the recipe names.
 
+You can choose the runner without editing the recipe by hand:
+
+- In the Composer, selecting Stryker shows a test runner control. Vitest is preselected and records
+  nothing in the recipe; choosing `node:test` records `integrationOptions.stryker.testRunner`.
+- In an interactive `create-project-calavera apply` or `init`, Calavera asks which runner the project
+  uses when the recipe selects `stryker` and records no `testRunner`. Vitest is preselected, so pressing
+  Enter keeps the default. After you choose `node:test`, Calavera asks for the paths that the
+  project's test script passes to `node --test`; an empty answer keeps the files that `node --test`
+  runs by default and records no `testFiles`. Both commands record your answers in
+  `calavera.config.json`.
+  A run with `--yes` or `--json`, or without a terminal, never asks and keeps Vitest.
+- The Calavera skill tells an agent to confirm the runner with you before the dry run.
+
 ```json
 {
   "integrations": ["stryker"],

@@ -163,6 +163,10 @@ In a copy of the `vp create` library fixture with a `tests/index.test.ts` that i
 
 **The coverage limit.** The tap runner runs each test file in a process of its own and measures coverage only inside that process. Code that a test reaches only through a child process does not count as covered by that test file. In the same fixture, with a test that ran `src/cli.ts` through `execFileSync` and checked its output, Stryker reported all three mutants as "no coverage", a score of 0, and `--coverageAnalysis off` did not change that result. Stryker runs only the test files that cover a mutant, so a mutant in code that only such tests reach is not tested at all, and a mutant that another test file covers can survive although the test file that reaches it through a child process might have killed it. #725 recorded the same limit for this repository's own Stryker setup. The README documents it, and the dry run repeats it whenever the recipe selects `node:test`.
 
+### Offering the runner choice
+
+The project owner decided on 2026-11-10 (https://github.com/schalkneethling/create-project-calavera/issues/890#issuecomment-6778868894) that the runner choice ships with the Stryker integration, and that three surfaces offer it, so a person does not edit `calavera.config.json` by hand. The Composer shows a control when `stryker` is selected. An interactive `apply` asks only when the recipe selects `stryker` and records no runner, with Vitest preselected, so pressing Enter keeps today's behavior; choosing `node:test` also asks for the test file paths, with the files `node --test` runs by default preselected, and an empty answer records no `testFiles`. Non-interactive runs never ask and keep Vitest. The interactive `init` wizard asks the same questions, because it hands its recipe to apply without a prompt. The Calavera skill tells the agent to confirm the runner with the user. Each surface reads its choices from the catalog's `testRunners`, so a runner added there reaches all three. Detecting the runner stays out of scope, as above.
+
 ## Open questions
 
 The first three questions are kept as they were asked on 2026-10-22, and Resolutions answers all three.
