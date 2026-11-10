@@ -227,6 +227,34 @@ test("WebMCP compose_recipe with quality true records no html-validate option an
   }
 });
 
+test("only a Stryker runner other than the default is recorded, and only when stryker is selected", () => {
+  const selection = { profile: "minimal", integrations: ["stryker"] };
+
+  assert.equal(composerRecipe(selection).integrationOptions, undefined);
+  assert.equal(
+    composerRecipe({ ...selection, stryker: { testRunner: "vitest" } }).integrationOptions,
+    undefined,
+  );
+  assert.deepEqual(
+    composerRecipe({ ...selection, stryker: { testRunner: "node:test" } }).integrationOptions,
+    { stryker: { testRunner: "node:test" } },
+  );
+  assert.equal(
+    composerRecipe({ profile: "minimal", integrations: [], stryker: { testRunner: "node:test" } })
+      .integrationOptions,
+    undefined,
+  );
+  assert.deepEqual(
+    composerRecipe({
+      ...selection,
+      integrations: ["stryker", "html-validate"],
+      htmlValidate: { quality: false },
+      stryker: { testRunner: "node:test" },
+    }).integrationOptions,
+    { "html-validate": { quality: false }, stryker: { testRunner: "node:test" } },
+  );
+});
+
 test("next commands follow the package manager and default to npm", () => {
   assert.deepEqual(composerNextCommands("pnpm"), projectLocalCommandSteps("pnpm"));
   assert.deepEqual(composerNextCommands(undefined), projectLocalCommandSteps("npm"));

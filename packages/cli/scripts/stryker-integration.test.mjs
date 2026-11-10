@@ -306,16 +306,26 @@ test("vp create monorepo member packages/utils: apply_recipe installs Stryker wi
   });
 });
 
-test("every catalog appliesAt value is one apply acts on, and runsVitestTests is a boolean", () => {
-  for (const { id, appliesAt, runsVitestTests } of integrationCatalog) {
+test("every catalog appliesAt value is one apply acts on, runsProjectTests is a boolean, and each test runner names its Stryker plugin", () => {
+  for (const { id, appliesAt, runsProjectTests, testRunners } of integrationCatalog) {
     assert.ok(
       appliesAt === undefined || ["repository-root", "package"].includes(appliesAt),
       `${id} declares appliesAt ${appliesAt}, which apply ignores`,
     );
     assert.ok(
-      runsVitestTests === undefined || typeof runsVitestTests === "boolean",
-      `${id} declares runsVitestTests ${runsVitestTests}`,
+      runsProjectTests === undefined || typeof runsProjectTests === "boolean",
+      `${id} declares runsProjectTests ${runsProjectTests}`,
     );
+    for (const runner of testRunners ?? []) {
+      assert.ok(runner.testFiles.length > 0, `${id} ${runner.id} lists no test files`);
+      // Knip's Stryker plugin maps testRunner to @stryker-mutator/<testRunner>-runner, so the
+      // installed plugin is not reported as unused.
+      assert.deepEqual(
+        runner.dependencies,
+        [`@stryker-mutator/${runner.strykerTestRunner}-runner`],
+        `${id} ${runner.id}`,
+      );
+    }
   }
 });
 

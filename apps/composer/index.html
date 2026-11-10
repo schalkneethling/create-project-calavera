@@ -196,6 +196,21 @@
           </section>
           <section
             class="options-panel"
+            id="stryker-options"
+            aria-labelledby="stryker-heading"
+            hidden
+          >
+            <div class="options-panel-text">
+              <h3 id="stryker-heading">Stryker mutation testing</h3>
+              <p class="hint" id="stryker-hint"></p>
+            </div>
+            <fieldset class="options-choices" aria-describedby="stryker-hint">
+              <legend class="group-heading">Test runner</legend>
+              <div class="segmented" id="stryker-test-runners"></div>
+            </fieldset>
+          </section>
+          <section
+            class="options-panel"
             id="repository-controls-options"
             aria-labelledby="repository-controls-heading"
             hidden

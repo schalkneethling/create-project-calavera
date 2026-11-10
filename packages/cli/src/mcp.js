@@ -96,7 +96,11 @@ const integrationOutputSchema = z.looseObject({
     .describe(
       "Whether the integration is recommended, optional, experimental, or framework-specific.",
     ),
-  dependencies: z.array(z.string()).describe("Development packages installed for the integration."),
+  dependencies: z
+    .array(z.string())
+    .describe(
+      "Development packages installed for the integration. An integration with testRunners also installs the dependencies of the runner the recipe selects.",
+    ),
   profiles: z.array(z.string()).describe("Profiles the integration is available in."),
   description: z.string().describe("Generated description prefixed with the integration summary."),
   minimumCliVersion: z.string().optional(),
@@ -105,6 +109,26 @@ const integrationOutputSchema = z.looseObject({
     .optional()
     .describe("The first CLI version that accepts this integration's integrationOptions entry."),
   appliesAt: z.string().optional(),
+  notes: z
+    .array(z.string())
+    .describe(
+      "Plain-language conditions to tell the user before selecting the integration, such as that it needs a project that Vite+ manages or applies in a workspace member, not at a workspace root.",
+    ),
+  testRunners: z
+    .array(
+      z.looseObject({
+        id: z.string().describe("The value of integrationOptions[id].testRunner."),
+        label: z.string(),
+        dependencies: z
+          .array(z.string())
+          .describe("Development packages installed with dependencies when this runner is chosen."),
+        testFiles: z.array(z.string()).describe("The test files the runner reads by default."),
+      }),
+    )
+    .optional()
+    .describe(
+      "The test runners the integration can drive, chosen with integrationOptions[id].testRunner. The first is the default.",
+    ),
   includes: z.array(z.string()).optional(),
 });
 

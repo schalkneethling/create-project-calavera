@@ -1,4 +1,4 @@
-// Issue #734: the stops for catalog `runsVitestTests` and `appliesAt: "package"` are generic, so
+// Issue #734: the stops for catalog `runsProjectTests` and `appliesAt: "package"` are generic, so
 // they hold for an integration other than stryker. This file adds a test integration that applies
 // only in a package and runs no tests; node --test runs each file in its own process, so the
 // catalog of the other test files does not see it.

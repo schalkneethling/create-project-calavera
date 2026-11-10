@@ -57,6 +57,12 @@ import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { loadProjectFormatter } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
+import {
+  integrationDependencies,
+  resolveStrykerTestRunner,
+  selectedTestRunner,
+  STRYKER_ID,
+} from "./stryker-options.js";
 
 import {
   aiArtifactOutputPaths,
@@ -137,6 +143,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {boolean} assumeYes
  * @property {boolean} apply
  * @property {boolean} [writeConfig]
+ * @property {import("./stryker-options.js").AskForTestRunner} [askForTestRunner] Replaces the terminal prompts for the Stryker test runner, so tests can answer them (#890). It is used only where apply could prompt.
  * @property {ArtifactLockEntry[]} [approvedArtifacts] Artifacts a dry run reported it would lock; apply installs them at exactly those versions.
  * @property {PackageManager} [packageManager]
  * @property {"append" | "fallback"} [agentsMd]
@@ -177,8 +184,11 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {{ extends?: string[], rules?: Record<string, unknown> }} [htmlValidate]
  * @property {{ extends?: string[], plugins?: string[], rules?: Record<string, unknown> }} [stylelint]
  * @property {{ gitignore?: string[], htmlValidateIgnore?: string[] }} [ignore] The lines the integration needs in .gitignore and .htmlvalidateignore (ADR-0016).
+ * @property {import("./github-repository-controls.js").DependabotGroups} [dependabotGroups] The Dependabot groups the integration needs in the managed .github/dependabot.yml when the recipe also selects github-repository-controls (#880).
  * @property {string} [appliesAt] "repository-root" for an integration that applies only at the repository root, "package" for one that applies in a single-package project or a workspace member but not at a workspace root.
- * @property {boolean} [runsVitestTests] The integration runs the project's tests with the Vitest that vite-plus installs, so it needs a project that apply delegates to Vite+ (ADR-0014).
+ * @property {string} [standaloneScript] The package.json script the integration adds that `quality` does not run, named in the Composer and the MCP descriptions (ADR-0014 Decision 3).
+ * @property {boolean} [runsProjectTests] The integration runs the project's own tests, so it needs a project that apply delegates to Vite+ (ADR-0009, ADR-0014).
+ * @property {import("./stryker-options.js").TestRunner[]} [testRunners] The test runners the integration can drive, chosen with `integrationOptions[id].testRunner`; the first is the default (#736).
  *
  * @typedef {object} Recipe
  * @property {string} [$schema]
@@ -301,6 +311,11 @@ const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", impo
 const STRYKER_CONFIG_PATH = "stryker.config.json";
 // A file that does not exist, so Stryker skips its tsconfig preprocessing (createStrykerConfig).
 const STRYKER_SKIPPED_TSCONFIG = "stryker-skips-tsconfig-preprocessing.json";
+// The arguments the tap runner passes to node for each test file: the tap reporter, which the
+// runner parses, then Stryker's coverage hook and the test file (#736). These are the runner's
+// defaults in 10.1.1 (dist/schema/tap-runner-options.json); the config states them so that the
+// dry run shows them and a change of default cannot change what runs.
+const STRYKER_TAP_NODE_ARGS = ["--test-reporter=tap", "-r", "{{hookFile}}", "{{testFile}}"];
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
 
@@ -490,38 +505,135 @@ async function vitePlusQualitySteps(detection, directory, packageJSON, packageMa
   };
 }
 
-/** Vitest's default `include` and `exclude`, as vitest 5.1.0 defines them (`dist/config.cjs`). */
-const VITEST_DEFAULT_INCLUDE = "**/*.{test,spec}.?(c|m)[jt]s?(x)";
-const VITEST_DEFAULT_EXCLUDE = ["**/node_modules/**", "**/.git/**"];
-
 /**
- * Whether a file in `directory` matches Vitest's default test pattern.
+ * Whether a file in `directory` matches one of `patterns`, and, with `findFolder`, the first
+ * folder that matches. Stryker's tap runner runs node on every match, folders included, so a
+ * folder match makes its run fail. Like Vitest and node --test, the search skips `node_modules`;
+ * like Vitest, it also skips `.git`.
  *
  * @param {string} directory
+ * @param {string[]} patterns
+ * @param {{ findFolder: boolean }} options
+ * @returns {Promise<{ hasFile: boolean, folder?: string }>}
  */
-async function hasVitestDefaultTestFile(directory) {
-  for await (const _ of glob(VITEST_DEFAULT_INCLUDE, {
+async function matchTestFiles(directory, patterns, { findFolder }) {
+  let hasFile = false;
+  /** @type {string | undefined} */
+  let folder;
+  for await (const entry of glob(patterns, {
     cwd: directory,
-    exclude: VITEST_DEFAULT_EXCLUDE,
+    exclude: ["**/node_modules/**", "**/.git/**"],
+    withFileTypes: true,
   })) {
-    return true;
+    if (entry.isDirectory()) {
+      if (findFolder) {
+        folder ??= relative(directory, resolve(directory, entry.parentPath, entry.name));
+      }
+    } else {
+      hasFile = true;
+    }
+    if (hasFile && (!findFolder || folder !== undefined)) {
+      break;
+    }
   }
-  return false;
+  return { hasFile, folder };
+}
+
+/** @param {string[]} values */
+const quotedList = (values) => values.map((value) => JSON.stringify(value)).join(", ");
+
+/**
+ * Why an integration that runs the project's tests needs a project that Vite+ manages. The Vitest
+ * runner reads the Vitest that vite-plus installs; any runner falls under ADR-0009, which gives no
+ * JavaScript or TypeScript tooling to a project that has not adopted Vite+.
+ *
+ * @param {import("./stryker-options.js").SelectedTestRunner | undefined} runner
+ */
+function vitePlusReason(runner) {
+  return runner === undefined || runner.id === "vitest"
+    ? "it runs the project's tests with the Vitest that vite-plus installs"
+    : "Calavera provides no JavaScript or TypeScript tooling to a project that has not adopted Vite+";
 }
 
 /**
- * The findings for selected integrations that run the project's Vitest tests (catalog
- * `runsVitestTests`, ADR-0014 Decision 2) or apply only in a package (catalog
+ * What the dry run says about the runner an integration drives and the config it writes for it,
+ * so the approval covers the runner and every setting of the config (#736).
+ *
+ * @param {string} id
+ * @param {import("./stryker-options.js").SelectedTestRunner} runner
+ */
+function testRunnerNote(id, runner) {
+  const plugin = runner.dependencies.join(", ");
+  const config = `${STRYKER_CONFIG_PATH} will hold ${JSON.stringify(createStrykerConfig(runner))}`;
+  if (runner.id === "vitest") {
+    return `${id} runs the project's Vitest tests through ${plugin}, so ${config}. For a project that tests with node:test, set integrationOptions.${id}.testRunner to "node:test".`;
+  }
+  return `${id} runs the project's ${runner.label} tests through ${plugin}, so ${config}. The tap runner measures coverage inside each test file's own process, so code that a test reaches only through a child process does not count as covered by that test: Stryker reports a mutant there as not covered, or as survived when another test file covers it, although that test might kill it. Check those mutants by hand.`;
+}
+
+/**
+ * The warning for a project where no file matches the test files the runner reads.
+ *
+ * @param {string} id
+ * @param {import("./stryker-options.js").SelectedTestRunner} runner
+ * @returns {ProjectInspectionFinding}
+ */
+function noTestFilesFinding(id, runner) {
+  if (runner.id === "vitest") {
+    return {
+      severity: "warning",
+      kind: "no-vitest-test-files",
+      message: `No file in this project matches Vitest's default test pattern, "${runner.testFiles.join('", "')}", so ${id} has no tests to run, and its run stops with an error until the project has Vitest tests. A project whose Vite config sets test.include to other files can ignore this warning.`,
+    };
+  }
+  const outcome = `so ${id} has no tests to run, and its run stops with an error until the project has ${runner.label} tests that match them.`;
+  return {
+    severity: "warning",
+    kind: "no-node-test-files",
+    message:
+      runner.testFilesSource === "recipe"
+        ? `No file in this project matches integrationOptions.${id}.testFiles, ${quotedList(runner.testFiles)}, ${outcome} Record the paths that the project's test script passes to node --test in integrationOptions.${id}.testFiles.`
+        : `No file in this project matches the files node --test runs by default, ${quotedList(runner.testFiles)}, ${outcome} If the project's test script passes other paths to node --test, record those paths in integrationOptions.${id}.testFiles.`,
+  };
+}
+
+/**
+ * The warning for a test-file glob that matches a folder, which the tap runner would run with
+ * node, so its run would fail.
+ *
+ * @param {string} id
+ * @param {import("./stryker-options.js").SelectedTestRunner} runner
+ * @param {string} folder
+ * @returns {ProjectInspectionFinding}
+ */
+function testFilesFolderFinding(id, runner, folder) {
+  const outcome = `match the folder ${JSON.stringify(folder)}, and Stryker's tap runner runs node on every match, so its run stops with an error.`;
+  const example = JSON.stringify(`${folder}/**/*.test.*`);
+  return {
+    severity: "warning",
+    kind: "node-test-files-folder",
+    message:
+      runner.testFilesSource === "recipe"
+        ? `The globs in integrationOptions.${id}.testFiles ${outcome} Change the globs so that they match only test files, such as ${example}.`
+        : `The files node --test runs by default ${outcome} Rename the folder, or record globs that match only test files in integrationOptions.${id}.testFiles, such as ${example}.`,
+  };
+}
+
+/**
+ * The findings for selected integrations that run the project's tests (catalog
+ * `runsProjectTests`, ADR-0014 Decision 2) or apply only in a package (catalog
  * `appliesAt: "package"`, the owner's decision of 2026-11-09 on #734). An error means the dry run
- * and apply stop before anything is written: where apply does not delegate to Vite+, which
- * installs the Vitest the integration runs, and at a workspace root, which has no tests of its
- * own. A warning, which does not stop, says that no file matches Vitest's default test pattern;
- * a `test.include` in the Vite config can name other files, so that alone is no reason to stop.
- * Whether `directory` is a workspace root is read from the files on disk for every package
- * manager, so the stop does not depend on which package manager apply resolves. `packageManager`
- * only names the command in the message.
+ * and apply stop before anything is written: where apply does not delegate to Vite+ (ADR-0009),
+ * and at a workspace root, which has no tests of its own. A warning, which does not stop, says
+ * that no file matches the test files of the runner the recipe selects; for Vitest, a
+ * `test.include` in the Vite config can name other files, so that alone is no reason to stop. An
+ * info finding names the runner and the config apply writes for it (#736). Whether `directory`
+ * is a workspace root is read from the files on disk for every package manager, so the stop does
+ * not depend on which package manager apply resolves. `packageManager` only names the command in
+ * the message.
  *
  * @param {Integration[]} integrations
+ * @param {Record<string, unknown> | undefined} integrationOptions
  * @param {VitePlusDetection} detection
  * @param {string} directory
  * @param {PackageJSON | undefined} packageJSON
@@ -530,6 +642,7 @@ async function hasVitestDefaultTestFile(directory) {
  */
 async function packageTestFindings(
   integrations,
+  integrationOptions,
   detection,
   directory,
   packageJSON,
@@ -539,15 +652,15 @@ async function packageTestFindings(
   const findings = [];
   /** @type {boolean | undefined} */
   let workspaceRoot;
-  /** @type {boolean | undefined} */
-  let hasTestFile;
 
-  for (const { id, runsVitestTests, appliesAt } of integrations) {
-    if (runsVitestTests && !delegatesToVitePlus(detection)) {
+  for (const integration of integrations) {
+    const { id, runsProjectTests, appliesAt } = integration;
+    const runner = selectedTestRunner(integration, integrationOptions);
+    if (runsProjectTests && !delegatesToVitePlus(detection)) {
       findings.push({
         severity: "error",
         kind: "vite-plus-required",
-        message: `${id} needs a project that Vite+ manages, because it runs the project's tests with the Vitest that vite-plus installs, and Vite+ does not manage this project. The dry run and apply stop before writing anything. Run vp create or vp migrate to adopt Vite+, then apply again, or remove ${id} from this recipe.`,
+        message: `${id} needs a project that Vite+ manages, because ${vitePlusReason(runner)}, and Vite+ does not manage this project. The dry run and apply stop before writing anything. Run vp create or vp migrate to adopt Vite+, then apply again, or remove ${id} from this recipe.`,
       });
       continue;
     }
@@ -556,23 +669,30 @@ async function packageTestFindings(
       appliesAt === "package" &&
       (workspaceRoot ??= await isWorkspaceRoot(directory, packageJSON))
     ) {
-      const reason = runsVitestTests
+      const reason = runsProjectTests
         ? ", because it runs the tests of the project it is applied to and a workspace root has none of its own"
         : "";
+      const members = runsProjectTests && runner ? ` that has ${runner.label} tests` : "";
       findings.push({
         severity: "error",
         kind: "workspace-root",
-        message: `${id} applies in each workspace member, not at the workspace root${reason}. The dry run and apply stop before writing anything. Apply a recipe that selects ${id} from each workspace member${runsVitestTests ? " that has Vitest tests" : ""} (cd <member> && ${projectLocalCommandCatalog[packageManager].applyDryRun}), and remove ${id} from this recipe.`,
+        message: `${id} applies in each workspace member, not at the workspace root${reason}. The dry run and apply stop before writing anything. Apply a recipe that selects ${id} from each workspace member${members} (cd <member> && ${projectLocalCommandCatalog[packageManager].applyDryRun}), and remove ${id} from this recipe.`,
       });
       continue;
     }
 
-    if (runsVitestTests && !(hasTestFile ??= await hasVitestDefaultTestFile(directory))) {
-      findings.push({
-        severity: "warning",
-        kind: "no-vitest-test-files",
-        message: `No file in this project matches Vitest's default test pattern, "${VITEST_DEFAULT_INCLUDE}", so ${id} has no tests to run, and its run stops with an error until the project has Vitest tests. A project whose Vite config sets test.include to other files can ignore this warning.`,
+    if (runsProjectTests && runner) {
+      findings.push({ severity: "info", kind: "test-runner", message: testRunnerNote(id, runner) });
+      // Only the tap runner runs node on every match; Vitest finds its own test files.
+      const { hasFile, folder } = await matchTestFiles(directory, runner.testFiles, {
+        findFolder: runner.strykerTestRunner === "tap",
       });
+      if (folder !== undefined) {
+        findings.push(testFilesFolderFinding(id, runner, folder));
+      }
+      if (!hasFile) {
+        findings.push(noTestFilesFinding(id, runner));
+      }
     }
   }
 
@@ -1902,16 +2022,22 @@ function createKnipConfig() {
 
 /**
  * The managed `stryker.config.json` (#734), verified with Stryker 10.1.1 in a `vp create` library
- * under pnpm, npm, Yarn 4, and Bun. The config names the Vitest runner, because Stryker's default
- * command runner reports a timeout for every mutant of a slow suite and counts those as detected
+ * under pnpm, npm, Yarn 4, and Bun with the Vitest runner, and with the tap runner on node:test
+ * tests (#736). The config names the runner the recipe selects, because Stryker's default command
+ * runner reports a timeout for every mutant of a slow suite and counts those as detected
  * (ADR-0014), and lists it in `plugins`, because pnpm's strict `node_modules` layout hides it from
- * Stryker's default plugin lookup.
+ * Stryker's default plugin lookup. The tap runner also gets the test files and node arguments.
+ *
+ * @param {import("./stryker-options.js").SelectedTestRunner} runner
  */
-function createStrykerConfig() {
+function createStrykerConfig(runner) {
   return {
     $schema: "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-    testRunner: "vitest",
-    plugins: ["@stryker-mutator/vitest-runner"],
+    testRunner: runner.strykerTestRunner,
+    plugins: runner.dependencies,
+    ...(runner.strykerTestRunner === "tap"
+      ? { tap: { testFiles: runner.testFiles, nodeArgs: STRYKER_TAP_NODE_ARGS } }
+      : {}),
     // WORKAROUND(@stryker-mutator/core): tsconfig preprocessing calls the TypeScript JS API, which TypeScript 7 removed, and vp create projects use TypeScript 7; a missing file skips it | upstream: https://github.com/stryker-mutator/stryker-js/issues/6111
     tsconfigFile: STRYKER_SKIPPED_TSCONFIG,
     reporters: ["clear-text", "html"],
@@ -2217,16 +2343,23 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
     });
   }
 
-  if (integrations.some((integration) => integration.id === "stryker")) {
+  const stryker = integrations.find((integration) => integration.id === "stryker");
+  if (stryker) {
+    const runner = /** @type {import("./stryker-options.js").SelectedTestRunner} */ (
+      selectedTestRunner(stryker, integrationOptions)
+    );
     plans.push({
       path: STRYKER_CONFIG_PATH,
-      contents: `${JSON.stringify(createStrykerConfig(), null, 2)}\n`,
+      contents: `${JSON.stringify(createStrykerConfig(runner), null, 2)}\n`,
     });
   }
 
   if (integrations.some((integration) => integration.id === GITHUB_REPOSITORY_CONTROLS_ID)) {
     plans.push(
-      ...githubRepositoryControlManagedFiles(integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID]),
+      ...githubRepositoryControlManagedFiles(
+        integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID],
+        integrations,
+      ),
     );
   }
 
@@ -2543,6 +2676,7 @@ export async function inspectProject(recipe, options = {}) {
     findings.push(
       ...(await packageTestFindings(
         integrations,
+        recipe.integrationOptions,
         vitePlus,
         process.cwd(),
         packageJSON,
@@ -2709,6 +2843,10 @@ export async function applyRecipe(options) {
  * @returns {Promise<ApplyResult>}
  */
 export async function applyRecipeObject(recipeInput, options = {}, artifactServices = {}) {
+  // Read before validation, which drops a recorded default runner from the recipe (#890).
+  const recordedStrykerOptions = recipeInput?.integrationOptions?.[STRYKER_ID];
+  const recordsTestRunner =
+    isPlainObject(recordedStrykerOptions) && Object.hasOwn(recordedStrykerOptions, "testRunner");
   validateRecipe(recipeInput);
 
   const applyOptions = {
@@ -2735,20 +2873,46 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   // that follows it name the same command and write the same script, and a project whose
   // vite-plus cannot be located stops here.
   const vitePlusDetection = await detectVitePlus(process.cwd());
-  const packageTestInspection = await packageTestFindings(
+  const preflightTestInspection = await packageTestFindings(
     integrations,
+    recipeInput.integrationOptions,
     vitePlusDetection,
     process.cwd(),
     detectedPackageJSON,
     packageManager,
   );
-  assertNoPackageTestErrors(packageTestInspection);
+  assertNoPackageTestErrors(preflightTestInspection);
+  const interactive = canPrompt(applyOptions);
+  const previousState = await readStateIfPresent();
+  // #890: an interactive run asks which test runner Stryker drives, once, when the choice is new,
+  // after the stop above and before the findings that name the runner. It does not ask when the
+  // recipe records a runner, or when Calavera already manages stryker.config.json here, because
+  // the person chose then; the recipe's runner, Vitest when it records none, stays in force. Any
+  // run that cannot prompt keeps the recipe, and so Vitest.
+  const choiceIsNew =
+    !recordsTestRunner && managedFileStateForPath(previousState, STRYKER_CONFIG_PATH) === undefined;
+  const { recipe: recipeWithTestRunner, answered: testRunnerAnswered } =
+    await resolveStrykerTestRunner(recipeInput, integrations, {
+      ask:
+        interactive && choiceIsNew
+          ? (applyOptions.askForTestRunner ?? askForTestRunner)
+          : undefined,
+    });
+  const packageTestInspection = testRunnerAnswered
+    ? await packageTestFindings(
+        integrations,
+        recipeWithTestRunner.integrationOptions,
+        vitePlusDetection,
+        process.cwd(),
+        detectedPackageJSON,
+        packageManager,
+      )
+    : preflightTestInspection;
   // ADR-0015, Decision 6: every input a selected artifact declares, and every integration option
   // Calavera suggests a value for (#844), has a value before anything is planned. An interactive
   // run asks; any other run uses the default and reports it.
-  const interactive = canPrompt(applyOptions);
   const { recipe: recipeWithArtifactInputs, inputs: artifactInputs } = await resolveArtifactInputs(
-    recipeInput,
+    recipeWithTestRunner,
     { ask: interactive ? promptForArtifactInput : undefined },
   );
   const { recipe, inputs: integrationInputs } = await resolveIntegrationInputs(
@@ -2785,13 +2949,14 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       ].join("\n"),
     );
   }
-  const previousState = await readStateIfPresent();
   // Only a project Calavera already applied to can have a config or scripts
   // that are unchanged; on a first apply the whole plan is new.
   const previouslyApplied = await fileExists(STATE_FILE);
   const reownManagedFiles = normalizeManagedFilePathSet(applyOptions.reownManagedFiles ?? []);
   const dependencyList = unique(
-    integrations.flatMap((integration) => integration.dependencies ?? []),
+    integrations.flatMap((integration) =>
+      integrationDependencies(integration, recipe.integrationOptions),
+    ),
   );
   const vitePlusQuality = await vitePlusQualitySteps(
     vitePlusDetection,
@@ -2850,9 +3015,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   ];
   // A value the person typed is recorded in the recipe, so a later apply does not ask again.
   // Only an explicit writeConfig: false skips that.
-  const answered = [...artifactInputs, ...integrationInputs].some(
-    ({ source }) => source === "prompt",
-  );
+  const answered =
+    testRunnerAnswered ||
+    [...artifactInputs, ...integrationInputs].some(({ source }) => source === "prompt");
   const configPath = resolve(applyOptions.config ?? "calavera.config.json");
   const configText =
     applyOptions.writeConfig || (answered && applyOptions.writeConfig !== false)
@@ -4400,6 +4565,46 @@ function promptForArtifactInput({ artifact, name, ...request }) {
   return promptForInputValue(request, `${artifact}, ${name}`);
 }
 
+/** @type {import("./stryker-options.js").AskForTestRunner} */
+const askForTestRunner = {
+  async testRunner({ runners, defaultId }) {
+    const choice = await select({
+      message: "Which test runner does the project use? Stryker runs the project's tests with it.",
+      initialValue: defaultId,
+      options: runners.map(({ id, label }) => ({
+        value: id,
+        label,
+        hint: id === defaultId ? "default" : undefined,
+      })),
+    });
+    exitIfCancel(choice);
+    return typeof choice === "string" ? choice : defaultId;
+  },
+  async testFiles({ defaultTestFiles, validate }) {
+    const answer = await text({
+      message: `Which files does the project's test script pass to node --test? Separate the paths with spaces, and write each relative to the folder that holds package.json. Press Enter to use the files node --test runs by default, shown here.`,
+      placeholder: defaultTestFiles.join(" "),
+      validate: (value) => validate(testFilePaths(value ?? "")),
+    });
+    exitIfCancel(answer);
+    return testFilePaths(typeof answer === "string" ? answer : "");
+  },
+};
+
+/**
+ * The paths in an answer to the test files prompt, separated by white space as node --test takes
+ * them, and drops the quotes a shell script puts around a glob. Commas do not separate paths,
+ * because a glob can hold them, as in `{test,spec}`.
+ *
+ * @param {string} answer
+ */
+function testFilePaths(answer) {
+  return answer
+    .split(/\s+/)
+    .filter(Boolean)
+    .map((path) => path.replace(/^(["'])(.*)\1$/, "$2"));
+}
+
 /** @type {import("./integration-inputs.js").AskForIntegrationInput} */
 function promptForIntegrationInput({ integration, name, ...request }) {
   return promptForInputValue(request, `${integration}, ${name}`);
@@ -4585,9 +4790,15 @@ export async function initRecipe(options) {
     }),
     { ask: interactive ? promptForArtifactInput : undefined },
   );
-  const { recipe, inputs: integrationInputs } = await resolveIntegrationInputs(
-    recipeWithArtifactInputs,
-    { ask: interactive ? promptForIntegrationInput : undefined },
+  const { recipe: recipeWithIntegrationInputs, inputs: integrationInputs } =
+    await resolveIntegrationInputs(recipeWithArtifactInputs, {
+      ask: interactive ? promptForIntegrationInput : undefined,
+    });
+  // #890: the wizard hands its recipe to apply without a prompt, so it asks for the runner here.
+  const { recipe } = await resolveStrykerTestRunner(
+    recipeWithIntegrationInputs,
+    resolveRecipeIntegrations(recipeWithIntegrationInputs),
+    { ask: interactive ? askForTestRunner : undefined },
   );
   const validation = validateRecipeResponse(recipe);
   const explanation = explainRecipeResponse(recipe);

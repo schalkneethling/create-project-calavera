@@ -6,6 +6,7 @@ import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   normalizeGithubRepositoryControlsOptions,
 } from "./github-repository-controls-options.js";
+import { integrationDependencies, normalizeStrykerOptions, STRYKER_ID } from "./stryker-options.js";
 import {
   assertKnownValue,
   assertObjectArray,
@@ -173,7 +174,7 @@ export const recipeToolInputDescriptions = Object.freeze({
     'Values for the inputs the artifact declares, keyed by input name, such as { protectedBranch: "main" }. compose_recipe reports each declared input with its default; confirm the value with the user before dry_run_apply.',
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
-    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from.",
+    "Options keyed by selected integration ID. Stylelint Baseline accepts availability and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from; Stryker accepts testRunner, vitest by default or node:test for a project that tests with node:test, and, with node:test, testFiles, the globs the project's test script passes to node --test.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
   baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
   baselineLimit: "Maximum number of Baseline feature search results.",
@@ -319,13 +320,28 @@ export function projectLocalCommandSteps(packageManager = "npm") {
 }
 
 /**
- * The sentence the catalog description and `explain_recipe` add for an
- * integration that applies only at the repository root.
+ * The sentences the catalog description, `explain_recipe`, and the Composer add for an
+ * integration, read from its catalog metadata: where it applies, whether it needs a project
+ * that Vite+ manages, and the script it adds that `quality` does not run.
  *
- * @param {{ appliesAt?: string }} integration
+ * @param {{ appliesAt?: string, runsProjectTests?: boolean, standaloneScript?: string }} integration
+ * @returns {string[]}
  */
-function repositoryRootNote(integration) {
-  return integration.appliesAt === "repository-root" ? " Applies at the repository root." : "";
+function integrationNotes({ appliesAt, runsProjectTests, standaloneScript }) {
+  return [
+    appliesAt === "repository-root" && "Applies at the repository root.",
+    runsProjectTests && "Needs a project that Vite+ manages.",
+    standaloneScript && `Adds a ${standaloneScript} script, which quality does not run.`,
+    appliesAt === "package" &&
+      "Applies in a single-package project or a workspace member, not at a workspace root.",
+  ].filter((note) => typeof note === "string");
+}
+
+/** @param {Parameters<typeof integrationNotes>[0]} integration */
+function integrationNoteSuffix(integration) {
+  return integrationNotes(integration)
+    .map((note) => ` ${note}`)
+    .join("");
 }
 
 export function listIntegrationOptions(profile) {
@@ -333,7 +349,8 @@ export function listIntegrationOptions(profile) {
     .map((integration) => ({
       ...integration,
       profiles: integrationProfiles(integration.id),
-      description: `${integration.summary} ${integration.label}. Category: ${integration.group}. Status: ${integration.status}.${repositoryRootNote(integration)}`,
+      notes: integrationNotes(integration),
+      description: `${integration.summary} ${integration.label}. Category: ${integration.group}. Status: ${integration.status}.${integrationNoteSuffix(integration)}`,
     }))
     .filter((integration) => !profile || integration.profiles.includes(profile));
 }
@@ -531,7 +548,12 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
   }
 
   assertPlainObject("integrationOptions", integrationOptions);
-  const supportedIds = ["stylelint-baseline", "html-validate", GITHUB_REPOSITORY_CONTROLS_ID];
+  const supportedIds = [
+    "stylelint-baseline",
+    "html-validate",
+    GITHUB_REPOSITORY_CONTROLS_ID,
+    STRYKER_ID,
+  ];
   const unknownIds = Object.keys(integrationOptions).filter((id) => !supportedIds.includes(id));
 
   if (unknownIds.length > 0) {
@@ -616,6 +638,16 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
     );
   }
 
+  if (Object.hasOwn(integrationOptions, STRYKER_ID)) {
+    if (!resolvedIds.has(STRYKER_ID)) {
+      throw new Error(`integrationOptions.${STRYKER_ID} requires the ${STRYKER_ID} integration.`);
+    }
+    const strykerOptions = normalizeStrykerOptions(integrationOptions[STRYKER_ID]);
+    if (strykerOptions) {
+      normalized[STRYKER_ID] = strykerOptions;
+    }
+  }
+
   return Object.keys(normalized).length > 0 ? normalized : undefined;
 }
 
@@ -652,7 +684,7 @@ export function explainRecipeIntegrations(recipe) {
     homepage: integration.homepage,
     group: integration.group,
     status: integration.status,
-    reason: `${reasons.get(integration.id) ?? "Selected by the composed recipe."}${repositoryRootNote(integration)}`,
+    reason: `${reasons.get(integration.id) ?? "Selected by the composed recipe."}${integrationNoteSuffix(integration)}`,
   }));
 }
 
@@ -778,7 +810,9 @@ export function validateRecipeResponse(recipe) {
 export function dependencyListForRecipe(recipe) {
   return [
     ...new Set(
-      resolveRecipeIntegrations(recipe).flatMap((integration) => integration.dependencies ?? []),
+      resolveRecipeIntegrations(recipe).flatMap((integration) =>
+        integrationDependencies(integration, recipe.integrationOptions),
+      ),
     ),
   ];
 }

@@ -60,6 +60,9 @@ const baselineOptions = document.querySelector("#baseline-options");
 const baselineAvailable = document.querySelector("#baseline-available");
 const repositoryControlsOptions = document.querySelector("#repository-controls-options");
 const htmlValidateOptions = document.querySelector("#html-validate-options");
+const strykerOptions = document.querySelector("#stryker-options");
+const strykerHint = document.querySelector("#stryker-hint");
+const strykerTestRunners = document.querySelector("#stryker-test-runners");
 const cliVersionBadge = document.querySelector("#cli-version");
 const cliCompatibilityNote = document.querySelector("#cli-compatibility");
 const stickyBarProfile = document.querySelector("#sticky-bar-profile");
@@ -255,6 +258,16 @@ const integrationHintIds = {
   "github-repository-controls": "repository-controls-hint",
 };
 
+/**
+ * The id of the group hint that holds an integration's notes, so the integration's checkbox
+ * names them in aria-describedby.
+ *
+ * @param {string} id
+ */
+function integrationNotesId(id) {
+  return `integration-notes-${id}`;
+}
+
 /** @param {ReturnType<typeof listIntegrationOptions>[number]} integration */
 function integrationRow(integration) {
   const details = [];
@@ -267,7 +280,13 @@ function integrationRow(integration) {
     name: "integration",
     id: integration.id,
     label: integration.label,
-    describedBy: integrationHintIds[integration.id],
+    describedBy:
+      [
+        integrationHintIds[integration.id],
+        integration.notes.length > 0 ? integrationNotesId(integration.id) : undefined,
+      ]
+        .filter(Boolean)
+        .join(" ") || undefined,
     chip: element(
       "span",
       { class: `chip ${statusChipClasses[integration.status] ?? "chip-optional"}` },
@@ -345,8 +364,11 @@ function renderIntegrations() {
       element("h3", { class: "group-heading" }, [group]),
       element("ul", { class: "rows" }, items.map(integrationRow)),
     ]);
-    if (items.some(({ appliesAt }) => appliesAt === "repository-root")) {
-      section.append(element("p", { class: "hint" }, ["Applies at the repository root."]));
+    for (const { id, notes } of items) {
+      if (notes.length === 0) continue;
+      section.append(
+        element("p", { class: "hint", id: integrationNotesId(id) }, [notes.join(" ")]),
+      );
     }
     integrations.append(section);
   }
@@ -555,6 +577,32 @@ function applyTargetToSelectedArtifacts(target) {
   }
 }
 
+/** The Stryker integration's test runners, from its catalog metadata; the first is the default. */
+function strykerRunnerChoices() {
+  return listIntegrationOptions().find(({ id }) => id === "stryker")?.testRunners ?? [];
+}
+
+/** Renders one radio per runner the catalog lists, with the first checked and named as the default. */
+function renderStrykerTestRunners() {
+  const [defaultRunner] = strykerRunnerChoices();
+  if (!defaultRunner) return;
+
+  strykerHint.textContent = `Choose the test runner that the project's tests use. ${defaultRunner.label} is the default, and the recipe records only another choice.`;
+  strykerTestRunners.replaceChildren(
+    ...strykerRunnerChoices().map(({ id, label }) =>
+      element("label", {}, [
+        element("input", {
+          type: "radio",
+          name: "strykerTestRunner",
+          value: id,
+          checked: id === defaultRunner.id,
+        }),
+        label,
+      ]),
+    ),
+  );
+}
+
 function syncIntegrationOptions() {
   const enabled = Boolean(
     form.querySelector('[name="integration"][value="stylelint-baseline"]:checked'),
@@ -567,6 +615,12 @@ function syncIntegrationOptions() {
   htmlValidateOptions.hidden = !(
     form.querySelector('[name="integration"][value="html-validate"]:checked') &&
     integrationOptionsSupported(htmlValidate, cliCompatibility.version)
+  );
+  const stryker = listIntegrationOptions().find(({ id }) => id === "stryker");
+  strykerOptions.hidden = !(
+    form.querySelector('[name="integration"][value="stryker"]:checked') &&
+    strykerRunnerChoices().length > 0 &&
+    integrationOptionsSupported(stryker, cliCompatibility.version)
   );
 }
 
@@ -598,6 +652,10 @@ function recipe() {
     // the option; either way, quality keeps lint:html and the recipe records no option.
     htmlValidate: {
       quality: htmlValidateOptions.hidden || data.get("htmlValidateQuality") === "on",
+    },
+    // The panel is hidden when stryker is not selected; then the recipe records no runner.
+    stryker: {
+      testRunner: strykerOptions.hidden ? undefined : String(data.get("strykerTestRunner")),
     },
   });
 }
@@ -1000,6 +1058,23 @@ function registerWebMcpTools() {
                   quality: { type: "boolean" },
                 },
               },
+              stryker: {
+                type: "object",
+                additionalProperties: false,
+                properties: {
+                  testRunner: {
+                    type: "string",
+                    enum: listIntegrationOptions()
+                      .find(({ id }) => id === "stryker")
+                      ?.testRunners?.map(({ id }) => id),
+                  },
+                  testFiles: {
+                    type: "array",
+                    minItems: 1,
+                    items: { type: "string", minLength: 1 },
+                  },
+                },
+              },
               "github-repository-controls": {
                 type: "object",
                 additionalProperties: false,
@@ -1248,6 +1323,7 @@ document.querySelector("#download").addEventListener("click", () => {
 });
 
 renderAiArtifacts();
+renderStrykerTestRunners();
 setDefaults();
 registerWebMcpTools();
 

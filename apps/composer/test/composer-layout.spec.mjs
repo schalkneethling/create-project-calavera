@@ -78,6 +78,73 @@ test("integration rows expand to the catalog summary and homepage", async ({ pag
   );
 });
 
+test("stryker is offered from CLI 6.2.0 with the conditions it needs", async ({ page }) => {
+  const strykerRow = page.locator(".row", {
+    has: page.locator('[name="integration"][value="stryker"]'),
+  });
+  const group = page.locator(".group", {
+    has: page.getByRole("heading", { name: "Mutation testing" }),
+  });
+
+  await openComposer(page, "6.1.9");
+  await expect(strykerRow).toHaveCount(0);
+
+  await openComposer(page, "6.2.0");
+  await expect(
+    strykerRow.getByRole("checkbox", { name: "Stryker mutation testing" }),
+  ).toBeAttached();
+  await expect(group.locator(".hint")).toHaveText(
+    "Needs a project that Vite+ manages. Adds a test:mutation script, which quality does not run. Applies in a single-package project or a workspace member, not at a workspace root.",
+  );
+  await expect(group.locator(".hint")).toBeVisible();
+  await expect(
+    strykerRow.getByRole("checkbox", { name: "Stryker mutation testing" }),
+  ).toHaveAccessibleDescription(/^Needs a project that Vite\+ manages\./);
+});
+
+test("the Stryker test runner control appears with stryker and records only node:test", async ({
+  page,
+}) => {
+  const panel = page.getByRole("region", { name: "Stryker mutation testing" });
+  const runners = panel.getByRole("group", { name: "Test runner" });
+  const stryker = page.getByRole("checkbox", { name: "Stryker mutation testing" });
+
+  await openComposer(page, "6.2.0");
+  await expect(panel).toBeHidden();
+
+  await stryker.check();
+  await expect(panel).toBeVisible();
+  // The choices come from the catalog's testRunners, and the first one is preselected.
+  await expect(runners.getByRole("radio")).toHaveCount(2);
+  await expect(runners.getByRole("radio", { name: "Vitest" })).toBeChecked();
+  await expect(runners).toHaveAccessibleDescription(/Vitest is the default/);
+  expect((await recipeOutput(page)).integrationOptions).toBeUndefined();
+
+  await runners.getByText("node:test").click();
+  await expect(runners.getByRole("radio", { name: "node:test" })).toBeChecked();
+  expect((await recipeOutput(page)).integrationOptions).toEqual({
+    stryker: { testRunner: "node:test" },
+  });
+
+  await runners.getByText("Vitest").click();
+  expect((await recipeOutput(page)).integrationOptions).toBeUndefined();
+
+  // A choice made while stryker is selected is dropped when stryker is cleared.
+  await runners.getByText("node:test").click();
+  await stryker.uncheck();
+  await expect(panel).toBeHidden();
+  expect((await recipeOutput(page)).integrationOptions).toBeUndefined();
+});
+
+test("the repository controls group keeps its repository-root hint", async ({ page }) => {
+  await openComposer(page, "6.2.0");
+  const group = page.locator(".group", {
+    has: page.locator('[name="integration"][value="github-repository-controls"]'),
+  });
+
+  await expect(group.locator(".hint")).toHaveText("Applies at the repository root.");
+});
+
 test("switching artifact tabs keeps selections", async ({ page }) => {
   await openComposer(page);
   await page.getByRole("checkbox", { name: "Calavera" }).check();
