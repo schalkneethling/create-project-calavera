@@ -41,7 +41,8 @@ export function normalizeStrykerOptions(value) {
 
   const runners = strykerTestRunners();
   const defaultRunnerId = runners[0]?.id;
-  const testRunner = value.testRunner ?? defaultRunnerId;
+  // Only an absent field selects the default runner; null is rejected below, as the schema does.
+  const testRunner = Object.hasOwn(value, "testRunner") ? value.testRunner : defaultRunnerId;
   if (typeof testRunner !== "string" || !runners.some(({ id }) => id === testRunner)) {
     throw new Error(
       `${name}.testRunner is ${JSON.stringify(testRunner)}, but Calavera sets Stryker up for these test runners only: ${runners.map(({ id }) => JSON.stringify(id)).join(", ")}. Use one of them, or remove ${STRYKER_ID} from this recipe.`,

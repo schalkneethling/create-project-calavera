@@ -44,7 +44,7 @@ const tapConfig = (testFiles) => ({
   tsconfigFile: "stryker-skips-tsconfig-preprocessing.json",
   reporters: ["clear-text", "html"],
 });
-const tapRunnerNote = `stryker runs the project's node:test tests through @stryker-mutator/tap-runner, so stryker.config.json sets testRunner to "tap", tap.testFiles to "${nodeTestFiles.join('", "')}", and tap.nodeArgs to "${nodeArgs.join('", "')}". The tap runner measures coverage inside each test file's own process, so code that a test reaches only through a child process does not count as covered by that test: Stryker reports a mutant there as not covered, or as survived when another test file covers it, although that test might kill it. Check those mutants by hand.`;
+const tapRunnerNote = `stryker runs the project's node:test tests through @stryker-mutator/tap-runner, so stryker.config.json will hold ${JSON.stringify(tapConfig(nodeTestFiles))}. The tap runner measures coverage inside each test file's own process, so code that a test reaches only through a child process does not count as covered by that test: Stryker reports a mutant there as not covered, or as survived when another test file covers it, although that test might kill it. Check those mutants by hand.`;
 const nodeTestIndex = `import assert from "node:assert/strict";
 import test from "node:test";
 
@@ -158,6 +158,11 @@ test("integrationOptions.stryker records only a runner other than Vitest, in the
       options: { testRunner: "node:test", testFiles: [""] },
       message:
         "integrationOptions.stryker.testFiles must list at least one glob, and each must be a non-empty string. Record the paths that the project's test script passes to node --test, or remove testFiles to use the files node --test runs by default.",
+    },
+    {
+      options: { testRunner: null },
+      message:
+        'integrationOptions.stryker.testRunner is null, but Calavera sets Stryker up for these test runners only: "vitest", "node:test". Use one of them, or remove stryker from this recipe.',
     },
     {
       options: { testRunner: "node:test", reporter: "tap" },
@@ -362,7 +367,7 @@ test("vp create library: recorded testFiles go into the config, and the warning 
       findingsOf(
         withoutMatch.result.projectInspection.findings,
         "test-runner",
-      )[0]?.message.includes('tap.testFiles to "checks/*.check.mjs",'),
+      )[0]?.message.includes(JSON.stringify(tapConfig(["checks/*.check.mjs"]))),
     );
 
     await mkdir("checks");
@@ -476,8 +481,15 @@ test("vp create library: switching the runner back to Vitest rewrites the manage
     assert.deepEqual(findingsOf(dryRun.result.projectInspection.findings, "test-runner"), [
       {
         severity: "info",
-        message:
-          'stryker runs the project\'s Vitest tests through @stryker-mutator/vitest-runner, so stryker.config.json sets testRunner to "vitest". For a project that tests with node:test, set integrationOptions.stryker.testRunner to "node:test".',
+        message: `stryker runs the project's Vitest tests through @stryker-mutator/vitest-runner, so stryker.config.json will hold ${JSON.stringify(
+          {
+            $schema: "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
+            testRunner: "vitest",
+            plugins: ["@stryker-mutator/vitest-runner"],
+            tsconfigFile: "stryker-skips-tsconfig-preprocessing.json",
+            reporters: ["clear-text", "html"],
+          },
+        )}. For a project that tests with node:test, set integrationOptions.stryker.testRunner to "node:test".`,
       },
     ]);
     assert.ok(

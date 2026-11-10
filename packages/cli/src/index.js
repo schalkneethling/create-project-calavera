@@ -551,17 +551,18 @@ function vitePlusReason(runner) {
 
 /**
  * What the dry run says about the runner an integration drives and the config it writes for it,
- * so the approval covers the runner (#736).
+ * so the approval covers the runner and every setting of the config (#736).
  *
  * @param {string} id
  * @param {import("./stryker-options.js").SelectedTestRunner} runner
  */
 function testRunnerNote(id, runner) {
   const plugin = runner.dependencies.join(", ");
+  const config = `${STRYKER_CONFIG_PATH} will hold ${JSON.stringify(createStrykerConfig(runner))}`;
   if (runner.id === "vitest") {
-    return `${id} runs the project's Vitest tests through ${plugin}, so ${STRYKER_CONFIG_PATH} sets testRunner to "${runner.strykerTestRunner}". For a project that tests with node:test, set integrationOptions.${id}.testRunner to "node:test".`;
+    return `${id} runs the project's Vitest tests through ${plugin}, so ${config}. For a project that tests with node:test, set integrationOptions.${id}.testRunner to "node:test".`;
   }
-  return `${id} runs the project's ${runner.label} tests through ${plugin}, so ${STRYKER_CONFIG_PATH} sets testRunner to "${runner.strykerTestRunner}", tap.testFiles to ${quotedList(runner.testFiles)}, and tap.nodeArgs to ${quotedList(STRYKER_TAP_NODE_ARGS)}. The tap runner measures coverage inside each test file's own process, so code that a test reaches only through a child process does not count as covered by that test: Stryker reports a mutant there as not covered, or as survived when another test file covers it, although that test might kill it. Check those mutants by hand.`;
+  return `${id} runs the project's ${runner.label} tests through ${plugin}, so ${config}. The tap runner measures coverage inside each test file's own process, so code that a test reaches only through a child process does not count as covered by that test: Stryker reports a mutant there as not covered, or as survived when another test file covers it, although that test might kill it. Check those mutants by hand.`;
 }
 
 /**
