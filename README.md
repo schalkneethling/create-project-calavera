@@ -430,6 +430,15 @@ Vite+ requirement, the `test:mutation` script, and the workspace-member scope un
 testing heading. The `notes` of `list_integrations` and `describe_integration`, and the
 `explain_recipe` reason, in the MCP server carry the same three conditions.
 
+When the recipe also selects `github-repository-controls`, the managed `.github/dependabot.yml`
+gets a Dependabot group named `stryker` for `@stryker-mutator/*` in its `npm` entry. Each runner
+plugin, `@stryker-mutator/vitest-runner` or `@stryker-mutator/tap-runner`, requires the exact core
+version as a peer dependency, so the group lets version updates move core and the runner plugin in
+one pull request (ADR-0014). Dependabot security updates are not grouped. Because
+`stryker` applies in a workspace member and `github-repository-controls` at the repository root,
+a monorepo does not get the group
+([#889](https://github.com/schalkneethling/create-project-calavera/issues/889) tracks that gap).
+
 ### GitHub repository controls
 
 The optional `github-repository-controls` integration generates a committed desired-state policy,
