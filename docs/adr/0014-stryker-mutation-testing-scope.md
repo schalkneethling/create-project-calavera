@@ -1,6 +1,6 @@
 # ADR-0014: Stryker Mutation Testing as an Optional Integration for Vite+-Managed Projects
 
-- **Status:** Accepted (2026-10-22, Schalk Neethling). Decision 2's open point and the Yarn and Bun question resolved on 2026-11-09 (see Resolutions).
+- **Status:** Accepted (2026-10-22, Schalk Neethling). Decision 2's open point and the Yarn and Bun question resolved on 2026-11-09, and the grouped-updates question on 2026-11-10 (see Resolutions).
 - **Date:** 2026-10-22
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/732
 - **Decides:** whether Calavera may offer Stryker mutation testing as an optional integration, and on what terms. It decides that mutation testing is not a "test runner" under ADR-0009, that version 1 supports only projects that Calavera delegates to Vite+, and that Stryker runs only through a `test:mutation` script, outside `quality` and outside CI. Where the work sits relative to Increment 1 is left to the project owner. None of the C8 safety properties (brief Section 3) changes.
@@ -142,9 +142,11 @@ groups:
 
 The reason is the exact peer dependency the Evidence section records: the runner declares `"@stryker-mutator/core": "10.1.1"`, so a pull request that bumps one package without the other cannot install. The keys come from GitHub's Dependabot options reference for `groups`: GitHub configures groups per package ecosystem, `patterns` takes names with `*` as a wildcard, and a group name starts and ends with a letter.
 
-- **The catalog declares the group.** The `stryker` entry carries `dependabotGroups: { npm: { stryker: { patterns: ["@stryker-mutator/*"] } } }`, keyed by package ecosystem because a group applies to one ecosystem. `createDependabotConfig` merges the groups of every selected integration into the matching `updates` entry and never names an integration. Two integrations that declare the same group name for one ecosystem stop the plan with an error that names both, because Dependabot would otherwise take one definition and drop the other.
+- **The catalog declares the group.** The `stryker` entry carries `dependabotGroups: { npm: { stryker: { patterns: ["@stryker-mutator/*"] } } }`, keyed by package ecosystem because a group applies to one ecosystem. `createDependabotConfig` merges the groups of every selected integration into the matching `updates` entry and never names an integration. Two integrations that declare the same group name for one ecosystem stop the plan with an error that names both, because the merge would otherwise keep the later definition and silently drop the earlier one.
 - **A recipe without `stryker` is unchanged.** Its `.github/dependabot.yml` holds the same bytes as before, which a test compares against the text the earlier release wrote.
 - **The change to the managed file follows the existing rule for changed managed content.** Calavera compares the file on disk with the hash it recorded in `.calavera/state.json`. A project whose file still matches the recorded hash gets the new text on its next apply, and a project whose file Calavera never wrote, or one that was edited, stops with the managed-file conflict. `--reown-managed-file .github/dependabot.yml` lets apply replace an edited file with Calavera's text, so the person copies any edit worth keeping out of the file first. No migration step is needed, because the state record already tracks the file.
+- **The group covers version updates only.** It sets no `applies-to`, and GitHub's default is `version-updates`. A Dependabot security update for one Stryker package still arrives as its own pull request.
+- **A monorepo does not get the group.** `stryker` applies in a workspace member and `github-repository-controls` applies at the repository root, so one recipe never selects both in a workspace, and the root `.github/dependabot.yml` has no Stryker group even when the members use Stryker. #889 tracks that gap.
 - **Only `npm` gets the group.** The `github-actions` entry has no Stryker packages. A recipe whose `dependabotEcosystems` leaves out `npm` writes no group, because there is no `npm` entry to hold it.
 
 ## Open questions

@@ -231,7 +231,7 @@ test("dry_run_apply at the repository root still plans the repository-controls f
     .filter(({ type }) => type === "write")
     .map(({ path }) => path);
 
-  for (const { path } of githubRepositoryControlManagedFiles(repositoryControlsOptions)) {
+  for (const { path } of githubRepositoryControlManagedFiles(repositoryControlsOptions, [])) {
     assert.ok(writes.includes(path), `the dry run does not plan ${path}`);
   }
 });

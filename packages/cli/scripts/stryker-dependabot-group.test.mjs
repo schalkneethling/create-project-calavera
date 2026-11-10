@@ -154,3 +154,15 @@ test("a local edit to dependabot.yml is a managed-file conflict, with and withou
     assert.equal(await readDependabot(project.root), edited);
   });
 });
+
+test("removing stryker from a project whose dependabot.yml Calavera wrote rewrites the file without the group", async () => {
+  await using project = await copyReleaseFixture("library");
+
+  await inDirectory(project.root, async () => {
+    await applyRecipeObject(withStryker, applyOptions);
+    assert.match(await readDependabot(project.root), /@stryker-mutator\/\*/);
+
+    await applyRecipeObject(withoutStryker, applyOptions);
+    assert.doesNotMatch(await readDependabot(project.root), /groups|stryker/);
+  });
+});

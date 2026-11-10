@@ -100,19 +100,21 @@ function declaredDependabotGroups(integrations, ecosystem) {
 }
 
 /**
+ * @typedef {Record<string, Record<string, Record<string, unknown>>>} DependabotGroups Per package
+ *   ecosystem, the groups an integration needs in the managed `.github/dependabot.yml`, in the
+ *   shape of GitHub's `groups` option (#880).
+ *
  * @typedef {object} DependabotGroupDeclaration
  * @property {string} id
- * @property {Record<string, Record<string, Record<string, unknown>>>} [dependabotGroups] Per package
- *   ecosystem, the groups the integration needs in the managed `.github/dependabot.yml`, in the
- *   shape of GitHub's `groups` option (#880).
+ * @property {DependabotGroups} [dependabotGroups]
  */
 
 /**
  * @param {string[]} ecosystems
- * @param {DependabotGroupDeclaration[]} [integrations] The selected integrations, which may
+ * @param {DependabotGroupDeclaration[]} integrations The selected integrations, which may
  *   declare groups.
  */
-export function createDependabotConfig(ecosystems, integrations = []) {
+export function createDependabotConfig(ecosystems, integrations) {
   return stringifyYaml({
     version: 2,
     updates: ecosystems.map((ecosystem) => {
@@ -201,10 +203,10 @@ The generated script verifies the repository identity before planning or applyin
 
 /**
  * @param {unknown} rawOptions
- * @param {DependabotGroupDeclaration[]} [integrations] The selected integrations, which may
- *   declare Dependabot groups.
+ * @param {DependabotGroupDeclaration[]} integrations The selected integrations, which may
+ *   declare Dependabot groups. A caller that passes none gets no groups, so none may leave it out.
  */
-export function githubRepositoryControlManagedFiles(rawOptions, integrations = []) {
+export function githubRepositoryControlManagedFiles(rawOptions, integrations) {
   const options = normalizeGithubRepositoryControlsOptions(rawOptions);
   // Apply fills defaultBranch before it plans any file (#844), so a missing value here is a bug in
   // the caller, and a file without it would describe no branch to GitHub.
