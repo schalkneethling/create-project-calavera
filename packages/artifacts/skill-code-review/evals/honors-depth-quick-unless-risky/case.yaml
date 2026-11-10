@@ -1,0 +1,11 @@
+schema_version: "1.1"
+name: honors-depth-quick-unless-risky
+expected_outcome: |
+  The user asked for a quick review, but the branch changes a payment path
+  with a retry loop, so risk raises the depth to standard. The report says so
+  in one line after the verdict, and still reports the per-attempt
+  idempotency key as a P0 or P1 on src/refunds/service.js inside the retry loop.
+  It runs the mutation script, which a quick review skips, so the standard
+  process ran rather than only the quick pass.
+context:
+  scaffold_script: place-files.sh
