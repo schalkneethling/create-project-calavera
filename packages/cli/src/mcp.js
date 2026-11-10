@@ -96,7 +96,11 @@ const integrationOutputSchema = z.looseObject({
     .describe(
       "Whether the integration is recommended, optional, experimental, or framework-specific.",
     ),
-  dependencies: z.array(z.string()).describe("Development packages installed for the integration."),
+  dependencies: z
+    .array(z.string())
+    .describe(
+      "Development packages installed for the integration. An integration with testRunners also installs the dependencies of the runner the recipe selects.",
+    ),
   profiles: z.array(z.string()).describe("Profiles the integration is available in."),
   description: z.string().describe("Generated description prefixed with the integration summary."),
   minimumCliVersion: z.string().optional(),

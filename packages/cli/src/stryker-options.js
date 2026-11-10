@@ -64,6 +64,16 @@ export function normalizeStrykerOptions(value) {
   ) {
     throw new Error(testFilesMessage);
   }
+  // The tap runner runs every match with node, so a glob outside the project would run files the
+  // project does not own, and the dry run would search the whole disk for it.
+  const outside = testFiles.find(
+    (glob) => /^([/\\]|[A-Za-z]:)/.test(glob) || glob.split(/[/\\]/).includes(".."),
+  );
+  if (outside !== undefined) {
+    throw new Error(
+      `${name}.testFiles must stay inside the project, but ${JSON.stringify(outside)} starts at the file system root or leaves the project through "..". Write each glob relative to the folder that holds package.json, such as "tests/**/*.test.ts".`,
+    );
+  }
 
   return { testRunner, testFiles };
 }

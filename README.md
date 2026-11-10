@@ -300,7 +300,8 @@ each one, and reports the mutants that no test detected. It installs `@stryker-m
 the Stryker runner plugin for the project's test runner with `vp add -D`, writes a managed
 `stryker.config.json`, and adds a `test:mutation` script that runs `stryker run`. Run it with
 `vp run test:mutation`. Stryker drives Vitest by default; a project that tests with `node:test`
-selects the tap runner instead (see [Projects that test with `node:test`](#projects-that-test-with-nodetest)).
+selects the tap runner instead (see
+[Projects that test with `node:test`](#projects-that-test-with-nodetest)).
 
 `test:mutation` is not part of `quality`, and Calavera adds no CI job for it (ADR-0014, Decision 3).
 A mutation run takes minutes on a real project, and Stryker exits with code 0 whatever the score,
@@ -379,9 +380,16 @@ runner, and writes this `stryker.config.json`:
 - `tap.testFiles` lists the files that `node --test` runs when it is given no paths, in Node.js 24
   and 26, including TypeScript files, because both strip types by default. If the project's `test`
   script passes other paths to `node --test`, record those globs in
-  `integrationOptions.stryker.testFiles`, and apply writes them instead. `testFiles` is accepted
-  only with `"testRunner": "node:test"`, because Stryker's Vitest runner reads the test files from
-  the Vite config.
+  `integrationOptions.stryker.testFiles`, and apply writes them instead. Each glob must match test
+  files, not folders, because the tap runner runs `node` on every match: write `tests/**/*.test.ts`,
+  not `tests/` or `tests/**`. The dry run warns when a glob matches a folder. Each glob must also
+  stay inside the project, so recipe validation rejects a glob that starts with `/` or a drive
+  letter or that contains a `..` segment. `testFiles` is accepted only with
+  `"testRunner": "node:test"`, because Stryker's Vitest runner reads the test files from the Vite
+  config.
+- The tap runner starts each test file with the `node` on the project's `PATH`. The default
+  patterns include TypeScript files, which `node` runs only when it strips types by default, as
+  Node.js 24 and 26 do.
 - `tap.nodeArgs` starts with `--test-reporter=tap`, because the tap runner reads each test file's
   results as TAP output. Stryker then loads its coverage hook (`-r {{hookFile}}`) and runs the test
   file (`{{testFile}}`). These are the runner's defaults in 10.1.1; the config states them so that
@@ -407,7 +415,10 @@ Check those mutants by hand. Running with `--coverageAnalysis off` did not chang
 Stryker 10.1.1. The dry run repeats this limit when the recipe selects `node:test`.
 
 Switching a recipe from one runner to the other rewrites `stryker.config.json` and installs the
-other runner plugin. Apply does not uninstall the plugin it installed before.
+other runner plugin. Apply does not uninstall the plugin it installed before, and Knip, when the
+recipe selects it, reports that plugin as unused. Remove it with
+`vp remove @stryker-mutator/vitest-runner`, or `vp remove @stryker-mutator/tap-runner` after
+a switch back to Vitest.
 
 Stryker writes its sandboxes to `.stryker-tmp/`, which a failed run leaves behind, and its HTML
 report to `reports/mutation/`. Apply lists both in a marked block in `.gitignore`, so `vp check`

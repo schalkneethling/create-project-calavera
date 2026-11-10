@@ -162,6 +162,10 @@ test("integrationOptions.stryker records only a runner other than Vitest, in the
       options: { testRunner: "node:test", reporter: "tap" },
       message: "Unknown integrationOptions.stryker fields: reporter.",
     },
+    ...["/srv/**/*.test.js", "../shared/*.test.js", "tests/../../x.test.js"].map((glob) => ({
+      options: { testRunner: "node:test", testFiles: ["tests/*.test.js", glob] },
+      message: `integrationOptions.stryker.testFiles must stay inside the project, but ${JSON.stringify(glob)} starts at the file system root or leaves the project through "..". Write each glob relative to the folder that holds package.json, such as "tests/**/*.test.ts".`,
+    })),
   ];
   for (const { options, message } of rejected) {
     assert.throws(() => build(options), { message });
@@ -355,6 +359,41 @@ test("vp create library: recorded testFiles go into the config, and the warning 
     assert.deepEqual(
       JSON.parse(await readFile("stryker.config.json", "utf8")),
       tapConfig(testFiles),
+    );
+  });
+});
+
+test("vp create library: a testFiles glob that matches a folder warns, because the tap runner would run node on the folder", async () => {
+  await using fixture = await copyReleaseFixture("library");
+
+  await inDirectory(fixture.root, async () => {
+    await mkdir("checks/unit", { recursive: true });
+    await writeFile("checks/unit/index.check.mjs", "");
+    const recipe = await composeRecipe(["stryker"], {
+      testRunner: "node:test",
+      testFiles: ["checks/**"],
+    });
+
+    const dryRun = await callMcpTool("dry_run_apply", { recipe });
+    const { findings } = dryRun.result.projectInspection;
+    assert.deepEqual(findingsOf(findings, "node-test-files-folder"), [
+      {
+        severity: "warning",
+        message:
+          'integrationOptions.stryker.testFiles matches the folder "checks", and Stryker\'s tap runner runs node on every match, so its run stops with an error. Change the globs so that they match only test files, such as "checks/**/*.test.*".',
+      },
+    ]);
+    assert.deepEqual(findingsOf(findings, "no-node-test-files"), []);
+
+    // A glob that names only files raises no warning.
+    const filesOnly = await composeRecipe(["stryker"], {
+      testRunner: "node:test",
+      testFiles: ["checks/**/*.check.mjs"],
+    });
+    const clean = await callMcpTool("dry_run_apply", { recipe: filesOnly });
+    assert.deepEqual(
+      clean.result.projectInspection.findings.filter(({ severity }) => severity === "warning"),
+      [],
     );
   });
 });
