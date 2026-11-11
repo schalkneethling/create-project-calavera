@@ -1,6 +1,6 @@
 {
   "name": "@schalkneethling/calavera-skill-protected-branch-guard",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Protected branch guard artifact for Calavera.",
   "license": "MIT",
   "repository": {
