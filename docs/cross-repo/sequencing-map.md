@@ -1,7 +1,7 @@
 # Cross-Repo Sequencing Map: css-evolve and Calavera
 
 **Status:** Draft 1, 9 September 2026. Owner: Schalk Neethling. Both agents read this at the start of every session and update the status column when a handoff is delivered or consumed.
-**Revised:** 7 November 2026, when handoff H0 was delivered and Section 0 was reset for the next increment.
+**Revised:** 7 November 2026, when handoff H0 was delivered and Section 0 was reset for the next increment; 13 November 2026, when Section 0 recorded what 6.2.0 shipped and the owner's choice of issues for the next release.
 **Purpose:** One timeline with every point where one project delivers a frozen surface the other consumes, so neither agent starts work that is blocked and neither invents the other side's API.
 
 ---
@@ -10,7 +10,7 @@
 
 This section is the live plan. The briefs describe where the projects end up; this section says what is being worked now. It is rewritten at the end of each increment. Work only the current increment; anything else noticed becomes an issue.
 
-**The next increment is not defined yet.** Increment 1 ended when handoff H0 was delivered on 7 November 2026. The owner reviews this skeleton and decides what the next increment contains. Apart from the decisions recorded under Issues, every placeholder below reads "Owner to decide" and is filled in only by the owner.
+**The next increment is not fully defined yet.** Increment 1 ended when handoff H0 was delivered on 7 November 2026. The owner has chosen the issues for the next release, recorded under Issues; every other placeholder below reads "Owner to decide" and is filled in only by the owner.
 
 **Name:** Owner to decide.
 
@@ -18,14 +18,12 @@ This section is the live plan. The briefs describe where the projects end up; th
 
 **Exit condition:** Owner to decide.
 
-**Issues:** The Stryker integration work and #846 join the next increment (owner decisions, 2026-11-07). Any other issues: Owner to decide. The facts in the list below already exist and are listed so that the owner does not have to look them up; apart from the Stryker issues and #846, listing an issue here does not place it in the next increment.
+**Issues:** The next release is the open issues labeled `milestone: cli-experience` (owner decision, 2026-11-13). That label is the list; this section does not copy it, so the two cannot drift apart. The facts below are listed so that the owner does not have to look them up; listing an issue here does not place it in the next release.
 
-- #846: fix the guard's `protectedBranch` default, which was the current branch and therefore a feature branch in the documented flow. The owner chose the default source on 2026-11-08: the repository's default branch, shared with `github-repository-controls.defaultBranch` (#844).
-
-- The Stryker integration issues #733 (integrations add `.gitignore` and html-validate ignore entries), #734 (the Stryker integration), #735 (offer it in the Composer and MCP), and #736 (whether it supports `node:test` through the tap runner) are in the next increment, by the owner's decision of 2026-11-07. On 2026-10-22 the owner had decided that they wait until Increment 1 is finished, that is, until H0 is delivered (recorded on #732), and H0 is now delivered. The decision issue #732 was closed on 2026-11-05 because ADR-0014 answers it; ADR-0014 Decision 4 leaves the placement relative to Increment 1 to the owner, and the 2026-10-22 decision gives it: the Stryker work comes after H0, not inside Increment 1.
-- Approved by the owner on 2026-11-07 for the next release, outside the increment plan: #829 (`clean` removes untouched wiring, as decided on that issue), #795 (item 1), #830, #792, #790, #784, and #837.
+- Shipped in `create-project-calavera` 6.2.0 on 12 November 2026: the Stryker integration work (#733, #734, #735, #736, #880, and #890), #846 with #844 (the guard's `protectedBranch` and `github-repository-controls.defaultBranch` both default to the repository's default branch), and the list the owner approved on 2026-11-07 outside the increment plan (#829, #795 item 1, #830, #792, #790, #784, and #837).
+- #795 stays open for items 2 to 6 and for the pnpm workspace install failure reported in its comments.
 - #737 (remove the Stryker TypeScript 7 workaround) is blocked on a Stryker release that fixes stryker-mutator/stryker-js#6111.
-- The deferred decisions #673 and #676; the friction issues the readiness check filed, #838 to #844 (#843 is the only p1); and the blocked items #671 (waits on #689), #737, and #746 (waits on the adoption trigger recorded in #744).
+- The deferred decisions #673 and #676; the friction issues the readiness check filed that are still open, #838 to #843 (#843 is the only p1); and the blocked items #671 (waits on #689), #737, and #746 (waits on the adoption trigger recorded in #744). The label decides scope, so #676, #671, #689, and #838 to #841 are in the next release because they carry `milestone: cli-experience`; #676 still needs the owner's decision, and #671 cannot close until #689 does. #842 and #843 carry other milestone labels, so they are not in the next release.
 
 **Explicitly not now:** Owner to decide.
 
