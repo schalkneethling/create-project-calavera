@@ -19,7 +19,7 @@ import {
   text,
 } from "@clack/prompts";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
-import { execa } from "execa";
+import { ExecaError, execa } from "execa";
 import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
 import { prepareArtifactSources, runArtifactCommand } from "./artifact-lifecycle.js";
@@ -3988,7 +3988,88 @@ export const NPM_EXIT_127_HINT =
  * @typedef {{ exitCode: number | null, signal: string | null }} RunnerExit
  * @typedef {object} NewProjectRuntime
  * @property {(invocation: RunnerInvocation) => Promise<RunnerExit>} [spawnRunner]
+ * @property {(cwd: string) => Promise<string | undefined>} [readYarnVersion]
  */
+
+const YARN_DLX_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or later.";
+
+// The runner has already failed, so the version read must not delay its error.
+export const YARN_VERSION_TIMEOUT_MS = 5000;
+
+/**
+ * Reads the version of the `yarn` that runs in `cwd`, where Corepack resolves
+ * the same Yarn the runner used. Stdin is closed, so a prompt (such as
+ * Corepack's download prompt) fails at once instead of waiting, and a time
+ * limit stops a yarn that hangs. It rejects when yarn cannot start, exits
+ * non-zero, or times out.
+ *
+ * @param {string} cwd
+ * @returns {Promise<string>}
+ */
+async function readInstalledYarnVersion(cwd) {
+  const { stdout } = await execa("yarn", ["--version"], {
+    cwd,
+    stdin: "ignore",
+    timeout: YARN_VERSION_TIMEOUT_MS,
+  });
+
+  return stdout;
+}
+
+/**
+ * The hint for a failed `yarn dlx` run (#911). The runner inherits stdio, so
+ * Calavera cannot read Yarn's error; the Yarn version decides instead. Yarn 0
+ * and 1 have no dlx command. Yarn 2 or later has one, so the cause is
+ * elsewhere and no Yarn hint is added. An unreadable version keeps the hint
+ * that states its own condition, with the reason the version was unreadable.
+ *
+ * @param {(cwd: string) => Promise<string | undefined>} readYarnVersion
+ * @param {string} cwd
+ * @returns {Promise<{ hint: string, cause?: unknown }>}
+ */
+async function yarnFailureHint(readYarnVersion, cwd) {
+  let output;
+
+  try {
+    output = await readYarnVersion(cwd);
+  } catch (error) {
+    // execa's shortMessage names the command and the failure without its output.
+    const reason =
+      error instanceof ExecaError
+        ? error.shortMessage.split("\n")[0]
+        : error instanceof Error
+          ? error.message.split("\n")[0]
+          : String(error);
+
+    return {
+      hint: ` ${YARN_DLX_HINT} Calavera could not read the Yarn version: ${reason}.`,
+      cause: error,
+    };
+  }
+
+  const match = /^((\d+)\.\d+\.\d+\S*)/.exec(output ?? "");
+
+  if (match === null) {
+    const printed = output?.split("\n")[0];
+
+    return {
+      hint: ` ${YARN_DLX_HINT}${
+        printed === undefined
+          ? ""
+          : ` yarn --version printed ${printed === "" ? "nothing" : `"${printed}"`}, which is not a version.`
+      }`,
+    };
+  }
+
+  const [, version, major] = match;
+
+  return {
+    hint:
+      Number(major) < 2
+        ? ` The yarn in this directory is Yarn ${version}, which has no dlx command, so it could not start Vite+. Use Yarn 2 or later, for example through Corepack, or pass another --package-manager before --new.`
+        : "",
+  };
+}
 
 /**
  * Spawns the runner with inherited stdio, so Vite+ asks its own questions.
@@ -4277,14 +4358,20 @@ export async function newProject(options, runtime = {}) {
   const exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({ ...runnerCommand, cwd });
 
   if (exit.exitCode !== 0) {
+    const yarn =
+      runnerCommand.command === "yarn"
+        ? await yarnFailureHint(runtime.readYarnVersion ?? readInstalledYarnVersion, cwd)
+        : undefined;
+
     throw new Error(
       `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
-        runnerCommand.command === "yarn"
-          ? " If yarn itself failed, note that yarn dlx needs Yarn 2 or later."
+        yarn !== undefined
+          ? yarn.hint
           : runnerCommand.command !== "npm"
             ? ""
             : ` ${exit.exitCode === 127 ? NPM_EXIT_127_HINT : NPM_STALE_CACHE_HINT}`
       }`,
+      yarn?.cause === undefined ? undefined : { cause: yarn.cause },
     );
   }
 

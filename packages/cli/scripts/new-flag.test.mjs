@@ -2,7 +2,8 @@
 // placed first on PATH stands in for the package-manager runner, so these
 // tests need neither network access nor vite-plus.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
+import { realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
@@ -11,6 +12,7 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 import {
   NPM_EXIT_127_HINT,
   NPM_STALE_CACHE_HINT,
+  YARN_VERSION_TIMEOUT_MS,
   createVpCreateCommand,
   newProject,
   parseArgs,
@@ -44,6 +46,26 @@ import { basename, join, resolve } from "node:path";
 import { json, libraryManifest, plainViteManifest, vitePlusConfig, writeVitePlusFormatter } from ${JSON.stringify(fixturesUrl.href)};
 
 const argv = process.argv.slice(2);
+
+// "yarn --version" (#911): print STUB_VERSION, or fail when it is unset. It is
+// logged separately, so runner invocations stay the only entries in STUB_LOG.
+// STUB_VERSION_MODE "stdin" waits for stdin to end first, as a prompt would,
+// and "hang" never exits.
+if (argv.length === 1 && argv[0] === "--version") {
+  appendFileSync(process.env.STUB_LOG + ".version", JSON.stringify({ cwd: process.cwd() }) + "\\n");
+  if (process.env.STUB_VERSION_MODE === "hang") {
+    setInterval(() => {}, 1000);
+    await new Promise(() => {});
+  } else {
+    if (process.env.STUB_VERSION_MODE === "stdin") {
+      for await (const _chunk of process.stdin);
+    }
+    if (process.env.STUB_VERSION === undefined) process.exit(2);
+    console.log(process.env.STUB_VERSION);
+    process.exit(0);
+  }
+}
+
 appendFileSync(
   process.env.STUB_LOG,
   JSON.stringify({
@@ -146,12 +168,21 @@ function stubPath(workspace) {
 }
 
 /**
+ * Runs the CLI with the stub runners first on PATH.
+ *
+ * With `deadlineMs`, the CLI starts in its own process group. If it is still
+ * running at the deadline, the whole group is killed, so a test that expects
+ * the CLI to give up on a hanging child fails with `timedOut: true` instead
+ * of hanging, and leaves no stray child behind (#911). POSIX only, like the
+ * stub runners.
+ *
  * @param {{ work: string, log: string, bin: string }} workspace
  * @param {string[]} args
  * @param {Record<string, string>} [env]
- * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ * @param {{ deadlineMs?: number }} [options]
+ * @returns {Promise<{ code: number, stdout: string, stderr: string, timedOut: boolean }>}
  */
-function runCli(workspace, args, env = {}) {
+function runCli(workspace, args, env = {}, { deadlineMs } = {}) {
   const childEnv = {
     ...process.env,
     NO_COLOR: "1",
@@ -163,22 +194,34 @@ function runCli(workspace, args, env = {}) {
   // A VP_CLI_BIN from the developer's shell would hide whether Calavera sets one.
   delete childEnv.VP_CLI_BIN;
 
-  return new Promise((resolvePromise) => {
-    execFile(
-      process.execPath,
-      [binPath, ...args],
-      {
-        cwd: workspace.work,
-        env: childEnv,
-      },
-      (error, stdout, stderr) => {
-        resolvePromise({
-          code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(process.execPath, [binPath, ...args], {
+      cwd: workspace.work,
+      env: childEnv,
+      detached: deadlineMs !== undefined,
+      // stdin stays an open pipe, as execFile left it, so no test sees an early end of input.
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
+
+    const deadline =
+      deadlineMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            // The negative pid names the process group: the CLI and every child it started.
+            process.kill(-child.pid, "SIGKILL");
+          }, deadlineMs);
+
+    child.on("error", rejectPromise);
+    child.on("close", (code) => {
+      clearTimeout(deadline);
+      resolvePromise({ code: code ?? 1, stdout, stderr, timedOut });
+    });
   });
 }
 
@@ -550,6 +593,268 @@ test("--new hard-stops on a non-zero exit, names the cause, and writes nothing f
   assert.equal(await readFile(join(workspace.work, "partial/package.json"), "utf8"), "{");
 });
 
+/**
+ * Runs a failing --new through the stub yarn and returns the error and the
+ * working directories `yarn --version` ran in (#911).
+ *
+ * @param {Record<string, string>} env
+ */
+async function failedYarnRun(env) {
+  await using workspace = await createTemporaryWorkspace(
+    `yarn-version-${env.STUB_VERSION ?? "none"}`,
+  );
+  const result = await runCli(
+    workspace,
+    ["--yes", "--package-manager", "yarn", "--new", "vite:library"],
+    { STUB_MODE: "fail", ...env },
+    // Generous next to the CLI's own timeout, so only a CLI that never gives up reaches it.
+    { deadlineMs: YARN_VERSION_TIMEOUT_MS + 10_000 },
+  );
+  assert.equal(result.timedOut, false, "the CLI was still waiting at the test deadline");
+  const versionLog = await readFile(`${workspace.log}.version`, "utf8").catch(() => "");
+  const versionCwds = versionLog
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => realpathSync(JSON.parse(line).cwd));
+
+  // Resolved here, while the workspace still exists: macOS reports /private/var for /var.
+  return { result, versionCwds, work: realpathSync(workspace.work) };
+}
+
+const GUESSING_YARN_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or later.";
+
+test("--new names Yarn 1 as the cause when yarn dlx fails under Yarn 1", async () => {
+  const { result, versionCwds, work } = await failedYarnRun({ STUB_VERSION: "1.22.22" });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /exited with code 1/);
+  assert.match(result.stderr, /partial scaffold that belongs to Vite\+/);
+  assert.match(result.stderr, /Yarn 1\.22\.22/);
+  assert.match(result.stderr, /no dlx command/);
+  assert.match(result.stderr, /Corepack/);
+  assert.match(result.stderr, /--package-manager .*before --new/);
+  assert.ok(!result.stderr.includes(GUESSING_YARN_HINT));
+  assert.deepEqual(versionCwds, [work]);
+});
+
+test("--new adds no Yarn hint when yarn dlx fails under Yarn 2 or later", async () => {
+  const { result } = await failedYarnRun({ STUB_VERSION: "4.18.1" });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /exited with code 1/);
+  assert.doesNotMatch(result.stderr, /dlx/);
+  assert.match(result.stderr, /partial scaffold that belongs to Vite\+\.\s*$/);
+});
+
+for (const [label, env, reason] of [
+  ["exits non-zero", {}, /could not read the Yarn version: Command failed with exit code 2/],
+  [
+    "prints no version",
+    { STUB_VERSION: "" },
+    /yarn --version printed nothing, which is not a version/,
+  ],
+  [
+    "prints something else",
+    { STUB_VERSION: "yarn is not configured" },
+    /yarn --version printed "yarn is not configured", which is not a version/,
+  ],
+]) {
+  test(`--new keeps the existing Yarn hint and names why when yarn --version ${label}`, async () => {
+    const { result } = await failedYarnRun(env);
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /exited with code 1/);
+    assert.ok(result.stderr.includes(GUESSING_YARN_HINT));
+    assert.match(result.stderr, reason);
+  });
+}
+
+test("--new closes stdin for yarn --version, so a yarn waiting for input cannot stall the error", async () => {
+  const { result } = await failedYarnRun({ STUB_VERSION: "1.22.22", STUB_VERSION_MODE: "stdin" });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Yarn 1\.22\.22, which has no dlx command/);
+});
+
+test("--new stops waiting for a yarn --version that hangs and still reports the runner failure", async () => {
+  const { result } = await failedYarnRun({ STUB_VERSION_MODE: "hang" });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /vp create through yarn exited with code 1/);
+  assert.match(result.stderr, /partial scaffold that belongs to Vite\+/);
+  assert.ok(result.stderr.includes(GUESSING_YARN_HINT));
+  assert.match(
+    result.stderr,
+    /could not read the Yarn version: Command timed out after 5000 milliseconds/,
+  );
+});
+
+// In-process, so mutation testing sees the version parsing (#911). Only a full
+// major.minor.patch at the start of the output counts as a version, and only
+// the version itself reaches the message.
+for (const [output, expected, shown] of [
+  ["1.22.22", "yarn 1", "1.22.22"],
+  ["1.0.0-rc.1", "yarn 1", "1.0.0-rc.1"],
+  ["0.27.5", "yarn 1", "0.27.5"],
+  ["1.22.22\nwarning: an extra line", "yarn 1", "1.22.22"],
+  ["2.4.3", "none"],
+  ["10.0.0", "none"],
+  ["1.22", "guess"],
+  ["v1.22.22", "guess"],
+  ["", "guess"],
+  [undefined, "guess"],
+]) {
+  test(`--new chooses the ${expected} hint when yarn --version reports ${JSON.stringify(output)}`, async () => {
+    const message = await failedNewMessage("yarn", { exitCode: 1 }, async () => output);
+
+    assert.match(message, /exited with code 1/);
+    assert.equal(message.includes(GUESSING_YARN_HINT), expected === "guess");
+    assert.equal(/has no dlx command/.test(message), expected === "yarn 1");
+    assert.doesNotMatch(message, /warning: an extra line/);
+    if (expected === "yarn 1") {
+      assert.ok(message.includes(`is Yarn ${shown}, which has no dlx command`));
+    }
+    if (expected === "none") {
+      assert.match(message, /may hold a partial scaffold that belongs to Vite\+\.$/);
+    }
+    if (expected === "none" || output === undefined) {
+      assert.doesNotMatch(message, /which is not a version|could not read/);
+    }
+    if (output === undefined) {
+      assert.ok(message.endsWith(GUESSING_YARN_HINT));
+    }
+  });
+}
+
+test("--new keeps the version read failure as the cause and names it in the hint", async () => {
+  await using workspace = await createTemporaryWorkspace("yarn-version-throws");
+  const previousCwd = process.cwd();
+  // A plain Error: only its first line reaches the message. The execa
+  // shortMessage path is covered by the CLI test where yarn --version exits 2.
+  const failure = new Error("spawn yarn EACCES\nmore detail");
+
+  process.chdir(workspace.work);
+
+  try {
+    const error = await newProject(
+      parseArgs(["--yes", "--package-manager", "yarn", "--new", "vite:library"]),
+      {
+        spawnRunner: async () => ({ exitCode: 1, signal: null }),
+        readYarnVersion: async () => {
+          throw failure;
+        },
+      },
+    ).then(
+      () => assert.fail("expected --new to fail"),
+      (rejection) => rejection,
+    );
+
+    assert.ok(error.message.includes(GUESSING_YARN_HINT));
+    assert.match(error.message, /could not read the Yarn version: spawn yarn EACCES\.$/);
+    assert.equal(error.cause, failure);
+  } finally {
+    process.chdir(previousCwd);
+  }
+});
+
+test("--new names a thrown value that is not an Error and keeps it as the cause", async () => {
+  const error = await failedNewError("yarn", async () => {
+    throw "spawn refused";
+  });
+
+  assert.match(error.message, /could not read the Yarn version: spawn refused\.$/);
+  assert.equal(error.cause, "spawn refused");
+});
+
+test("--new sets no cause when the Yarn version was read", async () => {
+  const error = await failedNewError("yarn", async () => "1.22.22");
+
+  assert.equal(error.cause, undefined);
+});
+
+/**
+ * @param {string} packageManager
+ * @param {(cwd: string) => Promise<string | undefined>} readYarnVersion
+ */
+async function failedNewError(packageManager, readYarnVersion) {
+  await using workspace = await createTemporaryWorkspace(`error-${packageManager}`);
+  const previousCwd = process.cwd();
+
+  process.chdir(workspace.work);
+
+  try {
+    return await newProject(
+      parseArgs(["--yes", "--package-manager", packageManager, "--new", "vite:library"]),
+      { spawnRunner: async () => ({ exitCode: 1, signal: null }), readYarnVersion },
+    ).then(
+      () => assert.fail("expected --new to fail"),
+      (rejection) => rejection,
+    );
+  } finally {
+    process.chdir(previousCwd);
+  }
+}
+
+test("--new reads the Yarn version from the yarn on PATH in the working directory", async () => {
+  await using workspace = await createTemporaryWorkspace("yarn-version-in-process");
+  const previousCwd = process.cwd();
+  const keys = ["PATH", "STUB_LOG", "STUB_VERSION"];
+  const previousEnv = Object.fromEntries(keys.map((key) => [key, process.env[key]]));
+  const run = () =>
+    newProject(parseArgs(["--yes", "--package-manager", "yarn", "--new", "vite:library"]), {
+      spawnRunner: async () => ({ exitCode: 1, signal: null }),
+    }).then(
+      () => assert.fail("expected --new to fail"),
+      (rejection) => rejection,
+    );
+
+  process.chdir(workspace.work);
+  Object.assign(process.env, {
+    PATH: stubPath(workspace),
+    STUB_LOG: workspace.log,
+    STUB_VERSION: "1.22.22",
+  });
+
+  try {
+    const error = await run();
+    const versionLog = await readFile(`${workspace.log}.version`, "utf8");
+
+    assert.match(error.message, /Yarn 1\.22\.22, which has no dlx command/);
+    assert.equal(realpathSync(JSON.parse(versionLog.trim()).cwd), realpathSync(workspace.work));
+
+    process.env.STUB_VERSION = "4.18.1";
+    assert.doesNotMatch((await run()).message, /dlx/);
+
+    delete process.env.STUB_VERSION;
+    const unknown = await run();
+
+    assert.ok(unknown.message.includes(GUESSING_YARN_HINT));
+    assert.match(unknown.message, /Command failed with exit code 2/);
+    assert.notEqual(unknown.cause, undefined);
+  } finally {
+    process.chdir(previousCwd);
+    for (const key of keys) {
+      if (previousEnv[key] === undefined) delete process.env[key];
+      else process.env[key] = previousEnv[key];
+    }
+  }
+});
+
+for (const packageManager of ["npm", "pnpm", "bun"]) {
+  test(`--new does not run yarn --version when the ${packageManager} runner fails`, async () => {
+    await using workspace = await createTemporaryWorkspace(`no-yarn-version-${packageManager}`);
+    const result = await runCli(
+      workspace,
+      ["--yes", "--package-manager", packageManager, "--new", "vite:library"],
+      { STUB_MODE: "fail", STUB_VERSION: "1.22.22" },
+    );
+
+    assert.equal(result.code, 1);
+    assert.equal(await exists(`${workspace.log}.version`), false);
+    assert.doesNotMatch(result.stderr, /Yarn 1/);
+  });
+}
+
 test("--new hard-stops when the scaffold is unmanaged and names the finding", async () => {
   await using workspace = await createTemporaryWorkspace("unmanaged");
 
@@ -733,7 +1038,7 @@ test("--new names the terminating signal when the runner is killed", async () =>
  * @param {{ exitCode: number | null, signal?: string }} exit
  * @returns {Promise<string>}
  */
-async function failedNewMessage(packageManager, exit) {
+async function failedNewMessage(packageManager, exit, readYarnVersion = async () => undefined) {
   await using workspace = await createTemporaryWorkspace(`hint-${packageManager ?? "default"}`);
   const previousCwd = process.cwd();
 
@@ -747,7 +1052,8 @@ async function failedNewMessage(packageManager, exit) {
         "--new",
         "vite:library",
       ]),
-      { spawnRunner: async () => exit },
+      // By default no version, so the Yarn hint does not depend on the yarn installed here (#911).
+      { spawnRunner: async () => exit, readYarnVersion },
     ).then(
       () => assert.fail("expected --new to fail"),
       (rejection) => rejection,
