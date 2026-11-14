@@ -2,7 +2,7 @@
 // placed first on PATH stands in for the package-manager runner, so these
 // tests need neither network access nor vite-plus.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
@@ -168,12 +168,21 @@ function stubPath(workspace) {
 }
 
 /**
+ * Runs the CLI with the stub runners first on PATH.
+ *
+ * With `deadlineMs`, the CLI starts in its own process group. If it is still
+ * running at the deadline, the whole group is killed, so a test that expects
+ * the CLI to give up on a hanging child fails with `timedOut: true` instead
+ * of hanging, and leaves no stray child behind (#911). POSIX only, like the
+ * stub runners.
+ *
  * @param {{ work: string, log: string, bin: string }} workspace
  * @param {string[]} args
  * @param {Record<string, string>} [env]
- * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ * @param {{ deadlineMs?: number }} [options]
+ * @returns {Promise<{ code: number, stdout: string, stderr: string, timedOut: boolean }>}
  */
-function runCli(workspace, args, env = {}) {
+function runCli(workspace, args, env = {}, { deadlineMs } = {}) {
   const childEnv = {
     ...process.env,
     NO_COLOR: "1",
@@ -185,22 +194,34 @@ function runCli(workspace, args, env = {}) {
   // A VP_CLI_BIN from the developer's shell would hide whether Calavera sets one.
   delete childEnv.VP_CLI_BIN;
 
-  return new Promise((resolvePromise) => {
-    execFile(
-      process.execPath,
-      [binPath, ...args],
-      {
-        cwd: workspace.work,
-        env: childEnv,
-      },
-      (error, stdout, stderr) => {
-        resolvePromise({
-          code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
-          stdout,
-          stderr,
-        });
-      },
-    );
+  return new Promise((resolvePromise, rejectPromise) => {
+    const child = spawn(process.execPath, [binPath, ...args], {
+      cwd: workspace.work,
+      env: childEnv,
+      detached: deadlineMs !== undefined,
+      // stdin stays an open pipe, as execFile left it, so no test sees an early end of input.
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let stdout = "";
+    let stderr = "";
+    let timedOut = false;
+    child.stdout.setEncoding("utf8").on("data", (chunk) => (stdout += chunk));
+    child.stderr.setEncoding("utf8").on("data", (chunk) => (stderr += chunk));
+
+    const deadline =
+      deadlineMs === undefined
+        ? undefined
+        : setTimeout(() => {
+            timedOut = true;
+            // The negative pid names the process group: the CLI and every child it started.
+            process.kill(-child.pid, "SIGKILL");
+          }, deadlineMs);
+
+    child.on("error", rejectPromise);
+    child.on("close", (code) => {
+      clearTimeout(deadline);
+      resolvePromise({ code: code ?? 1, stdout, stderr, timedOut });
+    });
   });
 }
 
@@ -586,7 +607,10 @@ async function failedYarnRun(env) {
     workspace,
     ["--yes", "--package-manager", "yarn", "--new", "vite:library"],
     { STUB_MODE: "fail", ...env },
+    // Generous next to the CLI's own timeout, so only a CLI that never gives up reaches it.
+    { deadlineMs: YARN_VERSION_TIMEOUT_MS + 10_000 },
   );
+  assert.equal(result.timedOut, false, "the CLI was still waiting at the test deadline");
   const versionLog = await readFile(`${workspace.log}.version`, "utf8").catch(() => "");
   const versionCwds = versionLog
     .split("\n")
@@ -653,7 +677,6 @@ test("--new closes stdin for yarn --version, so a yarn waiting for input cannot 
 });
 
 test("--new stops waiting for a yarn --version that hangs and still reports the runner failure", async () => {
-  const started = Date.now();
   const { result } = await failedYarnRun({ STUB_VERSION_MODE: "hang" });
 
   assert.equal(result.code, 1);
@@ -664,7 +687,6 @@ test("--new stops waiting for a yarn --version that hangs and still reports the 
     result.stderr,
     /could not read the Yarn version: Command timed out after 5000 milliseconds/,
   );
-  assert.ok(Date.now() - started < YARN_VERSION_TIMEOUT_MS + 10_000);
 });
 
 // In-process, so mutation testing sees the version parsing (#911). Only a full
