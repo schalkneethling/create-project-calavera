@@ -1,8 +1,8 @@
 # ADR-0010: `--new` Delegates Project Scaffolding to `vp create`
 
-- **Status:** Accepted (2026-09-28, merged in #531); amendment to Decisions 1, 4, and 5 proposed 2026-10-21 (#688) and accepted 2026-10-23 (implementation issue #758)
+- **Status:** Accepted (2026-09-28, merged in #531); amendment to Decisions 1, 4, and 5 proposed 2026-10-21 (#688) and accepted 2026-10-23 (implementation issue #758); amendment to Decision 1 on how the runner is chosen, decided by the owner on 2026-11-13 (#676, implementation issue #909)
 - **Date:** 2026-09-27
-- **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/442; amendment https://github.com/schalkneethling/create-project-calavera/issues/688
+- **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/442; amendments https://github.com/schalkneethling/create-project-calavera/issues/688 and https://github.com/schalkneethling/create-project-calavera/issues/676
 - **Decides:** how Calavera starts a project that does not exist yet. `--new` confirms, spawns `vp create` through a package-manager runner with inherited stdio, and continues into what `--init` does today only when the child exits zero and ADR-0001 detection reports `managed` on the scaffolded directory. Calavera writes no JavaScript or TypeScript scaffolding itself, and nothing in C8 changes.
 
 ## Context
@@ -51,6 +51,8 @@ Calavera always runs `vp create` through a package-manager runner that names the
 The npm and Bun rows are replaced by the 2026-10-21 amendment ("Amendment: `create-vite-plus` for the npm and Bun Runners" below). The pnpm and Yarn rows stand.
 
 The runner is chosen from Calavera's own `--package-manager` when it is given, and is npm otherwise, matching the `?? "npm"` fallback `agentBootstrap` already applies when no manifest names a package manager. There is nothing to detect in a directory that has no manifest yet. The runner only fetches and starts vite-plus; the project's package manager is a question Vite+ asks, or that a forwarded `vp create --package-manager` answers (from Vite+ 1.3.0, Vite+ uses the runner's package manager instead of asking; see the amendment), and the `--init` step that follows detects it from the scaffolded manifest as it does today.
+
+The 2026-11-13 amendment ("Amendment: The Launching Package Manager Chooses the Runner" below) replaces the npm fallback in the paragraph above: without `--package-manager`, the package manager that launched Calavera chooses the runner, and npm is the fallback only when that cannot be read.
 
 The runner is chosen over putting a bin directory on `PATH` because the `PATH` alternative requires Calavera to install vite-plus somewhere first and then locate its bin directory, which is the job a runner exists to do. A runner that executes a package bin is expected to expose that package's bins to the process it starts, and that is what the bare `"vp"` re-invocation needs. Setting `VP_CLI_BIN` is rejected for the same reason ADR-0001 rejected the `vite-plus-core` pin as a primary signal: it is an internal name Vite+ has not promised to keep. A globally installed `vp` is not preferred even when one is on `PATH`, because its version is whatever the machine happens to hold, and the spawn has to behave the same on every machine.
 
@@ -162,7 +164,7 @@ The runner table in Decision 1 becomes:
 | Yarn                   | `yarn dlx --package vite-plus vp create <forwarded>` |
 | Bun                    | `bunx create-vite-plus@latest <forwarded>`           |
 
-How the runner is chosen does not change: Calavera's own `--package-manager` when it is given, and npm otherwise. Issue #676 still decides whether the launching package manager should choose it instead.
+How the runner is chosen does not change: Calavera's own `--package-manager` when it is given, and npm otherwise. Issue #676 still decides whether the launching package manager should choose it instead. (The 2026-11-13 amendment below records that decision.)
 
 npm and Bun use `create-vite-plus` because it is Vite+'s own entry point and it passed with every project package manager. For npm it also removes the first cause of #670. pnpm and Yarn keep today's shape because `create-vite-plus` fails through `dlx` on a machine without a global `vp`, and Decision 1 forbids working around that with `VP_CLI_BIN` or a hand-built `PATH`. They move to `create-vite-plus` in their own issue once a Vite+ release fixes voidzero-dev/vite-plus#3177 and passes the same probe.
 
@@ -216,6 +218,55 @@ Four findings follow:
 - **Bun forwards Vite+'s flags.** Through `bunx create-vite-plus@latest`, `--no-git`, `--no-hooks`, and a template `--` reached Vite+. A forwarded `--no-install` also reached Vite+, which rejects it because `vp create` has no such option; Decision 2 already states that the install cannot be skipped.
 - **The remaining exit 127 cause has a workaround.** The pnpm runner completed with `npm_config_package` inherited, because Vite+ then chose pnpm and did not start `npx`. This is the workaround the npm exit 127 hint names for #689.
 - **pnpm can follow.** `pnpm create vite-plus@1.4.0` also passed with no `vp` on `PATH`, which is the first half of the #740 probe; Yarn was not run.
+
+## Amendment: The Launching Package Manager Chooses the Runner
+
+**Status:** Accepted (decided by the project owner on 2026-11-13 in #676, implementation issue #909). It amends Decision 1, the rule that chooses the runner when Calavera's own `--package-manager` is not given. The runner table, Decisions 2 to 7, and the 2026-10-21 amendment are unchanged.
+
+### Why Decision 1 is reopened
+
+Decision 1 chose npm whenever no `--package-manager` comes before `--new`. At the time, the runner only fetched and started vite-plus, and Vite+ asked for the project's package manager. Since Vite+ 1.3.0, the runner's package manager also becomes the project's package manager when `--package-manager` is not forwarded and no surrounding workspace names one (the 2026-10-21 amendment, second finding; Vite+ ranks a forwarded `--package-manager` first, then the package manager of a workspace it detects, then the launcher). So outside a workspace, `pnpm create project-calavera --new` produces an npm project, which is the opposite of what someone who started with pnpm expects. #676 observed this on 2026-10-09, before Vite+ 1.3.0 made the consequence permanent.
+
+#676 weighed two options: keep npm and state it in the confirmation, or read the launching package manager from `npm_config_user_agent`. The second depends on an environment variable Calavera does not control, which the project principles ask to avoid. The first leaves the surprise in place and only explains it.
+
+### Evidence
+
+All runs took place on 2026-11-13 on macOS with Node.js 26.13.1, npm 11.20.0, pnpm 12.9.1, Yarn 1.22.22 (Yarn classic, the only Yarn installed), and Bun 1.3.9. A stand-in package printed `process.env.npm_config_user_agent` from a script and from its bin.
+
+| How the stand-in was started               | `npm_config_user_agent`                                   |
+| ------------------------------------------ | --------------------------------------------------------- |
+| `npm run probe`                            | `npm/11.20.0 node/v26.13.1 darwin arm64 workspaces/false` |
+| `npm exec --package <tarball> -- ua-probe` | `npm/11.20.0 node/v26.13.1 darwin arm64 workspaces/false` |
+| `pnpm run probe`                           | `pnpm/12.9.1 npm/? node/? darwin arm64`                   |
+| `pnpm dlx --package <tarball> ua-probe`    | `pnpm/12.9.1 npm/? node/? darwin arm64`                   |
+| `yarn run probe`                           | `yarn/1.22.22 npm/? node/v26.13.1 darwin arm64`           |
+| `bun run probe`                            | `bun/1.3.9 npm/? node/v24.3.0 darwin arm64`               |
+| `bunx --package <tarball> ua-probe`        | `bun/1.3.9 npm/? node/v24.3.0 darwin arm64`               |
+| `node probe.js`, with no package manager   | not set                                                   |
+
+Further checks:
+
+- **The `create` launchers were not probed.** The table assumes that `npm create`, `pnpm create`, and `bun create` set the same value as `npm exec`, `pnpm dlx`, and `bunx`, which they run Calavera through. No `create` command was run, so that is an assumption, not a measurement.
+- **Yarn 2 or later was not probed.** Only Yarn 1 was installed, and fetching Yarn 4 for a probe was not permitted in this session. The rule below therefore assumes that Yarn 2 or later starts its value with `yarn/<version>`, as Yarn 1 does. #909 must confirm this with one run under Yarn 2 or later before it merges; if the value has another shape, the Yarn part of the rule returns here.
+- **Yarn 1 has no `dlx`.** `yarn dlx --package <tarball> ua-probe` under Yarn 1.22.22 treated `dlx` as a script name and exited 1 with `Couldn't find a package.json file`. The Yarn row of the runner table therefore works only with Yarn 2 or later, which `docs/agent-first-calavera-workflow.md` already states.
+- **Vite+ reads the same variable.** vite-plus 1.5.0 picks the package manager for a new project in `detectLauncherPackageManager` (`vite-plus/dist/create/bin.js`), which takes the text before the first `/` of `npm_config_user_agent` and keeps it only when it names a package manager Vite+ supports. The 2026-10-21 finding that Vite+ uses the runner's package manager is this function at work.
+
+### Decision
+
+When Calavera's own `--package-manager` is given before `--new`, it chooses the runner, as before. Otherwise the runner is the package manager named by `npm_config_user_agent`, read as the text before the first `/`, when that is `npm`, `pnpm`, or `bun`, or `yarn` with a major version of 2 or later. In every other case the runner is npm: when the variable is unset or empty, when it names another program, and when it names Yarn 1.
+
+This follows the launcher because, outside a workspace, the runner's package manager is now the project's package manager, so a runner Calavera picks on its own decides the project for the user. The dependency on `npm_config_user_agent` is accepted for three reasons. First, npm, pnpm, Yarn 1, and Bun set it for the processes they start, as the table above shows, and Yarn 2 or later is expected to as well, pending the check in #909. Second, Vite+ already relies on the same variable for the same decision one process further down. Third, the npm fallback keeps the result defined when the variable is missing or unexpected, so Calavera never fails because of it.
+
+Yarn 1 falls back to npm instead of failing, because the runner table has no command that works under Yarn 1. That user gets an npm project unless they forward `--package-manager` after `--new`, which is today's behavior for every launcher, and the confirmation states which package manager Vite+ will use.
+
+Calavera still does not add `--package-manager` to the forwarded arguments (Decision 5). The confirmation and the `--dry-run` output already name the runner command and the package manager Vite+ will use, so they need no new line; they now show the launcher's package manager instead of npm.
+
+### Consequences of the amendment
+
+- #909 changes `newProject` (`packages/cli/src/index.js`), which today chooses the runner with `options.packageManager ?? "npm"`. Its tests set `npm_config_user_agent` to each value in the table above, to a Yarn 2 or later value, to unset, to empty, and to an unrecognized name, and they check that an explicit `--package-manager` wins over the variable. No test needs a package manager or network access. The Yarn 2 or later test value is a stand-in until the one manual run under Yarn 2 or later that #909 records replaces it with a measured value.
+- #909 updates the paragraph in `docs/agent-first-calavera-workflow.md` that says Calavera uses npm when no `--package-manager` is given.
+- Starting Calavera with `npx --package create-project-calavera` reports npm, so the runner stays npm and #689 is unchanged. The known-issue advice to choose another runner with `--package-manager` before `--new` still applies.
+- An explicit `--package-manager yarn` under Yarn 1 still fails at `yarn dlx`. This amendment does not change it.
 
 ## Consequences
 
