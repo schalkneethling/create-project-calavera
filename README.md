@@ -53,7 +53,7 @@ commands for it. It does not apply the recipe.
 3. Choose exactly one project-local MCP host when prompted: Claude Code, Codex,
    Cursor, OpenCode, or skip/manual.
 4. Restart or reload the agent session if your MCP host does not discover new tools dynamically.
-5. Confirm the Calavera MCP tools are exposed: `inspect_project`, `list_profiles`, `list_integrations`, `list_ai_artifacts`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
+5. Confirm the Calavera MCP tools are exposed: `inspect_project`, `list_profiles`, `list_integrations`, `describe_integration`, `list_ai_artifacts`, `list_baseline_targets`, `describe_baseline_target`, `search_baseline_features`, `recommend_baseline_target`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
 6. Start the agent from the project root.
 7. Agent prompt: `Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, validate and explain it, show me the dry-run result, and apply it only after I approve.`
 
