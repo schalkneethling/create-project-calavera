@@ -79,10 +79,13 @@ import {
   optionalStringArray,
 } from "./state.js";
 import {
+  declaredManagedFiles,
   HTML_VALIDATE_WRAPPER_PATH,
   integrationConfigFiles,
+  managedFileDeclarations,
   packageManagerLockfiles,
   projectInspectionFiles,
+  STRYKER_CONFIG_PATH,
 } from "./project-inspection.js";
 import {
   assertKnownProfile,
@@ -319,7 +322,6 @@ const AGENT_BOOTSTRAP_NEXT_PROMPT =
 const AGENT_BOOTSTRAP_MCP_NOTES_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
-const STRYKER_CONFIG_PATH = "stryker.config.json";
 // A file that does not exist, so Stryker skips its tsconfig preprocessing (createStrykerConfig).
 const STRYKER_SKIPPED_TSCONFIG = "stryker-skips-tsconfig-preprocessing.json";
 // The arguments the tap runner passes to node for each test file: the tap reporter, which the
@@ -2313,68 +2315,78 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState, 
 }
 
 /**
+ * The text of each integration's managed files, by path. Which files exist, and the order apply
+ * writes them in, come from `managedFileDeclarations` in project-inspection.js (#458).
+ *
+ * @type {Record<string, (integration: Integration, integrations: Integration[], integrationOptions: Record<string, unknown>) => Record<string, string>>}
+ */
+const managedFileContents = {
+  editorconfig: () => ({ ".editorconfig": createEditorConfig() }),
+  stylelint: (_integration, integrations, integrationOptions) => ({
+    ".stylelintrc.json": `${JSON.stringify(createStylelintConfig(integrations, integrationOptions), null, 2)}\n`,
+  }),
+  "html-validate": (_integration, integrations) => ({
+    ".htmlvalidate.json": `${JSON.stringify(createHtmlValidateConfig(integrations), null, 2)}\n`,
+    [HTML_VALIDATE_IGNORE_PATH]: htmlValidateIgnoreText(integrations),
+    [HTML_VALIDATE_WRAPPER_PATH]: createHtmlValidateWrapper(),
+  }),
+  "react-doctor": () => ({
+    "react-doctor.config.json": `${JSON.stringify(createReactDoctorConfig(), null, 2)}\n`,
+  }),
+  knip: () => ({ "knip.json": `${JSON.stringify(createKnipConfig(), null, 2)}\n` }),
+  stryker: (stryker, _integrations, integrationOptions) => {
+    const runner = /** @type {import("./stryker-options.js").SelectedTestRunner} */ (
+      selectedTestRunner(stryker, integrationOptions)
+    );
+    return {
+      [STRYKER_CONFIG_PATH]: `${JSON.stringify(createStrykerConfig(runner), null, 2)}\n`,
+    };
+  },
+  [GITHUB_REPOSITORY_CONTROLS_ID]: (_integration, integrations, integrationOptions) =>
+    Object.fromEntries(
+      githubRepositoryControlManagedFiles(
+        integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID],
+        integrations,
+      ).map(({ path, contents }) => [path, contents]),
+    ),
+};
+
+/**
  * @param {Integration[]} integrations
  * @param {Record<string, unknown>} [integrationOptions]
  * @returns {{ path: string, contents: string }[]}
  */
 function plannedManagedFiles(integrations, integrationOptions = {}) {
-  const plans = [];
+  return managedFileDeclarations.flatMap(({ integration: id, files }) => {
+    const integration = integrations.find((selected) => selected.id === id);
+    if (!integration) {
+      return [];
+    }
 
-  if (integrations.some((integration) => integration.id === "editorconfig")) {
-    plans.push({ path: ".editorconfig", contents: createEditorConfig() });
-  }
+    const createContents = managedFileContents[id];
+    if (!createContents) {
+      throw new Error(`Calavera declares managed files for ${id} but has no contents for them.`);
+    }
 
-  if (integrations.some((integration) => integration.id === "stylelint")) {
-    plans.push({
-      path: ".stylelintrc.json",
-      contents: `${JSON.stringify(createStylelintConfig(integrations, integrationOptions), null, 2)}\n`,
-    });
-  }
-
-  if (integrations.some((integration) => integration.id === "html-validate")) {
-    plans.push({
-      path: ".htmlvalidate.json",
-      contents: `${JSON.stringify(createHtmlValidateConfig(integrations), null, 2)}\n`,
-    });
-    plans.push({ path: HTML_VALIDATE_IGNORE_PATH, contents: htmlValidateIgnoreText(integrations) });
-    plans.push({ path: HTML_VALIDATE_WRAPPER_PATH, contents: createHtmlValidateWrapper() });
-  }
-
-  if (integrations.some((integration) => integration.id === "react-doctor")) {
-    plans.push({
-      path: "react-doctor.config.json",
-      contents: `${JSON.stringify(createReactDoctorConfig(), null, 2)}\n`,
-    });
-  }
-
-  if (integrations.some((integration) => integration.id === "knip")) {
-    plans.push({
-      path: "knip.json",
-      contents: `${JSON.stringify(createKnipConfig(), null, 2)}\n`,
-    });
-  }
-
-  const stryker = integrations.find((integration) => integration.id === "stryker");
-  if (stryker) {
-    const runner = /** @type {import("./stryker-options.js").SelectedTestRunner} */ (
-      selectedTestRunner(stryker, integrationOptions)
+    const contentsByPath = createContents(integration, integrations, integrationOptions);
+    // A file with contents but no declaration would never be written, so it stops the plan.
+    const undeclared = Object.keys(contentsByPath).filter(
+      (path) => !files.some((file) => file.path === path),
     );
-    plans.push({
-      path: STRYKER_CONFIG_PATH,
-      contents: `${JSON.stringify(createStrykerConfig(runner), null, 2)}\n`,
+    if (undeclared.length > 0) {
+      throw new Error(
+        `Calavera has contents for ${undeclared.join(", ")} but does not declare them for ${id}.`,
+      );
+    }
+
+    return files.map(({ path }) => {
+      const contents = contentsByPath[path];
+      if (contents === undefined) {
+        throw new Error(`Calavera declares ${path} for ${id} but has no contents for it.`);
+      }
+      return { path, contents };
     });
-  }
-
-  if (integrations.some((integration) => integration.id === GITHUB_REPOSITORY_CONTROLS_ID)) {
-    plans.push(
-      ...githubRepositoryControlManagedFiles(
-        integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID],
-        integrations,
-      ),
-    );
-  }
-
-  return plans;
+  });
 }
 
 /**
@@ -3214,7 +3226,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     ...(omittedQualitySteps.length > 0 ? { omittedQualitySteps } : {}),
   });
 
-  // plannedManagedFiles lists every managed file in the order apply writes it.
+  // managedFileDeclarations in project-inspection.js sets which managed files apply writes, in order.
   for (const plan of managedFilePlans) {
     managedFiles.push(
       await writeManagedFile(
@@ -5020,28 +5032,9 @@ async function doctor(options) {
     const recipe = await readRecipe(options.config);
     const integrations = resolveRecipeIntegrations(recipe);
     const aiArtifacts = resolveAiArtifacts(recipe);
-    const expectedFiles = [
-      integrations.some((integration) => integration.id === "editorconfig")
-        ? ".editorconfig"
-        : null,
-      integrations.some((integration) => integration.id === "stylelint")
-        ? ".stylelintrc.json"
-        : null,
-      integrations.some((integration) => integration.id === "html-validate")
-        ? ".htmlvalidate.json"
-        : null,
-      integrations.some((integration) => integration.id === "html-validate")
-        ? ".htmlvalidateignore"
-        : null,
-      integrations.some((integration) => integration.id === "html-validate")
-        ? HTML_VALIDATE_WRAPPER_PATH
-        : null,
-      integrations.some((integration) => integration.id === "react-doctor")
-        ? "react-doctor.config.json"
-        : null,
-      integrations.some((integration) => integration.id === "knip") ? "knip.json" : null,
-      integrations.some((integration) => integration.id === "stryker") ? STRYKER_CONFIG_PATH : null,
-    ].filter(isNotEmptyString);
+    const expectedFiles = declaredManagedFiles(integrations.map(({ id }) => id))
+      .filter(({ checkedByDoctor }) => checkedByDoctor !== false)
+      .map(({ path }) => path);
 
     for (const file of expectedFiles) {
       if (!(await fileExists(file))) {
