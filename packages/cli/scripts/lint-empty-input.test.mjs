@@ -134,7 +134,17 @@ test("the html-validate quality option leaves lint:html out of quality and keeps
     const scripts = await packageScripts();
     const packageChange = result.changes.find(({ path }) => path === "package.json");
 
-    assert.equal(scripts.quality, "npm run lint:styles");
+    // With lint:html left out, quality would only run lint:styles, so it is not
+    // generated as an alias of that script (#230).
+    assert.equal(Object.hasOwn(scripts, "quality"), false);
+    assert.deepEqual(
+      packageChange.omittedScripts.find(({ script }) => script === "quality"),
+      {
+        script: "quality",
+        reason:
+          'quality was requested, but it would only run "npm run lint:styles", so Calavera does not generate quality as an alias of that script.',
+      },
+    );
     assert.equal(scripts["lint:html"], lintHtml);
     assert.deepEqual(packageChange.omittedQualitySteps, [
       {
@@ -165,7 +175,7 @@ test("a second apply and dry run keep both settings and report nothing to change
     assert.ok(reapplied.changes.every(({ type }) => type === "unchanged"));
     assert.deepEqual(reapplied.scriptChanges, []);
     assert.deepEqual(await packageScripts(), firstScripts);
-    assert.equal(firstScripts.quality, "npm run lint:styles");
+    assert.equal(Object.hasOwn(firstScripts, "quality"), false);
     assert.equal(firstScripts["lint:styles"], lintStyles);
 
     // The CLI reads the recipe that the first apply wrote to calavera.config.json.
@@ -211,7 +221,9 @@ test("a dry run on a project an earlier release applied shows each changed lint 
         'Would change script lint:styles from "stylelint \\"**/*.{css,scss}\\"" to "stylelint \\"**/*.{css,scss}\\" --allow-empty-input"',
         'Would change script lint:styles:fix from "stylelint \\"**/*.{css,scss}\\" --fix" to "stylelint \\"**/*.{css,scss}\\" --allow-empty-input --fix"',
         'Would change script lint:html from "html-validate \\"**/*.html\\"" to "node scripts/lint-html.mjs \\"**/*.html\\""',
-        'Would change script quality from "npm run lint:styles && npm run lint:html" to "npm run lint:styles"',
+        // The value quality had before the html-validate quality option is one
+        // Calavera wrote, and quality would now only alias lint:styles (#230).
+        'Would remove script quality: "npm run lint:styles && npm run lint:html"',
       ]) {
         assert.ok(
           lines.some((line) => line.endsWith(expected)),

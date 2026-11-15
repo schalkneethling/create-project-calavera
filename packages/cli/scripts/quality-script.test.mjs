@@ -169,6 +169,122 @@ test("a managed project with no Calavera script to aggregate gets no quality scr
   );
 });
 
+// Issue #230: in a project Vite+ does not manage, a quality script that would
+// run one Calavera script is only an alias of that script, so it is not
+// generated, and the omission names the script to run instead.
+/** @param {string} value */
+const singleCheckOmission = (value) =>
+  `quality was requested, but it would only run "${value}", so Calavera does not generate quality as an alias of that script.`;
+
+for (const { integration, script } of optionalScripts) {
+  test(`an unmanaged project with only ${integration} gets no quality alias of ${script}`, async () => {
+    const recipe = buildRecipe("default", [integration], "npm");
+    const change = await plannedPackageChange({ "package.json": unmanagedManifest }, recipe);
+
+    assert.equal(change.scripts.includes("quality"), false, JSON.stringify(change.scripts));
+    assert.ok(change.scripts.includes(script), JSON.stringify(change.scripts));
+    assert.deepEqual(
+      change.omittedScripts.find((omission) => omission.script === "quality"),
+      { script: "quality", reason: singleCheckOmission(`npm run ${script}`) },
+    );
+
+    const scripts = await appliedScripts({ "package.json": unmanagedManifest }, [integration]);
+    assert.equal(Object.hasOwn(scripts, "quality"), false);
+  });
+}
+
+test("an unmanaged project with two checks still gets a quality script that runs both", async () => {
+  const scripts = await appliedScripts({ "package.json": unmanagedManifest }, [
+    "stylelint",
+    "knip",
+  ]);
+
+  assert.equal(scripts.quality, "npm run lint:styles && npm run knip");
+});
+
+test("a managed project with one check still gets quality, which runs the Vite+ checks first", async () => {
+  const scripts = await appliedScripts({ "package.json": managedManifest() }, ["knip"]);
+
+  assert.equal(scripts.quality, "vp check && vp test --passWithNoTests && npm run knip");
+});
+
+test("an unmanaged project whose only check left in quality is knip, with lint:html left out, gets no quality alias", async () => {
+  const recipe = buildRecipe("default", ["knip", "html-validate"], "npm", [], {
+    "html-validate": { quality: false },
+  });
+  const change = await plannedPackageChange({ "package.json": unmanagedManifest }, recipe);
+
+  assert.equal(change.scripts.includes("quality"), false, JSON.stringify(change.scripts));
+  assert.deepEqual(
+    change.omittedScripts.find((omission) => omission.script === "quality"),
+    { script: "quality", reason: singleCheckOmission("npm run knip") },
+  );
+});
+
+const knipOnlyRecipe = buildRecipe("default", ["knip"], "npm");
+
+test("apply removes a quality alias an earlier release wrote, and a second apply changes nothing", async () => {
+  await using fixture = await createTemporaryFixture("quality", {
+    "package.json": `${JSON.stringify({ name: "earlier-alias", scripts: { knip: "knip", quality: "npm run knip" } }, null, 2)}\n`,
+  });
+  await writeVitePlusFormatter(fixture.root);
+
+  await inDirectory(fixture.root, async () => {
+    const dryRun = packageChange((await applyRecipeObject(knipOnlyRecipe, dryRunOptions)).changes);
+    assert.equal(dryRun.removedQualityScript, "npm run knip");
+    assert.equal(
+      JSON.parse(await readFile("package.json", "utf8")).scripts.quality,
+      "npm run knip",
+    );
+
+    const applied = packageChange((await applyRecipeObject(knipOnlyRecipe, applyOptions)).changes);
+    assert.equal(applied.removedQualityScript, "npm run knip");
+    const scripts = JSON.parse(await readFile("package.json", "utf8")).scripts;
+    assert.equal(Object.hasOwn(scripts, "quality"), false);
+    assert.equal(scripts.knip, "knip");
+
+    const reapplied = await applyRecipeObject(knipOnlyRecipe, applyOptions);
+    assert.ok(
+      reapplied.changes.every(({ type }) => type === "unchanged"),
+      JSON.stringify(reapplied.changes),
+    );
+  });
+});
+
+test("apply removes a quality alias of lint, the Stylelint script's name before the rename, which quality would otherwise leave running a renamed script", async () => {
+  const change = await plannedPackageChange(
+    {
+      "package.json": `${JSON.stringify({ name: "earlier-lint-alias", scripts: { lint: earlierStylelintLint, quality: "npm run lint" } }, null, 2)}\n`,
+    },
+    buildRecipe("default", ["stylelint"], "npm"),
+  );
+
+  assert.equal(change.scripts.includes("quality"), false, JSON.stringify(change.scripts));
+  assert.equal(change.removedQualityScript, "npm run lint");
+});
+
+test("apply keeps a quality of the user's own when quality would be an alias, and says so", async () => {
+  const userQuality = "npm run knip && npm test";
+  await using fixture = await createTemporaryFixture("quality", {
+    "package.json": `${JSON.stringify({ name: "user-quality", scripts: { quality: userQuality } }, null, 2)}\n`,
+  });
+  await writeVitePlusFormatter(fixture.root);
+
+  await inDirectory(fixture.root, async () => {
+    const applied = packageChange((await applyRecipeObject(knipOnlyRecipe, applyOptions)).changes);
+
+    assert.equal(applied.removedQualityScript, undefined);
+    assert.deepEqual(
+      applied.omittedScripts.find((omission) => omission.script === "quality"),
+      {
+        script: "quality",
+        reason: `${singleCheckOmission("npm run knip")} package.json keeps its quality script, "${userQuality}", because Calavera did not write that value.`,
+      },
+    );
+    assert.equal(JSON.parse(await readFile("package.json", "utf8")).scripts.quality, userQuality);
+  });
+});
+
 const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
 const memberWithTest = json({ name: "member", scripts: { test: "vp test" } });
 const memberWithoutTest = json({ name: "member" });

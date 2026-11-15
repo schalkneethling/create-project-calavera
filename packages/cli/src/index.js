@@ -1617,23 +1617,52 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
 
   if (recipe.scripts?.quality) {
     const htmlInQuality = recipe.integrationOptions?.["html-validate"]?.quality !== false;
-    const qualityScripts = [
+    // Every generated script quality can run, before the html-validate quality option applies.
+    const qualityCandidates = [
       "lint:styles",
-      usesHtmlValidate && htmlInQuality ? "lint:html" : null,
+      usesHtmlValidate ? "lint:html" : null,
       usesKnip ? "knip" : null,
       usesReactDoctor ? "react:doctor" : null,
       usesVarlock ? "env:load" : null,
     ]
       .filter(isNotEmptyString)
       .filter((script) => Boolean(scripts[script]));
+    const qualityScripts = qualityCandidates.filter(
+      (script) => htmlInQuality || script !== "lint:html",
+    );
 
     const run = packageManagerCommands[supportedPackageManager].run;
     const htmlLeftOut = usesHtmlValidate && !htmlInQuality;
 
+    const qualitySteps = [...vitePlusQuality.steps, ...qualityScripts.map(run)];
+
     // Without a Calavera script to aggregate, quality would only repeat Vite+
-    // commands, so it is omitted as before (ADR-0013).
-    if (qualityScripts.length > 0) {
-      scripts.quality = [...vitePlusQuality.steps, ...qualityScripts.map(run)].join(" && ");
+    // commands, so it is omitted as before (ADR-0013). With a single step,
+    // quality would only be an alias of that one script, so it is omitted too
+    // (#230).
+    if (qualityScripts.length > 0 && qualitySteps.length === 1) {
+      const [alias] = qualitySteps;
+      omittedScripts.push({
+        script: "quality",
+        reason: `quality was requested, but it would only run ${quoteScriptValue(alias)}, so Calavera does not generate quality as an alias of that script.`,
+      });
+      // The values a release before #230 wrote for this recipe, so apply removes
+      // them instead of leaving a quality that runs a renamed script: the alias,
+      // the value with lint:html before the html-validate quality option, and
+      // each of those with lint, the Stylelint script's name before ADR-0013.
+      /** @param {string[]} names */
+      const withEarlierLintName = (names) =>
+        names.map((name) => (name === "lint:styles" ? "lint" : name));
+      const earlierLists = htmlLeftOut ? [qualityScripts, qualityCandidates] : [qualityScripts];
+      staleQualityValues.push(
+        ...new Set(
+          earlierLists
+            .flatMap((names) => [names, withEarlierLintName(names)])
+            .map((names) => names.map(run).join(" && ")),
+        ),
+      );
+    } else if (qualityScripts.length > 0) {
+      scripts.quality = qualitySteps.join(" && ");
       omittedQualitySteps.push(...vitePlusQuality.omittedSteps);
     } else if (htmlLeftOut) {
       omittedScripts.push({

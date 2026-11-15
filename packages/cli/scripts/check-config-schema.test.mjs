@@ -2612,7 +2612,8 @@ test("Knip is managed across apply, doctor, local-edit protection, and clean", a
 
     const packageFile = JSON.parse(await readFile("package.json", "utf8"));
     assert.equal(packageFile.scripts.knip, "knip");
-    assert.equal(packageFile.scripts.quality, "npm run knip");
+    // A quality that would only run this one script is not generated (#230).
+    assert.equal(Object.hasOwn(packageFile.scripts, "quality"), false);
     assert.deepEqual(JSON.parse(await readFile("knip.json", "utf8")), {
       $schema: "https://unpkg.com/knip@6/schema.json",
       ignore: [".agents/**"],
@@ -2918,7 +2919,8 @@ test("HTML validation is managed across dry-run, MCP, apply, doctor, and clean",
 
     const packageFile = JSON.parse(await readFile("package.json", "utf8"));
     assert.equal(packageFile.scripts["lint:html"], 'node scripts/lint-html.mjs "**/*.html"');
-    assert.equal(packageFile.scripts.quality, "npm run lint:html");
+    // A quality that would only run this one script is not generated (#230).
+    assert.equal(Object.hasOwn(packageFile.scripts, "quality"), false);
 
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
     assert.deepEqual(
@@ -3059,7 +3061,8 @@ APP_ENV=development
 
     const packageFile = JSON.parse(await readFile("package.json", "utf8"));
     assert.equal(packageFile.scripts["env:load"], "varlock load");
-    assert.equal(packageFile.scripts.quality, "npm run env:load");
+    // A quality that would only run this one script is not generated (#230).
+    assert.equal(Object.hasOwn(packageFile.scripts, "quality"), false);
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
     assert.equal(
       state.managedFiles.some(({ path }) => path === ".env.schema"),

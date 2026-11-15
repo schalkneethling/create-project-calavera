@@ -246,7 +246,13 @@ says so, for example
 
 A project Vite+ does not manage keeps a `quality` script without `vp`. No
 other generated script calls `vp`, so Calavera writes no script that repeats a
-`vp` command. Playwright and other test suites are not part of `quality`; add
+`vp` command. Such a project gets `quality` only when it runs two or more
+of Calavera's scripts. With only one, `quality` would only repeat that script,
+for example `npm run knip`, so Calavera does not generate it, and the dry run
+says so:
+`Would omit script quality: quality was requested, but it would only run "npm run knip", so Calavera does not generate quality as an alias of that script.`
+Apply removes a `quality` script whose value an earlier release wrote for that
+recipe, such as `npm run knip`, and keeps any other value as your own. Playwright and other test suites are not part of `quality`; add
 them to your own scripts.
 
 The Stylelint scripts are `lint:styles` and `lint:styles:fix`. A project Calavera

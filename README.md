@@ -776,7 +776,11 @@ In a project Vite+ manages, the generated `quality` script runs `vp check` and
 `vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip`. At a
 workspace root, the test step is `vp run -r test`, which runs each member's
 `test` script, and leaves the step out when no package defines `test`. Other
-projects keep a `quality` script without `vp`. Calavera writes no script that
+projects keep a `quality` script without `vp` when it runs two or more of
+Calavera's scripts. With only one, such as `npm run knip`, Calavera does not
+generate `quality`, because it would only repeat that script; apply removes
+such an alias that an earlier release wrote and keeps any other value as your
+own. Calavera writes no script that
 repeats a `vp` command on its own, and does not add Playwright or other test
 suites to `quality`. The Stylelint scripts are `lint:styles` and
 `lint:styles:fix`. In a project that has `.calavera/state.json` from an earlier
