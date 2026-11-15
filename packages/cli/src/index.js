@@ -209,7 +209,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus: VitePlusDetection }} ProjectInspection
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[], packageTestFindings?: ProjectInspectionFinding[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter. `packageTestFindings` holds the findings apply already planned with the package manager it resolved, so inspection reports them instead of planning them again.
- * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], staleQualityValues: string[] }} ScriptPlan staleQualityValues are quality values an earlier release wrote, which apply removes because the plan omits quality
+ * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], staleQualityValues: string[], aliasQualityValues: string[] }} ScriptPlan staleQualityValues are quality values an earlier release wrote, which apply removes because the plan omits quality; aliasQualityValues are the single-script aliases an earlier release wrote, which apply removes only when the state shows Calavera wrote the project's value (#230)
  * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
@@ -1535,16 +1535,9 @@ async function ensurePackageJSON(packageManager, dryRun, assumeYes, json) {
  * @param {Integration[]} integrations
  * @param {PackageManager} packageManager
  * @param {{ steps: string[], omittedSteps: QualityStepOmission[] }} vitePlusQuality the Vite+ commands `quality` runs first, and those left out, from `vitePlusQualitySteps`
- * @param {boolean} [previouslyApplied] whether `.calavera/state.json` exists, so an earlier release can have written the project's `quality`
  * @returns {ScriptPlan}
  */
-function buildScripts(
-  recipe,
-  integrations,
-  packageManager,
-  vitePlusQuality,
-  previouslyApplied = false,
-) {
+function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
   const supportedPackageManager = assertSupportedPackageManager(packageManager);
   /** @param {string} id */
   const has = (id) => integrations.some((integration) => integration.id === id);
@@ -1573,6 +1566,8 @@ function buildScripts(
   const omittedQualitySteps = [];
   /** @type {string[]} */
   const staleQualityValues = [];
+  /** @type {string[]} */
+  const aliasQualityValues = [];
 
   if (recipe.scripts?.lint && lintParts.length > 0) {
     scripts["lint:styles"] = lintParts.join(" && ");
@@ -1653,25 +1648,23 @@ function buildScripts(
         script: "quality",
         reason: `quality was requested, but it would only run ${quoteScriptValue(alias)}, so Calavera does not generate quality as an alias of that script.`,
       });
-      // After an earlier apply, the values a release before #230 wrote for this
-      // recipe are Calavera's, so apply removes them instead of leaving a quality
-      // that runs a renamed script: the alias, the value with lint:html before
-      // the html-validate quality option, and each of those with lint, the
-      // Stylelint script's name before ADR-0013. Before any apply, Calavera
-      // wrote no quality, so the project's own is kept.
-      if (previouslyApplied) {
-        /** @param {string[]} names */
-        const withEarlierLintName = (names) =>
-          names.map((name) => (name === "lint:styles" ? "lint" : name));
-        const earlierLists = htmlLeftOut ? [qualityScripts, qualityCandidates] : [qualityScripts];
-        staleQualityValues.push(
-          ...new Set(
-            earlierLists
-              .flatMap((names) => [names, withEarlierLintName(names)])
-              .map((names) => names.map(run).join(" && ")),
-          ),
-        );
-      }
+      // The values a release before #230 wrote for this recipe: the alias, the
+      // value with lint:html before the html-validate quality option, and each
+      // of those with lint, the Stylelint script's name before ADR-0013. Apply
+      // removes one only when the state shows Calavera wrote it
+      // (`stateShowsCalaveraWroteQuality`), so it does not leave a quality that
+      // runs a renamed script.
+      /** @param {string[]} names */
+      const withEarlierLintName = (names) =>
+        names.map((name) => (name === "lint:styles" ? "lint" : name));
+      const earlierLists = htmlLeftOut ? [qualityScripts, qualityCandidates] : [qualityScripts];
+      aliasQualityValues.push(
+        ...new Set(
+          earlierLists
+            .flatMap((names) => [names, withEarlierLintName(names)])
+            .map((names) => names.map(run).join(" && ")),
+        ),
+      );
     } else if (qualityScripts.length > 0) {
       scripts.quality = qualitySteps.join(" && ");
       omittedQualitySteps.push(...vitePlusQuality.omittedSteps);
@@ -1703,7 +1696,47 @@ function buildScripts(
     }
   }
 
-  return { scripts, omittedScripts, omittedQualitySteps, staleQualityValues };
+  return { scripts, omittedScripts, omittedQualitySteps, staleQualityValues, aliasQualityValues };
+}
+
+/**
+ * The integrations whose generated scripts quality can run, in `buildScripts`.
+ */
+const QUALITY_INTEGRATION_IDS = Object.freeze([
+  "stylelint",
+  "html-validate",
+  "knip",
+  "react-doctor",
+  "varlock",
+]);
+
+/**
+ * Whether the state shows that Calavera wrote the project's `quality` value
+ * (#230). A state file that records `qualityScript` shows it only when the
+ * recorded value is this value; once this release has applied, a value apply
+ * kept as the project's own is recorded as null and never removed. A state
+ * file from a release before #230 has no record, but those releases wrote
+ * quality on every apply, so it shows Calavera wrote the value when it records
+ * an apply of the same quality integrations the recipe selects.
+ *
+ * @param {CalaveraState} state
+ * @param {unknown} quality the project's `quality` value
+ * @param {string[]} integrationIds the recipe's integrations
+ * @returns {boolean}
+ */
+function stateShowsCalaveraWroteQuality(state, quality, integrationIds) {
+  if (typeof quality !== "string") {
+    return false;
+  }
+
+  if (state.qualityScript !== undefined) {
+    return state.qualityScript === quality;
+  }
+
+  /** @param {string[]} ids */
+  const qualityIds = (ids) => QUALITY_INTEGRATION_IDS.filter((id) => ids.includes(id)).join(" ");
+  const selected = qualityIds(integrationIds);
+  return selected !== "" && qualityIds(state.integrations) === selected;
 }
 
 function createHtmlValidateWrapper() {
@@ -3113,14 +3146,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     managedFilePlans,
     packageTestFindings: packageTestInspection,
   });
-  const scriptPlan = buildScripts(
-    recipe,
-    integrations,
-    packageManager,
-    vitePlusQuality,
-    previouslyApplied,
-  );
-  const { scripts, omittedScripts, omittedQualitySteps, staleQualityValues } = scriptPlan;
+  const scriptPlan = buildScripts(recipe, integrations, packageManager, vitePlusQuality);
+  const { scripts, omittedScripts, omittedQualitySteps, staleQualityValues, aliasQualityValues } =
+    scriptPlan;
   /** @type {Change[]} */
   const changes = [];
   /** @type {ManagedFileState[]} */
@@ -3128,7 +3156,13 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
   const removedQualityScript = removeStaleQualityScript(
     packageJSON,
-    staleQualityValues,
+    stateShowsCalaveraWroteQuality(
+      previousState,
+      packageJSON.scripts?.quality,
+      integrations.map(({ id }) => id),
+    )
+      ? [...staleQualityValues, ...aliasQualityValues]
+      : staleQualityValues,
     omittedScripts,
   );
   const usesVarlock = integrations.some(({ id }) => id === "varlock");
@@ -3334,6 +3368,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
         aiResult.artifacts,
         wiringPlan.records,
         gitignorePlan.records,
+        typeof scripts.quality === "string" ? scripts.quality : null,
       ),
       false,
     );
@@ -3404,6 +3439,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
  * @param {AiArtifactState[]} aiArtifacts The selected artifacts as apply installed them. The previous records of every other artifact are kept for clean.
  * @param {import("./ai/artifact-wiring.js").WiringRecord[]} aiWiring The wiring in the project after apply. It replaces the previous records, because apply removes the wiring of every artifact the recipe no longer selects, and a record of removed wiring would describe text the files no longer hold.
  * @param {import("./ignore-lines.js").IgnoreLines[]} gitignoreBlocks The integrations' .gitignore blocks after apply. They replace the previous records for the same reason as `aiWiring`.
+ * @param {string | null} qualityScript The value apply wrote to `quality`, or null when it wrote none, such as when it kept the project's own value (#230).
  * @returns {CalaveraState}
  */
 function mergeRecipeIntoState(
@@ -3414,6 +3450,7 @@ function mergeRecipeIntoState(
   aiArtifacts,
   aiWiring,
   gitignoreBlocks,
+  qualityScript,
 ) {
   const managedFilesByPath = new Map(
     managedFilesFromState(previousState).map((file) => [file.path, file]),
@@ -3444,6 +3481,7 @@ function mergeRecipeIntoState(
     aiArtifacts: nextAiArtifacts,
     aiWiring,
     gitignoreBlocks,
+    qualityScript,
   };
 }
 
