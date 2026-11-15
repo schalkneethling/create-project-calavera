@@ -1,7 +1,7 @@
 # Cross-Repo Sequencing Map: css-evolve and Calavera
 
 **Status:** Draft 1, 9 September 2026. Owner: Schalk Neethling. Both agents read this at the start of every session and update the status column when a handoff is delivered or consumed.
-**Revised:** 7 November 2026, when handoff H0 was delivered and Section 0 was reset for the next increment; 13 November 2026, when Section 0 recorded what 6.2.0 shipped and the owner's choice of issues for the next release.
+**Revised:** 7 November 2026, when handoff H0 was delivered and Section 0 was reset for the next increment; 13 November 2026, when Section 0 recorded what 6.2.0 shipped and the owner's choice of issues for the next release; 14 November 2026, when Section 0 recorded the `cli-experience` release's name, goal, exit condition, decisions, and waves.
 **Purpose:** One timeline with every point where one project delivers a frozen surface the other consumes, so neither agent starts work that is blocked and neither invents the other side's API.
 
 ---
@@ -10,22 +10,57 @@
 
 This section is the live plan. The briefs describe where the projects end up; this section says what is being worked now. It is rewritten at the end of each increment. Work only the current increment; anything else noticed becomes an issue.
 
-**The next increment is not fully defined yet.** Increment 1 ended when handoff H0 was delivered on 7 November 2026. The owner has chosen the issues for the next release, recorded under Issues; every other placeholder below reads "Owner to decide" and is filled in only by the owner.
+**Current increment: the `cli-experience` release.** Increment 1 ended when handoff H0 was delivered on 7 November 2026. The owner chose this release's issues on 2026-11-13, and its name, goal, and exit condition on 2026-11-14.
 
-**Name:** Owner to decide.
+**Name:** CLI experience.
 
-**Goal:** Owner to decide.
+**Goal:** From the first `--new` to removing Calavera, every command Calavera prints or documents runs as printed, and every summary it prints names each change once, grouped, so a person or an agent can act on it without rereading.
 
-**Exit condition:** Owner to decide.
+**Exit condition:** Every issue labeled `milestone: cli-experience` is closed or moved out by the owner, and one rehearsal on the release candidate, run by the automated rehearsal from #918, shows all of the following:
 
-**Issues:** The next release is the open issues labeled `milestone: cli-experience` (owner decision, 2026-11-13). That label is the list; this section does not copy it, so the two cannot drift apart. The facts below are listed so that the owner does not have to look them up; listing an issue here does not place it in the next release.
+1. `--new` launched through npm, pnpm, Yarn 2 or later, and Bun, and with Calavera itself started through `npx --package create-project-calavera`, produces a project that `inspect_project` reports as `managed`, through the runner that launcher implies (#909, #740, #689, #671).
+2. `--init`, `apply --dry-run`, `apply`, a second dry run that reports no change, and `clean --dry-run` each print every file, dependency, and artifact once, under headings, and their next-step commands work when pasted (#601, #602, #617, #331).
+3. After apply and a commit through the Vite+ pre-commit hook, `git status` is clean: the cache folder does not appear, the apply summary says why, and the state file is committed as apply wrote it (#838, #841).
+4. A Calavera older than the published `latest` prints the version notice (#675).
+5. The drift tests pass for the MCP tool list and the agent prompt (#839, #840).
 
-- Shipped in `create-project-calavera` 6.2.0 on 12 November 2026: the Stryker integration work (#733, #734, #735, #736, #880, and #890), #846 with #844 (the guard's `protectedBranch` and `github-repository-controls.defaultBranch` both default to the repository's default branch), and the list the owner approved on 2026-11-07 outside the increment plan (#829, #795 item 1, #830, #792, #790, #784, and #837).
-- #795 stays open for items 2 to 6 and for the pnpm workspace install failure reported in its comments.
-- #737 (remove the Stryker TypeScript 7 workaround) is blocked on a Stryker release that fixes stryker-mutator/stryker-js#6111.
-- The deferred decisions #673 and #676; the friction issues the readiness check filed that are still open, #838 to #843 (#843 is the only p1); and the blocked items #671 (waits on #689), #737, and #746 (waits on the adoption trigger recorded in #744). The label decides scope, so #676, #671, #689, and #838 to #841 are in the next release because they carry `milestone: cli-experience`; #676 still needs the owner's decision, and #671 cannot close until #689 does. #842 and #843 carry other milestone labels, so they are not in the next release.
+The owner asked on 2026-11-14 for the rehearsal to be automated, deterministic, and idempotent, so it can run more often than once per release (#918).
 
-**Explicitly not now:** Owner to decide.
+**Issues:** The release is the open issues labeled `milestone: cli-experience` (owner decision, 2026-11-13). That label is the list; this section does not copy it, so the two cannot drift apart.
+
+- Shipped in `create-project-calavera` 6.2.0 on 12 November 2026: the Stryker integration work (#733, #734, #735, #736, #880, and #890), #846 with #844, and the list the owner approved on 2026-11-07 outside the increment plan (#829, #795 item 1, #830, #792, #790, #784, and #837). #795 stays open for items 2 to 6 and for the pnpm workspace install failure reported in its comments.
+- #676 is decided ("follow the launcher") and recorded in the ADR-0010 amendment (#910). #909 implements it. #911 merged through #912.
+- #740 is no longer blocked: Vite+ 1.4.0 (23 October 2026) is the first release that contains voidzero-dev/vite-plus#3181. Recommendation, not an owner decision: run the #740 probe before #909 and include Yarn 1, because moving the Yarn runner to `yarn create vite-plus` may change what #909 needs for Yarn 1. Any Yarn 1 change that follows needs its own issue, because #911 is closed.
+- #671 waits on #689 only, because #688 is closed.
+
+**Owner decisions of 2026-11-14,** each recorded on its issue:
+
+- #689: remove `npm_config_package` and `npm_config_call` from the `vp create` child's environment only, and pass every other variable through unchanged. This does not reopen ADR-0010.
+- #603: for `apply --config <outside path>`, the project root is the current directory with a `package.json`; otherwise refuse and name the directory, with no offer to create `package.json` and no workspace-ancestor check. #430 covers a different entry point, the `dry_run_apply` choices when the inspected directory has no manifest, so the two rules must not be merged.
+- #617: one line per integration, with its package in parentheses only when the names differ; the full dependency list stays in `--json`.
+- #663: an environment variable turns on stack traces.
+- #838: write `.calavera/state.json` through the project's formatter.
+- #841: the cache is not committed; Calavera writes the ignore line in a marked `.gitignore` block, and the apply summary says so.
+- #678: the command is `eject`, and `package.json` scripts that call Calavera are reported, not removed. The ADR comes first.
+- #602: the agent prompt follows `cd`; only `apply --dry-run` and `apply` wait for a recipe.
+- #675: a CLI version notice, which needs a short ADR on its network behavior first.
+- #840: the README's prompt is the single source.
+- #247: split across the output issues, then closed with an inventory of what remains, or moved out.
+- #354: kept, in wave 5, the last work wave, as a document only.
+
+**Order of work** (planned with the owner on 2026-11-14; the owner chose one wave at a time)**:** six workstreams, grouped by the code they touch, because nearly every issue edits `packages/cli/src/index.js`. Within a workstream, issues run one after another; the workstreams run side by side. The owner chose to run one wave at a time: a wave ends when its pull requests merge, every open worktree rebases on `main`, and the owner hears the result before the next wave starts.
+
+| Wave | A. Runner | B. Output                                             | C. Footprint | D. Catalog, MCP, and Composer | E. Detection | F. Standalone |
+| ---- | --------- | ----------------------------------------------------- | ------------ | ----------------------------- | ------------ | ------------- |
+| 1    | #740      | #840                                                  | #458         | #839                          | #432         | #230, #918    |
+| 2    | #909      | #601                                                  | #841         | #228                          | #430         | #663          |
+| 3    | #689      | #602                                                  | #838         | #580                          | —            | #398          |
+| 4    | #671      | #617                                                  | #678 ADR     | #232                          | —            | #603          |
+| 5    | —         | #331, #675 (ADR first), then #247 closed or moved out | #678         | —                             | #431         | #354          |
+
+#918 starts in wave 1, because the exit rehearsal depends on it and it touches no CLI code. #232 follows #580 in column D because both change the Composer. When wave 5 has merged, the #918 rehearsal runs on the release candidate as the evidence for the exit condition, and the release follows.
+
+**Explicitly not now:** #914 (Lighthouse) and #915 (Mergiraf) go to a later release (owner decision, 2026-11-14). Issues without the label stay out, including #673, #737 (blocked on stryker-mutator/stryker-js#6111), #746, #842, and #843.
 
 **Increment 1 (closed) — Calavera becomes `vp`-aware and lean.** It started on 13 September 2026 and delivered H0 on 7 November 2026 with published `create-project-calavera` 6.1.0. The evidence is `docs/bootstrap-readiness-record.md`. The exit condition was: on a fresh `vp create` library monorepo, the Calavera agent-first flow from Claude Code (`inspect_project` → `compose_recipe` → `dry_run_apply` → `apply_recipe`) installs repository controls, governance and drift checks, EditorConfig, Knip, the selected Determinant gates, and the MCP registration, offers nothing Vite+ already provides, and a second `apply --dry-run` reports no drift.
 
