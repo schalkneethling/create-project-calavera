@@ -1,6 +1,8 @@
 // Issue #840: the repository README holds the one agent prompt that `--new` and `--init` print.
 // The published package ships its own short README, not this one, so the CLI keeps the text in a
-// constant and these tests compare what it prints with the README.
+// constant and these tests compare what it prints with the README. The README must keep the prompt
+// on one numbered line, "N. Agent prompt: " followed by the prompt in backticks, with no backtick inside the prompt; a change of
+// that format makes readmeAgentPrompt throw rather than pass.
 import { readFile } from "node:fs/promises";
 
 const REPOSITORY_ROOT = new URL("../../../", import.meta.url);

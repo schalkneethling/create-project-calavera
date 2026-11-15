@@ -102,7 +102,7 @@ test("agent bootstrap writes MCP-first guardrails", async () => {
     const agentsMd = await readFile("AGENTS.md", "utf8");
     const mcpNotes = await readFile(".agents/calavera/mcp.md", "utf8");
 
-    assert.match(result.nextPrompt, /First verify that the Calavera MCP tools are available/);
+    assert.equal(result.nextPrompt, await readmeAgentPrompt());
     assert.match(agentsMd, /Verify the Calavera MCP tools are available/);
     assert.match(agentsMd, /Do not inspect npm cache internals/);
     assert.match(mcpNotes, /Confirm the Calavera tools are visible before/);

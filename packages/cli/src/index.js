@@ -314,8 +314,8 @@ const AGENT_BOOTSTRAP_NEXT_PROMPT =
 // The suggested first prompt in `.agents/calavera/mcp.md`, which still predates the README text.
 // Changing it changes the file's text, which must then be registered in
 // src/utils/earlier-guidance.js under the release that writes it (#830). That release is not known
-// until its version pull request, so a follow-up issue moves this text onto
-// AGENT_BOOTSTRAP_NEXT_PROMPT then, together with both copies of the Calavera skill.
+// until its version pull request, so the follow-up named in the #840 pull request moves this text
+// onto AGENT_BOOTSTRAP_NEXT_PROMPT then, together with both copies of the Calavera skill.
 const AGENT_BOOTSTRAP_MCP_NOTES_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
