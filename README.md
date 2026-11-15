@@ -252,7 +252,10 @@ choice, because it lives in the recipe:
 When `lint:html` is the only script `quality` would run, Calavera does not
 generate `quality`. Apply removes a `quality` script whose value an earlier
 release wrote, such as `npm run lint:html`, and keeps any other value as your
-own. The dry run shows both.
+own. The dry run shows both. In a project Vite+ does not manage, Calavera also
+does not generate `quality` when one other script is left, because `quality`
+would only repeat it; see [Vite+ And Delta Workflows](#vite-and-delta-workflows) for what happens to an existing
+`quality` then.
 
 Validate the rendered HTML in your tests instead, with the `HtmlValidate` class
 from the [HTML Validate API](https://html-validate.org/dev/using-api.html), and
@@ -776,8 +779,17 @@ In a project Vite+ manages, the generated `quality` script runs `vp check` and
 `vp check && vp test --passWithNoTests && pnpm lint:styles && pnpm knip`. At a
 workspace root, the test step is `vp run -r test`, which runs each member's
 `test` script, and leaves the step out when no package defines `test`. Other
-projects keep a `quality` script without `vp`. Calavera writes no script that
-repeats a `vp` command on its own, and does not add Playwright or other test
+projects keep a `quality` script without `vp` when it runs two or more of
+Calavera's scripts. With only one, such as `npm run knip`, Calavera does not
+generate `quality`, because it would only repeat that script. Apply records
+the `quality` value it writes, or `null`, in `.calavera/state.json` as
+`qualityScript`. When it does not generate `quality`, it removes the existing
+`quality` if that record holds exactly the same value, because then Calavera
+wrote it. It keeps any other value, including one an earlier release wrote
+before this record existed, and the dry run says so; when the state file has
+no record and the value matches what an earlier release wrote for the recipe,
+the dry run names the match, so you can remove it. Calavera writes no script
+that repeats a `vp` command on its own, and does not add Playwright or other test
 suites to `quality`. The Stylelint scripts are `lint:styles` and
 `lint:styles:fix`. In a project that has `.calavera/state.json` from an earlier
 apply, a later apply renames a `lint` or `lint:fix` script whose value is

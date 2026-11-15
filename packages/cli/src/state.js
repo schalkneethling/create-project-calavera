@@ -30,6 +30,7 @@ const VITE_HOOK_NAMES = new Set(
  * @property {AiArtifactState[]} aiArtifacts
  * @property {WiringRecord[]} aiWiring The hook lines and settings groups apply wrote for each artifact (ADR-0015, Decision 5).
  * @property {IgnoreLines[]} gitignoreBlocks The lines apply wrote in each integration's .gitignore block (ADR-0016).
+ * @property {string | null} [qualityScript] The value apply last wrote to the package.json `quality` script, or null when it wrote none, so a later apply removes only a value it can show it wrote (#230). A state file from a release before #230 does not have it.
  */
 
 /**
@@ -44,6 +45,7 @@ export function createEmptyState() {
     aiArtifacts: [],
     aiWiring: [],
     gitignoreBlocks: [],
+    qualityScript: null,
   };
 }
 
@@ -213,7 +215,23 @@ export function normalizeState(rawState) {
     aiArtifacts: normalizeAiArtifacts(rawState.aiArtifacts),
     aiWiring: normalizeAiWiring(rawState.aiWiring),
     gitignoreBlocks: normalizeGitignoreBlocks(rawState.gitignoreBlocks),
+    // Absent stays absent: it marks a state file from a release before #230.
+    ...(rawState.qualityScript === undefined
+      ? {}
+      : { qualityScript: normalizeQualityScript(rawState.qualityScript) }),
   };
+}
+
+/**
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function normalizeQualityScript(value) {
+  if (value !== null && typeof value !== "string") {
+    throw new Error("Calavera state qualityScript must be a string or null.");
+  }
+
+  return value;
 }
 
 /**

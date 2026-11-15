@@ -1,0 +1,5 @@
+---
+"create-project-calavera": patch
+---
+
+In a project Vite+ does not manage, apply no longer generates a `quality` script that would only run one generated script, such as `"quality": "npm run knip"`, because it adds a script without adding a check. The dry run names the omission and the one script that `quality` would have run. Apply now records the `quality` value it writes, or `null`, in `.calavera/state.json` as `qualityScript`. When it does not generate `quality`, it removes the existing `quality` only if that record holds exactly the same value, so a `quality` it kept as the project's own, or that the user edited, is not removed by a later apply. It keeps any other value, including one that a release before this one wrote, because a state file without the record does not show who wrote it; the dry run says so and names a value that matches what such a release wrote for the recipe. A recipe that runs two or more scripts, and every project Vite+ manages, still gets `quality` (#230).

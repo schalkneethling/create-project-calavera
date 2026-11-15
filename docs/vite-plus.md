@@ -246,8 +246,27 @@ says so, for example
 
 A project Vite+ does not manage keeps a `quality` script without `vp`. No
 other generated script calls `vp`, so Calavera writes no script that repeats a
-`vp` command. Playwright and other test suites are not part of `quality`; add
-them to your own scripts.
+`vp` command. Such a project gets `quality` only when it runs two or more
+of Calavera's scripts. With only one, `quality` would only repeat that script,
+for example `npm run knip`, so Calavera does not generate it, and the dry run
+says so:
+`Would omit script quality: quality was requested, but it would only run "npm run knip", so Calavera does not generate quality as an alias of that script.`
+Apply records the value it writes to `quality`, or `null` when it writes none,
+as `qualityScript` in `.calavera/state.json`. When apply does not generate
+`quality`, it removes the existing `quality` if that record holds exactly the
+same value, whatever recipe Calavera wrote it for, because the record shows
+that Calavera wrote it. A value the record does not hold is kept, so a
+`quality` that apply kept as your own, or that you edited, is never removed by
+a later apply of this release. A state file without the record, written by a
+release before this one, does not show who wrote `quality`: those releases
+wrote no `quality` when the recipe turned it off, and the state file does not
+record that choice. Apply then keeps the value, even one an earlier release
+wrote, such as `npm run knip`, or `npm run lint` from before the Stylelint
+rename, and the dry run names the match:
+`... package.json keeps its quality script, "npm run knip", because Calavera cannot show that it wrote that value. It matches a value an earlier release wrote for this recipe, so remove it if you did not write it yourself.`
+
+Playwright and other test suites are not part of `quality`; add them to your
+own scripts.
 
 The Stylelint scripts are `lint:styles` and `lint:styles:fix`. A project Calavera
 applied to before this change has them as `lint` and `lint:fix`. The next

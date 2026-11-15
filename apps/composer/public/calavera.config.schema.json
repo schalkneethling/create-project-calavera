@@ -72,7 +72,7 @@
         },
         "quality": {
           "type": "boolean",
-          "description": "Generate a combined quality script from the generated lint:styles, lint:html, Knip, React Doctor, and env:load scripts. In a Vite+-managed project, it runs vp check and the Vite+ tests first."
+          "description": "Generate a combined quality script from the generated lint:styles, lint:html, Knip, React Doctor, and env:load scripts. In a Vite+-managed project, it runs vp check and the Vite+ tests first. In any other project, Calavera does not generate quality when it would run only one script."
         }
       }
     },
