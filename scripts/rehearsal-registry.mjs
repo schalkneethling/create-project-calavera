@@ -105,6 +105,23 @@ export function parseRegistryPath(path) {
 }
 
 /**
+ * Builds the public-registry URL for a request path. The host is fixed, and only the path and query
+ * come from the request, so a request such as `//evil.example/x` or `@evil.example/x` cannot point the
+ * proxy at another host. Anything that is not an origin-form path (`/...`) is refused.
+ *
+ * @param {string} path The request target, as `request.url` gives it.
+ * @returns {URL | undefined}
+ */
+export function upstreamUrl(path) {
+  if (!path.startsWith("/") || path.startsWith("//")) return undefined;
+  const requested = new URL(path, "http://registry.invalid");
+  const url = new URL(UPSTREAM);
+  url.pathname = requested.pathname;
+  url.search = requested.search;
+  return url;
+}
+
+/**
  * @param {{
  *   local: Map<string, LocalPackage>,
  *   vitePlusVersion?: string,
@@ -142,10 +159,16 @@ export async function startRegistry({
         return;
       }
 
+      const target = upstreamUrl(path);
+      if (target === undefined) {
+        response.writeHead(400, { "content-type": "text/plain" });
+        response.end(`Refusing to forward ${path}: only origin-form paths reach the registry.`);
+        return;
+      }
       /** @type {Uint8Array[]} */
       const chunks = [];
       for await (const chunk of request) chunks.push(chunk);
-      const upstream = await fetchUpstream(`${UPSTREAM}${path}`, {
+      const upstream = await fetchUpstream(target, {
         method: request.method,
         headers: {
           accept: request.headers.accept ?? "application/json",

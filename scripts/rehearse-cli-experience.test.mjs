@@ -37,6 +37,7 @@ import {
   parseRegistryPath,
   pinPackument,
   startRegistry,
+  upstreamUrl,
 } from "./rehearsal-registry.mjs";
 
 const scratch = await mkdtemp(join(tmpdir(), "calavera-rehearsal-test-"));
@@ -759,4 +760,16 @@ test("the command stops before it creates anything when a prerequisite is missin
     await readFile(report, "utf8"),
     /^## cli-experience rehearsal, pinned mode: CANNOT START/,
   );
+});
+
+test("the registry proxy forwards only origin-form paths to the fixed public registry", () => {
+  assert.equal(String(upstreamUrl("/knip")), "https://registry.npmjs.org/knip");
+  assert.equal(
+    String(upstreamUrl("/@scope%2fpkg?write=true")),
+    "https://registry.npmjs.org/@scope%2fpkg?write=true",
+  );
+  assert.equal(upstreamUrl("//evil.example/x"), undefined);
+  assert.equal(upstreamUrl("@evil.example/x"), undefined);
+  assert.equal(upstreamUrl("http://evil.example/x"), undefined);
+  assert.equal(new URL(String(upstreamUrl("/..//evil.example/x"))).host, "registry.npmjs.org");
 });
