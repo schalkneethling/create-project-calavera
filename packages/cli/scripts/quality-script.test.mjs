@@ -223,11 +223,29 @@ test("an unmanaged project whose only check left in quality is knip, with lint:h
 
 const knipOnlyRecipe = buildRecipe("default", ["knip"], "npm");
 
-test("apply removes a quality alias an earlier release wrote, and a second apply changes nothing", async () => {
+/**
+ * Applies `recipe` to the fixture at `root`, then sets the package.json
+ * scripts in `scripts`, as an earlier release left them.
+ *
+ * @param {string} root
+ * @param {ReturnType<typeof buildRecipe>} recipe
+ * @param {Record<string, string>} scripts
+ */
+async function applyAsAnEarlierRelease(root, recipe, scripts) {
+  await inDirectory(root, async () => {
+    await applyRecipeObject(recipe, applyOptions);
+    const packageJSON = JSON.parse(await readFile("package.json", "utf8"));
+    packageJSON.scripts = { ...packageJSON.scripts, ...scripts };
+    await writeFile("package.json", `${JSON.stringify(packageJSON, null, 2)}\n`);
+  });
+}
+
+test("after an earlier apply, apply removes the quality alias that release wrote, and a second apply changes nothing", async () => {
   await using fixture = await createTemporaryFixture("quality", {
-    "package.json": `${JSON.stringify({ name: "earlier-alias", scripts: { knip: "knip", quality: "npm run knip" } }, null, 2)}\n`,
+    "package.json": unmanagedManifest,
   });
   await writeVitePlusFormatter(fixture.root);
+  await applyAsAnEarlierRelease(fixture.root, knipOnlyRecipe, { quality: "npm run knip" });
 
   await inDirectory(fixture.root, async () => {
     const dryRun = packageChange((await applyRecipeObject(knipOnlyRecipe, dryRunOptions)).changes);
@@ -251,16 +269,91 @@ test("apply removes a quality alias an earlier release wrote, and a second apply
   });
 });
 
-test("apply removes a quality alias of lint, the Stylelint script's name before the rename, which quality would otherwise leave running a renamed script", async () => {
+test("after an apply before the rename, apply removes a quality alias of lint along with renaming lint, so no quality runs a renamed script", async () => {
+  const stylelintRecipe = buildRecipe("default", ["stylelint"], "npm");
+  await using fixture = await createTemporaryFixture("quality", {
+    "package.json": unmanagedManifest,
+  });
+  await writeVitePlusFormatter(fixture.root);
+  await applyAsBeforeTheRename(fixture.root, stylelintRecipe);
+
+  await inDirectory(fixture.root, async () => {
+    // A release before the rename wrote this alias for a Stylelint-only recipe.
+    const packageJSON = JSON.parse(await readFile("package.json", "utf8"));
+    packageJSON.scripts.quality = "npm run lint";
+    await writeFile("package.json", `${JSON.stringify(packageJSON, null, 2)}\n`);
+
+    const applied = packageChange((await applyRecipeObject(stylelintRecipe, applyOptions)).changes);
+    const scripts = JSON.parse(await readFile("package.json", "utf8")).scripts;
+
+    assert.equal(applied.removedQualityScript, "npm run lint");
+    assert.equal(Object.hasOwn(scripts, "quality"), false);
+    assert.equal(Object.hasOwn(scripts, "lint"), false);
+    assert.equal(scripts["lint:styles"], stylelintLint);
+  });
+});
+
+test("before any apply, a quality alias of the project's own lint is kept, and the omission says so", async () => {
   const change = await plannedPackageChange(
     {
-      "package.json": `${JSON.stringify({ name: "earlier-lint-alias", scripts: { lint: earlierStylelintLint, quality: "npm run lint" } }, null, 2)}\n`,
+      "package.json": `${JSON.stringify({ name: "own-lint-alias", scripts: { lint: "eslint .", quality: "npm run lint" } }, null, 2)}\n`,
     },
     buildRecipe("default", ["stylelint"], "npm"),
   );
 
-  assert.equal(change.scripts.includes("quality"), false, JSON.stringify(change.scripts));
-  assert.equal(change.removedQualityScript, "npm run lint");
+  assert.equal(change.removedQualityScript, undefined);
+  assert.deepEqual(
+    change.omittedScripts.find((omission) => omission.script === "quality"),
+    {
+      script: "quality",
+      reason: `${singleCheckOmission("npm run lint:styles")} package.json keeps its quality script, "npm run lint", because it is not a value Calavera wrote for this recipe.`,
+    },
+  );
+});
+
+test("a managed project applied before the rename, with one check, still warns that the user's lint left quality", async () => {
+  const stylelintRecipe = buildRecipe("default", ["stylelint"], "npm");
+  await using fixture = await createTemporaryFixture("quality", {
+    "package.json": managedManifest(),
+  });
+  await writeVitePlusFormatter(fixture.root);
+  await applyAsBeforeTheRename(fixture.root, stylelintRecipe, { lint: "stylelint src" });
+
+  await inDirectory(fixture.root, async () => {
+    const dryRun = await applyRecipeObject(stylelintRecipe, dryRunOptions);
+    const [finding] = dryRun.projectInspection.findings.filter(
+      ({ kind }) => kind === "legacy-package-script",
+    );
+
+    assert.match(
+      finding.message,
+      /The generated quality script now runs "lint:styles" instead of "lint", so your "lint" no longer runs as part of quality\.$/,
+    );
+  });
+});
+
+test("a blocked rename does not promise a quality script that a single check does not get", async () => {
+  const stylelintRecipe = buildRecipe("default", ["stylelint"], "npm");
+  await using fixture = await createTemporaryFixture("quality", {
+    "package.json": unmanagedManifest,
+  });
+  await writeVitePlusFormatter(fixture.root);
+  await applyAsBeforeTheRename(fixture.root, stylelintRecipe, { "lint:styles": "stylelint src" });
+
+  await inDirectory(fixture.root, async () => {
+    const dryRun = await applyRecipeObject(stylelintRecipe, dryRunOptions);
+    const change = packageChange(dryRun.changes);
+    const [finding] = dryRun.projectInspection.findings.filter(
+      ({ kind }) => kind === "legacy-package-script-conflict",
+    );
+
+    assert.equal(change.scripts.includes("quality"), false, JSON.stringify(change.scripts));
+    assert.equal(
+      change.omittedScripts.find(({ script }) => script === "lint:styles")?.reason,
+      "package.json defines lint:styles with a value of your own, and lint still has the value Calavera wrote, so Calavera keeps both instead of renaming lint.",
+    );
+    assert.doesNotMatch(finding.message, /quality/);
+  });
 });
 
 test("apply keeps a quality of the user's own when quality would be an alias, and says so", async () => {
@@ -278,7 +371,7 @@ test("apply keeps a quality of the user's own when quality would be an alias, an
       applied.omittedScripts.find((omission) => omission.script === "quality"),
       {
         script: "quality",
-        reason: `${singleCheckOmission("npm run knip")} package.json keeps its quality script, "${userQuality}", because Calavera did not write that value.`,
+        reason: `${singleCheckOmission("npm run knip")} package.json keeps its quality script, "${userQuality}", because it is not a value Calavera wrote for this recipe.`,
       },
     );
     assert.equal(JSON.parse(await readFile("package.json", "utf8")).scripts.quality, userQuality);

@@ -221,9 +221,9 @@ test("a dry run on a project an earlier release applied shows each changed lint 
         'Would change script lint:styles from "stylelint \\"**/*.{css,scss}\\"" to "stylelint \\"**/*.{css,scss}\\" --allow-empty-input"',
         'Would change script lint:styles:fix from "stylelint \\"**/*.{css,scss}\\" --fix" to "stylelint \\"**/*.{css,scss}\\" --allow-empty-input --fix"',
         'Would change script lint:html from "html-validate \\"**/*.html\\"" to "node scripts/lint-html.mjs \\"**/*.html\\""',
-        // The value quality had before the html-validate quality option is one
-        // Calavera wrote, and quality would now only alias lint:styles (#230).
-        'Would remove script quality: "npm run lint:styles && npm run lint:html"',
+        // quality would now only alias lint:styles (#230). Without a state file
+        // from an earlier apply, Calavera cannot tell that it wrote this value.
+        'Would omit script quality: quality was requested, but it would only run "npm run lint:styles", so Calavera does not generate quality as an alias of that script. package.json keeps its quality script, "npm run lint:styles && npm run lint:html", because it is not a value Calavera wrote for this recipe.',
       ]) {
         assert.ok(
           lines.some((line) => line.endsWith(expected)),
@@ -317,7 +317,7 @@ test("with only lint:html left out, apply keeps a quality of the user's own and 
 
       assertLine(
         dryRunLines,
-        `${htmlOnlyQualityOmission} package.json keeps its quality script, "${userQuality}", because Calavera did not write that value.`,
+        `${htmlOnlyQualityOmission} package.json keeps its quality script, "${userQuality}", because it is not a value Calavera wrote for this recipe.`,
       );
       assert.equal(
         dryRunLines.some((line) => line.includes("Would remove script quality")),

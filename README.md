@@ -250,7 +250,8 @@ choice, because it lives in the recipe:
 ```
 
 When `lint:html` is the only script `quality` would run, Calavera does not
-generate `quality`. Apply removes a `quality` script whose value an earlier
+generate `quality`. In a project Vite+ does not manage, the same is true when
+one other script is left, because `quality` would only repeat it. Apply removes a `quality` script whose value an earlier
 release wrote, such as `npm run lint:html`, and keeps any other value as your
 own. The dry run shows both.
 
@@ -778,9 +779,10 @@ workspace root, the test step is `vp run -r test`, which runs each member's
 `test` script, and leaves the step out when no package defines `test`. Other
 projects keep a `quality` script without `vp` when it runs two or more of
 Calavera's scripts. With only one, such as `npm run knip`, Calavera does not
-generate `quality`, because it would only repeat that script; apply removes
-such an alias that an earlier release wrote and keeps any other value as your
-own. Calavera writes no script that
+generate `quality`, because it would only repeat that script. In a project
+that has `.calavera/state.json` from an earlier apply, a later apply removes a
+`quality` whose value is exactly the alias an earlier release wrote for the
+recipe; it keeps any other value, and the dry run says so. Calavera writes no script that
 repeats a `vp` command on its own, and does not add Playwright or other test
 suites to `quality`. The Stylelint scripts are `lint:styles` and
 `lint:styles:fix`. In a project that has `.calavera/state.json` from an earlier

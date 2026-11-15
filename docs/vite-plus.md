@@ -251,8 +251,11 @@ of Calavera's scripts. With only one, `quality` would only repeat that script,
 for example `npm run knip`, so Calavera does not generate it, and the dry run
 says so:
 `Would omit script quality: quality was requested, but it would only run "npm run knip", so Calavera does not generate quality as an alias of that script.`
-Apply removes a `quality` script whose value an earlier release wrote for that
-recipe, such as `npm run knip`, and keeps any other value as your own. Playwright and other test suites are not part of `quality`; add
+In a project that has `.calavera/state.json` from an earlier apply, a later
+apply removes a `quality` script whose value is exactly the alias an earlier
+release wrote for the recipe, such as `npm run knip`, or `npm run lint` from
+before the Stylelint rename. Apply keeps any other value, because Calavera
+cannot tell that it wrote it, and the dry run says so. Playwright and other test suites are not part of `quality`; add
 them to your own scripts.
 
 The Stylelint scripts are `lint:styles` and `lint:styles:fix`. A project Calavera
