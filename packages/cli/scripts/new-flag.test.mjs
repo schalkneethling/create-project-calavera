@@ -78,14 +78,14 @@ appendFileSync(
 );
 
 // npm create vite-plus@latest -- <args>, bunx create-vite-plus@latest <args>,
-// and <runner> --package vite-plus vp create <args>.
+// and <pnpm|yarn> dlx create-vite-plus@latest <args>.
 const runner = basename(process.argv[1]);
 const vpCreateArgs =
   runner === "npm"
     ? argv.slice(argv.indexOf("--") + 1)
     : runner === "bunx"
       ? argv.slice(1)
-      : argv.slice(argv.indexOf("create") + 1);
+      : argv.slice(2);
 const separator = vpCreateArgs.indexOf("--");
 const own = separator === -1 ? vpCreateArgs : vpCreateArgs.slice(0, separator);
 const directoryIndex = own.indexOf("--directory");
@@ -273,7 +273,7 @@ function recipeBlock(target, { cd, applyDryRun, applyRecipe }) {
   ].join("\n");
 }
 
-test("createVpCreateCommand runs create-vite-plus for npm and Bun and vp create for pnpm and Yarn", () => {
+test("createVpCreateCommand runs create-vite-plus for every runner", () => {
   const forwarded = ["vite:library", "--", "--template", "react-ts"];
 
   // npm consumes the first --, so Calavera adds exactly one in front of the
@@ -282,13 +282,14 @@ test("createVpCreateCommand runs create-vite-plus for npm and Bun and vp create 
     command: "npm",
     args: ["create", "vite-plus@latest", "--", ...forwarded],
   });
+  // pnpm dlx and yarn dlx pass every later token on, a -- included (#740).
   assert.deepEqual(createVpCreateCommand("pnpm", forwarded), {
     command: "pnpm",
-    args: ["dlx", "--package", "vite-plus", "vp", "create", ...forwarded],
+    args: ["dlx", "create-vite-plus@latest", ...forwarded],
   });
   assert.deepEqual(createVpCreateCommand("yarn", forwarded), {
     command: "yarn",
-    args: ["dlx", "--package", "vite-plus", "vp", "create", ...forwarded],
+    args: ["dlx", "create-vite-plus@latest", ...forwarded],
   });
   // Not bun create, which prefers a local .bun-create template of the same name.
   assert.deepEqual(createVpCreateCommand("bun", forwarded), {
@@ -412,10 +413,7 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
   ]);
 
   assert.equal(result.code, 0, result.stderr);
-  assert.match(
-    result.stdout,
-    /pnpm dlx --package vite-plus vp create vite:library --directory 'my lib'/,
-  );
+  assert.match(result.stdout, /pnpm dlx create-vite-plus@latest vite:library --directory 'my lib'/);
   assert.match(result.stdout, /Calavera will run Vite\+ to scaffold a new project:/);
   assert.match(result.stdout, new RegExp(`Working directory: ${workspace.work}`));
   assert.match(result.stdout, /may download Vite\+/);
@@ -568,14 +566,32 @@ test("--new forwards every token after it unchanged, including -- and what follo
   const invocations = await readInvocations(workspace.log);
 
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(invocations[0].argv, [
-    "dlx",
-    "--package",
-    "vite-plus",
-    "vp",
+  assert.deepEqual(invocations[0].argv, ["dlx", "create-vite-plus@latest", ...forwarded]);
+  assert.ok(await exists(join(workspace.work, "lib/.calavera/state.json")));
+});
+
+test("--new forwards every token to yarn dlx create-vite-plus unchanged and in order", async () => {
+  await using workspace = await createTemporaryWorkspace("forwarding-yarn");
+  // A literal create token in the template arguments must not move the target.
+  const forwarded = [
+    "vite:library",
+    "--directory",
+    "lib",
+    "--",
     "create",
-    ...forwarded,
-  ]);
+    "--directory",
+    "elsewhere",
+  ];
+
+  const result = await runCli(
+    workspace,
+    ["--yes", "--package-manager", "yarn", "--new", ...forwarded],
+    { STUB_MODE: "scaffold" },
+  );
+  const invocations = await readInvocations(workspace.log);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(invocations[0].argv, ["dlx", "create-vite-plus@latest", ...forwarded]);
   assert.ok(await exists(join(workspace.work, "lib/.calavera/state.json")));
 });
 

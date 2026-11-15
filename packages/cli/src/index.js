@@ -1749,9 +1749,8 @@ function createMcpLaunchCommand(packageManager) {
 }
 
 /**
- * The command `--new` spawns, per ADR-0010 Decision 1 and its 2026-10-21
- * amendment: npm and Bun run Vite+'s `create-vite-plus` entry point, and pnpm
- * and Yarn keep `dlx --package vite-plus vp create` until #740.
+ * The command `--new` spawns, per ADR-0010 Decision 1 and its amendments:
+ * every runner starts Vite+'s `create-vite-plus` entry point.
  *
  * @param {PackageManager} packageManager
  * @param {string[]} forwardedArgs
@@ -1760,11 +1759,12 @@ function createMcpLaunchCommand(packageManager) {
 export function createVpCreateCommand(packageManager, forwardedArgs) {
   switch (packageManager) {
     case "pnpm":
-    case "yarn": {
-      const runner = createPackageRunnerCommand(packageManager, "vite-plus", "vp");
-
-      return { command: runner.command, args: [...runner.args, "create", ...forwardedArgs] };
-    }
+    case "yarn":
+      // Not yarn create: under Yarn 1 it installs create-vite-plus globally (#740).
+      return {
+        command: packageManager,
+        args: ["dlx", "create-vite-plus@latest", ...forwardedArgs],
+      };
     case "bun":
       // Not bun create: it prefers a local .bun-create template of the same name.
       return { command: "bunx", args: ["create-vite-plus@latest", ...forwardedArgs] };
