@@ -356,7 +356,12 @@ function printedName(output, item) {
  * @returns {string[]} One line per violation.
  */
 export function listingViolations(output, items) {
-  const lines = output.split("\n");
+  // A command, such as the "vp add -D" install command, names packages to run them, not to list
+  // them, so its line does not count as a mention. #617 keeps one line per integration with the
+  // package in parentheses only when the names differ, so an integration line that names its
+  // package does count.
+  const lines = output.split("\n").filter((line) => !isCommandLine(line));
+  output = lines.join("\n");
   const firstHeading = lines.findIndex(isHeading);
   const names = new Map(items.map((item) => [item, printedName(output, item)]));
   return [...new Set(names.values())]
@@ -373,6 +378,20 @@ export function listingViolations(output, items) {
         .filter(([, name]) => name === undefined)
         .map(([item]) => `${item} is printed 0 times`),
     );
+}
+
+/**
+ * Whether a line is a command, with an optional label such as "Dev dependency install command:".
+ *
+ * @param {string} line
+ */
+export function isCommandLine(line) {
+  const text = plainLine(line)
+    .replace(/^(?:[-*•]|\d+[.)])\s+/, "")
+    .replace(/^[A-Z][^:]{0,60}:\s+/, "")
+    .replace(/^\$\s+/, "")
+    .replace(/^`/, "");
+  return COMMAND_WORDS.has(text.split(/\s+/)[0] ?? "");
 }
 
 const COMMAND_WORDS = new Set([
@@ -498,7 +517,11 @@ export function namedItems(value) {
     for (const [name, child] of Object.entries(node)) {
       if (/dependencies$/i.test(name) && Array.isArray(child)) {
         // ApplyResult.dependencies is a list of package names.
-        items.push(...child.filter((entry) => typeof entry === "string"));
+        for (const entry of child) {
+          if (typeof entry === "string") items.push(entry);
+          else if (entry && typeof entry === "object" && typeof entry.name === "string")
+            items.push(entry.name);
+        }
       } else if (/dependencies$/i.test(name) && child && typeof child === "object") {
         items.push(...Object.keys(child));
       } else if (/artifacts$/i.test(name) && Array.isArray(child)) {
@@ -527,11 +550,15 @@ export function namedItems(value) {
 export function cacheIgnoreProblem(checkIgnoreOutput, gitignore) {
   const match = /^(.*):(\d+):(.*)\t/.exec(checkIgnoreOutput.trim());
   if (!match) return ".calavera/cache is not ignored by any ignore file";
-  const [, source, lineText] = match;
+  const [, source, lineText, pattern] = match;
+  if (pattern?.startsWith("!")) {
+    return `.calavera/cache is re-included by the negated pattern ${pattern} on line ${lineText} of ${source}`;
+  }
   if (source !== ".gitignore") {
     return `.calavera/cache is ignored by ${source}, not by the project's .gitignore`;
   }
-  const lines = gitignore.split(/\r?\n/);
+  // Calavera's own block finder ignores trailing whitespace on a marker line, so this does too.
+  const lines = gitignore.split(/\r?\n/).map((line) => line.trimEnd());
   const index = Number(lineText) - 1;
   for (let start = index - 1; start >= 0; start -= 1) {
     const owner = /^# calavera:(.+):start$/.exec(lines[start] ?? "")?.[1];
@@ -549,8 +576,10 @@ export function cacheIgnoreProblem(checkIgnoreOutput, gitignore) {
 /**
  * Whether the apply output says why the cache is not committed. #841 decided that Calavera writes
  * the ignore line in a marked `.gitignore` block and that the apply summary says so, so at least
- * one output line must name both `.calavera/cache` and `.gitignore`. The wording is not settled,
- * so the check asserts this property, not a sentence.
+ * one output line must name `.calavera/cache`, with or without a trailing slash, and say that it
+ * is ignored or not committed. The wording is not settled, so the check asserts this property,
+ * not a sentence. The line does not have to name `.gitignore`: the listing check already requires
+ * `.gitignore` to be printed exactly once, and `cacheIgnoreProblem` checks the block itself.
  *
  * @param {string} output
  */
@@ -558,18 +587,23 @@ export function summaryExplainsCache(output) {
   return output
     .split("\n")
     .some(
-      (line) => countMentions(line, ".calavera/cache") > 0 && countMentions(line, ".gitignore") > 0,
+      (line) =>
+        (countMentions(line, ".calavera/cache") > 0 ||
+          countMentions(line, ".calavera/cache/") > 0) &&
+        /ignor|not commit/i.test(line.replaceAll(".calavera/cache", "")),
     );
 }
 
 /**
  * Whether Git ran a pre-commit hook during a commit, read from Git's own trace2 event log
- * (GIT_TRACE2_EVENT): a `child_start` event of class `hook` named `pre-commit`, and the
- * `child_exit` event with the same `child_id`. This relies only on Git, not on how Vite+ installs
- * its hook.
+ * (GIT_TRACE2_EVENT, Git 2.22 or later): a `child_start` event of class `hook` named `pre-commit`
+ * from the top-level `git commit`, whose session ID has no `/`. A git the hook starts writes to the
+ * same log with a nested session ID, so it cannot count as the hook. The hook's exit code is not
+ * read here: the commit itself fails when the hook fails. This relies only on Git, not on how
+ * Vite+ installs its hook.
  *
  * @param {string} trace One JSON event per line.
- * @returns {{ ran: false } | { ran: true, exitCode: number | undefined, argv: string[] }}
+ * @returns {{ ran: boolean, argv?: string[] }}
  */
 export function preCommitHookRun(trace) {
   const events = trace.split("\n").flatMap((line) => {
@@ -583,13 +617,11 @@ export function preCommitHookRun(trace) {
     (event) =>
       event.event === "child_start" &&
       event.child_class === "hook" &&
-      event.hook_name === "pre-commit",
+      event.hook_name === "pre-commit" &&
+      typeof event.sid === "string" &&
+      !event.sid.includes("/"),
   );
-  if (!start) return { ran: false };
-  const exit = events.find(
-    (event) => event.event === "child_exit" && event.child_id === start.child_id,
-  );
-  return { ran: true, exitCode: exit?.code, argv: start.argv ?? [] };
+  return start ? { ran: true, argv: start.argv ?? [] } : { ran: false };
 }
 
 /** @param {CommandResult} result */
@@ -762,14 +794,15 @@ function flowCommit(context) {
       env: { ...context.env, GIT_TRACE2_EVENT: trace },
     });
     assertExitZero(commit);
-    const hook = preCommitHookRun(await readFile(trace, "utf8").catch(() => ""));
-    if (!hook.ran || hook.exitCode !== 0) {
+    const traceText = await readFile(trace, "utf8").catch(() => "");
+    if (!preCommitHookRun(traceText).ran) {
       throw new CheckFailure({
-        expected: "the commit to run the Vite+ pre-commit hook, which exits with code 0",
-        actual: hook.ran
-          ? `the hook ${hook.argv.join(" ")} exited with code ${hook.exitCode}`
-          : "Git's trace shows no pre-commit hook during the commit",
-        command: commit.display,
+        expected: "the commit to run the Vite+ pre-commit hook",
+        actual:
+          traceText === ""
+            ? "Git wrote no trace2 events (GIT_TRACE2_EVENT needs Git 2.22 or later), so the hook cannot be confirmed"
+            : "Git's trace shows no pre-commit hook during the commit",
+        command: `GIT_TRACE2_EVENT=${trace} ${commit.display}`,
       });
     }
     return project;
@@ -941,11 +974,12 @@ const commitChecks = [
       if (!summaryExplainsCache(result.output)) {
         throw new CheckFailure({
           expected:
-            "an apply output line that names .calavera/cache and .gitignore, saying the cache is ignored there (#841)",
+            "an apply output line that names .calavera/cache and says it is ignored or not committed (#841)",
           actual: `${
-            countMentions(result.output, ".calavera/cache") === 0
+            countMentions(result.output, ".calavera/cache") === 0 &&
+            countMentions(result.output, ".calavera/cache/") === 0
               ? ".calavera/cache is not mentioned"
-              : "no line names both .calavera/cache and .gitignore"
+              : "no line that names .calavera/cache says it is ignored or not committed"
           }\n${tail(result.output)}`,
           command: result.display,
         });
@@ -955,6 +989,14 @@ const commitChecks = [
         ["check-ignore", "--verbose", "--no-index", ".calavera/cache/npm/rehearsal-probe"],
         { cwd: project },
       );
+      // git check-ignore exits 0 for a match, 1 for none, and 128 for an error.
+      if (ignored.exitCode !== 0 && ignored.exitCode !== 1) {
+        throw new CheckFailure({
+          expected: "git check-ignore to run",
+          actual: `${describeExit(ignored)}\n${tail(ignored.output)}`,
+          command: ignored.display,
+        });
+      }
       const gitignore = await readFile(join(project, ".gitignore"), "utf8").catch(() => "");
       const problem = cacheIgnoreProblem(ignored.stdout, gitignore);
       if (problem) {

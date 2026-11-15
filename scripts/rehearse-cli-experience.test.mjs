@@ -25,6 +25,7 @@ import {
   cacheIgnoreProblem,
   cliExperienceChecks,
   countMentions,
+  isCommandLine,
   isHeading,
   listingViolations,
   namedItems,
@@ -797,8 +798,15 @@ test("dependencies are named items, so a missing or repeated dependency fails th
       "Files:\n- .editorconfig\nDev dependencies: knip\nDev dependency install command: vp add -D knip\n",
       items,
     ),
-    ["knip is printed 2 times", "stylelint is printed 0 times"],
+    ["stylelint is printed 0 times"],
+    "the install command names knip to run it, so only the listing line counts",
   );
+  assert.deepEqual(listingViolations("Integrations: knip\nDev dependencies: knip\n", ["knip"]), [
+    "knip is printed 2 times",
+  ]);
+  assert.equal(isCommandLine("Dev dependency install command: vp add -D knip"), true);
+  assert.equal(isCommandLine("Integrations: stylelint"), false);
+  assert.deepEqual(namedItems({ dependencies: [{ name: "knip" }] }), ["knip"]);
 });
 
 test("the cache must be ignored by a line inside a Calavera-marked block of the root .gitignore", () => {
@@ -825,40 +833,81 @@ test("the cache must be ignored by a line inside a Calavera-marked block of the 
     cacheIgnoreProblem(".git/info/exclude:1:.calavera/\t.calavera/cache/npm/x", gitignore) ?? "",
     /ignored by \.git\/info\/exclude, not by the project's \.gitignore/,
   );
+  // git check-ignore --verbose also prints a matching negated pattern, which re-includes the path.
+  assert.match(
+    cacheIgnoreProblem(".gitignore:3:!.calavera/cache/npm/x\t.calavera/cache/npm/x", gitignore) ??
+      "",
+    /re-included by the negated pattern/,
+  );
+  // Calavera's block finder ignores trailing whitespace on a marker line.
+  assert.equal(
+    cacheIgnoreProblem(
+      ".gitignore:2:.calavera/cache/\t.calavera/cache/npm/x",
+      "# calavera:calavera-cache:start  \r\n.calavera/cache/\r\n# calavera:calavera-cache:end\r\n",
+    ),
+    undefined,
+  );
 });
 
-test("the apply summary explains the cache only when a line names both the cache and .gitignore", () => {
+test("the apply summary explains the cache only when a line names it and says it is ignored or not committed", () => {
   assert.equal(summaryExplainsCache("Wrote .calavera/cache/npm"), false);
-  assert.equal(summaryExplainsCache(".calavera/cache is not committed.\nWrote .gitignore"), false);
+  assert.equal(summaryExplainsCache("Wrote .calavera/cache\nWrote .gitignore"), false);
+  assert.equal(summaryExplainsCache(".calavera/cache is not committed."), true);
   assert.equal(
     summaryExplainsCache(
       "Cache: .calavera/cache is not committed; a marked block in .gitignore ignores it.",
     ),
     true,
   );
+  // The line apply prints today for a catalog ignore entry, with the trailing slash.
+  assert.equal(
+    summaryExplainsCache(
+      'Ignore: Would add the calavera-cache block to .gitignore: ".calavera/cache/"',
+    ),
+    true,
+  );
 });
 
-test("a pre-commit hook counts as run only when Git's trace shows it started and exited", () => {
+test("a pre-commit hook counts as run only when the top-level git commit started it", () => {
   const event = (/** @type {Record<string, unknown>} */ fields) => JSON.stringify(fields);
+  const sid = "20261115T232322.955909Z-H828a8b6e-P00001518";
   const ran = [
     event({
       event: "child_start",
+      sid,
       child_id: 0,
       child_class: "hook",
       hook_name: "pre-commit",
       argv: [".vite-hooks/_/pre-commit"],
     }),
-    event({ event: "child_exit", child_id: 0, code: 0 }),
+    // A git the hook starts logs to the same file with a nested session ID and reuses child_id 0.
+    event({ event: "child_exit", sid: `${sid}/20261115T232323.1Z-H1-P2`, child_id: 0, code: -1 }),
+    event({ event: "child_exit", sid, child_id: 0, code: 0 }),
   ].join("\n");
-  assert.deepEqual(preCommitHookRun(ran), {
-    ran: true,
-    exitCode: 0,
-    argv: [".vite-hooks/_/pre-commit"],
-  });
+  assert.deepEqual(preCommitHookRun(ran), { ran: true, argv: [".vite-hooks/_/pre-commit"] });
+  // A pre-commit hook of a nested git commit, started by something else, is not this commit's hook.
+  assert.deepEqual(
+    preCommitHookRun(
+      event({
+        event: "child_start",
+        sid: `${sid}/x`,
+        child_id: 0,
+        child_class: "hook",
+        hook_name: "pre-commit",
+      }),
+    ),
+    { ran: false },
+  );
   // core.hooksPath set but no hook started: the commit ran no hook.
   assert.deepEqual(
     preCommitHookRun(
-      event({ event: "child_start", child_id: 1, child_class: "?", argv: ["git", "maintenance"] }),
+      event({
+        event: "child_start",
+        sid,
+        child_id: 1,
+        child_class: "?",
+        argv: ["git", "maintenance"],
+      }),
     ),
     { ran: false },
   );
@@ -917,4 +966,35 @@ test("the second dry run fails when a next-step command it prints does not work 
     return true;
   });
   assert.deepEqual(pasted, ["pnpm dlx create-project-calavera doctor"]);
+});
+
+test("apply-summary-cache reports a git check-ignore error as an error, with its output", async () => {
+  const check = cliExperienceChecks.find(({ id }) => id === "apply-summary-cache");
+  assert.ok(check);
+  const context = {
+    shared: new Map([
+      [
+        "flow-apply",
+        Promise.resolve({
+          project: scratch,
+          result: { output: "Cache: .calavera/cache is not committed.", display: "apply" },
+        }),
+      ],
+    ]),
+    run: async () => ({
+      exitCode: 128,
+      signal: null,
+      timedOut: false,
+      stdout: "",
+      stderr: "fatal: not a git repository",
+      output: "fatal: not a git repository",
+      display: "git check-ignore --verbose --no-index .calavera/cache/npm/rehearsal-probe",
+    }),
+  };
+  await assert.rejects(check.run(context), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.equal(error.expected, "git check-ignore to run");
+    assert.match(error.actual, /exit code 128\nfatal: not a git repository/);
+    return true;
+  });
 });
