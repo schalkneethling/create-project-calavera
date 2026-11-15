@@ -272,7 +272,7 @@ function recipeBlock(target, { cd, applyDryRun, applyRecipe }) {
   ].join("\n");
 }
 
-test("createVpCreateCommand runs create-vite-plus for npm and Bun and vp create for pnpm and Yarn", () => {
+test("createVpCreateCommand runs create-vite-plus for every runner", () => {
   const forwarded = ["vite:library", "--", "--template", "react-ts"];
 
   // npm consumes the first --, so Calavera adds exactly one in front of the
@@ -281,13 +281,14 @@ test("createVpCreateCommand runs create-vite-plus for npm and Bun and vp create 
     command: "npm",
     args: ["create", "vite-plus@latest", "--", ...forwarded],
   });
+  // pnpm dlx and yarn dlx pass every later token on, a -- included (#740).
   assert.deepEqual(createVpCreateCommand("pnpm", forwarded), {
     command: "pnpm",
-    args: ["dlx", "--package", "vite-plus", "vp", "create", ...forwarded],
+    args: ["dlx", "create-vite-plus@latest", ...forwarded],
   });
   assert.deepEqual(createVpCreateCommand("yarn", forwarded), {
     command: "yarn",
-    args: ["dlx", "--package", "vite-plus", "vp", "create", ...forwarded],
+    args: ["dlx", "create-vite-plus@latest", ...forwarded],
   });
   // Not bun create, which prefers a local .bun-create template of the same name.
   assert.deepEqual(createVpCreateCommand("bun", forwarded), {
@@ -411,10 +412,7 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
   ]);
 
   assert.equal(result.code, 0, result.stderr);
-  assert.match(
-    result.stdout,
-    /pnpm dlx --package vite-plus vp create vite:library --directory 'my lib'/,
-  );
+  assert.match(result.stdout, /pnpm dlx create-vite-plus@latest vite:library --directory 'my lib'/);
   assert.match(result.stdout, /Calavera will run Vite\+ to scaffold a new project:/);
   assert.match(result.stdout, new RegExp(`Working directory: ${workspace.work}`));
   assert.match(result.stdout, /may download Vite\+/);
@@ -566,14 +564,7 @@ test("--new forwards every token after it unchanged, including -- and what follo
   const invocations = await readInvocations(workspace.log);
 
   assert.equal(result.code, 0, result.stderr);
-  assert.deepEqual(invocations[0].argv, [
-    "dlx",
-    "--package",
-    "vite-plus",
-    "vp",
-    "create",
-    ...forwarded,
-  ]);
+  assert.deepEqual(invocations[0].argv, ["dlx", "create-vite-plus@latest", ...forwarded]);
   assert.ok(await exists(join(workspace.work, "lib/.calavera/state.json")));
 });
 

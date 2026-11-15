@@ -232,9 +232,9 @@ runs nothing. Calavera's dry run cannot preview what Vite+ writes.
 
 Calavera runs `vp create` through the package manager given with
 `--package-manager` before `--new`, or npm when none is given:
-`npm create vite-plus@latest --`, `pnpm dlx --package vite-plus vp create`,
-`yarn dlx --package vite-plus vp create` (Yarn 2 or later), or
-`bunx create-vite-plus@latest`. npm and Bun run `create-vite-plus`, the entry
+`npm create vite-plus@latest --`, `pnpm dlx create-vite-plus@latest`,
+`yarn dlx create-vite-plus@latest` (Yarn 2 or later), or
+`bunx create-vite-plus@latest`. Each one runs `create-vite-plus`, the entry
 point Vite+ provides for starting a project. The `--package-manager` forwarded
 after `--new` is the project's package manager, which Vite+ uses. Vite+ 1.0.0
 requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`. If Calavera itself was
