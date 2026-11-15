@@ -70,7 +70,7 @@ pnpm release:status
 ```
 
 `release:rehearse:cli` is the cli-experience exit rehearsal (#918). It needs network access and the
-Node.js and Bun versions in `scripts/rehearsal-pins.json`, and `release:prepare` runs it as a gate; see
+Node.js and Bun versions in `scripts/rehearsal-pins.json`, and `release:prepare` and `release:publish` run it as a gate; see
 the [release runbook](./release-runbook.md#4-run-the-automated-release-gate).
 
 `release:status` compares with the Changesets `baseBranch` and therefore requires an up-to-date local `main` ref. A single-branch clone can create it without switching away from the rehearsal branch:

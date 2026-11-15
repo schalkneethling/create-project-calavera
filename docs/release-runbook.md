@@ -21,9 +21,12 @@ release.
   which synchronizes its own environment from the locked dependencies automatically.
 - For the cli-experience rehearsal gate in step 4: network access, Node.js and Bun at exactly the
   versions in [`scripts/rehearsal-pins.json`](../scripts/rehearsal-pins.json) (Node.js 26.13.1 and Bun
-  1.4.4 at the time of writing), and `git` and `tar` on `PATH`. The rehearsal installs its own
+  1.4.4 at the time of writing), and `git` and `tar` in a standard system directory or next to Node.js
+  or Bun. The gate uses the Node.js that runs `pnpm release:prepare`, so run the whole release
+  command with the pinned Node.js. The rehearsal gives Bun an empty HOME, so put the Bun binary itself
+  on `PATH`, not a version-manager shim that needs your HOME. The rehearsal installs its own
   Corepack, pnpm, Yarn, and Vite+ at their pinned versions. It checks these prerequisites before it
-  starts and names any that are missing.
+  creates anything and names any that are missing.
 - npm CLI 11.15.0+, logged in to npm with two-factor authentication enabled, only if the release
   includes a brand-new package name (see "New packages (minting)" below).
 - You do not need a local npm token. Publishing happens inside the protected `publish` GitHub
@@ -69,7 +72,7 @@ pnpm release:prepare
 
 This single command first plans the public workspace against the npm registry. If the version PR
 introduces a package name that has never existed on npm, it stops immediately, before the Baseline
-data check, the local rehearsal, or the workflow audit run, and prints the exact commands to mint it.
+data check, the local rehearsals, or the workflow audit run, and prints the exact commands to mint it.
 See "New packages (minting)" below instead of continuing to step 5.
 
 Once every planned package already exists on npm, `release:prepare` runs the Baseline data check
@@ -92,8 +95,10 @@ caches, and deletes them afterwards. If any check fails, the gate stops and prin
 each failing check, what was expected, what happened, the command that ran, and the issue that
 delivers it. There is no option to skip it: fix the failing checks on `main` and rerun. A warning
 that files below your HOME changed during the run does not fail the gate, because other tools on your
-machine write to the same caches; the `harness-isolation` check is the one that fails when the
-rehearsal's own commands leave their temporary directories. The "CLI experience rehearsal" workflow
+machine write to the same caches. The `harness-isolation` check fails instead when a command the
+rehearsal started had a home, cache, store, or registry outside its temporary directories, or any
+other variable that points into your HOME. It checks each command's environment, so it cannot see a
+tool that finds your home directory without reading HOME. The "CLI experience rehearsal" workflow
 also runs the pinned rehearsal on the Version Packages pull request and shows the result there as the
 `CLI experience rehearsal (pinned)` status, so a failure is visible before you merge.
 

@@ -251,7 +251,7 @@ export const releaseGates = [
   [
     "pnpm",
     ["release:rehearse:cli"],
-    "The cli-experience rehearsal did not pass on this candidate. If it stopped before running, it printed which prerequisite is missing and how to install it. Otherwise the result table above names each failing check, what was expected, what happened, the command that ran, and the issue that delivers it. Fix those checks on main, then rerun pnpm release:prepare.",
+    "The cli-experience rehearsal did not pass on this candidate. If it stopped before running, it printed which prerequisite is missing and how to install it. Otherwise the result table above names each failing check, what was expected, what happened, the command that ran, and the issue that delivers it. Fix those checks on main, then rerun pnpm release:prepare, or pnpm release:publish if that is the command that stopped.",
   ],
   ["pnpm", ["workflow:check"]],
 ];

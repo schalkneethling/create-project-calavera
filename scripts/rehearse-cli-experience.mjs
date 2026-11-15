@@ -139,6 +139,9 @@ const INHERITED_VARIABLES = [
   "NODE_EXTRA_CA_CERTS",
 ];
 
+/** The system directories at the end of every run's PATH. */
+const STANDARD_PATH = ["/usr/local/bin", "/usr/bin", "/bin", "/usr/sbin", "/sbin"];
+
 /**
  * The run's own directories, all below `root`. `home` holds every per-user cache and setting, so
  * a check can get a second, empty home with the same root.
@@ -202,11 +205,7 @@ export function buildEnvironment(
     nodeDirectory,
     ...(bunDirectory ? [bunDirectory] : []),
     join(dirs.npmGlobal, "bin"),
-    "/usr/local/bin",
-    "/usr/bin",
-    "/bin",
-    "/usr/sbin",
-    "/sbin",
+    ...STANDARD_PATH,
   ];
   return {
     ...inherited,
@@ -278,18 +277,35 @@ const REGISTRY_VARIABLES = [
  * @param {string} root
  * @param {string[]} registryUrls The rehearsal registries this run started.
  */
-export function isolationViolations(env, root, registryUrls) {
+export function isolationViolations(env, root, registryUrls, developerHome = homedir()) {
+  const inside = (/** @type {string} */ value) => value === root || value.startsWith(`${root}/`);
+  const known = new Set([
+    ...ISOLATED_PATH_VARIABLES,
+    ...REGISTRY_VARIABLES,
+    ...INHERITED_VARIABLES,
+    "PATH",
+  ]);
   return [
     ...ISOLATED_PATH_VARIABLES.flatMap((name) => {
       const value = env[name];
       if (value === undefined) return [`${name} is not set`];
-      return value === root || value.startsWith(`${root}/`) ? [] : [`${name} is ${value}`];
+      return inside(value) ? [] : [`${name} is ${value}`];
     }),
     ...REGISTRY_VARIABLES.flatMap((name) => {
       const value = env[name];
       if (value === undefined) return [`${name} is not set`];
       return registryUrls.includes(value.replace(/\/$/, "")) ? [] : [`${name} is ${value}`];
     }),
+    // Any other variable that points into the developer's HOME, such as PNPM_HOME or
+    // GIT_CONFIG_GLOBAL, would let a tool read or write the developer's own state.
+    ...Object.entries(env).flatMap(([name, value]) =>
+      !known.has(name) &&
+      value !== undefined &&
+      !inside(value) &&
+      (value === developerHome || value.startsWith(`${developerHome}/`))
+        ? [`${name} is ${value}`]
+        : [],
+    ),
   ];
 }
 
@@ -353,15 +369,15 @@ export async function watchDeveloperState(home, markerDirectory, env = process.e
 }
 
 /**
- * Replaces the run's root with `<run>` so results from different runs compare equal and no
- * temporary path reaches a report.
+ * Replaces the run's root with `<run>` and the developer's HOME with `~`, so results from different
+ * runs compare equal and no temporary or personal path reaches a report.
  *
  * @param {CheckResult} result
  * @param {string} root
  */
-function scrub(result, root) {
+function scrub(result, root, home = homedir()) {
   /** @param {string | undefined} value */
-  const clean = (value) => value?.replaceAll(root, "<run>");
+  const clean = (value) => value?.replaceAll(root, "<run>").replaceAll(home, "~");
   return {
     ...result,
     expected: clean(result.expected),
@@ -387,9 +403,10 @@ function scrub(result, root) {
  *   mode: "pinned" | "latest",
  *   pins: Record<string, string>,
  *   checks: Check[],
- *   prepare: (dirs: ReturnType<typeof runDirectories>, options: { mode: "pinned" | "latest", pins: Record<string, string>, versions: Record<string, string> }) => Promise<{ close?: () => Promise<void>, lastCommand?: () => string | undefined } & Record<string, unknown>>,
+ *   prepare: (dirs: ReturnType<typeof runDirectories>, options: { mode: "pinned" | "latest", pins: Record<string, string>, versions: Record<string, string>, isolation: string[] }) => Promise<{ close?: () => Promise<void>, lastCommand?: () => string | undefined } & Record<string, unknown>>,
  *   tmpRoot?: string,
  *   developerHome?: string,
+ *   strictDeveloperState?: boolean,
  *   log?: (line: string) => void,
  * }} options
  */
@@ -400,6 +417,7 @@ export async function runRehearsal({
   prepare,
   tmpRoot = tmpdir(),
   developerHome = homedir(),
+  strictDeveloperState = Boolean(process.env.CI),
   log = () => {},
 }) {
   const developerState = await watchDeveloperState(developerHome, tmpRoot);
@@ -414,6 +432,13 @@ export async function runRehearsal({
    * @type {Record<string, string>}
    */
   const versions = {};
+  /**
+   * Filled in by `prepare` for every command it starts whose environment leaves the run, also
+   * during a setup that fails.
+   *
+   * @type {string[]}
+   */
+  const isolation = [];
   /** @type {Awaited<ReturnType<typeof prepare>> | undefined} */
   let context;
   // An interrupted run still deletes its directory. The handler is removed when the run ends.
@@ -426,10 +451,10 @@ export async function runRehearsal({
   process.once("SIGTERM", onSignal);
   try {
     for (const dir of Object.values(dirs)) await mkdir(dir, { recursive: true });
-    context = await prepare(dirs, { mode, pins, versions });
+    context = await prepare(dirs, { mode, pins, versions, isolation });
     for (const check of checks) {
       log(`Running ${check.id}: ${check.name}`);
-      results.push(scrub(await runCheck(check, context), root));
+      results.push(scrub(await runCheck(check, context), root, developerHome));
     }
   } catch (error) {
     results.push(
@@ -444,6 +469,7 @@ export async function runRehearsal({
           command: error instanceof CheckFailure ? error.command : context?.lastCommand?.(),
         },
         root,
+        developerHome,
       ),
     );
     // Every check still gets a row, so the table always lists each one with its result.
@@ -477,8 +503,8 @@ export async function runRehearsal({
   });
   // Isolation by construction: every command the rehearsal started had its homes, caches, and
   // registry inside the run. This is what the rehearsal controls, so a violation fails the run.
-  const violations = context?.isolationViolations?.() ?? [];
-  if (context?.isolationViolations) {
+  const violations = [...new Set(isolation)];
+  {
     results.push(
       scrub(
         {
@@ -495,16 +521,33 @@ export async function runRehearsal({
               }),
         },
         root,
+        developerHome,
       ),
     );
   }
   // Files written below the developer's HOME during the run. Other sessions and tools on the same
   // machine write to these caches too, and the rehearsal cannot tell their writes from its own, so
-  // this is a warning: it must not fail a release gate because of an unrelated process.
+  // this is a warning: it must not fail a release gate because of an unrelated process. On CI
+  // (CI is set), nothing else runs on the runner, so there it is a failed check.
   const changed = await developerState.changes();
+  const changedList = `${changed.slice(0, 20).join(", ")}${changed.length > 20 ? `, and ${changed.length - 20} more` : ""}`;
+  if (strictDeveloperState) {
+    results.push({
+      id: "harness-developer-state",
+      name: "The developer's HOME, npm cache, Corepack home, and package-manager stores are unchanged",
+      issues: ["#918"],
+      status: changed.length === 0 ? "pass" : "fail",
+      ...(changed.length === 0
+        ? {}
+        : {
+            expected: "no file below HOME written during the run",
+            actual: `changed: ${changedList}`,
+          }),
+    });
+  }
   /** @type {string[]} */
   const warnings =
-    changed.length === 0
+    changed.length === 0 || strictDeveloperState
       ? []
       : [
           `Files below the developer's HOME changed during the run: ${changed.slice(0, 20).join(", ")}${changed.length > 20 ? `, and ${changed.length - 20} more` : ""}. Another process may have written them; the harness-isolation check shows whether the rehearsal's own commands stayed inside the run.`,
@@ -638,9 +681,9 @@ export function compareRuns(first, second) {
  * release candidate, and the Calavera bins installed from it.
  *
  * @param {ReturnType<typeof runDirectories>} dirs
- * @param {{ mode: "pinned" | "latest", pins: Record<string, string>, versions: Record<string, string> }} options
+ * @param {{ mode: "pinned" | "latest", pins: Record<string, string>, versions: Record<string, string>, isolation: string[] }} options
  */
-async function prepareRun(dirs, { mode, pins, versions }) {
+async function prepareRun(dirs, { mode, pins, versions, isolation }) {
   /** @type {Map<string, import("./rehearsal-registry.mjs").LocalPackage>} */
   const local = new Map();
   versions["Node.js"] = process.version;
@@ -660,22 +703,20 @@ async function prepareRun(dirs, { mode, pins, versions }) {
     bunDirectory: bunPath ? dirname(bunPath) : undefined,
   });
 
-  /**
-   * @param {string} command
-   * @param {string[]} args
-   * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, timeout?: number }} [options]
-   */
-  /** @type {string[]} */
-  const violations = [];
   /** Registries a check starts, such as the one that advertises a newer Calavera. @type {Array<{ url: string }>} */
   const extraRegistries = [];
   /** @param {NodeJS.ProcessEnv} commandEnv @param {string} display */
   const recordEnvironment = (commandEnv, display) => {
     const registryUrls = [registry.url, ...extraRegistries.map(({ url }) => url)];
     for (const problem of isolationViolations(commandEnv, dirs.root, registryUrls)) {
-      violations.push(`${display}: ${problem}`);
+      isolation.push(`${display}: ${problem}`);
     }
   };
+  /**
+   * @param {string} command
+   * @param {string[]} args
+   * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, timeout?: number }} [options]
+   */
   const run = async (command, args, options = {}) => {
     recordEnvironment(options.env ?? env, formatCommand(command, args, options.cwd ?? dirs.root));
     const result = await runCommand(command, args, {
@@ -786,7 +827,6 @@ async function prepareRun(dirs, { mode, pins, versions }) {
         }),
       lastCommand: () => lastCommand,
       recordEnvironment,
-      isolationViolations: () => [...new Set(violations)],
       close: async () => {
         for (const closer of closers) await closer.close();
       },
@@ -908,7 +948,7 @@ export async function prerequisiteProblems(
   {
     nodeVersion = process.version,
     bunVersion = installedBunVersion,
-    hasCommand = async (command) => (await which(command)) !== undefined,
+    hasCommand = hasPreflightCommand,
   } = {},
 ) {
   /** @type {string[]} */
@@ -921,24 +961,49 @@ export async function prerequisiteProblems(
   const bun = await bunVersion();
   if (bun !== pins.bun) {
     problems.push(
-      `Bun ${pins.bun} is required; ${bun === undefined ? "bun is not on PATH" : `bun --version prints ${bun}`}. Install Bun ${pins.bun} exactly, the version in scripts/rehearsal-pins.json, so that bun and bunx are on PATH and bun --version prints ${pins.bun}, then run the command again.`,
+      `Bun ${pins.bun} is required; ${bun === undefined ? "bun is not on PATH" : `bun --version prints ${bun}`}. Install Bun ${pins.bun} exactly, the version in scripts/rehearsal-pins.json, so that bun and bunx are on PATH and bun --version prints ${pins.bun}, then run the command again. The rehearsal gives bun its own empty HOME, so put the Bun binary itself on PATH, not a version-manager shim that needs your HOME.`,
     );
   }
   for (const command of ["git", "tar"]) {
     if (!(await hasCommand(command))) {
       problems.push(
-        `${command} is required and is not on PATH. Install it, then run the command again.`,
+        `${command} is required and is not on the PATH the rehearsal gives its commands (the Node.js and Bun directories, then ${STANDARD_PATH.join(", ")}). Install it there, then run the command again.`,
       );
     }
   }
   return problems;
 }
 
-async function installedBunVersion() {
+/**
+ * The environment the preflight probes with: the PATH a run gives its commands, apart from the
+ * run's own bin directories, and a HOME that does not exist, because a run gives every command an
+ * empty HOME. A version-manager shim that finds its installs through the real HOME fails here, as
+ * it would in the run. Nothing is created.
+ */
+async function preflightEnvironment() {
   const bun = await which("bun");
-  if (!bun) return undefined;
-  const result = await runCommand(bun, ["--version"], { cwd: tmpdir(), env: process.env });
+  return {
+    PATH: [dirname(process.execPath), ...(bun ? [dirname(bun)] : []), ...STANDARD_PATH].join(
+      delimiter,
+    ),
+    HOME: join(tmpdir(), "calavera-rehearsal-preflight-home-does-not-exist"),
+  };
+}
+
+async function installedBunVersion() {
+  const env = await preflightEnvironment();
+  const result = await runCommand("bun", ["--version"], { cwd: tmpdir(), env });
   return result.exitCode === 0 ? result.stdout.trim() : undefined;
+}
+
+/** @param {string} command */
+async function hasPreflightCommand(command) {
+  const env = await preflightEnvironment();
+  const result = await runCommand("sh", ["-c", 'command -v "$1"', "sh", command], {
+    cwd: tmpdir(),
+    env,
+  });
+  return result.exitCode === 0;
 }
 
 async function main() {
@@ -949,6 +1014,12 @@ async function main() {
     process.stderr.write(
       `The cli-experience rehearsal cannot start; nothing was created:\n${problems.map((problem) => `- ${problem}`).join("\n")}\n`,
     );
+    if (options.reportFile) {
+      await writeFile(
+        options.reportFile,
+        `## cli-experience rehearsal, ${options.mode} mode: CANNOT START\n\nNo check ran. Node.js ${process.version}.\n\n${problems.map((problem) => `- ${problem}`).join("\n")}\n`,
+      );
+    }
     process.exitCode = 2;
     return;
   }

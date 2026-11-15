@@ -3,10 +3,12 @@
 // `pnpm release:rehearse:cli` and its workflow, never in `pnpm quality`.
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
+import { spawnSync } from "node:child_process";
+import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   buildEnvironment,
@@ -77,6 +79,7 @@ test("a run reports every check, records its versions, and fails when one check 
       ["passes", "pass"],
       ["fails", "fail"],
       ["harness-cleanup", "pass"],
+      ["harness-isolation", "pass"],
     ],
   );
   const failure = report.results.find(({ id }) => id === "fails");
@@ -183,6 +186,7 @@ test("a write below the developer's HOME during a run is a warning, not a failed
     pins: {},
     tmpRoot: scratch,
     developerHome: home,
+    strictDeveloperState: false,
     prepare: async (_dirs, options) => (Object.assign(options.versions, versions), {}),
     checks: [stubCheck("writes-npmrc", () => writeFile(join(home, ".npmrc"), "registry=x\n"))],
   });
@@ -650,13 +654,109 @@ test("a run fails when a command ran outside its isolated directories", async ()
     pins: {},
     tmpRoot: scratch,
     developerHome: await fakeHome(),
-    prepare: async () => ({
-      isolationViolations: () => ["(cd <run> && npm install): HOME is /Users/dev"],
-    }),
+    prepare: async (_dirs, options) => {
+      options.isolation.push("(cd <run> && npm install): HOME is /Users/dev");
+      return {};
+    },
     checks: [stubCheck("passes", async () => {})],
   });
   const isolation = report.results.find(({ id }) => id === "harness-isolation");
   assert.equal(isolation?.status, "fail");
   assert.match(isolation?.actual ?? "", /HOME is \/Users\/dev/);
   assert.equal(report.ok, false);
+});
+
+test("on CI, a write below HOME during the run is a failed check, because nothing else runs there", async () => {
+  const home = await fakeHome();
+  const report = await runRehearsal({
+    mode: "pinned",
+    pins: {},
+    tmpRoot: scratch,
+    developerHome: home,
+    strictDeveloperState: true,
+    prepare: async () => ({}),
+    checks: [stubCheck("writes-npmrc", () => writeFile(join(home, ".npmrc"), "registry=x\n"))],
+  });
+  const state = report.results.find(({ id }) => id === "harness-developer-state");
+  assert.equal(state?.status, "fail");
+  assert.equal(state?.actual, "changed: ~/.npmrc");
+  assert.deepEqual(report.warnings, []);
+});
+
+test("isolation violations found during a failed setup still fail the run, with HOME printed as ~", async () => {
+  const home = await fakeHome();
+  const report = await runRehearsal({
+    mode: "pinned",
+    pins: {},
+    tmpRoot: scratch,
+    developerHome: home,
+    strictDeveloperState: false,
+    prepare: async (_dirs, options) => {
+      options.isolation.push(`(cd <run> && npm install): HOME is ${home}`);
+      throw new Error("npm install failed");
+    },
+    checks: [],
+  });
+  const isolation = report.results.find(({ id }) => id === "harness-isolation");
+  assert.equal(isolation?.status, "fail");
+  assert.equal(isolation?.actual, "(cd <run> && npm install): HOME is ~");
+});
+
+test("any other variable that points into the developer's HOME is a violation", () => {
+  const dirs = runDirectories("/run");
+  const env = buildEnvironment(dirs, "http://127.0.0.1:4873", { nodeDirectory: "/node/bin" });
+  assert.deepEqual(
+    isolationViolations(
+      { ...env, PNPM_HOME: "/Users/dev/Library/pnpm", SSL_CERT_FILE: "/Users/dev/certs.pem" },
+      "/run",
+      ["http://127.0.0.1:4873"],
+      "/Users/dev",
+    ),
+    ["PNPM_HOME is /Users/dev/Library/pnpm"],
+    "inherited network settings such as SSL_CERT_FILE are allowed",
+  );
+});
+
+test("a missing git or tar is a prerequisite problem", async () => {
+  const problems = await prerequisiteProblems(
+    { node: "26.13.1", bun: "1.4.4" },
+    {
+      nodeVersion: "v26.13.1",
+      bunVersion: async () => "1.4.4",
+      hasCommand: async (command) => command !== "tar",
+    },
+  );
+  assert.equal(problems.length, 1);
+  assert.match(
+    problems[0] ?? "",
+    /^tar is required and is not on the PATH the rehearsal gives its commands/,
+  );
+});
+
+test("the command stops before it creates anything when a prerequisite is missing, with exit code 2", async () => {
+  // A bin directory with the running Node.js and a bun that reports another version, so the
+  // preflight cannot pass whatever is installed on this machine.
+  const bin = await mkdtemp(join(scratch, "bin-"));
+  await symlink(process.execPath, join(bin, "node"));
+  await writeFile(join(bin, "bun"), "#!/bin/sh\necho 0.0.1\n");
+  await chmod(join(bin, "bun"), 0o755);
+  const tmp = await mkdtemp(join(scratch, "tmp-"));
+  const report = join(tmp, "report.md");
+  const result = spawnSync(
+    process.execPath,
+    [
+      fileURLToPath(new URL("./rehearse-cli-experience.mjs", import.meta.url)),
+      "--report-file",
+      report,
+    ],
+    { env: { PATH: bin, HOME: await fakeHome(), TMPDIR: tmp }, encoding: "utf8" },
+  );
+  assert.equal(result.status, 2, result.stderr);
+  assert.match(result.stderr, /^The cli-experience rehearsal cannot start; nothing was created:\n/);
+  assert.match(result.stderr, /Bun 1\.4\.4 is required; bun --version prints 0\.0\.1\./);
+  assert.deepEqual(await readdir(tmp), ["report.md"], "only the requested report was written");
+  assert.match(
+    await readFile(report, "utf8"),
+    /^## cli-experience rehearsal, pinned mode: CANNOT START/,
+  );
 });
