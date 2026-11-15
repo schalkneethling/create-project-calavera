@@ -55,6 +55,7 @@ const versions = { "create-project-calavera": "9.9.9", "Node.js": "v26.13.1", "V
 
 test("a run reports every check, records its versions, and fails when one check fails", async () => {
   const report = await runRehearsal({
+    strictDeveloperState: false,
     mode: "pinned",
     pins: {},
     tmpRoot: scratch,
@@ -91,6 +92,7 @@ test("a run reports every check, records its versions, and fails when one check 
 
 test("a run passes only when every check passes", async () => {
   const report = await runRehearsal({
+    strictDeveloperState: false,
     mode: "latest",
     pins: {},
     tmpRoot: scratch,
@@ -115,6 +117,7 @@ test("a run deletes its directory after a failing check, a throwing check, and a
     throw new Error("boom");
   });
   const report = await runRehearsal({
+    strictDeveloperState: false,
     mode: "pinned",
     pins: {},
     tmpRoot,
@@ -126,6 +129,7 @@ test("a run deletes its directory after a failing check, a throwing check, and a
   assert.equal(report.results[0]?.actual, "boom");
 
   const failedSetup = await runRehearsal({
+    strictDeveloperState: false,
     mode: "pinned",
     pins: {},
     tmpRoot,
@@ -166,6 +170,7 @@ test("a run deletes its directory after a failing check, a throwing check, and a
 test("a run closes what setup opened, also when a check fails", async () => {
   let closed = false;
   await runRehearsal({
+    strictDeveloperState: false,
     mode: "pinned",
     pins: {},
     tmpRoot: scratch,
@@ -651,6 +656,7 @@ test("an isolation violation names the command and every home, cache, or registr
 
 test("a run fails when a command ran outside its isolated directories", async () => {
   const report = await runRehearsal({
+    strictDeveloperState: false,
     mode: "pinned",
     pins: {},
     tmpRoot: scratch,
