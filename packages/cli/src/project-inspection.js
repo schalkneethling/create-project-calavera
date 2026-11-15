@@ -51,7 +51,7 @@ export const managedFileDeclarations = Object.freeze([
   },
   {
     integration: "github-repository-controls",
-    // Doctor has never checked these files, unlike every other managed file (#458 follow-up).
+    // Doctor has never checked these files, unlike every other managed file (#925).
     files: [
       { path: ".github/repository-controls.json", checkedByDoctor: false },
       { path: ".github/dependabot.yml", checkedByDoctor: false },
@@ -74,7 +74,7 @@ export function declaredManagedFiles(integrationIds) {
 }
 
 // The order inspection has always listed existing configs in, which differs from the order apply
-// writes them in (#458 follow-up). Every declared integration needs a place here.
+// writes them in (#926). Every declared integration needs a place here.
 const existingConfigReportOrder = [
   "editorconfig",
   "github-repository-controls",

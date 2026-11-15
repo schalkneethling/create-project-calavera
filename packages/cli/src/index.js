@@ -2358,6 +2358,16 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
     }
 
     const contentsByPath = createContents(integration, integrations, integrationOptions);
+    // A file with contents but no declaration would never be written, so it stops the plan.
+    const undeclared = Object.keys(contentsByPath).filter(
+      (path) => !files.some((file) => file.path === path),
+    );
+    if (undeclared.length > 0) {
+      throw new Error(
+        `Calavera has contents for ${undeclared.join(", ")} but does not declare them for ${id}.`,
+      );
+    }
+
     return files.map(({ path }) => {
       const contents = contentsByPath[path];
       if (contents === undefined) {

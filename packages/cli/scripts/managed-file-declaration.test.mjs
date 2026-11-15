@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
 import { integrationCatalog } from "../src/catalog.js";
+import { githubRepositoryControlManagedFiles } from "../src/github-repository-controls.js";
 import { planCleanManagedFiles } from "../src/index.js";
 import * as projectInspection from "../src/project-inspection.js";
 
@@ -121,7 +122,7 @@ test("doctor checks every planned file except the github-repository-controls fil
     .filter((message) => message.startsWith(prefix))
     .map((message) => message.slice(prefix.length).split(". Run ")[0]);
 
-  // #458 follow-up: doctor has never checked the github-repository-controls files.
+  // #925: doctor has never checked the github-repository-controls files.
   assert.deepEqual(
     missing,
     plannedPaths.filter((path) => !repositoryControlFiles.includes(path)),
@@ -152,11 +153,24 @@ test("every integration that writes a managed file appears exactly once in the o
     );
   }
 
+  // The planner reads paths from the declaration, so compare the declaration with the module that
+  // builds the repository-controls files, which lists its paths itself.
+  assert.deepEqual(
+    githubRepositoryControlManagedFiles(
+      integrationOptions["github-repository-controls"],
+      integrationCatalog,
+    ).map(({ path }) => path),
+    declarations
+      .find(({ integration }) => integration === "github-repository-controls")
+      .files.map(({ path }) => path),
+  );
+
   const paths = declarations.flatMap(({ files }) => files.map(({ path }) => path));
   assert.deepEqual(paths, [...new Set(paths)], "no file is declared by two integrations");
 });
 
 test("doctor's list is the declared files of the selected integrations, minus those it skips", () => {
+  assert.equal(typeof projectInspection.declaredManagedFiles, "function");
   const files = projectInspection.declaredManagedFiles(["knip", "github-repository-controls"]);
   assert.deepEqual(files, [
     { path: "knip.json" },
