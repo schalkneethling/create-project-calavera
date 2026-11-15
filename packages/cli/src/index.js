@@ -209,7 +209,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {{ packageManager?: PackageManager, files: string[], findings: ProjectInspectionFinding[], vitePlus: VitePlusDetection }} ProjectInspection
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[], packageTestFindings?: ProjectInspectionFinding[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter. `packageTestFindings` holds the findings apply already planned with the package manager it resolved, so inspection reports them instead of planning them again.
- * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], staleQualityValues: string[], aliasQualityValues: string[] }} ScriptPlan staleQualityValues are quality values an earlier release wrote, which apply removes because the plan omits quality; aliasQualityValues are the single-script aliases an earlier release wrote, which apply removes only when the state shows Calavera wrote the project's value (#230)
+ * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], staleQualityValues: string[], aliasQualityValues: string[] }} ScriptPlan staleQualityValues are quality values an earlier release wrote, which apply removes because the plan omits quality; aliasQualityValues are the values an earlier release wrote for a recipe whose quality is now a single-script alias, which apply removes only when the state shows Calavera wrote the project's value (#230)
  * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
@@ -1455,14 +1455,16 @@ function removeDefaultTestScript(packageJSON) {
  * Removes a `quality` script the plan omits when its value is one an earlier
  * release wrote (`staleQualityValues`), so it no longer runs what the recipe
  * leaves out. Any other value is kept, and the quality omission says so,
- * because Calavera cannot tell that it wrote that value.
+ * because Calavera cannot show that it wrote that value. A kept value that
+ * matches one of `earlierAliases` is named as such, so the user can remove it.
  *
  * @param {PackageJSON} packageJSON
  * @param {string[]} staleQualityValues
  * @param {ScriptOmission[]} omittedScripts
+ * @param {string[]} earlierAliases the single-script aliases an earlier release wrote for this recipe (#230)
  * @returns {string | undefined} the removed value
  */
-function removeStaleQualityScript(packageJSON, staleQualityValues, omittedScripts) {
+function removeStaleQualityScript(packageJSON, staleQualityValues, omittedScripts, earlierAliases) {
   const quality = packageJSON.scripts?.quality;
 
   if (typeof quality !== "string") {
@@ -1476,7 +1478,11 @@ function removeStaleQualityScript(packageJSON, staleQualityValues, omittedScript
 
   const omission = omittedScripts.find(({ script }) => script === "quality");
   if (omission) {
-    omission.reason += ` package.json keeps its quality script, ${quoteScriptValue(quality)}, because it is not a value Calavera wrote for this recipe.`;
+    omission.reason += ` package.json keeps its quality script, ${quoteScriptValue(quality)}, because Calavera cannot show that it wrote that value.`;
+    if (earlierAliases.includes(quality)) {
+      omission.reason +=
+        " It matches the alias an earlier release wrote for this recipe, so remove it if you did not write it yourself.";
+    }
   }
   return undefined;
 }
@@ -1652,8 +1658,8 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
       // value with lint:html before the html-validate quality option, and each
       // of those with lint, the Stylelint script's name before ADR-0013. Apply
       // removes one only when the state shows Calavera wrote it
-      // (`stateShowsCalaveraWroteQuality`), so it does not leave a quality that
-      // runs a renamed script.
+      // (`stateShowsCalaveraWroteQuality`); otherwise the dry run names the
+      // match, so the user can remove it.
       /** @param {string[]} names */
       const withEarlierLintName = (names) =>
         names.map((name) => (name === "lint:styles" ? "lint" : name));
@@ -1700,43 +1706,21 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
 }
 
 /**
- * The integrations whose generated scripts quality can run, in `buildScripts`.
- */
-const QUALITY_INTEGRATION_IDS = Object.freeze([
-  "stylelint",
-  "html-validate",
-  "knip",
-  "react-doctor",
-  "varlock",
-]);
-
-/**
  * Whether the state shows that Calavera wrote the project's `quality` value
- * (#230). A state file that records `qualityScript` shows it only when the
- * recorded value is this value; once this release has applied, a value apply
- * kept as the project's own is recorded as null and never removed. A state
- * file from a release before #230 has no record, but those releases wrote
- * quality on every apply, so it shows Calavera wrote the value when it records
- * an apply of the same quality integrations the recipe selects.
+ * (#230): the state records that apply wrote exactly this value. Apply records
+ * null when it writes no quality, such as when it keeps the project's own, so
+ * a value it kept is never removed later. A state file without the record,
+ * from a release before #230 or rewritten by one, shows nothing: those
+ * releases did not write quality when the recipe turned it off, and the state
+ * does not record the recipe's script flags, so the value may be the
+ * project's own.
  *
  * @param {CalaveraState} state
  * @param {unknown} quality the project's `quality` value
- * @param {string[]} integrationIds the recipe's integrations
  * @returns {boolean}
  */
-function stateShowsCalaveraWroteQuality(state, quality, integrationIds) {
-  if (typeof quality !== "string") {
-    return false;
-  }
-
-  if (state.qualityScript !== undefined) {
-    return state.qualityScript === quality;
-  }
-
-  /** @param {string[]} ids */
-  const qualityIds = (ids) => QUALITY_INTEGRATION_IDS.filter((id) => ids.includes(id)).join(" ");
-  const selected = qualityIds(integrationIds);
-  return selected !== "" && qualityIds(state.integrations) === selected;
+function stateShowsCalaveraWroteQuality(state, quality) {
+  return typeof quality === "string" && state.qualityScript === quality;
 }
 
 function createHtmlValidateWrapper() {
@@ -3156,14 +3140,11 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
   const removedQualityScript = removeStaleQualityScript(
     packageJSON,
-    stateShowsCalaveraWroteQuality(
-      previousState,
-      packageJSON.scripts?.quality,
-      integrations.map(({ id }) => id),
-    )
+    stateShowsCalaveraWroteQuality(previousState, packageJSON.scripts?.quality)
       ? [...staleQualityValues, ...aliasQualityValues]
       : staleQualityValues,
     omittedScripts,
+    aliasQualityValues,
   );
   const usesVarlock = integrations.some(({ id }) => id === "varlock");
   const varlockFilePlans = usesVarlock

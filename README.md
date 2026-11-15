@@ -779,12 +779,12 @@ workspace root, the test step is `vp run -r test`, which runs each member's
 `test` script, and leaves the step out when no package defines `test`. Other
 projects keep a `quality` script without `vp` when it runs two or more of
 Calavera's scripts. With only one, such as `npm run knip`, Calavera does not
-generate `quality`, because it would only repeat that script. Apply removes a
-`quality` whose value is exactly the alias an earlier release wrote for the
-recipe only when `.calavera/state.json` shows that Calavera wrote it; it keeps
-any other value, and the dry run says so. Apply records the `quality` value it
-wrote, or none, in `.calavera/state.json` as `qualityScript`, so a value it kept
-as your own stays yours on every later apply. Calavera writes no script that
+generate `quality`, because it would only repeat that script. Apply records
+the `quality` value it writes, or `null`, in `.calavera/state.json` as
+`qualityScript`, and removes an earlier `quality` only when that record holds
+exactly the same value. It keeps any other value, including an alias an
+earlier release wrote before this record existed, and the dry run says so and
+names a value that matches such an alias, so you can remove it. Calavera writes no script that
 repeats a `vp` command on its own, and does not add Playwright or other test
 suites to `quality`. The Stylelint scripts are `lint:styles` and
 `lint:styles:fix`. In a project that has `.calavera/state.json` from an earlier

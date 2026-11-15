@@ -252,7 +252,13 @@ async function applyAsAnEarlierRelease(root, recipe, scripts) {
   });
 }
 
-test("after an earlier apply, apply removes the quality alias that release wrote, and a second apply changes nothing", async () => {
+const earlierAliasNote =
+  " It matches the alias an earlier release wrote for this recipe, so remove it if you did not write it yourself.";
+
+test("a state file without the quality record shows nothing, so apply keeps a quality alias and names the match, and a second apply changes nothing", async () => {
+  // A release before #230 wrote this state file. It did not write quality when the recipe
+  // turned quality off, and the state does not record that flag, so the alias may be the
+  // project's own.
   await using fixture = await createTemporaryFixture("quality", {
     "package.json": unmanagedManifest,
   });
@@ -260,18 +266,17 @@ test("after an earlier apply, apply removes the quality alias that release wrote
   await applyAsAnEarlierRelease(fixture.root, knipOnlyRecipe, { quality: "npm run knip" });
 
   await inDirectory(fixture.root, async () => {
-    const dryRun = packageChange((await applyRecipeObject(knipOnlyRecipe, dryRunOptions)).changes);
-    assert.equal(dryRun.removedQualityScript, "npm run knip");
+    const applied = packageChange((await applyRecipeObject(knipOnlyRecipe, applyOptions)).changes);
+
+    assert.equal(applied.removedQualityScript, undefined);
+    assert.equal(
+      applied.omittedScripts.find(({ script }) => script === "quality")?.reason,
+      `${singleCheckOmission("npm run knip")} package.json keeps its quality script, "npm run knip", because Calavera cannot show that it wrote that value.${earlierAliasNote}`,
+    );
     assert.equal(
       JSON.parse(await readFile("package.json", "utf8")).scripts.quality,
       "npm run knip",
     );
-
-    const applied = packageChange((await applyRecipeObject(knipOnlyRecipe, applyOptions)).changes);
-    assert.equal(applied.removedQualityScript, "npm run knip");
-    const scripts = JSON.parse(await readFile("package.json", "utf8")).scripts;
-    assert.equal(Object.hasOwn(scripts, "quality"), false);
-    assert.equal(scripts.knip, "knip");
 
     const reapplied = await applyRecipeObject(knipOnlyRecipe, applyOptions);
     assert.ok(
@@ -281,7 +286,34 @@ test("after an earlier apply, apply removes the quality alias that release wrote
   });
 });
 
-test("after an apply before the rename, apply removes a quality alias of lint along with renaming lint, so no quality runs a renamed script", async () => {
+test("apply removes an earlier quality value the state records it wrote, once quality would only alias one script", async () => {
+  const withHtml = buildRecipe("default", ["html-validate", "knip"], "npm");
+  const withoutHtml = buildRecipe("default", ["html-validate", "knip"], "npm", [], {
+    "html-validate": { quality: false },
+  });
+  await using fixture = await createTemporaryFixture("quality", {
+    "package.json": unmanagedManifest,
+  });
+  await writeVitePlusFormatter(fixture.root);
+
+  await inDirectory(fixture.root, async () => {
+    await applyRecipeObject(withHtml, applyOptions);
+    assert.equal(
+      JSON.parse(await readFile("package.json", "utf8")).scripts.quality,
+      "npm run lint:html && npm run knip",
+    );
+
+    const applied = packageChange((await applyRecipeObject(withoutHtml, applyOptions)).changes);
+
+    assert.equal(applied.removedQualityScript, "npm run lint:html && npm run knip");
+    assert.equal(
+      Object.hasOwn(JSON.parse(await readFile("package.json", "utf8")).scripts, "quality"),
+      false,
+    );
+  });
+});
+
+test("after an apply before the rename, a quality alias of lint is kept without the quality record, and the dry run names the match", async () => {
   const stylelintRecipe = buildRecipe("default", ["stylelint"], "npm");
   await using fixture = await createTemporaryFixture("quality", {
     "package.json": unmanagedManifest,
@@ -299,9 +331,12 @@ test("after an apply before the rename, apply removes a quality alias of lint al
     const applied = packageChange((await applyRecipeObject(stylelintRecipe, applyOptions)).changes);
     const scripts = JSON.parse(await readFile("package.json", "utf8")).scripts;
 
-    assert.equal(applied.removedQualityScript, "npm run lint");
-    assert.equal(Object.hasOwn(scripts, "quality"), false);
-    assert.equal(Object.hasOwn(scripts, "lint"), false);
+    assert.equal(applied.removedQualityScript, undefined);
+    assert.equal(
+      applied.omittedScripts.find(({ script }) => script === "quality")?.reason,
+      `${singleCheckOmission("npm run lint:styles")} package.json keeps its quality script, "npm run lint", because Calavera cannot show that it wrote that value.${earlierAliasNote}`,
+    );
+    assert.equal(scripts.quality, "npm run lint");
     assert.equal(scripts["lint:styles"], stylelintLint);
   });
 });
@@ -319,7 +354,7 @@ test("before any apply, a quality alias of the project's own lint is kept, and t
     change.omittedScripts.find((omission) => omission.script === "quality"),
     {
       script: "quality",
-      reason: `${singleCheckOmission("npm run lint:styles")} package.json keeps its quality script, "npm run lint", because it is not a value Calavera wrote for this recipe.`,
+      reason: `${singleCheckOmission("npm run lint:styles")} package.json keeps its quality script, "npm run lint", because Calavera cannot show that it wrote that value.${earlierAliasNote}`,
     },
   );
 });
@@ -369,31 +404,6 @@ test("a quality alias the user adds after an apply that wrote no quality is kept
   });
 });
 
-test("a state file from a release before #230 for other quality integrations does not show Calavera wrote a quality alias", async () => {
-  await using fixture = await createTemporaryFixture("quality", {
-    "package.json": unmanagedManifest,
-  });
-  await writeVitePlusFormatter(fixture.root);
-  // That release applied stylelint and knip, so it wrote a quality that runs both, not this alias.
-  await applyAsAnEarlierRelease(
-    fixture.root,
-    buildRecipe("default", ["stylelint", "knip"], "npm"),
-    {
-      quality: "npm run knip",
-    },
-  );
-
-  await inDirectory(fixture.root, async () => {
-    const applied = packageChange((await applyRecipeObject(knipOnlyRecipe, applyOptions)).changes);
-
-    assert.equal(applied.removedQualityScript, undefined);
-    assert.equal(
-      JSON.parse(await readFile("package.json", "utf8")).scripts.quality,
-      "npm run knip",
-    );
-  });
-});
-
 test("apply records in the state file the quality value it wrote, or null when it wrote none", async () => {
   await using fixture = await createTemporaryFixture("quality", {
     "package.json": unmanagedManifest,
@@ -409,6 +419,33 @@ test("apply records in the state file the quality value it wrote, or null when i
 
     await applyRecipeObject(knipOnlyRecipe, applyOptions);
     assert.equal(await recordedQuality(), null);
+  });
+});
+
+test("clean keeps the quality record in the state file it rewrites", async () => {
+  await using fixture = await createTemporaryFixture("quality", {
+    "package.json": unmanagedManifest,
+  });
+  await writeVitePlusFormatter(fixture.root);
+
+  await inDirectory(fixture.root, async () => {
+    // The recipe drops editorconfig, so clean has a stale managed file to remove and
+    // rewrites the state file.
+    await applyRecipeObject(
+      buildRecipe("default", ["editorconfig", "stylelint", "knip"], "npm"),
+      applyOptions,
+    );
+    await applyRecipeObject(buildRecipe("default", ["stylelint", "knip"], "npm"), applyOptions);
+    const before = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.ok(before.files.includes(".editorconfig"), JSON.stringify(before.files));
+
+    await execFileAsync(process.execPath, [cliPath, "clean", "--yes", "--json"], {
+      env: { ...process.env, NO_COLOR: "1" },
+    });
+
+    const after = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    assert.equal(after.files.includes(".editorconfig"), false, JSON.stringify(after.files));
+    assert.equal(after.qualityScript, "npm run lint:styles && npm run knip");
   });
 });
 
@@ -483,7 +520,7 @@ test("apply keeps a quality of the user's own when quality would be an alias, an
       applied.omittedScripts.find((omission) => omission.script === "quality"),
       {
         script: "quality",
-        reason: `${singleCheckOmission("npm run knip")} package.json keeps its quality script, "${userQuality}", because it is not a value Calavera wrote for this recipe.`,
+        reason: `${singleCheckOmission("npm run knip")} package.json keeps its quality script, "${userQuality}", because Calavera cannot show that it wrote that value.`,
       },
     );
     assert.equal(JSON.parse(await readFile("package.json", "utf8")).scripts.quality, userQuality);
