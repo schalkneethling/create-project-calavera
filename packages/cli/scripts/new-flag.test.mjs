@@ -18,6 +18,7 @@ import {
   parseArgs,
 } from "../src/index.js";
 import { detectVitePlus } from "../src/vite-plus-detection.js";
+import { printedNextPrompt, readmeAgentPrompt } from "./readme-agent-prompt.mjs";
 import {
   createTemporaryFixture,
   json,
@@ -505,7 +506,8 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
   assert.ok(await exists(join(target, "AGENTS.md")));
   assert.equal(await exists(join(workspace.work, ".calavera")), false);
   assert.match(result.stdout, /Calavera agent bootstrap complete/);
-  assert.match(result.stdout, /Next prompt: /);
+  // The README holds the agent prompt; --new prints it word for word (#840).
+  assert.equal(printedNextPrompt(result.stdout), await readmeAgentPrompt());
   assert.ok(
     result.stdout.includes(
       recipeBlock(target, {

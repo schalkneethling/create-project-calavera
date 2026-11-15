@@ -305,7 +305,18 @@ const AGENT_BOOTSTRAP_SKILL_RECIPE = {
   ai: [{ type: "skill", src: "skills/calavera" }],
 };
 const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/", import.meta.url));
+// The agent prompt `--new` and `--init` print. The repository README's "Agent prompt" step is the
+// source of this text (#840); the published package ships a short README without it, so the text
+// lives here, and tests that read the README through scripts/readme-agent-prompt.mjs fail when
+// the two differ.
 const AGENT_BOOTSTRAP_NEXT_PROMPT =
+  "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, validate and explain it, show me the dry-run result, and apply it only after I approve.";
+// The suggested first prompt in `.agents/calavera/mcp.md`, which still predates the README text.
+// Changing it changes the file's text, which must then be registered in
+// src/utils/earlier-guidance.js under the release that writes it (#830). That release is not known
+// until its version pull request, so the follow-up named in the #840 pull request moves this text
+// onto AGENT_BOOTSTRAP_NEXT_PROMPT then, together with both copies of the Calavera skill.
+const AGENT_BOOTSTRAP_MCP_NOTES_PROMPT =
   "Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.";
 const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
 const STRYKER_CONFIG_PATH = "stryker.config.json";
@@ -1941,7 +1952,7 @@ Then run \`${commands.applyDryRun}\` and ask for approval before running \`${com
 
 Suggested first prompt:
 
-> ${AGENT_BOOTSTRAP_NEXT_PROMPT}
+> ${AGENT_BOOTSTRAP_MCP_NOTES_PROMPT}
 `;
 }
 

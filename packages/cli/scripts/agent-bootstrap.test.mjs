@@ -7,6 +7,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { agentBootstrap, parseArgs } from "../src/index.js";
+import {
+  printedNextPrompt,
+  readmeAgentPrompt,
+  readRepositoryFile,
+} from "./readme-agent-prompt.mjs";
 
 const binPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 
@@ -97,7 +102,7 @@ test("agent bootstrap writes MCP-first guardrails", async () => {
     const agentsMd = await readFile("AGENTS.md", "utf8");
     const mcpNotes = await readFile(".agents/calavera/mcp.md", "utf8");
 
-    assert.match(result.nextPrompt, /First verify that the Calavera MCP tools are available/);
+    assert.equal(result.nextPrompt, await readmeAgentPrompt());
     assert.match(agentsMd, /Verify the Calavera MCP tools are available/);
     assert.match(agentsMd, /Do not inspect npm cache internals/);
     assert.match(mcpNotes, /Confirm the Calavera tools are visible before/);
@@ -146,6 +151,23 @@ test("agent bootstrap does not duplicate an existing Calavera guidance section",
       ),
     );
   });
+});
+
+test("--init prints the agent prompt from the README, word for word (#840)", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+
+    const result = await runCli(directory, ["--init", "--mcp-harness", "skip"]);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(printedNextPrompt(result.stdout), await readmeAgentPrompt());
+  });
+});
+
+test("the agent-first workflow guide quotes the README's agent prompt (#840)", async () => {
+  const guide = await readRepositoryFile("docs/agent-first-calavera-workflow.md");
+
+  assert.ok(guide.includes(`\n${await readmeAgentPrompt()}\n`), "the guide's prompt block differs");
 });
 
 test("--init prints the recipe next steps without a cd line", async () => {
