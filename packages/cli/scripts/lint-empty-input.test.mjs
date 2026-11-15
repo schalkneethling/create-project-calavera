@@ -223,7 +223,7 @@ test("a dry run on a project an earlier release applied shows each changed lint 
         'Would change script lint:html from "html-validate \\"**/*.html\\"" to "node scripts/lint-html.mjs \\"**/*.html\\""',
         // quality would now only alias lint:styles (#230). Without a state file
         // from an earlier apply, Calavera cannot tell that it wrote this value.
-        'Would omit script quality: quality was requested, but it would only run "npm run lint:styles", so Calavera does not generate quality as an alias of that script. package.json keeps its quality script, "npm run lint:styles && npm run lint:html", because Calavera cannot show that it wrote that value. It matches the alias an earlier release wrote for this recipe, so remove it if you did not write it yourself.',
+        'Would omit script quality: quality was requested, but it would only run "npm run lint:styles", so Calavera does not generate quality as an alias of that script. package.json keeps its quality script, "npm run lint:styles && npm run lint:html", because Calavera cannot show that it wrote that value.',
       ]) {
         assert.ok(
           lines.some((line) => line.endsWith(expected)),
