@@ -475,7 +475,8 @@ function assertListing(result, items) {
 
 /**
  * The files, dependencies, and artifacts a JSON result names, wherever they sit in it: every
- * `path`, `destination`, and `file` value, the keys of dependency maps, and artifact IDs.
+ * `path`, `destination`, and `file` value, the names in a dependency list or the keys of a
+ * dependency map, and artifact IDs.
  *
  * @param {unknown} value
  * @returns {string[]}
@@ -495,12 +496,10 @@ export function namedItems(value) {
       return;
     }
     for (const [name, child] of Object.entries(node)) {
-      if (
-        /dependencies$/i.test(name) &&
-        child &&
-        typeof child === "object" &&
-        !Array.isArray(child)
-      ) {
+      if (/dependencies$/i.test(name) && Array.isArray(child)) {
+        // ApplyResult.dependencies is a list of package names.
+        items.push(...child.filter((entry) => typeof entry === "string"));
+      } else if (/dependencies$/i.test(name) && child && typeof child === "object") {
         items.push(...Object.keys(child));
       } else if (/artifacts$/i.test(name) && Array.isArray(child)) {
         for (const artifact of child) {
@@ -515,6 +514,82 @@ export function namedItems(value) {
   };
   visit(value, "");
   return [...new Set(items)];
+}
+
+/**
+ * Why the cache is not ignored the way #841 decided, or undefined when it is: `git check-ignore -v`
+ * must name a line of the project's own `.gitignore`, and that line must sit inside a block
+ * Calavera marks with `# calavera:<owner>:start` and `# calavera:<owner>:end`.
+ *
+ * @param {string} checkIgnoreOutput `git check-ignore -v` output: `<source>:<line>:<pattern>\t<path>`.
+ * @param {string} gitignore The project's `.gitignore`.
+ */
+export function cacheIgnoreProblem(checkIgnoreOutput, gitignore) {
+  const match = /^(.*):(\d+):(.*)\t/.exec(checkIgnoreOutput.trim());
+  if (!match) return ".calavera/cache is not ignored by any ignore file";
+  const [, source, lineText] = match;
+  if (source !== ".gitignore") {
+    return `.calavera/cache is ignored by ${source}, not by the project's .gitignore`;
+  }
+  const lines = gitignore.split(/\r?\n/);
+  const index = Number(lineText) - 1;
+  for (let start = index - 1; start >= 0; start -= 1) {
+    const owner = /^# calavera:(.+):start$/.exec(lines[start] ?? "")?.[1];
+    if (owner === undefined) {
+      if (/^# calavera:.+:end$/.test(lines[start] ?? "")) break;
+      continue;
+    }
+    const end = lines.indexOf(`# calavera:${owner}:end`, index + 1);
+    if (end > index) return undefined;
+    break;
+  }
+  return `.calavera/cache is ignored by line ${lineText} of .gitignore, which is not inside a Calavera-marked block`;
+}
+
+/**
+ * Whether the apply output says why the cache is not committed. #841 decided that Calavera writes
+ * the ignore line in a marked `.gitignore` block and that the apply summary says so, so at least
+ * one output line must name both `.calavera/cache` and `.gitignore`. The wording is not settled,
+ * so the check asserts this property, not a sentence.
+ *
+ * @param {string} output
+ */
+export function summaryExplainsCache(output) {
+  return output
+    .split("\n")
+    .some(
+      (line) => countMentions(line, ".calavera/cache") > 0 && countMentions(line, ".gitignore") > 0,
+    );
+}
+
+/**
+ * Whether Git ran a pre-commit hook during a commit, read from Git's own trace2 event log
+ * (GIT_TRACE2_EVENT): a `child_start` event of class `hook` named `pre-commit`, and the
+ * `child_exit` event with the same `child_id`. This relies only on Git, not on how Vite+ installs
+ * its hook.
+ *
+ * @param {string} trace One JSON event per line.
+ * @returns {{ ran: false } | { ran: true, exitCode: number | undefined, argv: string[] }}
+ */
+export function preCommitHookRun(trace) {
+  const events = trace.split("\n").flatMap((line) => {
+    try {
+      return line.trim() ? [JSON.parse(line)] : [];
+    } catch {
+      return [];
+    }
+  });
+  const start = events.find(
+    (event) =>
+      event.event === "child_start" &&
+      event.child_class === "hook" &&
+      event.hook_name === "pre-commit",
+  );
+  if (!start) return { ran: false };
+  const exit = events.find(
+    (event) => event.event === "child_exit" && event.child_id === start.child_id,
+  );
+  return { ran: true, exitCode: exit?.code, argv: start.argv ?? [] };
 }
 
 /** @param {CommandResult} result */
@@ -678,26 +753,25 @@ function flowApply(context) {
 function flowCommit(context) {
   return shared(context, "flow-commit", async () => {
     const { project } = await flowApply(context);
-    const hooksPath = await context.run("git", ["config", "core.hooksPath"], { cwd: project });
-    const hasHook =
-      (hooksPath.exitCode === 0 && hooksPath.stdout.trim() !== "") ||
-      (await readFile(join(project, ".git", "hooks", "pre-commit")).then(
-        () => true,
-        () => false,
-      ));
-    if (!hasHook) {
-      throw new CheckFailure({
-        expected: "the Vite+ pre-commit hook to be installed in the scaffolded repository",
-        actual: "core.hooksPath is not set and .git/hooks/pre-commit does not exist",
-        command: hooksPath.display,
-      });
-    }
     await context.runOrThrow("git", ["add", "--all"], { cwd: project });
-    // No --no-verify: the commit goes through the Vite+ pre-commit hook.
+    // No --no-verify: the commit goes through the Vite+ pre-commit hook. Git's trace2 event log
+    // records every hook it runs, which proves the hook ran rather than only that one is configured.
+    const trace = join(context.dirs.tmp, "commit-trace2.json");
     const commit = await context.run("git", ["commit", "--message", "Apply Calavera"], {
       cwd: project,
+      env: { ...context.env, GIT_TRACE2_EVENT: trace },
     });
     assertExitZero(commit);
+    const hook = preCommitHookRun(await readFile(trace, "utf8").catch(() => ""));
+    if (!hook.ran || hook.exitCode !== 0) {
+      throw new CheckFailure({
+        expected: "the commit to run the Vite+ pre-commit hook, which exits with code 0",
+        actual: hook.ran
+          ? `the hook ${hook.argv.join(" ")} exited with code ${hook.exitCode}`
+          : "Git's trace shows no pre-commit hook during the commit",
+        command: commit.display,
+      });
+    }
     return project;
   });
 }
@@ -748,7 +822,7 @@ const flowChecks = [
   },
   {
     id: "second-dry-run-no-change",
-    name: "A second apply --dry-run reports no change and prints it under headings",
+    name: "A second apply --dry-run reports no change, prints it under headings, and its next-step commands work",
     issues: ["#617", "#331"],
     /** @param {RehearsalContext} context */
     run: async (context) => {
@@ -778,6 +852,7 @@ const flowChecks = [
       assertExitZero(result);
       await assertUnchanged(context, project, before, result.display);
       assertListing(result, namedItems(report));
+      await assertNextStepsRun(context, project, result.output, "second-dry-run");
     },
   },
   {
@@ -862,12 +937,32 @@ const commitChecks = [
     issues: ["#841"],
     /** @param {RehearsalContext} context */
     run: async (context) => {
-      const { result } = await flowApply(context);
-      if (countMentions(result.output, ".calavera/cache") === 0) {
+      const { project, result } = await flowApply(context);
+      if (!summaryExplainsCache(result.output)) {
         throw new CheckFailure({
-          expected: "the apply output to name .calavera/cache and say why it is not committed",
-          actual: `.calavera/cache is not mentioned\n${tail(result.output)}`,
+          expected:
+            "an apply output line that names .calavera/cache and .gitignore, saying the cache is ignored there (#841)",
+          actual: `${
+            countMentions(result.output, ".calavera/cache") === 0
+              ? ".calavera/cache is not mentioned"
+              : "no line names both .calavera/cache and .gitignore"
+          }\n${tail(result.output)}`,
           command: result.display,
+        });
+      }
+      const ignored = await context.run(
+        "git",
+        ["check-ignore", "--verbose", "--no-index", ".calavera/cache/npm/rehearsal-probe"],
+        { cwd: project },
+      );
+      const gitignore = await readFile(join(project, ".gitignore"), "utf8").catch(() => "");
+      const problem = cacheIgnoreProblem(ignored.stdout, gitignore);
+      if (problem) {
+        throw new CheckFailure({
+          expected:
+            "a line in a Calavera-marked block of .gitignore to ignore .calavera/cache (#841)",
+          actual: problem,
+          command: ignored.display,
         });
       }
     },

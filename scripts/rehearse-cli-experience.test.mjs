@@ -22,6 +22,7 @@ import {
   watchDeveloperState,
 } from "./rehearse-cli-experience.mjs";
 import {
+  cacheIgnoreProblem,
   cliExperienceChecks,
   countMentions,
   isHeading,
@@ -29,6 +30,8 @@ import {
   namedItems,
   nextStepCommands,
   pastedCommandWorked,
+  preCommitHookRun,
+  summaryExplainsCache,
   tapCounts,
 } from "./rehearsal-checks.mjs";
 import { CheckFailure } from "./rehearsal-failure.mjs";
@@ -778,4 +781,140 @@ test("the registry proxy forwards only origin-form paths to the fixed public reg
   assert.equal(upstreamUrl("@evil.example/x"), undefined);
   assert.equal(upstreamUrl("http://evil.example/x"), undefined);
   assert.equal(new URL(String(upstreamUrl("/..//evil.example/x"))).host, "registry.npmjs.org");
+});
+
+// Greptile review of #938: four ways a check could pass while its feature is missing.
+
+test("dependencies are named items, so a missing or repeated dependency fails the listing", () => {
+  // ApplyResult.dependencies is a string[] of package names (packages/cli/src/index.js).
+  const items = namedItems({
+    changes: [{ type: "write", path: ".editorconfig" }],
+    dependencies: ["knip", "stylelint"],
+  });
+  assert.deepEqual(items, [".editorconfig", "knip", "stylelint"]);
+  assert.deepEqual(
+    listingViolations(
+      "Files:\n- .editorconfig\nDev dependencies: knip\nDev dependency install command: vp add -D knip\n",
+      items,
+    ),
+    ["knip is printed 2 times", "stylelint is printed 0 times"],
+  );
+});
+
+test("the cache must be ignored by a line inside a Calavera-marked block of the root .gitignore", () => {
+  const gitignore = [
+    "node_modules",
+    "# calavera:calavera-cache:start",
+    ".calavera/cache/",
+    "# calavera:calavera-cache:end",
+    "",
+  ].join("\n");
+  assert.equal(
+    cacheIgnoreProblem(".gitignore:3:.calavera/cache/\t.calavera/cache/npm/x", gitignore),
+    undefined,
+  );
+  assert.match(cacheIgnoreProblem("", gitignore) ?? "", /is not ignored/);
+  assert.match(
+    cacheIgnoreProblem(
+      ".gitignore:1:.calavera/cache/\t.calavera/cache/npm/x",
+      ".calavera/cache/\n",
+    ) ?? "",
+    /line 1 of \.gitignore, which is not inside a Calavera-marked block/,
+  );
+  assert.match(
+    cacheIgnoreProblem(".git/info/exclude:1:.calavera/\t.calavera/cache/npm/x", gitignore) ?? "",
+    /ignored by \.git\/info\/exclude, not by the project's \.gitignore/,
+  );
+});
+
+test("the apply summary explains the cache only when a line names both the cache and .gitignore", () => {
+  assert.equal(summaryExplainsCache("Wrote .calavera/cache/npm"), false);
+  assert.equal(summaryExplainsCache(".calavera/cache is not committed.\nWrote .gitignore"), false);
+  assert.equal(
+    summaryExplainsCache(
+      "Cache: .calavera/cache is not committed; a marked block in .gitignore ignores it.",
+    ),
+    true,
+  );
+});
+
+test("a pre-commit hook counts as run only when Git's trace shows it started and exited", () => {
+  const event = (/** @type {Record<string, unknown>} */ fields) => JSON.stringify(fields);
+  const ran = [
+    event({
+      event: "child_start",
+      child_id: 0,
+      child_class: "hook",
+      hook_name: "pre-commit",
+      argv: [".vite-hooks/_/pre-commit"],
+    }),
+    event({ event: "child_exit", child_id: 0, code: 0 }),
+  ].join("\n");
+  assert.deepEqual(preCommitHookRun(ran), {
+    ran: true,
+    exitCode: 0,
+    argv: [".vite-hooks/_/pre-commit"],
+  });
+  // core.hooksPath set but no hook started: the commit ran no hook.
+  assert.deepEqual(
+    preCommitHookRun(
+      event({ event: "child_start", child_id: 1, child_class: "?", argv: ["git", "maintenance"] }),
+    ),
+    { ran: false },
+  );
+  assert.deepEqual(preCommitHookRun(""), { ran: false });
+});
+
+test("the second dry run fails when a next-step command it prints does not work when pasted", async () => {
+  const check = cliExperienceChecks.find(({ id }) => id === "second-dry-run-no-change");
+  assert.ok(check);
+  const root = await mkdtemp(join(scratch, "second-dry-run-"));
+  const project = join(root, "project");
+  await mkdir(project);
+  await writeFile(join(project, "package.json"), "{}\n");
+  for (const dir of ["projects", "tmp"]) await mkdir(join(root, dir));
+  /** @type {string[]} */
+  const pasted = [];
+  const context = {
+    dirs: { projects: join(root, "projects"), tmp: join(root, "tmp") },
+    shared: new Map([["flow-apply", Promise.resolve({ project, planned: [], stateHash: "" })]]),
+    run: async (/** @type {string} */ command, /** @type {string[]} */ args) => {
+      const result = (/** @type {number} */ exitCode, /** @type {string} */ stdout) => ({
+        exitCode,
+        signal: null,
+        timedOut: false,
+        stdout,
+        stderr: "",
+        output: stdout,
+        display: `${command} ${args.join(" ")}`,
+      });
+      if (command === "sh") {
+        pasted.push(args[3] ?? "");
+        return result(1, "pnpm: command broken");
+      }
+      if (args.includes("--json")) {
+        return result(
+          0,
+          JSON.stringify({
+            changes: [{ type: "unchanged", path: "package.json" }],
+            autoInstalledArtifacts: [],
+          }),
+        );
+      }
+      return result(
+        0,
+        "Files:\n- package.json\nNothing to change.\nNext steps:\n  pnpm dlx create-project-calavera doctor\n",
+      );
+    },
+    calavera: { bin: "create-project-calavera" },
+  };
+  await assert.rejects(check.run(context), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.match(
+      error.expected,
+      /the next-step command "pnpm dlx create-project-calavera doctor" to work when pasted/,
+    );
+    return true;
+  });
+  assert.deepEqual(pasted, ["pnpm dlx create-project-calavera doctor"]);
 });
