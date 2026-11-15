@@ -77,14 +77,14 @@ appendFileSync(
 );
 
 // npm create vite-plus@latest -- <args>, bunx create-vite-plus@latest <args>,
-// and <runner> --package vite-plus vp create <args>.
+// and <pnpm|yarn> dlx create-vite-plus@latest <args>.
 const runner = basename(process.argv[1]);
 const vpCreateArgs =
   runner === "npm"
     ? argv.slice(argv.indexOf("--") + 1)
     : runner === "bunx"
       ? argv.slice(1)
-      : argv.slice(argv.indexOf("create") + 1);
+      : argv.slice(2);
 const separator = vpCreateArgs.indexOf("--");
 const own = separator === -1 ? vpCreateArgs : vpCreateArgs.slice(0, separator);
 const directoryIndex = own.indexOf("--directory");
@@ -560,6 +560,31 @@ test("--new forwards every token after it unchanged, including -- and what follo
     {
       STUB_MODE: "scaffold",
     },
+  );
+  const invocations = await readInvocations(workspace.log);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.deepEqual(invocations[0].argv, ["dlx", "create-vite-plus@latest", ...forwarded]);
+  assert.ok(await exists(join(workspace.work, "lib/.calavera/state.json")));
+});
+
+test("--new forwards every token to yarn dlx create-vite-plus unchanged and in order", async () => {
+  await using workspace = await createTemporaryWorkspace("forwarding-yarn");
+  // A literal create token in the template arguments must not move the target.
+  const forwarded = [
+    "vite:library",
+    "--directory",
+    "lib",
+    "--",
+    "create",
+    "--directory",
+    "elsewhere",
+  ];
+
+  const result = await runCli(
+    workspace,
+    ["--yes", "--package-manager", "yarn", "--new", ...forwarded],
+    { STUB_MODE: "scaffold" },
   );
   const invocations = await readInvocations(workspace.log);
 
