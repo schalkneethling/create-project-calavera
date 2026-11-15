@@ -276,9 +276,9 @@ const REGISTRY_VARIABLES = [
  *
  * @param {NodeJS.ProcessEnv} env
  * @param {string} root
- * @param {string} registryUrl
+ * @param {string[]} registryUrls The rehearsal registries this run started.
  */
-export function isolationViolations(env, root, registryUrl) {
+export function isolationViolations(env, root, registryUrls) {
   return [
     ...ISOLATED_PATH_VARIABLES.flatMap((name) => {
       const value = env[name];
@@ -288,7 +288,7 @@ export function isolationViolations(env, root, registryUrl) {
     ...REGISTRY_VARIABLES.flatMap((name) => {
       const value = env[name];
       if (value === undefined) return [`${name} is not set`];
-      return value.replace(/\/$/, "") === registryUrl ? [] : [`${name} is ${value}`];
+      return registryUrls.includes(value.replace(/\/$/, "")) ? [] : [`${name} is ${value}`];
     }),
   ];
 }
@@ -667,9 +667,12 @@ async function prepareRun(dirs, { mode, pins, versions }) {
    */
   /** @type {string[]} */
   const violations = [];
+  /** Registries a check starts, such as the one that advertises a newer Calavera. @type {Array<{ url: string }>} */
+  const extraRegistries = [];
   /** @param {NodeJS.ProcessEnv} commandEnv @param {string} display */
   const recordEnvironment = (commandEnv, display) => {
-    for (const problem of isolationViolations(commandEnv, dirs.root, registry.url)) {
+    const registryUrls = [registry.url, ...extraRegistries.map(({ url }) => url)];
+    for (const problem of isolationViolations(commandEnv, dirs.root, registryUrls)) {
       violations.push(`${display}: ${problem}`);
     }
   };
@@ -778,6 +781,7 @@ async function prepareRun(dirs, { mode, pins, versions }) {
       startRegistry: (/** @type {Omit<Parameters<typeof startRegistry>[0], "local">} */ options) =>
         startRegistry({ local, ...options }).then((extra) => {
           closers.push(extra);
+          extraRegistries.push(extra);
           return extra;
         }),
       lastCommand: () => lastCommand,

@@ -626,14 +626,20 @@ test("prerequisites name every missing or mismatched tool with its remedy, befor
 test("an isolation violation names the command and every home, cache, or registry outside the run", () => {
   const dirs = runDirectories("/run");
   const env = buildEnvironment(dirs, "http://127.0.0.1:4873", { nodeDirectory: "/node/bin" });
-  assert.deepEqual(isolationViolations(env, "/run", "http://127.0.0.1:4873"), []);
+  assert.deepEqual(isolationViolations(env, "/run", ["http://127.0.0.1:4873"]), []);
   const leaked = { ...env, HOME: "/Users/dev", npm_config_registry: "https://registry.npmjs.org/" };
-  assert.deepEqual(isolationViolations(leaked, "/run", "http://127.0.0.1:4873"), [
+  assert.deepEqual(isolationViolations(leaked, "/run", ["http://127.0.0.1:4873"]), [
     "HOME is /Users/dev",
     "npm_config_registry is https://registry.npmjs.org/",
   ]);
+  // A second rehearsal registry, such as the version-notice check's, is inside the run too.
+  const second = { ...env, npm_config_registry: "http://127.0.0.1:5000/" };
+  assert.deepEqual(
+    isolationViolations(second, "/run", ["http://127.0.0.1:4873", "http://127.0.0.1:5000"]),
+    [],
+  );
   const { npm_config_cache: _dropped, ...missing } = env;
-  assert.deepEqual(isolationViolations(missing, "/run", "http://127.0.0.1:4873"), [
+  assert.deepEqual(isolationViolations(missing, "/run", ["http://127.0.0.1:4873"]), [
     "npm_config_cache is not set",
   ]);
 });
