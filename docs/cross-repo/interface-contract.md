@@ -189,12 +189,13 @@ css-evolve does not read this schema; it exists here so css-evolve's I4 declarat
 - **Artifact** (Calavera): a versioned skill, hook, subagent, or MCP registration installed under `.agents/` and tracked for updates.
 - **Recipe** (Calavera): `calavera.config.json`, the declarative list of integrations and artifacts for a project.
 - **Apply** (Calavera): the pipeline that writes a recipe into a project; `dry_run_apply` is the approval boundary.
-- **`vp`-managed** (Calavera): a project where Vite+ owns the JS and TS toolchain, as detected under CQ2.
+- **`vp`-managed** (Calavera): a project where Vite+ owns the JS and TS toolchain, as decided by [ADR-0001](../adr/0001-vite-plus-detection-signal.md). The primary signal is the check `vp` itself uses: `vite-plus` is a key of `dependencies` or `devDependencies` in the inspected directory's `package.json` or in the nearest ancestor manifest that declares it. A directory without a readable `package.json` of its own is reported as `"unknown"` instead. Calavera's tool output, such as `vitePlus.status` from `inspect_project`, reports the result; that output is not a surface in this contract, so css-evolve does not depend on it.
 - **Baseline target** (both): the I1 value and its resolution by the Calavera engine.
 - **Handoff** (both): a named point in `docs/cross-repo/sequencing-map.md` where one project delivers a frozen surface the other consumes.
 
 ## I9. Change Log
 
-| Date       | Surface | Change        | Request |
-| ---------- | ------- | ------------- | ------- |
-| 2026-09-09 | all     | initial draft | —       |
+| Date       | Surface | Change                                                                    | Request |
+| ---------- | ------- | ------------------------------------------------------------------------- | ------- |
+| 2026-09-09 | all     | initial draft                                                             | —       |
+| 2026-11-15 | I8      | glossary wording only: `vp`-managed points at ADR-0001; no surface change | —       |
