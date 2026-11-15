@@ -11,6 +11,8 @@ jobs:
   release-pr:
     name: Update release pull request
     runs-on: ubuntu-latest
+    outputs:
+      pr-number: ${{ steps.changesets.outputs.pr-number }}
     permissions:
       contents: write
       pull-requests: write
@@ -29,6 +31,7 @@ jobs:
       - name: Install dependencies
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Create or update release pull request
+        id: changesets
         # changesets/action's major version must stay in lockstep with @changesets/cli's
         # major version in package.json (v2 needs CLI v3+). Dependabot bumps these two
         # independently across ecosystems, so verify both together on any major bump.
@@ -36,3 +39,28 @@ jobs:
         with:
           version-script: pnpm release:version
           github-token: ${{ secrets.GITHUB_TOKEN }}
+
+  # The action pushes the release branch with GITHUB_TOKEN, and a pull_request run started by that
+  # token waits for manual approval, so the rehearsal cannot rely on the pull_request event. A
+  # workflow_dispatch event always creates a run. The rehearsal reports its result on the release
+  # pull request's head commit as the "CLI experience rehearsal (pinned)" status (#918). This job
+  # holds actions: write alone, apart from the job that installs dependencies and runs Changesets.
+  rehearse-release-pr:
+    name: Start the pinned CLI experience rehearsal
+    needs: release-pr
+    if: needs.release-pr.outputs.pr-number != ''
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+      pull-requests: read
+    steps:
+      - name: Dispatch the rehearsal for the release pull request
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ needs.release-pr.outputs.pr-number }}
+        run: |
+          head_ref=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefName --jq .headRefName)
+          head_sha=$(gh pr view "$PR_NUMBER" --repo "$GITHUB_REPOSITORY" --json headRefOid --jq .headRefOid)
+          gh workflow run cli-experience-rehearsal.yml --repo "$GITHUB_REPOSITORY" --ref "$head_ref" \
+            -f mode=pinned -f status-sha="$head_sha"

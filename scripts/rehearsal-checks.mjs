@@ -1,0 +1,1014 @@
+// The checks of the cli-experience exit rehearsal (#918). Section 0 of
+// docs/cross-repo/sequencing-map.md is the source of truth: each numbered item of its exit
+// condition becomes one or more named checks here, each with the issues that deliver it. When
+// Section 0 changes, change this list with it.
+//
+// Where an output format is not settled yet (the grouped headings from #601 and #617, the version
+// notice from #675), a check asserts the property Section 0 states, not a guessed snapshot.
+import { spawn } from "node:child_process";
+import { createHash } from "node:crypto";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+
+import { snapshotDirectory } from "../packages/cli/scripts/project-snapshot.mjs";
+import { CheckFailure, describeExit, tail } from "./rehearsal-failure.mjs";
+
+/**
+ * @typedef {import("./rehearsal-failure.mjs").CommandResult} CommandResult
+ * @typedef {{
+ *   mode: "pinned" | "latest",
+ *   dirs: ReturnType<typeof import("./rehearse-cli-experience.mjs").runDirectories>,
+ *   env: NodeJS.ProcessEnv,
+ *   registry: { url: string, requests: string[] },
+ *   calavera: { version: string, bin: string, mcpBin: string },
+ *   repositoryRoot: string,
+ *   run: (command: string, args: string[], options?: { cwd?: string, env?: NodeJS.ProcessEnv, timeout?: number }) => Promise<CommandResult>,
+ *   runOrThrow: (command: string, args: string[], options?: { cwd?: string }) => Promise<CommandResult>,
+ *   freshEnvironment: (name: string) => Promise<NodeJS.ProcessEnv>,
+ *   versions: Record<string, string>,
+ *   vitePlusVersion: string,
+ *   startRegistry: (options: { vitePlusVersion?: string, advertisedLatest?: { name: string, version: string } }) => Promise<{ url: string }>,
+ *   shared?: Map<string, Promise<unknown>>,
+ * }} RehearsalContext
+ */
+
+/**
+ * What `vp create` is asked to scaffold in every check: a library with a Git repository, so Vite+
+ * also sets up its pre-commit hook (the default without prompts), and no questions.
+ */
+const SCAFFOLD_ARGS = ["vite:library", "--git", "--no-interactive", "--directory", "app"];
+
+/** @param {CommandResult} result */
+function assertExitZero(result) {
+  if (result.exitCode !== 0) {
+    throw new CheckFailure({
+      expected: "exit code 0",
+      actual: `${describeExit(result)}\n${tail(result.output)}`,
+      command: result.display,
+    });
+  }
+}
+
+/**
+ * Runs `create` once per run and shares its result, or its failure, with every check that needs it.
+ *
+ * @template T
+ * @param {RehearsalContext} context
+ * @param {string} key
+ * @param {() => Promise<T>} create
+ * @returns {Promise<T>}
+ */
+function shared(context, key, create) {
+  context.shared ??= new Map();
+  if (!context.shared.has(key)) context.shared.set(key, create());
+  return /** @type {Promise<T>} */ (context.shared.get(key));
+}
+
+/**
+ * Calls one MCP tool on the packed `create-project-calavera-mcp`, speaking JSON-RPC over stdio.
+ *
+ * @param {RehearsalContext} context
+ * @param {string} cwd
+ * @param {string} name
+ * @param {Record<string, unknown>} [args]
+ * @returns {Promise<Record<string, any>>}
+ */
+export function callPackedMcpTool(context, cwd, name, args = {}) {
+  const command = `(cd ${cwd} && ${context.calavera.mcpBin}) <<< tools/call ${name}`;
+  return new Promise((resolvePromise, reject) => {
+    const child = spawn(context.calavera.mcpBin, [], {
+      cwd,
+      env: context.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    });
+    let buffer = "";
+    let stderr = "";
+    let settled = false;
+    // Every way the exchange can end goes through here, so a server that crashes, closes its
+    // input, or writes something other than JSON is a failed check, never an uncaught exception.
+    /** @param {string} expected @param {string} actual */
+    const fail = (expected, actual) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      child.kill("SIGKILL");
+      reject(new CheckFailure({ expected, actual, command }));
+    };
+    const timer = setTimeout(
+      () => fail(`${name} to answer within 60 seconds`, `no answer\n${tail(stderr)}`),
+      60_000,
+    );
+    /** @param {Record<string, unknown>} message */
+    const send = (message) =>
+      child.stdin.write(`${JSON.stringify({ jsonrpc: "2.0", ...message })}\n`);
+    child.stdout.setEncoding("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk) => (stderr += chunk));
+    child.stdin.on("error", (error) => fail("the MCP server to read its input", error.message));
+    child.on("error", (error) => fail("the MCP server to start", error.message));
+    child.on("exit", (code, signal) =>
+      fail(
+        `the MCP server to answer ${name}`,
+        `it exited with ${code === null ? `signal ${signal}` : `code ${code}`} first\n${tail(stderr)}`,
+      ),
+    );
+    child.stdout.on("data", (chunk) => {
+      buffer += chunk;
+      let newline;
+      while (!settled && (newline = buffer.indexOf("\n")) >= 0) {
+        const line = buffer.slice(0, newline).trim();
+        buffer = buffer.slice(newline + 1);
+        if (!line) continue;
+        let message;
+        try {
+          message = JSON.parse(line);
+        } catch {
+          fail("only JSON-RPC messages on the MCP server's stdout", line.slice(0, 500));
+          return;
+        }
+        if (message.id === 1) {
+          send({ method: "notifications/initialized" });
+          send({ id: 2, method: "tools/call", params: { name, arguments: args } });
+        } else if (message.id === 2) {
+          if (message.error || message.result?.isError) {
+            fail(`${name} to succeed`, JSON.stringify(message.error ?? message.result.content));
+            return;
+          }
+          const result = message.result;
+          let payload;
+          try {
+            payload = result.structuredContent ?? JSON.parse(result.content?.[0]?.text ?? "{}");
+          } catch {
+            fail(`${name} to return JSON`, String(result.content?.[0]?.text).slice(0, 500));
+            return;
+          }
+          settled = true;
+          clearTimeout(timer);
+          child.kill();
+          resolvePromise(payload);
+        }
+      }
+    });
+    send({
+      id: 1,
+      method: "initialize",
+      params: {
+        protocolVersion: "2025-06-18",
+        capabilities: {},
+        clientInfo: { name: "calavera-rehearsal", version: "1.0.0" },
+      },
+    });
+  });
+}
+
+/**
+ * Asserts that `inspect_project`, from the packed MCP server, reports `directory` as managed.
+ *
+ * @param {RehearsalContext} context
+ * @param {string} directory
+ */
+async function assertManaged(context, directory) {
+  const inspection = await callPackedMcpTool(context, directory, "inspect_project");
+  const status = inspection.vitePlus?.status;
+  if (status !== "managed") {
+    throw new CheckFailure({
+      expected: `inspect_project in ${directory} to report vitePlus.status "managed"`,
+      actual: `vitePlus.status is ${JSON.stringify(status)}; findings: ${JSON.stringify(inspection.findings ?? [])}`,
+      command: `(cd ${directory} && ${context.calavera.mcpBin}) <<< tools/call inspect_project`,
+    });
+  }
+}
+
+/**
+ * The launchers of Section 0 item 1, each with the runner it implies for `vp create` (#909: the
+ * runner follows the launcher). The runner is read from the "Command:" line --new prints.
+ */
+const launchers = [
+  {
+    id: "new-npm",
+    label: "npm create",
+    issues: ["#909"],
+    command: "npm",
+    args: (/** @type {string[]} */ calavera) => ["create", "project-calavera", "--", ...calavera],
+    runner: /^npm /,
+    runnerLabel: "npm",
+  },
+  {
+    id: "new-pnpm",
+    label: "pnpm create",
+    issues: ["#909", "#740"],
+    command: "pnpm",
+    args: (/** @type {string[]} */ calavera) => ["create", "project-calavera", ...calavera],
+    runner: /^pnpm /,
+    runnerLabel: "pnpm",
+  },
+  {
+    id: "new-yarn",
+    label: "yarn dlx (Yarn 2 or later)",
+    issues: ["#909", "#740"],
+    command: "yarn",
+    args: (/** @type {string[]} */ calavera) => ["dlx", "create-project-calavera", ...calavera],
+    runner: /^yarn /,
+    runnerLabel: "yarn",
+  },
+  {
+    id: "new-bun",
+    label: "bunx",
+    issues: ["#909"],
+    command: "bunx",
+    args: (/** @type {string[]} */ calavera) => ["create-project-calavera", ...calavera],
+    runner: /^bunx? /,
+    runnerLabel: "bun or bunx",
+  },
+  {
+    id: "new-npx-package",
+    label: "npx --package create-project-calavera",
+    issues: ["#909", "#689", "#671"],
+    command: "npx",
+    args: (/** @type {string[]} */ calavera) => [
+      "--package",
+      "create-project-calavera",
+      "create-project-calavera",
+      ...calavera,
+    ],
+    runner: /^(npm|npx) /,
+    runnerLabel: "npm or npx",
+  },
+];
+
+/** @param {(typeof launchers)[number]} launcher */
+function newProjectCheck(launcher) {
+  return {
+    id: launcher.id,
+    name: `--new through ${launcher.label} produces a project inspect_project reports as managed, through the ${launcher.runnerLabel} runner`,
+    issues: launcher.issues,
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const cwd = join(context.dirs.projects, launcher.id);
+      await mkdir(cwd, { recursive: true });
+      const requestsBefore = context.registry.requests.length;
+      // A new home and caches per launcher, so each one downloads Calavera as a first-time user
+      // would, and the request log shows that it came from the release candidate.
+      const env = await context.freshEnvironment(launcher.id);
+      const result = await context.run(
+        launcher.command,
+        launcher.args(["--yes", "--new", ...SCAFFOLD_ARGS]),
+        { cwd, env },
+      );
+      assertExitZero(result);
+      const servedCalavera = context.registry.requests
+        .slice(requestsBefore)
+        .some((request) => /\/create-project-calavera\/-\/.+\.tgz$/.test(request));
+      if (!servedCalavera) {
+        throw new CheckFailure({
+          expected: `${launcher.label} to install create-project-calavera ${context.calavera.version} from the release candidate`,
+          actual:
+            "the rehearsal registry served no create-project-calavera tarball, so another copy ran",
+          command: result.display,
+        });
+      }
+      const runner = /^\s*Command: (.+)$/m.exec(result.output)?.[1] ?? "";
+      if (!launcher.runner.test(runner)) {
+        throw new CheckFailure({
+          expected: `vp create to run through ${launcher.runnerLabel}, the runner ${launcher.label} implies`,
+          actual: runner
+            ? `Command: ${runner}`
+            : `no "Command:" line in the output\n${tail(result.output)}`,
+          command: result.display,
+        });
+      }
+      await assertManaged(context, join(cwd, "app"));
+    },
+  };
+}
+
+// ---------------------------------------------------------------------------------------------
+// Section 0 item 2: the human output of --init, apply --dry-run, apply, a second dry run, and
+// clean --dry-run.
+
+/** Characters that can be part of a path or a package name in the output. */
+const NAME_CHARACTER = /[\w./@-]/;
+
+/**
+ * How many times `name` appears in `text` as a whole word: not as part of a longer path or name.
+ *
+ * @param {string} text
+ * @param {string} name
+ */
+export function countMentions(text, name) {
+  let count = 0;
+  let from = 0;
+  for (;;) {
+    const index = text.indexOf(name, from);
+    if (index < 0) return count;
+    const before = text[index - 1] ?? " ";
+    const after = text[index + name.length] ?? " ";
+    // A trailing period ends a sentence; it is not part of the name.
+    const afterIsName =
+      NAME_CHARACTER.test(after) &&
+      !(after === "." && !NAME_CHARACTER.test(text[index + name.length + 1] ?? " "));
+    if (!NAME_CHARACTER.test(before) && !afterIsName) count += 1;
+    from = index + name.length;
+  }
+}
+
+/** Removes the frame of a Clack box and list markers from one output line. @param {string} line */
+function plainLine(line) {
+  return line.replace(/[│┃├╮╯╭╰─◇◆●○■▲]/g, " ").trim();
+}
+
+/**
+ * A heading is a short line that ends with a colon, such as "Files:" or "Next steps:", or the
+ * title of a Clack note box, such as "◇  Next steps ──╮".
+ *
+ * @param {string} line
+ */
+export function isHeading(line) {
+  if (/^\s*[◇◆]\s+\S.*─/.test(line)) return true;
+  const text = plainLine(line);
+  return text.length > 1 && text.length <= 60 && /^[A-Z][^:]*:$/.test(text);
+}
+
+/**
+ * The name an item is printed under: the item itself, or the nearest directory above it that the
+ * output names, because a command may report a directory it wrote, such as a skill folder, as one
+ * line. Undefined when the output names neither.
+ *
+ * @param {string} output
+ * @param {string} item
+ */
+function printedName(output, item) {
+  const parts = item.split("/");
+  for (let length = parts.length; length > 0; length -= 1) {
+    const candidate = parts.slice(0, length).join("/");
+    if (countMentions(output, candidate) > 0) return candidate;
+  }
+  return undefined;
+}
+
+/**
+ * Section 0 item 2: every item is printed once, under a heading.
+ *
+ * @param {string} output
+ * @param {string[]} items Paths, dependency names, and artifact IDs the command handles.
+ * @returns {string[]} One line per violation.
+ */
+export function listingViolations(output, items) {
+  const lines = output.split("\n");
+  const firstHeading = lines.findIndex(isHeading);
+  const names = new Map(items.map((item) => [item, printedName(output, item)]));
+  return [...new Set(names.values())]
+    .flatMap((name) => {
+      if (name === undefined) return [];
+      const count = countMentions(output, name);
+      if (count !== 1) return [`${name} is printed ${count} times`];
+      const line = lines.findIndex((text) => countMentions(text, name) > 0);
+      if (firstHeading < 0 || line <= firstHeading) return [`${name} is not under a heading`];
+      return [];
+    })
+    .concat(
+      [...names]
+        .filter(([, name]) => name === undefined)
+        .map(([item]) => `${item} is printed 0 times`),
+    );
+}
+
+const COMMAND_WORDS = new Set([
+  "cd",
+  "npm",
+  "npx",
+  "pnpm",
+  "yarn",
+  "bun",
+  "bunx",
+  "vp",
+  "git",
+  "create-project-calavera",
+]);
+
+/**
+ * The commands the output tells a person to run: every line that, without list markers, a `$`
+ * prompt, or backticks, starts with a command such as `pnpm` or `cd`. Section 0 asks that each of
+ * them works when pasted, wherever the output prints it.
+ *
+ * @param {string} output
+ */
+export function nextStepCommands(output) {
+  return output.split("\n").flatMap((line) => {
+    const text = plainLine(line)
+      .replace(/^(?:[-*•]|\d+[.)])\s+/, "")
+      .replace(/^\$\s+/, "")
+      .replace(/^`(.*)`$/, "$1")
+      .trim();
+    const word = text.split(/\s+/)[0] ?? "";
+    return COMMAND_WORDS.has(word) ? [text] : [];
+  });
+}
+
+/**
+ * Whether a pasted command worked: it exited with code 0, or it stopped only because it asks for
+ * a confirmation that a run without a terminal cannot give. A person who pastes it answers that
+ * prompt; the rehearsal does not, so the confirmation itself is as far as it can go.
+ *
+ * @param {CommandResult} result
+ */
+export function pastedCommandWorked(result) {
+  return result.exitCode === 0 || /cannot ask for confirmation/i.test(result.output);
+}
+
+/**
+ * Runs each next-step command as pasted, in order, in a copy of `projectDirectory`, so the
+ * commands cannot change the project later checks use. A `cd` moves the following commands.
+ *
+ * @param {RehearsalContext} context
+ * @param {string} projectDirectory
+ * @param {string} output
+ * @param {string} label
+ */
+async function assertNextStepsRun(context, projectDirectory, output, label) {
+  const commands = nextStepCommands(output);
+  if (commands.length === 0) return;
+  const copy = join(context.dirs.projects, `${label}-paste`);
+  await rm(copy, { recursive: true, force: true });
+  await cp(projectDirectory, copy, { recursive: true, verbatimSymlinks: true });
+  const pwdFile = join(context.dirs.tmp, `${label}-pwd`);
+  try {
+    let cwd = copy;
+    for (const command of commands) {
+      // The shell runs the line as pasted, `cd` and `&&` included, and records where it ended up,
+      // so the next line starts in the same directory, as it would in a terminal.
+      const result = await context.run(
+        "sh",
+        ["-c", 'eval "$1"; status=$?; pwd > "$2"; exit $status', "sh", command, pwdFile],
+        { cwd, timeout: 5 * 60_000 },
+      );
+      cwd = (await readFile(pwdFile, "utf8").catch(() => cwd)).trim() || cwd;
+      if (!pastedCommandWorked(result)) {
+        throw new CheckFailure({
+          expected: `the next-step command "${command}" to work when pasted`,
+          actual: `${describeExit(result)}\n${tail(result.output)}`,
+          command: result.display,
+        });
+      }
+    }
+  } finally {
+    await rm(copy, { recursive: true, force: true });
+  }
+}
+
+/**
+ * @param {CommandResult} result
+ * @param {string[]} items
+ */
+function assertListing(result, items) {
+  const violations = listingViolations(result.output, items);
+  if (violations.length > 0) {
+    throw new CheckFailure({
+      expected: "every file, dependency, and artifact printed once, under a heading",
+      actual: `${violations.join("\n")}\n\nOutput:\n${tail(result.output)}`,
+      command: result.display,
+    });
+  }
+}
+
+/**
+ * The files, dependencies, and artifacts a JSON result names, wherever they sit in it: every
+ * `path`, `destination`, and `file` value, the keys of dependency maps, and artifact IDs.
+ *
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+export function namedItems(value) {
+  /** @type {string[]} */
+  const items = [];
+  /** @param {unknown} node @param {string} key */
+  const visit = (node, key) => {
+    if (Array.isArray(node)) {
+      for (const entry of node) visit(entry, key);
+      return;
+    }
+    if (node === null || typeof node !== "object") {
+      if (typeof node === "string" && ["path", "destination", "file"].includes(key))
+        items.push(node);
+      return;
+    }
+    for (const [name, child] of Object.entries(node)) {
+      if (
+        /dependencies$/i.test(name) &&
+        child &&
+        typeof child === "object" &&
+        !Array.isArray(child)
+      ) {
+        items.push(...Object.keys(child));
+      } else if (/artifacts$/i.test(name) && Array.isArray(child)) {
+        for (const artifact of child) {
+          if (artifact && typeof artifact === "object" && typeof artifact.id === "string")
+            items.push(artifact.id);
+        }
+        visit(child, name);
+      } else {
+        visit(child, name);
+      }
+    }
+  };
+  visit(value, "");
+  return [...new Set(items)];
+}
+
+/** @param {CommandResult} result */
+function parseJson(result) {
+  try {
+    return JSON.parse(result.stdout);
+  } catch {
+    throw new CheckFailure({
+      expected: "JSON output",
+      actual: tail(result.output),
+      command: result.display,
+    });
+  }
+}
+
+/** @param {string} directory */
+async function snapshotProject(directory) {
+  const snapshot = await snapshotDirectory(directory);
+  // Installed packages and Git's own files are not part of what a command must leave unchanged.
+  return Object.fromEntries(
+    Object.entries(snapshot).filter(
+      ([path]) => !path.includes("/node_modules/") && !path.includes("/.git/"),
+    ),
+  );
+}
+
+/**
+ * @param {RehearsalContext} context
+ * @param {string} directory
+ * @param {Record<string, string>} before
+ * @param {string} command
+ */
+async function assertUnchanged(context, directory, before, command) {
+  const after = await snapshotProject(directory);
+  const changed = Object.keys({ ...before, ...after }).filter(
+    (path) => before[path] !== after[path],
+  );
+  if (changed.length > 0) {
+    throw new CheckFailure({
+      expected: "a dry run to leave the project unchanged",
+      actual: `changed: ${changed.map((path) => path.replace(`${directory}/`, "")).join(", ")}`,
+      command,
+    });
+  }
+}
+
+/**
+ * The project the item 2 and item 3 checks share: a Vite+ library scaffolded by Vite+ itself at the
+ * run's Vite+ version, so these checks do not depend on the --new checks above.
+ *
+ * @param {RehearsalContext} context
+ */
+function flowProject(context) {
+  return shared(context, "flow-project", async () => {
+    const cwd = join(context.dirs.projects, "flow");
+    await mkdir(cwd, { recursive: true });
+    await context.runOrThrow("pnpm", ["create", "vite-plus", ...SCAFFOLD_ARGS], { cwd });
+    const project = join(cwd, "app");
+    // pnpm holds back releases younger than its minimum release age, so it can install an older
+    // Vite+ than the run asked for. Record what was installed, and stop if it is not that version.
+    const installed = await readFile(
+      join(project, "node_modules", "vite-plus", "package.json"),
+      "utf8",
+    )
+      .then((text) => String(JSON.parse(text).version))
+      .catch(() => "not installed");
+    context.versions["Vite+ installed in the flow project"] = installed;
+    if (installed !== context.vitePlusVersion) {
+      throw new CheckFailure({
+        expected: `the flow project to install Vite+ ${context.vitePlusVersion}`,
+        actual: `it installed ${installed}`,
+        command: `(cd ${cwd} && pnpm create vite-plus ${SCAFFOLD_ARGS.join(" ")})`,
+      });
+    }
+    return project;
+  });
+}
+
+/** @param {RehearsalContext} context */
+function flowInit(context) {
+  return shared(context, "flow-init", async () => {
+    const project = await flowProject(context);
+    const before = await snapshotProject(project);
+    const result = await context.run(
+      context.calavera.bin,
+      ["--init", "--yes", "--mcp-harness", "skip"],
+      {
+        cwd: project,
+      },
+    );
+    return { project, before, after: await snapshotProject(project), result };
+  });
+}
+
+/** The recipe the apply checks use: written by `init --yes`, which composes the default recipe. @param {RehearsalContext} context */
+function flowRecipe(context) {
+  return shared(context, "flow-recipe", async () => {
+    const { project } = await flowInit(context);
+    // --profile is needed: without it, init asks for one even with --yes. One artifact is added so
+    // the apply checks also cover an artifact installed from the release candidate.
+    const result = await context.runOrThrow(
+      context.calavera.bin,
+      [
+        "init",
+        "--yes",
+        "--profile",
+        "default",
+        "--package-manager",
+        "pnpm",
+        "--ai-artifact",
+        "skill-release-with-confidence",
+      ],
+      { cwd: project },
+    );
+    const written = await readFile(join(project, "calavera.config.json"), "utf8").catch(
+      () => undefined,
+    );
+    if (written === undefined) {
+      throw new CheckFailure({
+        expected: "init to write calavera.config.json",
+        actual: `no calavera.config.json\n${tail(result.output)}`,
+        command: result.display,
+      });
+    }
+    return project;
+  });
+}
+
+/** @param {RehearsalContext} context */
+function flowDryRun(context) {
+  return shared(context, "flow-dry-run", async () => {
+    const project = await flowRecipe(context);
+    const before = await snapshotProject(project);
+    const json = await context.run(context.calavera.bin, ["apply", "--dry-run", "--json"], {
+      cwd: project,
+    });
+    const result = await context.run(context.calavera.bin, ["apply", "--dry-run"], {
+      cwd: project,
+    });
+    return { project, before, json, result };
+  });
+}
+
+/** @param {RehearsalContext} context */
+function flowApply(context) {
+  return shared(context, "flow-apply", async () => {
+    const { project, json } = await flowDryRun(context);
+    assertExitZero(json);
+    const planned = namedItems(parseJson(json));
+    const result = await context.run(context.calavera.bin, ["apply", "--yes"], { cwd: project });
+    assertExitZero(result);
+    const statePath = join(project, ".calavera", "state.json");
+    const stateHash = createHash("sha256")
+      .update(await readFile(statePath))
+      .digest("hex");
+    return { project, planned, result, stateHash };
+  });
+}
+
+/** @param {RehearsalContext} context */
+function flowCommit(context) {
+  return shared(context, "flow-commit", async () => {
+    const { project } = await flowApply(context);
+    const hooksPath = await context.run("git", ["config", "core.hooksPath"], { cwd: project });
+    const hasHook =
+      (hooksPath.exitCode === 0 && hooksPath.stdout.trim() !== "") ||
+      (await readFile(join(project, ".git", "hooks", "pre-commit")).then(
+        () => true,
+        () => false,
+      ));
+    if (!hasHook) {
+      throw new CheckFailure({
+        expected: "the Vite+ pre-commit hook to be installed in the scaffolded repository",
+        actual: "core.hooksPath is not set and .git/hooks/pre-commit does not exist",
+        command: hooksPath.display,
+      });
+    }
+    await context.runOrThrow("git", ["add", "--all"], { cwd: project });
+    // No --no-verify: the commit goes through the Vite+ pre-commit hook.
+    const commit = await context.run("git", ["commit", "--message", "Apply Calavera"], {
+      cwd: project,
+    });
+    assertExitZero(commit);
+    return project;
+  });
+}
+
+const flowChecks = [
+  {
+    id: "init-output",
+    name: "--init prints every file once, under headings, and its next-step commands work when pasted",
+    issues: ["#601", "#602"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, before, after, result } = await flowInit(context);
+      assertExitZero(result);
+      const written = Object.keys({ ...before, ...after })
+        .filter((path) => before[path] !== after[path] && !path.endsWith("/"))
+        .map((path) => path.replace(`${project}/`, ""));
+      assertListing(result, written);
+      // #602: apply --dry-run and apply wait for a recipe, so the pasted commands run once the
+      // project has one. Without a recipe, they run in the project as --init left it.
+      const pasteFrom = await flowRecipe(context).catch(() => project);
+      await assertNextStepsRun(context, pasteFrom, result.output, "init");
+    },
+  },
+  {
+    id: "apply-dry-run-output",
+    name: "apply --dry-run changes nothing and prints every file, dependency, and artifact once, under headings",
+    issues: ["#617", "#331"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, before, json, result } = await flowDryRun(context);
+      assertExitZero(json);
+      assertExitZero(result);
+      await assertUnchanged(context, project, before, result.display);
+      assertListing(result, namedItems(parseJson(json)));
+      await assertNextStepsRun(context, project, result.output, "apply-dry-run");
+    },
+  },
+  {
+    id: "apply-output",
+    name: "apply prints every file, dependency, and artifact once, under headings, and its next-step commands work",
+    issues: ["#617", "#331"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, planned, result } = await flowApply(context);
+      assertListing(result, planned);
+      await assertNextStepsRun(context, project, result.output, "apply");
+    },
+  },
+  {
+    id: "second-dry-run-no-change",
+    name: "A second apply --dry-run reports no change and prints it under headings",
+    issues: ["#617", "#331"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project } = await flowApply(context);
+      const before = await snapshotProject(project);
+      const json = await context.run(context.calavera.bin, ["apply", "--dry-run", "--json"], {
+        cwd: project,
+      });
+      assertExitZero(json);
+      const report = parseJson(json);
+      const pending = [
+        ...(report.changes ?? []).filter(
+          (/** @type {{ type: string }} */ change) => change.type !== "unchanged",
+        ),
+        ...(report.autoInstalledArtifacts ?? []),
+      ];
+      if (pending.length > 0 || (report.changes ?? []).length === 0) {
+        throw new CheckFailure({
+          expected: 'every planned change to be "unchanged" and no artifact to install',
+          actual: `${pending.length} pending: ${JSON.stringify(pending).slice(0, 2000)}`,
+          command: json.display,
+        });
+      }
+      const result = await context.run(context.calavera.bin, ["apply", "--dry-run"], {
+        cwd: project,
+      });
+      assertExitZero(result);
+      await assertUnchanged(context, project, before, result.display);
+      assertListing(result, namedItems(report));
+    },
+  },
+  {
+    id: "clean-dry-run-output",
+    name: "clean --dry-run changes nothing and prints every file, dependency, and artifact once, under headings",
+    issues: ["#331", "#601"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const project = await flowCommit(context).catch(
+        async () => (await flowApply(context)).project,
+      );
+      const before = await snapshotProject(project);
+      const json = await context.run(context.calavera.bin, ["clean", "--dry-run", "--json"], {
+        cwd: project,
+      });
+      assertExitZero(json);
+      const result = await context.run(context.calavera.bin, ["clean", "--dry-run"], {
+        cwd: project,
+      });
+      assertExitZero(result);
+      await assertUnchanged(context, project, before, result.display);
+      assertListing(result, namedItems(parseJson(json)));
+      await assertNextStepsRun(context, project, result.output, "clean-dry-run");
+    },
+  },
+];
+
+// ---------------------------------------------------------------------------------------------
+// Section 0 item 3: after apply and a commit through the Vite+ pre-commit hook.
+
+const commitChecks = [
+  {
+    id: "hook-commit-clean",
+    name: "After apply and a commit through the Vite+ pre-commit hook, git status is clean",
+    issues: ["#838", "#841"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const project = await flowCommit(context);
+      const status = await context.run("git", ["status", "--porcelain", "--untracked-files=all"], {
+        cwd: project,
+      });
+      assertExitZero(status);
+      if (status.stdout.trim() !== "") {
+        throw new CheckFailure({
+          expected: "git status to show no change",
+          actual: tail(status.stdout),
+          command: status.display,
+        });
+      }
+    },
+  },
+  {
+    id: "cache-not-committed",
+    name: "The .calavera/cache folder is not committed and does not appear in git status",
+    issues: ["#841"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const project = await flowCommit(context);
+      const tracked = await context.run("git", ["ls-files", "--", ".calavera/cache"], {
+        cwd: project,
+      });
+      const status = await context.run(
+        "git",
+        ["status", "--porcelain", "--untracked-files=all", "--", ".calavera/cache"],
+        {
+          cwd: project,
+        },
+      );
+      const listed = `${tracked.stdout}${status.stdout}`.trim();
+      if (listed !== "") {
+        throw new CheckFailure({
+          expected: "no file under .calavera/cache tracked or shown by git status",
+          actual: tail(listed),
+          command: `${tracked.display}; ${status.display}`,
+        });
+      }
+    },
+  },
+  {
+    id: "apply-summary-cache",
+    name: "The apply summary says why the cache folder is not committed",
+    issues: ["#841"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { result } = await flowApply(context);
+      if (countMentions(result.output, ".calavera/cache") === 0) {
+        throw new CheckFailure({
+          expected: "the apply output to name .calavera/cache and say why it is not committed",
+          actual: `.calavera/cache is not mentioned\n${tail(result.output)}`,
+          command: result.display,
+        });
+      }
+    },
+  },
+  {
+    id: "state-committed-as-written",
+    name: "The state file is committed as apply wrote it",
+    issues: ["#838"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { stateHash } = await flowApply(context);
+      const project = await flowCommit(context);
+      const committed = await context.run("git", ["show", "HEAD:.calavera/state.json"], {
+        cwd: project,
+      });
+      assertExitZero(committed);
+      const hash = createHash("sha256").update(committed.stdout).digest("hex");
+      if (hash !== stateHash) {
+        throw new CheckFailure({
+          expected:
+            ".calavera/state.json in the commit to match what apply wrote (the hook must not reformat it)",
+          actual: `apply wrote sha256 ${stateHash}; the commit holds sha256 ${hash}`,
+          command: committed.display,
+        });
+      }
+    },
+  },
+];
+
+// ---------------------------------------------------------------------------------------------
+// Section 0 item 4: the version notice.
+
+const versionNoticeCheck = {
+  id: "version-notice",
+  name: "A Calavera older than the published latest prints the version notice",
+  issues: ["#675"],
+  /** @param {RehearsalContext} context */
+  run: async (context) => {
+    const [major] = context.calavera.version.split(".");
+    const newer = `${Number(major) + 1}.0.0`;
+    const registry = await context.startRegistry({
+      advertisedLatest: { name: "create-project-calavera", version: newer },
+    });
+    const cwd = join(context.dirs.projects, "version-notice");
+    await mkdir(cwd, { recursive: true });
+    await writeFile(
+      join(cwd, "package.json"),
+      `${JSON.stringify({ name: "version-notice", private: true }, null, 2)}\n`,
+    );
+    await writeFile(join(context.dirs.home, ".npmrc"), `registry=${registry.url}/\n`);
+    try {
+      const result = await context.run(context.calavera.bin, ["--init", "--dry-run", "--yes"], {
+        cwd,
+        env: {
+          ...context.env,
+          npm_config_registry: `${registry.url}/`,
+          YARN_NPM_REGISTRY_SERVER: registry.url,
+          BUN_CONFIG_REGISTRY: `${registry.url}/`,
+        },
+      });
+      if (
+        countMentions(result.output, newer) === 0 ||
+        countMentions(result.output, context.calavera.version) === 0
+      ) {
+        throw new CheckFailure({
+          expected: `a notice that names the running version ${context.calavera.version} and the published latest ${newer}`,
+          actual: tail(result.output),
+          command: result.display,
+        });
+      }
+    } finally {
+      await writeFile(join(context.dirs.home, ".npmrc"), `registry=${context.registry.url}/\n`);
+    }
+  },
+};
+
+// ---------------------------------------------------------------------------------------------
+// Section 0 item 5: the drift tests, run from this repository with the TAP reporter.
+
+/**
+ * @param {string} output TAP output of `node --test`.
+ */
+export function tapCounts(output) {
+  /** @param {string} name */
+  const count = (name) => Number(new RegExp(`^# ${name} (\\d+)$`, "m").exec(output)?.[1] ?? "0");
+  return { pass: count("pass"), fail: count("fail") + count("cancelled") };
+}
+
+/**
+ * @param {{ id: string, name: string, issues: string[], file: string, namePattern?: string }} options
+ */
+function driftCheck({ id, name, issues, file, namePattern }) {
+  return {
+    id,
+    name,
+    issues,
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const args = [
+        "--test",
+        "--test-reporter=tap",
+        // In-process, so the counts are the tests themselves, not one entry for the file, and a
+        // name pattern that matches nothing counts zero tests.
+        "--test-isolation=none",
+        ...(namePattern ? [`--test-name-pattern=${namePattern}`] : []),
+        file,
+      ];
+      const result = await context.run(process.execPath, args, {
+        cwd: context.repositoryRoot,
+        env: { ...context.env, PATH: process.env.PATH },
+      });
+      const { pass, fail } = tapCounts(result.stdout);
+      if (result.exitCode !== 0 || fail > 0 || pass === 0) {
+        throw new CheckFailure({
+          expected: `${file}${namePattern ? ` (tests matching ${namePattern})` : ""} to run at least one test, all passing`,
+          actual: `${describeExit(result)}, ${pass} passed, ${fail} failed\n${tail(result.output)}`,
+          command: result.display,
+        });
+      }
+    },
+  };
+}
+
+const driftChecks = [
+  driftCheck({
+    id: "drift-mcp-tool-list",
+    name: "The drift test for the MCP tool list passes",
+    issues: ["#839"],
+    file: "packages/cli/scripts/mcp-tool-list-docs.test.mjs",
+  }),
+  driftCheck({
+    id: "drift-agent-prompt",
+    name: "The drift test for the agent prompt passes",
+    issues: ["#840"],
+    file: "packages/cli/scripts/agent-bootstrap.test.mjs",
+    namePattern: "#840",
+  }),
+];
+
+export const cliExperienceChecks = [
+  ...launchers.map(newProjectCheck),
+  ...flowChecks,
+  ...commitChecks,
+  versionNoticeCheck,
+  ...driftChecks,
+];
