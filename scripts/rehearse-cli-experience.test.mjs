@@ -12,7 +12,9 @@ import {
   buildEnvironment,
   compareRuns,
   formatReport,
+  isolationViolations,
   parseOptions,
+  prerequisiteProblems,
   runDirectories,
   runRehearsal,
   watchDeveloperState,
@@ -75,7 +77,6 @@ test("a run reports every check, records its versions, and fails when one check 
       ["passes", "pass"],
       ["fails", "fail"],
       ["harness-cleanup", "pass"],
-      ["harness-developer-state", "pass"],
     ],
   );
   const failure = report.results.find(({ id }) => id === "fails");
@@ -175,7 +176,7 @@ test("a run closes what setup opened, also when a check fails", async () => {
   assert.equal(closed, true);
 });
 
-test("a run fails its developer-state check when a check writes below the developer's HOME", async () => {
+test("a write below the developer's HOME during a run is a warning, not a failed check", async () => {
   const home = await fakeHome();
   const report = await runRehearsal({
     mode: "pinned",
@@ -185,9 +186,20 @@ test("a run fails its developer-state check when a check writes below the develo
     prepare: async (_dirs, options) => (Object.assign(options.versions, versions), {}),
     checks: [stubCheck("writes-npmrc", () => writeFile(join(home, ".npmrc"), "registry=x\n"))],
   });
-  const state = report.results.find(({ id }) => id === "harness-developer-state");
-  assert.equal(state?.status, "fail");
-  assert.equal(state?.actual, "changed: ~/.npmrc", "the developer's home is not printed");
+  // Other sessions and tools on the same machine write to these caches too, and the rehearsal
+  // cannot tell their writes from its own, so they are reported, never a failed release gate.
+  assert.equal(report.ok, true);
+  assert.equal(
+    report.results.some(({ id }) => id === "harness-developer-state"),
+    false,
+  );
+  assert.deepEqual(report.warnings, [
+    "Files below the developer's HOME changed during the run: ~/.npmrc. Another process may have written them; the harness-isolation check shows whether the rehearsal's own commands stayed inside the run.",
+  ]);
+  assert.match(
+    formatReport(report),
+    /^### Warnings\n\n- Files below the developer's HOME changed during the run: ~\/\.npmrc\./m,
+  );
 });
 
 test("the developer-state watch sees a new file and a deep cache entry, not a removed temporary one", async () => {
@@ -588,4 +600,57 @@ test("a local packument lists only the packed version as latest unless a newer o
     "http://127.0.0.1:1/@scope/pkg/-/pkg-1.0.0.tgz",
   );
   assert.equal(localPackument(local, "http://127.0.0.1:1", "2.0.0")["dist-tags"].latest, "2.0.0");
+});
+
+test("prerequisites name every missing or mismatched tool with its remedy, before a run starts", async () => {
+  const pins = { node: "26.13.1", bun: "1.4.4" };
+  assert.deepEqual(
+    await prerequisiteProblems(pins, { nodeVersion: "v26.13.1", bunVersion: async () => "1.4.4" }),
+    [],
+  );
+  const problems = await prerequisiteProblems(pins, {
+    nodeVersion: "v24.15.0",
+    bunVersion: async () => undefined,
+  });
+  assert.equal(problems.length, 2);
+  assert.match(problems[0] ?? "", /Node\.js v26\.13\.1 is required; this is v24\.15\.0\./);
+  assert.match(problems[0] ?? "", /scripts\/rehearsal-pins\.json/);
+  assert.match(problems[1] ?? "", /Bun 1\.4\.4 is required; bun is not on PATH\./);
+  const [wrongBun] = await prerequisiteProblems(pins, {
+    nodeVersion: "v26.13.1",
+    bunVersion: async () => "1.3.9",
+  });
+  assert.match(wrongBun ?? "", /Bun 1\.4\.4 is required; bun --version prints 1\.3\.9\./);
+});
+
+test("an isolation violation names the command and every home, cache, or registry outside the run", () => {
+  const dirs = runDirectories("/run");
+  const env = buildEnvironment(dirs, "http://127.0.0.1:4873", { nodeDirectory: "/node/bin" });
+  assert.deepEqual(isolationViolations(env, "/run", "http://127.0.0.1:4873"), []);
+  const leaked = { ...env, HOME: "/Users/dev", npm_config_registry: "https://registry.npmjs.org/" };
+  assert.deepEqual(isolationViolations(leaked, "/run", "http://127.0.0.1:4873"), [
+    "HOME is /Users/dev",
+    "npm_config_registry is https://registry.npmjs.org/",
+  ]);
+  const { npm_config_cache: _dropped, ...missing } = env;
+  assert.deepEqual(isolationViolations(missing, "/run", "http://127.0.0.1:4873"), [
+    "npm_config_cache is not set",
+  ]);
+});
+
+test("a run fails when a command ran outside its isolated directories", async () => {
+  const report = await runRehearsal({
+    mode: "pinned",
+    pins: {},
+    tmpRoot: scratch,
+    developerHome: await fakeHome(),
+    prepare: async () => ({
+      isolationViolations: () => ["(cd <run> && npm install): HOME is /Users/dev"],
+    }),
+    checks: [stubCheck("passes", async () => {})],
+  });
+  const isolation = report.results.find(({ id }) => id === "harness-isolation");
+  assert.equal(isolation?.status, "fail");
+  assert.match(isolation?.actual ?? "", /HOME is \/Users\/dev/);
+  assert.equal(report.ok, false);
 });

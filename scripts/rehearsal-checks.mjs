@@ -26,6 +26,7 @@ import { CheckFailure, describeExit, tail } from "./rehearsal-failure.mjs";
  *   runOrThrow: (command: string, args: string[], options?: { cwd?: string }) => Promise<CommandResult>,
  *   freshEnvironment: (name: string) => Promise<NodeJS.ProcessEnv>,
  *   versions: Record<string, string>,
+ *   recordEnvironment: (env: NodeJS.ProcessEnv, command: string) => void,
  *   vitePlusVersion: string,
  *   startRegistry: (options: { vitePlusVersion?: string, advertisedLatest?: { name: string, version: string } }) => Promise<{ url: string }>,
  *   shared?: Map<string, Promise<unknown>>,
@@ -75,6 +76,7 @@ function shared(context, key, create) {
  */
 export function callPackedMcpTool(context, cwd, name, args = {}) {
   const command = `(cd ${cwd} && ${context.calavera.mcpBin}) <<< tools/call ${name}`;
+  context.recordEnvironment(context.env, command);
   return new Promise((resolvePromise, reject) => {
     const child = spawn(context.calavera.mcpBin, [], {
       cwd,

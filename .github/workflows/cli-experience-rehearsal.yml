@@ -1,7 +1,9 @@
 name: CLI experience rehearsal
 
-# The cli-experience exit rehearsal (#918). Pinned mode is the exit-condition evidence: the release
-# workflow (release-pr.yml) dispatches it for the Changesets "Version Packages" pull request and
+# The cli-experience exit rehearsal (#918). The release gate is `pnpm release:prepare` and
+# `pnpm release:publish`, which run the pinned rehearsal on the exact candidate commit and refuse to
+# continue when it fails. This workflow gives an earlier, visible signal: the release workflow
+# (release-pr.yml) dispatches pinned mode for the Changesets "Version Packages" pull request and
 # passes that pull request's head commit, which gets the result as a commit status. Latest mode
 # runs weekly with the Vite+ that users get today. Both run on manual dispatch. Neither runs on
 # ordinary pull requests, because the rehearsal needs network access and takes many minutes.

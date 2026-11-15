@@ -19,6 +19,11 @@ release.
   After that, `uvx zizmor` is available offline for every subsequent `workflow:check` run. You do not
   need a separate `uv sync` step: the rehearsal's SkillSpector scan runs through `uv run --frozen`,
   which synchronizes its own environment from the locked dependencies automatically.
+- For the cli-experience rehearsal gate in step 4: network access, Node.js and Bun at exactly the
+  versions in [`scripts/rehearsal-pins.json`](../scripts/rehearsal-pins.json) (Node.js 26.13.1 and Bun
+  1.4.4 at the time of writing), and `git` and `tar` on `PATH`. The rehearsal installs its own
+  Corepack, pnpm, Yarn, and Vite+ at their pinned versions. It checks these prerequisites before it
+  starts and names any that are missing.
 - npm CLI 11.15.0+, logged in to npm with two-factor authentication enabled, only if the release
   includes a brand-new package name (see "New packages (minting)" below).
 - You do not need a local npm token. Publishing happens inside the protected `publish` GitHub
@@ -32,7 +37,8 @@ Open the "Version Packages" PR and confirm before merging:
   the menu-bar app are private and must never appear (see
   [contributor release boundaries](./release-and-update-journey.md#contributor-release-boundaries)).
 - Each changelog entry under a package heading matches the actual change that shipped.
-- CI on the PR is green.
+- CI on the PR is green, including the `CLI experience rehearsal (pinned)` status. That status is an
+  early signal: the same rehearsal runs again as a gate in step 4, on the merged commit.
 
 If a bump is wrong, do not hand-edit the generated `package.json` or `CHANGELOG.md` files in the PR.
 Fix or remove the source Changeset on `main` instead and let the bot regenerate the PR.
@@ -72,11 +78,26 @@ prints one line with the cutoff and source versions. It then installs the Chromi
 workspace package's Playwright version needs (`browsers:install`). This takes about a second when
 the build is already cached, and it means a Playwright upgrade cannot fail the rehearsal because a
 browser is missing. If the install fails, the error says so and tells you how to recover. Next, it
-runs the full local rehearsal (`release:rehearse`) and the workflow audit (`workflow:check`), and
-confirms that Changesets has no packages left to version. The rehearsal includes `release:fixture`, which packs every workspace artifact with
+runs the full local rehearsal (`release:rehearse`), the cli-experience exit rehearsal
+(`release:rehearse:cli`), and the workflow audit (`workflow:check`), and confirms that Changesets has
+no packages left to version. The rehearsal includes `release:fixture`, which packs every workspace artifact with
 `pnpm pack` and installs each one through the real `artifacts install` path with the workspace CLI
 version, so a manifest or compatibility range that would break consumers fails before anything is
-published. It then prints the plan. "Packages absent from npm" lists versions that are not on
+published. The cli-experience exit rehearsal (#918) packs the CLI, its workspace dependencies, and every
+artifact, serves them from a local registry, and runs every check of the release's exit condition in
+pinned mode against them: `--new` through each launcher, the human output of `--init`, `apply`, and
+`clean`, a commit through the Vite+ pre-commit hook, the version notice, and the drift tests. It
+takes several minutes. Every run uses new temporary directories and empty package-manager homes and
+caches, and deletes them afterwards. If any check fails, the gate stops and prints a table that names
+each failing check, what was expected, what happened, the command that ran, and the issue that
+delivers it. There is no option to skip it: fix the failing checks on `main` and rerun. A warning
+that files below your HOME changed during the run does not fail the gate, because other tools on your
+machine write to the same caches; the `harness-isolation` check is the one that fails when the
+rehearsal's own commands leave their temporary directories. The "CLI experience rehearsal" workflow
+also runs the pinned rehearsal on the Version Packages pull request and shows the result there as the
+`CLI experience rehearsal (pinned)` status, so a failure is visible before you merge.
+
+It then prints the plan. "Packages absent from npm" lists versions that are not on
 npm yet; the package names themselves already exist, because the minting check ran first. For
 example:
 

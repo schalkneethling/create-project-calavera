@@ -682,6 +682,7 @@ test("release gates check the Baseline data first, right after the frozen instal
       "pnpm baseline:check",
       "pnpm browsers:install",
       "pnpm release:rehearse",
+      "pnpm release:rehearse:cli",
       "pnpm workflow:check",
     ],
   );
@@ -775,6 +776,32 @@ test("a failed browser install gate explains the cause and the remedy and keeps 
       assert.match(error.message, /^pnpm browsers:install failed with exit code 1\./);
       assert.match(error.message, /Playwright could not install the Chromium build/);
       assert.match(error.message, /run pnpm browsers:install until it succeeds/);
+      assert.match(error.message, /pnpm release:prepare/);
+      assert.equal(error.cause, failure);
+      return true;
+    },
+  );
+});
+
+test("a failed cli-experience rehearsal gate names the result table and the remedy and keeps the original failure (#918)", async () => {
+  const gate = releaseGates.find(([, args]) => args[0] === "release:rehearse:cli");
+  assert.ok(gate, "release:rehearse:cli is a release gate");
+  // One pinned run: the release needs this candidate's result, and the CI workflow proves two runs
+  // agree on every Version Packages pull request.
+  assert.deepEqual(gate.slice(0, 2), ["pnpm", ["release:rehearse:cli"]]);
+  const { scripts } = JSON.parse(await readFile(join(root, "package.json"), "utf8"));
+  assert.equal(scripts["release:rehearse:cli"], "node scripts/rehearse-cli-experience.mjs");
+  const failure = new ReleaseError("pnpm release:rehearse:cli failed with exit code 1.");
+  assert.throws(
+    () =>
+      runGate(gate, () => {
+        throw failure;
+      }),
+    (error) => {
+      assert.ok(error instanceof ReleaseError);
+      assert.match(error.message, /^pnpm release:rehearse:cli failed with exit code 1\./);
+      assert.match(error.message, /cli-experience rehearsal/);
+      assert.match(error.message, /result table above/);
       assert.match(error.message, /pnpm release:prepare/);
       assert.equal(error.cause, failure);
       return true;

@@ -244,6 +244,55 @@ export function buildEnvironment(
   };
 }
 
+/** The variables that hold a home, cache, store, or configuration file; each must be inside the run. */
+const ISOLATED_PATH_VARIABLES = [
+  "HOME",
+  "TMPDIR",
+  "XDG_CACHE_HOME",
+  "XDG_CONFIG_HOME",
+  "XDG_DATA_HOME",
+  "XDG_STATE_HOME",
+  "npm_config_cache",
+  "npm_config_userconfig",
+  "npm_config_globalconfig",
+  "npm_config_prefix",
+  "COREPACK_HOME",
+  "YARN_CACHE_FOLDER",
+  "YARN_GLOBAL_FOLDER",
+  "BUN_INSTALL_CACHE_DIR",
+  "BUN_INSTALL",
+];
+
+/** The variables that name the registry; each must point at the rehearsal registry. */
+const REGISTRY_VARIABLES = [
+  "npm_config_registry",
+  "YARN_NPM_REGISTRY_SERVER",
+  "BUN_CONFIG_REGISTRY",
+];
+
+/**
+ * Where a command's environment leaves the run: a home, cache, or store outside `root`, or a
+ * registry other than the rehearsal's. Empty when the command is isolated.
+ *
+ * @param {NodeJS.ProcessEnv} env
+ * @param {string} root
+ * @param {string} registryUrl
+ */
+export function isolationViolations(env, root, registryUrl) {
+  return [
+    ...ISOLATED_PATH_VARIABLES.flatMap((name) => {
+      const value = env[name];
+      if (value === undefined) return [`${name} is not set`];
+      return value === root || value.startsWith(`${root}/`) ? [] : [`${name} is ${value}`];
+    }),
+    ...REGISTRY_VARIABLES.flatMap((name) => {
+      const value = env[name];
+      if (value === undefined) return [`${name} is not set`];
+      return value.replace(/\/$/, "") === registryUrl ? [] : [`${name} is ${value}`];
+    }),
+  ];
+}
+
 /**
  * The configuration files, caches, and stores under the developer's HOME that a run must not
  * change.
@@ -426,20 +475,47 @@ export async function runRehearsal({
       ? { expected: "the run's directory to be deleted", actual: "<run> still exists" }
       : {}),
   });
+  // Isolation by construction: every command the rehearsal started had its homes, caches, and
+  // registry inside the run. This is what the rehearsal controls, so a violation fails the run.
+  const violations = context?.isolationViolations?.() ?? [];
+  if (context?.isolationViolations) {
+    results.push(
+      scrub(
+        {
+          id: "harness-isolation",
+          name: "Every command the rehearsal started used the run's own homes, caches, and registry",
+          issues: ["#918"],
+          status: violations.length === 0 ? "pass" : "fail",
+          ...(violations.length === 0
+            ? {}
+            : {
+                expected:
+                  "HOME, TMPDIR, XDG_*, every cache and store, and the registry inside the run",
+                actual: violations.join("\n"),
+              }),
+        },
+        root,
+      ),
+    );
+  }
+  // Files written below the developer's HOME during the run. Other sessions and tools on the same
+  // machine write to these caches too, and the rehearsal cannot tell their writes from its own, so
+  // this is a warning: it must not fail a release gate because of an unrelated process.
   const changed = await developerState.changes();
-  results.push({
-    id: "harness-developer-state",
-    name: "The developer's HOME, npm cache, Corepack home, and package-manager stores are unchanged",
-    issues: ["#918"],
-    status: changed.length === 0 ? "pass" : "fail",
-    ...(changed.length === 0
-      ? {}
-      : {
-          expected: "no change below the developer's HOME",
-          actual: `changed: ${changed.slice(0, 20).join(", ")}${changed.length > 20 ? `, and ${changed.length - 20} more` : ""}`,
-        }),
-  });
-  return { mode, versions, results, ok: results.every(({ status }) => status === "pass") };
+  /** @type {string[]} */
+  const warnings =
+    changed.length === 0
+      ? []
+      : [
+          `Files below the developer's HOME changed during the run: ${changed.slice(0, 20).join(", ")}${changed.length > 20 ? `, and ${changed.length - 20} more` : ""}. Another process may have written them; the harness-isolation check shows whether the rehearsal's own commands stayed inside the run.`,
+        ];
+  return {
+    mode,
+    versions,
+    results,
+    warnings,
+    ok: results.every(({ status }) => status === "pass"),
+  };
 }
 
 /** @param {unknown} error */
@@ -492,9 +568,9 @@ async function removeTree(path) {
 /**
  * The result table, then every failure with what was expected, what happened, and the command.
  *
- * @param {{ mode: string, versions: Record<string, string>, results: CheckResult[], ok: boolean }} report
+ * @param {{ mode: string, versions: Record<string, string>, results: CheckResult[], warnings?: string[], ok: boolean }} report
  */
-export function formatReport({ mode, versions, results, ok }) {
+export function formatReport({ mode, versions, results, warnings = [], ok }) {
   const failed = results.filter(({ status }) => status === "fail");
   const lines = [
     `## cli-experience rehearsal, ${mode} mode: ${ok ? "PASS" : "FAIL"} (${results.length - failed.length} of ${results.length} checks pass)`,
@@ -514,6 +590,9 @@ export function formatReport({ mode, versions, results, ok }) {
         `| ${status === "pass" ? "pass" : "FAIL"} | ${name} | \`${id}\` | ${issues.join(", ")} |`,
     ),
   ];
+  if (warnings.length > 0) {
+    lines.push("", "### Warnings", "", ...warnings.map((warning) => `- ${warning}`));
+  }
   if (failed.length > 0) {
     lines.push("", "### Failures");
     for (const result of failed) lines.push("", formatFailure(result));
@@ -586,7 +665,16 @@ async function prepareRun(dirs, { mode, pins, versions }) {
    * @param {string[]} args
    * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, timeout?: number }} [options]
    */
+  /** @type {string[]} */
+  const violations = [];
+  /** @param {NodeJS.ProcessEnv} commandEnv @param {string} display */
+  const recordEnvironment = (commandEnv, display) => {
+    for (const problem of isolationViolations(commandEnv, dirs.root, registry.url)) {
+      violations.push(`${display}: ${problem}`);
+    }
+  };
   const run = async (command, args, options = {}) => {
+    recordEnvironment(options.env ?? env, formatCommand(command, args, options.cwd ?? dirs.root));
     const result = await runCommand(command, args, {
       cwd: options.cwd ?? dirs.root,
       env: options.env ?? env,
@@ -693,6 +781,8 @@ async function prepareRun(dirs, { mode, pins, versions }) {
           return extra;
         }),
       lastCommand: () => lastCommand,
+      recordEnvironment,
+      isolationViolations: () => [...new Set(violations)],
       close: async () => {
         for (const closer of closers) await closer.close();
       },
@@ -801,37 +891,64 @@ export function parseOptions(argv) {
 }
 
 /**
- * The pins a pinned run must use, and the check that compares the tools the caller provides
- * (Node.js and Bun) with them. pnpm, Yarn, Corepack, and Vite+ are installed at their pins by the run.
+ * What the rehearsal needs from the machine before it starts: the pinned Node.js and Bun, which a
+ * run cannot install for itself, and Git and tar. Each problem says how to fix it, so a release
+ * gate stops before it creates anything, not halfway through. pnpm, Yarn, Corepack, and Vite+ are
+ * installed at their pins by the run, and need only network access.
  *
  * @param {Record<string, string>} pins
+ * @param {{ nodeVersion?: string, bunVersion?: () => Promise<string | undefined>, hasCommand?: (command: string) => Promise<boolean> }} [probe]
  */
-function toolchainPinCheck(pins) {
-  return {
-    id: "harness-toolchain-pins",
-    name: "Node.js and Bun match the pinned versions",
-    issues: ["#918"],
-    /** @param {{ versions: Record<string, string>, mode: string }} context */
-    run: async ({ versions, mode }) => {
-      if (mode !== "pinned") return;
-      const mismatches = [
-        ...(versions["Node.js"] === `v${pins.node}` ? [] : [`Node.js ${versions["Node.js"]}`]),
-        ...(versions.Bun === pins.bun ? [] : [`Bun ${versions.Bun}`]),
-      ];
-      if (mismatches.length > 0) {
-        throw new CheckFailure({
-          expected: `Node.js v${pins.node} and Bun ${pins.bun} from scripts/rehearsal-pins.json`,
-          actual: mismatches.join(", "),
-        });
-      }
-    },
-  };
+export async function prerequisiteProblems(
+  pins,
+  {
+    nodeVersion = process.version,
+    bunVersion = installedBunVersion,
+    hasCommand = async (command) => (await which(command)) !== undefined,
+  } = {},
+) {
+  /** @type {string[]} */
+  const problems = [];
+  if (nodeVersion !== `v${pins.node}`) {
+    problems.push(
+      `Node.js v${pins.node} is required; this is ${nodeVersion}. Switch to Node.js ${pins.node}, the version in scripts/rehearsal-pins.json, with your Node.js version manager, then run the command again.`,
+    );
+  }
+  const bun = await bunVersion();
+  if (bun !== pins.bun) {
+    problems.push(
+      `Bun ${pins.bun} is required; ${bun === undefined ? "bun is not on PATH" : `bun --version prints ${bun}`}. Install Bun ${pins.bun} exactly, the version in scripts/rehearsal-pins.json, so that bun and bunx are on PATH and bun --version prints ${pins.bun}, then run the command again.`,
+    );
+  }
+  for (const command of ["git", "tar"]) {
+    if (!(await hasCommand(command))) {
+      problems.push(
+        `${command} is required and is not on PATH. Install it, then run the command again.`,
+      );
+    }
+  }
+  return problems;
+}
+
+async function installedBunVersion() {
+  const bun = await which("bun");
+  if (!bun) return undefined;
+  const result = await runCommand(bun, ["--version"], { cwd: tmpdir(), env: process.env });
+  return result.exitCode === 0 ? result.stdout.trim() : undefined;
 }
 
 async function main() {
   const options = parseOptions(process.argv.slice(2));
   const pins = JSON.parse(await readFile(pinsPath, "utf8"));
-  const checks = [toolchainPinCheck(pins), ...cliExperienceChecks];
+  const problems = await prerequisiteProblems(pins);
+  if (problems.length > 0) {
+    process.stderr.write(
+      `The cli-experience rehearsal cannot start; nothing was created:\n${problems.map((problem) => `- ${problem}`).join("\n")}\n`,
+    );
+    process.exitCode = 2;
+    return;
+  }
+  const checks = cliExperienceChecks;
   /** @type {Awaited<ReturnType<typeof runRehearsal>>[]} */
   const reports = [];
   for (let index = 0; index < options.runs; index += 1) {
