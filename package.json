@@ -32,8 +32,9 @@
     "release:version": "node scripts/release-version.mjs",
     "release:prepare": "node scripts/release-orchestrator.mjs prepare",
     "release:publish": "node scripts/release-orchestrator.mjs publish",
-    "release:contracts": "node scripts/check-release-contracts.mjs && node --test scripts/release-orchestrator.test.mjs",
+    "release:contracts": "node scripts/check-release-contracts.mjs && node --test scripts/release-orchestrator.test.mjs scripts/rehearse-cli-experience.test.mjs",
     "release:fixture": "pnpm --filter create-project-calavera exec node --test scripts/release-integration.test.mjs",
+    "release:rehearse:cli": "node scripts/rehearse-cli-experience.mjs",
     "release:rehearse": "pnpm quality && pnpm release:fixture && pnpm web:build && pnpm --filter @calavera/baseline-explorer build && pnpm --filter @calavera/menu-bar build:web && pnpm publish:check",
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
   },

@@ -8,6 +8,7 @@ Copy this file into the release issue or another durable release record. Do not 
 - Source commit:
 - GitHub release or disposable rehearsal reference:
 - `pnpm release:rehearse` result:
+- `pnpm release:rehearse:cli` result (pinned mode; paste the result table):
 - `pnpm workflow:check` result:
 - `pnpm release:status` result:
 

@@ -244,6 +244,15 @@ export const releaseGates = [
     "Playwright could not install the Chromium build that the workspace tests need. Check the output above and your network access, run pnpm browsers:install until it succeeds, then rerun pnpm release:prepare.",
   ],
   ["pnpm", ["release:rehearse"]],
+  // The cli-experience exit rehearsal (#918) on this exact candidate, pinned mode, once: the release
+  // needs this candidate's result, and the rehearsal workflow already proves on every Version
+  // Packages pull request that two runs agree. It needs network access, Bun, and the pinned Node.js,
+  // and checks for them before it starts.
+  [
+    "pnpm",
+    ["release:rehearse:cli"],
+    "The cli-experience rehearsal did not pass on this candidate. If it stopped before running, it printed which prerequisite is missing and how to install it. Otherwise the result table above names each failing check, what was expected, what happened, the command that ran, and the issue that delivers it. Fix those checks on main, then rerun pnpm release:prepare, or pnpm release:publish if that is the command that stopped.",
+  ],
   ["pnpm", ["workflow:check"]],
 ];
 

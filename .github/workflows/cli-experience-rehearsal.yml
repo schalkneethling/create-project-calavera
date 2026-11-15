@@ -1,0 +1,154 @@
+name: CLI experience rehearsal
+
+# The cli-experience exit rehearsal (#918). The release gate is `pnpm release:prepare` and
+# `pnpm release:publish`, which run the pinned rehearsal on the exact candidate commit and refuse to
+# continue when it fails. This workflow gives an earlier, visible signal: the release workflow
+# (release-pr.yml) dispatches pinned mode for the Changesets "Version Packages" pull request and
+# passes that pull request's head commit, which gets the result as a commit status. Latest mode
+# runs weekly with the Vite+ that users get today. Both run on manual dispatch. Neither runs on
+# ordinary pull requests, because the rehearsal needs network access and takes many minutes.
+
+on:
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: "pinned: the pinned Vite+ (exit-condition evidence). latest: the Vite+ users get today."
+        type: choice
+        options:
+          - pinned
+          - latest
+        default: pinned
+      status-sha:
+        description: "Commit that gets the result as a commit status. The release workflow sets it; leave empty otherwise."
+        type: string
+        required: false
+        default: ""
+  schedule:
+    # Mondays at 06:17 UTC, in latest mode.
+    - cron: "17 6 * * 1"
+
+permissions:
+  contents: read
+
+concurrency:
+  # The event is part of the group, so a manual latest run does not cancel a scheduled one and
+  # with it the failure issue. A newer pinned dispatch for the release branch cancels an older one.
+  group: ${{ github.workflow }}-${{ github.event_name }}-${{ github.ref }}-${{ inputs.mode || 'latest' }}
+  cancel-in-progress: true
+
+jobs:
+  rehearse:
+    name: Rehearse (${{ inputs.mode || 'latest' }})
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    permissions:
+      contents: read
+      issues: write
+      statuses: write
+    env:
+      # A scheduled run has no inputs, so it runs in latest mode.
+      MODE: ${{ inputs.mode || 'latest' }}
+      STATUS_SHA: ${{ inputs.status-sha }}
+      STATUS_CONTEXT: CLI experience rehearsal (pinned)
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          # The commit that gets the status is the commit under test, even when the release branch
+          # moved between the dispatch and this run.
+          ref: ${{ inputs.status-sha || github.sha }}
+          persist-credentials: false
+      - name: Validate inputs
+        id: validate
+        run: |
+          if [ -n "$STATUS_SHA" ] && ! printf '%s' "$STATUS_SHA" | grep -Eq '^[0-9a-f]{40}$'; then
+            echo "status-sha must be a full 40-character commit SHA." >&2
+            exit 1
+          fi
+          if [ -n "$STATUS_SHA" ] && [ "$MODE" != "pinned" ]; then
+            echo "Only a pinned run reports a commit status." >&2
+            exit 1
+          fi
+      - name: Read the pinned Node.js and Bun versions
+        id: pins
+        run: |
+          echo "node=$(jq -r .node scripts/rehearsal-pins.json)" >> "$GITHUB_OUTPUT"
+          echo "bun=$(jq -r .bun scripts/rehearsal-pins.json)" >> "$GITHUB_OUTPUT"
+      - name: Setup pnpm and Node.js
+        uses: pnpm/setup@fa36a5ef7dcdefc3a7cb25655c122e00cf6e636e # v3.1.2
+        with:
+          runtime: node@${{ steps.pins.outputs.node }}
+          install: false
+          cache: false
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@0c5077e51419868618aeaa5fe8019c62421857d6 # v2.2.0
+        with:
+          bun-version: ${{ steps.pins.outputs.bun }}
+          no-cache: true
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile --ignore-scripts
+      - name: Report a pending status
+        if: env.STATUS_SHA != ''
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$STATUS_SHA"
+          -f state=pending -f context="$STATUS_CONTEXT"
+          -f description="The pinned rehearsal is running."
+          -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Rehearse
+        id: rehearse
+        # Shorter than the job's limit, so the status and summary steps still run after a timeout.
+        timeout-minutes: 100
+        # A pinned run goes twice and compares the results, which proves the two-runs-same-result
+        # criterion on every release candidate.
+        run: |
+          runs=1
+          if [ "$MODE" = "pinned" ]; then runs=2; fi
+          pnpm release:rehearse:cli --mode "$MODE" --runs "$runs" --report-file "$RUNNER_TEMP/rehearsal-report.md"
+      - name: Write the result table to the job summary
+        if: always()
+        run: |
+          if [ -f "$RUNNER_TEMP/rehearsal-report.md" ]; then
+            cat "$RUNNER_TEMP/rehearsal-report.md" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "The rehearsal wrote no report; see the Rehearse step log." >> "$GITHUB_STEP_SUMMARY"
+          fi
+      - name: Report the result as a commit status
+        if: always() && env.STATUS_SHA != '' && steps.validate.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          OUTCOME: ${{ steps.rehearse.outcome }}
+        run: |
+          if [ "$OUTCOME" = "success" ]; then
+            state=success
+            description="Every check passed."
+          else
+            state=failure
+            description="One or more checks failed. The run summary lists them."
+          fi
+          gh api --method POST "repos/$GITHUB_REPOSITORY/statuses/$STATUS_SHA" \
+            -f state="$state" -f context="$STATUS_CONTEXT" -f description="$description" \
+            -f target_url="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+      - name: Open or update the failure issue
+        if: failure() && github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: "CLI experience rehearsal fails in latest mode"
+        run: |
+          report="$RUNNER_TEMP/rehearsal-report.md"
+          body="$RUNNER_TEMP/issue-body.md"
+          {
+            echo "The scheduled latest-mode rehearsal failed: $GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID"
+            echo
+            echo "When pinned mode passes and latest mode fails, a new Vite+ release changed the flow, not Calavera."
+            echo
+            if [ -f "$report" ]; then head -c 60000 "$report"; else echo "The rehearsal wrote no report; see the run log."; fi
+          } > "$body"
+          existing=$(gh issue list --repo "$GITHUB_REPOSITORY" --state open --search "\"$TITLE\" in:title" --json number,title \
+            --jq "map(select(.title == \"$TITLE\")) | first | .number // empty")
+          if [ -n "$existing" ]; then
+            gh issue comment "$existing" --repo "$GITHUB_REPOSITORY" --body-file "$body"
+          else
+            gh issue create --repo "$GITHUB_REPOSITORY" --title "$TITLE" --label calavera-evolution --body-file "$body"
+          fi
