@@ -124,7 +124,9 @@ registration float to a later package release.
 After registration, restart or reload the agent session if the MCP host does not
 discover new tools dynamically. Before composing a recipe, confirm these
 Calavera MCP tools are exposed: `inspect_project`, `list_profiles`,
-`list_integrations`, `list_ai_artifacts`, `compose_recipe`, `validate_recipe`,
+`list_integrations`, `describe_integration`, `list_ai_artifacts`,
+`list_baseline_targets`, `describe_baseline_target`, `search_baseline_features`,
+`recommend_baseline_target`, `compose_recipe`, `validate_recipe`,
 `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
 
 The `inspect_project` response includes an optional `vitePlus` field reporting
