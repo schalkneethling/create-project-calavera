@@ -260,13 +260,22 @@ scaffold, stops with the exit code, the directory, and the detection finding.
 After a stop, Calavera writes nothing more and removes nothing; the directory may
 hold a partial scaffold that belongs to Vite+.
 
-After the bootstrap, Calavera prints the next steps. A new project has no recipe
-yet, and Calavera changes nothing until it has one, so the block names both ways
-to get one: the agent prompt printed above it, or the hosted Composer. For a
-project scaffolded into `/home/me/code/my-lib` whose `package.json` names pnpm,
-the block reads:
+After the bootstrap, Calavera prints a summary in labeled groups separated by
+blank lines. "Changes" lists each file the bootstrap wrote, updated, or skipped,
+once. The Calavera skill and `.coderabbit.yaml` are not listed when they are
+already up to date. "Notes" says where installed skills live and what you still need to do by
+hand, such as merging `AGENTS.calavera.md` or setting up MCP from
+`.agents/calavera/mcp.md`. "Next prompt" is followed by the agent prompt alone on
+one line between blank lines, so you can copy all of it into your agent as one
+message. "Next steps" comes last.
+
+A new project has no recipe yet, and Calavera changes nothing until it has one,
+so the next-steps block names both ways to get one: the agent prompt printed
+above it, or the hosted Composer. For a project scaffolded into
+`/home/me/code/my-lib` whose `package.json` names pnpm, the block reads:
 
 ```text
+Next steps:
 Your project needs a recipe before Calavera changes anything.
   Either: open /home/me/code/my-lib in your agent and use the prompt above.
   Or: compose one at https://calavera.schalkneethling.com/ and save
@@ -277,8 +286,8 @@ Your project needs a recipe before Calavera changes anything.
 ```
 
 The commands match the scaffolded project's package manager. `--init` prints
-the same block without the `cd` line, and `--init --json` returns the same lines
-as a `nextSteps` array. When the project already has `calavera.config.json`, the
+the same block without the `cd` line, and `--init --json` returns the same lines,
+without the heading, as a `nextSteps` array. When the project already has `calavera.config.json`, the
 block names that file and the preview and apply commands instead. The dry run and
 every stop print no block.
 

@@ -3752,9 +3752,11 @@ async function writeAgentBootstrapMcpConfig(
     return {
       harness,
       action: "manual",
-      reason: `Could not write project MCP config at ${path}: ${
-        error instanceof Error ? error.message : String(error)
-      }. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+      // The error's own trailing period is dropped so the sentence ends once.
+      reason: `Could not write project MCP config at ${path}: ${(error instanceof Error
+        ? error.message
+        : String(error)
+      ).replace(/\.$/, "")}. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
     };
   }
 
@@ -3829,6 +3831,8 @@ async function formatAgentBootstrapGuidance(loadFormatter) {
  * @param {Change[]} changes
  * @param {CliOptions} options
  * @param {AgentBootstrapGuidanceText} guidanceText
+ * @returns {Promise<boolean>} Whether AGENTS.calavera.md holds the current guidance, which then
+ *   waits for a manual merge into AGENTS.md.
  */
 async function handleExistingAgentBootstrapGuidance(
   currentGuidance,
@@ -3853,7 +3857,7 @@ async function handleExistingAgentBootstrapGuidance(
     if (!dryRun && nextGuidance.changed) {
       await writeFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, nextGuidance.contents);
     }
-    return;
+    return false;
   }
 
   if (currentGuidance.includes(AGENT_BOOTSTRAP_MARKER)) {
@@ -3867,7 +3871,7 @@ async function handleExistingAgentBootstrapGuidance(
         path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
         reason: "Calavera guidance already present.",
       });
-      return;
+      return false;
     }
 
     changes.push({
@@ -3879,7 +3883,7 @@ async function handleExistingAgentBootstrapGuidance(
     if (!dryRun) {
       await writeFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, guidanceText.file);
     }
-    return;
+    return false;
   }
 
   const mode = await resolveAgentBootstrapGuidanceMode(options);
@@ -3896,7 +3900,7 @@ async function handleExistingAgentBootstrapGuidance(
     if (!dryRun) {
       await writeFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, nextGuidance.contents);
     }
-    return;
+    return false;
   }
 
   changes.push({
@@ -3905,7 +3909,9 @@ async function handleExistingAgentBootstrapGuidance(
     reason: `Existing AGENTS.md left unchanged; Calavera guidance ${dryRun ? "would be" : "was"} written separately.`,
   });
 
-  await writeBootstrapTextFile(
+  // False only when the fallback holds a local edit that was kept; an up-to-date fallback is
+  // still current guidance that waits to be merged.
+  return writeBootstrapTextFile(
     AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
     guidanceText.fallback,
     dryRun,
@@ -3919,6 +3925,8 @@ async function handleExistingAgentBootstrapGuidance(
  * @param {CliOptions} options
  * @param {Change[]} changes
  * @param {AgentBootstrapGuidanceText} guidanceText
+ * @returns {Promise<boolean>} Whether AGENTS.calavera.md holds the current guidance, which then
+ *   waits for a manual merge into AGENTS.md.
  */
 async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
   const guidance = guidanceText.file;
@@ -3931,7 +3939,7 @@ async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
       changes,
       "Existing agent guidance differs and was left unchanged.",
     );
-    return;
+    return false;
   }
 
   const currentGuidance = await readFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, "utf8");
@@ -3942,10 +3950,10 @@ async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
       path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
       reason: "Already up to date.",
     });
-    return;
+    return false;
   }
 
-  await handleExistingAgentBootstrapGuidance(
+  return handleExistingAgentBootstrapGuidance(
     currentGuidance,
     options.dryRun,
     changes,
@@ -4006,7 +4014,11 @@ export async function agentBootstrap(options = {}) {
   /** @type {Change[]} */
   const changes = [...aiResult.changes];
 
-  await writeAgentBootstrapGuidance(bootstrapOptions, changes, guidanceText);
+  const fallbackGuidanceAwaitsMerge = await writeAgentBootstrapGuidance(
+    bootstrapOptions,
+    changes,
+    guidanceText,
+  );
   const mcpHarness = await resolveAgentBootstrapMcpHarness(bootstrapOptions);
   const mcp = await writeAgentBootstrapMcpConfig(
     mcpHarness,
@@ -4027,16 +4039,10 @@ export async function agentBootstrap(options = {}) {
     );
   }
 
-  const wroteFallbackGuidance = changes.some(
-    (change) => change.path === AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
-  );
-  const agentGuidancePointer = wroteFallbackGuidance
-    ? `Agent guidance: ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} for manual merge with ${AGENT_BOOTSTRAP_GUIDANCE_FILE}`
-    : `Agent guidance: ${AGENT_BOOTSTRAP_GUIDANCE_FILE}`;
-  const mcpPointer =
-    mcp.action === "manual"
-      ? `MCP setup: manual (${AGENT_BOOTSTRAP_MCP_FILE})`
-      : `MCP setup: ${mcp.path}`;
+  // #601: the pointers carry only what the list of changes does not already say, so the summary
+  // names each file once. A file that was written, updated, or skipped is in `changes`. The merge
+  // note follows fallbackGuidanceAwaitsMerge, not the change type, because an up-to-date fallback
+  // is also reported as a skip; only a fallback kept as a local edit gets no note.
 
   if (!bootstrapOptions.dryRun) {
     await mkdir(".calavera", { recursive: true });
@@ -4053,9 +4059,13 @@ export async function agentBootstrap(options = {}) {
     changes,
     pointers: [
       ...aiResult.pointers,
-      agentGuidancePointer,
-      mcpPointer,
-      ...(mcp.action === "manual" ? [`MCP setup notes: ${AGENT_BOOTSTRAP_MCP_FILE}`] : []),
+      ...(fallbackGuidanceAwaitsMerge
+        ? [
+            `Merge ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
+          ]
+        : []),
+      // Only a manual MCP setup carries a reason.
+      ...(mcp.reason ? [mcp.reason] : []),
     ],
     nextPrompt: AGENT_BOOTSTRAP_NEXT_PROMPT,
     nextSteps: recipeNextSteps(process.cwd(), packageManager, { changeDirectory: false }),
@@ -5817,6 +5827,7 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.success(`Copied ${result.recipe.source} to ${result.recipe.path}.`);
     }
 
+    logger.info("");
     printResult(result.bootstrap);
     return;
   }
@@ -5828,39 +5839,31 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.success("Calavera agent bootstrap complete.");
     }
 
-    for (const change of result.changes) {
-      if (change.type === "write") {
-        logger.info(result.dryRun ? `Would write ${change.path}` : `Wrote ${change.path}`);
-      }
+    // #601: labeled groups separated by blank lines. Each file appears once, under Changes; the
+    // prompt stands alone between blank lines, without a prefix or indent, so it copies whole.
+    const changeLines = result.changes.flatMap((change) => {
+      const line = formatAgentBootstrapChange(change, result.dryRun);
+      return line ? [`  ${line}`] : [];
+    });
 
-      if (change.type === "skip") {
-        logger.info(
-          result.dryRun
-            ? `Would skip ${change.path}: ${change.reason}`
-            : `Skipped ${change.path}: ${change.reason}`,
-        );
-      }
-
-      if (change.type === "update") {
-        logger.info(
-          result.dryRun
-            ? `Would update ${change.path}: ${change.reason}`
-            : `Updated ${change.path}: ${change.reason}`,
-        );
-      }
+    if (changeLines.length > 0) {
+      logger.info("");
+      logger.info("Changes:");
+      for (const line of changeLines) logger.info(line);
     }
 
-    for (const pointer of result.pointers) {
-      logger.info(pointer);
+    if (result.pointers.length > 0) {
+      logger.info("");
+      logger.info("Notes:");
+      for (const pointer of result.pointers) logger.info(`  ${pointer}`);
     }
 
-    logger.info(
-      result.mcp.action === "manual"
-        ? `MCP auto-config skipped: ${result.mcp.reason}`
-        : `MCP auto-config ${result.mcp.action}: ${result.mcp.path}`,
-    );
-    logger.info("Review the files above to confirm what Calavera changed or skipped.");
-    logger.info(`Next prompt: ${result.nextPrompt}`);
+    logger.info("");
+    logger.info("Next prompt. Copy all of it into your agent as one message:");
+    logger.info("");
+    logger.info(result.nextPrompt);
+    logger.info("");
+    logger.info("Next steps:");
 
     for (const line of result.nextSteps) {
       logger.info(line);
@@ -6099,6 +6102,31 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     for (const pointer of result.pointers) {
       logger.info(pointer);
     }
+  }
+}
+
+/**
+ * One line of the bootstrap summary's Changes group, or `undefined` for a change type the
+ * bootstrap does not produce.
+ *
+ * @param {Change} change
+ * @param {boolean} dryRun
+ * @returns {string | undefined}
+ */
+function formatAgentBootstrapChange(change, dryRun) {
+  switch (change.type) {
+    case "write":
+      return dryRun ? `Would write ${change.path}` : `Wrote ${change.path}`;
+    case "update":
+      return dryRun
+        ? `Would update ${change.path}: ${change.reason}`
+        : `Updated ${change.path}: ${change.reason}`;
+    case "skip":
+      return dryRun
+        ? `Would skip ${change.path}: ${change.reason}`
+        : `Skipped ${change.path}: ${change.reason}`;
+    default:
+      return undefined;
   }
 }
 

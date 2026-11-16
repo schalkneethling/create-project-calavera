@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { agentBootstrap, parseArgs } from "../src/index.js";
 import {
+  NEXT_PROMPT_HEADING,
   printedNextPrompt,
   readmeAgentPrompt,
   readRepositoryFile,
@@ -127,7 +128,8 @@ test("agent bootstrap can append guidance to existing AGENTS.md", async () => {
     assert.match(agentsMd, /# Calavera Agent Guidance/);
     assert.doesNotMatch(agentsMd, /<!-- calavera-agent-bootstrap -->/);
     assert.doesNotMatch(agentsMd, /AGENTS\.calavera\.md/);
-    assert.ok(result.pointers.includes("Agent guidance: AGENTS.md"));
+    // Appended guidance needs no merge, so no pointer names the fallback file (#601).
+    assert.ok(!result.pointers.some((pointer) => pointer.includes("AGENTS.calavera.md")));
     await assert.rejects(readFile("AGENTS.calavera.md", "utf8"), { code: "ENOENT" });
   });
 });
@@ -229,5 +231,199 @@ test("--init names an existing recipe instead of asking for one", async () => {
       "    npm create project-calavera apply -- --dry-run",
       "    npm create project-calavera apply",
     ]);
+  });
+});
+
+/**
+ * The next-steps group --init prints for a pnpm project without a recipe.
+ *
+ * @param {string} directory
+ * @returns {string[]}
+ */
+function initNextSteps(directory) {
+  return [
+    "Next steps:",
+    "Your project needs a recipe before Calavera changes anything.",
+    `  Either: open ${directory} in your agent and use the prompt above.`,
+    "  Or: compose one at https://calavera.schalkneethling.com/ and save",
+    `      calavera.config.json into ${directory}, then:`,
+    "        pnpm dlx create-project-calavera apply --dry-run",
+    "        pnpm dlx create-project-calavera apply",
+  ];
+}
+
+/**
+ * The prompt group: a heading, then the prompt alone on its own line between blank lines, so it
+ * can be copied whole.
+ *
+ * @returns {Promise<string[]>}
+ */
+async function nextPromptGroup() {
+  return [NEXT_PROMPT_HEADING, "", await readmeAgentPrompt(), ""];
+}
+
+test("--init groups the summary and names each file once when it writes the MCP config (#601)", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({ name: "demo", packageManager: "pnpm@10.0.0" }),
+    );
+
+    const result = await runCli(directory, ["--init", "--mcp-harness", "claude-code"]);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(
+      result.stdout,
+      [
+        "Calavera agent bootstrap complete.",
+        "",
+        "Changes:",
+        "  Wrote .agents/skills/calavera",
+        "  Wrote .coderabbit.yaml",
+        "  Wrote AGENTS.md",
+        "  Wrote .mcp.json",
+        "",
+        "Notes:",
+        "  Installed skills are available under .agents/skills/.",
+        "",
+        ...(await nextPromptGroup()),
+        ...initNextSteps(directory),
+        "",
+      ].join("\n"),
+    );
+  });
+});
+
+test("--init groups the summary when MCP needs manual setup (#601)", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({ name: "demo", packageManager: "pnpm@10.0.0" }),
+    );
+
+    const result = await runCli(directory, ["--init", "--mcp-harness", "skip"]);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(
+      result.stdout,
+      [
+        "Calavera agent bootstrap complete.",
+        "",
+        "Changes:",
+        "  Wrote .agents/skills/calavera",
+        "  Wrote .coderabbit.yaml",
+        "  Wrote AGENTS.md",
+        "  Wrote .agents/calavera/mcp.md",
+        "",
+        "Notes:",
+        "  Installed skills are available under .agents/skills/.",
+        "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+        "",
+        ...(await nextPromptGroup()),
+        ...initNextSteps(directory),
+        "",
+      ].join("\n"),
+    );
+  });
+});
+
+test("--init names a skipped AGENTS.md once and says to merge the fallback guidance (#601)", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({ name: "demo", packageManager: "pnpm@10.0.0" }),
+    );
+    await writeFile("AGENTS.md", "# Existing project guidance\n");
+
+    const result = await runCli(directory, [
+      "--init",
+      "--dry-run",
+      "--mcp-harness",
+      "skip",
+      "--agents-md=fallback",
+    ]);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.equal(
+      result.stdout,
+      [
+        "Calavera agent bootstrap dry run complete. No files were changed.",
+        "",
+        "Changes:",
+        "  Would write .agents/skills/calavera",
+        "  Would write .coderabbit.yaml",
+        "  Would skip AGENTS.md: Existing AGENTS.md left unchanged; Calavera guidance would be written separately.",
+        "  Would write AGENTS.calavera.md",
+        "  Would write .agents/calavera/mcp.md",
+        "",
+        "Notes:",
+        "  Installed skills are available under .agents/skills/.",
+        "  Merge AGENTS.calavera.md into AGENTS.md by hand.",
+        "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+        "",
+        ...(await nextPromptGroup()),
+        ...initNextSteps(directory),
+        "",
+      ].join("\n"),
+    );
+  });
+});
+
+test("--init names an MCP config it could not write once, in a note with one period (#601)", async () => {
+  await withTempProject(async () => {
+    await writeFile(".mcp.json", JSON.stringify({ mcpServers: 3 }));
+
+    const result = await agentBootstrap({ mcpHarness: "claude-code" });
+    const mcpNote = result.pointers.find((pointer) => pointer.startsWith("Could not write"));
+
+    assert.equal(result.mcp.action, "manual");
+    assert.ok(mcpNote, JSON.stringify(result.pointers));
+    assert.equal(
+      mcpNote,
+      "Could not write project MCP config at .mcp.json: .mcp.json mcpServers must be an object. Follow .agents/calavera/mcp.md for manual setup.",
+    );
+    assert.equal(result.changes.filter((change) => change.path === ".mcp.json").length, 0);
+  });
+});
+
+test("--init does not ask for a merge of fallback guidance it left unchanged (#601)", async () => {
+  await withTempProject(async () => {
+    await writeFile("AGENTS.md", "# Existing project guidance\n");
+    await writeFile("AGENTS.calavera.md", "# My own edits\n");
+
+    const result = await agentBootstrap({ agentsMd: "fallback", mcpHarness: "skip" });
+
+    assert.ok(
+      result.changes.some(
+        (change) => change.type === "skip" && change.path === "AGENTS.calavera.md",
+      ),
+    );
+    assert.ok(!result.pointers.some((pointer) => pointer.includes("AGENTS.calavera.md")));
+  });
+});
+
+test("--init keeps the merge note on a rerun before the generated fallback is merged (#601)", async () => {
+  await withTempProject(async () => {
+    await writeFile("AGENTS.md", "# Existing project guidance\n");
+    await agentBootstrap({ agentsMd: "fallback", mcpHarness: "skip" });
+
+    const result = await agentBootstrap({ agentsMd: "fallback", mcpHarness: "skip" });
+
+    assert.ok(
+      result.changes.some(
+        (change) =>
+          change.type === "skip" &&
+          change.path === "AGENTS.calavera.md" &&
+          change.reason === "Already up to date.",
+      ),
+      JSON.stringify(result.changes),
+    );
+    assert.ok(
+      result.pointers.includes("Merge AGENTS.calavera.md into AGENTS.md by hand."),
+      JSON.stringify(result.pointers),
+    );
   });
 });
