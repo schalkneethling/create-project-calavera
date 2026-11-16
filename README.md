@@ -716,11 +716,15 @@ in this order:
 3. `list_integrations`
 4. `describe_integration`
 5. `list_ai_artifacts`
-6. `compose_recipe`
-7. `validate_recipe`
-8. `explain_recipe`
-9. `dry_run_apply`
-10. `apply_recipe`
+6. `list_baseline_targets`
+7. `describe_baseline_target`
+8. `search_baseline_features`
+9. `recommend_baseline_target`
+10. `compose_recipe`
+11. `validate_recipe`
+12. `explain_recipe`
+13. `dry_run_apply`
+14. `apply_recipe`
 
 `dry_run_apply` returns structured JSON with the package manager, integrations,
 dependency packages, the command that installs them, the Vite+ detection

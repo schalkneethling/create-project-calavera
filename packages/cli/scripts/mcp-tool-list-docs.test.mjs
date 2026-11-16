@@ -1,6 +1,9 @@
 // #839: the README and `--help` tell people which MCP tools to confirm before composing a
 // recipe, and permission allow-lists are built from that list, so a tool the documents leave
 // out gets denied. These tests compare both lists with the tools the server registers.
+// #933: the README's tool-order list and the bundled Calavera skill, which tells an agent which
+// tools to look for, are checked the same way. The generated `.agents/calavera/mcp.md` list is
+// not checked here yet: changing its text waits for #934.
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
@@ -17,10 +20,24 @@ const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../bin/create-project-calavera.js", import.meta.url));
 const readmeUrl = new URL("../../../README.md", import.meta.url);
 const workflowDocUrl = new URL("../../../docs/agent-first-calavera-workflow.md", import.meta.url);
+// The CLI installs the first copy during `--init`; the second is the published skill artifact.
+const skills = [
+  {
+    source: "packages/cli/src/bootstrap/calavera/SKILL.md",
+    url: new URL("../src/bootstrap/calavera/SKILL.md", import.meta.url),
+  },
+  {
+    source: "packages/artifacts/skill-calavera/payload/calavera/SKILL.md",
+    url: new URL("../../artifacts/skill-calavera/payload/calavera/SKILL.md", import.meta.url),
+  },
+];
 
 const README_MARKER = "Confirm the Calavera MCP tools are exposed:";
 const WORKFLOW_DOC_MARKER = "Calavera MCP tools are exposed:";
 const HELP_MARKER = "Confirm these tools are visible before composing a recipe:";
+const README_ORDER_MARKER = "An MCP client can use the tools\nin this order:";
+const SKILL_MARKER = "Look for tools named";
+const WORKFLOW_DOC_MCP_MARKER = "composition tools and project-local apply tools:";
 const TOOL_NAME_PATTERN = /\b[a-z]+(?:_[a-z]+)+\b/g;
 
 /**
@@ -68,6 +85,33 @@ function listAfterMarker(text, marker, source) {
 }
 
 /**
+ * The numbered list that follows the marker, one item per line, so the parse stops at the first
+ * line after the list that is not a numbered item.
+ *
+ * @param {string} text
+ * @param {string} marker
+ * @param {string} source
+ * @returns {string}
+ */
+function numberedListAfterMarker(text, marker, source) {
+  const start = text.indexOf(marker);
+  assert.notEqual(start, -1, `${source} no longer contains "${marker}"`);
+  assert.equal(
+    text.indexOf(marker, start + marker.length),
+    -1,
+    `${source} contains "${marker}" more than once`,
+  );
+  const lines = text
+    .slice(start + marker.length)
+    .replace(/^\s*\n/, "")
+    .split("\n");
+  const end = lines.findIndex((line) => !/^\d+\.\s/.test(line));
+  const items = end === -1 ? lines : lines.slice(0, end);
+  assert.notEqual(items.length, 0, `${source} has no numbered list after "${marker}"`);
+  return items.join("\n");
+}
+
+/**
  * @param {string} list
  * @returns {string[]}
  */
@@ -82,10 +126,35 @@ test("the README lists every tool the MCP server registers, and no others", asyn
   assert.deepEqual(documented, await registeredToolNames());
 });
 
+test("the README's tool-order list names every tool the MCP server registers, and no others", async () => {
+  const readme = await readFile(readmeUrl, "utf8");
+  const documented = toolNamesIn(numberedListAfterMarker(readme, README_ORDER_MARKER, "README.md"));
+
+  assert.deepEqual(documented, await registeredToolNames());
+});
+
+for (const { source, url } of skills) {
+  test(`the bundled Calavera skill at ${source} lists every tool the MCP server registers, and no others`, async () => {
+    const skill = await readFile(url, "utf8");
+    const documented = toolNamesIn(listAfterMarker(skill, SKILL_MARKER, source));
+
+    assert.deepEqual(documented, await registeredToolNames());
+  });
+}
+
 test("the agent-first workflow doc lists every tool the MCP server registers, and no others", async () => {
   const doc = await readFile(workflowDocUrl, "utf8");
   const documented = toolNamesIn(
     listAfterMarker(doc, WORKFLOW_DOC_MARKER, "docs/agent-first-calavera-workflow.md"),
+  );
+
+  assert.deepEqual(documented, await registeredToolNames());
+});
+
+test("the agent-first workflow doc's standard MCP list names every tool the MCP server registers, and no others", async () => {
+  const doc = await readFile(workflowDocUrl, "utf8");
+  const documented = toolNamesIn(
+    numberedListAfterMarker(doc, WORKFLOW_DOC_MCP_MARKER, "docs/agent-first-calavera-workflow.md"),
   );
 
   assert.deepEqual(documented, await registeredToolNames());
@@ -121,5 +190,23 @@ test("the list parser catches a missing, an extra, and a repeated tool name", ()
       ),
     ),
     registered,
+  );
+});
+
+test("the numbered-list parser stops at the first line that is not a numbered item", () => {
+  const fixture = `${README_ORDER_MARKER}\n\n1. \`inspect_project\`\n2. \`apply_recipe\`\n\n\`dry_run_apply\` returns structured JSON.`;
+
+  assert.deepEqual(toolNamesIn(numberedListAfterMarker(fixture, README_ORDER_MARKER, "fixture")), [
+    "apply_recipe",
+    "inspect_project",
+  ]);
+  assert.throws(
+    () =>
+      numberedListAfterMarker(
+        `${README_ORDER_MARKER}\n\nNo list here.`,
+        README_ORDER_MARKER,
+        "fixture",
+      ),
+    /has no numbered list/,
   );
 });

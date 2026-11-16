@@ -412,15 +412,20 @@ forwarded flags; the `dlx` and `bunx` commands do not.
 The standard MCP server is the agent-native project workflow. It exposes
 composition tools and project-local apply tools:
 
-1. `list_profiles`
-2. `list_integrations`
-3. `describe_integration`
-4. `list_ai_artifacts`
-5. `compose_recipe`
-6. `validate_recipe`
-7. `explain_recipe`
-8. `dry_run_apply`
-9. `apply_recipe`
+1. `inspect_project`
+2. `list_profiles`
+3. `list_integrations`
+4. `describe_integration`
+5. `list_ai_artifacts`
+6. `list_baseline_targets`
+7. `describe_baseline_target`
+8. `search_baseline_features`
+9. `recommend_baseline_target`
+10. `compose_recipe`
+11. `validate_recipe`
+12. `explain_recipe`
+13. `dry_run_apply`
+14. `apply_recipe`
 
 WebMCP exposes the browser-safe composition subset:
 
