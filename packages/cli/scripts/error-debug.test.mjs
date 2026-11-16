@@ -251,6 +251,44 @@ function runCli(args, cwd, extraEnv) {
   });
 }
 
+const FRAME_LINE = /^\s+at /;
+
+/**
+ * The CLI's error text without what the debug switch adds: the stack frame lines, and each
+ * "Caused by:" line that has only a name and is followed by frames, which is a cause kept
+ * only for its stack.
+ *
+ * @param {string} text
+ */
+function withoutDebugLines(text) {
+  const lines = text.split("\n");
+  return lines
+    .filter(
+      (line, index) =>
+        !FRAME_LINE.test(line) &&
+        !(/^Caused by: \S+$/.test(line) && FRAME_LINE.test(lines[index + 1] ?? "")),
+    )
+    .join("\n");
+}
+
+test("withoutDebugLines removes frames and the causes kept only for their stack", () => {
+  const on = [
+    "Could not save: disk full",
+    "    at save (file:///a.js:1:1)",
+    "Caused by: Error",
+    "      at write (file:///b.js:2:2)",
+    "Caused by: EACCES",
+    "Caused by: permission denied",
+    "      at open (file:///c.js:3:3)",
+    "",
+  ].join("\n");
+
+  assert.equal(
+    withoutDebugLines(on),
+    "Could not save: disk full\nCaused by: EACCES\nCaused by: permission denied\n",
+  );
+});
+
 test("the CLI prints redacted stacks for its top-level error only with CALAVERA_DEBUG", async () => {
   const directory = await mkdtemp(join(tmpdir(), "calavera-error-debug-cli-"));
 
@@ -271,14 +309,11 @@ test("the CLI prints redacted stacks for its top-level error only with CALAVERA_
     assertNoSecret(on.stderr);
     assert.match(on.stderr, /--new refused/);
     assert.match(on.stderr, /\n {4}at .*index\.js:\d+:\d+/);
-    // The output without the switch is the output with it, minus the stack frames.
-    assert.equal(
-      on.stderr
-        .split("\n")
-        .filter((line) => !/^\s+at /.test(line))
-        .join("\n"),
-      off.stderr,
-    );
+    // The output without the switch is the output with it, minus the stack frames and minus
+    // each cause that the switch keeps only for its stack. Whether the ENOENT cause has frames
+    // depends on the Node.js version: on Node.js 24 it does, so it is kept as "Caused by: Error"
+    // followed by its frames; on Node.js 26 it has none, so it is left out as before.
+    assert.equal(withoutDebugLines(on.stderr), off.stderr);
   } finally {
     await rm(directory, { force: true, recursive: true });
   }
