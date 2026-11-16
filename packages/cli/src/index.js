@@ -4496,7 +4496,20 @@ export async function newProject(options, runtime = {}) {
       ? undefined
       : await readFileIfPresent(join(forwardedTarget, "package.json"));
   const before = forwardedTarget === undefined ? await snapshotManifests(cwd) : new Map();
-  const exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({ ...runnerCommand, cwd });
+  let exit;
+  try {
+    exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({ ...runnerCommand, cwd });
+  } catch (error) {
+    if (options.packageManager !== undefined) {
+      throw error;
+    }
+
+    // The runner was not chosen by the user, so name how it was chosen and how to choose another (#909).
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)} No --package-manager came before --new, so Calavera chose ${runnerPackageManager}: the package manager that started Calavera, or npm when that package manager has no runner. Pass --package-manager with npm, pnpm, yarn, or bun before --new to choose another runner.`,
+      { cause: error },
+    );
+  }
 
   if (exit.exitCode !== 0) {
     const yarn =

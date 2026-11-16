@@ -234,19 +234,20 @@ runs nothing. Calavera's dry run cannot preview what Vite+ writes.
 
 Calavera runs `vp create` through the package manager given with
 `--package-manager` before `--new`. When none is given, it uses the package
-manager that started Calavera, so `pnpm create project-calavera --new` runs
-`vp create` through pnpm. Calavera reads that package manager from the
-`npm_config_user_agent` environment variable, the same way Vite+ does. It falls
-back to npm when the variable is unset, names another program, or names Yarn 1
-or a Yarn whose version it cannot read, because Yarn 1 has no `dlx` command.
-The runners are
+manager that started Calavera: when pnpm started Calavera, `vp create` runs
+through pnpm. Calavera reads that package manager's name from the
+`npm_config_user_agent` environment variable, as Vite+ does, and uses Yarn only
+at version 2 or later, because Yarn 1 has no `dlx` command. Calavera falls back
+to npm when the variable is unset or empty, names another program, names Yarn 1,
+or names a Yarn whose version it cannot read. The runners are
 `npm create vite-plus@latest --`, `pnpm dlx create-vite-plus@latest`,
 `yarn dlx create-vite-plus@latest` (Yarn 2 or later), and
 `bunx create-vite-plus@latest`. Each one runs `create-vite-plus`, the entry
 point Vite+ provides for starting a project. Outside an existing workspace, the
 runner's package manager becomes the project's package manager, unless you
 forward `--package-manager` after `--new`, which Vite+ then uses instead. The
-confirmation and `--dry-run` output name the package manager Vite+ will use. Vite+ 1.0.0
+confirmation and `--dry-run` output name the package manager Vite+ will use.
+Vite+ 1.0.0
 requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`. If Calavera itself was
 started with `npx --package`, see
 [Known Issue: `vp create` Exits With Code 127 Through npm](#known-issue-vp-create-exits-with-code-127-through-npm).

@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { basename, delimiter, join } from "node:path";
+import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -521,7 +521,7 @@ const launcherCases = [
   // A Yarn whose major version cannot be read could be Yarn 1.
   {
     label: "a Yarn without a version",
-    userAgent: "yarn npm/? node/v26.13.1 darwin arm64",
+    userAgent: "yarn/unknown npm/? node/v26.13.1 darwin arm64",
     command: "npm create vite-plus@latest -- vite:library",
     launcher: undefined,
   },
@@ -577,7 +577,8 @@ test("launchingPackageManager reads the name before the first / and Yarn's major
   assert.equal(launchingPackageManager("pnpmx/1.0.0"), undefined);
   assert.equal(launchingPackageManager("PNPM/12.9.1"), undefined);
   assert.equal(launchingPackageManager(" npm/11.20.0"), undefined);
-  // Only a leading major version counts, and a Corepack-style suffix does not hide it.
+  // Only a leading major version counts. Yarn adds -core to its version when it runs
+  // from @yarnpkg/core without a release version (scriptUtils.ts in yarnpkg/berry).
   assert.equal(launchingPackageManager("yarn/10.0.0"), "yarn");
   assert.equal(launchingPackageManager("yarn/4.0.0-rc.1 npm/?"), "yarn");
   assert.equal(launchingPackageManager("yarn/4.6.0-core npm/?"), "yarn");
@@ -612,8 +613,54 @@ test("--new forwards every token unchanged to the launcher's runner and adds no 
 
   assert.equal(result.code, 0, result.stderr);
   assert.equal(invocations.length, 1);
-  assert.equal(basename(invocations[0].runner), "pnpm");
+  assert.equal(invocations[0].runner, "pnpm");
   assert.deepEqual(invocations[0].argv, ["dlx", "create-vite-plus@latest", ...forwarded]);
+});
+
+test("--new names how it chose the runner when a runner it chose cannot start", async () => {
+  await using workspace = await createTemporaryWorkspace("launcher-missing-runner");
+  const previousCwd = process.cwd();
+  const startFailure = new Error(
+    "--new could not start bunx: spawn bunx ENOENT. Calavera wrote nothing.",
+  );
+
+  process.chdir(workspace.work);
+
+  try {
+    for (const args of [
+      ["--yes", "--new", "vite:library"],
+      ["--yes", "--package-manager", "bun", "--new", "vite:library"],
+    ]) {
+      const explicit = args.includes("--package-manager");
+      const error = await newProject(parseArgs(args), {
+        env: { npm_config_user_agent: "bun/1.3.9 npm/? node/v24.3.0 darwin arm64" },
+        spawnRunner: async () => {
+          throw startFailure;
+        },
+      }).then(
+        () => assert.fail("expected --new to fail"),
+        (rejection) => rejection,
+      );
+
+      if (explicit) {
+        // The user chose the runner, so the error stays as it was.
+        assert.equal(error, startFailure);
+      } else {
+        assert.ok(error.message.startsWith(startFailure.message));
+        assert.match(
+          error.message,
+          /No --package-manager came before --new, so Calavera chose bun:/,
+        );
+        assert.match(
+          error.message,
+          /Pass --package-manager with npm, pnpm, yarn, or bun before --new/,
+        );
+        assert.equal(error.cause, startFailure);
+      }
+    }
+  } finally {
+    process.chdir(previousCwd);
+  }
 });
 
 test("--new --yes scaffolds through the runner, verifies managed, and runs the bootstrap", async () => {
