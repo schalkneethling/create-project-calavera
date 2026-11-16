@@ -37,7 +37,7 @@ const WORKFLOW_DOC_MARKER = "Calavera MCP tools are exposed:";
 const HELP_MARKER = "Confirm these tools are visible before composing a recipe:";
 const README_ORDER_MARKER = "in this order:";
 const SKILL_MARKER = "Look for tools named";
-const WORKFLOW_DOC_MCP_MARKER = "project-local\napply tools:";
+const WORKFLOW_DOC_MCP_MARKER = "project-local apply tools:";
 const TOOL_NAME_PATTERN = /\b[a-z]+(?:_[a-z]+)+\b/g;
 
 /**
@@ -72,21 +72,40 @@ async function registeredToolNames() {
  * @returns {string}
  */
 function listAfterMarker(text, marker, source) {
-  const start = text.indexOf(marker);
-  assert.notEqual(start, -1, `${source} no longer contains "${marker}"`);
-  assert.equal(
-    text.indexOf(marker, start + marker.length),
-    -1,
-    `${source} contains "${marker}" more than once`,
-  );
-  const rest = text.slice(start + marker.length);
+  const rest = text.slice(markerEnd(text, marker, source));
   const end = rest.search(/\n\s*\n|\n\s*\d+\.\s/);
   return end === -1 ? rest : rest.slice(0, end);
 }
 
 /**
- * The numbered list that follows the marker, one item per line, so the parse stops at the first
- * line after the list that is not a numbered item.
+ * Where the marker ends in `text`. Any run of whitespace in the marker matches any run in the
+ * text, so rewrapping the prose around a marker does not break the parse.
+ *
+ * @param {string} text
+ * @param {string} marker
+ * @param {string} source
+ * @returns {number}
+ */
+function markerEnd(text, marker, source) {
+  const pattern = new RegExp(
+    marker
+      .trim()
+      .split(/\s+/)
+      .map((word) => word.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&"))
+      .join("\\s+"),
+    "g",
+  );
+  const matches = [...text.matchAll(pattern)];
+  assert.notEqual(matches.length, 0, `${source} no longer contains "${marker}"`);
+  assert.equal(matches.length, 1, `${source} contains "${marker}" more than once`);
+  const [match] = matches;
+  return match.index + match[0].length;
+}
+
+/**
+ * The numbered list that follows the marker. Markdown continues a list across blank lines and
+ * indented continuation lines, so the parse reads both, and stops at the first line that starts
+ * at the margin and is not a numbered item.
  *
  * @param {string} text
  * @param {string} marker
@@ -94,20 +113,13 @@ function listAfterMarker(text, marker, source) {
  * @returns {string}
  */
 function numberedListAfterMarker(text, marker, source) {
-  const start = text.indexOf(marker);
-  assert.notEqual(start, -1, `${source} no longer contains "${marker}"`);
-  assert.equal(
-    text.indexOf(marker, start + marker.length),
-    -1,
-    `${source} contains "${marker}" more than once`,
-  );
   const lines = text
-    .slice(start + marker.length)
+    .slice(markerEnd(text, marker, source))
     .replace(/^\s*\n/, "")
     .split("\n");
-  const end = lines.findIndex((line) => !/^\d+\.\s/.test(line));
+  const end = lines.findIndex((line) => !/^(?:\d+\.\s|\s|$)/.test(line));
   const items = end === -1 ? lines : lines.slice(0, end);
-  assert.notEqual(items.length, 0, `${source} has no numbered list after "${marker}"`);
+  assert.match(items[0] ?? "", /^\d+\.\s/, `${source} has no numbered list after "${marker}"`);
   return items.join("\n");
 }
 
@@ -213,5 +225,25 @@ test("the numbered-list parser stops at the first line that is not a numbered it
         "fixture",
       ),
     /has no numbered list/,
+  );
+});
+
+test("the numbered-list parser reads items after a blank line and on continuation lines", () => {
+  const fixture = `${README_ORDER_MARKER}\n\n1. \`inspect_project\`\n\n2. \`apply_recipe\`\n   and \`drop_table\`\n\n15. \`list_tables\`\n\n\`dry_run_apply\` returns structured JSON.`;
+
+  assert.deepEqual(toolNamesIn(numberedListAfterMarker(fixture, README_ORDER_MARKER, "fixture")), [
+    "apply_recipe",
+    "drop_table",
+    "inspect_project",
+    "list_tables",
+  ]);
+});
+
+test("a marker matches when the prose around it is wrapped differently", () => {
+  const fixture = `It exposes project-local apply\ntools:\n\n1. \`inspect_project\``;
+
+  assert.deepEqual(
+    toolNamesIn(numberedListAfterMarker(fixture, "project-local apply tools:", "fixture")),
+    ["inspect_project"],
   );
 });
