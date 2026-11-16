@@ -14,6 +14,7 @@ import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
+import { fixture } from "./ignore-fixture-integration.mjs";
 
 const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const applyOptions = { json: true, noInstall: true, assumeYes: true };
@@ -193,6 +194,19 @@ test("with Varlock, apply keeps the cache block and appends the Varlock lines af
 
     const again = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry());
     assert.deepEqual(again.ignoreChanges, [cacheChange("unchanged")]);
+  });
+});
+
+test("an integration's own block, without an artifact, adds no pointer", async () => {
+  await inProject(undefined, async () => {
+    const recipe = buildRecipe("minimal", [fixture.id], "npm");
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true });
+
+    assert.deepEqual(
+      dryRun.ignoreChanges.map(({ integration, type }) => ({ integration, type })),
+      [{ integration: fixture.id, type: "write" }],
+    );
+    assert.deepEqual(dryRun.pointers, []);
   });
 });
 
