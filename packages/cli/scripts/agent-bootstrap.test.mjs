@@ -404,3 +404,26 @@ test("--init does not ask for a merge of fallback guidance it left unchanged (#6
     assert.ok(!result.pointers.some((pointer) => pointer.includes("AGENTS.calavera.md")));
   });
 });
+
+test("--init keeps the merge note on a rerun before the generated fallback is merged (#601)", async () => {
+  await withTempProject(async () => {
+    await writeFile("AGENTS.md", "# Existing project guidance\n");
+    await agentBootstrap({ agentsMd: "fallback", mcpHarness: "skip" });
+
+    const result = await agentBootstrap({ agentsMd: "fallback", mcpHarness: "skip" });
+
+    assert.ok(
+      result.changes.some(
+        (change) =>
+          change.type === "skip" &&
+          change.path === "AGENTS.calavera.md" &&
+          change.reason === "Already up to date.",
+      ),
+      JSON.stringify(result.changes),
+    );
+    assert.ok(
+      result.pointers.includes("Merge AGENTS.calavera.md into AGENTS.md by hand."),
+      JSON.stringify(result.pointers),
+    );
+  });
+});

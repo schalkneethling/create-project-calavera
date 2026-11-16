@@ -3809,6 +3809,8 @@ async function formatAgentBootstrapGuidance(loadFormatter) {
  * @param {Change[]} changes
  * @param {CliOptions} options
  * @param {AgentBootstrapGuidanceText} guidanceText
+ * @returns {Promise<boolean>} Whether AGENTS.calavera.md holds the current guidance, which then
+ *   waits for a manual merge into AGENTS.md.
  */
 async function handleExistingAgentBootstrapGuidance(
   currentGuidance,
@@ -3833,7 +3835,7 @@ async function handleExistingAgentBootstrapGuidance(
     if (!dryRun && nextGuidance.changed) {
       await writeFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, nextGuidance.contents);
     }
-    return;
+    return false;
   }
 
   if (currentGuidance.includes(AGENT_BOOTSTRAP_MARKER)) {
@@ -3847,7 +3849,7 @@ async function handleExistingAgentBootstrapGuidance(
         path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
         reason: "Calavera guidance already present.",
       });
-      return;
+      return false;
     }
 
     changes.push({
@@ -3859,7 +3861,7 @@ async function handleExistingAgentBootstrapGuidance(
     if (!dryRun) {
       await writeFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, guidanceText.file);
     }
-    return;
+    return false;
   }
 
   const mode = await resolveAgentBootstrapGuidanceMode(options);
@@ -3876,7 +3878,7 @@ async function handleExistingAgentBootstrapGuidance(
     if (!dryRun) {
       await writeFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, nextGuidance.contents);
     }
-    return;
+    return false;
   }
 
   changes.push({
@@ -3885,7 +3887,9 @@ async function handleExistingAgentBootstrapGuidance(
     reason: `Existing AGENTS.md left unchanged; Calavera guidance ${dryRun ? "would be" : "was"} written separately.`,
   });
 
-  await writeBootstrapTextFile(
+  // False only when the fallback holds a local edit that was kept; an up-to-date fallback is
+  // still current guidance that waits to be merged.
+  return writeBootstrapTextFile(
     AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
     guidanceText.fallback,
     dryRun,
@@ -3899,6 +3903,8 @@ async function handleExistingAgentBootstrapGuidance(
  * @param {CliOptions} options
  * @param {Change[]} changes
  * @param {AgentBootstrapGuidanceText} guidanceText
+ * @returns {Promise<boolean>} Whether AGENTS.calavera.md holds the current guidance, which then
+ *   waits for a manual merge into AGENTS.md.
  */
 async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
   const guidance = guidanceText.file;
@@ -3911,7 +3917,7 @@ async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
       changes,
       "Existing agent guidance differs and was left unchanged.",
     );
-    return;
+    return false;
   }
 
   const currentGuidance = await readFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, "utf8");
@@ -3922,10 +3928,10 @@ async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
       path: AGENT_BOOTSTRAP_GUIDANCE_FILE,
       reason: "Already up to date.",
     });
-    return;
+    return false;
   }
 
-  await handleExistingAgentBootstrapGuidance(
+  return handleExistingAgentBootstrapGuidance(
     currentGuidance,
     options.dryRun,
     changes,
@@ -3986,7 +3992,11 @@ export async function agentBootstrap(options = {}) {
   /** @type {Change[]} */
   const changes = [...aiResult.changes];
 
-  await writeAgentBootstrapGuidance(bootstrapOptions, changes, guidanceText);
+  const fallbackGuidanceAwaitsMerge = await writeAgentBootstrapGuidance(
+    bootstrapOptions,
+    changes,
+    guidanceText,
+  );
   const mcpHarness = await resolveAgentBootstrapMcpHarness(bootstrapOptions);
   const mcp = await writeAgentBootstrapMcpConfig(
     mcpHarness,
@@ -4008,12 +4018,9 @@ export async function agentBootstrap(options = {}) {
   }
 
   // #601: the pointers carry only what the list of changes does not already say, so the summary
-  // names each file once. A file that was written, updated, or skipped is in `changes`. A
-  // fallback file that was left unchanged does not hold the current guidance, so it gets no merge
-  // note; its skip line says why.
-  const wroteFallbackGuidance = changes.some(
-    (change) => change.path === AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE && change.type !== "skip",
-  );
+  // names each file once. A file that was written, updated, or skipped is in `changes`. The merge
+  // note follows fallbackGuidanceAwaitsMerge, not the change type, because an up-to-date fallback
+  // is also reported as a skip; only a fallback kept as a local edit gets no note.
 
   if (!bootstrapOptions.dryRun) {
     await mkdir(".calavera", { recursive: true });
@@ -4030,7 +4037,7 @@ export async function agentBootstrap(options = {}) {
     changes,
     pointers: [
       ...aiResult.pointers,
-      ...(wroteFallbackGuidance
+      ...(fallbackGuidanceAwaitsMerge
         ? [
             `Merge ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
           ]
