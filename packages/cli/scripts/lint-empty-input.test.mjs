@@ -262,46 +262,109 @@ function assertLine(lines, expected) {
   );
 }
 
-test("with only lint:html left out, apply removes a quality an earlier release wrote, and a second apply changes nothing", async () => {
+test('with only lint:html left out, a first apply keeps the project\'s own quality: "npm run lint:html" and says so', async () => {
+  // #937: the value matches what a release before #644 wrote, but without a
+  // state file nothing shows that Calavera wrote it, so it is a local edit.
+  const ownQuality = "npm run lint:html";
+
   await inProject(
     async () => {
       await writeFile("calavera.config.json", `${JSON.stringify(htmlOnlyRecipe, null, 2)}\n`);
       const dryRunLines = await runCli(["apply", "--dry-run"]);
 
-      assertLine(dryRunLines, 'Would remove script quality: "npm run lint:html"');
-      assertLine(dryRunLines, htmlOnlyQualityOmission);
+      assertLine(
+        dryRunLines,
+        `${htmlOnlyQualityOmission} package.json keeps its quality script, "${ownQuality}", because Calavera cannot show that it wrote that value.`,
+      );
       assertLine(dryRunLines, htmlLeftOutStep);
-      assert.equal((await packageScripts()).quality, "npm run lint:html");
-
-      const applied = await applyRecipeObject(htmlOnlyRecipe, applyOptions);
-      const scripts = await packageScripts();
-      const packageChange = applied.changes.find(({ path }) => path === "package.json");
-
-      assert.equal(Object.hasOwn(scripts, "quality"), false);
-      assert.equal(scripts["lint:html"], lintHtml);
-      assert.equal(packageChange.removedQualityScript, "npm run lint:html");
-      assert.deepEqual(packageChange.omittedQualitySteps, [
-        {
-          step: "lint:html",
-          reason:
-            'the recipe sets integrationOptions["html-validate"].quality to false, so quality does not validate HTML files.',
-        },
-      ]);
-
-      const reapplied = await applyRecipeObject(htmlOnlyRecipe, applyOptions);
-      assert.ok(reapplied.changes.every(({ type }) => type === "unchanged"));
-      assert.equal(Object.hasOwn(await packageScripts(), "quality"), false);
-
-      const secondDryRunLines = await runCli(["apply", "--dry-run"]);
-      assertLine(secondDryRunLines, "Nothing to change: the project already matches this recipe.");
-      assertLine(secondDryRunLines, htmlOnlyQualityOmission);
       assert.equal(
-        secondDryRunLines.some((line) => line.includes("Would remove script quality")),
+        dryRunLines.some((line) => line.includes("Would remove script quality")),
         false,
       );
+
+      const applied = await applyRecipeObject(htmlOnlyRecipe, applyOptions);
+      const packageChange = applied.changes.find(({ path }) => path === "package.json");
+
+      assert.equal((await packageScripts()).quality, ownQuality);
+      assert.equal(packageChange.removedQualityScript, undefined);
+      assert.equal(JSON.parse(await readFile(".calavera/state.json", "utf8")).qualityScript, null);
+
+      // The second apply keeps it too, because the state records that apply wrote no quality.
+      const reapplied = await applyRecipeObject(htmlOnlyRecipe, applyOptions);
+      assert.ok(reapplied.changes.every(({ type }) => type === "unchanged"));
+      assert.equal((await packageScripts()).quality, ownQuality);
     },
     {
       name: "html-only",
+      scripts: { "lint:html": 'html-validate "**/*.html"', quality: ownQuality },
+    },
+  );
+});
+
+test("with only lint:html left out, apply removes a quality the state records it wrote, and a second apply changes nothing", async () => {
+  const recordedQuality = "npm run lint:html && npm run knip";
+
+  await inProject(async () => {
+    // The first recipe runs two scripts, so apply writes quality and records it.
+    await applyRecipeObject(buildRecipe("minimal", ["html-validate", "knip"], "npm"), applyOptions);
+    assert.equal((await packageScripts()).quality, recordedQuality);
+
+    await writeFile("calavera.config.json", `${JSON.stringify(htmlOnlyRecipe, null, 2)}\n`);
+    const dryRunLines = await runCli(["apply", "--dry-run"]);
+
+    assertLine(dryRunLines, `Would remove script quality: "${recordedQuality}"`);
+    assertLine(dryRunLines, htmlOnlyQualityOmission);
+    assertLine(dryRunLines, htmlLeftOutStep);
+
+    const applied = await applyRecipeObject(htmlOnlyRecipe, applyOptions);
+    const scripts = await packageScripts();
+    const packageChange = applied.changes.find(({ path }) => path === "package.json");
+
+    assert.equal(Object.hasOwn(scripts, "quality"), false);
+    assert.equal(scripts["lint:html"], lintHtml);
+    assert.equal(packageChange.removedQualityScript, recordedQuality);
+    assert.deepEqual(packageChange.omittedQualitySteps, [
+      {
+        step: "lint:html",
+        reason:
+          'the recipe sets integrationOptions["html-validate"].quality to false, so quality does not validate HTML files.',
+      },
+    ]);
+
+    const reapplied = await applyRecipeObject(htmlOnlyRecipe, applyOptions);
+    assert.ok(reapplied.changes.every(({ type }) => type === "unchanged"));
+    assert.equal(Object.hasOwn(await packageScripts(), "quality"), false);
+
+    const secondDryRunLines = await runCli(["apply", "--dry-run"]);
+    assertLine(secondDryRunLines, "Nothing to change: the project already matches this recipe.");
+    assertLine(secondDryRunLines, htmlOnlyQualityOmission);
+    assert.equal(
+      secondDryRunLines.some((line) => line.includes("Would remove script quality")),
+      false,
+    );
+  });
+});
+
+test("with only lint:html left out, apply keeps a quality an earlier release wrote and names the match", async () => {
+  await inProject(
+    async () => {
+      await applyRecipeObject(htmlOnlyRecipe, applyOptions);
+      // A state file from a release before #230 has no qualityScript record.
+      const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+      delete state.qualityScript;
+      await writeFile(".calavera/state.json", `${JSON.stringify(state, null, 2)}\n`);
+
+      const dryRunLines = await runCli(["apply", "--dry-run"]);
+      assertLine(
+        dryRunLines,
+        `${htmlOnlyQualityOmission} package.json keeps its quality script, "npm run lint:html", because Calavera cannot show that it wrote that value. It matches a value an earlier release wrote for this recipe, so remove it if you did not write it yourself.`,
+      );
+
+      await applyRecipeObject(htmlOnlyRecipe, applyOptions);
+      assert.equal((await packageScripts()).quality, "npm run lint:html");
+    },
+    {
+      name: "html-only-earlier-release",
       scripts: { "lint:html": 'html-validate "**/*.html"', quality: "npm run lint:html" },
     },
   );
