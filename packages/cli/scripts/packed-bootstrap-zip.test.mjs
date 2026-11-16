@@ -14,18 +14,19 @@ import fs from "node:fs";
 import { mkdir, mkdtemp, readFile, readdir, rm } from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
-import { dirname, join, relative } from "node:path";
+import { join, relative, sep } from "node:path";
 import { promisify } from "node:util";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { NodeFS, PosixFS, VirtualFS, patchFs } from "@yarnpkg/fslib";
+import { NodeFS, PortablePath, PosixFS, VirtualFS, npath, patchFs, ppath } from "@yarnpkg/fslib";
 import { ZipFS, ZipOpenFS, getLibzipSync } from "@yarnpkg/libzip";
 
 const execFileAsync = promisify(execFile);
 const cliRoot = fileURLToPath(new URL("..", import.meta.url));
-const PACKAGE_IN_ZIP = "/node_modules/create-project-calavera";
+// Where Yarn's cache keeps a package inside its zip, as a path inside the archive.
+const PACKAGE_IN_ZIP = ppath.join(PortablePath.root, "node_modules", "create-project-calavera");
 
 /**
  * The paths of every file under `directory`, relative to it, read before `fs` is patched.
@@ -58,16 +59,11 @@ async function packIntoYarnStyleZip(workRoot, zipPath) {
   await execFileAsync("tar", ["-xzf", join(packDirectory, tarball), "-C", packDirectory]);
   const unpacked = join(packDirectory, "package");
 
-  const zip = new ZipFS(/** @type {import("@yarnpkg/fslib").PortablePath} */ (zipPath), {
-    create: true,
-  });
+  // Yarn's file systems take portable paths: on Windows, `C:\dir` becomes `/C:/dir`.
+  const zip = new ZipFS(npath.toPortablePath(zipPath), { create: true });
   for (const file of await filesUnder(unpacked)) {
-    const target = /** @type {import("@yarnpkg/fslib").PortablePath} */ (
-      `${PACKAGE_IN_ZIP}/${file}`
-    );
-    zip.mkdirSync(/** @type {import("@yarnpkg/fslib").PortablePath} */ (dirname(target)), {
-      recursive: true,
-    });
+    const target = ppath.join(PACKAGE_IN_ZIP, npath.toPortablePath(file));
+    zip.mkdirSync(ppath.dirname(target), { recursive: true });
     zip.writeFileSync(target, await readFile(join(unpacked, file)));
   }
   zip.saveAndClose();
@@ -114,7 +110,9 @@ test("the bundled bootstrap skill installs from a packed CLI served from a Yarn 
     assert.ok(expectedFiles.includes("SKILL.md"), "the packed CLI must bundle the bootstrap skill");
 
     process.chdir(project);
-    const skillInZip = `${zipPath}${PACKAGE_IN_ZIP}/${bootstrapSkill}/`;
+    // A native path with a trailing separator, as the bootstrap passes it; the patched fs converts
+    // it to a portable path, as Yarn's does.
+    const skillInZip = `${join(zipPath, "node_modules", "create-project-calavera", bootstrapSkill)}${sep}`;
     const result = await buildAiApplyResult(
       AGENT_BOOTSTRAP_SKILL_RECIPE,
       { dryRun: false },
