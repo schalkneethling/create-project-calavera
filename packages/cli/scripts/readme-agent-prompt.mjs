@@ -20,15 +20,25 @@ export async function readmeAgentPrompt() {
   return prompts[0];
 }
 
-/** The text after "Next prompt: " in the CLI's output. */
+export const NEXT_PROMPT_HEADING = "Next prompt. Copy all of it into your agent as one message:";
+
+/**
+ * The prompt block in the CLI's output (#601): the heading, a blank line, the prompt alone on one
+ * line, and a blank line.
+ */
 export function printedNextPrompt(stdout) {
-  const prompts = [...stdout.matchAll(/^Next prompt: (.+)$/gm)].map((match) => match[1]);
-  if (prompts.length !== 1) {
+  const lines = stdout.split("\n");
+  const headings = lines.flatMap((line, index) => (line === NEXT_PROMPT_HEADING ? [index] : []));
+  if (headings.length !== 1) {
     throw new Error(
-      `Expected exactly one "Next prompt:" line, found ${prompts.length}:\n${stdout}`,
+      `Expected exactly one "${NEXT_PROMPT_HEADING}" line, found ${headings.length}:\n${stdout}`,
     );
   }
-  return prompts[0];
+  const [blankBefore, prompt, blankAfter] = lines.slice(headings[0] + 1, headings[0] + 4);
+  if (blankBefore !== "" || !prompt || blankAfter !== "") {
+    throw new Error(`Expected the prompt alone between two blank lines:\n${stdout}`);
+  }
+  return prompt;
 }
 
 /** A file in the repository, by its path from the repository root. */

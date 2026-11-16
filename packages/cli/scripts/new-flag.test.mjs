@@ -18,7 +18,11 @@ import {
   parseArgs,
 } from "../src/index.js";
 import { detectVitePlus } from "../src/vite-plus-detection.js";
-import { printedNextPrompt, readmeAgentPrompt } from "./readme-agent-prompt.mjs";
+import {
+  NEXT_PROMPT_HEADING,
+  printedNextPrompt,
+  readmeAgentPrompt,
+} from "./readme-agent-prompt.mjs";
 import {
   createTemporaryFixture,
   json,
@@ -516,7 +520,9 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
     ),
     result.stdout,
   );
-  assert.ok(result.stdout.indexOf("Next prompt: ") < result.stdout.indexOf(RECIPE_BLOCK_HEADING));
+  assert.ok(
+    result.stdout.indexOf(NEXT_PROMPT_HEADING) < result.stdout.indexOf(RECIPE_BLOCK_HEADING),
+  );
 });
 
 test("--new names the scaffolded project's package manager and quotes the target in the next steps", async () => {
@@ -1352,4 +1358,49 @@ test("--new --config does not overwrite a calavera.config.json already in the ta
   assert.match(result.stderr, /already exists/);
   assert.equal(await readFile(join(existing, "calavera.config.json"), "utf8"), "keep\n");
   assert.equal(await exists(join(existing, ".calavera")), false);
+});
+
+test("--new prints the bootstrap summary in labeled groups, with the prompt as its own block (#601)", async () => {
+  await using workspace = await createTemporaryWorkspace("summary-groups");
+
+  const result = await runCli(workspace, ["--yes", "--new", "vite:library", "--no-interactive"], {
+    STUB_MODE: "scaffold",
+    STUB_TARGET: "my-lib",
+  });
+  const target = join(workspace.work, "my-lib");
+  const summaryStart = result.stdout.indexOf(`Vite+ scaffolded ${target}.`);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.notEqual(summaryStart, -1, result.stdout);
+  // --yes without --mcp-harness leaves MCP to manual setup, so this also pins that case.
+  assert.equal(
+    result.stdout.slice(summaryStart),
+    [
+      `Vite+ scaffolded ${target}. Vite+ detection: managed.`,
+      "",
+      "Calavera agent bootstrap complete.",
+      "",
+      "Changes:",
+      "  Wrote .agents/skills/calavera",
+      "  Wrote .coderabbit.yaml",
+      "  Wrote AGENTS.md",
+      "  Wrote .agents/calavera/mcp.md",
+      "",
+      "Notes:",
+      "  Installed skills are available under .agents/skills/.",
+      "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+      "",
+      NEXT_PROMPT_HEADING,
+      "",
+      await readmeAgentPrompt(),
+      "",
+      "Next steps:",
+      recipeBlock(target, {
+        cd: `cd ${target}`,
+        applyDryRun: "npm create project-calavera apply -- --dry-run",
+        applyRecipe: "npm create project-calavera apply",
+      }),
+      "",
+    ].join("\n"),
+  );
 });
