@@ -1,12 +1,12 @@
 // @ts-check
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { basename, dirname, join, resolve } from "node:path";
+import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { basename, dirname, join, relative, resolve } from "node:path";
 
 import { artifactForId, artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
 
 import { fileExists } from "../utils/fs.js";
 import { isNotEmptyString } from "../utils/guards.js";
-import { hashDirectory, hashFile, textHash } from "../utils/hash.js";
+import { collectFiles, hashDirectory, hashFile, textHash } from "../utils/hash.js";
 import { normalizeAiItems } from "./recipe-items.js";
 
 /**
@@ -401,6 +401,27 @@ function stateAiArtifactForPath(state, path) {
 }
 
 /**
+ * Copies the files of a skill directory, the same files `hashDirectory` hashes, one at a time.
+ * Not `fs.promises.cp`, because Yarn 2 and later serve Calavera from a zip archive, and Yarn's
+ * Plug'n'Play `fs` patch does not cover `cp`: Node's directory copy then looks the zip path up on
+ * the real file system and fails with ENOTDIR (#939). A skill source holds no symbolic links to
+ * leave out: recipe sources are catalog entries, pacote's extract drops links from registry
+ * payloads, and the bundled skill holds regular files only.
+ *
+ * @param {string} source
+ * @param {string} target
+ */
+async function copySkillDirectory(source, target) {
+  // Created up front, as `cp` did, so a skill without files still installs as a directory.
+  await mkdir(target, { recursive: true });
+  for (const file of await collectFiles(source)) {
+    const destination = join(target, relative(source, file));
+    await mkdir(dirname(destination), { recursive: true });
+    await copyFile(file, destination);
+  }
+}
+
+/**
  * @param {ResolvedAiArtifact} artifact
  * @param {string} [outputRoot]
  */
@@ -408,9 +429,8 @@ async function copyAiArtifact(artifact, outputRoot) {
   const installPath = outputRoot ? resolve(outputRoot, artifact.path) : resolve(artifact.path);
 
   if (artifact.type === "skill") {
-    await mkdir(dirname(installPath), { recursive: true });
     await rm(installPath, { force: true, recursive: true });
-    await cp(artifact.sourcePath, installPath, { recursive: true });
+    await copySkillDirectory(artifact.sourcePath, installPath);
     return;
   }
 
