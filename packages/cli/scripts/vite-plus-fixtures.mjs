@@ -1,6 +1,14 @@
 // Shared ADR-0001 fixtures for the Vite+ detection tests and for the tests
 // that drive detection through the MCP tools and the CLI.
-import { cp, mkdir, mkdtempDisposable, readFile, realpath, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtempDisposable,
+  readFile,
+  realpath,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -91,6 +99,45 @@ if (argv[0] === "add" && !argv.includes("-w") && !argv.includes("--workspace-roo
   }
 }
 `;
+
+/**
+ * A package-manager stand-in. It records its argv and working directory, then
+ * exits with STUB_EXIT, which defaults to zero. A successful `init` writes a
+ * package.json, as the real command does. The pnpm stand-in also refuses a
+ * root install without `-w`, as pnpm does.
+ *
+ * @param {string} name
+ */
+const packageManagerStub = (name) => `#!/usr/bin/env node
+const { appendFileSync, writeFileSync } = require("node:fs");
+const argv = process.argv.slice(2);
+appendFileSync(process.env.STUB_LOG, JSON.stringify({ argv, cwd: process.cwd() }) + "\\n");
+${name === "pnpm" ? pnpmAddingToRootCheck : ""}
+const exitCode = Number(process.env.STUB_EXIT ?? "0");
+if (exitCode !== 0) {
+  console.log("package manager stub: ERR_STUB_COMMAND the command failed");
+  console.error("package manager stub: the command failed");
+} else if (argv[0] === "init") {
+  writeFileSync("package.json", JSON.stringify({ name: "stub-init" }) + "\\n");
+}
+process.exit(exitCode);
+`;
+
+/**
+ * Puts a stand-in for each supported package manager in `bin`, so a test can
+ * prove which one apply ran, and that a managed project ran none of them.
+ *
+ * @param {string} bin
+ */
+export async function writePackageManagerStubs(bin) {
+  await mkdir(bin, { recursive: true });
+
+  for (const name of ["npm", "pnpm", "yarn", "bun"]) {
+    const path = join(bin, name);
+    await writeFile(path, packageManagerStub(name));
+    await chmod(path, 0o755);
+  }
+}
 
 /**
  * Writes a stand-in for the vite-plus package at `node_modules/vite-plus` under

@@ -9,7 +9,7 @@
 // or a stand-in package manager first on PATH, records what apply ran.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { chmod, mkdir, readFile, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, stat, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -26,8 +26,8 @@ import {
   createTemporaryFixture,
   json,
   plainViteManifest,
-  pnpmAddingToRootCheck,
   readStubInvocations,
+  writePackageManagerStubs,
   writeVitePlusStub,
 } from "./vite-plus-fixtures.mjs";
 
@@ -36,45 +36,6 @@ const recipe = buildRecipe("minimal", ["editorconfig", "knip"], "pnpm", [], {});
 // Long enough for a slow CI runner; a CLI held open by a running spinner
 // timer never exits on its own, so it reaches this limit instead.
 const CLI_TIMEOUT_MS = 30_000;
-
-/**
- * A package-manager stand-in. It records its argv and working directory, then
- * exits with STUB_EXIT, which defaults to zero. A successful `init` writes a
- * package.json, as the real command does. The pnpm stand-in also refuses a
- * root install without `-w`, as pnpm does.
- *
- * @param {string} name
- */
-const packageManagerStub = (name) => `#!/usr/bin/env node
-const { appendFileSync, writeFileSync } = require("node:fs");
-const argv = process.argv.slice(2);
-appendFileSync(process.env.STUB_LOG, JSON.stringify({ argv, cwd: process.cwd() }) + "\\n");
-${name === "pnpm" ? pnpmAddingToRootCheck : ""}
-const exitCode = Number(process.env.STUB_EXIT ?? "0");
-if (exitCode !== 0) {
-  console.log("package manager stub: ERR_STUB_COMMAND the command failed");
-  console.error("package manager stub: the command failed");
-} else if (argv[0] === "init") {
-  writeFileSync("package.json", JSON.stringify({ name: "stub-init" }) + "\\n");
-}
-process.exit(exitCode);
-`;
-
-/**
- * Puts a stand-in for each supported package manager in `bin`, so a test can
- * prove which one apply ran, and that a managed project ran none of them.
- *
- * @param {string} bin
- */
-async function writePackageManagerStubs(bin) {
-  await mkdir(bin, { recursive: true });
-
-  for (const name of ["npm", "pnpm", "yarn", "bun"]) {
-    const path = join(bin, name);
-    await writeFile(path, packageManagerStub(name));
-    await chmod(path, 0o755);
-  }
-}
 
 /**
  * A copy of the committed `vp create` library fixture with the recipe saved as
@@ -505,7 +466,15 @@ test("apply keeps the package manager's own command in a project Vite+ does not 
 test("in a workspace member without its own package.json under a Vite+ workspace, the dry run and apply name the same vp add -D", async () => {
   await using workspace = await memberWithoutManifest();
 
-  const dryRun = await runCli(workspace, ["apply", "--dry-run", "--json", "--yes"]);
+  // #430: without a manifest of its own, apply acts only on the person's choice.
+  const dryRun = await runCli(workspace, [
+    "apply",
+    "--dry-run",
+    "--json",
+    "--yes",
+    "--manifest-choice",
+    "create-here",
+  ]);
   assert.equal(dryRun.code, 0, dryRun.stderr);
   const planned = JSON.parse(dryRun.stdout);
   assert.equal(planned.vitePlus.status, "unknown");
@@ -518,7 +487,13 @@ test("in a workspace member without its own package.json under a Vite+ workspace
   );
   assert.equal(await exists(join(workspace.project, "package.json")), false);
 
-  const applied = await runCli(workspace, ["apply", "--yes", "--json"]);
+  const applied = await runCli(workspace, [
+    "apply",
+    "--yes",
+    "--json",
+    "--manifest-choice",
+    "create-here",
+  ]);
   assert.equal(applied.code, 0, applied.stderr);
   assert.equal(JSON.parse(applied.stdout).installCommand, planned.installCommand);
   assert.deepEqual(await readStubInvocations(workspace.packageManagerLog), [

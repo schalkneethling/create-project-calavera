@@ -390,7 +390,11 @@ test("vp create monorepo: a new member without a package.json is planned, becaus
   await writeFile(join(member, "tests/index.test.ts"), "export {};\n");
 
   await inDirectory(member, async () => {
-    const dryRun = await callMcpTool("dry_run_apply", { recipe: await composeRecipe(["stryker"]) });
+    // #430: the member has no manifest of its own, so the plan follows the person's choice.
+    const dryRun = await callMcpTool("dry_run_apply", {
+      recipe: await composeRecipe(["stryker"]),
+      manifestChoice: "create-here",
+    });
     assert.equal(dryRun.result.vitePlus.status, "unknown");
     assert.ok(
       dryRun.result.changes.some(({ path }) => path === "stryker.config.json"),

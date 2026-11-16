@@ -211,12 +211,24 @@ lists what was written, gives the exact install command, which runs without
 finish the install, run that command in the project directory (ADR-0012,
 Decision 4).
 
-In a directory without a `package.json` of its own, `apply` creates one with
-the package manager's `init` command, and the dry run names that command. A
-directory like this was not scaffolded by `vp create`, which always writes a
-`package.json`, and `init` writes only that file, without linking
-`node_modules`. The development dependency install that follows still goes
-through `vp add -D` (ADR-0012, Decision 1).
+In a directory without a `package.json` of its own, but with a manifest above
+it, `apply` does not choose what to do (#430, ADR-0001). The dry run names the
+ancestor manifest and offers three choices: `create-here`, `apply-at-ancestor`,
+and `abandon`. An `apply` in a terminal without `--yes` or `--json` asks once;
+any other `apply` reports the choices and stops before writing anything. Give
+the choice with `--manifest-choice`, or with the `manifestChoice` input of
+`dry_run_apply` and `apply_recipe`. `apply-at-ancestor` applies in the ancestor
+manifest's directory, which Calavera inspects again, so the verdict is that
+directory's own; it stops when that directory already has a Calavera recipe or
+state. `init --apply` runs in such a directory only with
+`--manifest-choice create-here`, because it writes the recipe there first.
+
+With `create-here`, `apply` creates `package.json` with the package manager's
+`init` command, and the dry run names that command. A directory like this was
+not scaffolded by `vp create`, which always writes a `package.json`, and `init`
+writes only that file, without linking `node_modules`. The development
+dependency install that follows still goes through `vp add -D` when the
+ancestor is managed (ADR-0012, Decision 1).
 
 ## What the quality script runs
 

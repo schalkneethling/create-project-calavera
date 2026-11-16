@@ -63,6 +63,17 @@ import { formatGeneratedText } from "./utils/generated-text.js";
 import { loadProjectFormatter } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
 import {
+  ancestorAlreadyManagedError,
+  initApplyManifestChoiceError,
+  manifestChoiceNotApplicableError,
+  manifestChoiceRequiredError,
+  manifestChoices,
+  manifestDecision,
+  manifestDecisionLines,
+  manifestDecisionQuestion,
+  pathAtAncestor,
+} from "./manifest-decision.js";
+import {
   integrationDependencies,
   resolveStrykerTestRunner,
   selectedTestRunner,
@@ -141,6 +152,8 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {import("./state.js").CalaveraState} CalaveraState
  * @typedef {import("./state.js").ManagedFileState} ManagedFileState
  * @typedef {import("./vite-plus-detection.js").VitePlusDetection} VitePlusDetection
+ * @typedef {import("./manifest-decision.js").ManifestChoice} ManifestChoice
+ * @typedef {import("./manifest-decision.js").ManifestDecision} ManifestDecision
  *
  * @typedef {object} CliOptions
  * @property {string} command
@@ -152,6 +165,8 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {boolean} apply
  * @property {boolean} [writeConfig]
  * @property {import("./stryker-options.js").AskForTestRunner} [askForTestRunner] Replaces the terminal prompts for the Stryker test runner, so tests can answer them (#890). It is used only where apply could prompt.
+ * @property {ManifestChoice} [manifestChoice] The person's choice when the directory has no package.json of its own but a manifest above it was found (#430). Apply never makes this choice itself.
+ * @property {import("./manifest-decision.js").AskForManifestChoice} [askForManifestChoice] Replaces the terminal prompt for the manifest choice, so tests can answer it (#430). It is used only where apply could prompt, and never in a dry run.
  * @property {ArtifactLockEntry[]} [approvedArtifacts] Artifacts a dry run reported it would lock; apply installs them at exactly those versions.
  * @property {PackageManager} [packageManager]
  * @property {"append" | "fallback"} [agentsMd]
@@ -242,6 +257,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string[]} wiringWarnings Why written wiring would not act yet, such as Git hooks that no dispatcher runs, with the remedy. They never stop apply.
  * @property {IgnoreChange[]} ignoreChanges The lines each integration adds to or removes from .gitignore and .htmlvalidateignore (ADR-0016), and the block that keeps the artifact cache out of Git (#841), so the approval boundary shows the exact lines.
  * @property {Recipe} recipe The recipe apply used, with every artifact input filled in. After a dry run, pass this recipe to apply, so the values cannot change between approval and apply.
+ * @property {ManifestDecision} [manifestDecision] Present when the directory has no package.json of its own but a manifest above it was found (#430): the choices, and `choice` once the person made one. Without a choice, or with abandon, nothing is planned and `changes` is empty.
  *
  * @typedef {import("./ai/artifact-inputs.js").ResolvedInput} ResolvedInput
  * @typedef {import("./integration-inputs.js").ResolvedIntegrationInput} ResolvedIntegrationInput
@@ -1147,6 +1163,7 @@ const cliParseOptions = {
   tag: { type: "string", default: "latest" },
   all: { type: "boolean" },
   "check-updates": { type: "boolean" },
+  "manifest-choice": { type: "string" },
 };
 
 /**
@@ -1251,6 +1268,7 @@ export function parseArgs(rawArgs) {
   const mcpHarness = optionalStringValue(values["mcp-harness"]);
   const artifactTag = optionalStringValue(values.tag) ?? "latest";
   assertKnownValue("tag", artifactTag, ["latest", "next"]);
+  const manifestChoice = optionalStringValue(values["manifest-choice"]);
   /** @type {CliOptions} */
   const parsed = {
     command: values.help
@@ -1313,6 +1331,20 @@ export function parseArgs(rawArgs) {
 
   if (mcpHarness !== undefined) {
     parsed.mcpHarness = assertSupportedMcpHarness(mcpHarness);
+  }
+
+  if (manifestChoice !== undefined) {
+    assertKnownValue("manifest-choice", manifestChoice, [...manifestChoices]);
+    // A flag that would be ignored is refused, because ignoring abandon could apply a recipe.
+    if (
+      !["apply", "update"].includes(parsed.command) &&
+      !(parsed.command === "init" && parsed.apply)
+    ) {
+      throw new Error(
+        "--manifest-choice works only with apply, update, and init --apply, the commands that apply a recipe.",
+      );
+    }
+    parsed.manifestChoice = /** @type {ManifestChoice} */ (manifestChoice);
   }
 
   return parsed;
@@ -2936,6 +2968,132 @@ export async function applyRecipe(options) {
 }
 
 /**
+ * #430 and ADR-0001: when the working directory has no package.json of its own but the Vite+
+ * detection walk found a manifest above it, apply acts only on the person's choice. A dry run
+ * reports the choices and never asks; an apply that can prompt asks once; any other apply stops.
+ * create-here returns the decision for apply to carry on with in this directory. abandon, and a
+ * dry run without a choice, return a result that plans nothing. apply-at-ancestor applies in the
+ * ancestor's directory, which inspects it again, and returns that result. A choice given where
+ * there is no decision stops, because ignoring abandon would apply the recipe.
+ *
+ * @param {Recipe} recipe
+ * @param {Partial<CliOptions> & { dryRun: boolean, json: boolean, assumeYes: boolean }} applyOptions
+ * @param {ArtifactServices} artifactServices
+ * @returns {Promise<{ result?: ApplyResult, decision?: ManifestDecision }>}
+ */
+async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
+  const directory = process.cwd();
+  const detection = await detectVitePlus(directory);
+  const decision = manifestDecision(directory, detection);
+
+  if (applyOptions.manifestChoice !== undefined) {
+    assertKnownValue("manifestChoice", applyOptions.manifestChoice, [...manifestChoices]);
+  }
+
+  if (!decision) {
+    if (applyOptions.manifestChoice !== undefined) {
+      throw manifestChoiceNotApplicableError(directory, detection);
+    }
+    return {};
+  }
+
+  const choice =
+    applyOptions.manifestChoice ??
+    (!applyOptions.dryRun && canPrompt(applyOptions)
+      ? await (applyOptions.askForManifestChoice ?? askForManifestChoice)(decision)
+      : undefined);
+
+  if (choice === undefined) {
+    if (!applyOptions.dryRun) {
+      throw manifestChoiceRequiredError(decision);
+    }
+    return { result: await manifestDecisionResult(recipe, applyOptions, decision) };
+  }
+
+  /** @type {ManifestDecision} */
+  const chosen = { ...decision, choice };
+
+  if (choice === "abandon") {
+    return { result: await manifestDecisionResult(recipe, applyOptions, chosen) };
+  }
+
+  if (choice === "apply-at-ancestor") {
+    const ancestorDirectory = dirname(decision.ancestor.manifestPath);
+    // A recipe path given relative to this directory moves with the apply, so nothing is written
+    // here.
+    const config = pathAtAncestor(chosen, applyOptions.config ?? CONFIG_FILE);
+
+    // Another project's recipe or state is a hard stop, not something to replace. The ancestor's
+    // default recipe counts even when the recipe path given here is a custom one, because apply
+    // would otherwise record state for this recipe next to it. Because the ancestor has no state,
+    // no managed file there can be reowned, so reownManagedFiles needs no translation.
+    for (const existing of new Set([
+      config,
+      join(ancestorDirectory, CONFIG_FILE),
+      join(ancestorDirectory, STATE_FILE),
+    ])) {
+      if (await fileExists(existing)) {
+        throw ancestorAlreadyManagedError(chosen, existing);
+      }
+    }
+
+    process.chdir(ancestorDirectory);
+    try {
+      const result = await applyRecipeObject(
+        recipe,
+        { ...applyOptions, config, manifestChoice: undefined },
+        artifactServices,
+      );
+      return { result: { ...result, manifestDecision: chosen } };
+    } finally {
+      process.chdir(directory);
+    }
+  }
+
+  return { decision: chosen };
+}
+
+/**
+ * The apply result for a manifest decision that plans nothing: no choice yet, or abandon. The
+ * inspection is read-only, so the findings still say why there is a decision.
+ *
+ * @param {Recipe} recipe
+ * @param {Partial<CliOptions> & { dryRun: boolean }} applyOptions
+ * @param {ManifestDecision} decision
+ * @returns {Promise<ApplyResult>}
+ */
+async function manifestDecisionResult(recipe, applyOptions, decision) {
+  // A directory without a manifest has no managed files to reown.
+  const projectInspection = await inspectProject(recipe);
+
+  return {
+    command: "apply",
+    dryRun: applyOptions.dryRun,
+    packageManager: resolveApplyPackageManager(recipe, applyOptions, {}),
+    dependencies: [],
+    installCommand: null,
+    installNotes: [],
+    integrations: [],
+    projectInspection,
+    vitePlus: vitePlusReport(projectInspection.vitePlus),
+    changes: [],
+    scriptChanges: [],
+    pointers: [],
+    autoInstalledArtifacts: [],
+    artifactRegistries: [],
+    artifactWarnings: [],
+    artifactInputs: [],
+    integrationInputs: [],
+    inputWarnings: [],
+    wiringChanges: [],
+    wiringWarnings: [],
+    ignoreChanges: [],
+    recipe,
+    manifestDecision: decision,
+  };
+}
+
+/**
  * @param {Recipe} recipeInput
  * @param {Partial<CliOptions>} options
  * @param {ArtifactServices} [artifactServices] Registry access for artifacts that are not yet locked.
@@ -2956,6 +3114,12 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     reownManagedFiles: [],
     ...options,
   };
+  // #430: the manifest choice comes first, because apply-at-ancestor runs every check below in
+  // another directory, and the choices without a plan write nothing.
+  const manifestOutcome = await resolveManifestChoice(recipeInput, applyOptions, artifactServices);
+  if (manifestOutcome.result) {
+    return manifestOutcome.result;
+  }
   // A recipe that cannot apply in this directory stops before anyone is asked for an input value.
   // These checks read only the selections and the package manager, which inputs do not change.
   const integrations = resolveRecipeIntegrations(recipeInput);
@@ -3140,7 +3304,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const packageJSON = await ensurePackageJSON(
     packageManager,
     applyOptions.dryRun,
-    applyOptions.assumeYes,
+    // Choosing create-here is the approval to create package.json (#430).
+    applyOptions.assumeYes || manifestOutcome.decision?.choice === "create-here",
     applyOptions.json,
   );
   const projectInspection = await inspectProject(recipe, {
@@ -3439,6 +3604,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     wiringWarnings,
     ignoreChanges,
     recipe,
+    ...(manifestOutcome.decision ? { manifestDecision: manifestOutcome.decision } : {}),
   };
 }
 
@@ -4843,6 +5009,24 @@ function promptForArtifactInput({ artifact, name, ...request }) {
   return promptForInputValue(request, `${artifact}, ${name}`);
 }
 
+/**
+ * Asks which manifest choice to act on (#430). Cancelling the prompt abandons, which writes
+ * nothing.
+ *
+ * @type {import("./manifest-decision.js").AskForManifestChoice}
+ */
+async function askForManifestChoice(decision) {
+  const choice = await select({
+    message: manifestDecisionQuestion(decision),
+    options: decision.options.map(({ choice: value, description }) => ({
+      value,
+      label: value,
+      hint: description,
+    })),
+  });
+  return isCancel(choice) ? "abandon" : /** @type {ManifestChoice} */ (choice);
+}
+
 /** @type {import("./stryker-options.js").AskForTestRunner} */
 const askForTestRunner = {
   async testRunner({ runners, defaultId }) {
@@ -5044,6 +5228,20 @@ async function promptForAiArtifacts(options) {
  * @returns {Promise<InitResult>}
  */
 export async function initRecipe(options) {
+  // #430: init writes the recipe before it applies, so a manifest choice that would not apply here
+  // stops before anything is asked or written. That includes a choice where there is no decision,
+  // because ignoring abandon would write and apply the recipe.
+  if (options.apply) {
+    const detection = await detectVitePlus(process.cwd());
+    const decision = manifestDecision(process.cwd(), detection);
+    if (!decision && options.manifestChoice !== undefined) {
+      throw manifestChoiceNotApplicableError(process.cwd(), detection);
+    }
+    if (decision && options.manifestChoice !== "create-here") {
+      throw initApplyManifestChoiceError(decision);
+    }
+  }
+
   if (!options.json) {
     console.clear();
     intro("Compose your Calavera tooling recipe");
@@ -5192,7 +5390,8 @@ async function doctor(options) {
   if (!hasPackageJSON) {
     issues.push({
       level: "warning",
-      message: "Missing package.json. Calavera can create one during apply.",
+      message:
+        "Missing package.json. apply creates one; when a manifest above this directory exists, apply asks whether to create one here, apply there, or stop.",
     });
   }
 
@@ -5717,6 +5916,9 @@ Options:
   --no-install         Write files without installing dependencies during apply
   --reown-managed-file <path>
                       Treat a tracked managed file's current contents as approved
+  --manifest-choice <choice>
+                      Without a package.json here but with one above: create-here,
+                      apply-at-ancestor, or abandon
   -h, --help           Show this help
 
 Agent-first setup:
@@ -5898,6 +6100,29 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     }
 
     return;
+  }
+
+  if (result.command === "apply" && result.manifestDecision) {
+    const decision = result.manifestDecision;
+
+    if (decision.choice === undefined) {
+      for (const line of manifestDecisionLines(decision)) {
+        logger.info(line);
+      }
+      logger.info("Run apply again with --manifest-choice <choice>. No files were changed.");
+      return;
+    }
+
+    if (decision.choice === "abandon") {
+      logger.info("Abandoned. No files were changed.");
+      return;
+    }
+
+    logger.info(
+      decision.choice === "apply-at-ancestor"
+        ? `Manifest choice: apply-at-ancestor. ${result.dryRun ? "Planned" : "Applied"} at ${dirname(decision.ancestor.manifestPath)}, not in ${decision.directory}.`
+        : `Manifest choice: create-here. ${result.dryRun ? "Apply would create" : "Created"} package.json in ${decision.directory}.`,
+    );
   }
 
   if (result.command === "apply" && result.dryRun) {
