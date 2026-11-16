@@ -22,7 +22,12 @@ import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { ExecaError, execa } from "execa";
 import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
-import { prepareArtifactSources, runArtifactCommand } from "./artifact-lifecycle.js";
+import {
+  ARTIFACT_CACHE_BLOCK,
+  artifactCacheIgnoreLines,
+  prepareArtifactSources,
+  runArtifactCommand,
+} from "./artifact-lifecycle.js";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   githubRepositoryControlManagedFiles,
@@ -235,7 +240,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string[]} inputWarnings Input values that disagree, such as a protected branch that is not the default branch github-repository-controls describes. They never stop apply.
  * @property {WiringChange[]} wiringChanges Each hook block and settings group apply writes into the project for a selected artifact, so the approval boundary shows the exact text.
  * @property {string[]} wiringWarnings Why written wiring would not act yet, such as Git hooks that no dispatcher runs, with the remedy. They never stop apply.
- * @property {IgnoreChange[]} ignoreChanges The lines each integration adds to or removes from .gitignore and .htmlvalidateignore (ADR-0016), so the approval boundary shows the exact lines.
+ * @property {IgnoreChange[]} ignoreChanges The lines each integration adds to or removes from .gitignore and .htmlvalidateignore (ADR-0016), and the block that keeps the artifact cache out of Git (#841), so the approval boundary shows the exact lines.
  * @property {Recipe} recipe The recipe apply used, with every artifact input filled in. After a dry run, pass this recipe to apply, so the values cannot change between approval and apply.
  *
  * @typedef {import("./ai/artifact-inputs.js").ResolvedInput} ResolvedInput
@@ -345,6 +350,9 @@ const VARLOCK_GITIGNORE_COMMENTS = [
 const VARLOCK_GITIGNORE_LINES = ["!.env.schema", ".env.local", ".env.*.local"];
 const VARLOCK_POINTER =
   "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
+
+const ARTIFACT_CACHE_POINTER =
+  "Calavera ignores .calavera/cache/ through its artifact-cache block in .gitignore, because the folder is a local npm download cache and does not belong in Git. Commit .calavera/artifacts.lock.json and .calavera/packages/, which hold the exact artifact versions and payloads the project uses.";
 
 /** @type {Record<PackageManager, PackageManagerCommands>} */
 const packageManagerCommands = {
@@ -3084,15 +3092,25 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     plannedManagedFiles(integrations, recipe.integrationOptions),
     loadFormatter,
   );
-  // ADR-0016: the integrations' .gitignore blocks are planned before anything is written, so an
-  // edited block stops the dry run and apply alike. The person's lines are never rewritten.
+  // ADR-0016: the integrations' .gitignore blocks, and the block that keeps the artifact cache out
+  // of Git (#841), are planned before anything is written, so an edited block stops the dry run
+  // and apply alike. The person's lines are never rewritten.
   const gitignorePlan = planGitignoreBlocks({
     contents: (await fileExists(GITIGNORE_PATH))
       ? await readFile(GITIGNORE_PATH, "utf8")
       : undefined,
-    declared: declaredIgnoreLines(integrations, "gitignore"),
+    declared: [
+      ...declaredIgnoreLines(integrations, "gitignore"),
+      ...(await artifactCacheIgnoreLines(recipe)),
+    ],
     records: previousState.gitignoreBlocks,
   });
+  // The cache sits next to files the project commits, so apply says why it is ignored when it adds
+  // the block, and not again on every apply after that.
+  const addsArtifactCacheBlock = gitignorePlan.changes.some(
+    ({ integration, type, removedLines }) =>
+      integration === ARTIFACT_CACHE_BLOCK && type !== "unchanged" && removedLines === undefined,
+  );
   const ignoreChanges = [
     ...gitignorePlan.changes,
     ...(managedFilePlans.some(({ path }) => path === HTML_VALIDATE_IGNORE_PATH)
@@ -3406,7 +3424,11 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     vitePlus: vitePlusReport(projectInspection.vitePlus),
     changes: [...changes, ...aiChanges],
     scriptChanges,
-    pointers: [...aiResult.pointers, ...(usesVarlock ? [VARLOCK_POINTER] : [])],
+    pointers: [
+      ...aiResult.pointers,
+      ...(usesVarlock ? [VARLOCK_POINTER] : []),
+      ...(addsArtifactCacheBlock ? [ARTIFACT_CACHE_POINTER] : []),
+    ],
     autoInstalledArtifacts: artifactPlan.installed,
     artifactRegistries: artifactPlan.registries,
     artifactWarnings: artifactPlan.warnings,
@@ -3427,7 +3449,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
  * @param {ManagedFileState[]} managedFiles
  * @param {AiArtifactState[]} aiArtifacts The selected artifacts as apply installed them. The previous records of every other artifact are kept for clean.
  * @param {import("./ai/artifact-wiring.js").WiringRecord[]} aiWiring The wiring in the project after apply. It replaces the previous records, because apply removes the wiring of every artifact the recipe no longer selects, and a record of removed wiring would describe text the files no longer hold.
- * @param {import("./ignore-lines.js").IgnoreLines[]} gitignoreBlocks The integrations' .gitignore blocks after apply. They replace the previous records for the same reason as `aiWiring`.
+ * @param {import("./ignore-lines.js").IgnoreLines[]} gitignoreBlocks The integrations' .gitignore blocks, and the artifact cache block (#841), after apply. They replace the previous records for the same reason as `aiWiring`.
  * @param {string | null} qualityScript The value apply wrote to `quality`, or null when it wrote none, such as when it kept the project's own value (#230).
  * @returns {CalaveraState}
  */
@@ -4734,9 +4756,14 @@ function formatWiringChange({
 function formatIgnoreChange({ path, integration, type, lines, previousLines, removedLines }) {
   const quoted = (/** @type {string[]} */ values) => values.map(quoteScriptValue).join(", ");
   if (removedLines !== undefined) {
-    return integration === undefined
-      ? `Would remove from ${path}, because no selected integration declares them: ${quoted(removedLines)}`
-      : `Would remove the ${integration} block from ${path}, because ${integration} no longer adds lines to it: ${quoted(removedLines)}`;
+    if (integration === undefined) {
+      return `Would remove from ${path}, because no selected integration declares them: ${quoted(removedLines)}`;
+    }
+    const because =
+      integration === ARTIFACT_CACHE_BLOCK
+        ? "the recipe selects no artifacts and .calavera/cache/ does not exist"
+        : `${integration} no longer adds lines to it`;
+    return `Would remove the ${integration} block from ${path}, because ${because}: ${quoted(removedLines)}`;
   }
   const what = path === GITIGNORE_PATH ? `the ${integration} block` : `the ${integration} lines`;
   if (type === "unchanged") {
