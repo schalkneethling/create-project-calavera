@@ -367,11 +367,27 @@ async function runFlow({ directory, integrations, quality, guard }, root) {
 
     const after = await snapshotTree(root);
     // Apply changes package.json, and with the guard it inserts a block into the
-    // seeded pre-commit script; every other file it did not plan stays as it was.
-    const edited = new Set([manifestPath, ...(guard ? [".vite-hooks/pre-commit"] : [])]);
+    // seeded pre-commit script and appends the artifact cache block to the
+    // template's .gitignore (#841); every other file it did not plan stays as it was.
+    const gitignorePath = join(directory, ".gitignore");
+    const edited = new Set([
+      manifestPath,
+      ...(guard ? [".vite-hooks/pre-commit", gitignorePath] : []),
+    ]);
     for (const [path, contents] of before) {
       if (edited.has(path)) continue;
       assert.ok(after.get(path)?.equals(contents), `${path} is not byte-for-byte unchanged`);
+    }
+    if (guard) {
+      const templateGitignore = before.get(gitignorePath)?.toString("utf8");
+      assert.ok(
+        templateGitignore?.endsWith("\n"),
+        "the template .gitignore ends with a line break",
+      );
+      assert.equal(
+        after.get(gitignorePath)?.toString("utf8"),
+        `${templateGitignore}# calavera:artifact-cache:start\n.calavera/cache/\n# calavera:artifact-cache:end\n`,
+      );
     }
 
     return { recipe, changes, writes, applied, before };

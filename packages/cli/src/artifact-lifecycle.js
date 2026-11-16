@@ -24,10 +24,29 @@ import { fileExists } from "./utils/fs.js";
 
 const LOCK_PATH = ".calavera/artifacts.lock.json";
 const STATE_PATH = ".calavera/state.json";
-const CACHE_PATH = ".calavera/cache/npm";
+const CACHE_ROOT = ".calavera/cache";
+const CACHE_PATH = `${CACHE_ROOT}/npm`;
 const PACKAGE_PATH = ".calavera/packages";
 const TRANSACTION_PATH = ".calavera/artifact-transaction.json";
 const TRANSACTION_ROOT = ".calavera/.transactions";
+
+// #841: the npm cache that artifact packages resolve through is not committed (owner decision,
+// 2026-11-14). Apply keeps it out of Git with its own marked `.gitignore` block (ADR-0016,
+// Amendment 1). The owner id is not an integration id; a catalog test keeps it that way.
+export const ARTIFACT_CACHE_BLOCK = "artifact-cache";
+
+/**
+ * The `.gitignore` block that keeps the artifact cache out of Git. Apply plans it while the recipe
+ * selects an artifact package, because apply then resolves packages through the cache, and while
+ * the cache folder exists, because a recipe that drops its artifacts leaves the cache behind.
+ *
+ * @param {{ ai?: unknown }} recipe
+ * @returns {Promise<import("./ignore-lines.js").IgnoreLines[]>}
+ */
+export async function artifactCacheIgnoreLines(recipe) {
+  const needed = normalizePackageSelections(recipe.ai).length > 0 || (await fileExists(CACHE_ROOT));
+  return needed ? [{ integration: ARTIFACT_CACHE_BLOCK, lines: [`${CACHE_ROOT}/`] }] : [];
+}
 
 /**
  * @typedef {{ config: string, dryRun: boolean, artifactAction?: string, artifactId?: string, artifactTag?: "latest" | "next", artifactAll?: boolean, checkUpdates?: boolean }} ArtifactOptions
@@ -177,7 +196,7 @@ export async function prepareArtifactSources(
  * @param {Map<string, ArtifactLockEntry>} approvedById Selections to install at an approved version.
  */
 async function installUnlockedArtifacts(unlocked, lock, dryRun, registry, preflight, approvedById) {
-  const createdDirectories = [".calavera", ".calavera/cache", CACHE_PATH, TRANSACTION_ROOT];
+  const createdDirectories = [".calavera", CACHE_ROOT, CACHE_PATH, TRANSACTION_ROOT];
   // The transaction creates the parent directories of the outputs it moves into place, and a
   // rollback restores files only, so remove the parents this attempt created, deepest first.
   const outputParents = new Set();

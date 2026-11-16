@@ -15,7 +15,8 @@ export const HTML_VALIDATE_IGNORE_PATH = ".htmlvalidateignore";
  *
  * @typedef {object} IgnoreLines One integration's lines for one ignore file. The state record keeps
  *   the `.gitignore` ones as `gitignoreBlocks`, so a later apply can tell its block from an edit.
- * @property {string} integration
+ * @property {string} integration The block's owner: an integration id, or `artifact-cache` for the
+ *   block that keeps Calavera's artifact cache out of Git (#841, ADR-0016 Amendment 1).
  * @property {string[]} lines
  *
  * @typedef {object} IgnoreChange One integration's part of an ignore file, for the dry run.
