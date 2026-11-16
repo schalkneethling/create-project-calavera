@@ -35,9 +35,9 @@ const skills = [
 const README_MARKER = "Confirm the Calavera MCP tools are exposed:";
 const WORKFLOW_DOC_MARKER = "Calavera MCP tools are exposed:";
 const HELP_MARKER = "Confirm these tools are visible before composing a recipe:";
-const README_ORDER_MARKER = "An MCP client can use the tools\nin this order:";
+const README_ORDER_MARKER = "in this order:";
 const SKILL_MARKER = "Look for tools named";
-const WORKFLOW_DOC_MCP_MARKER = "composition tools and project-local apply tools:";
+const WORKFLOW_DOC_MCP_MARKER = "project-local\napply tools:";
 const TOOL_NAME_PATTERN = /\b[a-z]+(?:_[a-z]+)+\b/g;
 
 /**
@@ -112,6 +112,11 @@ function numberedListAfterMarker(text, marker, source) {
 }
 
 /**
+ * The tool names in a list, sorted, so the tests compare which tools a list names and not their
+ * order. The registration order cannot be the reference, because the server registers
+ * `list_profiles` before `inspect_project`, while the documented workflows start with
+ * `inspect_project`.
+ *
  * @param {string} list
  * @returns {string[]}
  */

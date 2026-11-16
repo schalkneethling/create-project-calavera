@@ -410,7 +410,8 @@ forwarded flags; the `dlx` and `bunx` commands do not.
 ## MCP And WebMCP
 
 The standard MCP server is the agent-native project workflow. It exposes
-composition tools and project-local apply tools:
+project inspection, Baseline lookup, recipe composition, and project-local
+apply tools:
 
 1. `inspect_project`
 2. `list_profiles`
