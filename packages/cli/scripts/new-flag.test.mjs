@@ -478,8 +478,8 @@ test("--new --dry-run shows the npm and Bun create-vite-plus commands", async ()
 
 // #909: with no --package-manager before --new, the runner follows the package
 // manager that launched Calavera, read from npm_config_user_agent, and falls
-// back to npm when `launcher` is undefined. The Yarn 4 value is a stand-in until a real Yarn 2 or later run
-// records one (#909).
+// back to npm when `launcher` is undefined. The Yarn 4 value is the one a
+// `yarn run` script printed under Yarn 4.18.1 through Corepack on 2026-11-16 (#909).
 const launcherCases = [
   {
     label: "npm",
@@ -495,7 +495,7 @@ const launcherCases = [
   },
   {
     label: "Yarn 4",
-    userAgent: "yarn/4.18.1 npm/? node/v24.22.0 darwin arm64",
+    userAgent: "yarn/4.18.1 npm/? node/v26.13.1 darwin arm64",
     command: "yarn dlx create-vite-plus@latest vite:library",
     launcher: "yarn",
   },
