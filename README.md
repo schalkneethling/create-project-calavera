@@ -250,9 +250,10 @@ choice, because it lives in the recipe:
 ```
 
 When `lint:html` is the only script `quality` would run, Calavera does not
-generate `quality`. Apply removes a `quality` script whose value an earlier
-release wrote, such as `npm run lint:html`, and keeps any other value as your
-own. The dry run shows both. In a project Vite+ does not manage, Calavera also
+generate `quality`. Apply removes an existing `quality` script only when
+`.calavera/state.json` records that Calavera wrote that exact value, and keeps
+any other value as your own, even `npm run lint:html`, which an earlier release
+wrote. The dry run shows which one applies. In a project Vite+ does not manage, Calavera also
 does not generate `quality` when one other script is left, because `quality`
 would only repeat it; see [Vite+ And Delta Workflows](#vite-and-delta-workflows) for what happens to an existing
 `quality` then.
