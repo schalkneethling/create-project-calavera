@@ -4120,6 +4120,7 @@ export const NPM_EXIT_127_HINT =
  * @typedef {object} NewProjectRuntime
  * @property {(invocation: RunnerInvocation) => Promise<RunnerExit>} [spawnRunner]
  * @property {(cwd: string) => Promise<string | undefined>} [readYarnVersion]
+ * @property {Record<string, string | undefined>} [env] Where `npm_config_user_agent` is read; `process.env` by default.
  */
 
 const YARN_DLX_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or later.";
@@ -4352,6 +4353,33 @@ async function readNewProjectRecipe(source) {
 }
 
 /**
+ * The package manager that launched Calavera, when it has a runner for
+ * `vp create`, per the ADR-0010 amendment "The Launching Package Manager
+ * Chooses the Runner" (#909). Its name is the text of `npm_config_user_agent`
+ * before the first `/`, as Vite+ reads it for the same decision. Yarn counts
+ * only at major version 2 or later, because Yarn 1 has no dlx command; a Yarn
+ * whose version cannot be read could be Yarn 1, so it does not count either.
+ *
+ * @param {string | undefined} userAgent For example `yarn/4.18.1 npm/? node/v24.22.0 darwin arm64`.
+ * @returns {PackageManager | undefined} `undefined` when the caller falls back to npm.
+ */
+export function launchingPackageManager(userAgent) {
+  const [name, version = ""] = (userAgent ?? "").split("/", 2);
+
+  switch (name) {
+    case "npm":
+    case "pnpm":
+    case "bun":
+      return name;
+    case "yarn":
+      // No leading major version gives Number(undefined), NaN, which is not >= 2.
+      return Number(/^(\d+)\./.exec(version)?.[1]) >= 2 ? "yarn" : undefined;
+    default:
+      return undefined;
+  }
+}
+
+/**
  * @param {string} runner
  * @param {PackageManager} runnerPackageManager The package manager Vite+ uses unless one is forwarded.
  * @param {string} cwd
@@ -4399,8 +4427,9 @@ function nonInteractiveReasons(options) {
 }
 
 /**
- * `--new`: confirms, spawns `vp create` through a package-manager runner,
- * verifies that the scaffold is managed by Vite+, and runs the `--init`
+ * `--new`: confirms, spawns `vp create` through the runner of the package
+ * manager given before `--new`, else of the one that launched Calavera, else
+ * npm, verifies that the scaffold is managed by Vite+, and runs the `--init`
  * bootstrap in it, as decided by ADR-0010.
  *
  * @param {CliOptions} options
@@ -4434,7 +4463,10 @@ export async function newProject(options, runtime = {}) {
     );
   }
 
-  const runnerPackageManager = options.packageManager ?? "npm";
+  const runnerPackageManager =
+    options.packageManager ??
+    launchingPackageManager((runtime.env ?? process.env).npm_config_user_agent) ??
+    "npm";
   const runnerCommand = createVpCreateCommand(runnerPackageManager, forwardedArgs);
   const runner = formatShellCommand(runnerCommand);
   const recipe =
@@ -4486,7 +4518,20 @@ export async function newProject(options, runtime = {}) {
       ? undefined
       : await readFileIfPresent(join(forwardedTarget, "package.json"));
   const before = forwardedTarget === undefined ? await snapshotManifests(cwd) : new Map();
-  const exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({ ...runnerCommand, cwd });
+  let exit;
+  try {
+    exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({ ...runnerCommand, cwd });
+  } catch (error) {
+    if (options.packageManager !== undefined) {
+      throw error;
+    }
+
+    // The runner was not chosen by the user, so name how it was chosen and how to choose another (#909).
+    throw new Error(
+      `${error instanceof Error ? error.message : String(error)} No --package-manager came before --new, so Calavera chose ${runnerPackageManager}: the package manager that started Calavera, or npm when that package manager has no runner. Pass --package-manager with npm, pnpm, yarn, or bun before --new to choose another runner.`,
+      { cause: error },
+    );
+  }
 
   if (exit.exitCode !== 0) {
     const yarn =
