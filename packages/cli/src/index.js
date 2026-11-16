@@ -3015,10 +3015,15 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
     // here.
     const config = pathAtAncestor(chosen, applyOptions.config ?? CONFIG_FILE);
 
-    // Another project's recipe or state is a hard stop, not something to replace. Because the
-    // ancestor has no state, no managed file there can be reowned, so reownManagedFiles needs no
-    // translation.
-    for (const existing of [config, join(ancestorDirectory, STATE_FILE)]) {
+    // Another project's recipe or state is a hard stop, not something to replace. The ancestor's
+    // default recipe counts even when the recipe path given here is a custom one, because apply
+    // would otherwise record state for this recipe next to it. Because the ancestor has no state,
+    // no managed file there can be reowned, so reownManagedFiles needs no translation.
+    for (const existing of new Set([
+      config,
+      join(ancestorDirectory, CONFIG_FILE),
+      join(ancestorDirectory, STATE_FILE),
+    ])) {
       if (await fileExists(existing)) {
         throw ancestorAlreadyManagedError(chosen, existing);
       }
@@ -5142,9 +5147,14 @@ async function promptForAiArtifacts(options) {
  */
 export async function initRecipe(options) {
   // #430: init writes the recipe before it applies, so a manifest choice that would not apply here
-  // stops before anything is asked or written.
+  // stops before anything is asked or written. That includes a choice where there is no decision,
+  // because ignoring abandon would write and apply the recipe.
   if (options.apply) {
-    const decision = manifestDecision(process.cwd(), await detectVitePlus(process.cwd()));
+    const detection = await detectVitePlus(process.cwd());
+    const decision = manifestDecision(process.cwd(), detection);
+    if (!decision && options.manifestChoice !== undefined) {
+      throw manifestChoiceNotApplicableError(process.cwd(), detection);
+    }
     if (decision && options.manifestChoice !== "create-here") {
       throw initApplyManifestChoiceError(decision);
     }

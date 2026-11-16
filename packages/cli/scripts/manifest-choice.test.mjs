@@ -592,3 +592,52 @@ test("applyRecipeObject refuses a manifest choice it does not know", async () =>
   );
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
 });
+
+test("init --apply with a choice where there is no decision stops before writing the recipe", async () => {
+  // Greptile on #954: abandon must never be ignored, because init would then write the recipe.
+  await using fixture = await createTemporaryFixture("manifest-choice-init-no-decision", {
+    "package.json": json(plainViteManifest),
+  });
+  const before = await snapshotDirectory(fixture.root);
+
+  for (const manifestChoice of CHOICES) {
+    const options = parseArgs([
+      "init",
+      "--apply",
+      "--yes",
+      "--json",
+      "--profile",
+      "minimal",
+      "--manifest-choice",
+      manifestChoice,
+    ]);
+    await assert.rejects(
+      inDirectory(fixture.root, false, () => initRecipe(options)),
+      /has its own package\.json, so there is no manifest choice to make/,
+    );
+  }
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+test("apply-at-ancestor with a custom recipe path still stops when the ancestor has its default recipe", async () => {
+  // Greptile on #954: the destination of a custom path is not the ancestor's default recipe.
+  await using fixture = await directoryUnderUnmanagedProject();
+  await writeFile(join(fixture.root, "calavera.config.json"), json(recipe));
+  const before = await snapshotDirectory(fixture.root);
+
+  for (const dryRun of [true, false]) {
+    await assert.rejects(
+      inDirectory(fixture.project, false, () =>
+        applyRecipeObject(structuredClone(recipe), {
+          dryRun,
+          assumeYes: true,
+          noInstall: true,
+          config: "custom.json",
+          manifestChoice: "apply-at-ancestor",
+        }),
+      ),
+      /calavera\.config\.json already exists there, so the directory has a Calavera recipe of its own\./,
+    );
+  }
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
