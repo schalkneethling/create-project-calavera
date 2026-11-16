@@ -19,8 +19,22 @@ export function truncateFailureLine(line) {
 }
 
 /**
- * @typedef {{ name?: string, message: string, code?: string }} ErrorChainEntry
+ * @typedef {{ name?: string, message: string, code?: string, stack?: string }} ErrorChainEntry
  */
+
+/**
+ * Whether the opt-in debug switch is on: `CALAVERA_DEBUG` set to `1` or
+ * `true`, in any case. An environment variable, not a flag, so that it also
+ * reaches an MCP server that an agent client starts.
+ *
+ * @param {Record<string, string | undefined>} [env]
+ */
+export function isDebugEnabled(env = process.env) {
+  return /^(?:1|true)$/i.test(env.CALAVERA_DEBUG ?? "");
+}
+
+// A line of a V8 stack trace that names a call site.
+const STACK_FRAME = /^\s+at\s/;
 
 /**
  * Reads a property without letting a throwing getter or proxy escape.
@@ -94,6 +108,34 @@ function ownText(value) {
   return displayString(value);
 }
 
+/**
+ * The call-site lines of a value's stack, without the header line or lines
+ * that repeat its name and message, or undefined when it has none. V8 writes
+ * the header when the error is created, so the frames are taken from after
+ * the first occurrence of the message, which keeps a message line that looks
+ * like a frame out of them.
+ *
+ * @param {unknown} value
+ * @returns {string[] | undefined}
+ */
+function stackFrames(value) {
+  const stack = readProperty(value, "stack");
+  if (typeof stack !== "string") return undefined;
+
+  const message = readProperty(value, "message");
+  const messageIndex = typeof message === "string" ? stack.indexOf(message) : -1;
+  const afterHeader =
+    messageIndex === -1
+      ? stack
+      : stack.slice(messageIndex + /** @type {string} */ (message).length);
+  const frames = afterHeader
+    .split("\n")
+    .map((line) => line.trimEnd())
+    .filter((line) => STACK_FRAME.test(line));
+
+  return frames.length > 0 ? frames : undefined;
+}
+
 /** @param {string} text */
 function normalize(text) {
   return text.trim().replace(/\.$/, "");
@@ -138,6 +180,10 @@ function containsWhole(text, part) {
  *
  * The error itself is always kept in full.
  *
+ * When `isDebugEnabled(env)`, each entry also carries `stack`: the call-site
+ * lines of its stack, redacted the same way. A cause whose text the rule above
+ * leaves out is then kept with an empty message, so that its stack is shown.
+ *
  * @param {unknown} error
  * @param {Record<string, string | undefined>} [env] The environment whose secret values are redacted.
  * @returns {[ErrorChainEntry, ...ErrorChainEntry[]]}
@@ -150,6 +196,7 @@ export function errorChain(error, env = process.env) {
   /** @type {Set<string>} */
   const shownLines = new Set();
   const visited = new Set();
+  const debug = isDebugEnabled(env);
   /** @param {string} text */
   const redact = (text) => redactSecrets(stripVTControlCharacters(text), env);
 
@@ -182,12 +229,19 @@ export function errorChain(error, env = process.env) {
 
     const name = readProperty(value, "name");
     const code = readProperty(value, "code");
+    const frames = debug ? stackFrames(value) : undefined;
     // A cause with an empty message of its own is still shown, by its name.
-    if (isError || lines.length > 0 || (whole === "" && typeof name === "string" && name)) {
+    if (
+      isError ||
+      lines.length > 0 ||
+      (whole === "" && typeof name === "string" && name) ||
+      frames !== undefined
+    ) {
       entries.push({
         ...(typeof name === "string" && name ? { name: redact(name) } : {}),
         message: (isError ? lines : lines.map(truncateFailureLine)).join("\n"),
         ...(typeof code === "string" && code ? { code: redact(code) } : {}),
+        ...(frames ? { stack: frames.map(redact).join("\n") } : {}),
       });
     }
 
@@ -213,9 +267,19 @@ function entryText({ name, message }) {
 }
 
 /**
+ * An entry's text, followed by its stack frames when it carries them.
+ *
+ * @param {string} text
+ * @param {ErrorChainEntry} entry
+ */
+function withStack(text, { stack }) {
+  return stack ? `${text}\n${stack}` : text;
+}
+
+/**
  * The error chain as text for a terminal: the error, then each cause on a
  * line that starts with `Caused by:`, with further lines of that cause
- * indented.
+ * indented. With the debug switch on, each entry's stack frames follow it.
  *
  * @param {unknown} error
  * @param {Record<string, string | undefined>} [env] The environment whose secret values are redacted.
@@ -225,7 +289,9 @@ export function formatErrorChain(error, env = process.env) {
   const [first, ...causes] = errorChain(error, env);
 
   return [
-    entryText(first) || "Calavera stopped with an error that has no message.",
-    ...causes.map((cause) => `Caused by: ${entryText(cause).split("\n").join("\n  ")}`),
+    withStack(entryText(first) || "Calavera stopped with an error that has no message.", first),
+    ...causes.map(
+      (cause) => `Caused by: ${withStack(entryText(cause), cause).split("\n").join("\n  ")}`,
+    ),
   ].join("\n");
 }
