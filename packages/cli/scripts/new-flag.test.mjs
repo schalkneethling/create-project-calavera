@@ -5,7 +5,7 @@ import assert from "node:assert/strict";
 import { spawn } from "node:child_process";
 import { realpathSync } from "node:fs";
 import { chmod, mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { basename, delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -14,6 +14,7 @@ import {
   NPM_STALE_CACHE_HINT,
   YARN_VERSION_TIMEOUT_MS,
   createVpCreateCommand,
+  launchingPackageManager,
   newProject,
   parseArgs,
 } from "../src/index.js";
@@ -32,7 +33,7 @@ const fixturesUrl = pathToFileURL(
 );
 
 /**
- * The runner stub. It records its argv, cwd, VP_CLI_BIN, and PATH, strips the
+ * The runner stub. It records its name, argv, cwd, VP_CLI_BIN, and PATH, strips the
  * runner's own arguments to find what \`vp create\` receives, then acts on STUB_MODE:
  * `scaffold` writes a Vite+ project into the `--directory` target (or
  * STUB_TARGET) and, as `vp create` installs dependencies, a vite-plus whose
@@ -70,6 +71,7 @@ if (argv.length === 1 && argv[0] === "--version") {
 appendFileSync(
   process.env.STUB_LOG,
   JSON.stringify({
+    runner: basename(process.argv[1]),
     argv,
     cwd: process.cwd(),
     vpCliBin: process.env.VP_CLI_BIN ?? null,
@@ -184,8 +186,12 @@ function stubPath(workspace) {
  * @returns {Promise<{ code: number, stdout: string, stderr: string, timedOut: boolean }>}
  */
 function runCli(workspace, args, env = {}, { deadlineMs } = {}) {
+  const inherited = { ...process.env };
+  // The package manager running these tests sets a user agent that would choose
+  // the runner (#909), so a test that wants one passes it in env.
+  delete inherited.npm_config_user_agent;
   const childEnv = {
-    ...process.env,
+    ...inherited,
     NO_COLOR: "1",
     PATH: stubPath(workspace),
     STUB_LOG: workspace.log,
@@ -468,6 +474,146 @@ test("--new --dry-run shows the npm and Bun create-vite-plus commands", async ()
   assert.match(bun.stdout, /Command: bunx create-vite-plus@latest vite:library/);
   assert.match(bun.stdout, /Vite\+ uses bun as the project's package manager/);
   assert.deepEqual(await readInvocations(workspace.log), []);
+});
+
+// #909: with no --package-manager before --new, the runner follows the package
+// manager that launched Calavera, read from npm_config_user_agent, and falls
+// back to npm when `launcher` is undefined. The Yarn 4 value is a stand-in until a real Yarn 2 or later run
+// records one (#909).
+const launcherCases = [
+  {
+    label: "npm",
+    userAgent: "npm/11.20.0 node/v26.13.1 darwin arm64 workspaces/false",
+    command: "npm create vite-plus@latest -- vite:library",
+    launcher: "npm",
+  },
+  {
+    label: "pnpm",
+    userAgent: "pnpm/12.9.1 npm/? node/? darwin arm64",
+    command: "pnpm dlx create-vite-plus@latest vite:library",
+    launcher: "pnpm",
+  },
+  {
+    label: "Yarn 4",
+    userAgent: "yarn/4.18.1 npm/? node/v24.22.0 darwin arm64",
+    command: "yarn dlx create-vite-plus@latest vite:library",
+    launcher: "yarn",
+  },
+  {
+    label: "Yarn 2",
+    userAgent: "yarn/2.0.0 npm/? node/v24.22.0 darwin arm64",
+    command: "yarn dlx create-vite-plus@latest vite:library",
+    launcher: "yarn",
+  },
+  {
+    label: "Bun",
+    userAgent: "bun/1.3.9 npm/? node/v24.3.0 darwin arm64",
+    command: "bunx create-vite-plus@latest vite:library",
+    launcher: "bun",
+  },
+  // Yarn 1 has no dlx command, so it falls back to npm.
+  {
+    label: "Yarn 1",
+    userAgent: "yarn/1.22.22 npm/? node/v26.13.1 darwin arm64",
+    command: "npm create vite-plus@latest -- vite:library",
+    launcher: undefined,
+  },
+  // A Yarn whose major version cannot be read could be Yarn 1.
+  {
+    label: "a Yarn without a version",
+    userAgent: "yarn npm/? node/v26.13.1 darwin arm64",
+    command: "npm create vite-plus@latest -- vite:library",
+    launcher: undefined,
+  },
+  {
+    label: "an unset user agent",
+    userAgent: undefined,
+    command: "npm create vite-plus@latest -- vite:library",
+    launcher: undefined,
+  },
+  {
+    label: "an empty user agent",
+    userAgent: "",
+    command: "npm create vite-plus@latest -- vite:library",
+    launcher: undefined,
+  },
+  {
+    label: "an unrecognized launcher",
+    userAgent: "deno/2.0.0",
+    command: "npm create vite-plus@latest -- vite:library",
+    launcher: undefined,
+  },
+];
+
+for (const { label, userAgent, command, launcher } of launcherCases) {
+  const packageManager = launcher ?? "npm";
+
+  test(`--new chooses the ${packageManager} runner when launched through ${label}`, async () => {
+    await using workspace = await createTemporaryWorkspace(`launcher-${packageManager}`);
+
+    const result = await runCli(
+      workspace,
+      ["--dry-run", "--new", "vite:library"],
+      userAgent === undefined ? {} : { npm_config_user_agent: userAgent },
+    );
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.match(result.stdout, new RegExp(`Command: ${RegExp.escape(command)}\n`));
+    assert.match(
+      result.stdout,
+      new RegExp(`Vite\\+ uses ${packageManager} as the project's package manager`),
+    );
+    assert.deepEqual(await readInvocations(workspace.log), []);
+  });
+}
+
+test("launchingPackageManager reads the name before the first / and Yarn's major version", () => {
+  for (const { userAgent, launcher } of launcherCases) {
+    assert.equal(launchingPackageManager(userAgent), launcher, String(userAgent));
+  }
+  // A value with no / is a name alone, as Vite+ reads it.
+  assert.equal(launchingPackageManager("pnpm"), "pnpm");
+  // The name must match exactly; a prefix, a suffix, or another case is another program.
+  assert.equal(launchingPackageManager("pnpmx/1.0.0"), undefined);
+  assert.equal(launchingPackageManager("PNPM/12.9.1"), undefined);
+  assert.equal(launchingPackageManager(" npm/11.20.0"), undefined);
+  // Only a leading major version counts, and a Corepack-style suffix does not hide it.
+  assert.equal(launchingPackageManager("yarn/10.0.0"), "yarn");
+  assert.equal(launchingPackageManager("yarn/4.0.0-rc.1 npm/?"), "yarn");
+  assert.equal(launchingPackageManager("yarn/4.6.0-core npm/?"), "yarn");
+  assert.equal(launchingPackageManager("yarn/v4.0.0"), undefined);
+  assert.equal(launchingPackageManager("yarn/4"), undefined);
+  assert.equal(launchingPackageManager("yarn/0.27.5"), undefined);
+});
+
+test("--new lets --package-manager before --new choose the runner over the launcher", async () => {
+  await using workspace = await createTemporaryWorkspace("launcher-explicit");
+
+  const result = await runCli(
+    workspace,
+    ["--dry-run", "--package-manager", "bun", "--new", "vite:library"],
+    { npm_config_user_agent: "pnpm/12.9.1 npm/? node/? darwin arm64" },
+  );
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.match(result.stdout, /Command: bunx create-vite-plus@latest vite:library\n/);
+  assert.match(result.stdout, /Vite\+ uses bun as the project's package manager/);
+});
+
+test("--new forwards every token unchanged to the launcher's runner and adds no --package-manager", async () => {
+  await using workspace = await createTemporaryWorkspace("launcher-forwarding");
+  const forwarded = ["vite:library", "--directory", "lib", "--", "--template", "vanilla-ts"];
+
+  const result = await runCli(workspace, ["--yes", "--new", ...forwarded], {
+    STUB_MODE: "scaffold",
+    npm_config_user_agent: "pnpm/12.9.1 npm/? node/? darwin arm64",
+  });
+  const invocations = await readInvocations(workspace.log);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(invocations.length, 1);
+  assert.equal(basename(invocations[0].runner), "pnpm");
+  assert.deepEqual(invocations[0].argv, ["dlx", "create-vite-plus@latest", ...forwarded]);
 });
 
 test("--new --yes scaffolds through the runner, verifies managed, and runs the bootstrap", async () => {
@@ -1026,6 +1172,8 @@ test("--new names the terminating signal when the runner is killed", async () =>
   try {
     await assert.rejects(
       newProject(parseArgs(["--yes", "--new", "vite:library"]), {
+        // No launcher, so the runner is npm whichever package manager runs these tests (#909).
+        env: {},
         spawnRunner: async (invocation) => {
           spawned.push(invocation);
           return { exitCode: null, signal: "SIGTERM" };
@@ -1070,8 +1218,9 @@ async function failedNewMessage(packageManager, exit, readYarnVersion = async ()
         "--new",
         "vite:library",
       ]),
-      // By default no version, so the Yarn hint does not depend on the yarn installed here (#911).
-      { spawnRunner: async () => exit, readYarnVersion },
+      // By default no version, so the Yarn hint does not depend on the yarn installed here (#911),
+      // and no launcher, so the default runner is npm whichever package manager runs these tests (#909).
+      { spawnRunner: async () => exit, readYarnVersion, env: {} },
     ).then(
       () => assert.fail("expected --new to fail"),
       (rejection) => rejection,
