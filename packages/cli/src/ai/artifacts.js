@@ -404,7 +404,9 @@ function stateAiArtifactForPath(state, path) {
  * Copies the files of a skill directory, the same files `hashDirectory` hashes, one at a time.
  * Not `fs.promises.cp`, because Yarn 2 and later serve Calavera from a zip archive, and Yarn's
  * Plug'n'Play `fs` patch does not cover `cp`: Node's directory copy then looks the zip path up on
- * the real file system and fails with ENOTDIR (#939).
+ * the real file system and fails with ENOTDIR (#939). A skill source holds no symbolic links to
+ * leave out: recipe sources are catalog entries, pacote's extract drops links from registry
+ * payloads, and the bundled skill holds regular files only.
  *
  * @param {string} source
  * @param {string} target

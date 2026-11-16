@@ -325,10 +325,20 @@ const AGENT_BOOTSTRAP_MCP_FILE = ".agents/calavera/mcp.md";
 const AGENT_BOOTSTRAP_MARKER = "<!-- calavera-agent-bootstrap -->";
 const AGENT_BOOTSTRAP_SECTION_START = "<!-- calavera-agent-bootstrap:start -->";
 const AGENT_BOOTSTRAP_SECTION_END = "<!-- calavera-agent-bootstrap:end -->";
-const AGENT_BOOTSTRAP_SKILL_RECIPE = {
+export const AGENT_BOOTSTRAP_SKILL_RECIPE = {
   ai: [{ type: "skill", src: "skills/calavera" }],
 };
 const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/", import.meta.url));
+
+/**
+ * The source of the bootstrap skill, by artifact ID: the copy bundled in this package unless a test
+ * passes the same files from elsewhere, such as a packed install in a Yarn zip (#939).
+ *
+ * @param {string} [skillPath]
+ */
+export function agentBootstrapSkillSources(skillPath = AGENT_BOOTSTRAP_SKILL_PATH) {
+  return new Map([["skill-calavera", skillPath]]);
+}
 // The agent prompt `--new` and `--init` print. The repository README's "Agent prompt" step is the
 // source of this text (#840); the published package ships a short README without it, so the text
 // lives here, and tests that read the README through scripts/readme-agent-prompt.mjs fail when
@@ -4175,7 +4185,7 @@ export async function agentBootstrap(options = {}) {
     AGENT_BOOTSTRAP_SKILL_RECIPE,
     { dryRun: bootstrapOptions.dryRun },
     previousState,
-    new Map([["skill-calavera", AGENT_BOOTSTRAP_SKILL_PATH]]),
+    agentBootstrapSkillSources(),
   );
   /** @type {Change[]} */
   const changes = [...aiResult.changes];

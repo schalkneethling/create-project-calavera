@@ -5,8 +5,9 @@
 // looked up the zip path on the real file system and failed.
 //
 // This test packs the CLI, stores the packed files in a zip laid out the way Yarn's cache stores a
-// package, and patches `fs` with the same zip file system layer Yarn's PnP runtime installs. It then
-// installs the bundled bootstrap skill from inside that zip. The test runs in its own process
+// package, and patches `fs` with a zip file system layer built like the one Yarn's PnP runtime
+// installs, from Yarn's published @yarnpkg/fslib and @yarnpkg/libzip packages. It then installs
+// the bootstrap skill from inside that zip, with the recipe and sources the bootstrap itself uses. The test runs in its own process
 // (`node --test` runs each file separately), so the patched `fs` does not reach other tests.
 import { execFile } from "node:child_process";
 import fs from "node:fs";
@@ -25,7 +26,6 @@ import { ZipFS, ZipOpenFS, getLibzipSync } from "@yarnpkg/libzip";
 const execFileAsync = promisify(execFile);
 const cliRoot = fileURLToPath(new URL("..", import.meta.url));
 const PACKAGE_IN_ZIP = "/node_modules/create-project-calavera";
-const BOOTSTRAP_SKILL = "src/bootstrap/calavera";
 
 /**
  * The paths of every file under `directory`, relative to it, read before `fs` is patched.
@@ -75,8 +75,8 @@ async function packIntoYarnStyleZip(workRoot, zipPath) {
 }
 
 /**
- * Patches `fs` with the zip file system layer Yarn's PnP runtime installs (`.pnp.cjs`): a
- * VirtualFS over a read-only ZipOpenFS over the real file system.
+ * Patches `fs` with a zip file system layer built like the one in Yarn 4's `.pnp.cjs`: a VirtualFS
+ * over a read-only ZipOpenFS over the real file system, wrapped in a PosixFS.
  */
 function patchFsLikeYarnPnp() {
   const zipOpenFs = new ZipOpenFS({
@@ -97,23 +97,29 @@ test("the bundled bootstrap skill installs from a packed CLI served from a Yarn 
   try {
     const zipPath = join(workRoot, "create-project-calavera-npm.zip");
     const unpacked = await packIntoYarnStyleZip(workRoot, zipPath);
-    const expectedFiles = await filesUnder(join(unpacked, BOOTSTRAP_SKILL));
-    assert.ok(expectedFiles.includes("SKILL.md"), "the packed CLI must bundle the bootstrap skill");
 
     const project = join(workRoot, "project");
     await mkdir(project);
     patchFsLikeYarnPnp();
-    // Imported after patching, so the module's own fs imports are the patched ones.
+    // Imported after patching, so the modules' own fs imports are the patched ones.
+    const { AGENT_BOOTSTRAP_SKILL_RECIPE, agentBootstrapSkillSources } =
+      await import("../src/index.js");
     const { buildAiApplyResult } = await import("../src/ai/artifacts.js");
     const { createEmptyState } = await import("../src/state.js");
 
+    // The bundled skill's place in the package, as the bootstrap finds it from its own module.
+    const [[artifactId, bundledSkill]] = agentBootstrapSkillSources();
+    const bootstrapSkill = relative(cliRoot, bundledSkill);
+    const expectedFiles = await filesUnder(join(unpacked, bootstrapSkill));
+    assert.ok(expectedFiles.includes("SKILL.md"), "the packed CLI must bundle the bootstrap skill");
+
     process.chdir(project);
-    const skillInZip = `${zipPath}${PACKAGE_IN_ZIP}/${BOOTSTRAP_SKILL}/`;
+    const skillInZip = `${zipPath}${PACKAGE_IN_ZIP}/${bootstrapSkill}/`;
     const result = await buildAiApplyResult(
-      { ai: [{ type: "skill", src: "skills/calavera" }] },
+      AGENT_BOOTSTRAP_SKILL_RECIPE,
       { dryRun: false },
       createEmptyState(),
-      new Map([["skill-calavera", skillInZip]]),
+      new Map([[artifactId, skillInZip]]),
     );
 
     const installed = result.artifacts.find(({ type }) => type === "skill");
@@ -123,7 +129,7 @@ test("the bundled bootstrap skill installs from a packed CLI served from a Yarn 
     for (const file of expectedFiles) {
       assert.deepEqual(
         await readFile(join(installPath, file)),
-        await readFile(join(unpacked, BOOTSTRAP_SKILL, file)),
+        await readFile(join(unpacked, bootstrapSkill, file)),
         file,
       );
     }
