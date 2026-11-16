@@ -54,21 +54,36 @@ test("listIntegrationOptions exposes summary and homepage and prefixes the descr
 });
 
 // #228: an agent picks integrations from list_integrations alone, so each summary must say what
-// that tool does. The generated description already carries the label, category, and status, so
-// a summary that repeats them, or one shared with another integration, tells the agent nothing.
-test("list_integrations returns a distinct summary per integration that is not the generated template", async () => {
-  const response = await callMcpTool("list_integrations");
-  const integrations = /** @type {Array<Record<string, string>>} */ (response.integrations);
+// that tool does. The generated description already carries the label, category, and status, so a
+// summary that only rewords them, or one shared with another integration, tells the agent nothing.
+// Removing those words, the ID, and filler words leaves 6 or more content words in every current
+// summary, and none in a sentence such as "Knip is an optional integration in the Unused code group."
+const SUMMARY_FILLER_WORDS = ["a", "an", "and", "the", "is", "in", "of", "for", "to", "with"];
+const SUMMARY_TEMPLATE_WORDS = ["integration", "group", "category", "status", "tool"];
+const SUMMARY_MIN_CONTENT_WORDS = 5;
+
+function summaryWords(text) {
+  return (text.toLowerCase().match(/[a-z0-9@/.-]+/g) ?? []).map((word) => word.replace(/\.$/, ""));
+}
+
+test("list_integrations returns a distinct summary per integration that says more than the generated template", async () => {
+  const { integrations } = await callMcpTool("list_integrations");
   const summaries = integrations.map(({ summary }) => summary);
 
   assert.equal(integrations.length, integrationCatalog.length);
   assert.equal(new Set(summaries).size, summaries.length, "summaries must be distinct");
   for (const { id, label, group, status, summary } of integrations) {
-    assert.doesNotMatch(summary, /Category:|Status:/, `${id} summary must not be templated`);
-    assert.notEqual(summary, `${label}.`, `${id} summary must not be its label alone`);
-    assert.notEqual(summary, `${group}.`, `${id} summary must not be its group alone`);
-    assert.notEqual(summary, `${status}.`, `${id} summary must not be its status alone`);
-    assert.ok(summary.split(/\s+/).length >= 8, `${id} summary must be a full sentence`);
+    const templateWords = new Set([
+      ...summaryWords(`${id} ${label} ${group} ${status}`),
+      ...SUMMARY_FILLER_WORDS,
+      ...SUMMARY_TEMPLATE_WORDS,
+    ]);
+    const contentWords = summaryWords(summary).filter((word) => !templateWords.has(word));
+
+    assert.ok(
+      contentWords.length >= SUMMARY_MIN_CONTENT_WORDS,
+      `${id} summary must have at least ${SUMMARY_MIN_CONTENT_WORDS} words beyond its ID, label, group, and status; found: ${contentWords.join(" ")}`,
+    );
   }
 
   const knip = integrations.find(({ id }) => id === "knip");
@@ -77,7 +92,8 @@ test("list_integrations returns a distinct summary per integration that is not t
 
 // #228: the summaries are additive. Agents and saved recipes depend on the existing IDs, labels,
 // groups, and statuses, so a change to any of them must be deliberate. A new integration does not
-// need an entry here.
+// need an entry here; a pull request that removes an integration deletes its entry. Order is not
+// pinned, because the acceptance criteria name the grouping, not the order.
 test("list_integrations keeps the existing IDs, labels, groups, and statuses", async () => {
   const expected = [
     ["editorconfig", "EditorConfig", "Project consistency", "recommended"],
@@ -106,8 +122,7 @@ test("list_integrations keeps the existing IDs, labels, groups, and statuses", a
       "experimental",
     ],
   ];
-  const response = await callMcpTool("list_integrations");
-  const integrations = /** @type {Array<Record<string, string>>} */ (response.integrations);
+  const { integrations } = await callMcpTool("list_integrations");
 
   for (const [id, label, group, status] of expected) {
     const integration = integrations.find((candidate) => candidate.id === id);
