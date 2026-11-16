@@ -53,6 +53,71 @@ test("listIntegrationOptions exposes summary and homepage and prefixes the descr
   }
 });
 
+// #228: an agent picks integrations from list_integrations alone, so each summary must say what
+// that tool does. The generated description already carries the label, category, and status, so
+// a summary that repeats them, or one shared with another integration, tells the agent nothing.
+test("list_integrations returns a distinct summary per integration that is not the generated template", async () => {
+  const response = await callMcpTool("list_integrations");
+  const integrations = /** @type {Array<Record<string, string>>} */ (response.integrations);
+  const summaries = integrations.map(({ summary }) => summary);
+
+  assert.equal(integrations.length, integrationCatalog.length);
+  assert.equal(new Set(summaries).size, summaries.length, "summaries must be distinct");
+  for (const { id, label, group, status, summary } of integrations) {
+    assert.doesNotMatch(summary, /Category:|Status:/, `${id} summary must not be templated`);
+    assert.notEqual(summary, `${label}.`, `${id} summary must not be its label alone`);
+    assert.notEqual(summary, `${group}.`, `${id} summary must not be its group alone`);
+    assert.notEqual(summary, `${status}.`, `${id} summary must not be its status alone`);
+    assert.ok(summary.split(/\s+/).length >= 8, `${id} summary must be a full sentence`);
+  }
+
+  const knip = integrations.find(({ id }) => id === "knip");
+  assert.match(knip?.summary ?? "", /unused dependencies, exports, and files/);
+});
+
+// #228: the summaries are additive. Agents and saved recipes depend on the existing IDs, labels,
+// groups, and statuses, so a change to any of them must be deliberate. A new integration does not
+// need an entry here.
+test("list_integrations keeps the existing IDs, labels, groups, and statuses", async () => {
+  const expected = [
+    ["editorconfig", "EditorConfig", "Project consistency", "recommended"],
+    ["knip", "Knip", "Unused code", "optional"],
+    ["html-validate", "HTML Validate", "HTML", "optional"],
+    ["varlock", "Varlock", "Environment variables", "optional"],
+    [
+      "github-repository-controls",
+      "GitHub repository controls",
+      "Repository governance",
+      "optional",
+    ],
+    ["stryker", "Stryker mutation testing", "Mutation testing", "optional"],
+    ["react-doctor", "React Doctor", "React best practices", "framework-specific"],
+    ["stylelint", "Stylelint", "CSS linting", "recommended"],
+    ["stylelint-standard", "Stylelint standard config", "CSS linting", "recommended"],
+    ["stylelint-order", "CSS property ordering", "CSS property ordering", "optional"],
+    ["stylelint-baseline", "CSS Baseline", "CSS Baseline", "recommended"],
+    ["stylelint-scss", "SCSS support", "CSS linting", "framework-specific"],
+    ["stylelint-stylistic", "Stylelint stylistic rules", "CSS linting", "optional"],
+    ["stylelint-logical-css", "Logical CSS", "CSS logical properties", "optional"],
+    [
+      "css-property-type-validator",
+      "CSS property type validation",
+      "CSS property type validation",
+      "experimental",
+    ],
+  ];
+  const response = await callMcpTool("list_integrations");
+  const integrations = /** @type {Array<Record<string, string>>} */ (response.integrations);
+
+  for (const [id, label, group, status] of expected) {
+    const integration = integrations.find((candidate) => candidate.id === id);
+    assert.deepEqual(
+      [integration?.id, integration?.label, integration?.group, integration?.status],
+      [id, label, group, status],
+    );
+  }
+});
+
 test("describe_integration for varlock returns summary and homepage", async () => {
   const response = await callMcpTool("describe_integration", { id: "varlock" });
 
