@@ -253,10 +253,11 @@ When `lint:html` is the only script `quality` would run, Calavera does not
 generate `quality`. Apply removes an existing `quality` script only when
 `.calavera/state.json` records that Calavera wrote that exact value, and keeps
 any other value as your own, even `npm run lint:html`, which an earlier release
-wrote. The dry run shows which one applies. In a project Vite+ does not manage, Calavera also
-does not generate `quality` when one other script is left, because `quality`
-would only repeat it; see [Vite+ And Delta Workflows](#vite-and-delta-workflows) for what happens to an existing
-`quality` then.
+wrote. The dry run shows which one applies. In a project Vite+ does not manage,
+Calavera also does not generate `quality` when one other script is left,
+because `quality` would only repeat it; see
+[Vite+ And Delta Workflows](#vite-and-delta-workflows) for what happens to an
+existing `quality` then.
 
 Validate the rendered HTML in your tests instead, with the `HtmlValidate` class
 from the [HTML Validate API](https://html-validate.org/dev/using-api.html), and

@@ -1038,3 +1038,42 @@ for (const lint of ["eslint .", "oxlint . && eslint ."]) {
     });
   });
 }
+
+// #937: in a managed project, the quality a release before #644 wrote when
+// lint:html was the only Calavera script, with the Vite+ steps, is kept like
+// any value the state does not record, and named when the state predates the record.
+const htmlOnlyQualityOff = buildRecipe("minimal", ["html-validate"], "npm", [], {
+  "html-validate": { quality: false },
+});
+const managedHtmlQuality = "vp check && vp test --passWithNoTests && npm run lint:html";
+const htmlOnlyKeptReason = `quality was requested, but integrationOptions["html-validate"].quality leaves out lint:html, the only generated script quality would run, so Calavera does not generate quality. package.json keeps its quality script, "${managedHtmlQuality}", because Calavera cannot show that it wrote that value.`;
+
+/** @param {{ omittedScripts?: Array<{ script: string, reason: string }> }} change */
+function qualityOmissionReason(change) {
+  return change.omittedScripts?.find(({ script }) => script === "quality")?.reason;
+}
+
+test("a first apply to a managed project keeps its own quality with the Vite+ steps and lint:html, and says so", async () => {
+  const change = await plannedPackageChange(
+    { "package.json": managedManifest({ scripts: { quality: managedHtmlQuality } }) },
+    htmlOnlyQualityOff,
+  );
+
+  assert.equal(change.removedQualityScript, undefined);
+  assert.equal(qualityOmissionReason(change), htmlOnlyKeptReason);
+});
+
+test("a managed project whose state predates the quality record keeps the Vite+ lint:html quality and names the match", async () => {
+  await using fixture = await createTemporaryFixture("quality", {
+    "package.json": managedManifest(),
+  });
+  await writeVitePlusFormatter(fixture.root);
+  await applyAsAnEarlierRelease(fixture.root, htmlOnlyQualityOff, { quality: managedHtmlQuality });
+
+  const change = await inDirectory(fixture.root, async () =>
+    packageChange((await applyRecipeObject(htmlOnlyQualityOff, dryRunOptions)).changes),
+  );
+
+  assert.equal(change.removedQualityScript, undefined);
+  assert.equal(qualityOmissionReason(change), `${htmlOnlyKeptReason}${earlierAliasNote}`);
+});
