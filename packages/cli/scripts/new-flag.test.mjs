@@ -31,6 +31,10 @@ import {
   vitePlusConfig,
 } from "./vite-plus-fixtures.mjs";
 
+// These tests match the CLI's error output without the debug switch from #663, also when a
+// developer has CALAVERA_DEBUG set in their shell; the CLI child processes inherit this environment.
+delete process.env.CALAVERA_DEBUG;
+
 const binPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const fixturesUrl = pathToFileURL(
   fileURLToPath(new URL("./vite-plus-fixtures.mjs", import.meta.url)),

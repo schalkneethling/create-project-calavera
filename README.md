@@ -762,6 +762,25 @@ approves the proposed recipe and dry-run result.
 - `--yes`
 - `--json`
 
+## Debugging Errors
+
+When Calavera stops with an error, it prints the error and each cause under it, with secrets
+redacted. To also see the stack frames of each error in the chain, set the `CALAVERA_DEBUG`
+environment variable to `1` or `true`. The CLI then prints the frames after each error, and the MCP
+server adds a `stack` field to each error in a tool's error result. The frames are redacted with the
+same rules as the messages. An error that carries no frames, such as many file system errors from
+Node.js, prints no stack.
+
+```bash
+CALAVERA_DEBUG=1 npx create-project-calavera@<version> apply
+```
+
+The switch is an environment variable, not a flag, so that it can also reach the MCP server that an
+agent client starts. A client does not always pass the variables of your shell to the server, so set
+`CALAVERA_DEBUG` in the `env` field of the server's entry in the client's MCP configuration.
+With the switch on, a cause whose text repeats an earlier message is kept with an empty message, so
+that its stack is still shown.
+
 ## Vite+ And Delta Workflows
 
 Calavera keeps generated package scripts as ordinary tool commands. It can add
