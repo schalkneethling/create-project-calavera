@@ -32,7 +32,8 @@ import {
 } from "./recipe.js";
 import { describeArtifactInputs } from "./ai/artifact-inputs.js";
 import { describeIntegrationInputs } from "./integration-inputs.js";
-import { assertPlainObject, assertStringArray } from "./utils/assertions.js";
+import { manifestChoices, pathAtAncestor } from "./manifest-decision.js";
+import { assertKnownValue, assertPlainObject, assertStringArray } from "./utils/assertions.js";
 import { errorChain } from "./utils/error-chain.js";
 import { redactSecrets } from "./utils/redact.js";
 import { assertWorkspacePath } from "./utils/fs.js";
@@ -41,6 +42,7 @@ import { assertWorkspacePath } from "./utils/fs.js";
  * @typedef {import("./index.js").PackageManager} PackageManager
  * @typedef {import("./index.js").Recipe} Recipe
  * @typedef {import("./artifact-lifecycle.js").ArtifactServices} ArtifactServices
+ * @typedef {import("./manifest-decision.js").ManifestChoice} ManifestChoice
  */
 
 const SERVER_NAME = "create-project-calavera";
@@ -64,6 +66,10 @@ const profileSchema = z.enum(profileIds, {
 });
 const packageManagerIds = packageManagerIdsForRecipe();
 const recipeSchema = z.record(z.string(), z.unknown()).describe("A Calavera recipe object.");
+const manifestChoiceSchema = z
+  .enum(manifestChoices)
+  .optional()
+  .describe(recipeToolInputDescriptions.manifestChoice);
 const reownManagedFilesSchema = z
   .array(z.string())
   .optional()
@@ -274,6 +280,7 @@ const toolConfigs = {
         .describe(recipeToolInputDescriptions.config),
       writeConfig: z.boolean().default(true).describe(recipeToolInputDescriptions.writeConfig),
       reownManagedFiles: reownManagedFilesSchema,
+      manifestChoice: manifestChoiceSchema,
     },
     annotations: toolAnnotations.read,
   },
@@ -292,6 +299,7 @@ const toolConfigs = {
       writeConfig: z.boolean().default(true).describe(recipeToolInputDescriptions.writeConfig),
       noInstall: z.boolean().default(false).describe(recipeToolInputDescriptions.noInstall),
       reownManagedFiles: reownManagedFilesSchema,
+      manifestChoice: manifestChoiceSchema,
     },
     annotations: toolAnnotations.apply,
   },
@@ -327,6 +335,19 @@ function optionalReownManagedFiles(value) {
 
   assertStringArray("reownManagedFiles", value);
   return value;
+}
+
+/**
+ * @param {unknown} value
+ * @returns {ManifestChoice | undefined}
+ */
+function optionalManifestChoice(value) {
+  if (value === undefined) {
+    return undefined;
+  }
+
+  assertKnownValue("manifestChoice", value, [...manifestChoices]);
+  return /** @type {ManifestChoice} */ (value);
 }
 
 /**
@@ -445,6 +466,7 @@ async function dryRunApplyTool(args, artifactServices) {
         assumeYes: true,
         packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
         reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
+        manifestChoice: optionalManifestChoice(args.manifestChoice),
         config: await projectConfigPath(args.config),
         writeConfig,
       },
@@ -463,24 +485,36 @@ async function applyRecipeTool(args, artifactServices) {
   const config = await projectConfigPath(args.config);
   const writeConfig = args.writeConfig !== false;
 
+  const result = await applyRecipeObject(
+    recipe,
+    {
+      dryRun: false,
+      json: true,
+      noInstall: Boolean(args.noInstall),
+      assumeYes: true,
+      packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
+      reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
+      manifestChoice: optionalManifestChoice(args.manifestChoice),
+      config,
+      writeConfig,
+    },
+    artifactServices,
+  );
+  // #430: abandon writes nothing, and apply-at-ancestor writes the recipe in the ancestor's
+  // directory.
+  const decision = result.manifestDecision;
+  const configWritten =
+    !writeConfig || decision?.choice === "abandon"
+      ? null
+      : decision?.choice === "apply-at-ancestor"
+        ? pathAtAncestor(decision, config)
+        : config;
+
   return {
     approvalBoundary:
       "apply_recipe is intended for use only after explicit user approval of dry_run_apply output.",
-    configWritten: writeConfig ? config : null,
-    result: await applyRecipeObject(
-      recipe,
-      {
-        dryRun: false,
-        json: true,
-        noInstall: Boolean(args.noInstall),
-        assumeYes: true,
-        packageManager: /** @type {PackageManager | undefined} */ (args.packageManager),
-        reownManagedFiles: optionalReownManagedFiles(args.reownManagedFiles),
-        config,
-        writeConfig,
-      },
-      artifactServices,
-    ),
+    configWritten,
+    result,
   };
 }
 
@@ -577,13 +611,23 @@ export function createMcpServer() {
     },
   );
 
+  // Tools read the project from the working directory, and apply-at-ancestor changes it while it
+  // runs (#430), so this server runs one tool call at a time: a call made in parallel would
+  // otherwise inspect or apply in the wrong directory.
+  /** @type {Promise<unknown>} */
+  let previousCall = Promise.resolve();
+
   for (const [name, config] of Object.entries(toolConfigs)) {
-    server.registerTool(name, config, async (input) => {
-      try {
-        return toolResult(await callMcpTool(name, input));
-      } catch (error) {
-        return toolErrorResult(error);
-      }
+    server.registerTool(name, config, (input) => {
+      const call = previousCall.then(async () => {
+        try {
+          return toolResult(await callMcpTool(name, input));
+        } catch (error) {
+          return toolErrorResult(error);
+        }
+      });
+      previousCall = call;
+      return call;
     });
   }
 
