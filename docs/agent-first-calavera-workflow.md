@@ -253,7 +253,8 @@ hold a partial scaffold that belongs to Vite+.
 
 After the bootstrap, Calavera prints a summary in labeled groups separated by
 blank lines. "Changes" lists each file the bootstrap wrote, updated, or skipped,
-once. "Notes" says where installed skills live and what you still need to do by
+once. The Calavera skill and `.coderabbit.yaml` are not listed when they are
+already up to date. "Notes" says where installed skills live and what you still need to do by
 hand, such as merging `AGENTS.calavera.md` or setting up MCP from
 `.agents/calavera/mcp.md`. "Next prompt" is followed by the agent prompt alone on
 one line between blank lines, so you can copy all of it into your agent as one

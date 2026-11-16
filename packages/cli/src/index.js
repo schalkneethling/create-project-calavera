@@ -3730,9 +3730,11 @@ async function writeAgentBootstrapMcpConfig(
     return {
       harness,
       action: "manual",
-      reason: `Could not write project MCP config at ${path}: ${
-        error instanceof Error ? error.message : String(error)
-      }. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+      // The error's own trailing period is dropped so the sentence ends once.
+      reason: `Could not write project MCP config at ${path}: ${(error instanceof Error
+        ? error.message
+        : String(error)
+      ).replace(/\.$/, "")}. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
     };
   }
 
@@ -4006,9 +4008,11 @@ export async function agentBootstrap(options = {}) {
   }
 
   // #601: the pointers carry only what the list of changes does not already say, so the summary
-  // names each file once. A file that was written, updated, or skipped is in `changes`.
+  // names each file once. A file that was written, updated, or skipped is in `changes`. A
+  // fallback file that was left unchanged does not hold the current guidance, so it gets no merge
+  // note; its skip line says why.
   const wroteFallbackGuidance = changes.some(
-    (change) => change.path === AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+    (change) => change.path === AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE && change.type !== "skip",
   );
 
   if (!bootstrapOptions.dryRun) {
@@ -4031,7 +4035,8 @@ export async function agentBootstrap(options = {}) {
             `Merge ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
           ]
         : []),
-      ...(mcp.action === "manual" && mcp.reason ? [mcp.reason] : []),
+      // Only a manual MCP setup carries a reason.
+      ...(mcp.reason ? [mcp.reason] : []),
     ],
     nextPrompt: AGENT_BOOTSTRAP_NEXT_PROMPT,
     nextSteps: recipeNextSteps(process.cwd(), packageManager, { changeDirectory: false }),

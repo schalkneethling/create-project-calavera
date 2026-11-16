@@ -371,3 +371,36 @@ test("--init names a skipped AGENTS.md once and says to merge the fallback guida
     );
   });
 });
+
+test("--init names an MCP config it could not write once, in a note with one period (#601)", async () => {
+  await withTempProject(async () => {
+    await writeFile(".mcp.json", JSON.stringify({ mcpServers: 3 }));
+
+    const result = await agentBootstrap({ mcpHarness: "claude-code" });
+    const mcpNote = result.pointers.find((pointer) => pointer.startsWith("Could not write"));
+
+    assert.equal(result.mcp.action, "manual");
+    assert.ok(mcpNote, JSON.stringify(result.pointers));
+    assert.equal(
+      mcpNote,
+      "Could not write project MCP config at .mcp.json: .mcp.json mcpServers must be an object. Follow .agents/calavera/mcp.md for manual setup.",
+    );
+    assert.equal(result.changes.filter((change) => change.path === ".mcp.json").length, 0);
+  });
+});
+
+test("--init does not ask for a merge of fallback guidance it left unchanged (#601)", async () => {
+  await withTempProject(async () => {
+    await writeFile("AGENTS.md", "# Existing project guidance\n");
+    await writeFile("AGENTS.calavera.md", "# My own edits\n");
+
+    const result = await agentBootstrap({ agentsMd: "fallback", mcpHarness: "skip" });
+
+    assert.ok(
+      result.changes.some(
+        (change) => change.type === "skip" && change.path === "AGENTS.calavera.md",
+      ),
+    );
+    assert.ok(!result.pointers.some((pointer) => pointer.includes("AGENTS.calavera.md")));
+  });
+});
