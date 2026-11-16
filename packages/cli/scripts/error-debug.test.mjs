@@ -107,6 +107,18 @@ test("with CALAVERA_DEBUG, a stack is redacted and has its terminal control sequ
   );
 });
 
+test("with CALAVERA_DEBUG, a secret value that spans lines of a stack is redacted whole", () => {
+  const privateKey = "line-one-of-the-key\nline-two-of-the-key";
+  const error = new Error("Could not sign.");
+  error.stack = `Error: Could not sign.\n    at sign (${privateKey})\n    at main (file:///a.js:1:1)`;
+
+  const [entry] = errorChain(error, { CALAVERA_DEBUG: "1", SIGNING_PRIVATE_KEY: privateKey });
+
+  assert.ok(!entry.stack?.includes("line-one-of-the-key"), entry.stack);
+  assert.ok(!entry.stack?.includes("line-two-of-the-key"), entry.stack);
+  assert.equal(entry.stack, "    at sign ([redacted])\n    at main (file:///a.js:1:1)");
+});
+
 test("with CALAVERA_DEBUG, a multi-line message is not repeated as stack frames", () => {
   const error = new TypeError("first line\n    at looks like a frame\nlast line");
 
@@ -119,7 +131,8 @@ test("with CALAVERA_DEBUG, a multi-line message is not repeated as stack frames"
 });
 
 test("with CALAVERA_DEBUG, frames are only lines that start with at, even when the header cannot be found", () => {
-  // The message changed after V8 wrote the header, so the header is found by its shape alone.
+  // The stack was read, which makes V8 write the header, before the message changed, so the
+  // header is found by its shape alone.
   // The new message is 14 characters long, so cutting the stack at that offset would start in
   // the middle of the header, at " at step 3".
   const renamed = errorWithFrames("failed at step 3", ["run (file:///a.js:1:1)"]);
@@ -242,8 +255,9 @@ test("the CLI prints redacted stacks for its top-level error only with CALAVERA_
   const directory = await mkdtemp(join(tmpdir(), "calavera-error-debug-cli-"));
 
   try {
-    // The config path holds a secret-shaped segment, so the ENOENT message and its stack would
-    // show it unredacted.
+    // The config path holds a secret-shaped segment, which the ENOENT message shows. The file
+    // system error carries no frames of its own, so this test shows that the CLI honors the
+    // switch and that redaction still applies; the unit tests above cover secrets in a stack.
     const missing = join(directory, githubToken, "missing.json");
     const args = ["--yes", "--config", missing, "--new", "vite"];
 

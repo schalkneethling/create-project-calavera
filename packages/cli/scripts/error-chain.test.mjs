@@ -21,6 +21,10 @@ import { buildRecipe } from "../src/recipe.js";
 import { errorChain, formatErrorChain } from "../src/utils/error-chain.js";
 import { json, libraryManifest, vitePlusConfig } from "./vite-plus-fixtures.mjs";
 
+// These tests expect the output without the debug switch from #663, also when a developer
+// has CALAVERA_DEBUG set in their shell; the CLI child processes inherit this environment.
+delete process.env.CALAVERA_DEBUG;
+
 const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.meta.url));
 

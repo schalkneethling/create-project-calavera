@@ -109,16 +109,21 @@ function ownText(value) {
 }
 
 /**
- * The call-site lines of a value's stack, without the header line or lines
- * that repeat its name and message, or undefined when it has none. V8 writes
- * the header when the error is created, so the frames are taken from after
- * the first occurrence of the message, which keeps a message line that looks
- * like a frame out of them.
+ * The call-site lines of a value's stack, redacted, without the header line or
+ * lines that repeat its name and message, or undefined when it has none. The
+ * frames are taken from after the first occurrence of the message, which keeps
+ * a message line that looks like a frame out of them. V8 writes the header the
+ * first time `stack` is read, so a message changed after that read no longer
+ * occurs in it; then only the frame shape tells the header from the frames.
+ *
+ * The text is redacted before it is split into lines, as a message is, so that
+ * a secret value spanning several lines is still found.
  *
  * @param {unknown} value
+ * @param {(text: string) => string} redact
  * @returns {string[] | undefined}
  */
-function stackFrames(value) {
+function stackFrames(value, redact) {
   const stack = readProperty(value, "stack");
   if (typeof stack !== "string") return undefined;
 
@@ -128,7 +133,7 @@ function stackFrames(value) {
     messageIndex === -1
       ? stack
       : stack.slice(messageIndex + /** @type {string} */ (message).length);
-  const frames = afterHeader
+  const frames = redact(afterHeader)
     .split("\n")
     .map((line) => line.trimEnd())
     .filter((line) => STACK_FRAME.test(line));
@@ -229,7 +234,7 @@ export function errorChain(error, env = process.env) {
 
     const name = readProperty(value, "name");
     const code = readProperty(value, "code");
-    const frames = debug ? stackFrames(value) : undefined;
+    const frames = debug ? stackFrames(value, redact) : undefined;
     // A cause with an empty message of its own is still shown, by its name.
     if (
       isError ||
@@ -241,7 +246,7 @@ export function errorChain(error, env = process.env) {
         ...(typeof name === "string" && name ? { name: redact(name) } : {}),
         message: (isError ? lines : lines.map(truncateFailureLine)).join("\n"),
         ...(typeof code === "string" && code ? { code: redact(code) } : {}),
-        ...(frames ? { stack: frames.map(redact).join("\n") } : {}),
+        ...(frames ? { stack: frames.join("\n") } : {}),
       });
     }
 
