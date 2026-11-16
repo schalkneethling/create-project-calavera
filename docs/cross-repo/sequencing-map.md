@@ -1,7 +1,7 @@
 # Cross-Repo Sequencing Map: css-evolve and Calavera
 
 **Status:** Draft 1, 9 September 2026. Owner: Schalk Neethling. Both agents read this at the start of every session and update the status column when a handoff is delivered or consumed.
-**Revised:** 7 November 2026, when handoff H0 was delivered and Section 0 was reset for the next increment; 13 November 2026, when Section 0 recorded what 6.2.0 shipped and the owner's choice of issues for the next release; 14 November 2026, when Section 0 recorded the `cli-experience` release's name, goal, exit condition, decisions, and waves.
+**Revised:** 7 November 2026, when handoff H0 was delivered and Section 0 was reset for the next increment; 13 November 2026, when Section 0 recorded what 6.2.0 shipped and the owner's choice of issues for the next release; 14 November 2026, when Section 0 recorded the `cli-experience` release's name, goal, exit condition, decisions, and waves; 16 November 2026, when Section 0 recorded wave 1 and placed the issues the owner added to the release.
 **Purpose:** One timeline with every point where one project delivers a frozen surface the other consumes, so neither agent starts work that is blocked and neither invents the other side's API.
 
 ---
@@ -30,7 +30,9 @@ The owner asked on 2026-11-14 for the rehearsal to be automated, deterministic, 
 
 - Shipped in `create-project-calavera` 6.2.0 on 12 November 2026: the Stryker integration work (#733, #734, #735, #736, #880, and #890), #846 with #844, and the list the owner approved on 2026-11-07 outside the increment plan (#829, #795 item 1, #830, #792, #790, #784, and #837). #795 stays open for items 2 to 6 and for the pnpm workspace install failure reported in its comments.
 - #676 is decided ("follow the launcher") and recorded in the ADR-0010 amendment (#910). #909 implements it. #911 merged through #912.
-- #740 is no longer blocked: Vite+ 1.4.0 (23 October 2026) is the first release that contains voidzero-dev/vite-plus#3181. Recommendation, not an owner decision: run the #740 probe before #909 and include Yarn 1, because moving the Yarn runner to `yarn create vite-plus` may change what #909 needs for Yarn 1. Any Yarn 1 change that follows needs its own issue, because #911 is closed.
+- #740 ran its probe before #909, as recommended, and merged through #931: the pnpm and Yarn runners now spawn `pnpm dlx create-vite-plus@latest` and `yarn dlx create-vite-plus@latest`. The probe showed that Yarn 1 still needs #909's fallback to npm when Yarn 1 is installed without Corepack; the details are on #740 and #909, and in ADR-0010.
+- Shipped in `create-project-calavera` 6.2.1 on 15 November 2026: the Yarn 1 hint from #911.
+- **Wave 1 delivered** (merged 2026-11-15 and 2026-11-16): #432 (#929), #839 (#924), #840 (#930), #458 (#927), #740 (#931), #230 (#928), and #918 (#938).
 - #671 waits on #689 only, because #688 is closed.
 
 **Owner decisions of 2026-11-14,** each recorded on its issue:
@@ -48,17 +50,24 @@ The owner asked on 2026-11-14 for the rehearsal to be automated, deterministic, 
 - #247: split across the output issues, then closed with an inventory of what remains, or moved out.
 - #354: kept, in wave 5, the last work wave, as a document only.
 
+**Owner decisions of 2026-11-15 and 2026-11-16,** each recorded on its issue:
+
+- #918: every rehearsal check is required from the start, with no "pending" state, because the Version Packages pull request is merged only when the release is ready. The pinned rehearsal is a gate in `pnpm release:prepare` and `pnpm release:publish`; the ruleset for `main` and `publish.yml` do not change.
+- #230: apply removes an existing `quality` script only when `.calavera/state.json` records that Calavera wrote exactly that value. Aliases from 6.2.1 and earlier have no record, so they are kept and reported.
+- The owner added the follow-ups found during wave 1 to the release; their places are in the waves table.
+
 **Order of work** (planned with the owner on 2026-11-14; the owner chose one wave at a time)**:** six workstreams, grouped by the code they touch, because nearly every issue edits `packages/cli/src/index.js`. Within a workstream, issues run one after another; the workstreams run side by side. The owner chose to run one wave at a time: a wave ends when its pull requests merge, every open worktree rebases on `main`, and the owner hears the result before the next wave starts.
 
-| Wave | A. Runner | B. Output                                             | C. Footprint | D. Catalog, MCP, and Composer | E. Detection | F. Standalone |
-| ---- | --------- | ----------------------------------------------------- | ------------ | ----------------------------- | ------------ | ------------- |
-| 1    | #740      | #840                                                  | #458         | #839                          | #432         | #230, #918    |
-| 2    | #909      | #601                                                  | #841         | #228                          | #430         | #663          |
-| 3    | #689      | #602                                                  | #838         | #580                          | —            | #398          |
-| 4    | #671      | #617                                                  | #678 ADR     | #232                          | —            | #603          |
-| 5    | —         | #331, #675 (ADR first), then #247 closed or moved out | #678         | —                             | #431         | #354          |
+| Wave    | A. Runner  | B. Output                                             | C. Footprint | D. Catalog, MCP, and Composer | E. Detection | F. Standalone |
+| ------- | ---------- | ----------------------------------------------------- | ------------ | ----------------------------- | ------------ | ------------- |
+| 1       | #740       | #840                                                  | #458         | #839                          | #432         | #230, #918    |
+| 2       | #909       | #601                                                  | #841, #937   | #228, #933                    | #430         | #663, #939    |
+| 3       | #689, #936 | #602                                                  | #838, #925   | #580                          | #926         | #398, #940    |
+| 4       | #671       | #617                                                  | #678 ADR     | #232                          | #935         | #603          |
+| 5       | —          | #331, #675 (ADR first), then #247 closed or moved out | #678         | —                             | #431         | #354          |
+| After 5 | —          | #934                                                  | —            | —                             | —            | —             |
 
-#918 starts in wave 1, because the exit rehearsal depends on it and it touches no CLI code. #232 follows #580 in column D because both change the Composer. When wave 5 has merged, the #918 rehearsal runs on the release candidate as the evidence for the exit condition, and the release follows.
+Wave 1 is delivered. #936 follows #909 because both change the Yarn runner's failure handling. #925 needs an owner decision on whether `doctor` checks the repository-controls files before work starts. #935 must merge before #934. #934 runs after wave 5, once the Version Packages pull request is open and the next version is known, and merges before it. #232 follows #580 in column D because both change the Composer. When wave 5 has merged, the #918 rehearsal runs on the release candidate as the evidence for the exit condition, and the release follows.
 
 **Explicitly not now:** #914 (Lighthouse) and #915 (Mergiraf) go to a later release (owner decision, 2026-11-14). Issues without the label stay out, including #673, #737 (blocked on stryker-mutator/stryker-js#6111), #746, #842, and #843.
 
