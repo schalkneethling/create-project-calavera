@@ -119,6 +119,6 @@ The cache is not an integration, but the block works exactly as Decisions 2 to 5
 - The record goes into `gitignoreBlocks` with `artifact-cache` in the `integration` field. The field keeps its name, because renaming it would change the state file every applied project holds. The Alternatives section noted that an artifact id and an integration id can be equal, so artifacts would need their own record key. That does not apply here, because `artifact-cache` names Calavera's cache, not an artifact, and a test fails if a catalog integration takes that id.
 - When apply adds the block, it adds a pointer that says the folder is a local download cache that does not belong in Git, and that `.calavera/artifacts.lock.json` and `.calavera/packages/` are the files to commit. When the block is removed, the dry run says it is removed because the recipe selects no artifacts and `.calavera/cache/` does not exist.
 
-The `artifacts install` and `artifacts update` commands also write the cache, but they do not plan `.gitignore` blocks. The next apply adds the block, because the folder then exists.
+The `artifacts install`, `artifacts update`, and `artifacts status --check-updates` commands can also write to the cache, but they do not plan `.gitignore` blocks. The next apply adds the block, because the folder then exists.
 
 No C8 test changes, for the reasons Decision 7 gives.

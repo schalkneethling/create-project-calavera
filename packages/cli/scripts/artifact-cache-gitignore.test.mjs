@@ -176,6 +176,26 @@ test("the block leaves with the cache, and the dry run says why", async () => {
   });
 });
 
+test("with Varlock, apply keeps the cache block and appends the Varlock lines after it", async () => {
+  await inProject(undefined, async () => {
+    const recipe = {
+      ...buildRecipe("minimal", ["varlock"], "npm"),
+      ai: [{ id: "skill-project-goal" }],
+    };
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry());
+    assert.deepEqual(dryRun.ignoreChanges, [cacheChange("write")]);
+    assert.equal(dryRun.changes.filter(({ path }) => path === ".gitignore").length, 1);
+
+    await applyRecipeObject(recipe, applyOptions, registry());
+    const gitignore = await readFile(".gitignore", "utf8");
+    assert.ok(gitignore.startsWith(cacheBlock), gitignore);
+    assert.match(gitignore.slice(cacheBlock.length), /\.env\.local/);
+
+    const again = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry());
+    assert.deepEqual(again.ignoreChanges, [cacheChange("unchanged")]);
+  });
+});
+
 test("no catalog integration takes the id of Calavera's own cache block", () => {
   assert.equal(
     integrationCatalog.some(({ id }) => id === "artifact-cache"),

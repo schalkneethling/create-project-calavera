@@ -3449,7 +3449,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
  * @param {ManagedFileState[]} managedFiles
  * @param {AiArtifactState[]} aiArtifacts The selected artifacts as apply installed them. The previous records of every other artifact are kept for clean.
  * @param {import("./ai/artifact-wiring.js").WiringRecord[]} aiWiring The wiring in the project after apply. It replaces the previous records, because apply removes the wiring of every artifact the recipe no longer selects, and a record of removed wiring would describe text the files no longer hold.
- * @param {import("./ignore-lines.js").IgnoreLines[]} gitignoreBlocks The integrations' .gitignore blocks after apply. They replace the previous records for the same reason as `aiWiring`.
+ * @param {import("./ignore-lines.js").IgnoreLines[]} gitignoreBlocks The integrations' .gitignore blocks, and the artifact cache block (#841), after apply. They replace the previous records for the same reason as `aiWiring`.
  * @param {string | null} qualityScript The value apply wrote to `quality`, or null when it wrote none, such as when it kept the project's own value (#230).
  * @returns {CalaveraState}
  */
