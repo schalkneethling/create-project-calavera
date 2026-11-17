@@ -422,6 +422,59 @@ test("apply restores a locked package that is missing from .calavera/packages an
   });
 });
 
+/**
+ * Records every temporary folder Calavera creates to rebuild a locked package, so a test can check
+ * that each one is gone once the command returns or throws.
+ *
+ * @param {import("node:test").TestContext} t
+ */
+function recordRebuildFolders(t) {
+  const mkdtemp = fsPromises.mkdtemp;
+  /** @type {string[]} */
+  const folders = [];
+  t.mock.method(fsPromises, "mkdtemp", async (/** @type {string} */ prefix, ...rest) => {
+    const folder = await mkdtemp(prefix, ...rest);
+    if (prefix.includes("calavera-locked-artifact-")) folders.push(folder);
+    return folder;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  return folders;
+}
+
+test("apply and its dry run remove the temporary folders they rebuild a locked package in, whether they finish or stop", async (t) => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    const folders = recordRebuildFolders(t);
+
+    await rm(".calavera/packages", { recursive: true });
+    await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    await assert.rejects(
+      applyRecipeObject(
+        recipe,
+        applyOptions,
+        stubRegistry(new Map(), {
+          failFor: "skill-project-goal",
+          error: new Error("ENOTCACHED: skill-project-goal is not in the offline cache"),
+        }),
+      ),
+      /ENOTCACHED/,
+    );
+
+    assert.equal(folders.length, 3, "each run rebuilds the missing package once");
+    for (const folder of folders) {
+      await assert.rejects(stat(folder), { code: "ENOENT" }, `${folder} was left behind`);
+    }
+  });
+});
+
 test("a local edit to a locked artifact stops apply before an unlocked artifact is installed", async () => {
   await inProject(async () => {
     const releases = new Map([["skill-project-goal", "0.1.0"]]);

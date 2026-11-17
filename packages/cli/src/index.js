@@ -3522,8 +3522,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   });
   // #838: the state is formatted after the last planning step and before apply writes any project
   // file or artifact output. One write comes earlier: the auto-install transaction, which formats
-  // and commits its own records atomically. It is formatted in the dry run as well, so the dry run stops where apply would and a formatter that
-  // fails leaves the project unchanged. A managed file's record is its path and the hash of the
+  // and commits its own records atomically. The state is formatted in the dry run as well, so the
+  // dry run stops where apply would and a formatter that fails leaves the project unchanged. A managed file's record is its path and the hash of the
   // text apply writes, as writeManagedFile writes it below. The quality script is final here,
   // because no script rename targets it.
   let stateText;
@@ -3543,7 +3543,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     );
     if (!applyOptions.dryRun) {
       // #988: a locked package that is missing from .calavera/packages/ was rebuilt outside the
-      // project, and is copied into place only now that nothing can stop apply.
+      // project during planning, and is copied into place only now, after the last planning step,
+      // as the first write apply makes after the auto-install.
       await artifactPlan.restore();
       await buildAiApplyResult(recipe, applyOptions, previousState, artifactPlan.sources);
     }

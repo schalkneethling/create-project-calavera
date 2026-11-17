@@ -134,8 +134,8 @@ export async function runArtifactCommand(options, services = {}) {
  * accepts the sources of every selection, so a conflict anywhere in the recipe's artifacts stops
  * apply before the install commits. When the install stops, the artifact lock, the artifact
  * outputs, and the Calavera state are left as they were. A locked payload that is missing from
- * `.calavera/packages/` is rebuilt outside the project; call `restore` once nothing can stop apply,
- * to copy it into place (#988). Call `dispose` once the sources are no longer needed.
+ * `.calavera/packages/` is rebuilt outside the project; call `restore` after apply's last planning
+ * step, to copy it into place (#988). Call `dispose` once the sources are no longer needed.
  *
  * @param {{ ai?: unknown }} recipe
  * @param {boolean} dryRun
@@ -342,7 +342,7 @@ async function installUnlockedArtifacts(
  * `.calavera/packages/`, or that no longer matches its lock entry, is rebuilt from the lock through
  * the offline cache into a temporary folder outside the project, and the returned sources point
  * there, so a caller can plan against them before it writes anything (#988). Unless this is a dry
- * run, call `restore` once nothing can stop the command, to copy the rebuilt packages into
+ * run, call `restore` after the command's last planning step, to copy the rebuilt packages into
  * `.calavera/packages/`. Call `dispose` to remove the temporary folders.
  *
  * @param {{ ai?: unknown }} recipe
