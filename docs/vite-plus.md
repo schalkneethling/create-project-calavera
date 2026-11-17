@@ -189,6 +189,14 @@ the file and the setting. Save Calavera's `.editorconfig`, which the error
 prints, in the project root, or leave `editorconfig` out of the recipe, then
 run `apply` again.
 
+`clean` makes the mirror decision. When the recipe no longer includes
+`editorconfig`, `clean` removes Calavera's `.editorconfig`, and the settings
+in a parent folder's `.editorconfig` apply again. If those differ from
+Calavera's, `clean` and its dry run stop before changing anything, because
+`clean` formats `.calavera/state.json` before it removes the file. Delete
+`.editorconfig` yourself, or keep `editorconfig` in the recipe, then run
+`clean` again.
+
 The dry run makes the same decision. `apply --dry-run` prints, for example,
 `Dev dependency install command: vp add -D knip`, followed by the exact
 command apply runs, or by the reason apply would stop. `dry_run_apply` and

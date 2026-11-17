@@ -3376,12 +3376,44 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     await artifactPlan.dispose();
     throw error;
   });
+  // #838: the AI result is planned without writing, so the state, which records it, is formatted
+  // before any artifact output is copied. The outputs are copied after that, below.
   const aiResult = await buildAiApplyResult(
     recipe,
-    applyOptions,
+    { dryRun: true },
     previousState,
     artifactPlan.sources,
-  ).finally(artifactPlan.dispose);
+  ).catch(async (error) => {
+    await artifactPlan.dispose();
+    throw error;
+  });
+  // #838: the state is formatted after the last planning step and before the first write to the
+  // project apart from the artifact install, which commits its own formatted records. It is
+  // formatted in the dry run as well, so the dry run stops where apply would and a formatter that
+  // fails leaves the project unchanged. A managed file's record is its path and the hash of the
+  // text apply writes, as writeManagedFile writes it below. The quality script is final here,
+  // because no script rename targets it.
+  let stateText;
+  try {
+    stateText = await formatStateText(
+      mergeRecipeIntoState(
+        previousState,
+        recipe.profile,
+        integrations.map((integration) => integration.id),
+        managedFilePlans.map(({ path, contents }) => ({ path, hash: textHash(contents) })),
+        aiResult.artifacts,
+        wiringPlan.records,
+        gitignorePlan.records,
+        typeof scripts.quality === "string" ? scripts.quality : null,
+      ),
+      loadFormatter,
+    );
+    if (!applyOptions.dryRun) {
+      await buildAiApplyResult(recipe, applyOptions, previousState, artifactPlan.sources);
+    }
+  } finally {
+    await artifactPlan.dispose();
+  }
   // A dry run plans the auto-installed outputs in both results; apply writes them during the
   // install, so only the install reports them.
   const autoInstalledPaths = new Set(artifactPlan.changes.map(({ path }) => path));
@@ -3400,9 +3432,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     vitePlusStatus: vitePlusDetection.status,
   });
 
-  let configUnchanged = true;
   if (configText !== undefined) {
-    configUnchanged =
+    const configUnchanged =
       previouslyApplied &&
       (await fileExists(configPath)) &&
       (await readFile(configPath, "utf8")) === configText;
@@ -3412,6 +3443,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       action: "write",
       ownership: "project",
     });
+    if (!applyOptions.dryRun && !configUnchanged) {
+      await writeFile(configPath, configText);
+    }
   }
 
   // ADR-0013, Decision 6: only after an earlier apply is a script under its
@@ -3481,28 +3515,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     ...(renamedScripts.length > 0 ? { renamedScripts } : {}),
     ...(omittedQualitySteps.length > 0 ? { omittedQualitySteps } : {}),
   });
-
-  // #838: the state is formatted after the last planning step and before the first write to the
-  // project, in the dry run as well, so the dry run stops where apply would and a formatter that
-  // fails leaves the project unchanged. A managed file's record is its path and the hash of the text
-  // apply writes, which writeManagedFile returns below.
-  const stateText = await formatStateText(
-    mergeRecipeIntoState(
-      previousState,
-      recipe.profile,
-      integrations.map((integration) => integration.id),
-      managedFilePlans.map(({ path, contents }) => ({ path, hash: textHash(contents) })),
-      aiResult.artifacts,
-      wiringPlan.records,
-      gitignorePlan.records,
-      typeof scripts.quality === "string" ? scripts.quality : null,
-    ),
-    loadFormatter,
-  );
-
-  if (!applyOptions.dryRun && !configUnchanged) {
-    await writeFile(configPath, /** @type {string} */ (configText));
-  }
 
   // managedFileDeclarations in project-inspection.js sets which managed files apply writes, in order.
   for (const plan of managedFilePlans) {
@@ -5592,7 +5604,13 @@ async function clean(options) {
   // longer selects under the same rules as apply, with the same planner. Only blocks and groups
   // that match the record are removed, and an edited one throws a conflict here, before anything
   // is listed or written, so clean never deletes a skill directory that recorded wiring still runs.
-  const loadFormatter = projectFormatterLoader(process.cwd());
+  // #838: clean formats its state and wiring before it removes anything, so when it removes
+  // Calavera's .editorconfig, formatting stops if the removal would change the settings vp fmt uses.
+  const loadFormatter = projectFormatterLoader(process.cwd(), undefined, {
+    removesEditorConfig:
+      staleFilesSafeToRemove.some(({ path }) => path === ".editorconfig") &&
+      (await fileExists(".editorconfig")),
+  });
   const wiringPlan = await planArtifactWiring({
     recipe,
     artifacts: [],

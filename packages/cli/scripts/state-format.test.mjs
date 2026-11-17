@@ -5,7 +5,7 @@
 // repository's Oxfmt on exactly the files it is given, as the hook does with the staged files.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { cp, readFile, writeFile } from "node:fs/promises";
+import { cp, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -13,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { agentBootstrap, applyRecipeObject } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
+import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "../src/utils/editorconfig.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 import {
@@ -233,4 +234,89 @@ test("Given a Vite+ project whose vp fmt prints a banner, when artifacts install
     );
     assert.deepEqual(await snapshotDirectory(), before, "the dry run changed the project");
   });
+});
+
+test("Given a locked hook whose output is missing, in a Vite+ project inside a folder whose .editorconfig sets four-space indentation, when apply would add Calavera's .editorconfig, then apply stops without restoring the hook", async () => {
+  await using parent = await createTemporaryFixture("state-locked-hook", {
+    ".editorconfig": "root = true\n\n[*]\nindent_style = space\nindent_size = 4\n",
+  });
+  const root = join(parent.root, "library");
+  await cp(releaseFixturePath("library"), root, { recursive: true });
+  await writeVitePlusFormatter(root);
+  const hook = { id: "hook-block-dangerous-commands" };
+  const options = { ...applyOptions, writeConfig: false };
+  const registry = stubRegistry(new Map([["hook-block-dangerous-commands", "0.4.0"]]));
+  const stop = /Calavera's \.editorconfig would change how vp fmt formats \.calavera\/state\.json/;
+
+  await inDirectory(root, async () => {
+    // The first apply locks the hook. Without editorconfig in the recipe, the parent's settings
+    // stay in effect, so nothing stops it.
+    await applyRecipeObject(
+      { ...buildRecipe("default", [], "pnpm", []), ai: [hook] },
+      options,
+      registry,
+    );
+    await rm(".agents/hooks/claude-code/block-dangerous-commands.mjs");
+    const before = await snapshotDirectory();
+    const withEditorConfig = {
+      ...buildRecipe("default", ["editorconfig"], "pnpm", []),
+      ai: [hook],
+    };
+
+    await assert.rejects(
+      applyRecipeObject(withEditorConfig, { ...options, dryRun: true }, registry),
+      stop,
+    );
+    await assert.rejects(applyRecipeObject(withEditorConfig, options, registry), stop);
+    assert.deepEqual(
+      await snapshotDirectory(),
+      before,
+      "apply restored the hook before it stopped",
+    );
+  });
+});
+
+test("Given a Vite+ project inside a folder whose .editorconfig sets four-space indentation, when clean would remove Calavera's .editorconfig, then clean stops before changing anything, and runs once the person removes it", async () => {
+  await using parent = await createTemporaryFixture("state-clean-editorconfig", {
+    ".editorconfig": "root = true\n\n[*]\nindent_style = space\nindent_size = 4\n",
+  });
+  const root = join(parent.root, "library");
+  await cp(releaseFixturePath("library"), root, { recursive: true });
+  await writeVitePlusFormatter(root);
+  // Calavera's .editorconfig is already in place, so apply formats with its settings.
+  await writeFile(join(root, ".editorconfig"), renderEditorConfig(CALAVERA_EDITORCONFIG));
+  await inDirectory(root, () => applyRecipeObject(recipe, applyOptions));
+  // Dropping editorconfig from the recipe leaves Calavera's .editorconfig for clean to remove.
+  await writeFile(
+    join(root, "calavera.config.json"),
+    `${JSON.stringify(buildRecipe("default", ["knip"], "pnpm", []), null, 2)}\n`,
+  );
+  const runClean = (/** @type {string[]} */ args) =>
+    spawnSync(process.execPath, [cli, "clean", "--yes", "--json", ...args], {
+      cwd: root,
+      encoding: "utf8",
+      env: { ...process.env, NO_COLOR: "1" },
+    });
+  const stop =
+    /Removing Calavera's \.editorconfig would change how vp fmt formats \.calavera\/state\.json: indent_size is 2 now and 4 after clean/;
+  const before = await inDirectory(root, () => snapshotDirectory());
+
+  for (const args of [["--dry-run"], []]) {
+    const clean = runClean(args);
+    assert.notEqual(clean.status, 0, clean.stdout);
+    assert.match(clean.stderr, stop);
+  }
+  assert.deepEqual(
+    await inDirectory(root, () => snapshotDirectory()),
+    before,
+    "clean changed files",
+  );
+
+  // The remedy the error names: remove the file first, so vp fmt reads the settings clean leaves.
+  await rm(join(root, ".editorconfig"));
+  const clean = runClean([]);
+  assert.equal(clean.status, 0, clean.stderr);
+  const { before: state, after } = await formatAsTheHookDoes(root, [STATE_PATH]);
+  assert.match(state[0], /^\{\n {4}"version": 1,/);
+  assert.equal(after[0], state[0], "vp fmt rewrote the state clean wrote");
 });

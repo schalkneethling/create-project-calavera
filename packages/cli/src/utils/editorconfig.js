@@ -77,29 +77,30 @@ function oxfmtSettings(properties) {
 }
 
 /**
- * Describes how writing `planned` as the project's `.editorconfig` would change the settings
- * Oxfmt uses for `path`, or returns undefined when it changes none of them.
+ * The settings Oxfmt uses for `path`, and the `.editorconfig` files they come from.
  *
  * Oxfmt looks for `.editorconfig` from its working directory upward, which is the project root
  * here, and ignores files in subfolders, so this reads the same files: the project root's and its
  * parents', up to one marked `root = true`. Their sections match `path` as EditorConfig defines.
+ * With `withoutProjectRootFile`, the project root's own file counts as missing, as it will once
+ * clean removes it.
  *
  * @param {string} projectDirectory
  * @param {string} path The file path relative to the project root.
- * @param {EditorConfigSettings} planned
- * @returns {Promise<{ property: string, current: unknown, planned: unknown, sources: string[] } | undefined>}
+ * @param {{ withoutProjectRootFile?: boolean }} [options]
  */
-export async function editorConfigFormattingChange(projectDirectory, path, planned) {
+async function oxfmtSettingsFor(projectDirectory, path, { withoutProjectRootFile = false } = {}) {
   /** @type {import("editorconfig").Visited[]} */
   const visited = [];
-  const current = await parse(resolve(projectDirectory, path), {
+  const properties = await parse(resolve(projectDirectory, path), {
     unset: true,
     files: visited,
     cache: {
       // A subfolder's .editorconfig counts as missing, because Oxfmt never reads it.
       get(configPath) {
         const folder = relative(projectDirectory, dirname(configPath));
-        if (folder === "" || folder.startsWith("..") || isAbsolute(folder)) return undefined;
+        if (folder.startsWith("..") || isAbsolute(folder)) return undefined;
+        if (folder === "" && !withoutProjectRootFile) return undefined;
         return { root: false, notfound: true, name: configPath, config: [[null, {}, null]] };
       },
       set() {
@@ -107,20 +108,57 @@ export async function editorConfigFormattingChange(projectDirectory, path, plann
       },
     },
   });
+  return {
+    settings: oxfmtSettings(properties),
+    sources: [...new Set(visited.map(({ fileName }) => fileName))],
+  };
+}
 
-  const now = oxfmtSettings(current);
-  const after = oxfmtSettings(planned);
+/**
+ * The first setting Oxfmt reads that differs between `now` and `after`, or undefined.
+ *
+ * @param {Record<keyof typeof OXFMT_DEFAULTS, unknown>} now
+ * @param {Record<keyof typeof OXFMT_DEFAULTS, unknown>} after
+ */
+function firstSettingChange(now, after) {
   for (const property of /** @type {(keyof typeof OXFMT_DEFAULTS)[]} */ (
     Object.keys(OXFMT_DEFAULTS)
   )) {
     if (now[property] !== after[property]) {
-      return {
-        property,
-        current: now[property],
-        planned: after[property],
-        sources: [...new Set(visited.map(({ fileName }) => fileName))],
-      };
+      return { property, current: now[property], planned: after[property] };
     }
   }
   return undefined;
+}
+
+/**
+ * Describes how writing `planned` as the project's `.editorconfig` would change the settings
+ * Oxfmt uses for `path`, or returns undefined when it changes none of them. `sources` names the
+ * files the current settings come from.
+ *
+ * @param {string} projectDirectory
+ * @param {string} path The file path relative to the project root.
+ * @param {EditorConfigSettings} planned
+ * @returns {Promise<{ property: string, current: unknown, planned: unknown, sources: string[] } | undefined>}
+ */
+export async function editorConfigFormattingChange(projectDirectory, path, planned) {
+  const now = await oxfmtSettingsFor(projectDirectory, path);
+  const change = firstSettingChange(now.settings, oxfmtSettings(planned));
+  return change && { ...change, sources: now.sources };
+}
+
+/**
+ * Describes how removing the project root's `.editorconfig` would change the settings Oxfmt uses
+ * for `path`, or returns undefined when it changes none of them. `sources` names the files the
+ * settings come from after the removal.
+ *
+ * @param {string} projectDirectory
+ * @param {string} path The file path relative to the project root.
+ * @returns {Promise<{ property: string, current: unknown, planned: unknown, sources: string[] } | undefined>}
+ */
+export async function editorConfigRemovalChange(projectDirectory, path) {
+  const now = await oxfmtSettingsFor(projectDirectory, path);
+  const after = await oxfmtSettingsFor(projectDirectory, path, { withoutProjectRootFile: true });
+  const change = firstSettingChange(now.settings, after.settings);
+  return change && { ...change, sources: after.sources };
 }
