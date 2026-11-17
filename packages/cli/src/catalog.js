@@ -1,3 +1,11 @@
+/** The label the Composer and agents show for each integration `status`. */
+export const integrationStatusLabels = Object.freeze({
+  recommended: "Recommended",
+  optional: "Optional",
+  "framework-specific": "Framework-specific",
+  experimental: "Experimental",
+});
+
 export const integrationCatalog = [
   {
     id: "editorconfig",

@@ -78,6 +78,27 @@ test("integration rows expand to the catalog summary and homepage", async ({ pag
   );
 });
 
+// #580: the chip and target names come from the CLI catalogs, not from tables in script.js.
+test("status chips and target options show the catalog display labels", async ({ page }) => {
+  await openComposer(page);
+  const scss = page.locator(".row", {
+    has: page.locator('[name="integration"][value="stylelint-scss"]'),
+  });
+  await expect(scss.locator(".chip")).toHaveText("Framework-specific");
+
+  await page.getByRole("tab", { name: /Hooks/ }).click();
+  const target = artifactRow(page, "hook-block-dangerous-commands").locator(
+    '[data-ai-target="hook-block-dangerous-commands"]',
+  );
+  await expect(target.locator("option")).toHaveText(["Claude Code", "Codex", "Cursor", "OpenCode"]);
+  await expect(page.getByLabel("Install into", { exact: true }).locator("option")).toHaveText([
+    "Claude Code",
+    "Codex",
+    "Cursor",
+    "OpenCode",
+  ]);
+});
+
 test("stryker is offered from CLI 6.2.0 with the conditions it needs", async ({ page }) => {
   const strykerRow = page.locator(".row", {
     has: page.locator('[name="integration"][value="stryker"]'),

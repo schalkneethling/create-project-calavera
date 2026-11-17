@@ -4,11 +4,15 @@ import test from "node:test";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
-import { integrationCatalog } from "../src/catalog.js";
+import { ARTIFACT_TARGET_LABELS } from "@schalkneethling/calavera-artifact-core";
+
+import { aiArtifactCatalog } from "../src/ai/catalog.js";
+import { integrationCatalog, integrationStatusLabels } from "../src/catalog.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import {
   buildRecipe,
   explainRecipeIntegrations,
+  listAiArtifactOptions,
   listIntegrationOptions,
   profileDefaults,
 } from "../src/recipe.js";
@@ -193,6 +197,76 @@ test("standard MCP list_integrations and describe_integration satisfy their decl
       const result = await client.callTool({ name: "describe_integration", arguments: { id } });
       assert.equal(result.structuredContent?.id, id);
     }
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+// #580: the Composer renders each integration's status as a chip, and agents can show the same
+// words, so the catalog carries the display label next to the status ID.
+test("every integration status has a display label, and listIntegrationOptions carries it", () => {
+  assert.deepEqual(integrationStatusLabels, {
+    recommended: "Recommended",
+    optional: "Optional",
+    "framework-specific": "Framework-specific",
+    experimental: "Experimental",
+  });
+
+  for (const integration of listIntegrationOptions()) {
+    assert.equal(
+      integration.statusLabel,
+      integrationStatusLabels[integration.status],
+      `${integration.id} statusLabel must match its status ${integration.status}`,
+    );
+  }
+});
+
+test("listAiArtifactOptions exposes each artifact's targets with their display labels", () => {
+  for (const artifact of listAiArtifactOptions()) {
+    const catalogEntry = aiArtifactCatalog.find(({ id }) => id === artifact.id);
+
+    assert.deepEqual(
+      artifact.targets,
+      (catalogEntry?.targets ?? []).map((id) => ({ id, label: ARTIFACT_TARGET_LABELS[id] })),
+      `${artifact.id} targets must list the catalog targets with labels`,
+    );
+  }
+
+  const hook = listAiArtifactOptions().find(({ id }) => id === "hook-block-dangerous-commands");
+  assert.deepEqual(hook?.targets[0], { id: "claude-code", label: "Claude Code" });
+  const skill = listAiArtifactOptions().find(({ id }) => id === "skill-calavera");
+  assert.deepEqual(skill?.targets, []);
+});
+
+test("standard MCP list_integrations advertises statusLabel and list_ai_artifacts returns targets", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createMcpServer();
+  const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+
+  try {
+    const { tools } = await client.listTools();
+    const listIntegrations = tools.find(({ name }) => name === "list_integrations");
+    const integrationProperties =
+      listIntegrations?.outputSchema?.properties?.integrations?.items?.properties;
+    assert.equal(integrationProperties?.statusLabel?.type, "string");
+
+    const listResult = await client.callTool({ name: "list_integrations", arguments: {} });
+    const reactDoctor = listResult.structuredContent?.integrations.find(
+      ({ id }) => id === "react-doctor",
+    );
+    assert.equal(reactDoctor?.statusLabel, "Framework-specific");
+
+    const artifactsResult = await client.callTool({ name: "list_ai_artifacts", arguments: {} });
+    const artifacts = JSON.parse(artifactsResult.content[0].text).artifacts;
+    const agent = artifacts.find(({ id }) => id === "agent-technical-devils-advocate");
+    assert.deepEqual(
+      agent?.targets.map(({ label }) => label),
+      ["Claude Code", "Codex", "Cursor", "OpenCode"],
+    );
   } finally {
     await client.close();
     await server.close();

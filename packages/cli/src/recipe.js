@@ -1,6 +1,6 @@
-import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "./ai/catalog.js";
+import { AI_TARGET_LABELS, aiArtifactCatalog, DEFAULT_AI_TARGET } from "./ai/catalog.js";
 import { normalizeAiItems } from "./ai/recipe-items.js";
-import { integrationCatalog } from "./catalog.js";
+import { integrationCatalog, integrationStatusLabels } from "./catalog.js";
 import { normalizeBaselineTarget } from "@schalkneethling/calavera-baseline-core";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
@@ -350,6 +350,7 @@ export function listIntegrationOptions(profile) {
   return integrationCatalog
     .map((integration) => ({
       ...integration,
+      statusLabel: integrationStatusLabels[integration.status],
       profiles: integrationProfiles(integration.id),
       notes: integrationNotes(integration),
       description: `${integration.summary} ${integration.label}. Category: ${integration.group}. Status: ${integration.status}.${integrationNoteSuffix(integration)}`,
@@ -359,13 +360,25 @@ export function listIntegrationOptions(profile) {
 
 export function listAiArtifactOptions() {
   return aiArtifactCatalog.map(
-    ({ id, type, src, group, label, status, defaultTarget, packageName, compatibility }) => ({
+    ({
+      id,
+      type,
+      src,
+      group,
+      label,
+      status,
+      targets = [],
+      defaultTarget,
+      packageName,
+      compatibility,
+    }) => ({
       id,
       type,
       src,
       label,
       group,
       status,
+      targets: targets.map((target) => ({ id: target, label: AI_TARGET_LABELS[target] })),
       defaultTarget,
       packageName,
       compatibility,
@@ -863,7 +876,7 @@ export function aiArtifactsResponse(currentConfiguration = []) {
     artifacts: listAiArtifactOptions(),
     input: {
       accepts:
-        "Use artifact IDs, labels, or sources in compose_recipe aiArtifacts. Add target for hook and agent artifacts when the default target is not correct.",
+        "Use artifact IDs, labels, or sources in compose_recipe aiArtifacts. Add target, an id from the artifact's targets, for hook and agent artifacts when the default target is not correct.",
       examples: [
         { id: "skill-frontend-engineering" },
         { id: "hooks/block-dangerous-commands", target: "claude-code" },
