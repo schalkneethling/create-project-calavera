@@ -128,6 +128,7 @@ import {
   validateRecipeResponse,
   webMcpToolNames,
 } from "../src/recipe.js";
+import { composerRegisteredToolNames } from "./composer-webmcp-tools.mjs";
 
 const execFileAsync = promisify(execFile);
 
@@ -1405,10 +1406,7 @@ test("WebMCP workflow exposes browser download instead of filesystem apply tools
 });
 
 test("WebMCP registers browser parity tools from the shared contract", async () => {
-  const script = await readProjectFile("../../apps/composer/script.js");
-  const registeredToolNames = [...script.matchAll(/registerTool\(\{\s*name: "([^"]+)"/g)].map(
-    (match) => match[1],
-  );
+  const registeredToolNames = await composerRegisteredToolNames();
   const legacyToolNames = [
     "get_project_tooling_options",
     "get_ai_artifact_options",
