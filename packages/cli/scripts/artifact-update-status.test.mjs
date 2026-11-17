@@ -11,7 +11,11 @@ import test from "node:test";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
-import { artifactReleaseNotesUrl, formatArtifactStatus } from "../src/artifact-status-report.js";
+import {
+  artifactReleaseNotesUrl,
+  formatArtifactStatus,
+  formatRemovedLockEntries,
+} from "../src/artifact-status-report.js";
 import { parseArgs } from "../src/index.js";
 import {
   buildRecipe,
@@ -678,6 +682,7 @@ function entry(overrides) {
     releaseNotesUrl: null,
     updateCommand: null,
     installCommand: null,
+    selected: true,
     ...overrides,
   };
 }
@@ -1130,4 +1135,184 @@ test("generated commands parse to the update they describe for every package man
       },
     );
   }
+});
+
+// #992 (owner decision, 2026-11-17): warn, then drop. The recipe is the source of truth, so
+// `artifacts install` and `artifacts update` remove the lock entry of an artifact the recipe no
+// longer selects, and status and the update, its dry run included, name that entry first.
+const NOT_SELECTED =
+  "  Not selected: the recipe no longer selects this artifact, so the next artifacts install or artifacts update removes its lock entry and leaves its installed files in place.";
+
+test("status names a locked artifact the recipe no longer selects, online and offline", async () => {
+  await inProject(
+    {
+      // skill-code-review is selected but not locked yet, so it is selected and has no lock entry.
+      ids: ["skill-project-goal", "skill-code-review"],
+      locked: [
+        { id: "skill-project-goal", version: "0.2.1" },
+        { id: "skill-css-tokens", version: "0.2.1" },
+      ],
+    },
+    async () => {
+      for (const checkUpdates of [false, true]) {
+        const result = await runArtifactCommand(
+          statusOptions({ checkUpdates }),
+          statusRegistry({
+            "skill-project-goal": { latest: "0.2.1" },
+            "skill-css-tokens": { latest: "0.2.1" },
+            "skill-code-review": { latest: "0.2.1" },
+          }),
+        );
+        const byId = new Map(result.artifacts.map((artifact) => [artifact.id, artifact]));
+        assert.equal(byId.get("skill-project-goal")?.selected, true);
+        assert.equal(byId.get("skill-code-review")?.selected, true);
+        assert.equal(byId.get("skill-css-tokens")?.selected, false);
+        const printed = messages(formatArtifactStatus(result));
+        const tokens = printed.findIndex((line) => line.startsWith("skill-css-tokens  0.2.1"));
+        assert.ok(tokens >= 0, printed.join("\n"));
+        assert.equal(printed[tokens + 1], NOT_SELECTED, printed.join("\n"));
+        assert.equal(printed.filter((line) => line === NOT_SELECTED).length, 1, printed.join("\n"));
+      }
+    },
+  );
+});
+
+test("status output names an unselected artifact even when it has an update", () => {
+  const lines = messages(
+    formatArtifactStatus({
+      offline: false,
+      updateAllCommand: null,
+      checkUpdatesCommand: null,
+      artifacts: [
+        entry({ id: "skill-code-review", latestVersion: "0.2.1" }),
+        entry({ latestVersion: "0.3.0", updateAvailable: true, selected: false }),
+      ],
+    }),
+  );
+  assert.deepEqual(lines, [
+    "skill-code-review  0.2.1, up to date (latest)",
+    "skill-project-goal  0.2.1 → 0.3.0 (latest)",
+    NOT_SELECTED,
+    "  Release notes: none, because the package metadata names no GitHub repository and package directory to link to",
+    "  Update: the recipe does not select this artifact, so artifacts update cannot update it",
+  ]);
+});
+
+for (const artifactAction of ["update", "install"]) {
+  test(`artifacts ${artifactAction} names the lock entries it drops, dry run first`, async () => {
+    await inProject(
+      {
+        ids: ["skill-project-goal"],
+        locked: [
+          { id: "skill-project-goal", version: "0.2.1" },
+          { id: "skill-css-tokens", version: "0.2.1" },
+        ],
+      },
+      async () => {
+        const status = await runArtifactCommand(statusOptions({ checkUpdates: false }), {
+          resolve: async () => assert.fail("Offline status contacts no registry."),
+          extract: async () => assert.fail("Status never extracts a package."),
+        });
+        const tokens = status.artifacts.find(({ id }) => id === "skill-css-tokens");
+        assert.ok(tokens);
+        const releases = stubRegistry(new Map([["skill-project-goal", "0.3.0"]]));
+        const options = {
+          config: "calavera.config.json",
+          artifactAction,
+          ...(artifactAction === "update" ? { artifactId: "skill-project-goal" } : {}),
+        };
+
+        const before = await snapshotDirectory();
+        const planned = await runArtifactCommand({ ...options, dryRun: true }, releases);
+        assert.deepEqual(await snapshotDirectory(), before);
+        assert.deepEqual(planned.removedLockEntries, [
+          { id: "skill-css-tokens", version: "0.2.1", tag: "latest" },
+        ]);
+        assert.deepEqual(formatRemovedLockEntries(planned), [
+          "Would remove the lock entry for skill-css-tokens 0.2.1 (latest), because the recipe no longer selects it. Its installed files stay in place.",
+        ]);
+
+        const applied = await runArtifactCommand({ ...options, dryRun: false }, releases);
+        assert.deepEqual(applied.removedLockEntries, planned.removedLockEntries);
+        assert.deepEqual(formatRemovedLockEntries(applied), [
+          "Removed the lock entry for skill-css-tokens 0.2.1 (latest), because the recipe no longer selects it. Its installed files stay in place.",
+        ]);
+        const lock = JSON.parse(await readFile(".calavera/artifacts.lock.json", "utf8"));
+        assert.deepEqual(
+          lock.artifacts.map(({ id }) => id),
+          ["skill-project-goal"],
+        );
+        // The installed files stay, as status and the warning say: the outputs, the package
+        // directory, and the state records that let `clean` remove them later.
+        const tokenFiles = (/** @type {Record<string, string>} */ snapshot) =>
+          Object.entries(snapshot).filter(
+            ([path]) =>
+              path.startsWith(tokens.destination) ||
+              path.startsWith(join(".calavera", "packages", "skill-css-tokens")),
+          );
+        assert.ok(tokenFiles(before).some(([path]) => path.startsWith(".calavera")));
+        assert.ok(tokenFiles(before).some(([path]) => path.startsWith(tokens.destination)));
+        assert.deepEqual(tokenFiles(await snapshotDirectory()), tokenFiles(before));
+        const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+        assert.ok(
+          state.aiArtifacts.some(({ path }) => path.startsWith(tokens.destination)),
+          JSON.stringify(state.aiArtifacts),
+        );
+
+        const again = await runArtifactCommand({ ...options, dryRun: true }, releases);
+        assert.deepEqual(again.removedLockEntries, []);
+        assert.deepEqual(formatRemovedLockEntries(again), []);
+      },
+    );
+  });
+}
+
+test("status names only install when the recipe selects no artifact, which update refuses", async () => {
+  await inProject({ ids: [], locked: [{ id: "skill-css-tokens", version: "0.2.1" }] }, async () => {
+    const result = await runArtifactCommand(statusOptions({ checkUpdates: false }), {
+      resolve: async () => assert.fail("Offline status contacts no registry."),
+      extract: async () => assert.fail("Status never extracts a package."),
+    });
+    assert.equal(result.artifacts[0].selected, false);
+    assert.deepEqual(messages(formatArtifactStatus(result)).slice(0, 2), [
+      "skill-css-tokens  0.2.1 (latest)",
+      "  Not selected: the recipe selects no artifacts, so the next artifacts install removes its lock entry and leaves its installed files in place.",
+    ]);
+    await assert.rejects(
+      runArtifactCommand(
+        {
+          config: "calavera.config.json",
+          dryRun: true,
+          artifactAction: "update",
+          artifactAll: true,
+        },
+        stubRegistry(new Map()),
+      ),
+      /requires an artifact ID or --all/,
+    );
+    const planned = await runArtifactCommand(
+      { config: "calavera.config.json", dryRun: true, artifactAction: "install" },
+      stubRegistry(new Map()),
+    );
+    assert.deepEqual(
+      planned.removedLockEntries.map(({ id }) => id),
+      ["skill-css-tokens"],
+    );
+  });
+});
+
+test("status without a recipe does not claim the recipe deselected its artifacts", async () => {
+  await inProject(
+    { ids: ["skill-css-tokens"], locked: [{ id: "skill-css-tokens", version: "0.2.1" }] },
+    async () => {
+      await rm("calavera.config.json");
+      const result = await runArtifactCommand(statusOptions({ checkUpdates: false }), {
+        resolve: async () => assert.fail("Offline status contacts no registry."),
+        extract: async () => assert.fail("Status never extracts a package."),
+      });
+      assert.equal(result.artifacts[0].selected, null);
+      const printed = messages(formatArtifactStatus(result));
+      assert.ok(!printed.some((line) => line.includes("Not selected")), printed.join("\n"));
+    },
+  );
 });

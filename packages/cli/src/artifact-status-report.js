@@ -16,10 +16,20 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {string | null} releaseNotesUrl
  * @property {string | null} updateCommand
  * @property {string | null} installCommand
+ * @property {boolean | null} selected False for a lock entry the recipe no longer selects, which the next `artifacts install`, or `artifacts update` while the recipe selects any artifact, removes (#992). Null when there is no recipe to compare the lock with.
  *
  * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null }} ArtifactStatusReport
  * @typedef {{ level: "info" | "success", message: string }} ReportLine
+ * @typedef {{ id: string, version: string, tag: "latest" | "next" }} RemovedLockEntry
  */
+
+// #992: the recipe is the source of truth, so an install or update drops the lock entry of an
+// artifact the recipe no longer selects. Neither removes that artifact's files. An update refuses
+// to run while the recipe selects no artifact, so then only install drops the entry.
+const NOT_SELECTED =
+  "  Not selected: the recipe no longer selects this artifact, so the next artifacts install or artifacts update removes its lock entry and leaves its installed files in place.";
+const NOTHING_SELECTED =
+  "  Not selected: the recipe selects no artifacts, so the next artifacts install removes its lock entry and leaves its installed files in place.";
 
 // A GitHub owner or repository name; "." and ".." are refused separately.
 const GITHUB_NAME = /^[\w.-]+$/;
@@ -140,6 +150,9 @@ export function formatArtifactStatus(result) {
     return lines;
   }
 
+  const notSelected = result.artifacts.some(({ selected }) => selected)
+    ? NOT_SELECTED
+    : NOTHING_SELECTED;
   for (const artifact of result.artifacts) {
     if (artifact.version === null) {
       const latest = result.offline ? "" : `, latest ${artifact.latestVersion}`;
@@ -154,16 +167,17 @@ export function formatArtifactStatus(result) {
       info(
         `${artifact.id}  ${artifact.version} → ${artifact.latestVersion} (${artifact.tag})${health}`,
       );
+      if (artifact.selected === false) info(notSelected);
       info(
         `  Release notes: ${artifact.releaseNotesUrl ?? "none, because the package metadata names no GitHub repository and package directory to link to"}`,
       );
       info(
         `  Update: ${artifact.updateCommand ?? "the recipe does not select this artifact, so artifacts update cannot update it"}`,
       );
-    } else if (result.offline) {
-      info(`${artifact.id}  ${artifact.version} (${artifact.tag})${health}`);
     } else {
-      info(`${artifact.id}  ${artifact.version}, up to date (${artifact.tag})${health}`);
+      const current = result.offline ? "" : ", up to date";
+      info(`${artifact.id}  ${artifact.version}${current} (${artifact.tag})${health}`);
+      if (artifact.selected === false) info(notSelected);
     }
   }
 
@@ -200,4 +214,19 @@ export function formatArtifactStatus(result) {
     lines.push({ level: "success", message: "Every artifact is up to date on its channel." });
   }
   return lines;
+}
+
+/**
+ * The warnings `artifacts install` and `artifacts update` print for the lock entries they remove,
+ * or, in a dry run, would remove, because the recipe no longer selects those artifacts (#992).
+ *
+ * @param {{ dryRun: boolean, removedLockEntries: RemovedLockEntry[] }} result
+ * @returns {string[]}
+ */
+export function formatRemovedLockEntries({ dryRun, removedLockEntries }) {
+  const removed = dryRun ? "Would remove" : "Removed";
+  return removedLockEntries.map(
+    ({ id, version, tag }) =>
+      `${removed} the lock entry for ${id} ${version} (${tag}), because the recipe no longer selects it. Its installed files stay in place.`,
+  );
 }
