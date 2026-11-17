@@ -120,21 +120,64 @@ test("Given the text this checkout writes, then an earlier release's template is
   }
 });
 
-test("Given the version this checkout publishes, then the template it writes lists that version", async () => {
-  // Issue #935: the version in package.json is the one the next publish writes into projects, so
-  // the Version Packages pull request fails here until the table lists the new release.
-  const remedy = `add ${version} to the releases of the matching template in fixtures/agent-guidance/epochs.json and src/utils/earlier-guidance.js`;
+/**
+ * Issue #935: says why `version`, the version in package.json, is not listed where it must be, or
+ * nothing when it is. The last template is the text this checkout writes. It must list `version`,
+ * unless the text changed since `version` was published: then an earlier template lists
+ * `version`, and the last one lists the release that will publish the new text. So the Version
+ * Packages pull request, which raises `version` to one no template lists, fails until the table
+ * lists it, while a pull request that changes a template text can still pass.
+ *
+ * @param {{ releases: string[] }[]} kindEpochs The templates of one kind, oldest first.
+ * @param {string} version
+ * @returns {string | undefined}
+ */
+function unlistedVersion(kindEpochs, version) {
+  const current = kindEpochs[kindEpochs.length - 1];
+  if (current.releases.includes(version)) return undefined;
+  if (kindEpochs.slice(0, -1).some(({ releases }) => releases.includes(version))) return undefined;
+  return `${version} is in no template: on main, not on the Version Packages branch, which Changesets regenerates, add it to the releases of the last template in fixtures/agent-guidance/epochs.json and src/utils/earlier-guidance.js`;
+}
+
+test("Given the version this checkout publishes, then the table lists it", async () => {
+  for (const [file, kindEpochs] of [
+    ["AGENTS.md", epochs.guidance],
+    [".agents/calavera/mcp.md", epochs.mcp],
+  ]) {
+    const problem = unlistedVersion(kindEpochs, version);
+    assert.equal(problem, undefined, `${file}: ${problem}`);
+  }
+  // When the text this checkout writes is the one `version` wrote, the files read back as that
+  // release's, pinned version included.
   for (const packageManager of packageManagers) {
     const current = await currentText(packageManager);
-    assert.ok(
-      findEarlierGuidance("guidance", current.agents)?.releases.includes(version),
-      `AGENTS.md for ${packageManager}: ${remedy}`,
-    );
-    assert.ok(
-      findEarlierGuidance("mcp", current.mcp)?.releases.includes(version),
-      `mcp.md for ${packageManager}: ${remedy}`,
-    );
+    if (epochs.guidance[epochs.guidance.length - 1].releases.includes(version)) {
+      assert.ok(
+        findEarlierGuidance("guidance", current.agents)?.releases.includes(version),
+        `AGENTS.md for ${packageManager}`,
+      );
+    }
+    if (epochs.mcp[epochs.mcp.length - 1].releases.includes(version)) {
+      assert.ok(
+        findEarlierGuidance("mcp", current.mcp)?.releases.includes(version),
+        `mcp.md for ${packageManager}`,
+      );
+    }
   }
+});
+
+test("Given a version bump or a changed template, then the release check fails only for the bump", () => {
+  const published = [{ releases: ["6.1.0"] }, { releases: ["6.2.0", "6.2.1"] }];
+  assert.equal(unlistedVersion(published, "6.2.1"), undefined);
+  // The Version Packages pull request raised the version and nobody listed it.
+  assert.match(unlistedVersion(published, "6.3.0") ?? "", /^6\.3\.0 is in no template/);
+  // A pull request changed the text: the new template names the release that will publish it,
+  // and package.json still holds the release that wrote the earlier text.
+  const changed = [...published, { releases: ["6.3.0"] }];
+  assert.equal(unlistedVersion(changed, "6.2.1"), undefined);
+  assert.equal(unlistedVersion(changed, "6.3.0"), undefined);
+  // The same pull request, with the version raised past the one the new template names.
+  assert.match(unlistedVersion(changed, "6.4.0") ?? "", /^6\.4\.0 is in no template/);
 });
 
 test("Given an earlier release's text, then the description names one release, a range of releases, or the pinned release", async () => {

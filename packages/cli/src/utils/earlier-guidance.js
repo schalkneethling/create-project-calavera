@@ -12,9 +12,10 @@ import { createHash } from "node:crypto";
 // recovered by running each release tag's own `agentBootstrap` in an empty project, once for each
 // package manager. To recognize a release this table does not list yet, add its version to the
 // matching `releases` list, or, when the template text changed, add the new text to the fixtures
-// and its digest here; that test fails until both agree. It also fails when the version in
-// package.json is not in the `releases` list of the template this checkout writes, so the Version
-// Packages pull request cannot pass until the table lists the release it publishes.
+// and its digest here; that test fails until both agree. It also fails when no template lists the
+// version in package.json, so the Version Packages pull request cannot pass until the table lists
+// the release it publishes. Make that change on main: Changesets regenerates the Version Packages
+// branch, so a commit there is lost. A new template text lists the release that will publish it.
 //
 // The text a release wrote is the text compared, except that a Windows line ending (`\r\n`) counts
 // as the Unix one (`\n`), and the version `.agents/calavera/mcp.md` pins in its launch command is
