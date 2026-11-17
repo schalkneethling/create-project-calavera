@@ -61,7 +61,7 @@ import {
 import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
 import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
-import { loadProjectFormatter } from "./utils/project-formatter.js";
+import { projectFormatterLoader } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
 import {
   ancestorAlreadyManagedError,
@@ -1419,6 +1419,20 @@ async function readStateIfPresent() {
 }
 
 /**
+ * The text Calavera writes as `.calavera/state.json`, formatted by the project's formatter like
+ * the JSON files it generates (#669). The Vite+ pre-commit hook formats the staged files, so state
+ * in any other shape would be rewritten in the next commit (#838). Nothing is written, so a dry run
+ * formats the same text and stops where apply would.
+ *
+ * @param {CalaveraState} state
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ * @returns {Promise<string>}
+ */
+async function formatStateText(state, loadFormatter) {
+  return formatGeneratedText(STATE_FILE, `${JSON.stringify(state, null, 2)}\n`, loadFormatter);
+}
+
+/**
  * @param {PackageJSON} [packageJSON]
  * @returns {PackageManager | undefined}
  */
@@ -2387,7 +2401,6 @@ function jsonContentsMatch(path, installedContents, targetContents) {
  * @param {Change[]} changes
  * @param {CalaveraState} previousState
  * @param {Set<string>} reownManagedFiles
- * @returns {Promise<ManagedFileState>}
  */
 async function writeManagedFile(path, contents, dryRun, changes, previousState, reownManagedFiles) {
   const unchanged = await managedFileUnchanged(path, contents, previousState);
@@ -2398,13 +2411,8 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState, 
     ownership: "calavera",
   });
 
-  const managedFile = {
-    path,
-    hash: textHash(contents),
-  };
-
   if (dryRun || unchanged) {
-    return managedFile;
+    return;
   }
 
   await assertSafeManagedFileWrite(path, contents, previousState, reownManagedFiles);
@@ -2415,8 +2423,6 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState, 
   }
 
   await writeFile(path, contents);
-
-  return managedFile;
 }
 
 /**
@@ -2492,30 +2498,6 @@ function plannedManagedFiles(integrations, integrationOptions = {}) {
       return { path, contents };
     });
   });
-}
-
-/**
- * Returns a function that loads the formatter for the files Calavera writes in `directory` the
- * first time a file needs it, and the same formatter after that. Without `vitePlusStatus`, the
- * project is detected when the formatter loads.
- *
- * @param {string} directory
- * @param {"managed" | "unmanaged" | "unknown"} [vitePlusStatus]
- * @param {{ editorConfig?: import("./utils/editorconfig.js").EditorConfigSettings }} [options]
- *   `editorConfig` is the `.editorconfig` the same run writes, so formatting stops when it would
- *   change the settings the formatter uses.
- * @returns {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>}
- */
-function projectFormatterLoader(directory, vitePlusStatus, options = {}) {
-  /** @type {Promise<import("./utils/project-formatter.js").ProjectFormatter> | undefined} */
-  let formatter;
-  return () =>
-    (formatter ??= (async () =>
-      loadProjectFormatter(
-        directory,
-        vitePlusStatus ?? (await detectVitePlus(directory)).status,
-        options,
-      ))());
 }
 
 /**
@@ -3264,6 +3246,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     plannedManagedFiles(integrations, recipe.integrationOptions),
     loadFormatter,
   );
+  // #838: the state apply writes last is formatted too, so a project whose formatter cannot load
+  // stops here, with nothing written, even when no other file needs the formatter.
+  await loadFormatter();
   // ADR-0016: the integrations' .gitignore blocks, and the block that keeps the artifact cache out
   // of Git (#841), are planned before anything is written, so an edited block stops the dry run
   // and apply alike. The person's lines are never rewritten.
@@ -3325,8 +3310,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const { scripts, omittedScripts, omittedQualitySteps, earlierQualityValues } = scriptPlan;
   /** @type {Change[]} */
   const changes = [];
-  /** @type {ManagedFileState[]} */
-  const managedFiles = [];
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
   // #230: when the plan omits a requested quality, a value the state records that apply wrote
   // is Calavera's, whatever recipe it was written for, so apply removes it. Only a state file
@@ -3373,7 +3356,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const artifactPlan = await prepareArtifactSources(
     recipe,
     applyOptions.dryRun,
-    artifactServices,
+    { ...artifactServices, loadFormatter },
     async (sources) => {
       await buildAiApplyResult(recipe, { dryRun: true }, previousState, sources);
       await planWiring(sources);
@@ -3385,12 +3368,46 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     await artifactPlan.dispose();
     throw error;
   });
+  // #838: the AI result is planned without writing, so the state, which records it, is formatted
+  // before any artifact output is copied. The outputs are copied after that, below.
   const aiResult = await buildAiApplyResult(
     recipe,
-    applyOptions,
+    { dryRun: true },
     previousState,
     artifactPlan.sources,
-  ).finally(artifactPlan.dispose);
+  ).catch(async (error) => {
+    await artifactPlan.dispose();
+    throw error;
+  });
+  // #838: the state is formatted after the last planning step and before apply writes any project
+  // file or artifact output. Two writes come earlier: the auto-install transaction, which formats
+  // and commits its own records atomically, and the restore of a locked payload that is missing
+  // from .calavera/packages/, which rebuilds what the lock already records. It is
+  // formatted in the dry run as well, so the dry run stops where apply would and a formatter that
+  // fails leaves the project unchanged. A managed file's record is its path and the hash of the
+  // text apply writes, as writeManagedFile writes it below. The quality script is final here,
+  // because no script rename targets it.
+  let stateText;
+  try {
+    stateText = await formatStateText(
+      mergeRecipeIntoState(
+        previousState,
+        recipe.profile,
+        integrations.map((integration) => integration.id),
+        managedFilePlans.map(({ path, contents }) => ({ path, hash: textHash(contents) })),
+        aiResult.artifacts,
+        wiringPlan.records,
+        gitignorePlan.records,
+        typeof scripts.quality === "string" ? scripts.quality : null,
+      ),
+      loadFormatter,
+    );
+    if (!applyOptions.dryRun) {
+      await buildAiApplyResult(recipe, applyOptions, previousState, artifactPlan.sources);
+    }
+  } finally {
+    await artifactPlan.dispose();
+  }
   // A dry run plans the auto-installed outputs in both results; apply writes them during the
   // install, so only the install reports them.
   const autoInstalledPaths = new Set(artifactPlan.changes.map(({ path }) => path));
@@ -3495,15 +3512,13 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
 
   // managedFileDeclarations in project-inspection.js sets which managed files apply writes, in order.
   for (const plan of managedFilePlans) {
-    managedFiles.push(
-      await writeManagedFile(
-        plan.path,
-        plan.contents,
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
+    await writeManagedFile(
+      plan.path,
+      plan.contents,
+      applyOptions.dryRun,
+      changes,
+      previousState,
+      reownManagedFiles,
     );
   }
 
@@ -3532,20 +3547,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     // Writing the record first would instead record text the files never received.
     await writeArtifactWiring(wiringPlan.files);
     await mkdir(".calavera", { recursive: true });
-    await writeJSON(
-      STATE_FILE,
-      mergeRecipeIntoState(
-        previousState,
-        recipe.profile,
-        integrations.map((integration) => integration.id),
-        managedFiles,
-        aiResult.artifacts,
-        wiringPlan.records,
-        gitignorePlan.records,
-        typeof scripts.quality === "string" ? scripts.quality : null,
-      ),
-      false,
-    );
+    await writeFile(STATE_FILE, stateText);
   }
 
   if (installPlan?.spawn && !applyOptions.dryRun) {
@@ -4181,6 +4183,13 @@ export async function agentBootstrap(options = {}) {
   );
   /** @type {Change[]} */
   const changes = [...aiResult.changes];
+  // #838: formatted in the dry run as well, and before the guidance and MCP files are written. The
+  // skill files are already written by now, so a formatter failure here leaves them without a
+  // state record.
+  const stateText = await formatStateText(
+    mergeAiArtifactsIntoState(previousState, aiResult.artifacts),
+    loadFormatter,
+  );
 
   const fallbackGuidanceAwaitsMerge = await writeAgentBootstrapGuidance(
     bootstrapOptions,
@@ -4214,11 +4223,7 @@ export async function agentBootstrap(options = {}) {
 
   if (!bootstrapOptions.dryRun) {
     await mkdir(".calavera", { recursive: true });
-    await writeJSON(
-      STATE_FILE,
-      mergeAiArtifactsIntoState(previousState, aiResult.artifacts),
-      false,
-    );
+    await writeFile(STATE_FILE, stateText);
   }
 
   return {
@@ -5625,12 +5630,19 @@ async function clean(options) {
   // longer selects under the same rules as apply, with the same planner. Only blocks and groups
   // that match the record are removed, and an edited one throws a conflict here, before anything
   // is listed or written, so clean never deletes a skill directory that recorded wiring still runs.
+  // #838: clean formats its state and wiring before it removes anything, so when it removes
+  // Calavera's .editorconfig, formatting stops if the removal would change the settings vp fmt uses.
+  const loadFormatter = projectFormatterLoader(process.cwd(), undefined, {
+    removesEditorConfig:
+      staleFilesSafeToRemove.some(({ path }) => path === ".editorconfig") &&
+      (await fileExists(".editorconfig")),
+  });
   const wiringPlan = await planArtifactWiring({
     recipe,
     artifacts: [],
     previousRecords: state.aiWiring.filter(({ artifact }) => !selectedAiIds.has(artifact)),
     skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
-    loadFormatter: projectFormatterLoader(process.cwd()),
+    loadFormatter,
   });
   const changedWiringFiles = wiringPlan.files.filter(({ type }) => type !== "unchanged");
 
@@ -5694,6 +5706,29 @@ async function clean(options) {
     };
   }
 
+  // A skipped item keeps its record, so the next clean still reports it, or removes it once the
+  // person restores it.
+  const keptFilePaths = new Set(staleFilesWithLocalEdits.map(({ path }) => path));
+  const keptManagedFiles = managedFilesFromState(state).filter(
+    (file) => expectedFiles.has(file.path) || keptFilePaths.has(file.path),
+  );
+  const keptAiPaths = new Set(staleAiArtifactsWithLocalEdits.map(({ path }) => path));
+  // #838: formatted before clean asks for approval or removes anything, in the dry run as well, so
+  // a formatter that cannot run, or a removal that would change its settings, stops clean first.
+  const stateText = await formatStateText(
+    {
+      ...state,
+      files: keptManagedFiles.map((file) => file.path),
+      managedFiles: keptManagedFiles,
+      aiArtifacts: state.aiArtifacts.filter(
+        (artifact) => expectedAiPaths.has(artifact.path) || keptAiPaths.has(artifact.path),
+      ),
+      // The records of removed wiring describe text the files no longer hold.
+      aiWiring: state.aiWiring.filter(({ artifact }) => selectedAiIds.has(artifact)),
+    },
+    loadFormatter,
+  );
+
   if (!options.assumeYes && !options.dryRun) {
     const staleCount = staleFilesSafeToRemove.length + staleAiArtifactsSafeToRemove.length;
     const removals = [
@@ -5751,14 +5786,6 @@ async function clean(options) {
   const kept = keptSummary([...staleFilesWithLocalEdits, ...staleAiArtifactsWithLocalEdits]);
 
   if (!options.dryRun) {
-    // A skipped item keeps its record, so the next clean still reports it, or removes it once the
-    // person restores it.
-    const keptFilePaths = new Set(staleFilesWithLocalEdits.map(({ path }) => path));
-    const keptManagedFiles = managedFilesFromState(state).filter(
-      (file) => expectedFiles.has(file.path) || keptFilePaths.has(file.path),
-    );
-    const keptAiPaths = new Set(staleAiArtifactsWithLocalEdits.map(({ path }) => path));
-
     // The wiring goes first, so a failure part way never leaves a hook that runs a deleted script.
     await writeArtifactWiring(wiringPlan.files);
 
@@ -5775,20 +5802,7 @@ async function clean(options) {
       });
     }
 
-    await writeJSON(
-      STATE_FILE,
-      {
-        ...state,
-        files: keptManagedFiles.map((file) => file.path),
-        managedFiles: keptManagedFiles,
-        aiArtifacts: state.aiArtifacts.filter(
-          (artifact) => expectedAiPaths.has(artifact.path) || keptAiPaths.has(artifact.path),
-        ),
-        // The records of removed wiring describe text the files no longer hold.
-        aiWiring: state.aiWiring.filter(({ artifact }) => selectedAiIds.has(artifact)),
-      },
-      false,
-    );
+    await writeFile(STATE_FILE, stateText);
   }
 
   return {

@@ -171,10 +171,12 @@ installed `vp` of another version (ADR-0012, Decision 2). Calavera decides the
 install command and locates the bin before `apply` writes anything, including
 a new `package.json`. If the project's vite-plus is not installed, or cannot
 be used, `apply` stops at that point; install the project's dependencies, then
-run `apply` again. `apply --no-install` does not get around this, because Calavera
-also formats the JSON and Markdown files it writes with the project's own
-`vp fmt`, in memory and before the dry run, so the files pass `vp check` as
-written. In a project Vite+ does not manage, those files are written
+run `apply` again. `apply --no-install` does not get around this, because
+Calavera also formats the JSON and Markdown files it writes with the project's
+own `vp fmt`, in memory and before the dry run, so the files pass `vp check` as
+written. That includes `.calavera/state.json` and
+`.calavera/artifacts.lock.json`, so the Vite+ pre-commit hook, which formats
+the staged files, commits them as Calavera wrote them. In a project Vite+ does not manage, those files are written
 unformatted.
 
 Oxfmt also reads indentation, line endings, the final newline, line length,
@@ -186,6 +188,14 @@ of those differently from Calavera's, the dry run and `apply` stop and name
 the file and the setting. Save Calavera's `.editorconfig`, which the error
 prints, in the project root, or leave `editorconfig` out of the recipe, then
 run `apply` again.
+
+`clean` makes the mirror decision. When the recipe no longer includes
+`editorconfig`, `clean` removes Calavera's `.editorconfig`, and the settings
+in a parent folder's `.editorconfig` apply again. If those differ from
+Calavera's, `clean` and its dry run stop before changing anything, because
+`clean` formats `.calavera/state.json` before it removes the file. Delete
+`.editorconfig` yourself, or keep `editorconfig` in the recipe, then run
+`clean` again.
 
 The dry run makes the same decision. `apply --dry-run` prints, for example,
 `Dev dependency install command: vp add -D knip`, followed by the exact
