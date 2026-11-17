@@ -1,6 +1,6 @@
 # ADR-0017: `eject` Removes Calavera's Management Footprint and Keeps the Installed Tooling
 
-- **Status:** Proposed (2026-11-17)
+- **Status:** Accepted (2026-11-17, Schalk Neethling, merged in #1004)
 - **Date:** 2026-11-17
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/678
 - **Decides:** what a new `eject` command removes from a project, what it keeps, and how it asks for approval. `eject` removes the files and the text Calavera keeps in a project to manage it (the footprint): the state, the recipe, the artifact lock and package copies, the artifact cache and its `.gitignore` block, the bootstrap guidance, the MCP setup notes and registration, a `.coderabbit.yaml` that Calavera created, and the base Calavera skill. It keeps every tool, managed file, `package.json` entry, and recipe-selected AI artifact other than the base skill that Calavera installed, and it writes nothing into a kept block or into a file that holds no footprint text. It changes nothing in `package.json`, and it reports each script there that runs Calavera and any development dependency on Calavera. Like `apply`, it starts with a dry run, and it deletes nothing until the person approves a list that names every deletion and edit and marks each item the person edited. `--yes` removes only items that match Calavera's records exactly. None of the C8 safety properties is weakened (Decision 9). The owner answered the open questions of the first draft on 2026-11-17 on #678, and each answer is recorded in the decision it belongs to.
