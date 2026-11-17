@@ -236,29 +236,38 @@ async function doctorReport(cwd) {
 }
 
 // #997: doctor names apply's refusal instead of only the root-only integration's missing files.
-test("doctor from a workspace member reports apply's refusal of a root-only integration as an error", async () => {
-  await using repository = await createRepository();
-  const recipe = repositoryControlsRecipe();
-  await writeFile(
-    join(repository.member, "calavera.config.json"),
-    `${JSON.stringify(recipe, null, 2)}\n`,
-  );
-  const applyRefusal = await inDirectory(repository.member, () =>
-    applyRecipeObject(recipe, { json: true, dryRun: true, assumeYes: true }).then(
-      () => assert.fail("apply did not refuse the recipe"),
-      (/** @type {Error} */ error) => error.message,
-    ),
-  );
-  assert.match(applyRefusal, refusal(repository.member, repository.root));
+// The pnpm recipe shows that doctor names the same package manager's command as apply.
+for (const packageManager of ["npm", "pnpm"]) {
+  test(`doctor from a workspace member reports apply's refusal of a root-only integration as an error (${packageManager})`, async () => {
+    await using repository = await createRepository();
+    const recipe = buildRecipe(
+      "minimal",
+      ["editorconfig", "github-repository-controls"],
+      packageManager,
+      [],
+      { "github-repository-controls": repositoryControlsOptions },
+    );
+    await writeFile(
+      join(repository.member, "calavera.config.json"),
+      `${JSON.stringify(recipe, null, 2)}\n`,
+    );
+    const applyRefusal = await inDirectory(repository.member, () =>
+      applyRecipeObject(recipe, { json: true, dryRun: true, assumeYes: true }).then(
+        () => assert.fail("apply did not refuse the recipe"),
+        (/** @type {Error} */ error) => error.message,
+      ),
+    );
+    assert.match(applyRefusal, /github-repository-controls applies at the repository root/);
 
-  const report = await doctorReport(repository.member);
+    const report = await doctorReport(repository.member);
 
-  assert.equal(report.ok, false);
-  assert.deepEqual(
-    report.issues.filter(({ level }) => level === "error"),
-    [{ level: "error", message: applyRefusal }],
-  );
-});
+    assert.equal(report.ok, false);
+    assert.deepEqual(
+      report.issues.filter(({ level }) => level === "error"),
+      [{ level: "error", message: applyRefusal }],
+    );
+  });
+}
 
 test("doctor at the repository root does not report the root-only refusal", async () => {
   await using repository = await createRepository();
