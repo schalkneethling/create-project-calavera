@@ -16,7 +16,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { createMcpServer } from "../src/mcp.js";
-import { composerRegisteredToolNames } from "./composer-webmcp-tools.mjs";
+import { composerRegisteredToolNames, registeredToolNamesIn } from "./composer-webmcp-tools.mjs";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../bin/create-project-calavera.js", import.meta.url));
@@ -262,4 +262,18 @@ test("a marker matches when the prose around it is wrapped differently", () => {
     toolNamesIn(numberedListAfterMarker(fixture, "project-local apply tools:", "fixture")),
     ["inspect_project"],
   );
+});
+
+test("the registration parser fails when a registerTool call does not start with its name", () => {
+  assert.deepEqual(registeredToolNamesIn('registerTool({\n  name: "list_profiles",\n});'), [
+    "list_profiles",
+  ]);
+  assert.throws(
+    () =>
+      registeredToolNamesIn(
+        'registerTool({ name: "list_profiles" });\nregisterTool({ description: "x", name: "new_tool" });',
+      ),
+    /first key is name/,
+  );
+  assert.throws(() => registeredToolNamesIn("registerTool(tool);"), /first key is name/);
 });
