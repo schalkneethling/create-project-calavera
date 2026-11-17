@@ -939,3 +939,135 @@ test("the runner note keeps its exact command when it does not end with the inst
   assert.ok(lines.includes(`  ${note}`));
   assert.ok(lines.includes("  Another note."));
 });
+
+test("the artifact group reads in the past tense after apply, and names the default registry alone", () => {
+  const result = emptyResult({
+    dryRun: false,
+    recipe: {
+      version: 1,
+      integrations: [],
+      ai: [{ id: "skill-code-review" }, { id: "skill-css-tokens" }],
+    },
+    artifactRegistries: [{ origin: "https://registry.npmjs.org", source: "default" }],
+    autoInstalledArtifacts: /** @type {any} */ ([{ id: "skill-css-tokens", version: "0.3.0" }]),
+    // An artifact with only an input still gets a line, with the input under it.
+    artifactInputs: /** @type {any} */ ([
+      {
+        artifact: "skill-code-review",
+        index: 0,
+        name: "branch",
+        value: "main",
+        source: "recorded",
+      },
+    ]),
+    wiringChanges: /** @type {any} */ ([
+      {
+        artifact: "skill-css-tokens",
+        path: ".vite-hooks/pre-push",
+        kind: "vite-hook",
+        type: "update",
+        block: "run b",
+      },
+      {
+        artifact: "skill-css-tokens",
+        path: ".vite-hooks/pre-push",
+        kind: "vite-hook",
+        type: "update",
+        removedBlock: "run c",
+      },
+      {
+        artifact: "skill-css-tokens",
+        path: ".claude/settings.json",
+        kind: "claude-settings",
+        type: "update",
+        groupChanges: [
+          { event: "SessionStart", action: "add", group: { a: 1 } },
+          { event: "Stop", action: "replace", group: { a: 1 }, previous: { a: 0 } },
+          { event: "PreToolUse", action: "remove", previous: { b: 0 } },
+        ],
+        reformatted: true,
+      },
+    ]),
+  });
+  const lines = applySummaryLines(result).map(({ text }) => text);
+  assert.deepEqual(lines.slice(lines.indexOf("Artifacts:")), [
+    "Artifacts:",
+    "  Registry: https://registry.npmjs.org",
+    "  skill-code-review",
+    "    branch = main (recorded in the recipe)",
+    "  Locked skill-css-tokens 0.3.0; its files in the project already matched",
+    '    Updated its block in .vite-hooks/pre-push: "run b"',
+    '    Removed its block from .vite-hooks/pre-push, because it no longer wires that hook: "run c"',
+    '    Added a SessionStart group to .claude/settings.json: {"a":1}',
+    '    Replaced the Stop group in .claude/settings.json: {"a":0} with {"a":1}',
+    '    Removed the PreToolUse group from .claude/settings.json: {"b":0}',
+    "    Also changed the layout of the rest of .claude/settings.json, because Calavera writes the whole file in the project's format; no value outside the groups changes",
+  ]);
+});
+
+test("a registry is named only with an artifact line; the scripts come from the change that has them", () => {
+  const lines = applySummaryLines(
+    emptyResult({
+      artifactRegistries: [{ origin: "https://registry.example", source: "default" }],
+      changes: [
+        { type: "write", path: "first.json", action: "write", ownership: "project" },
+        { type: "unchanged", path: "package.json", scripts: ["knip"] },
+      ],
+      ignoreChanges: /** @type {any} */ ([
+        { path: "first.json", integration: "stryker", type: "write", lines: ["a/", "b/"] },
+      ]),
+    }),
+  ).map(({ text }) => text);
+  assert.equal(lines.includes("Artifacts:"), false);
+  assert.ok(lines.includes('    Would add the stryker lines: "a/", "b/"'));
+  assert.deepEqual(lines.slice(lines.indexOf("Scripts:")), [
+    "Scripts:",
+    "  Scripts already set: knip",
+  ]);
+});
+
+test("a differing package manager keeps only its own finding", () => {
+  const lines = applySummaryLines(
+    emptyResult({
+      projectInspection: {
+        packageManager: "pnpm",
+        files: [],
+        findings: /** @type {any} */ ([
+          { severity: "info", kind: "package-manager", message: "Detected pnpm." },
+          { severity: "info", kind: "vite-plus-unmanaged", message: "Not managed." },
+        ]),
+        vitePlus: { status: "unmanaged", corroborating: [] },
+      },
+    }),
+  ).map(({ text }) => text);
+  assert.ok(lines.includes("  Inspection info: Detected pnpm."));
+  assert.equal(lines.includes("  Inspection info: Not managed."), false);
+});
+
+test("the runner note is shortened only for a vp command whose arguments it ends with", () => {
+  const prefix = "Vite+ runs this with the package manager the project pins; apply runs it as: ";
+  const notesFor = (/** @type {string} */ installCommand, /** @type {string} */ note) =>
+    applySummaryLines(
+      emptyResult({
+        recipe: { version: 1, integrations: ["knip"] },
+        dependencies: ["knip"],
+        installCommand,
+        installNotes: [note],
+      }),
+    )
+      .map(({ text }) => text)
+      .at(-1);
+
+  assert.equal(
+    notesFor("vp add -D knip", `${prefix}node vp add -D knip`),
+    "  Vite+ runs this with the package manager the project pins; apply runs it with: node vp",
+  );
+  assert.equal(
+    notesFor("pnpm add -D knip", `${prefix}node vp add -D knip`),
+    `  ${prefix}node vp add -D knip`,
+  );
+  assert.equal(
+    notesFor("vp add -D knip", "Other note ending add -D knip"),
+    "  Other note ending add -D knip",
+  );
+});
