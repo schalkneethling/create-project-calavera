@@ -169,7 +169,8 @@ export const recipeToolInputDescriptions = Object.freeze({
   tools: "Integration IDs or labels. Omit to use the selected profile defaults from list_profiles.",
   integrationId: "Integration ID or label from list_integrations.",
   aiArtifactId: "AI artifact ID, source, or label from list_ai_artifacts.",
-  aiArtifactTarget: "Optional target directory for hook and agent artifacts.",
+  aiArtifactTarget:
+    "Optional target for hook and agent artifacts: the id of one of the artifact's targets from list_ai_artifacts.",
   aiArtifactInputs:
     'Values for the inputs the artifact declares, keyed by input name, such as { protectedBranch: "main" }. compose_recipe reports each declared input with its default; confirm the value with the user before dry_run_apply.',
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",

@@ -214,6 +214,7 @@ test("every integration status has a display label, and listIntegrationOptions c
   });
 
   for (const integration of listIntegrationOptions()) {
+    assert.equal(typeof integration.statusLabel, "string", `${integration.id} needs a statusLabel`);
     assert.equal(
       integration.statusLabel,
       integrationStatusLabels[integration.status],
