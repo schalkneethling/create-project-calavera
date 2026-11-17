@@ -68,3 +68,22 @@ test("errorAfterCleanups keeps the original error first and as the cause when a 
   );
   assert.equal(laterRan, true);
 });
+
+test("a cleanup that throws instead of rejecting neither skips later cleanups nor hides the original error", async () => {
+  const stopped = new Error("formatter failed");
+  const busy = new Error("EBUSY: resource busy");
+  let laterRan = false;
+
+  const result = await errorAfterCleanups(stopped, [
+    () => {
+      throw busy;
+    },
+    async () => {
+      laterRan = true;
+    },
+  ]);
+
+  assert.ok(result instanceof AggregateError);
+  assert.deepEqual(result.errors, [stopped, busy]);
+  assert.equal(laterRan, true);
+});

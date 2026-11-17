@@ -569,6 +569,45 @@ test("when removing the install's staging folder fails, apply still removes the 
   });
 });
 
+test("when a locked package cannot be rebuilt and removing its rebuild folder fails, apply reports both failures", async (t) => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    const offlineMiss = new Error("ENOTCACHED: skill-project-goal is not in the offline cache");
+    const busy = new Error("EBUSY: resource busy");
+    const remove = fsPromises.rm;
+    t.mock.method(
+      fsPromises,
+      "rm",
+      (/** @type {string} */ path, /** @type {import("node:fs").RmOptions} */ rmOptions) =>
+        String(path).includes("calavera-locked-artifact-")
+          ? Promise.reject(busy)
+          : remove(path, rmOptions),
+    );
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+
+    await assert.rejects(
+      applyRecipeObject(
+        recipe,
+        applyOptions,
+        stubRegistry(new Map(), { failFor: "skill-project-goal", error: offlineMiss }),
+      ),
+      (/** @type {Error} */ error) => {
+        assert.ok(error instanceof AggregateError);
+        assert.deepEqual(error.errors, [offlineMiss, busy]);
+        assert.equal(error.cause, offlineMiss);
+        return true;
+      },
+    );
+  });
+});
+
 test("a local edit to a locked artifact stops apply before an unlocked artifact is installed", async () => {
   await inProject(async () => {
     const releases = new Map([["skill-project-goal", "0.1.0"]]);

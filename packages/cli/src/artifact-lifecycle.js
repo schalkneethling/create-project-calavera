@@ -780,7 +780,9 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
     };
   } catch (error) {
     // A commit that failed part way leaves its journal and staging for recovery.
-    if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) await dispose();
+    if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) {
+      throw await errorAfterCleanups(error, [dispose]);
+    }
     throw error;
   }
 }

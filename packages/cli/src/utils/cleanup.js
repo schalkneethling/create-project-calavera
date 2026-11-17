@@ -10,13 +10,15 @@ export class CleanupError extends AggregateError {}
 const reasonOf = (error) => (error instanceof Error ? error.message : String(error));
 
 /**
- * Runs every cleanup, even when another fails, and returns their failures.
+ * Runs every cleanup, even when another fails, and returns their failures. The cleanups run at the
+ * same time, so each must be independent of the others, such as removing separate folders. A
+ * cleanup that throws instead of rejecting counts as failed, so the others still run.
  *
  * @param {Array<() => Promise<unknown>>} cleanups
  * @returns {Promise<unknown[]>}
  */
 async function cleanupFailures(cleanups) {
-  const results = await Promise.allSettled(cleanups.map((cleanup) => cleanup()));
+  const results = await Promise.allSettled(cleanups.map(async (cleanup) => cleanup()));
   return results.flatMap((result) => {
     if (result.status === "fulfilled") return [];
     return result.reason instanceof CleanupError ? result.reason.errors : [result.reason];
@@ -24,8 +26,8 @@ async function cleanupFailures(cleanups) {
 }
 
 /**
- * Runs every cleanup, even when another fails, and then throws a CleanupError that lists each
- * failure, if any.
+ * Runs every cleanup at the same time, even when another fails, and then throws a CleanupError
+ * that lists each failure, if any.
  *
  * @param {Array<() => Promise<unknown>>} cleanups
  */
@@ -40,10 +42,10 @@ export async function runCleanups(cleanups) {
 }
 
 /**
- * Runs every cleanup after `error` stopped a command, even when a cleanup fails, and returns the
- * error to throw: `error` itself when every cleanup succeeded, and otherwise an AggregateError that
- * lists `error` first and then each cleanup failure, and keeps `error` as its cause, so neither the
- * original failure nor a cleanup failure is lost.
+ * Runs every cleanup at the same time after `error` stopped a command, even when a cleanup fails,
+ * and returns the error to throw: `error` itself when every cleanup succeeded, and otherwise an
+ * AggregateError that lists `error` first and then each cleanup failure, and keeps `error` as its
+ * cause, so neither the original failure nor a cleanup failure is lost.
  *
  * @param {unknown} error
  * @param {Array<() => Promise<unknown>>} cleanups
