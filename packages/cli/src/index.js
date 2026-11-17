@@ -2,6 +2,7 @@
 import { existsSync, realpathSync } from "node:fs";
 import {
   glob,
+  lstat,
   mkdir,
   readFile,
   readdir,
@@ -3042,7 +3043,19 @@ async function planRecipeCopy(source) {
 
   const bytes = await readFile(source);
   const target = join(directory, CONFIG_FILE);
+  // fileExists follows a link, so a link whose target is missing reads as no file, and the copy
+  // would then be written wherever the link points, possibly outside the project.
+  const isLink = await lstat(target).then(
+    (stats) => stats.isSymbolicLink(),
+    () => false,
+  );
   const existing = (await fileExists(target)) ? await readFile(target) : undefined;
+
+  if (isLink && existing === undefined) {
+    throw new Error(
+      `apply refused: ${target} is a symbolic link to a file that does not exist, so copying ${source} there would write wherever the link points. Remove the link, or restore the file it points to, then run apply again. Calavera stopped before writing anything.`,
+    );
+  }
 
   if (existing !== undefined && !existing.equals(bytes)) {
     throw new Error(

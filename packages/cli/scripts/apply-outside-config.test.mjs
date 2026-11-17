@@ -6,7 +6,15 @@
 // names the directory, and it does not offer to create package.json.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtempDisposable, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtempDisposable,
+  readFile,
+  readdir,
+  realpath,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -46,8 +54,7 @@ async function downloadedRecipe({ withPackageJSON = true } = {}) {
   return {
     source: join(downloads, "calavera.config.json"),
     project,
-    // The project as the temporary folder names it, before any symbolic link is resolved.
-    unresolvedProject: join(root.path, "project"),
+    root: resolvedRoot,
     [Symbol.asyncDispose]: () => root[Symbol.asyncDispose](),
   };
 }
@@ -253,21 +260,51 @@ for (const dryRun of [true, false]) {
   });
 }
 
+for (const dryRun of [true, false]) {
+  test(`a dangling link at calavera.config.json is refused before any write (dryRun: ${dryRun})`, async () => {
+    await using fixture = await downloadedRecipe();
+    const elsewhere = join(fixture.root, "elsewhere");
+    await mkdir(elsewhere);
+    const target = join(fixture.project, "calavera.config.json");
+    await symlink(join(elsewhere, "recipe.json"), target);
+    const before = await snapshotDirectory(fixture.project);
+
+    await assert.rejects(
+      inDirectory(fixture.project, () => applyRecipe(applyOptions(fixture.source, { dryRun }))),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.includes(target), error.message);
+        assert.match(error.message, /symbolic link/);
+        assert.match(error.message, /stopped before writing anything/);
+        return true;
+      },
+    );
+    assert.deepEqual(await snapshotDirectory(fixture.project), before);
+    assert.deepEqual(await readdir(elsewhere), [], "nothing is written where the link points");
+  });
+}
+
 for (const [name, config] of [
   ["the default relative path", () => "calavera.config.json"],
   ["an absolute path", (fixture) => join(fixture.project, "calavera.config.json")],
   [
-    "a path through a symbolic link",
-    (fixture) => join(fixture.unresolvedProject, "calavera.config.json"),
+    "a path through a directory link",
+    async (fixture) => {
+      // A link created here, so the case does not depend on the temporary folder being one.
+      const link = join(fixture.root, "project-link");
+      await symlink(fixture.project, link, "junction");
+      return join(link, "calavera.config.json");
+    },
   ],
 ]) {
   test(`--config naming the project's own calavera.config.json by ${name} copies nothing`, async () => {
     await using fixture = await downloadedRecipe();
     await writeFile(join(fixture.project, "calavera.config.json"), recipeText);
     const before = await snapshotDirectory(fixture.project);
+    const configPath = await config(fixture);
 
     const result = await inDirectory(fixture.project, () =>
-      applyRecipe(applyOptions(config(fixture), { dryRun: true })),
+      applyRecipe(applyOptions(configPath, { dryRun: true })),
     );
 
     assert.deepEqual(
