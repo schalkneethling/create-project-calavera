@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { createHash } from "node:crypto";
 import test from "node:test";
 
+import packageJson from "../package.json" with { type: "json" };
 import { EARLIER_TEMPLATES, findEarlierGuidance } from "../src/utils/earlier-guidance.js";
 import {
   currentText,
@@ -18,6 +19,7 @@ import {
 
 /** @param {string} text */
 const sha256 = (text) => createHash("sha256").update(text).digest("hex");
+const { version } = packageJson;
 
 test("Given the committed release fixtures, then the digests the CLI holds are exactly their digests", async () => {
   const expected = {
@@ -114,6 +116,23 @@ test("Given the text this checkout writes, then an earlier release's template is
       findEarlierGuidance("mcp", pinned)?.releases,
       lastMcp.releases,
       `mcp.md for ${packageManager}: the text this checkout writes is not registered: add it to fixtures/agent-guidance and its digest to src/utils/earlier-guidance.js, keeping the earlier texts`,
+    );
+  }
+});
+
+test("Given the version this checkout publishes, then the template it writes lists that version", async () => {
+  // Issue #935: the version in package.json is the one the next publish writes into projects, so
+  // the Version Packages pull request fails here until the table lists the new release.
+  const remedy = `add ${version} to the releases of the matching template in fixtures/agent-guidance/epochs.json and src/utils/earlier-guidance.js`;
+  for (const packageManager of packageManagers) {
+    const current = await currentText(packageManager);
+    assert.ok(
+      findEarlierGuidance("guidance", current.agents)?.releases.includes(version),
+      `AGENTS.md for ${packageManager}: ${remedy}`,
+    );
+    assert.ok(
+      findEarlierGuidance("mcp", current.mcp)?.releases.includes(version),
+      `mcp.md for ${packageManager}: ${remedy}`,
     );
   }
 });

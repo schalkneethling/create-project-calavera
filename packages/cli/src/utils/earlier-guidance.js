@@ -12,7 +12,9 @@ import { createHash } from "node:crypto";
 // recovered by running each release tag's own `agentBootstrap` in an empty project, once for each
 // package manager. To recognize a release this table does not list yet, add its version to the
 // matching `releases` list, or, when the template text changed, add the new text to the fixtures
-// and its digest here; that test fails until both agree.
+// and its digest here; that test fails until both agree. It also fails when the version in
+// package.json is not in the `releases` list of the template this checkout writes, so the Version
+// Packages pull request cannot pass until the table lists the release it publishes.
 //
 // The text a release wrote is the text compared, except that a Windows line ending (`\r\n`) counts
 // as the Unix one (`\n`), and the version `.agents/calavera/mcp.md` pins in its launch command is
@@ -70,7 +72,7 @@ const GUIDANCE = [
     sha256: ["f198c16e05ee0c587754f173d612b9de266751f845c4ce1914a1857d6d29dcb5"],
   },
   {
-    releases: ["6.1.0"],
+    releases: ["6.1.0", "6.2.0", "6.2.1"],
     sha256: ["c0c6c875f0eb05cbf1dfbce2793a317900407966a65eaf8838e1af4f87d67e00"],
   },
 ];
@@ -157,7 +159,7 @@ const MCP = [
     ],
   },
   {
-    releases: ["5.0.0", "5.0.1", "6.0.0", "6.1.0"],
+    releases: ["5.0.0", "5.0.1", "6.0.0", "6.1.0", "6.2.0", "6.2.1"],
     pinned: true,
     sha256: [
       "85efd7663418e9bc17f8f35e2d39bddc5f646a6ca7c317bda2ea8f4a3ed25487",
