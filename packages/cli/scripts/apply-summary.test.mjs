@@ -472,6 +472,13 @@ test("each kind of file, script, and finding has one line, in both tenses", () =
     { type: "write", path: ".env.schema", action: "scaffold", ownership: "project" },
     { type: "write", path: "merged.json", action: "merge", ownership: "project" },
     { type: "write", path: "plain.yaml", action: "write", ownership: "project" },
+    {
+      type: "write",
+      path: "calavera.config.json",
+      action: "write",
+      ownership: "project",
+      from: "../recipes/web.json",
+    },
     { type: "unchanged", path: "same.json" },
     { type: "skip", path: "skipped.json" },
   ];
@@ -520,6 +527,7 @@ test("each kind of file, script, and finding has one line, in both tenses", () =
     "info   Would scaffold .env.schema",
     "info   Would merge merged.json",
     "info   Would write plain.yaml",
+    "info   Would copy ../recipes/web.json to calavera.config.json",
     "info   Unchanged same.json",
     "info ",
     "info Scripts:",
@@ -546,6 +554,7 @@ test("each kind of file, script, and finding has one line, in both tenses", () =
     "info   Scaffolded .env.schema",
     "info   Merged merged.json",
     "info   Wrote plain.yaml",
+    "info   Copied ../recipes/web.json to calavera.config.json",
     "info   Unchanged same.json",
     "info ",
     "info Scripts:",
@@ -1070,4 +1079,40 @@ test("the runner note is shortened only for a vp command whose arguments it ends
     notesFor("vp add -D knip", "Other note ending add -D knip"),
     "  Other note ending add -D knip",
   );
+});
+
+test("a legacy artifact entry is named by its catalog ID, with the version apply locks", async () => {
+  // Greptile on #1012: a recipe may still select an artifact by its legacy type and src.
+  await inManagedProject(async () => {
+    const recipe = {
+      ...buildRecipe("minimal", ["editorconfig"], "pnpm"),
+      ai: [{ type: "skill", src: "skills/project-goal" }],
+    };
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const texts = (/** @type {import("../src/index.js").ApplyResult} */ result) =>
+      applySummaryLines(result).map(({ text }) => text);
+
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+    assert.ok(
+      texts(dryRun).includes(
+        "  Would lock skill-project-goal 0.1.0 and write .agents/skills/project-goal",
+      ),
+      printed(texts(dryRun)),
+    );
+
+    await applyRecipeObject(
+      dryRun.recipe,
+      { ...applyOptions, approvedArtifacts: dryRun.autoInstalledArtifacts },
+      registry,
+    );
+    // As after a bootstrap that installed the files before the project had a lock.
+    await rm(LOCK_PATH);
+    const relock = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+    assert.ok(
+      texts(relock).includes(
+        "  Would lock skill-project-goal 0.1.0; its files in the project already match",
+      ),
+      printed(texts(relock)),
+    );
+  });
 });

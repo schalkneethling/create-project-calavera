@@ -8,7 +8,7 @@
 // its inputs and wiring under it. The `--json` and MCP results keep their shape and text; where a
 // note there repeats what the summary already names, the summary prints a shorter form of it.
 import { aiArtifactOutputPaths, resolveAiArtifacts } from "./ai/artifacts.js";
-import { ARTIFACT_CACHE_BLOCK } from "./artifact-lifecycle.js";
+import { ARTIFACT_CACHE_BLOCK, normalizePackageSelections } from "./artifact-lifecycle.js";
 import { GITIGNORE_PATH } from "./ignore-lines.js";
 import { resolveRecipeIntegrations } from "./recipe.js";
 import { integrationDependencies } from "./stryker-options.js";
@@ -358,8 +358,11 @@ function artifactLines(result) {
   /** @type {Set<string>} */
   const named = new Set();
 
+  // The catalog ID of each recipe item, as the lock entries, inputs, and wiring name it, also for
+  // an item the recipe selects by its legacy type and src.
+  const catalogIds = normalizePackageSelections(result.recipe.ai).map(({ id }) => id);
   for (const artifact of resolveAiArtifacts(result.recipe)) {
-    const id = artifact.source;
+    const id = catalogIds[artifact.index] ?? artifact.source;
     named.add(id);
     const written = aiArtifactOutputPaths(artifact).filter((path) => writtenPaths.has(path));
     const locked = result.autoInstalledArtifacts.find((entry) => entry.id === id);
