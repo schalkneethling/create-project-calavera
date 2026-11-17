@@ -8,24 +8,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { manifestChoices } from "../src/manifest-decision.js";
+import { bundledSkillCopies } from "./bundled-skill-copies.mjs";
 
-// The CLI installs the first copy during `--init`; the second is the published skill artifact.
-const skills = [
-  {
-    source: "packages/cli/src/bootstrap/calavera/SKILL.md",
-    url: new URL("../src/bootstrap/calavera/SKILL.md", import.meta.url),
-  },
-  {
-    source: "packages/artifacts/skill-calavera/payload/calavera/SKILL.md",
-    url: new URL("../../artifacts/skill-calavera/payload/calavera/SKILL.md", import.meta.url),
-  },
-];
-
-for (const { source, url } of skills) {
+for (const { source, url } of bundledSkillCopies) {
   test(`the bundled Calavera skill at ${source} keeps the manifest choice with the user`, async () => {
     const skill = await readFile(url, "utf8");
 
-    for (const name of ["manifestDecision", "manifestChoice", ...manifestChoices]) {
+    // `manifestDecision` stays in the result after a choice, with the choice in `choice`, so the
+    // skill must name that field or an agent asks the user again.
+    for (const name of [
+      "manifestDecision",
+      "manifestChoice",
+      "result.manifestDecision.choice",
+      ...manifestChoices,
+    ]) {
       assert.ok(skill.includes(`\`${name}\``), `${source} does not name \`${name}\``);
     }
     assert.match(

@@ -16,23 +16,13 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 
 import { createMcpServer } from "../src/mcp.js";
+import { bundledSkillCopies } from "./bundled-skill-copies.mjs";
 import { composerRegisteredToolNames, registeredToolNamesIn } from "./composer-webmcp-tools.mjs";
 
 const execFileAsync = promisify(execFile);
 const cliPath = fileURLToPath(new URL("../bin/create-project-calavera.js", import.meta.url));
 const readmeUrl = new URL("../../../README.md", import.meta.url);
 const workflowDocUrl = new URL("../../../docs/agent-first-calavera-workflow.md", import.meta.url);
-// The CLI installs the first copy during `--init`; the second is the published skill artifact.
-const skills = [
-  {
-    source: "packages/cli/src/bootstrap/calavera/SKILL.md",
-    url: new URL("../src/bootstrap/calavera/SKILL.md", import.meta.url),
-  },
-  {
-    source: "packages/artifacts/skill-calavera/payload/calavera/SKILL.md",
-    url: new URL("../../artifacts/skill-calavera/payload/calavera/SKILL.md", import.meta.url),
-  },
-];
 
 const README_MARKER = "Confirm the Calavera MCP tools are exposed:";
 const WORKFLOW_DOC_MARKER = "Calavera MCP tools are exposed:";
@@ -153,7 +143,7 @@ test("the README's tool-order list names every tool the MCP server registers, an
   assert.deepEqual(documented, await registeredToolNames());
 });
 
-for (const { source, url } of skills) {
+for (const { source, url } of bundledSkillCopies) {
   test(`the bundled Calavera skill at ${source} lists every tool the MCP server registers, and no others`, async () => {
     const skill = await readFile(url, "utf8");
     const documented = toolNamesIn(listAfterMarker(skill, SKILL_MARKER, source));
