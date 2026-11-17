@@ -38,6 +38,7 @@ import {
 import {
   assertGitHookArtifactsAtRepositoryRoot,
   assertRootOnlyIntegrationsAtRepositoryRoot,
+  findRepositoryRoot,
 } from "./repository-root.js";
 import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
 import { defaultBranchWarnings, resolveIntegrationInputs } from "./integration-inputs.js";
@@ -5438,15 +5439,27 @@ async function doctor(options) {
     const recipe = await readRecipe(options.config);
     const integrations = resolveRecipeIntegrations(recipe);
     const aiArtifacts = resolveAiArtifacts(recipe);
-    const expectedFiles = declaredManagedFiles(integrations.map(({ id }) => id))
-      .filter(({ checkedByDoctor }) => checkedByDoctor !== false)
-      .map(({ path }) => path);
+    // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the
+    // repository root, so doctor run from a workspace member checks them there (#925).
+    const rootOnlyIds = new Set(
+      integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
+    );
+    const projectDirectory = process.cwd();
+    const repositoryRoot =
+      rootOnlyIds.size > 0
+        ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
+        : projectDirectory;
 
-    for (const file of expectedFiles) {
+    for (const { integration, path } of declaredManagedFiles(integrations.map(({ id }) => id))) {
+      const atRepositoryRoot = rootOnlyIds.has(integration) && repositoryRoot !== projectDirectory;
+      const file = atRepositoryRoot ? relative(projectDirectory, join(repositoryRoot, path)) : path;
+
       if (!(await fileExists(file))) {
         issues.push({
           level: "warning",
-          message: `Missing managed file: ${file}. Run create-project-calavera apply to regenerate managed files.`,
+          message: atRepositoryRoot
+            ? `Missing managed file: ${file}. Run create-project-calavera apply from the repository root, ${repositoryRoot}, to regenerate managed files.`
+            : `Missing managed file: ${file}. Run create-project-calavera apply to regenerate managed files.`,
         });
       }
     }

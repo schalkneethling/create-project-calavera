@@ -146,7 +146,7 @@ test("inspection reports existing-config findings in apply's write order (#926)"
   }
 });
 
-test("doctor checks every planned file except the github-repository-controls files", async () => {
+test("doctor checks every planned file", async () => {
   await using directory = await mkdtempDisposable(join(tmpdir(), "calavera-458-"));
   await writeFile(
     join(directory.path, "calavera.config.json"),
@@ -164,15 +164,59 @@ test("doctor checks every planned file except the github-repository-controls fil
     env: { ...process.env, NO_COLOR: "1" },
   }).catch((error) => error);
   const prefix = "Missing managed file: ";
-  const missing = JSON.parse(stdout)
+  const messages = JSON.parse(stdout)
     .issues.map(({ message }) => message)
-    .filter((message) => message.startsWith(prefix))
-    .map((message) => message.slice(prefix.length).split(". Run ")[0]);
+    .filter((message) => message.startsWith(prefix));
 
-  // #925: doctor has never checked the github-repository-controls files.
+  // #925: the github-repository-controls files are checked like every other managed file, and at
+  // the repository root the remedy is the plain one.
   assert.deepEqual(
-    missing,
-    plannedPaths.filter((path) => !repositoryControlFiles.includes(path)),
+    messages,
+    plannedPaths.map(
+      (path) => `${prefix}${path}. Run create-project-calavera apply to regenerate managed files.`,
+    ),
+  );
+});
+
+test("doctor run from a workspace member checks the repository-controls files at the repository root", async () => {
+  await using directory = await mkdtempDisposable(join(tmpdir(), "calavera-925-"));
+  const root = directory.path;
+  const member = join(root, "packages", "app");
+  await mkdir(join(root, ".git"));
+  await mkdir(member, { recursive: true });
+  await writeFile(
+    join(member, "calavera.config.json"),
+    `${JSON.stringify({
+      version: 1,
+      profile: "web",
+      packageManager: "npm",
+      integrations: ["knip", "github-repository-controls"],
+      integrationOptions,
+    })}\n`,
+  );
+  // knip applies in the member, so its file is checked there, not at the repository root.
+  await writeFile(join(member, "knip.json"), "{}\n");
+  // Every repository-controls file but the last exists at the repository root, none in the member.
+  const [missingFile, ...presentFiles] = repositoryControlFiles.toReversed();
+  for (const path of presentFiles) {
+    await mkdir(join(root, path, ".."), { recursive: true });
+    await writeFile(join(root, path), "");
+  }
+
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
+    cwd: member,
+    env: { ...process.env, NO_COLOR: "1" },
+  }).catch((error) => error);
+  const messages = JSON.parse(stdout)
+    .issues.map(({ message }) => message)
+    .filter((message) => message.startsWith("Missing managed file: "));
+
+  assert.equal(messages.length, 1, messages.join("\n"));
+  assert.ok(
+    messages[0].startsWith(
+      `Missing managed file: ../../${missingFile}. Run create-project-calavera apply from the repository root, `,
+    ),
+    messages[0],
   );
 });
 
@@ -216,12 +260,12 @@ test("every integration that writes a managed file appears exactly once in the o
   assert.deepEqual(paths, [...new Set(paths)], "no file is declared by two integrations");
 });
 
-test("doctor's list is the declared files of the selected integrations, minus those it skips", () => {
+test("doctor's list is the declared files of the selected integrations", () => {
   assert.equal(typeof projectInspection.declaredManagedFiles, "function");
   const files = projectInspection.declaredManagedFiles(["knip", "github-repository-controls"]);
   assert.deepEqual(files, [
-    { path: "knip.json" },
-    ...repositoryControlFiles.map((path) => ({ path, checkedByDoctor: false })),
+    { integration: "knip", path: "knip.json" },
+    ...repositoryControlFiles.map((path) => ({ integration: "github-repository-controls", path })),
   ]);
   assert.deepEqual(projectInspection.declaredManagedFiles(["varlock"]), []);
 });

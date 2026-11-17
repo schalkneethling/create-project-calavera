@@ -19,11 +19,10 @@ export const STRYKER_CONFIG_PATH = "stryker.config.json";
  * writes them in this order; inspection and clean plan the same files through apply's planner, and
  * doctor checks that they exist.
  *
- * Each file entry takes `checkedByDoctor: false` when the doctor command does not check it.
  * `existingConfigFiles` lists the paths inspection reports as an existing configuration when they
  * differ from the files Calavera writes.
  *
- * @type {readonly { integration: string, files: { path: string, checkedByDoctor?: false }[], existingConfigFiles?: string[] }[]}
+ * @type {readonly { integration: string, files: { path: string }[], existingConfigFiles?: string[] }[]}
  */
 export const managedFileDeclarations = Object.freeze([
   { integration: "editorconfig", files: [{ path: ".editorconfig" }] },
@@ -51,18 +50,18 @@ export const managedFileDeclarations = Object.freeze([
   },
   {
     integration: "github-repository-controls",
-    // Doctor has never checked these files, unlike every other managed file (#925).
     files: [
-      { path: ".github/repository-controls.json", checkedByDoctor: false },
-      { path: ".github/dependabot.yml", checkedByDoctor: false },
-      { path: REPOSITORY_CONTROLS_SCRIPT_PATH, checkedByDoctor: false },
-      { path: "docs/repository-controls.md", checkedByDoctor: false },
+      { path: ".github/repository-controls.json" },
+      { path: ".github/dependabot.yml" },
+      { path: REPOSITORY_CONTROLS_SCRIPT_PATH },
+      { path: "docs/repository-controls.md" },
     ],
   },
 ]);
 
 /**
- * The managed files of the selected integrations, in the order apply writes them.
+ * The managed files of the selected integrations, in the order apply writes them, each with the
+ * integration that declares it.
  *
  * @param {Iterable<string>} integrationIds
  */
@@ -70,7 +69,7 @@ export function declaredManagedFiles(integrationIds) {
   const selected = new Set(integrationIds);
   return managedFileDeclarations
     .filter(({ integration }) => selected.has(integration))
-    .flatMap(({ files }) => files);
+    .flatMap(({ integration, files }) => files.map(({ path }) => ({ integration, path })));
 }
 
 // Inspection lists each integration's existing configs in the order apply writes the integrations
