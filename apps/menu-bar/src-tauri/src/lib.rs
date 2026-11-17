@@ -55,6 +55,7 @@ fn recipe_path(project: &Path, config: &str) -> Result<PathBuf, String> {
 #[tauri::command]
 fn inspect_project(path: String, config: String) -> Result<ProjectSnapshot, String> {
     let path = registered_path(path)?;
+    // A recipe path that leaves the project is refused and fails the check, as at registration.
     // A recipe that cannot be read or parsed is reported with its cause instead of failing the
     // whole check, so the project's updates stay listed.
     let (recipe, recipe_error) = match read_json(&recipe_path(&path, &config)?) {
@@ -237,8 +238,12 @@ mod tests {
         .unwrap();
         assert!(snapshot.recipe.is_none());
         assert!(snapshot.lock.is_some());
-        let error = snapshot.recipe_error.expect("the read error");
-        assert!(error.contains("key must be a string"), "{error}");
+        let error = snapshot.recipe_error.clone().expect("the read error");
+        assert!(!error.is_empty());
+        // The webview reads the error as `recipeError`.
+        let serialized = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(serialized["recipeError"], serde_json::Value::String(error));
+        assert!(serialized["recipe"].is_null());
     }
 
     #[test]

@@ -54,7 +54,7 @@ test("quotes an artifact id the lock names for the shell", async () => {
   assert.match(update.command, / artifacts update 'artifact; malicious-command'$/);
 });
 
-test("offers no update command without a readable recipe, as artifacts status does", async () => {
+test("offers no update command for a missing recipe, as artifacts status does", async () => {
   const [update] = await inspectUpdates(
     { path: "/project", tag: "latest", config: "recipe/calavera.json" },
     {

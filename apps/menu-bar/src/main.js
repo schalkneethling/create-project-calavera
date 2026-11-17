@@ -121,7 +121,7 @@ function render(
       const label = `${update.id}: ${update.current} → ${update.available}`;
       if (!update.command) {
         const unavailable = document.createElement("p");
-        unavailable.textContent = `${label}. No update command until the recipe is readable.`;
+        unavailable.textContent = `${label}. No update command until the recipe can be used; see the project diagnostics.`;
         article.append(unavailable);
         continue;
       }
