@@ -249,7 +249,8 @@ forward `--package-manager` after `--new`, which Vite+ then uses instead. The
 confirmation and `--dry-run` output name the package manager Vite+ will use.
 Vite+ 1.0.0
 requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`. If Calavera itself was
-started with `npx --package`, see
+started with `npx --package` or `npx -c`, Calavera removes `npm_config_package`
+and `npm_config_call` from the environment of `vp create`; see
 [Known Issue: `vp create` Exits With Code 127 Through npm](#known-issue-vp-create-exits-with-code-127-through-npm).
 
 Calavera continues into the bootstrap only when `vp create` exits with code 0
@@ -265,31 +266,38 @@ blank lines. "Changes" lists each file the bootstrap wrote, updated, or skipped,
 once. The Calavera skill and `.coderabbit.yaml` are not listed when they are
 already up to date. "Notes" says where installed skills live and what you still need to do by
 hand, such as merging `AGENTS.calavera.md` or setting up MCP from
-`.agents/calavera/mcp.md`. "Next prompt" is followed by the agent prompt alone on
-one line between blank lines, so you can copy all of it into your agent as one
-message. "Next steps" comes last.
+`.agents/calavera/mcp.md`. "Next steps" follows, and "Next prompt" comes last:
+the agent prompt alone on one line between blank lines, so you can copy all of
+it into your agent as one message.
 
-A new project has no recipe yet, and Calavera changes nothing until it has one,
-so the next-steps block names both ways to get one: the agent prompt printed
-above it, or the hosted Composer. For a project scaffolded into
-`/home/me/code/my-lib` whose `package.json` names pnpm, the block reads:
+`--new` runs in the parent folder, and Calavera cannot change your shell's
+directory, so the first next step is the `cd` into the new project. The agent
+prompt is used once that directory is open in your agent, so it comes after
+that step. A new project has no recipe yet, and Calavera changes nothing until
+it has one, so the next-steps block names both ways to get one: the agent
+prompt printed below it, or the hosted Composer. The commands that preview and
+apply a recipe appear only after the step that saves one. For a project
+scaffolded into `/home/me/code/my-lib` whose `package.json` names pnpm, the
+block reads:
 
 ```text
 Next steps:
+First, change into the new project:
+  cd /home/me/code/my-lib
 Your project needs a recipe before Calavera changes anything.
-  Either: open /home/me/code/my-lib in your agent and use the prompt above.
+  Either: open /home/me/code/my-lib in your agent and use the prompt below.
   Or: compose one at https://calavera.schalkneethling.com/ and save
       calavera.config.json into /home/me/code/my-lib, then:
-        cd /home/me/code/my-lib
         pnpm dlx create-project-calavera apply --dry-run
         pnpm dlx create-project-calavera apply
 ```
 
-The commands match the scaffolded project's package manager. `--init` prints
-the same block without the `cd` line, and `--init --json` returns the same lines,
-without the heading, as a `nextSteps` array. When the project already has `calavera.config.json`, the
-block names that file and the preview and apply commands instead. The dry run and
-every stop print no block.
+The commands match the scaffolded project's package manager. `--init` runs
+inside the project, so it prints the same block without the `cd` step, and
+`--init --json` returns the same lines, without the heading, as a `nextSteps`
+array. When the project already has `calavera.config.json`, the block names that
+file and the preview and apply commands instead. The `--new` dry run and every
+stop print no block.
 
 When you composed a recipe before the project existed, hand it to `--new` with
 `--config` before `--new`, like `--yes` and `--dry-run`:
@@ -306,9 +314,11 @@ directory, runs the bootstrap, and prints `Copied <source> to <target>/calavera.
 The next-steps block then names the copied file:
 
 ```text
+Next steps:
+First, change into the new project:
+  cd /home/me/code/my-lib
 Your project has a recipe at /home/me/code/my-lib/calavera.config.json. Calavera has not applied it.
   Preview it, then apply it after you approve the preview:
-    cd /home/me/code/my-lib
     pnpm dlx create-project-calavera apply --dry-run
     pnpm dlx create-project-calavera apply
 ```
@@ -338,32 +348,33 @@ prints `sh: create-vite@latest: command not found`, and Calavera stops with
 Vite+ closed that issue without changing `vp create`, so a later Vite+ release is
 not expected to fix this.
 
-Calavera's own runner no longer sets `npm_config_package`, because npm now
-starts Vite+ with `npm create vite-plus@latest` instead of
-`npx --package vite-plus vp create`. The setting still reaches Vite+ when
-Calavera itself was started with `npx --package create-project-calavera` or
-`npm exec --package create-project-calavera`, whichever runner Calavera then
-uses. When the npm runner exits with code 127, Calavera's error says so and links
-here.
+Calavera now removes both known causes. Its own runner no longer sets
+`npm_config_package`, because npm starts Vite+ with
+`npm create vite-plus@latest` instead of `npx --package vite-plus vp create`.
 
-Until Calavera stops passing the setting to Vite+, start Calavera with
-`npm create` or `pnpm create` instead:
+The second cause was how Calavera itself was started. With
+`npx --package create-project-calavera`,
+`npm exec --package create-project-calavera`, or `npx -c`, npm sets
+`npm_config_package` or `npm_config_call` for Calavera. When Calavera passed
+`npm_config_package` on, even `npm create vite-plus@latest` looked for
+`create-vite-plus` inside create-project-calavera and exited with code 127
+before Vite+ started. When it passed `npm_config_call` on,
+`npm create vite-plus@latest` ran Calavera's own command line again instead of
+`create-vite-plus`. Calavera
+now removes both settings from the environment it gives `vp create`, whichever
+runner it uses
+([Calavera issue 689](https://github.com/schalkneethling/create-project-calavera/issues/689)).
+npm matches these names in any case, so Calavera does too. Every other variable
+passes through unchanged, including other `npm_config_` settings such as
+`npm_config_user_agent`.
 
-```bash
-npm create project-calavera -- --new
-pnpm create project-calavera --new
-```
+If the npm runner still exits with code 127, Calavera adds no hint, because
+clearing the npx cache does not help a command that cannot be found. Read the
+npm or Vite+ output above the error.
 
-If you need to start Calavera with `npx --package`, choose a runner other than
-npm before `--new`, and do not forward `--package-manager npm` after it. The
-runner must be installed; Yarn needs version 2 or later.
-
-```bash
-npx --package create-project-calavera create-project-calavera --package-manager pnpm --new
-```
-
-[Calavera issue 689](https://github.com/schalkneethling/create-project-calavera/issues/689)
-tracks this remaining cause. Remove this section once it is resolved
+Remove this section once a published Calavera release passes `--new` with npm as
+the project's package manager, both through `npm create project-calavera` and
+when started with `npx --package create-project-calavera`
 ([Calavera issue 671](https://github.com/schalkneethling/create-project-calavera/issues/671)).
 
 ## Rich CLI Flow

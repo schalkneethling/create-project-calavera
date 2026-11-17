@@ -2,10 +2,18 @@
 
 export const DEFAULT_ARTIFACT_TARGET = "claude-code";
 
+/** The name each target tool uses for itself, keyed by the target ID that recipes and manifests use. */
+export const ARTIFACT_TARGET_LABELS = Object.freeze({
+  "claude-code": "Claude Code",
+  codex: "Codex",
+  cursor: "Cursor",
+  opencode: "OpenCode",
+});
+
 const ARTIFACT_SCHEMA =
   "https://calavera.schalkneethling.com/schemas/calavera-artifact.schema.json";
 const DEFAULT_COMPATIBILITY = ">=2.2.0";
-const ARTIFACT_TARGETS = Object.freeze(["claude-code", "codex", "cursor", "opencode"]);
+const ARTIFACT_TARGETS = Object.freeze(Object.keys(ARTIFACT_TARGET_LABELS));
 
 /**
  * The optional manifest members a definition can carry. The artifact schema allows them on skills

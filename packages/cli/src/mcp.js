@@ -102,6 +102,9 @@ const integrationOutputSchema = z.looseObject({
     .describe(
       "Whether the integration is recommended, optional, experimental, or framework-specific.",
     ),
+  statusLabel: z
+    .string()
+    .describe("Display label for status, such as Recommended or Framework-specific."),
   dependencies: z
     .array(z.string())
     .describe(

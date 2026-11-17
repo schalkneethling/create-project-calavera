@@ -1,9 +1,9 @@
 // Issue #458: every command that plans, writes, checks, or cleans managed files reads them from one
-// declaration. The first tests pin what each command did before the refactor, so the refactor
-// cannot change which files any command includes.
+// declaration. The first tests pin which files each command included before the refactor, so the
+// refactor cannot change them. Inspection lists them in apply's write order (#926).
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtempDisposable, writeFile } from "node:fs/promises";
+import { mkdir, mkdtempDisposable, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -12,8 +12,9 @@ import { promisify } from "node:util";
 
 import { integrationCatalog } from "../src/catalog.js";
 import { githubRepositoryControlManagedFiles } from "../src/github-repository-controls.js";
-import { planCleanManagedFiles } from "../src/index.js";
+import { inspectProject, planCleanManagedFiles } from "../src/index.js";
 import * as projectInspection from "../src/project-inspection.js";
+import { buildRecipe } from "../src/recipe.js";
 
 const { integrationConfigFiles, projectInspectionFiles } = projectInspection;
 
@@ -61,15 +62,15 @@ test("apply, inspection, and clean plan every managed file once, in apply's writ
   );
 });
 
-test("inspection reports the existing config files of each integration, in the same order", () => {
+test("inspection reports the existing config files of each integration in apply's write order", () => {
   assert.deepEqual(Object.entries(integrationConfigFiles), [
     ["editorconfig", [".editorconfig"]],
-    ["github-repository-controls", repositoryControlFiles],
-    ["html-validate", [".htmlvalidate.json", ".htmlvalidateignore", "scripts/lint-html.mjs"]],
-    ["knip", ["knip.json"]],
-    ["react-doctor", ["react-doctor.config.json"]],
     ["stylelint", [".stylelintrc.json"]],
+    ["html-validate", [".htmlvalidate.json", ".htmlvalidateignore", "scripts/lint-html.mjs"]],
+    ["react-doctor", ["react-doctor.config.json"]],
+    ["knip", ["knip.json"]],
     ["stryker", strykerConfigFileNames],
+    ["github-repository-controls", repositoryControlFiles],
   ]);
   assert.deepEqual(projectInspectionFiles, [
     "package.json",
@@ -82,14 +83,14 @@ test("inspection reports the existing config files of each integration, in the s
     "bun.lock",
     "bun.lockb",
     ".editorconfig",
-    ...repositoryControlFiles,
+    ".stylelintrc.json",
     ".htmlvalidate.json",
     ".htmlvalidateignore",
     "scripts/lint-html.mjs",
-    "knip.json",
     "react-doctor.config.json",
-    ".stylelintrc.json",
+    "knip.json",
     ...strykerConfigFileNames,
+    ...repositoryControlFiles,
     "vite.config.js",
     "vite.config.ts",
     "next.config.js",
@@ -97,6 +98,52 @@ test("inspection reports the existing config files of each integration, in the s
     "astro.config.mjs",
     "svelte.config.js",
   ]);
+});
+
+test("inspection reports existing-config findings in apply's write order (#926)", async () => {
+  await using project = await mkdtempDisposable(join(tmpdir(), "calavera-926-"));
+  // One foreign config per integration, written in reverse of the expected order so the finding
+  // order cannot come from the order the files were created in.
+  const foreignConfigs = [
+    ".editorconfig",
+    ".stylelintrc.json",
+    ".htmlvalidate.json",
+    "react-doctor.config.json",
+    "knip.json",
+    "stryker.config.json",
+    "docs/repository-controls.md",
+  ];
+  await writeFile(join(project.path, "package.json"), `${JSON.stringify({ scripts: {} })}\n`);
+  await mkdir(join(project.path, "docs"));
+
+  for (const path of foreignConfigs.toReversed()) {
+    await writeFile(join(project.path, path), "foreign\n");
+  }
+
+  const recipe = buildRecipe(
+    "default",
+    integrationCatalog.map(({ id }) => id),
+    "npm",
+    [],
+    integrationOptions,
+  );
+  const originalDirectory = process.cwd();
+  process.chdir(project.path);
+
+  try {
+    const { files, findings } = await inspectProject(recipe);
+
+    assert.deepEqual(
+      files.filter((path) => foreignConfigs.includes(path)),
+      foreignConfigs,
+    );
+    assert.deepEqual(
+      findings.filter(({ kind }) => kind === "existing-config").map(({ path }) => path),
+      foreignConfigs,
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
 });
 
 test("doctor checks every planned file except the github-repository-controls files", async () => {

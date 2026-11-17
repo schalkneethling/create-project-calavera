@@ -4243,11 +4243,13 @@ export async function agentBootstrap(options = {}) {
 }
 
 /**
- * The action block printed after the bootstrap: a project needs a recipe
- * before Calavera changes anything, so it names both ways to get one and the
- * commands that preview and apply it. When the project already has a recipe,
- * it names that file instead. `changeDirectory` adds a `cd` line for `--new`,
- * which leaves the user in the parent directory.
+ * The action block printed after the bootstrap, ahead of the agent prompt. A
+ * project needs a recipe before Calavera changes anything, so it names both
+ * ways to get one, and the commands that preview and apply a recipe come only
+ * after the step that saves one. When the project already has a recipe, it
+ * names that file and those commands instead. `changeDirectory` makes `cd`
+ * the first step for `--new`, because a child process cannot change its
+ * parent shell's directory and the user is still in the parent (#602).
  *
  * @param {string} target Absolute project directory.
  * @param {PackageManager} packageManager
@@ -4256,15 +4258,15 @@ export async function agentBootstrap(options = {}) {
  */
 function recipeNextSteps(target, packageManager, { changeDirectory }) {
   const commands = projectLocalCommandCatalog[packageManager];
-  const run = [
-    ...(changeDirectory ? [`cd ${quoteShellToken(target)}`] : []),
-    commands.applyDryRun,
-    commands.applyRecipe,
-  ];
+  const run = [commands.applyDryRun, commands.applyRecipe];
   const recipePath = join(target, CONFIG_FILE);
+  const changeDirectoryStep = changeDirectory
+    ? ["First, change into the new project:", `  cd ${quoteShellToken(target)}`]
+    : [];
 
   if (existsSync(recipePath)) {
     return [
+      ...changeDirectoryStep,
       `Your project has a recipe at ${recipePath}. Calavera has not applied it.`,
       "  Preview it, then apply it after you approve the preview:",
       ...run.map((line) => `    ${line}`),
@@ -4272,8 +4274,9 @@ function recipeNextSteps(target, packageManager, { changeDirectory }) {
   }
 
   return [
+    ...changeDirectoryStep,
     "Your project needs a recipe before Calavera changes anything.",
-    `  Either: open ${target} in your agent and use the prompt above.`,
+    `  Either: open ${target} in your agent and use the prompt below.`,
     `  Or: compose one at ${COMPOSER_URL} and save`,
     `      ${CONFIG_FILE} into ${target}, then:`,
     ...run.map((line) => `        ${line}`),
@@ -4288,17 +4291,35 @@ const NEW_HARD_STOP_SUFFIX =
 export const NPM_STALE_CACHE_HINT =
   'This applies only if the npm output above shows "npm error code ERESOLVE" and names a vite-plus version: an older create-vite-plus or vite-plus in the npx cache can cause that. To fix it, run "npm cache npx ls", find the rows that show create-vite-plus or vite-plus, run "npm cache npx rm <key>" with the key from each row, then run this command again. If the npm output shows a different error, this does not apply; read the npm or Vite+ output above.';
 
-// Exit 127 means a shell did not find a command, which no cache change fixes.
-export const NPM_EXIT_127_HINT =
-  'This applies only if the output above shows "command not found", for example for create-vite@latest. A likely cause is that Calavera itself was started with "npx --package" or "npm exec --package": npm then passes npm_config_package to the npx that Vite+ starts for the template, and that npx looks for its command in the wrong package. To avoid it, start Calavera with "npm create project-calavera" or "pnpm create project-calavera" if you did not already, or pass --package-manager pnpm before --new, with pnpm installed, and do not forward --package-manager npm after --new. See https://github.com/schalkneethling/create-project-calavera/blob/main/docs/agent-first-calavera-workflow.md#known-issue-vp-create-exits-with-code-127-through-npm. If the output shows a different error, this does not apply; read the npm or Vite+ output above.';
+/**
+ * The environment `vp create` receives (#689): Calavera's own, without the
+ * npm exec settings that describe how Calavera was launched. `npx --package`
+ * sets `npm_config_package` and `npx -c` sets `npm_config_call` for the
+ * process they start, and an npm command Calavera's child starts would read
+ * them too. With `npm_config_package`, `npm create vite-plus@latest` and the
+ * `npx` that Vite+ starts for the template looked for their command inside
+ * create-project-calavera and exited 127 (#670). With `npm_config_call`,
+ * `npm create vite-plus@latest` ran Calavera's own command line again instead
+ * of create-vite-plus (libnpmexec runs `call` before its arguments). npm reads the
+ * `npm_config_` prefix in any case, so the match ignores case. Every other
+ * variable passes through unchanged.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {Record<string, string | undefined>}
+ */
+export function vpCreateEnvironment(env) {
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => !/^npm_config_(package|call)$/i.test(key)),
+  );
+}
 
 /**
- * @typedef {{ command: string, args: string[], cwd: string }} RunnerInvocation
+ * @typedef {{ command: string, args: string[], cwd: string, env: Record<string, string | undefined> }} RunnerInvocation
  * @typedef {{ exitCode: number | null, signal: string | null }} RunnerExit
  * @typedef {object} NewProjectRuntime
  * @property {(invocation: RunnerInvocation) => Promise<RunnerExit>} [spawnRunner]
  * @property {(cwd: string) => Promise<string | undefined>} [readYarnVersion]
- * @property {Record<string, string | undefined>} [env] Where `npm_config_user_agent` is read; `process.env` by default.
+ * @property {Record<string, string | undefined>} [env] Where `npm_config_user_agent` is read, and the base of the environment `vp create` receives; `process.env` by default.
  */
 
 const YARN_DLX_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or later.";
@@ -4387,8 +4408,15 @@ async function yarnFailureHint(readYarnVersion, cwd) {
  * @param {RunnerInvocation} invocation
  * @returns {Promise<RunnerExit>}
  */
-async function spawnInheritedRunner({ command, args, cwd }) {
-  const result = await execa(command, args, { cwd, stdio: "inherit", reject: false });
+async function spawnInheritedRunner({ command, args, cwd, env }) {
+  // extendEnv: false, so the settings vpCreateEnvironment removed are not merged back from process.env.
+  const result = await execa(command, args, {
+    cwd,
+    env,
+    extendEnv: false,
+    stdio: "inherit",
+    reject: false,
+  });
 
   if (result.exitCode === undefined && result.signal === undefined) {
     throw new Error(
@@ -4641,10 +4669,9 @@ export async function newProject(options, runtime = {}) {
     );
   }
 
+  const env = runtime.env ?? process.env;
   const runnerPackageManager =
-    options.packageManager ??
-    launchingPackageManager((runtime.env ?? process.env).npm_config_user_agent) ??
-    "npm";
+    options.packageManager ?? launchingPackageManager(env.npm_config_user_agent) ?? "npm";
   const runnerCommand = createVpCreateCommand(runnerPackageManager, forwardedArgs);
   const runner = formatShellCommand(runnerCommand);
   const recipe =
@@ -4698,7 +4725,11 @@ export async function newProject(options, runtime = {}) {
   const before = forwardedTarget === undefined ? await snapshotManifests(cwd) : new Map();
   let exit;
   try {
-    exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({ ...runnerCommand, cwd });
+    exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({
+      ...runnerCommand,
+      cwd,
+      env: vpCreateEnvironment(env),
+    });
   } catch (error) {
     if (options.packageManager !== undefined) {
       throw error;
@@ -4721,9 +4752,10 @@ export async function newProject(options, runtime = {}) {
       `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
         yarn !== undefined
           ? yarn.hint
-          : runnerCommand.command !== "npm"
+          : // Exit 127 means a shell did not find a command, which no cache change fixes.
+            runnerCommand.command !== "npm" || exit.exitCode === 127
             ? ""
-            : ` ${exit.exitCode === 127 ? NPM_EXIT_127_HINT : NPM_STALE_CACHE_HINT}`
+            : ` ${NPM_STALE_CACHE_HINT}`
       }`,
       yarn?.cause === undefined ? undefined : { cause: yarn.cause },
     );
@@ -6062,16 +6094,20 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       for (const pointer of result.pointers) logger.info(`  ${pointer}`);
     }
 
-    logger.info("");
-    logger.info("Next prompt. Copy all of it into your agent as one message:");
-    logger.info("");
-    logger.info(result.nextPrompt);
+    // #602: the steps come first, so `cd` is read before the prompt that is used inside the project.
     logger.info("");
     logger.info("Next steps:");
 
     for (const line of result.nextSteps) {
       logger.info(line);
     }
+
+    logger.info("");
+    logger.info("Next prompt. Copy all of it into your agent as one message:");
+    logger.info("");
+    logger.info(result.nextPrompt);
+    // The prompt is the last group, so this blank line keeps it apart from what the launcher prints next.
+    logger.info("");
     return;
   }
 
