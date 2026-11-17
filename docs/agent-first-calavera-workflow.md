@@ -265,28 +265,35 @@ blank lines. "Changes" lists each file the bootstrap wrote, updated, or skipped,
 once. The Calavera skill and `.coderabbit.yaml` are not listed when they are
 already up to date. "Notes" says where installed skills live and what you still need to do by
 hand, such as merging `AGENTS.calavera.md` or setting up MCP from
-`.agents/calavera/mcp.md`. "Next prompt" is followed by the agent prompt alone on
-one line between blank lines, so you can copy all of it into your agent as one
-message. "Next steps" comes last.
+`.agents/calavera/mcp.md`. "Next steps" follows, and "Next prompt" comes last:
+the agent prompt alone on one line between blank lines, so you can copy all of
+it into your agent as one message.
 
-A new project has no recipe yet, and Calavera changes nothing until it has one,
-so the next-steps block names both ways to get one: the agent prompt printed
-above it, or the hosted Composer. For a project scaffolded into
-`/home/me/code/my-lib` whose `package.json` names pnpm, the block reads:
+`--new` runs in the parent folder, and Calavera cannot change your shell's
+directory, so the first next step is the `cd` into the new project. The agent
+prompt is used once that directory is open in your agent, so it comes after
+that step. A new project has no recipe yet, and Calavera changes nothing until
+it has one, so the next-steps block names both ways to get one: the agent
+prompt printed below it, or the hosted Composer. The commands that preview and
+apply a recipe appear only after the step that saves one. For a project
+scaffolded into `/home/me/code/my-lib` whose `package.json` names pnpm, the
+block reads:
 
 ```text
 Next steps:
+First, change into the new project:
+  cd /home/me/code/my-lib
 Your project needs a recipe before Calavera changes anything.
-  Either: open /home/me/code/my-lib in your agent and use the prompt above.
+  Either: open /home/me/code/my-lib in your agent and use the prompt below.
   Or: compose one at https://calavera.schalkneethling.com/ and save
       calavera.config.json into /home/me/code/my-lib, then:
-        cd /home/me/code/my-lib
         pnpm dlx create-project-calavera apply --dry-run
         pnpm dlx create-project-calavera apply
 ```
 
-The commands match the scaffolded project's package manager. `--init` prints
-the same block without the `cd` line, and `--init --json` returns the same lines,
+The commands match the scaffolded project's package manager. `--init` runs
+inside the project, so it prints the same block without the `cd` step, and
+`--init --json` returns the same lines,
 without the heading, as a `nextSteps` array. When the project already has `calavera.config.json`, the
 block names that file and the preview and apply commands instead. The dry run and
 every stop print no block.
@@ -306,9 +313,11 @@ directory, runs the bootstrap, and prints `Copied <source> to <target>/calavera.
 The next-steps block then names the copied file:
 
 ```text
+Next steps:
+First, change into the new project:
+  cd /home/me/code/my-lib
 Your project has a recipe at /home/me/code/my-lib/calavera.config.json. Calavera has not applied it.
   Preview it, then apply it after you approve the preview:
-    cd /home/me/code/my-lib
     pnpm dlx create-project-calavera apply --dry-run
     pnpm dlx create-project-calavera apply
 ```

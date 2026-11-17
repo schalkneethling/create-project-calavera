@@ -4251,11 +4251,13 @@ export async function agentBootstrap(options = {}) {
 }
 
 /**
- * The action block printed after the bootstrap: a project needs a recipe
- * before Calavera changes anything, so it names both ways to get one and the
- * commands that preview and apply it. When the project already has a recipe,
- * it names that file instead. `changeDirectory` adds a `cd` line for `--new`,
- * which leaves the user in the parent directory.
+ * The action block printed after the bootstrap, ahead of the agent prompt. A
+ * project needs a recipe before Calavera changes anything, so it names both
+ * ways to get one, and the commands that preview and apply a recipe come only
+ * after the step that saves one. When the project already has a recipe, it
+ * names that file and those commands instead. `changeDirectory` makes `cd`
+ * the first step for `--new`, because a child process cannot change its
+ * parent shell's directory and the user is still in the parent (#602).
  *
  * @param {string} target Absolute project directory.
  * @param {PackageManager} packageManager
@@ -4264,15 +4266,15 @@ export async function agentBootstrap(options = {}) {
  */
 function recipeNextSteps(target, packageManager, { changeDirectory }) {
   const commands = projectLocalCommandCatalog[packageManager];
-  const run = [
-    ...(changeDirectory ? [`cd ${quoteShellToken(target)}`] : []),
-    commands.applyDryRun,
-    commands.applyRecipe,
-  ];
+  const run = [commands.applyDryRun, commands.applyRecipe];
   const recipePath = join(target, CONFIG_FILE);
+  const changeDirectoryStep = changeDirectory
+    ? ["First, change into the new project:", `  cd ${quoteShellToken(target)}`]
+    : [];
 
   if (existsSync(recipePath)) {
     return [
+      ...changeDirectoryStep,
       `Your project has a recipe at ${recipePath}. Calavera has not applied it.`,
       "  Preview it, then apply it after you approve the preview:",
       ...run.map((line) => `    ${line}`),
@@ -4280,8 +4282,9 @@ function recipeNextSteps(target, packageManager, { changeDirectory }) {
   }
 
   return [
+    ...changeDirectoryStep,
     "Your project needs a recipe before Calavera changes anything.",
-    `  Either: open ${target} in your agent and use the prompt above.`,
+    `  Either: open ${target} in your agent and use the prompt below.`,
     `  Or: compose one at ${COMPOSER_URL} and save`,
     `      ${CONFIG_FILE} into ${target}, then:`,
     ...run.map((line) => `        ${line}`),
@@ -6070,16 +6073,20 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       for (const pointer of result.pointers) logger.info(`  ${pointer}`);
     }
 
-    logger.info("");
-    logger.info("Next prompt. Copy all of it into your agent as one message:");
-    logger.info("");
-    logger.info(result.nextPrompt);
+    // #602: the steps come first, so `cd` is read before the prompt that is used inside the project.
     logger.info("");
     logger.info("Next steps:");
 
     for (const line of result.nextSteps) {
       logger.info(line);
     }
+
+    logger.info("");
+    logger.info("Next prompt. Copy all of it into your agent as one message:");
+    logger.info("");
+    logger.info(result.nextPrompt);
+    // The prompt is the last group, so this blank line keeps it apart from what the launcher prints next.
+    logger.info("");
     return;
   }
 
