@@ -36,11 +36,11 @@ import packageJson from "../package.json" with { type: "json" };
 import {
   ARTIFACT_CACHE_BLOCK,
   artifactCacheIgnoreLines,
+  artifactCachePointers,
   prepareArtifactSources,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
 import {
-  ARTIFACT_CACHE_POINTER,
   applySummaryLines,
   formatArtifactInput,
   formatArtifactRegistry,
@@ -116,6 +116,7 @@ import {
   managedFilesFromState,
   normalizeState,
   optionalStringArray,
+  stateShowsEarlierApply,
 } from "./state.js";
 import {
   declaredManagedFiles,
@@ -2882,7 +2883,7 @@ export async function inspectProject(recipe, options = {}) {
   // Vite+ steps are planned too, because they decide whether quality exists:
   // without them, a single Calavera script is no quality at all (#230).
   const plannedScripts = await (async () => {
-    if (!recipe || manifestFinding || !(await fileExists(STATE_FILE))) {
+    if (!recipe || manifestFinding || !stateShowsEarlierApply(previousState)) {
       return {};
     }
     const plannedPackageManager = resolveApplyPackageManager(recipe, {}, packageJSON);
@@ -3345,8 +3346,10 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     );
   }
   // Only a project Calavera already applied to can have a config or scripts
-  // that are unchanged; on a first apply the whole plan is new.
-  const previouslyApplied = await fileExists(STATE_FILE);
+  // that are unchanged; on a first apply the whole plan is new. Other commands
+  // write the state file too, so its profile, not its existence, shows an
+  // earlier apply.
+  const previouslyApplied = stateShowsEarlierApply(previousState);
   const reownManagedFiles = normalizeManagedFilePathSet(applyOptions.reownManagedFiles ?? []);
   const dependencyList = unique(
     integrations.flatMap((integration) =>
@@ -3404,12 +3407,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     ],
     records: previousState.gitignoreBlocks,
   });
-  // The cache sits next to files the project commits, so apply says why it is ignored when it adds
-  // the block, and not again on every apply after that.
-  const addsArtifactCacheBlock = gitignorePlan.changes.some(
-    ({ integration, type, removedLines }) =>
-      integration === ARTIFACT_CACHE_BLOCK && type !== "unchanged" && removedLines === undefined,
-  );
   const ignoreChanges = [
     ...gitignorePlan.changes,
     ...(managedFilePlans.some(({ path }) => path === HTML_VALIDATE_IGNORE_PATH)
@@ -3760,7 +3757,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     pointers: [
       ...aiResult.pointers,
       ...(usesVarlock ? [VARLOCK_POINTER] : []),
-      ...(addsArtifactCacheBlock ? [ARTIFACT_CACHE_POINTER] : []),
+      // The cache sits next to files the project commits, so apply says why it is ignored when it
+      // adds the block, and not again on every apply after that.
+      ...artifactCachePointers(gitignorePlan.changes),
     ],
     autoInstalledArtifacts: artifactPlan.installed,
     artifactRegistries: artifactPlan.registries,
@@ -3819,7 +3818,9 @@ function mergeRecipeIntoState(
   return {
     ...previousState,
     version: 1,
-    profile: preservesToolingRecipe ? previousState.profile : profile,
+    // An apply that installs only artifacts keeps the profile an earlier apply recorded, and records
+    // its own when there is none, because the profile is what shows a later apply that it ran.
+    profile: preservesToolingRecipe ? (previousState.profile ?? profile) : profile,
     integrations: preservesToolingRecipe ? previousState.integrations : integrations,
     files: nextManagedFiles.map((file) => file.path),
     managedFiles: nextManagedFiles,
@@ -6453,10 +6454,15 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     )) {
       logger[level](message);
     }
+    printArtifactCacheBlock(result);
     return;
   }
 
   logger.success(`Calavera ${result.command} complete.`);
+
+  if (result.command === "artifacts install" || result.command === "artifacts update") {
+    printArtifactCacheBlock(result);
+  }
 
   if (result.command === "artifacts install" || result.command === "artifacts update") {
     for (const registry of /** @type {ArtifactRegistryReport[]} */ (result.registries)) {
@@ -6474,6 +6480,24 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     )) {
       logger.warn(warning);
     }
+  }
+}
+
+/**
+ * The artifact cache block an `artifacts` command adds to `.gitignore` (#960): in a dry run, the
+ * exact lines it would write, so the approval covers them, and in either case why the cache is
+ * ignored, when the command adds the block.
+ *
+ * @param {ArtifactCommandResult} result
+ */
+function printArtifactCacheBlock(result) {
+  if (result.dryRun) {
+    for (const change of /** @type {IgnoreChange[]} */ (result.ignoreChanges ?? [])) {
+      if (change.type !== "unchanged") logger.info(formatIgnoreChange(change));
+    }
+  }
+  for (const pointer of /** @type {string[]} */ (result.pointers ?? [])) {
+    logger.info(pointer);
   }
 }
 

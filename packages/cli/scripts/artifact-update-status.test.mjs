@@ -571,7 +571,8 @@ test("the printed commands run the update and keep the local-edit safeguard", as
 });
 
 // Status writes no lock, state, output, or recipe. The real resolver can still fill the npm cache
-// in .calavera/cache, which the README documents; this stand-in has no cache to fill.
+// in .calavera/cache, which the README documents; this stand-in has no cache to fill. The install
+// that set the project up already wrote the cache block (#960), so status finds it in place.
 test("status with --check-updates writes nothing in the project", async () => {
   await inProject(
     { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },

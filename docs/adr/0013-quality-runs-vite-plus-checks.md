@@ -115,3 +115,15 @@ The C8 tests are unchanged and pass. Only the CLI writes into projects. `dry_run
 **Record generated scripts in `.calavera/state.json`.** Not chosen. It would let apply recognize a script it wrote even after a recipe change, but it changes the state format, and value equality, which apply already uses for scripts, is enough to make the rename safe: a mismatch only ever keeps a script, never removes one.
 
 **Rename the recipe flags to `lint:styles` and `lint:styles:fix`.** Not chosen. It would invalidate every existing `calavera.config.json` and the published schema for a naming gain only, and recipe validation would need a migration message like the removed profiles have.
+
+## Amendment 1: An Earlier Apply Is Shown by the Recorded Profile
+
+- **Date:** 2026-11-17
+- **Pull request:** https://github.com/schalkneethling/create-project-calavera/pull/1017 (#960)
+
+Decision 6 took the existence of `.calavera/state.json` as proof that Calavera applied to the project before. That stopped being true. `artifacts install`, `artifacts update`, the bootstrap, and, since #960, `artifacts status --check-updates` write the state file without an apply. After any of them, the first apply could rename a `lint` script that the person wrote with the same value Calavera writes. The owner decided on 2026-11-17 that apply decides "applied before" from a record that only apply writes.
+
+- That record is the state's `profile`. Apply validates the recipe's profile and records it, and no other command sets it. The other commands only carry it through. No new field is added, so a state file from an earlier release that apply wrote already holds the record and keeps its renames.
+- Apply keeps an earlier profile when the recipe installs only artifacts. When there is no earlier profile, it now records the recipe's, so an apply of that kind also counts as an earlier apply.
+- `inspect_project` uses the same rule when it plans the rename findings.
+- Earlier releases skipped the profile in one case: an apply that installed only artifacts into a project with no earlier profile. Such an apply wrote no integration, so it wrote no `lint` script with Stylelint in it, which is the only kind this decision renames. Writing that script needs the `stylelint` integration, whose managed `.stylelintrc.json` made apply record the profile. A state file without a profile therefore holds nothing to rename. Its next apply treats the project as new and records the profile.

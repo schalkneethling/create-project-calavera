@@ -19,6 +19,7 @@ import {
   resolveAiArtifacts,
 } from "./ai/artifacts.js";
 import { assertFirstSelection } from "./ai/recipe-items.js";
+import { GITIGNORE_PATH, planGitignoreBlocks } from "./ignore-lines.js";
 import { artifactReleaseNotesUrl } from "./artifact-status-report.js";
 import {
   artifactCommand,
@@ -41,20 +42,102 @@ const TRANSACTION_ROOT = ".calavera/.transactions";
 
 // #841: the npm cache that artifact packages resolve through is not committed (owner decision,
 // 2026-11-14). Apply keeps it out of Git with its own marked `.gitignore` block (ADR-0016,
-// Amendment 1). The owner id is not an integration id; a catalog test keeps it that way.
+// Amendment 1). The owner id is not an integration id; a catalog test keeps it that way. #960:
+// `artifacts install`, `artifacts update`, and `artifacts status --check-updates` create the cache
+// too, so they write and record the same block (owner decision, 2026-11-17).
 export const ARTIFACT_CACHE_BLOCK = "artifact-cache";
 
+/** The two halves of why the cache is ignored; the apply summary drops the file name between them. */
+export const ARTIFACT_CACHE_IGNORED =
+  "Calavera ignores .calavera/cache/ through its artifact-cache block";
+export const ARTIFACT_CACHE_REASON =
+  "because the folder is a local npm download cache and does not belong in Git. Commit .calavera/artifacts.lock.json and .calavera/packages/, which hold the exact artifact versions and payloads the project uses.";
+
+/** Why the artifact cache is ignored (#841), as `pointers` carries it. */
+export const ARTIFACT_CACHE_POINTER = `${ARTIFACT_CACHE_IGNORED} in .gitignore, ${ARTIFACT_CACHE_REASON}`;
+
 /**
- * The `.gitignore` block that keeps the artifact cache out of Git. Apply plans it while the recipe
- * selects an artifact package, because apply then resolves packages through the cache, and while
+ * The `.gitignore` block that keeps the artifact cache out of Git. It is planned while the recipe
+ * selects an artifact package, because apply and the `artifacts` commands then resolve packages
+ * through the cache, while the command resolves packages for another reason, such as
+ * `artifacts status --check-updates` checking lock entries the recipe no longer selects, and while
  * the cache folder exists, because a recipe that drops its artifacts leaves the cache behind.
  *
  * @param {{ ai?: unknown }} recipe
+ * @param {{ resolvesPackages?: boolean }} [options]
  * @returns {Promise<import("./ignore-lines.js").IgnoreLines[]>}
  */
-export async function artifactCacheIgnoreLines(recipe) {
-  const needed = normalizePackageSelections(recipe.ai).length > 0 || (await fileExists(CACHE_ROOT));
+export async function artifactCacheIgnoreLines(recipe, { resolvesPackages = false } = {}) {
+  const needed =
+    resolvesPackages ||
+    normalizePackageSelections(recipe.ai).length > 0 ||
+    (await fileExists(CACHE_ROOT));
   return needed ? [{ integration: ARTIFACT_CACHE_BLOCK, lines: [`${CACHE_ROOT}/`] }] : [];
+}
+
+/**
+ * The pointer that says why the cache is ignored, when `changes` add or replace its block. A block
+ * that is already in place, or that is removed, needs no explanation.
+ *
+ * @param {import("./ignore-lines.js").IgnoreChange[]} changes
+ * @returns {string[]}
+ */
+export function artifactCachePointers(changes) {
+  const adds = changes.some(
+    ({ integration, type, removedLines }) =>
+      integration === ARTIFACT_CACHE_BLOCK && type !== "unchanged" && removedLines === undefined,
+  );
+  return adds ? [ARTIFACT_CACHE_POINTER] : [];
+}
+
+/**
+ * Plans the artifact cache block for an `artifacts` command (#960), through the planner apply uses,
+ * so an edited block stops the command, dry runs included, before anything is resolved or written
+ * (ADR-0016). Only the cache block is planned: the integrations' blocks belong to apply, so their
+ * records pass through unchanged, and the command never removes the cache block, because it only
+ * plans one while it needs the block.
+ *
+ * @param {{ gitignoreBlocks: import("./ignore-lines.js").IgnoreLines[] }} state
+ * @param {import("./ignore-lines.js").IgnoreLines[]} declared The cache block's lines, from `artifactCacheIgnoreLines`.
+ * @param {string} command The command a conflict tells the person to run again.
+ * @returns {Promise<ArtifactCacheBlockPlan>}
+ */
+async function planArtifactCacheBlock(state, declared, command) {
+  if (declared.length === 0) {
+    return {
+      contents: undefined,
+      writesGitignore: false,
+      writesState: false,
+      changes: [],
+      gitignoreBlocks: state.gitignoreBlocks,
+    };
+  }
+  const isCacheRecord = (/** @type {{ integration: string }} */ { integration }) =>
+    integration === ARTIFACT_CACHE_BLOCK;
+  const plan = planGitignoreBlocks({
+    contents: (await fileExists(GITIGNORE_PATH))
+      ? await readFile(GITIGNORE_PATH, "utf8")
+      : undefined,
+    declared,
+    records: state.gitignoreBlocks.filter(isCacheRecord),
+    command,
+  });
+  // The cache record keeps its place among the records, or follows them when it is new, as it
+  // follows the integrations' blocks when apply records it.
+  const gitignoreBlocks = state.gitignoreBlocks.some(isCacheRecord)
+    ? state.gitignoreBlocks.flatMap((record) => (isCacheRecord(record) ? plan.records : [record]))
+    : [...state.gitignoreBlocks, ...plan.records];
+  const writesGitignore = plan.type === "write" || plan.type === "update";
+  return {
+    contents: plan.contents,
+    writesGitignore,
+    // A block already in the file with the declared lines but no record is unchanged in the file,
+    // and only gains its record.
+    writesState:
+      writesGitignore || JSON.stringify(gitignoreBlocks) !== JSON.stringify(state.gitignoreBlocks),
+    changes: plan.changes,
+    gitignoreBlocks,
+  };
 }
 
 /**
@@ -67,6 +150,10 @@ export async function artifactCacheIgnoreLines(recipe) {
  * @typedef {{ id: string, target?: string }} ArtifactSelection
  * @typedef {import("./ai/artifacts.js").AiChange} AiChange
  * @typedef {import("./utils/project-formatter.js").ProjectFormatter} ProjectFormatter
+ * @typedef {{ contents: string | undefined, writesGitignore: boolean, writesState: boolean, changes: import("./ignore-lines.js").IgnoreChange[], gitignoreBlocks: import("./ignore-lines.js").IgnoreLines[] }} ArtifactCacheBlockPlan
+ *   The artifact cache block an `artifacts` command writes (#960): `.gitignore` as it would be,
+ *   whether `.gitignore` and the state record change, the changes to report, and the state's
+ *   records after it.
  * @typedef {{ origin: string, source: string }} ArtifactRegistryReport The registry (protocol, host, and port) an artifact resolves from, and the npm configuration it came from.
  * @typedef {{ registries: ArtifactRegistryReport[], warnings: string[] }} ArtifactRegistryNotes
  */
@@ -119,7 +206,7 @@ export async function runArtifactCommand(options, services = {}) {
       return migrateRecipe(options);
     case "status":
     case "doctor":
-      return artifactStatus(options, registry);
+      return artifactStatus(options, registry, loadFormatter);
     case "install":
       return installArtifacts(options, false, registry, loadFormatter);
     case "update":
@@ -459,8 +546,12 @@ async function migrateRecipe(options) {
   };
 }
 
-/** @param {ArtifactOptions} options @param {{ resolve: typeof resolveArtifactPackage }} registry */
-async function artifactStatus(options, registry) {
+/**
+ * @param {ArtifactOptions} options
+ * @param {{ resolve: typeof resolveArtifactPackage }} registry
+ * @param {() => Promise<ProjectFormatter>} loadFormatter Formats the state when the cache block is recorded.
+ */
+async function artifactStatus(options, registry, loadFormatter) {
   const recipeFound = await fileExists(options.config);
   const recipe = recipeFound ? await readJson(options.config) : {};
   const selections = normalizePackageSelections(recipe.ai);
@@ -471,106 +562,181 @@ async function artifactStatus(options, registry) {
   const lock = await readLock();
   const state = await readState();
   const stateByPath = new Map(state.aiArtifacts.map((item) => [item.path, item]));
-  const artifacts = [];
-  for (const entry of lock.artifacts) {
-    const outputPaths = aiArtifactOutputPaths({ type: entry.type, path: entry.destination });
-    const outputs = await Promise.all(
-      outputPaths.map(async (path) => {
-        const managed = stateByPath.get(path);
-        const installed = await fileExists(path);
-        const installedHash = installed
-          ? await hashAiInstall(entry.type, path, entry.target)
-          : null;
-        return {
-          installed,
-          managed: Boolean(managed),
-          locallyEdited: Boolean(installedHash && managed && installedHash !== managed.hash),
-        };
-      }),
-    );
-    const latest = options.checkUpdates
-      ? await registry.resolve({ id: entry.id, tag: entry.tag, cache: resolve(CACHE_PATH) })
-      : null;
-    const updateAvailable = Boolean(latest && latest.version !== entry.version);
-    artifacts.push({
-      ...entry,
-      installed: outputs.every(({ installed }) => installed),
-      managed: outputs.every(({ managed }) => managed),
-      locallyEdited: outputs.some(({ locallyEdited }) => locallyEdited),
-      latestVersion: latest?.version ?? null,
-      updateAvailable,
-      releaseNotesUrl:
-        latest && updateAvailable
-          ? artifactReleaseNotesUrl(
-              "repository" in latest ? latest.repository : undefined,
-              latest.version,
-            )
-          : null,
-      // `artifacts update` refuses an artifact the recipe does not select.
-      updateCommand:
-        updateAvailable && selectedIds.has(entry.id)
-          ? artifactUpdateCommand(recipe, options.config, entry.id, entry.tag)
-          : null,
-      installCommand: null,
-      // #992: without a recipe, status cannot say which lock entries an install would drop.
-      selected: recipeFound ? selectedIds.has(entry.id) : null,
-    });
-  }
   const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
-  for (const selection of selections.filter(({ id }) => !lockedIds.has(id))) {
-    const artifact = artifactForId(selection.id);
-    if (!artifact) throw new Error(`Unknown Calavera artifact: ${selection.id}.`);
-    const resolvedArtifact = resolveAiArtifacts({ ai: [selection] })[0];
-    if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
-    const latest = options.checkUpdates
-      ? await registry.resolve({ id: selection.id, tag: "latest", cache: resolve(CACHE_PATH) })
-      : null;
-    artifacts.push({
-      id: selection.id,
-      type: artifact.type,
-      package: artifact.packageName,
-      version: null,
-      resolved: null,
-      integrity: null,
-      tag: "latest",
-      manifestVersion: null,
-      ...(selection.target ? { target: selection.target } : {}),
-      destination: resolvedArtifact.path,
-      payloadHash: null,
-      installed: false,
-      managed: false,
-      locallyEdited: false,
-      latestVersion: latest?.version ?? null,
-      updateAvailable: false,
-      releaseNotesUrl: null,
-      updateCommand: null,
-      installCommand: command(["install"]),
-      selected: true,
-    });
-  }
-  // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only
-  // while every locked selection follows the same channel.
-  const selectedChannels = new Set(
-    lock.artifacts.filter(({ id }) => selectedIds.has(id)).map(({ tag }) => tag),
+  const unlockedSelections = selections.filter(({ id }) => !lockedIds.has(id));
+  // #960: checking for updates resolves every lock entry and unlocked selection through the cache,
+  // so the cache block is written first. A dry run plans it and resolves through a temporary
+  // cache, so it writes nothing.
+  const resolvesPackages = Boolean(
+    options.checkUpdates && lock.artifacts.length + unlockedSelections.length > 0,
   );
-  // Only a selected artifact has an update command, so an offered `--all` has one channel.
-  const [channel] = selectedChannels;
-  const updateAll =
-    selections.length > 1 &&
-    selectedChannels.size === 1 &&
-    artifacts.some(({ updateCommand }) => updateCommand !== null);
-  return {
-    command: `artifacts ${options.artifactAction}`,
-    offline: !options.checkUpdates,
-    updateAllCommand: updateAll
-      ? command(["update"], ["--all", ...artifactTagFlags(channel)])
-      : null,
-    checkUpdatesCommand: options.checkUpdates ? null : command(["status"], ["--check-updates"]),
-    ok: artifacts.every(
-      ({ installed, managed, locallyEdited }) => installed && managed && !locallyEdited,
-    ),
-    artifacts,
-  };
+  const cacheBlock = resolvesPackages
+    ? await planArtifactCacheBlock(
+        state,
+        await artifactCacheIgnoreLines(recipe, { resolvesPackages }),
+        `artifacts ${options.artifactAction} --check-updates`,
+      )
+    : undefined;
+  if (cacheBlock) {
+    await commitArtifactCacheBlock(cacheBlock, state, loadFormatter, options.dryRun);
+  }
+  const temporaryCache =
+    resolvesPackages && options.dryRun
+      ? await mkdtemp(join(tmpdir(), "calavera-artifact-status-"))
+      : undefined;
+  const cache = temporaryCache ?? resolve(CACHE_PATH);
+  try {
+    const artifacts = [];
+    for (const entry of lock.artifacts) {
+      const outputPaths = aiArtifactOutputPaths({ type: entry.type, path: entry.destination });
+      const outputs = await Promise.all(
+        outputPaths.map(async (path) => {
+          const managed = stateByPath.get(path);
+          const installed = await fileExists(path);
+          const installedHash = installed
+            ? await hashAiInstall(entry.type, path, entry.target)
+            : null;
+          return {
+            installed,
+            managed: Boolean(managed),
+            locallyEdited: Boolean(installedHash && managed && installedHash !== managed.hash),
+          };
+        }),
+      );
+      const latest = options.checkUpdates
+        ? await registry.resolve({ id: entry.id, tag: entry.tag, cache })
+        : null;
+      const updateAvailable = Boolean(latest && latest.version !== entry.version);
+      artifacts.push({
+        ...entry,
+        installed: outputs.every(({ installed }) => installed),
+        managed: outputs.every(({ managed }) => managed),
+        locallyEdited: outputs.some(({ locallyEdited }) => locallyEdited),
+        latestVersion: latest?.version ?? null,
+        updateAvailable,
+        releaseNotesUrl:
+          latest && updateAvailable
+            ? artifactReleaseNotesUrl(
+                "repository" in latest ? latest.repository : undefined,
+                latest.version,
+              )
+            : null,
+        // `artifacts update` refuses an artifact the recipe does not select.
+        updateCommand:
+          updateAvailable && selectedIds.has(entry.id)
+            ? artifactUpdateCommand(recipe, options.config, entry.id, entry.tag)
+            : null,
+        installCommand: null,
+        // #992: without a recipe, status cannot say which lock entries an install would drop.
+        selected: recipeFound ? selectedIds.has(entry.id) : null,
+      });
+    }
+    for (const selection of unlockedSelections) {
+      const artifact = artifactForId(selection.id);
+      if (!artifact) throw new Error(`Unknown Calavera artifact: ${selection.id}.`);
+      const resolvedArtifact = resolveAiArtifacts({ ai: [selection] })[0];
+      if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
+      const latest = options.checkUpdates
+        ? await registry.resolve({ id: selection.id, tag: "latest", cache })
+        : null;
+      artifacts.push({
+        id: selection.id,
+        type: artifact.type,
+        package: artifact.packageName,
+        version: null,
+        resolved: null,
+        integrity: null,
+        tag: "latest",
+        manifestVersion: null,
+        ...(selection.target ? { target: selection.target } : {}),
+        destination: resolvedArtifact.path,
+        payloadHash: null,
+        installed: false,
+        managed: false,
+        locallyEdited: false,
+        latestVersion: latest?.version ?? null,
+        updateAvailable: false,
+        releaseNotesUrl: null,
+        updateCommand: null,
+        installCommand: command(["install"]),
+        selected: true,
+      });
+    }
+    // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only
+    // while every locked selection follows the same channel.
+    const selectedChannels = new Set(
+      lock.artifacts.filter(({ id }) => selectedIds.has(id)).map(({ tag }) => tag),
+    );
+    // Only a selected artifact has an update command, so an offered `--all` has one channel.
+    const [channel] = selectedChannels;
+    const updateAll =
+      selections.length > 1 &&
+      selectedChannels.size === 1 &&
+      artifacts.some(({ updateCommand }) => updateCommand !== null);
+    return {
+      command: `artifacts ${options.artifactAction}`,
+      dryRun: options.dryRun,
+      offline: !options.checkUpdates,
+      updateAllCommand: updateAll
+        ? command(["update"], ["--all", ...artifactTagFlags(channel)])
+        : null,
+      checkUpdatesCommand: options.checkUpdates ? null : command(["status"], ["--check-updates"]),
+      ok: artifacts.every(
+        ({ installed, managed, locallyEdited }) => installed && managed && !locallyEdited,
+      ),
+      artifacts,
+      ignoreChanges: cacheBlock?.changes ?? [],
+      pointers: artifactCachePointers(cacheBlock?.changes ?? []),
+    };
+  } finally {
+    if (temporaryCache) await rm(temporaryCache, { recursive: true, force: true });
+  }
+}
+
+/**
+ * Commits the artifact cache block and its state record through the artifact transaction, so an
+ * interrupted write leaves both as they were (#960). The commands commit it before they resolve
+ * anything, so a cache the registry fills is ignored even when the command fails afterwards, and
+ * `.gitignore` is written right after it was read. Writes nothing when neither file changes. A dry
+ * run formats the state it would record and writes nothing, so it stops where the command would
+ * when the project's formatter cannot load or rejects the text (#838).
+ *
+ * @param {ArtifactCacheBlockPlan} cacheBlock
+ * @param {ReturnType<typeof createEmptyState>} state
+ * @param {() => Promise<ProjectFormatter>} loadFormatter
+ * @param {boolean} dryRun
+ */
+async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun) {
+  if (!cacheBlock.writesState) return;
+  const stateText = await formatRecordText(
+    STATE_PATH,
+    { ...state, gitignoreBlocks: cacheBlock.gitignoreBlocks },
+    loadFormatter,
+  );
+  if (dryRun) return;
+  const stagingRoot = resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
+  const stagedState = join(stagingRoot, "records", "state.json");
+  const stagedGitignore = join(stagingRoot, "records", "gitignore");
+  let commitStarted = false;
+  try {
+    await mkdir(dirname(stagedState), { recursive: true });
+    await writeFile(stagedState, stateText, { flag: "wx" });
+    if (cacheBlock.writesGitignore) {
+      await writeFile(stagedGitignore, /** @type {string} */ (cacheBlock.contents), { flag: "wx" });
+    }
+    commitStarted = true;
+    await commitArtifactTransaction(stagingRoot, [
+      ...(cacheBlock.writesGitignore
+        ? [{ staged: stagedGitignore, target: resolve(GITIGNORE_PATH) }]
+        : []),
+      { staged: stagedState, target: resolve(STATE_PATH) },
+    ]);
+  } finally {
+    // A commit that failed part way leaves its journal and staging for recovery.
+    if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) {
+      await rm(stagingRoot, { recursive: true, force: true });
+    }
+  }
 }
 
 /**
@@ -602,6 +768,18 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
   // for `artifacts install` or `artifacts update --all`, which request every selection.
   // `normalizeSelections` maps the recipe's `ai` items one to one, so an index marks both.
   const staged = selections.map(({ id }) => requestedIds.has(id) || lockedById.has(id));
+  const command = updating ? "artifacts update" : "artifacts install";
+  // #960: the cache block is planned and committed before anything resolves, so an edited block
+  // stops the command before the registry fills the cache, and a cache the registry fills is
+  // ignored even when the install fails afterwards. The install then reads the recorded block
+  // back from the state.
+  const state = await readState();
+  const cacheBlock = await planArtifactCacheBlock(
+    state,
+    await artifactCacheIgnoreLines(recipe),
+    command,
+  );
+  await commitArtifactCacheBlock(cacheBlock, state, loadFormatter, options.dryRun);
   const result = await stageArtifactInstall(
     Array.isArray(recipe.ai)
       ? {
@@ -624,7 +802,7 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
   );
   await result.dispose();
   return {
-    command: updating ? "artifacts update" : "artifacts install",
+    command,
     dryRun: options.dryRun,
     artifacts: result.entries,
     // #992: the lock written above holds only staged selections, so it no longer holds the entries
@@ -633,6 +811,8 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
       .filter(({ id }) => !selectedIds.has(id))
       .map(({ id, version, tag }) => ({ id, version, tag })),
     changes: result.changes,
+    ignoreChanges: cacheBlock.changes,
+    pointers: artifactCachePointers(cacheBlock.changes),
     registries: result.registries,
     warnings: result.warnings,
   };

@@ -85,10 +85,12 @@ function blockText(integration, lines, cr) {
  * @param {string | undefined} options.contents The file now, or undefined when it does not exist.
  * @param {IgnoreLines[]} options.declared The selected integrations' lines, in catalog order.
  * @param {IgnoreLines[]} options.records The blocks apply wrote last, from the state record.
+ * @param {string} [options.command] The command a conflict tells the person to run again once they
+ *   have resolved it: `apply`, or the `artifacts` command that writes the artifact cache block (#960).
  * @returns {{ contents: string | undefined, type: "write" | "update" | "unchanged" | undefined, changes: IgnoreChange[], records: IgnoreLines[] }}
  *   `type` is undefined when the plan touches no block, so apply reports nothing for the file.
  */
-export function planGitignoreBlocks({ contents, declared, records }) {
+export function planGitignoreBlocks({ contents, declared, records, command = "apply" }) {
   for (const { integration, lines } of declared) {
     for (const line of lines) {
       const problem = ignoreLineProblem(line);
@@ -111,7 +113,7 @@ export function planGitignoreBlocks({ contents, declared, records }) {
 
   for (const record of records) {
     if (declaredIds.has(record.integration) || text === undefined) continue;
-    const found = findBlock(GITIGNORE_PATH, text, record.integration);
+    const found = findBlock(GITIGNORE_PATH, text, record.integration, command);
     if ("reason" in found) {
       conflicts.push(found.reason);
       continue;
@@ -121,7 +123,7 @@ export function planGitignoreBlocks({ contents, declared, records }) {
     const recorded = record.lines.join("\n");
     if (found.current !== recorded) {
       conflicts.push(
-        `${GITIGNORE_PATH}: ${record.integration} no longer adds lines to ${GITIGNORE_PATH}, so Calavera would remove its block, but the block was edited since Calavera wrote it.\nCalavera wrote:\n${indent(recorded)}\nThe file now holds:\n${indent(found.current)}\nRemove the block yourself, both markers included, or keep the lines and delete the markers, and run apply again.`,
+        `${GITIGNORE_PATH}: ${record.integration} no longer adds lines to ${GITIGNORE_PATH}, so Calavera would remove its block, but the block was edited since Calavera wrote it.\nCalavera wrote:\n${indent(recorded)}\nThe file now holds:\n${indent(found.current)}\nRemove the block yourself, both markers included, or keep the lines and delete the markers, and run ${command} again.`,
       );
       continue;
     }
@@ -148,7 +150,7 @@ export function planGitignoreBlocks({ contents, declared, records }) {
       continue;
     }
 
-    const found = findBlock(GITIGNORE_PATH, text, integration);
+    const found = findBlock(GITIGNORE_PATH, text, integration, command);
     if ("reason" in found) {
       conflicts.push(found.reason);
       continue;
@@ -184,7 +186,7 @@ export function planGitignoreBlocks({ contents, declared, records }) {
       });
     } else {
       conflicts.push(
-        `${GITIGNORE_PATH}: the Calavera block for ${integration} ${recorded === undefined ? "is already in the file, and Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\n${recorded === undefined ? "" : `Calavera wrote:\n${indent(recorded.lines.join("\n"))}\n`}The file now holds:\n${indent(found.current)}\nCalavera would write:\n${indent(wanted)}\nTo let Calavera write it, remove the block, both markers included, and run apply again.`,
+        `${GITIGNORE_PATH}: the Calavera block for ${integration} ${recorded === undefined ? "is already in the file, and Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\n${recorded === undefined ? "" : `Calavera wrote:\n${indent(recorded.lines.join("\n"))}\n`}The file now holds:\n${indent(found.current)}\nCalavera would write:\n${indent(wanted)}\nTo let Calavera write it, remove the block, both markers included, and run ${command} again.`,
       );
       continue;
     }
