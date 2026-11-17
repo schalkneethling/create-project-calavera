@@ -10,7 +10,6 @@ import test from "node:test";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
-  NPM_EXIT_127_HINT,
   NPM_STALE_CACHE_HINT,
   YARN_VERSION_TIMEOUT_MS,
   createVpCreateCommand,
@@ -41,7 +40,9 @@ const fixturesUrl = pathToFileURL(
 );
 
 /**
- * The runner stub. It records its name, argv, cwd, VP_CLI_BIN, and PATH, strips the
+ * The runner stub. It records its name, argv, cwd, VP_CLI_BIN, PATH, and whole
+ * environment, fails as npm does when it inherits npm_config_package or
+ * npm_config_call (#689), strips the
  * runner's own arguments to find what \`vp create\` receives, then acts on STUB_MODE:
  * `scaffold` writes a Vite+ project into the `--directory` target (or
  * STUB_TARGET) and, as `vp create` installs dependencies, a vite-plus whose
@@ -84,8 +85,25 @@ appendFileSync(
     cwd: process.cwd(),
     vpCliBin: process.env.VP_CLI_BIN ?? null,
     path: process.env.PATH,
+    env: process.env,
   }) + "\\n",
 );
+
+// How npm fails when it inherits these settings (#670, #689). npm reads the
+// npm_config_ prefix in any case, so these checks do too. With package, it
+// looks for create-vite-plus in the wrong package and exits 127. With call,
+// it runs the inherited command line instead of create-vite-plus, which this
+// stub reports as exit 3.
+const inherited = (name) =>
+  Object.keys(process.env).some((key) => key.toLowerCase() === "npm_config_" + name);
+if (inherited("package")) {
+  console.error("sh: create-vite-plus: command not found");
+  process.exit(127);
+}
+if (inherited("call")) {
+  console.error("ran the inherited npm_config_call instead of create-vite-plus");
+  process.exit(3);
+}
 
 // npm create vite-plus@latest -- <args>, bunx create-vite-plus@latest <args>,
 // and <pnpm|yarn> dlx create-vite-plus@latest <args>.
@@ -179,6 +197,37 @@ function stubPath(workspace) {
 }
 
 /**
+ * The environment runCli starts the CLI with.
+ *
+ * @param {{ log: string, bin: string }} workspace
+ * @param {Record<string, string>} env
+ * @returns {Record<string, string | undefined>}
+ */
+function cliEnvironment(workspace, env) {
+  const inherited = { ...process.env };
+  // The package manager running these tests sets a user agent that would choose
+  // the runner (#909), so a test that wants one passes it in env.
+  delete inherited.npm_config_user_agent;
+  // npx and npm exec set npm_config_package and npm_config_call (#689), so a test that
+  // wants those settings passes them in env.
+  for (const key of Object.keys(inherited)) {
+    if (/^npm_config_(package|call)$/i.test(key)) delete inherited[key];
+  }
+  const childEnv = {
+    ...inherited,
+    NO_COLOR: "1",
+    PATH: stubPath(workspace),
+    STUB_LOG: workspace.log,
+    ...env,
+  };
+
+  // A VP_CLI_BIN from the developer's shell would hide whether Calavera sets one.
+  delete childEnv.VP_CLI_BIN;
+
+  return childEnv;
+}
+
+/**
  * Runs the CLI with the stub runners first on PATH.
  *
  * With `deadlineMs`, the CLI starts in its own process group. If it is still
@@ -194,20 +243,7 @@ function stubPath(workspace) {
  * @returns {Promise<{ code: number, stdout: string, stderr: string, timedOut: boolean }>}
  */
 function runCli(workspace, args, env = {}, { deadlineMs } = {}) {
-  const inherited = { ...process.env };
-  // The package manager running these tests sets a user agent that would choose
-  // the runner (#909), so a test that wants one passes it in env.
-  delete inherited.npm_config_user_agent;
-  const childEnv = {
-    ...inherited,
-    NO_COLOR: "1",
-    PATH: stubPath(workspace),
-    STUB_LOG: workspace.log,
-    ...env,
-  };
-
-  // A VP_CLI_BIN from the developer's shell would hide whether Calavera sets one.
-  delete childEnv.VP_CLI_BIN;
+  const childEnv = cliEnvironment(workspace, env);
 
   return new Promise((resolvePromise, rejectPromise) => {
     const child = spawn(process.execPath, [binPath, ...args], {
@@ -1252,8 +1288,82 @@ test("--new names the terminating signal when the runner is killed", async () =>
       command: "npm",
       args: ["create", "vite-plus@latest", "--", "vite:library"],
       cwd: workspace.work,
+      env: {},
     },
   ]);
+});
+
+test("--new removes only the npm exec settings from the environment vp create receives", async () => {
+  await using workspace = await createTemporaryWorkspace("launch-settings");
+  const previousCwd = process.cwd();
+  /** @type {Array<{ env?: Record<string, string | undefined> }>} */
+  const spawned = [];
+  const kept = {
+    npm_config_user_agent: "npm/11.20.0 node/v24.22.0 darwin arm64 workspaces/false",
+    // Other npm settings, including one whose name starts the same way, pass through.
+    npm_config_package_lock: "false",
+    npm_config_cache: "/home/user/.npm",
+    npm_package_name: "create-project-calavera",
+    CALAVERA_PASSTHROUGH: "kept",
+    PATH: "/usr/bin",
+  };
+
+  process.chdir(workspace.work);
+
+  try {
+    await assert.rejects(
+      newProject(parseArgs(["--yes", "--new", "vite:library"]), {
+        env: {
+          ...kept,
+          // What npx --package and npx -c set for the process they start.
+          npm_config_package: "create-project-calavera",
+          npm_config_call: "create-project-calavera --new",
+          // npm reads the npm_config_ prefix in any case.
+          NPM_CONFIG_PACKAGE: "create-project-calavera",
+          Npm_Config_Call: "create-project-calavera --new",
+        },
+        spawnRunner: async (invocation) => {
+          spawned.push(invocation);
+          return { exitCode: 1, signal: null };
+        },
+      }),
+    );
+  } finally {
+    process.chdir(previousCwd);
+  }
+
+  assert.equal(spawned.length, 1);
+  assert.deepEqual(spawned[0].env, kept);
+});
+
+test("--new succeeds with npm when Calavera was started with npx --package (#689)", async () => {
+  await using workspace = await createTemporaryWorkspace("npx-package");
+  const launch = {
+    // What npx --package create-project-calavera sets for Calavera.
+    npm_config_user_agent: "npm/11.20.0 node/v24.22.0 darwin arm64 workspaces/false",
+    npm_config_package: "create-project-calavera",
+    npm_config_call: "create-project-calavera --new",
+    STUB_MODE: "scaffold",
+    STUB_TARGET: "my-lib",
+    CALAVERA_PASSTHROUGH: "kept",
+  };
+
+  const result = await runCli(
+    workspace,
+    ["--yes", "--new", "vite:library", "--package-manager", "npm", "--no-interactive"],
+    launch,
+  );
+  const invocations = await readInvocations(workspace.log);
+
+  assert.equal(result.code, 0, result.stderr);
+  assert.equal(invocations.length, 1);
+  assert.equal(invocations[0].runner, "npm");
+
+  // Every variable Calavera was started with reaches the runner unchanged, except the two settings.
+  const expected = cliEnvironment(workspace, launch);
+  delete expected.npm_config_package;
+  delete expected.npm_config_call;
+  assert.deepEqual(invocations[0].env, expected);
 });
 
 /**
@@ -1311,7 +1421,6 @@ test("--new adds the stale-cache hint when npm exits non-zero for a reason other
   assertSharedFailureParts(message);
   assert.match(message, /exited with code 1/);
   assert.ok(message.includes(NPM_STALE_CACHE_HINT));
-  assert.ok(!message.includes(NPM_EXIT_127_HINT));
   assert.match(message, /"npm cache npx ls"/);
   assert.match(message, /"npm cache npx rm <key>"/);
 });
@@ -1328,37 +1437,20 @@ test("--new keeps the stale-cache hint and the signal when npm is killed", async
   assertSharedFailureParts(message);
   assert.match(message, /terminated by signal SIGTERM/);
   assert.ok(message.includes(NPM_STALE_CACHE_HINT));
-  assert.ok(!message.includes(NPM_EXIT_127_HINT));
 });
 
-test("--new replaces the stale-cache hint with the exit 127 hint when npm exits 127", async () => {
+test("--new adds no npm hint when npm exits 127, because no cache change finds a missing command", async () => {
   for (const packageManager of ["npm", undefined]) {
     const message = await failedNewMessage(packageManager, { exitCode: 127 });
 
     assertSharedFailureParts(message);
     assert.match(message, /exited with code 127/);
-    assert.ok(message.includes(NPM_EXIT_127_HINT));
     assert.ok(!message.includes(NPM_STALE_CACHE_HINT));
     assert.doesNotMatch(message, /npm cache npx/);
+    // #689 removed the npx --package cause, so the error no longer blames it.
+    assert.doesNotMatch(message, /npm_config_package|npx --package/);
+    assert.match(message, /may hold a partial scaffold that belongs to Vite\+\.$/);
   }
-});
-
-test("the exit 127 hint states its condition and names the cause, the workaround, and the docs", () => {
-  assert.match(
-    NPM_EXIT_127_HINT,
-    /^This applies only if the output above shows "command not found"/,
-  );
-  assert.match(NPM_EXIT_127_HINT, /npx --package/);
-  assert.match(NPM_EXIT_127_HINT, /npm_config_package/);
-  assert.match(NPM_EXIT_127_HINT, /npm create project-calavera/);
-  assert.match(NPM_EXIT_127_HINT, /if you did not already/);
-  assert.match(NPM_EXIT_127_HINT, /--package-manager pnpm before --new, with pnpm installed/);
-  assert.match(NPM_EXIT_127_HINT, /do not forward --package-manager npm after --new/);
-  assert.match(
-    NPM_EXIT_127_HINT,
-    /docs\/agent-first-calavera-workflow\.md#known-issue-vp-create-exits-with-code-127-through-npm/,
-  );
-  assert.match(NPM_EXIT_127_HINT, /If the output shows a different error, this does not apply/);
 });
 
 for (const packageManager of ["pnpm", "yarn", "bun"]) {
