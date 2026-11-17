@@ -293,10 +293,10 @@ Your project needs a recipe before Calavera changes anything.
 
 The commands match the scaffolded project's package manager. `--init` runs
 inside the project, so it prints the same block without the `cd` step, and
-`--init --json` returns the same lines,
-without the heading, as a `nextSteps` array. When the project already has `calavera.config.json`, the
-block names that file and the preview and apply commands instead. The dry run and
-every stop print no block.
+`--init --json` returns the same lines, without the heading, as a `nextSteps`
+array. When the project already has `calavera.config.json`, the block names that
+file and the preview and apply commands instead. The `--new` dry run and every
+stop print no block.
 
 When you composed a recipe before the project existed, hand it to `--new` with
 `--config` before `--new`, like `--yes` and `--dry-run`:
