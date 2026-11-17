@@ -1,8 +1,19 @@
 // @ts-check
 import { existsSync, realpathSync } from "node:fs";
-import { glob, mkdir, readFile, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
+import {
+  glob,
+  lstat,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  stat,
+  unlink,
+  writeFile,
+} from "node:fs/promises";
 import { createRequire } from "node:module";
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs as parseNodeArgs, stripVTControlCharacters } from "node:util";
 
@@ -47,6 +58,7 @@ import {
   assertGitHookArtifactsAtRepositoryRoot,
   assertRootOnlyIntegrationsAtRepositoryRoot,
   findRepositoryRoot,
+  rootOnlyIntegrationRefusal,
 } from "./repository-root.js";
 import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
 import { defaultBranchWarnings, resolveIntegrationInputs } from "./integration-inputs.js";
@@ -194,6 +206,12 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {boolean} [init]
  * @property {string[]} [newArgs] Tokens after `--new`, forwarded verbatim to `vp create`.
  * @property {string} [newConfig] Recipe path given with `--config` before `--new`, copied into the scaffold.
+ * @property {RecipeCopy} [recipeCopy] The recipe `apply --config` copies from outside the project into the project root (#603).
+ *
+ * @typedef {object} RecipeCopy
+ * @property {string} source Absolute path of the recipe given with `--config`.
+ * @property {Buffer} bytes The bytes read and validated, which apply copies unchanged.
+ * @property {boolean} unchanged The project's calavera.config.json already holds these bytes.
  *
  * @typedef {object} PackageManagerCommands
  * @property {[string, string[]]} init
@@ -242,7 +260,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[], packageTestFindings?: ProjectInspectionFinding[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter. `packageTestFindings` holds the findings apply already planned with the package manager it resolved, so inspection reports them instead of planning them again.
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], earlierQualityValues: string[] }} ScriptPlan earlierQualityValues are the values a release before #230 wrote for a recipe whose quality the plan now omits, which the dry run names when the project's value matches one and the state file predates the qualityScript record (#230, #937)
- * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
+ * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", from?: string, category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
  *
@@ -1414,8 +1432,15 @@ async function readPackageJSONIfPresent() {
  * @returns {Promise<Recipe>}
  */
 async function readRecipe(path) {
-  const recipe = await readJSON(path);
+  return recipeFromJSON(await readJSON(path), path);
+}
 
+/**
+ * @param {unknown} recipe The parsed contents of `path`.
+ * @param {string} path
+ * @returns {Recipe}
+ */
+function recipeFromJSON(recipe, path) {
   if (!isPlainObject(recipe)) {
     throw new Error(`${path} must contain a JSON object.`);
   }
@@ -2987,8 +3012,89 @@ export async function inspectProject(recipe, options = {}) {
  */
 export async function applyRecipe(options) {
   const configPath = resolve(options.config);
+
+  if (options.command === "apply" && !(await isInWorkingDirectory(configPath))) {
+    const recipeCopy = await planRecipeCopy(configPath);
+    return applyRecipeObject(
+      recipeFromJSON(JSON.parse(recipeCopy.bytes.toString("utf8")), configPath),
+      {
+        ...options,
+        config: CONFIG_FILE,
+        recipeCopy,
+      },
+    );
+  }
+
   const recipe = await readRecipe(configPath);
   return applyRecipeObject(recipe, options);
+}
+
+/**
+ * Whether the file at `path` is in the working directory or below it. Directory links are
+ * resolved, so a path that reaches the project through a link counts as inside. A link to the file
+ * itself is not followed, so a link inside the project counts as inside wherever it points.
+ *
+ * @param {string} path Absolute path.
+ * @returns {Promise<boolean>}
+ */
+async function isInWorkingDirectory(path) {
+  let directory = dirname(path);
+  try {
+    directory = await realpath(directory);
+  } catch {
+    // A directory that does not exist is compared as given; reading the recipe reports it.
+  }
+  const fromWorkingDirectory = relative(
+    await realpath(process.cwd()),
+    join(directory, basename(path)),
+  );
+  // A file is never the parent directory itself, so a path outside starts with `..` and a
+  // separator, or stays absolute when it is on another Windows drive.
+  return !fromWorkingDirectory.startsWith(`..${sep}`) && !isAbsolute(fromWorkingDirectory);
+}
+
+/**
+ * #603 and the owner decision of 2026-11-14: `apply --config <path>` with a recipe outside the
+ * project copies it, byte for byte, into the project root as calavera.config.json. The project
+ * root is the working directory, and it must contain a package.json; apply does not offer to
+ * create one there, because a missing package.json more likely means the wrong directory. A
+ * different calavera.config.json already in the project is a hard stop, because apply never
+ * replaces a local recipe. Both checks run before anything is planned, in the dry run as well.
+ *
+ * @param {string} source Absolute recipe path.
+ * @returns {Promise<RecipeCopy>}
+ */
+async function planRecipeCopy(source) {
+  const directory = process.cwd();
+
+  if (!(await fileExists(join(directory, "package.json")))) {
+    throw new Error(
+      `apply refused: ${directory} has no package.json, so it is not a project root. apply --config copies a recipe from outside the project into the project root, which is the current directory and must contain a package.json. Change to the project folder that contains package.json, then run apply again. Calavera stopped before writing anything.`,
+    );
+  }
+
+  const bytes = await readFile(source);
+  const target = join(directory, CONFIG_FILE);
+  // lstat does not follow links. A link of any kind, dangling or not, would make the copy, or a
+  // later rewrite of the recipe, land wherever it points, possibly outside the project, and a
+  // directory cannot be copied over, so only a regular file or nothing may be there.
+  const targetStats = await lstat(target).catch(() => undefined);
+
+  if (targetStats !== undefined && !targetStats.isFile()) {
+    throw new Error(
+      `apply refused: ${target} is ${targetStats.isSymbolicLink() ? "a symbolic link" : "a directory or other entry"}, not a regular file, so apply cannot copy ${source} there without writing somewhere else. Replace it with the recipe file itself, or remove it, then run apply again. Calavera stopped before writing anything.`,
+    );
+  }
+
+  const existing = targetStats === undefined ? undefined : await readFile(target);
+
+  if (existing !== undefined && !existing.equals(bytes)) {
+    throw new Error(
+      `apply refused: ${target} already exists and differs from ${source}, given with --config, and apply never replaces a project's recipe. To apply ${source}, replace ${target} with it yourself, then run apply without --config. To keep the project's recipe, run apply without --config. Calavera stopped before writing anything.`,
+    );
+  }
+
+  return { source, bytes, unchanged: existing !== undefined };
 }
 
 /**
@@ -3459,6 +3565,24 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     recipe,
     vitePlusStatus: vitePlusDetection.status,
   });
+
+  // #603: a value the person typed is recorded in the project's recipe, so configText, when set,
+  // is written instead of the copied bytes, and the change is a write, not a copy.
+  if (configText === undefined && applyOptions.recipeCopy !== undefined) {
+    const { source, bytes, unchanged } = applyOptions.recipeCopy;
+    changes.push({
+      type: unchanged ? "unchanged" : "write",
+      path: CONFIG_FILE,
+      action: "write",
+      ownership: "project",
+      from: source,
+    });
+    if (!applyOptions.dryRun && !unchanged) {
+      // planRecipeCopy found no file here, so an exclusive create fails, instead of following it,
+      // if a file or link appeared since.
+      await writeFile(CONFIG_FILE, bytes, { flag: "wx" });
+    }
+  }
 
   if (configText !== undefined) {
     const configUnchanged =
@@ -4702,7 +4826,7 @@ export function launchingPackageManager(userAgent) {
 
 /**
  * @param {string} runner
- * @param {PackageManager} runnerPackageManager The package manager Vite+ uses unless one is forwarded.
+ * @param {PackageManager} runnerPackageManager The package manager Vite+ uses outside an existing project, unless one is forwarded or VP_PACKAGE_MANAGER is set.
  * @param {string} cwd
  * @param {VitePlusDetection} cwdDetection
  * @param {string} [recipeSource] Absolute path of the recipe `--config` copies.
@@ -4715,7 +4839,8 @@ function newProjectConfirmation(runner, runnerPackageManager, cwd, cwdDetection,
     `  Working directory: ${cwd}`,
     "- The runner may download Vite+ before it starts.",
     "- Vite+ asks its own questions (template, target directory, and the rest) unless the forwarded flags answer them. Calavera does not answer them.",
-    `- Vite+ uses ${runnerPackageManager} as the project's package manager unless --package-manager is forwarded after --new. Inside an existing workspace, Vite+ uses that workspace's package manager instead, even when --package-manager is forwarded.`,
+    `- Outside an existing project, Vite+ uses ${runnerPackageManager} as the project's package manager unless --package-manager is forwarded after --new.`,
+    "- Inside an existing project, Vite+ uses the package manager it detects there unless --package-manager is forwarded. Inside a monorepo, Vite+ uses the package manager it detects for the monorepo even when --package-manager is forwarded. A VP_PACKAGE_MANAGER environment variable overrides all of these.",
     "- Vite+ installs the project's dependencies. This needs network access, can take minutes, and cannot be skipped.",
     "- If the target directory Vite+ is given is not empty, Vite+ may offer to remove its contents. That choice is Vite+'s.",
     "- Calavera's dry run does not preview what Vite+ writes, and Calavera does not undo it if the scaffold fails.",
@@ -5539,6 +5664,20 @@ async function doctor(options) {
         ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
         : projectDirectory;
 
+    // #997: apply refuses a root-only integration outside the repository root, so doctor reports
+    // apply's own refusal, naming the package manager apply would name. package.json is read only
+    // here, so a recipe without a root-only integration is checked as before.
+    if (repositoryRoot !== projectDirectory) {
+      const rootOnlyRefusal = rootOnlyIntegrationRefusal(
+        integrations,
+        projectDirectory,
+        resolveApplyPackageManager(recipe, options, await readPackageJSONIfPresent()),
+      );
+      if (rootOnlyRefusal !== undefined) {
+        issues.push({ level: "error", message: rootOnlyRefusal });
+      }
+    }
+
     for (const { integration, path } of declaredManagedFiles(integrations.map(({ id }) => id))) {
       const atRepositoryRoot = rootOnlyIds.has(integration) && repositoryRoot !== projectDirectory;
       const file = atRepositoryRoot ? relative(projectDirectory, join(repositoryRoot, path)) : path;
@@ -6052,6 +6191,7 @@ Options:
   --apply              Preview and optionally apply after composing a recipe
   --config <path>      Recipe path, defaults to calavera.config.json
                        Before --new: copy this recipe into the new project
+                       With apply: copy a recipe from outside the project into it
   --package-manager    npm, pnpm, yarn, or bun
   --profile            default or minimal; --yes without it uses default
   --tool <id>          Add an integration by id or label; repeatable

@@ -244,6 +244,10 @@ function fileChangeLine(change, dryRun) {
   if (change.action === "scaffold")
     return `${tense(dryRun, "Would scaffold", "Scaffolded")} ${path}`;
   if (change.action === "merge") return `${tense(dryRun, "Would merge", "Merged")} ${path}`;
+  // #603: a recipe from outside the project is copied in as calavera.config.json.
+  if (change.from !== undefined) {
+    return `${tense(dryRun, "Would copy", "Copied")} ${change.from} to ${path}`;
+  }
   return `${tense(dryRun, "Would write", "Wrote")} ${path}`;
 }
 

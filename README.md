@@ -73,6 +73,30 @@ Find the equivalent commands for your package manager in the
 | Yarn            | `yarn dlx create-project-calavera --init` | `yarn dlx create-project-calavera apply --dry-run` | `yarn dlx create-project-calavera apply` |
 | Bun             | `bunx create-project-calavera --init`     | `bunx create-project-calavera apply --dry-run`     | `bunx create-project-calavera apply`     |
 
+To apply a recipe saved outside the project, such as one downloaded from the
+[Web Composer](#web-composer), run these commands from the project root and pass
+the recipe with `--config <path>`:
+
+| Package manager | Preview a downloaded recipe                                                                  | Apply a downloaded recipe                                                          |
+| --------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| npm             | `npm create project-calavera apply -- --config ~/Downloads/calavera.config.json --dry-run`   | `npm create project-calavera apply -- --config ~/Downloads/calavera.config.json`   |
+| pnpm            | `pnpm dlx create-project-calavera apply --config ~/Downloads/calavera.config.json --dry-run` | `pnpm dlx create-project-calavera apply --config ~/Downloads/calavera.config.json` |
+| Yarn            | `yarn dlx create-project-calavera apply --config ~/Downloads/calavera.config.json --dry-run` | `yarn dlx create-project-calavera apply --config ~/Downloads/calavera.config.json` |
+| Bun             | `bunx create-project-calavera apply --config ~/Downloads/calavera.config.json --dry-run`     | `bunx create-project-calavera apply --config ~/Downloads/calavera.config.json`     |
+
+Apply copies the recipe, byte for byte, into the project root as
+`calavera.config.json`, so later commands such as `apply`, `update`, `doctor`,
+and `clean` find it without `--config`. The dry run lists the copy and writes
+nothing. The project root is the current directory, and it must contain a
+`package.json`: without one, apply refuses and names the directory instead of
+offering to create `package.json`. When the project already has a different
+`calavera.config.json`, apply stops without writing anything, because it never
+replaces a project's recipe.
+When apply asks for a value that the recipe does not record, it writes the
+recipe with that value to `calavera.config.json` instead of an exact copy, and
+leaves the downloaded file unchanged. A `--config` path inside the project, such
+as `recipes/team.json`, is used where it is and is not copied.
+
 `npm create` needs the `--` separator before Calavera flags such as `--init`
 and `--dry-run`. Do not use `npm create project-calavera --init`; npm treats
 `--init` as its own option and Calavera falls back to the recipe CLI. Yarn
@@ -975,6 +999,16 @@ the project folder that contains `calavera.config.json`. The optional bootstrap
 command prepares agent guidance; the dry-run command previews local changes; the
 apply command writes approved changes.
 
+When the recipe was saved outside the project, for example in your downloads
+folder, run the commands from the project root and pass the recipe with
+`--config <path>`: preview with
+`npm create project-calavera apply -- --config ~/Downloads/calavera.config.json --dry-run`,
+then apply with
+`npm create project-calavera apply -- --config ~/Downloads/calavera.config.json`.
+Apply copies the recipe into the project root as `calavera.config.json`. The
+[agent-first command table](#agent-first-command-table) lists the commands for
+each package manager.
+
 When the browser exposes WebMCP, the composer registers a browser parity surface
 for the MCP recipe composition workflow:
 
@@ -1065,7 +1099,7 @@ skill-code-review  0.4.0, up to date (latest)
 Update every artifact: npm create project-calavera artifacts update -- --all
 ```
 
-The commands use the runner for the recipe's package manager, add `--tag next` for an artifact on the `next` channel, and add `--config` when the recipe is not `calavera.config.json`. The all-artifacts command appears only when an update is available, the recipe selects more than one artifact, and every locked selection follows the same channel, because `--all` moves every artifact to the channel that `--tag` names. Every `artifacts update` command, targeted or `--all`, also installs and locks each selection that has no lock entry yet, on the channel that the command's `--tag` names, or `latest` without `--tag`, so when the recipe has such selections, status names them after the update commands. The release-notes link points at the `CHANGELOG.md` in the directory that the package's published `repository` metadata names on GitHub. When that metadata is missing, names a host other than GitHub, or names no package directory or one outside the repository, status still reports the update and its command, and says that there is no link. When every artifact is current, status says so. `--json` returns the same information: each artifact's `latestVersion`, `updateAvailable`, `releaseNotesUrl`, `updateCommand`, and, for a selection without a lock entry, `installCommand`, plus `updateAllCommand`, `updateAlsoInstalls` (the selections without a lock entry that an update command also installs), and, without `--check-updates`, `checkUpdatesCommand`.
+The commands use the runner for the recipe's package manager, add `--tag next` for an artifact on the `next` channel, and add `--config` when the recipe is not `calavera.config.json`. The all-artifacts command appears only when an update is available, the recipe selects more than one artifact, and every locked selection follows the same channel, because `--all` moves every artifact to the channel that `--tag` names. A targeted `artifacts update <id>` advances only the artifact it names. The other locked selections stay at their locked versions, and their outputs and local edits are checked as on every update. A selection that has no lock entry yet stays as it is until `artifacts install` installs it, or until `artifacts update --all` installs it on the channel that `--tag` names, or `latest` without `--tag`. When an update is available and the recipe has such selections, status says so after the update commands. The release-notes link points at the `CHANGELOG.md` in the directory that the package's published `repository` metadata names on GitHub. When that metadata is missing, names a host other than GitHub, or names no package directory or one outside the repository, status still reports the update and its command, and says that there is no link. When every artifact is current, status says so. `--json` returns the same information: each artifact's `latestVersion`, `updateAvailable`, `releaseNotesUrl`, `updateCommand`, and, for a selection without a lock entry, `installCommand`, plus `updateAllCommand` and, without `--check-updates`, `checkUpdatesCommand`.
 
 Commit `.calavera/artifacts.lock.json` and `.calavera/packages/`, but not `.calavera/cache/`. The cache is a local npm download cache, so it does not belong in Git. While the recipe selects an artifact, or while the cache folder exists, `apply` keeps the folder out of Git with a marked block in `.gitignore`, between `# calavera:artifact-cache:start` and `# calavera:artifact-cache:end`, and says so when it adds the block. The dry run lists the block like the integrations' `.gitignore` blocks. `artifacts install`, `artifacts update`, and `artifacts status --check-updates` can write to the cache but do not write the block, so the next `apply` adds it. A `.gitignore` line does not untrack files Git already tracks, so if a project committed the cache before this block existed, run `git rm -r --cached .calavera/cache` once and commit the result.
 
