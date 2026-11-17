@@ -5532,20 +5532,24 @@ async function doctor(options) {
       integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
     );
     const projectDirectory = process.cwd();
-    // #997: apply refuses a root-only integration outside the repository root, so doctor reports
-    // apply's own refusal, with the same package manager apply would name in its remedy.
-    const rootOnlyRefusal = rootOnlyIntegrationRefusal(
-      integrations,
-      projectDirectory,
-      resolveApplyPackageManager(recipe, options, await readPackageJSONIfPresent()),
-    );
-    if (rootOnlyRefusal !== undefined) {
-      issues.push({ level: "error", message: rootOnlyRefusal });
-    }
     const repositoryRoot =
       rootOnlyIds.size > 0
         ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
         : projectDirectory;
+
+    // #997: apply refuses a root-only integration outside the repository root, so doctor reports
+    // apply's own refusal, naming the package manager apply would name. package.json is read only
+    // here, so a recipe without a root-only integration is checked as before.
+    if (repositoryRoot !== projectDirectory) {
+      const rootOnlyRefusal = rootOnlyIntegrationRefusal(
+        integrations,
+        projectDirectory,
+        resolveApplyPackageManager(recipe, options, await readPackageJSONIfPresent()),
+      );
+      if (rootOnlyRefusal !== undefined) {
+        issues.push({ level: "error", message: rootOnlyRefusal });
+      }
+    }
 
     for (const { integration, path } of declaredManagedFiles(integrations.map(({ id }) => id))) {
       const atRepositoryRoot = rootOnlyIds.has(integration) && repositoryRoot !== projectDirectory;

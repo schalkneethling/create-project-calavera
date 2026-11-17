@@ -258,6 +258,14 @@ for (const packageManager of ["npm", "pnpm"]) {
       ),
     );
     assert.match(applyRefusal, /github-repository-controls applies at the repository root/);
+    assert.ok(
+      applyRefusal.includes(
+        packageManager === "pnpm"
+          ? "pnpm dlx create-project-calavera apply --dry-run"
+          : "npm create project-calavera apply -- --dry-run",
+      ),
+      applyRefusal,
+    );
 
     const report = await doctorReport(repository.member);
 
@@ -283,6 +291,21 @@ test("doctor at the repository root does not report the root-only refusal", asyn
     report.issues.every(({ message }) => !message.includes("applies at the repository root")),
     JSON.stringify(report.issues),
   );
+});
+
+test("doctor reads package.json only for a root-only integration outside the repository root", async () => {
+  await using repository = await createRepository();
+  // An unreadable package.json and an unsupported package manager do not stop doctor when the
+  // recipe selects no root-only integration, as before #997.
+  await writeFile(join(repository.member, "package.json"), "{bad");
+  await writeFile(
+    join(repository.member, "calavera.config.json"),
+    `${JSON.stringify({ ...buildRecipe("minimal", ["editorconfig"], "npm"), packageManager: "deno" })}\n`,
+  );
+
+  const report = await doctorReport(repository.member);
+
+  assert.equal(report.ok, true, JSON.stringify(report.issues));
 });
 
 test("dry_run_apply at the repository root still plans the repository-controls files", async () => {
