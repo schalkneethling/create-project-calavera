@@ -34,7 +34,7 @@ import { describeArtifactInputs } from "./ai/artifact-inputs.js";
 import { describeIntegrationInputs } from "./integration-inputs.js";
 import { manifestChoices, pathAtAncestor } from "./manifest-decision.js";
 import { assertKnownValue, assertPlainObject, assertStringArray } from "./utils/assertions.js";
-import { errorChain } from "./utils/error-chain.js";
+import { errorChain, fallbackErrorText, formatErrorChain } from "./utils/error-chain.js";
 import { redactSecrets } from "./utils/redact.js";
 import { assertWorkspacePath } from "./utils/fs.js";
 
@@ -643,18 +643,6 @@ export async function startMcpServer(transport = new StdioServerTransport()) {
 }
 
 /**
- * The startup error with its stack, redacted, for the server's own stderr.
- *
- * @param {unknown} error
- * @param {Record<string, string | undefined>} env
- * @returns {string}
- */
-function formatStartupError(error, env) {
-  const text = error instanceof Error ? (error.stack ?? error.message) : String(error);
-  return redactSecrets(text, env);
-}
-
-/**
  * @param {{
  *   cwd?: string,
  *   env?: Record<string, string | undefined>,
@@ -681,9 +669,15 @@ export async function runMcpEntrypoint(options = {}) {
   try {
     await startServer();
   } catch (error) {
-    stderr.write(
-      `[${SERVER_NAME}] failed to start MCP server\n${formatStartupError(error, env)}\n`,
-    );
+    // The error chain, redacted, as the CLI prints it: each cause on its own
+    // line, and the stack frames of each error when CALAVERA_DEBUG is on.
+    let text;
+    try {
+      text = formatErrorChain(error, env);
+    } catch {
+      text = redactSecrets(fallbackErrorText(error), env);
+    }
+    stderr.write(`[${SERVER_NAME}] failed to start MCP server\n${text}\n`);
     setExitCode(1);
   }
 }
