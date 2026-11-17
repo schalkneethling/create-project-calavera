@@ -1,0 +1,6 @@
+---
+"create-project-calavera": minor
+"@schalkneethling/calavera-artifact-core": minor
+---
+
+`artifacts status` and `artifacts doctor` now print each artifact with its locked version and channel instead of a single completion line. With `--check-updates`, each available update shows the installed and latest versions, a link to the release notes in the package's `CHANGELOG.md` on GitHub, and the command that applies it through the recipe's package manager, with `--tag next` for a `next`-channel artifact and `--config` for a recipe at another path. When the recipe selects more than one artifact on one channel, status also prints the `--all` command, and when every artifact is current, it says so. `--json` adds `releaseNotesUrl`, `updateCommand`, and `installCommand` to each artifact, and `updateAllCommand` and `checkUpdatesCommand` to the result. The link comes from the `repository` metadata of the published package, which `resolveArtifactPackage` in `@schalkneethling/calavera-artifact-core` now returns; without GitHub repository metadata, status still reports the update and its command (#398).

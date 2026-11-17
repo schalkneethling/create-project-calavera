@@ -19,9 +19,12 @@ import {
   resolveAiArtifacts,
 } from "./ai/artifacts.js";
 import { assertFirstSelection } from "./ai/recipe-items.js";
+import { artifactReleaseNotesUrl } from "./artifact-status-report.js";
+import { packageManagerIdsForRecipe, projectLocalCalaveraCommand } from "./recipe.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import { fileExists } from "./utils/fs.js";
 
+const CONFIG_FILE = "calavera.config.json";
 const LOCK_PATH = ".calavera/artifacts.lock.json";
 const STATE_PATH = ".calavera/state.json";
 const CACHE_ROOT = ".calavera/cache";
@@ -393,6 +396,22 @@ async function migrateRecipe(options) {
 async function artifactStatus(options, registry) {
   const recipe = (await fileExists(options.config)) ? await readJson(options.config) : {};
   const selections = normalizePackageSelections(recipe.ai);
+  const selectedIds = new Set(selections.map(({ id }) => id));
+  // Printed commands run through the project's runner and name the recipe when it is not the
+  // default one, so each runs as printed from the project directory.
+  const packageManager = packageManagerIdsForRecipe().includes(String(recipe.packageManager))
+    ? String(recipe.packageManager)
+    : "npm";
+  const configFlags = options.config === CONFIG_FILE ? [] : ["--config", options.config];
+  /** @param {string[]} positionals @param {string[]} [flags] */
+  const command = (positionals, flags = []) =>
+    projectLocalCalaveraCommand(
+      packageManager,
+      ["artifacts", ...positionals],
+      [...flags, ...configFlags],
+    );
+  /** @param {string | undefined} tag */
+  const tagFlags = (tag) => (tag === "next" ? ["--tag", "next"] : []);
   const lock = await readLock();
   const state = await readState();
   const stateByPath = new Map(state.aiArtifacts.map((item) => [item.path, item]));
@@ -416,13 +435,27 @@ async function artifactStatus(options, registry) {
     const latest = options.checkUpdates
       ? await registry.resolve({ id: entry.id, tag: entry.tag, cache: resolve(CACHE_PATH) })
       : null;
+    const updateAvailable = Boolean(latest && latest.version !== entry.version);
     artifacts.push({
       ...entry,
       installed: outputs.every(({ installed }) => installed),
       managed: outputs.every(({ managed }) => managed),
       locallyEdited: outputs.some(({ locallyEdited }) => locallyEdited),
       latestVersion: latest?.version ?? null,
-      updateAvailable: Boolean(latest && latest.version !== entry.version),
+      updateAvailable,
+      releaseNotesUrl:
+        latest && updateAvailable
+          ? artifactReleaseNotesUrl(
+              "repository" in latest ? latest.repository : undefined,
+              latest.version,
+            )
+          : null,
+      // `artifacts update` refuses an artifact the recipe does not select.
+      updateCommand:
+        updateAvailable && selectedIds.has(entry.id)
+          ? command(["update", entry.id], tagFlags(entry.tag))
+          : null,
+      installCommand: null,
     });
   }
   const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
@@ -451,11 +484,27 @@ async function artifactStatus(options, registry) {
       locallyEdited: false,
       latestVersion: latest?.version ?? null,
       updateAvailable: false,
+      releaseNotesUrl: null,
+      updateCommand: null,
+      installCommand: command(["install"]),
     });
   }
+  // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only
+  // while every locked selection follows the same channel.
+  const selectedChannels = new Set(
+    lock.artifacts.filter(({ id }) => selectedIds.has(id)).map(({ tag }) => tag),
+  );
+  // Only a selected artifact has an update command, so an offered `--all` has one channel.
+  const [channel] = selectedChannels;
+  const updateAll =
+    selections.length > 1 &&
+    selectedChannels.size === 1 &&
+    artifacts.some(({ updateCommand }) => updateCommand !== null);
   return {
     command: `artifacts ${options.artifactAction}`,
     offline: !options.checkUpdates,
+    updateAllCommand: updateAll ? command(["update"], ["--all", ...tagFlags(channel)]) : null,
+    checkUpdatesCommand: options.checkUpdates ? null : command(["status"], ["--check-updates"]),
     ok: artifacts.every(
       ({ installed, managed, locallyEdited }) => installed && managed && !locallyEdited,
     ),
