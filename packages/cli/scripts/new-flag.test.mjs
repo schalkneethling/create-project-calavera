@@ -512,7 +512,7 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
   assert.match(result.stdout, /asks its own questions/);
   assert.match(
     result.stdout,
-    /Vite\+ uses pnpm as the project's package manager unless --package-manager is forwarded after --new\./,
+    /- Outside an existing project, Vite\+ uses pnpm as the project's package manager unless --package-manager is forwarded after --new\./,
   );
   // Vite+ 1.6.0 (dist/create/bin.js) picks VP_PACKAGE_MANAGER first, then, inside a monorepo,
   // the detected package manager before a forwarded one; elsewhere, a forwarded one before the
@@ -778,7 +778,7 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
   assert.equal(invocations[0].path, stubPath(workspace));
   assert.match(
     result.stdout,
-    /Vite\+ uses npm as the project's package manager unless --package-manager is forwarded after --new\./,
+    /- Outside an existing project, Vite\+ uses npm as the project's package manager unless --package-manager is forwarded after --new\./,
   );
   assert.equal((await detectVitePlus(target)).status, "managed");
   assert.ok(await exists(join(target, ".agents/skills/calavera/SKILL.md")));

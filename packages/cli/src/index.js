@@ -4669,7 +4669,7 @@ export function launchingPackageManager(userAgent) {
 
 /**
  * @param {string} runner
- * @param {PackageManager} runnerPackageManager The package manager Vite+ uses unless one is forwarded.
+ * @param {PackageManager} runnerPackageManager The package manager Vite+ uses outside an existing project, unless one is forwarded or VP_PACKAGE_MANAGER is set.
  * @param {string} cwd
  * @param {VitePlusDetection} cwdDetection
  * @param {string} [recipeSource] Absolute path of the recipe `--config` copies.
@@ -4682,7 +4682,7 @@ function newProjectConfirmation(runner, runnerPackageManager, cwd, cwdDetection,
     `  Working directory: ${cwd}`,
     "- The runner may download Vite+ before it starts.",
     "- Vite+ asks its own questions (template, target directory, and the rest) unless the forwarded flags answer them. Calavera does not answer them.",
-    `- Vite+ uses ${runnerPackageManager} as the project's package manager unless --package-manager is forwarded after --new.`,
+    `- Outside an existing project, Vite+ uses ${runnerPackageManager} as the project's package manager unless --package-manager is forwarded after --new.`,
     "- Inside an existing project, Vite+ uses the package manager it detects there unless --package-manager is forwarded. Inside a monorepo, Vite+ uses the package manager it detects for the monorepo even when --package-manager is forwarded. A VP_PACKAGE_MANAGER environment variable overrides all of these.",
     "- Vite+ installs the project's dependencies. This needs network access, can take minutes, and cannot be skipped.",
     "- If the target directory Vite+ is given is not empty, Vite+ may offer to remove its contents. That choice is Vite+'s.",

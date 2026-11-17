@@ -248,8 +248,8 @@ or names a Yarn whose version it cannot read. The runners are
 point Vite+ provides for starting a project. Outside an existing project, the
 runner's package manager becomes the project's package manager, unless you
 forward `--package-manager` after `--new`, which Vite+ then uses instead. The
-confirmation and `--dry-run` output describe which package manager Vite+ will
-use, including inside an existing project or a monorepo.
+confirmation and `--dry-run` output describe how Vite+ chooses the package
+manager.
 Vite+ 1.0.0
 requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`. Whichever runner it
 uses, Calavera removes `npm_config_package` and `npm_config_call` from the
