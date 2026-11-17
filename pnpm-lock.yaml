@@ -175,11 +175,11 @@ importers:
   packages/baseline-core:
     dependencies:
       baseline-browser-mapping:
-        specifier: 2.11.35
-        version: 2.11.35
+        specifier: 2.11.37
+        version: 2.11.37
       web-features:
-        specifier: 3.45.0
-        version: 3.45.0
+        specifier: 3.46.0
+        version: 3.46.0
 
   packages/cli:
     dependencies:
@@ -1798,6 +1798,11 @@ packages:
     engines: {node: '>=6.0.0'}
     hasBin: true
 
+  baseline-browser-mapping@2.11.37:
+    resolution: {integrity: sha512-QYph+vfurmaxhNwi9FprfmtkT5cx2Keg8FzZ0vnjO8ukscIybVyZGMFwdllKGlTI6qyU8ck43OM9UXh+IFJihQ==}
+    engines: {node: '>=6.0.0'}
+    hasBin: true
+
   body-parser@2.4.0:
     resolution: {integrity: sha512-Ifk1KcLrxaGt1occQagQNFNNOqRt1LFuehEnHHzB8Z6cRgIxRU1TBaiIsUiCdA+gy5PL7Y1IX31DNKkRmxtXjQ==}
     engines: {node: '>=18'}
@@ -3316,8 +3321,8 @@ packages:
   weapon-regex@2.0.6:
     resolution: {integrity: sha512-iJC2vqYp+bh3r4X6zjuP0h65XqXjgUX3nJgmhj0PQMrdhAbUwCfN76CSTEEQqV3G7468kjOJ69PmytTG8l/8Gg==}
 
-  web-features@3.45.0:
-    resolution: {integrity: sha512-Atp/v77aPEuVIPsw7tYz9IrID8CztDcIleh8n/Z8r7HEkvNt7eYWHF8s4hlWQ0QskFzTPDjq81vjubXXCnBMSg==}
+  web-features@3.46.0:
+    resolution: {integrity: sha512-UXJz08ycij5sVoOL97e8kvzhnC/3kbo3SCGC1j84G5pqx7XXStbqPVNVli+BHwo8Gcb6SquKUGk5TJYsl0oRYw==}
 
   which-command@0.1.0:
     resolution: {integrity: sha512-XZyoF5/5hZtXitIwzrU4NKK+Wtbb9aB9CezUEw2Q0wlYK8NUYQxC1rRXgNueYLtBAJwXIb+/tFVk4dozciNJMA==}
@@ -4692,6 +4697,8 @@ snapshots:
   balanced-match@4.0.4: {}
 
   baseline-browser-mapping@2.11.35: {}
+
+  baseline-browser-mapping@2.11.37: {}
 
   body-parser@2.4.0(supports-color@10.2.2):
     dependencies:
@@ -6265,7 +6272,7 @@ snapshots:
 
   weapon-regex@2.0.6: {}
 
-  web-features@3.45.0: {}
+  web-features@3.46.0: {}
 
   which-command@0.1.0: {}
 
