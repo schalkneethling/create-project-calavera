@@ -1149,6 +1149,8 @@ const supportedPackageManagers = /** @type {PackageManager[]} */ (
 /** @type {McpHarness[]} */
 const supportedMcpHarnesses = ["claude-code", "codex", "cursor", "opencode", "skip"];
 const supportedProfiles = profileIdsForRecipe();
+// The profile that --yes takes when --profile is not given.
+const defaultProfile = "default";
 const recipePackageManagers = packageManagerIdsForRecipe();
 const args = process.argv.slice(2);
 /** @type {import("node:util").ParseArgsOptionsConfig} */
@@ -5139,6 +5141,12 @@ function formatArtifactRegistry({ origin, source }) {
  * @returns {Promise<string>}
  */
 async function promptForProfile(options) {
+  // #940: --yes takes the default profile, as the package manager and integration prompts take
+  // their defaults. Asking anyway left a run without a terminal to exit 0 with no recipe written.
+  if (options.profile === undefined && options.assumeYes) {
+    return defaultProfile;
+  }
+
   const selected =
     options.profile ??
     (await select({
@@ -5151,7 +5159,7 @@ async function promptForProfile(options) {
     }));
 
   exitIfCancel(selected);
-  return typeof selected === "string" ? selected : "default";
+  return typeof selected === "string" ? selected : defaultProfile;
 }
 
 /**
@@ -5187,7 +5195,7 @@ async function promptForPackageManager(options, detectedPackageManager) {
  * @returns {Promise<string[]>}
  */
 async function promptForIntegrations(options, profile) {
-  const defaults = profileDefaults[profile] ?? profileDefaults.default ?? [];
+  const defaults = profileDefaults[profile] ?? profileDefaults[defaultProfile] ?? [];
 
   if (options.integrations.length > 0) {
     return options.integrations;
@@ -5964,7 +5972,7 @@ Options:
   --config <path>      Recipe path, defaults to calavera.config.json
                        Before --new: copy this recipe into the new project
   --package-manager    npm, pnpm, yarn, or bun
-  --profile            default or minimal
+  --profile            default or minimal; --yes without it uses default
   --tool <id>          Add an integration by id or label; repeatable
   --ai-artifact <id>   Add a bundled AI artifact; repeatable
   --tag <channel>      Artifact release channel: latest (default) or next
