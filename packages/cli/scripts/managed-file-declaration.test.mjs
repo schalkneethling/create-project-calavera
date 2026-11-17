@@ -1,9 +1,10 @@
 // Issue #458: every command that plans, writes, checks, or cleans managed files reads them from one
 // declaration. The first tests pin which files each command included before the refactor, so the
-// refactor cannot change them. Inspection lists them in apply's write order (#926).
+// refactor cannot change them. Inspection lists them in apply's write order (#926). Since #925,
+// doctor also checks the github-repository-controls files, which it skipped before.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtempDisposable, writeFile } from "node:fs/promises";
+import { mkdir, mkdtempDisposable, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -148,6 +149,8 @@ test("inspection reports existing-config findings in apply's write order (#926)"
 
 test("doctor checks every planned file", async () => {
   await using directory = await mkdtempDisposable(join(tmpdir(), "calavera-458-"));
+  // The project is its own repository root, even when the temporary folder is inside a checkout.
+  await mkdir(join(directory.path, ".git"));
   await writeFile(
     join(directory.path, "calavera.config.json"),
     `${JSON.stringify({
@@ -212,11 +215,10 @@ test("doctor run from a workspace member checks the repository-controls files at
     .filter((message) => message.startsWith("Missing managed file: "));
 
   assert.equal(messages.length, 1, messages.join("\n"));
-  assert.ok(
-    messages[0].startsWith(
-      `Missing managed file: ../../${missingFile}. Run create-project-calavera apply from the repository root, `,
-    ),
+  // process.cwd() is the real path, so on macOS the root is /private/var/..., not /var/....
+  assert.equal(
     messages[0],
+    `Missing managed file: ../../${missingFile}. Run create-project-calavera apply from the repository root, ${await realpath(root)}, to regenerate managed files, adding --config <path> when the recipe is saved elsewhere.`,
   );
 });
 

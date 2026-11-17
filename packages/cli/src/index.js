@@ -5458,7 +5458,7 @@ async function doctor(options) {
         issues.push({
           level: "warning",
           message: atRepositoryRoot
-            ? `Missing managed file: ${file}. Run create-project-calavera apply from the repository root, ${repositoryRoot}, to regenerate managed files.`
+            ? `Missing managed file: ${file}. Run create-project-calavera apply from the repository root, ${repositoryRoot}, to regenerate managed files, adding --config <path> when the recipe is saved elsewhere.`
             : `Missing managed file: ${file}. Run create-project-calavera apply to regenerate managed files.`,
         });
       }
