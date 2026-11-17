@@ -529,11 +529,6 @@ async function artifactStatus(options, registry) {
     command: `artifacts ${options.artifactAction}`,
     offline: !options.checkUpdates,
     updateAllCommand: updateAll ? command(["update"], ["--all", ...tagFlags(channel)]) : null,
-    // `artifacts update`, targeted or `--all`, stages every recipe selection, so it also installs
-    // and locks each selection without a lock entry, on the channel the command's `--tag` names.
-    updateAlsoInstalls: artifacts.some(({ updateCommand }) => updateCommand !== null)
-      ? selections.filter(({ id }) => !lockedIds.has(id)).map(({ id }) => id)
-      : [],
     checkUpdatesCommand: options.checkUpdates ? null : command(["status"], ["--check-updates"]),
     ok: artifacts.every(
       ({ installed, managed, locallyEdited }) => installed && managed && !locallyEdited,
@@ -566,9 +561,21 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     if (!selectedIds.has(id)) throw new Error(`Artifact ${id} is not selected by the recipe.`);
   }
 
-  const staged = await stageArtifactInstall(
-    recipe,
-    selections,
+  // #991: a targeted update installs and locks only the artifact it names. Every other selection
+  // with a lock entry is staged again at its locked version, and a selection without one is left
+  // for `artifacts install` or `artifacts update --all`, which request every selection.
+  // `normalizeSelections` maps the recipe's `ai` items one to one, so an index marks both.
+  const staged = selections.map(({ id }) => requestedIds.has(id) || lockedById.has(id));
+  const result = await stageArtifactInstall(
+    Array.isArray(recipe.ai)
+      ? {
+          ...recipe,
+          ai: recipe.ai.filter(
+            (/** @type {unknown} */ _item, /** @type {number} */ index) => staged[index],
+          ),
+        }
+      : recipe,
+    selections.filter((_selection, index) => staged[index]),
     {
       lockedById,
       advanceIds: updating ? requestedIds : new Set(),
@@ -579,14 +586,14 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     },
     registry,
   );
-  await staged.dispose();
+  await result.dispose();
   return {
     command: updating ? "artifacts update" : "artifacts install",
     dryRun: options.dryRun,
-    artifacts: staged.entries,
-    changes: staged.changes,
-    registries: staged.registries,
-    warnings: staged.warnings,
+    artifacts: result.entries,
+    changes: result.changes,
+    registries: result.registries,
+    warnings: result.warnings,
   };
 }
 

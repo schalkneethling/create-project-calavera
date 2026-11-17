@@ -143,6 +143,11 @@ function statusOptions({
   return { config, dryRun: false, artifactAction, checkUpdates };
 }
 
+// The sentence status prints when an update is available and the recipe selects artifacts that
+// are not installed yet (#991).
+const UPDATE_TARGETS_ONE =
+  "Each Update command above installs and locks only the artifact it names, so it leaves the artifacts that are not installed yet as they are.";
+
 /** @param {ReturnType<typeof formatArtifactStatus>} lines */
 function messages(lines) {
   return lines.map(({ message }) => message);
@@ -572,13 +577,8 @@ test("ordinary output carries the same update information as --json", async () =
         ),
       );
       const printed = messages(formatArtifactStatus(result)).join("\n");
-      assert.deepEqual(result.updateAlsoInstalls, ["skill-css-tokens"]);
-      assert.ok(
-        printed.includes(
-          `not installed yet, on the channel its --tag names, or latest without --tag: ${result.updateAlsoInstalls.join(", ")}.`,
-        ),
-        printed,
-      );
+      assert.ok(!("updateAlsoInstalls" in result));
+      assert.ok(printed.includes(UPDATE_TARGETS_ONE), printed);
       const fromJson = [
         result.updateAllCommand,
         ...result.artifacts.flatMap((artifact) => [
@@ -686,7 +686,6 @@ test("status output names missing, unmanaged, and edited outputs, and an empty s
   const report = {
     offline: true,
     updateAllCommand: null,
-    updateAlsoInstalls: [],
     checkUpdatesCommand: "check",
   };
   assert.deepEqual(messages(formatArtifactStatus({ ...report, artifacts: [] })), [
@@ -718,7 +717,6 @@ test("status output explains an update for an artifact the recipe does not selec
     formatArtifactStatus({
       offline: false,
       updateAllCommand: null,
-      updateAlsoInstalls: [],
       checkUpdatesCommand: null,
       artifacts: [
         entry({ latestVersion: "0.3.0", updateAvailable: true, updateCommand: "update one" }),
@@ -800,7 +798,6 @@ test("status output prints no success line while a selection is not installed", 
   const lines = formatArtifactStatus({
     offline: false,
     updateAllCommand: null,
-    updateAlsoInstalls: [],
     checkUpdatesCommand: null,
     artifacts: [
       entry({ latestVersion: "0.2.1" }),
@@ -834,9 +831,10 @@ test("printed commands quote a recipe path the shell would split", () => {
   );
 });
 
-// `artifacts update <id>` stages every recipe selection, so it also installs and locks each
-// selection without a lock entry. Status says so instead of implying a targeted update avoids it.
-test("status says that each update command also installs the unlocked selections", async () => {
+// #991: a targeted `artifacts update <id>` installs and locks only the artifact it names. A
+// selection without a lock entry waits for `artifacts install` or `artifacts update --all`, and
+// status says so.
+test("status says that a targeted update leaves the unlocked selections to install", async () => {
   await inProject(
     {
       ids: [
@@ -860,7 +858,7 @@ test("status says that each update command also installs the unlocked selections
           "skill-frontend-testing": { latest: "0.3.0" },
         }),
       );
-      assert.deepEqual(result.updateAlsoInstalls, ["skill-css-tokens", "skill-frontend-testing"]);
+      assert.ok(!("updateAlsoInstalls" in result));
       assert.equal(
         result.updateAllCommand,
         "npm create project-calavera artifacts update -- --all",
@@ -868,14 +866,61 @@ test("status says that each update command also installs the unlocked selections
       const printed = messages(formatArtifactStatus(result));
       assert.deepEqual(printed.slice(-2), [
         `Update every artifact: ${result.updateAllCommand}`,
-        "Each update command above also installs and locks the selections that are not installed yet, on the channel its --tag names, or latest without --tag: skill-css-tokens, skill-frontend-testing.",
+        `${UPDATE_TARGETS_ONE} To install them, run their Install command, or update every artifact, which installs them on the channel its --tag names, or latest without --tag.`,
       ]);
-      assert.ok(!printed.some((line) => line.includes("instead")), printed.join("\n"));
+      assert.ok(!printed.some((line) => line.includes("also installs")), printed.join("\n"));
     },
   );
 });
 
-test("a printed targeted update installs and locks the unlocked selections", async () => {
+test("without an update every artifact command, status points only at Install", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-code-review", "skill-css-tokens"],
+      locked: [
+        { id: "skill-project-goal", version: "0.2.1" },
+        { id: "skill-code-review", version: "0.3.0-next.0", tag: "next" },
+      ],
+    },
+    async () => {
+      const result = await runArtifactCommand(
+        statusOptions(),
+        statusRegistry({
+          "skill-project-goal": { latest: "0.3.0" },
+          "skill-code-review": { next: "0.3.0-next.1" },
+          "skill-css-tokens": { latest: "0.3.0" },
+        }),
+      );
+      assert.equal(result.updateAllCommand, null);
+      assert.equal(
+        messages(formatArtifactStatus(result)).at(-1),
+        `${UPDATE_TARGETS_ONE} To install them, run their Install command.`,
+      );
+    },
+  );
+});
+
+test("status says nothing about unlocked selections when no update is available", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-css-tokens"],
+      locked: [{ id: "skill-project-goal", version: "0.2.1" }],
+    },
+    async () => {
+      const result = await runArtifactCommand(
+        statusOptions(),
+        statusRegistry({
+          "skill-project-goal": { latest: "0.2.1" },
+          "skill-css-tokens": { latest: "0.3.0" },
+        }),
+      );
+      const printed = messages(formatArtifactStatus(result));
+      assert.ok(!printed.includes(UPDATE_TARGETS_ONE), printed.join("\n"));
+    },
+  );
+});
+
+test("a printed targeted update installs and locks only the artifact it names", async () => {
   await inProject(
     {
       ids: ["skill-project-goal", "skill-css-tokens"],
@@ -889,29 +934,87 @@ test("a printed targeted update installs and locks the unlocked selections", asy
           "skill-css-tokens": { latest: "0.3.0" },
         }),
       );
-      const [goal] = result.artifacts;
+      const [goal, tokens] = result.artifacts;
+      // A file the user placed where the unlocked selection would install stays untouched.
+      const userFile = join(tokens.destination, "SKILL.md");
+      await mkdir(tokens.destination, { recursive: true });
+      await writeFile(userFile, "my own notes\n");
+      const releases = stubRegistry(
+        new Map([
+          ["skill-project-goal", "0.3.0"],
+          ["skill-css-tokens", "0.3.0"],
+        ]),
+      );
       const updated = await runArtifactCommand(
         parseArgs(calaveraArguments(goal.updateCommand, "npm")),
+        releases,
+      );
+      assert.deepEqual(
+        updated.artifacts.map(({ id, version }) => [id, version]),
+        [["skill-project-goal", "0.3.0"]],
+      );
+      const lock = JSON.parse(await readFile(".calavera/artifacts.lock.json", "utf8"));
+      assert.deepEqual(
+        lock.artifacts.map(({ id, version }) => [id, version]),
+        [["skill-project-goal", "0.3.0"]],
+      );
+      assert.equal(await readFile(userFile, "utf8"), "my own notes\n");
+      const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+      assert.ok(
+        !state.aiArtifacts.some(({ path }) => path.startsWith(tokens.destination)),
+        JSON.stringify(state.aiArtifacts),
+      );
+
+      await rm(tokens.destination, { recursive: true, force: true });
+      const installed = await runArtifactCommand(
+        parseArgs(calaveraArguments(tokens.installCommand, "npm")),
+        releases,
+      );
+      assert.deepEqual(
+        installed.artifacts.map(({ id, version }) => [id, version]),
+        [
+          ["skill-project-goal", "0.3.0"],
+          ["skill-css-tokens", "0.3.0"],
+        ],
+      );
+    },
+  );
+});
+
+test("a targeted update of an unlocked selection installs only that selection", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-css-tokens", "skill-code-review"],
+      locked: [{ id: "skill-project-goal", version: "0.2.1" }],
+    },
+    async () => {
+      const updated = await runArtifactCommand(
+        {
+          config: "calavera.config.json",
+          dryRun: false,
+          artifactAction: "update",
+          artifactId: "skill-css-tokens",
+        },
         stubRegistry(
           new Map([
             ["skill-project-goal", "0.3.0"],
             ["skill-css-tokens", "0.3.0"],
+            ["skill-code-review", "0.3.0"],
           ]),
         ),
       );
       assert.deepEqual(
         updated.artifacts.map(({ id, version }) => [id, version]),
         [
-          ["skill-project-goal", "0.3.0"],
+          ["skill-project-goal", "0.2.1"],
           ["skill-css-tokens", "0.3.0"],
         ],
       );
-      assert.deepEqual(result.updateAlsoInstalls, ["skill-css-tokens"]);
     },
   );
 });
 
-test("a next-channel update installs the unlocked selections on next, as status says", async () => {
+test("update every artifact installs the unlocked selections on its channel, as status says", async () => {
   await inProject(
     {
       ids: ["skill-project-goal", "skill-css-tokens"],
@@ -927,20 +1030,25 @@ test("a next-channel update installs the unlocked selections on next, as status 
       );
       const [goal] = result.artifacts;
       assert.ok(goal.updateCommand.endsWith("-- --tag next"), goal.updateCommand);
-      assert.equal(
-        messages(formatArtifactStatus(result)).at(-1),
-        "Each update command above also installs and locks the selections that are not installed yet, on the channel its --tag names, or latest without --tag: skill-css-tokens.",
-      );
+      assert.ok(result.updateAllCommand.endsWith("-- --all --tag next"), result.updateAllCommand);
       const releases = new Map([
         ["skill-project-goal", "0.3.0-next.1"],
         ["skill-css-tokens", "0.3.0-next.1"],
       ]);
-      const updated = await runArtifactCommand(
+      const targeted = await runArtifactCommand(
         parseArgs(calaveraArguments(goal.updateCommand, "npm")),
         stubRegistry(releases),
       );
       assert.deepEqual(
-        updated.artifacts.map(({ id, tag }) => [id, tag]),
+        targeted.artifacts.map(({ id, tag }) => [id, tag]),
+        [["skill-project-goal", "next"]],
+      );
+      const all = await runArtifactCommand(
+        parseArgs(calaveraArguments(result.updateAllCommand, "npm")),
+        stubRegistry(releases),
+      );
+      assert.deepEqual(
+        all.artifacts.map(({ id, tag }) => [id, tag]),
         [
           ["skill-project-goal", "next"],
           ["skill-css-tokens", "next"],
