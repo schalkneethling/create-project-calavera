@@ -6159,6 +6159,7 @@ Options:
   --apply              Preview and optionally apply after composing a recipe
   --config <path>      Recipe path, defaults to calavera.config.json
                        Before --new: copy this recipe into the new project
+                       With apply: copy a recipe from outside the project into it
   --package-manager    npm, pnpm, yarn, or bun
   --profile            default or minimal; --yes without it uses default
   --tool <id>          Add an integration by id or label; repeatable
