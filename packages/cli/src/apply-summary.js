@@ -5,7 +5,8 @@
 // it installs in parentheses only where their names differ from the integration's (owner decision
 // of 2026-11-14); each file is one line under Files, with the ignore lines apply writes into it;
 // the scripts sit under Scripts; each artifact is one line with its version and destination, with
-// its inputs and wiring under it. The `--json` and MCP results carry the same data unchanged.
+// its inputs and wiring under it. The `--json` and MCP results keep their shape and text; where a
+// note there repeats what the summary already names, the summary prints a shorter form of it.
 import { aiArtifactOutputPaths, resolveAiArtifacts } from "./ai/artifacts.js";
 import { ARTIFACT_CACHE_BLOCK } from "./artifact-lifecycle.js";
 import { GITIGNORE_PATH } from "./ignore-lines.js";
@@ -20,6 +21,20 @@ import { quoteScriptValue } from "./utils/text.js";
  * @typedef {import("./ignore-lines.js").IgnoreChange} IgnoreChange
  * @typedef {{ level: "info" | "success" | "warn", text: string }} SummaryLine
  */
+
+/**
+ * The start of the install note that names the exact command apply spawns: the running Node.js,
+ * the project's vp bin, and the install arguments (ADR-0012, Decision 3).
+ */
+export const VP_RUNNER_NOTE_PREFIX =
+  "Vite+ runs this with the package manager the project pins; apply runs it as: ";
+
+const CACHE_IGNORED = "Calavera ignores .calavera/cache/ through its artifact-cache block";
+const CACHE_REASON =
+  "because the folder is a local npm download cache and does not belong in Git. Commit .calavera/artifacts.lock.json and .calavera/packages/, which hold the exact artifact versions and payloads the project uses.";
+
+/** Why the artifact cache is ignored (#841), as `pointers` carries it. */
+export const ARTIFACT_CACHE_POINTER = `${CACHE_IGNORED} in .gitignore, ${CACHE_REASON}`;
 
 const ITEM = "  ";
 const DETAIL = "    ";
@@ -51,6 +66,7 @@ export function applySummaryLines(result) {
   ];
 
   if (
+    dryRun &&
     result.changes.length > 0 &&
     result.changes.every(({ type }) => type === "unchanged") &&
     result.autoInstalledArtifacts.length === 0
@@ -67,7 +83,7 @@ export function applySummaryLines(result) {
   pushGroup(lines, "Scripts", scriptLines(result));
   pushGroup(lines, "Artifacts", artifactLines(result));
   pushGroup(lines, "Notes", [
-    ...result.pointers.map((pointer) => info(`${ITEM}${pointer}`)),
+    ...result.pointers.map((pointer) => info(`${ITEM}${summaryPointer(pointer)}`)),
     ...result.inputWarnings.map((warning) => warn(`${ITEM}${warning}`)),
   ]);
 
@@ -111,7 +127,13 @@ function projectLines(result) {
     info(`${ITEM}Package manager: ${result.packageManager}`),
     ...result.vitePlus.lines.map((line) => info(`${ITEM}${line}`)),
     ...result.projectInspection.findings
-      .filter(({ kind }) => !FINDINGS_IN_PROJECT_GROUP.has(kind))
+      .filter(
+        ({ kind }) =>
+          !FINDINGS_IN_PROJECT_GROUP.has(kind) ||
+          // A package manager given to apply that differs from the detected one stays visible.
+          (kind === "package-manager" &&
+            result.projectInspection.packageManager !== result.packageManager),
+      )
       .map(({ severity, message }) => info(`${ITEM}Inspection ${severity}: ${message}`)),
   ];
 }
@@ -131,12 +153,10 @@ function integrationLines(result) {
   const lines = [];
 
   for (const integration of resolveRecipeIntegrations(result.recipe)) {
-    const packages = integrationDependencies(integration, result.recipe.integrationOptions).filter(
-      (name) => !named.has(name),
-    );
-    for (const name of packages) named.add(name);
-    const others = packages.filter((name) => name !== integration.id);
-    const prefix = others.length < packages.length ? "also " : "";
+    const installs = integrationDependencies(integration, result.recipe.integrationOptions);
+    const others = installs.filter((name) => name !== integration.id && !named.has(name));
+    for (const name of installs) named.add(name);
+    const prefix = installs.includes(integration.id) ? "also " : "";
     lines.push(
       info(
         `${ITEM}${integration.id}${others.length > 0 ? ` (${prefix}${others.join(", ")})` : ""}`,
@@ -155,7 +175,9 @@ function integrationLines(result) {
       lines.push(info(`${ITEM}Not installed, because apply ran with --no-install.`));
     } else if (result.dryRun) {
       lines.push(info(`${ITEM}Install command: ${result.installCommand}`));
-      lines.push(...result.installNotes.map((note) => info(`${ITEM}${note}`)));
+      lines.push(
+        ...result.installNotes.map((note) => info(`${ITEM}${summaryInstallNote(note, result)}`)),
+      );
     } else {
       lines.push(info(`${ITEM}Installed with: ${result.installCommand}`));
     }
@@ -365,16 +387,44 @@ function artifactLines(result) {
     );
   }
 
-  if (lines.length === 0) return [];
-
   return [
-    ...result.artifactRegistries.map((registry) =>
-      info(`${ITEM}Registry: ${formatArtifactRegistry(registry)}`),
-    ),
-    ...lines,
+    ...(lines.length > 0
+      ? [
+          ...result.artifactRegistries.map((registry) =>
+            info(`${ITEM}Registry: ${formatArtifactRegistry(registry)}`),
+          ),
+          ...lines,
+        ]
+      : []),
     ...result.artifactWarnings.map((warning) => warn(`${ITEM}${warning}`)),
     ...result.wiringWarnings.map((warning) => warn(`${ITEM}${warning}`)),
   ];
+}
+
+/**
+ * The cache pointer without the ignore file, which the summary names once, under Files, with the
+ * block in it.
+ *
+ * @param {string} pointer
+ */
+function summaryPointer(pointer) {
+  return pointer === ARTIFACT_CACHE_POINTER ? `${CACHE_IGNORED}, ${CACHE_REASON}` : pointer;
+}
+
+/**
+ * The runner note without the install arguments, which the Install command line just above
+ * names; the note in `installNotes` keeps the exact command (ADR-0012).
+ *
+ * @param {string} note
+ * @param {ApplyResult} result
+ */
+function summaryInstallNote(note, result) {
+  const command = result.installCommand ?? "";
+  if (!note.startsWith(VP_RUNNER_NOTE_PREFIX) || !command.startsWith("vp ")) return note;
+  const argumentsText = ` ${command.slice("vp ".length)}`;
+  if (!note.endsWith(argumentsText)) return note;
+  const runner = note.slice(VP_RUNNER_NOTE_PREFIX.length, note.length - argumentsText.length);
+  return `Vite+ runs this with the package manager the project pins; apply runs it with: ${runner}`;
 }
 
 /** @param {string} text @returns {SummaryLine} */

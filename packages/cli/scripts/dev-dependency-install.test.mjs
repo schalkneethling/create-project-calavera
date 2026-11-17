@@ -389,14 +389,19 @@ test("at the root of a pnpm workspace Vite+ does not manage, the dry run and app
 test("apply --dry-run names vp add -D, and how apply runs it, in a Vite+-managed project", async () => {
   await using workspace = await managedProject({ vitePlus: {} });
   const spawned = new RegExp(
-    `^(?: {2})?Vite\\+ runs this with the package manager the project pins; apply runs it through the project's own vp: \\S+ ${workspace.project}/node_modules/vite-plus/bin/vp$`,
+    `^Vite\\+ runs this with the package manager the project pins; apply runs it as: \\S+ ${workspace.project}/node_modules/vite-plus/bin/vp add -D knip$`,
+    "m",
+  );
+  // #617: the summary leaves out the arguments the Install command line above already names.
+  const summarized = new RegExp(
+    `^ {2}Vite\\+ runs this with the package manager the project pins; apply runs it with: \\S+ ${workspace.project}/node_modules/vite-plus/bin/vp$`,
     "m",
   );
 
   const human = await runCli(workspace, ["apply", "--dry-run"]);
   assert.equal(human.code, 0, human.stderr);
   assert.match(human.stdout, /^ {2}Install command: vp add -D knip$/m);
-  assert.match(human.stdout, spawned);
+  assert.match(human.stdout, summarized);
 
   const machine = await runCli(workspace, ["apply", "--dry-run", "--json"]);
   assert.equal(machine.code, 0, machine.stderr);

@@ -136,7 +136,7 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
         "  stylelint-standard (stylelint-config-standard)",
         "  stylelint-scss (also stylelint-config-standard-scss)",
         "  Install command: vp add -D knip stylelint stylelint-config-standard stylelint-scss stylelint-config-standard-scss",
-        "  Vite+ runs this with the package manager the project pins; apply runs it through the project's own vp: <node> <project>/node_modules/vite-plus/bin/vp",
+        "  Vite+ runs this with the package manager the project pins; apply runs it with: <node> <project>/node_modules/vite-plus/bin/vp",
         "",
         "Files:",
         "  Would update package.json",
@@ -395,7 +395,12 @@ test("every line the dry run prints for the rich recipe fits in 100 columns, exc
     );
     // The ADR-0011 report lines, the notes, and the warning are fixed sentences; quoted values are
     // the exact text apply writes; the runner note holds two absolute paths.
-    const fixed = new Set([...dryRun.vitePlus.lines, ...dryRun.pointers, ...dryRun.wiringWarnings]);
+    const fixed = new Set([
+      ...dryRun.vitePlus.lines,
+      // The summary prints the cache pointer without the ignore file it names under Files.
+      ...dryRun.pointers.map((pointer) => pointer.replace(" in .gitignore,", ",")),
+      ...dryRun.wiringWarnings,
+    ]);
     const long = summary(dryRun, root).filter(
       (line) =>
         line.length > 100 &&
@@ -424,6 +429,7 @@ function emptyResult(overrides) {
     installNotes: [],
     integrations: [],
     projectInspection: {
+      packageManager: "npm",
       files: [],
       findings: [],
       vitePlus: { status: "unmanaged", corroborating: [] },
@@ -486,6 +492,7 @@ test("each kind of file, script, and finding has one line, in both tenses", () =
     changes,
     scriptChanges,
     projectInspection: {
+      packageManager: "npm",
       files: [],
       findings,
       vitePlus: { status: "unmanaged", corroborating: [] },
@@ -875,4 +882,60 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
       .includes("Artifacts:"),
     false,
   );
+});
+
+test("a package manager given to apply that differs from the detected one stays visible", () => {
+  const finding = {
+    severity: "info",
+    kind: "package-manager",
+    message: "Detected pnpm as the project package manager.",
+  };
+  const texts = (/** @type {string} */ detected) =>
+    applySummaryLines(
+      emptyResult({
+        projectInspection: {
+          packageManager: /** @type {any} */ (detected),
+          files: [],
+          findings: /** @type {any} */ ([finding]),
+          vitePlus: { status: "unmanaged", corroborating: [] },
+        },
+      }),
+    ).map(({ text }) => text);
+
+  assert.equal(texts("npm").includes(`  Inspection info: ${finding.message}`), false);
+  assert.equal(texts("pnpm").includes(`  Inspection info: ${finding.message}`), true);
+});
+
+test("apply does not say nothing to change; only the dry run does", () => {
+  const unchanged = emptyResult({ changes: [{ type: "unchanged", path: "a" }] });
+  assert.deepEqual(
+    applySummaryLines({ ...unchanged, dryRun: false }).map(({ text }) => text),
+    ["Calavera apply complete.", "", "Files:", "  Unchanged a"],
+  );
+});
+
+test("artifact and wiring warnings print even when no artifact has a line", () => {
+  assert.deepEqual(
+    levels(
+      applySummaryLines(
+        emptyResult({ artifactWarnings: ["An npm setting."], wiringWarnings: ["A hook."] }),
+      ),
+    ).slice(-3),
+    ["info Artifacts:", "warn   An npm setting.", "warn   A hook."],
+  );
+});
+
+test("the runner note keeps its exact command when it does not end with the install arguments", () => {
+  const note =
+    "Vite+ runs this with the package manager the project pins; apply runs it as: node vp add -D other";
+  const lines = applySummaryLines(
+    emptyResult({
+      recipe: { version: 1, integrations: ["knip"] },
+      dependencies: ["knip"],
+      installCommand: "vp add -D knip",
+      installNotes: [note, "Another note."],
+    }),
+  ).map(({ text }) => text);
+  assert.ok(lines.includes(`  ${note}`));
+  assert.ok(lines.includes("  Another note."));
 });

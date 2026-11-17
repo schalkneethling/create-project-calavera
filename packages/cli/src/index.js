@@ -29,10 +29,12 @@ import {
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
 import {
+  ARTIFACT_CACHE_POINTER,
   applySummaryLines,
   formatArtifactInput,
   formatArtifactRegistry,
   formatIntegrationInput,
+  VP_RUNNER_NOTE_PREFIX,
 } from "./apply-summary.js";
 import { formatArtifactStatus } from "./artifact-status-report.js";
 import {
@@ -386,9 +388,6 @@ const VARLOCK_GITIGNORE_COMMENTS = [
 const VARLOCK_GITIGNORE_LINES = ["!.env.schema", ".env.local", ".env.*.local"];
 const VARLOCK_POINTER =
   "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
-
-const ARTIFACT_CACHE_POINTER =
-  "Calavera ignores .calavera/cache/ through its artifact-cache block, because the folder is a local npm download cache and does not belong in Git. Commit .calavera/artifacts.lock.json and .calavera/packages/, which hold the exact artifact versions and payloads the project uses.";
 
 /** @type {Record<PackageManager, PackageManagerCommands>} */
 const packageManagerCommands = {
@@ -1133,10 +1132,7 @@ async function planDevDependencyInstall(
     const vpBin = await resolveProjectVpBin(projectDirectory);
     /** @type {[string, string[]]} */
     const spawn = [process.execPath, [vpBin, ...command[1]]];
-    notes.push(
-      // #617: the command's packages are named once, in the command itself.
-      `Vite+ runs this with the package manager the project pins; apply runs it through the project's own vp: ${formatCommand([process.execPath, [vpBin]])}`,
-    );
+    notes.push(`${VP_RUNNER_NOTE_PREFIX}${formatCommand(spawn)}`);
     return { command, spawn, problem: undefined, notes };
   } catch (error) {
     // --no-install does not get around this: apply formats the files it writes with the same vp
