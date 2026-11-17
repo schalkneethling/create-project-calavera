@@ -17,7 +17,7 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {string | null} updateCommand
  * @property {string | null} installCommand
  *
- * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null }} ArtifactStatusReport
+ * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, updateAlsoInstalls: string[], checkUpdatesCommand: string | null }} ArtifactStatusReport
  * @typedef {{ level: "info" | "success", message: string }} ReportLine
  */
 
@@ -178,12 +178,14 @@ export function formatArtifactStatus(result) {
   if (result.updateAllCommand) {
     info(`Update every artifact: ${result.updateAllCommand}`);
   } else if (result.artifacts.filter(({ updateCommand }) => updateCommand !== null).length > 1) {
-    // Status withholds `--all` from several updatable artifacts when a selection is not installed
-    // or the channels differ.
+    // Status withholds `--all` from several updatable artifacts only when their channels differ.
     info(
-      result.artifacts.some(({ version }) => version === null)
-        ? "--all would also install the artifacts that are not installed, so run each Update command above instead."
-        : "These artifacts follow different channels, and --all would move every one to a single channel, so run each Update command above instead.",
+      "These artifacts follow different channels, and --all would move every one to a single channel, so run each Update command above instead.",
+    );
+  }
+  if (result.updateAlsoInstalls.length > 0) {
+    info(
+      `Each update command above also installs and locks the selections that are not installed yet: ${result.updateAlsoInstalls.join(", ")}.`,
     );
   }
   if (updates.length === 0 && result.artifacts.every(({ version }) => version !== null)) {

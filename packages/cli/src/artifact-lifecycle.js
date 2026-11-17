@@ -489,9 +489,8 @@ async function artifactStatus(options, registry) {
       installCommand: command(["install"]),
     });
   }
-  // `--all` moves every selected artifact to the one channel `--tag` names and installs every
-  // selection without a lock entry, so it is offered only while every selection is locked and
-  // follows the same channel.
+  // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only
+  // while every locked selection follows the same channel.
   const selectedChannels = new Set(
     lock.artifacts.filter(({ id }) => selectedIds.has(id)).map(({ tag }) => tag),
   );
@@ -499,13 +498,17 @@ async function artifactStatus(options, registry) {
   const [channel] = selectedChannels;
   const updateAll =
     selections.length > 1 &&
-    selections.every(({ id }) => lockedIds.has(id)) &&
     selectedChannels.size === 1 &&
     artifacts.some(({ updateCommand }) => updateCommand !== null);
   return {
     command: `artifacts ${options.artifactAction}`,
     offline: !options.checkUpdates,
     updateAllCommand: updateAll ? command(["update"], ["--all", ...tagFlags(channel)]) : null,
+    // `artifacts update`, targeted or `--all`, stages every recipe selection, so it also installs
+    // and locks each selection without a lock entry.
+    updateAlsoInstalls: artifacts.some(({ updateCommand }) => updateCommand !== null)
+      ? selections.filter(({ id }) => !lockedIds.has(id)).map(({ id }) => id)
+      : [],
     checkUpdatesCommand: options.checkUpdates ? null : command(["status"], ["--check-updates"]),
     ok: artifacts.every(
       ({ installed, managed, locallyEdited }) => installed && managed && !locallyEdited,
