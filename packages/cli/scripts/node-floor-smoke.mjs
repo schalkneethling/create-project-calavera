@@ -20,6 +20,7 @@ import { StdioClientTransport } from "@modelcontextprotocol/sdk/client/stdio.js"
 import semver from "semver";
 import packageJson from "../package.json" with { type: "json" };
 import { buildRecipe } from "../src/recipe.js";
+import { writeVitePlusFormatter } from "./vite-plus-fixtures.mjs";
 
 const execFileAsync = promisify(execFile);
 const cliBin = fileURLToPath(new URL("../bin/create-project-calavera.js", import.meta.url));
@@ -106,6 +107,9 @@ await smoke(
   async () => {
     await inTemporaryDirectory(async (directory) => {
       await cp(libraryFixture, directory, { recursive: true });
+      // Like vp create, which installs the project's dependencies, the copy gets the vite-plus
+      // package whose vp fmt formats the files apply writes, including its state (#838).
+      await writeVitePlusFormatter(directory);
       await writeFile(
         join(directory, "calavera.config.json"),
         `${JSON.stringify(buildRecipe("default", ["editorconfig"], "pnpm"), null, 2)}\n`,
