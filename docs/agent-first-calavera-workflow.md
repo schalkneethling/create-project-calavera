@@ -248,11 +248,15 @@ runner's package manager becomes the project's package manager, unless you
 forward `--package-manager` after `--new`, which Vite+ then uses instead. The
 confirmation and `--dry-run` output name the package manager Vite+ will use.
 Vite+ 1.0.0
-requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`. If Calavera itself was
-started with `npx --package` or `npx -c`, Calavera removes `npm_config_package`
-and `npm_config_call` from the environment of `vp create`, because npm would
-otherwise look for `create-vite-plus` inside create-project-calavera or run
-Calavera's own command line again.
+requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`. Whichever runner it
+uses, Calavera removes `npm_config_package` and `npm_config_call` from the
+environment it gives `vp create`. npm sets them when Calavera itself was started
+with `npx --package`, `npm exec --package`, or `npx -c`. Passed on,
+`npm_config_package` makes npm look inside create-project-calavera for the
+command it should start, either `create-vite-plus` or the `create-vite` that
+Vite+ starts for the template, and `npm_config_call` makes
+`npm create vite-plus@latest` run Calavera's own command line again. Every other
+variable passes through unchanged.
 
 Calavera continues into the bootstrap only when `vp create` exits with code 0
 and Vite+ detection reports `managed` for the scaffolded directory. That
