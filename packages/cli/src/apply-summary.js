@@ -8,7 +8,13 @@
 // its inputs and wiring under it. The `--json` and MCP results keep their shape and text; where a
 // note there repeats what the summary already names, the summary prints a shorter form of it.
 import { aiArtifactOutputPaths, resolveAiArtifacts } from "./ai/artifacts.js";
-import { ARTIFACT_CACHE_BLOCK, normalizePackageSelections } from "./artifact-lifecycle.js";
+import {
+  ARTIFACT_CACHE_BLOCK,
+  ARTIFACT_CACHE_IGNORED,
+  ARTIFACT_CACHE_POINTER,
+  ARTIFACT_CACHE_REASON,
+  normalizePackageSelections,
+} from "./artifact-lifecycle.js";
 import { GITIGNORE_PATH } from "./ignore-lines.js";
 import { resolveRecipeIntegrations } from "./recipe.js";
 import { integrationDependencies } from "./stryker-options.js";
@@ -28,13 +34,6 @@ import { quoteScriptValue } from "./utils/text.js";
  */
 export const VP_RUNNER_NOTE_PREFIX =
   "Vite+ runs this with the package manager the project pins; apply runs it as: ";
-
-const CACHE_IGNORED = "Calavera ignores .calavera/cache/ through its artifact-cache block";
-const CACHE_REASON =
-  "because the folder is a local npm download cache and does not belong in Git. Commit .calavera/artifacts.lock.json and .calavera/packages/, which hold the exact artifact versions and payloads the project uses.";
-
-/** Why the artifact cache is ignored (#841), as `pointers` carries it. */
-export const ARTIFACT_CACHE_POINTER = `${CACHE_IGNORED} in .gitignore, ${CACHE_REASON}`;
 
 const ITEM = "  ";
 const DETAIL = "    ";
@@ -418,7 +417,9 @@ function artifactLines(result) {
  * @param {string} pointer
  */
 function summaryPointer(pointer) {
-  return pointer === ARTIFACT_CACHE_POINTER ? `${CACHE_IGNORED}, ${CACHE_REASON}` : pointer;
+  return pointer === ARTIFACT_CACHE_POINTER
+    ? `${ARTIFACT_CACHE_IGNORED}, ${ARTIFACT_CACHE_REASON}`
+    : pointer;
 }
 
 /**

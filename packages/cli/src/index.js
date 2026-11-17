@@ -36,11 +36,11 @@ import packageJson from "../package.json" with { type: "json" };
 import {
   ARTIFACT_CACHE_BLOCK,
   artifactCacheIgnoreLines,
+  artifactCachePointers,
   prepareArtifactSources,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
 import {
-  ARTIFACT_CACHE_POINTER,
   applySummaryLines,
   formatArtifactInput,
   formatArtifactRegistry,
@@ -3403,12 +3403,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     ],
     records: previousState.gitignoreBlocks,
   });
-  // The cache sits next to files the project commits, so apply says why it is ignored when it adds
-  // the block, and not again on every apply after that.
-  const addsArtifactCacheBlock = gitignorePlan.changes.some(
-    ({ integration, type, removedLines }) =>
-      integration === ARTIFACT_CACHE_BLOCK && type !== "unchanged" && removedLines === undefined,
-  );
   const ignoreChanges = [
     ...gitignorePlan.changes,
     ...(managedFilePlans.some(({ path }) => path === HTML_VALIDATE_IGNORE_PATH)
@@ -3757,7 +3751,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     pointers: [
       ...aiResult.pointers,
       ...(usesVarlock ? [VARLOCK_POINTER] : []),
-      ...(addsArtifactCacheBlock ? [ARTIFACT_CACHE_POINTER] : []),
+      // The cache sits next to files the project commits, so apply says why it is ignored when it
+      // adds the block, and not again on every apply after that.
+      ...artifactCachePointers(gitignorePlan.changes),
     ],
     autoInstalledArtifacts: artifactPlan.installed,
     artifactRegistries: artifactPlan.registries,
@@ -6435,10 +6431,15 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     )) {
       logger[level](message);
     }
+    printArtifactCacheBlock(result);
     return;
   }
 
   logger.success(`Calavera ${result.command} complete.`);
+
+  if (result.command === "artifacts install" || result.command === "artifacts update") {
+    printArtifactCacheBlock(result);
+  }
 
   if (result.command === "artifacts install" || result.command === "artifacts update") {
     for (const registry of /** @type {ArtifactRegistryReport[]} */ (result.registries)) {
@@ -6456,6 +6457,24 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     )) {
       logger.warn(warning);
     }
+  }
+}
+
+/**
+ * The artifact cache block an `artifacts` command adds to `.gitignore` (#960): in a dry run, the
+ * exact lines it would write, so the approval covers them, and in either case why the cache is
+ * ignored, when the command adds the block.
+ *
+ * @param {ArtifactCommandResult} result
+ */
+function printArtifactCacheBlock(result) {
+  if (result.dryRun) {
+    for (const change of /** @type {IgnoreChange[]} */ (result.ignoreChanges ?? [])) {
+      if (change.type !== "unchanged") logger.info(formatIgnoreChange(change));
+    }
+  }
+  for (const pointer of /** @type {string[]} */ (result.pointers ?? [])) {
+    logger.info(pointer);
   }
 }
 

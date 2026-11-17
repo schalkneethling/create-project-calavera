@@ -119,6 +119,20 @@ The cache is not an integration, but the block works exactly as Decisions 2 to 5
 - The record goes into `gitignoreBlocks` with `artifact-cache` in the `integration` field. The field keeps its name, because renaming it would change the state file every applied project holds. The Alternatives section noted that an artifact id and an integration id can be equal, so artifacts would need their own record key. That does not apply here, because `artifact-cache` names Calavera's cache, not an artifact, and a test fails if a catalog integration takes that id.
 - When apply adds the block, it adds a pointer that says the folder is a local download cache that does not belong in Git, and that `.calavera/artifacts.lock.json` and `.calavera/packages/` are the files to commit. When the block is removed, the dry run says it is removed because the recipe selects no artifacts and `.calavera/cache/` does not exist.
 
-The `artifacts install`, `artifacts update`, and `artifacts status --check-updates` commands can also write to the cache, but they do not plan `.gitignore` blocks. The next apply adds the block, because the folder then exists.
+The `artifacts install`, `artifacts update`, and `artifacts status --check-updates` commands can also write to the cache, but they do not plan `.gitignore` blocks. The next apply adds the block, because the folder then exists. Amendment 2 changes this.
 
 No C8 test changes, for the reasons Decision 7 gives.
+
+## Amendment 2: The `artifacts` Commands Write the Cache Block
+
+- **Date:** 2026-11-17
+- **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/960
+
+Amendment 1 left the cache block to `apply`, so a project that only ran `artifacts install`, `artifacts update`, or `artifacts status --check-updates` showed `.calavera/cache/` in `git status` until its next apply. The owner decided on 2026-11-17 that those commands write the block themselves. `artifacts doctor --check-updates` shares the status code, so it does the same.
+
+- Each command plans the block with the planner and the lines apply uses, before it resolves any package, so an edited block stops the command, and its dry run, before anything is written, exactly as Decision 2 describes for apply. The conflict message names the command to run again.
+- The commands plan only the `artifact-cache` block. The integrations' blocks and their records belong to apply, so the commands pass them through unchanged, and they never remove the cache block.
+- Each command commits the block and its record in an artifact transaction of its own, right after planning them and before it contacts the registry. A cache that the registry fills is therefore ignored even when the command fails afterwards, and the block and its record stay in place after such a failure. `artifacts status --check-updates` plans the block only while it has a lock entry or a selection to check.
+- A block that is already in the file with the declared lines but has no record keeps its bytes and gains its record, as it does in apply.
+- A dry run writes nothing. `artifacts status --check-updates --dry-run` resolves through a temporary cache, as the install dry run already did.
+- When a command adds the block, it prints the pointer apply prints, and its dry run prints the block's lines.
