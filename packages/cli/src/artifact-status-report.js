@@ -185,7 +185,7 @@ export function formatArtifactStatus(result) {
   }
   if (result.updateAlsoInstalls.length > 0) {
     info(
-      `Each update command above also installs and locks the selections that are not installed yet: ${result.updateAlsoInstalls.join(", ")}.`,
+      `Each update command above also installs and locks the selections that are not installed yet, on the channel its --tag names, or latest without --tag: ${result.updateAlsoInstalls.join(", ")}.`,
     );
   }
   if (updates.length === 0 && result.artifacts.every(({ version }) => version !== null)) {

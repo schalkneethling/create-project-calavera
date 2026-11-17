@@ -573,9 +573,14 @@ test("ordinary output carries the same update information as --json", async () =
       );
       const printed = messages(formatArtifactStatus(result)).join("\n");
       assert.deepEqual(result.updateAlsoInstalls, ["skill-css-tokens"]);
+      assert.ok(
+        printed.includes(
+          `not installed yet, on the channel its --tag names, or latest without --tag: ${result.updateAlsoInstalls.join(", ")}.`,
+        ),
+        printed,
+      );
       const fromJson = [
         result.updateAllCommand,
-        ...result.updateAlsoInstalls,
         ...result.artifacts.flatMap((artifact) => [
           artifact.id,
           artifact.version,
@@ -863,7 +868,7 @@ test("status says that each update command also installs the unlocked selections
       const printed = messages(formatArtifactStatus(result));
       assert.deepEqual(printed.slice(-2), [
         `Update every artifact: ${result.updateAllCommand}`,
-        "Each update command above also installs and locks the selections that are not installed yet: skill-css-tokens, skill-frontend-testing.",
+        "Each update command above also installs and locks the selections that are not installed yet, on the channel its --tag names, or latest without --tag: skill-css-tokens, skill-frontend-testing.",
       ]);
       assert.ok(!printed.some((line) => line.includes("instead")), printed.join("\n"));
     },
@@ -902,6 +907,45 @@ test("a printed targeted update installs and locks the unlocked selections", asy
         ],
       );
       assert.deepEqual(result.updateAlsoInstalls, ["skill-css-tokens"]);
+    },
+  );
+});
+
+test("a next-channel update installs the unlocked selections on next, as status says", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-css-tokens"],
+      locked: [{ id: "skill-project-goal", version: "0.3.0-next.0", tag: "next" }],
+    },
+    async () => {
+      const result = await runArtifactCommand(
+        statusOptions(),
+        statusRegistry({
+          "skill-project-goal": { next: "0.3.0-next.1" },
+          "skill-css-tokens": { latest: "0.2.1", next: "0.3.0-next.1" },
+        }),
+      );
+      const [goal] = result.artifacts;
+      assert.ok(goal.updateCommand.endsWith("-- --tag next"), goal.updateCommand);
+      assert.equal(
+        messages(formatArtifactStatus(result)).at(-1),
+        "Each update command above also installs and locks the selections that are not installed yet, on the channel its --tag names, or latest without --tag: skill-css-tokens.",
+      );
+      const releases = new Map([
+        ["skill-project-goal", "0.3.0-next.1"],
+        ["skill-css-tokens", "0.3.0-next.1"],
+      ]);
+      const updated = await runArtifactCommand(
+        parseArgs(calaveraArguments(goal.updateCommand, "npm")),
+        stubRegistry(releases),
+      );
+      assert.deepEqual(
+        updated.artifacts.map(({ id, tag }) => [id, tag]),
+        [
+          ["skill-project-goal", "next"],
+          ["skill-css-tokens", "next"],
+        ],
+      );
     },
   );
 });

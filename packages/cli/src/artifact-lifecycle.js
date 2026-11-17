@@ -505,7 +505,7 @@ async function artifactStatus(options, registry) {
     offline: !options.checkUpdates,
     updateAllCommand: updateAll ? command(["update"], ["--all", ...tagFlags(channel)]) : null,
     // `artifacts update`, targeted or `--all`, stages every recipe selection, so it also installs
-    // and locks each selection without a lock entry.
+    // and locks each selection without a lock entry, on the channel the command's `--tag` names.
     updateAlsoInstalls: artifacts.some(({ updateCommand }) => updateCommand !== null)
       ? selections.filter(({ id }) => !lockedIds.has(id)).map(({ id }) => id)
       : [],
