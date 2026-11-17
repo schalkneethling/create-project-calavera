@@ -190,7 +190,7 @@ const TOKEN = "npm_0123456789abcdefSECRETTOKEN";
  * @param {{ version: string, tarball: Buffer, integrity: string }} packed
  * @param {{ status?: number }} [options]
  */
-async function startRegistry(packed, { status = 200 } = {}) {
+async function startRegistry(packed, { status = 200, repository } = {}) {
   const requests = [];
   const server = createServer((req, res) => {
     requests.push({ url: req.url, authorization: req.headers.authorization });
@@ -211,6 +211,7 @@ async function startRegistry(packed, { status = 200 } = {}) {
             [packed.version]: {
               name: artifact.packageName,
               version: packed.version,
+              ...(repository ? { repository } : {}),
               dist: { tarball: `${origin}/-/artifact.tgz`, integrity: packed.integrity },
             },
           },
@@ -281,6 +282,37 @@ test("resolution and extraction use the configured scoped registry and token", a
     }
   } finally {
     await registry.close();
+  }
+});
+
+test("resolution reports the package's published repository metadata, or null without it", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-repository-"));
+  const packed = await packFixture(directory);
+  const repository = {
+    type: "git",
+    url: "git+ssh://git@github.com/schalkneethling/create-project-calavera.git",
+    directory: "packages/artifacts/skill-project-goal",
+  };
+  for (const [metadata, expected] of [
+    [repository, repository],
+    [undefined, null],
+  ]) {
+    const registry = await startRegistry(packed, { repository: metadata });
+    try {
+      const fixture = await npmConfigFixture(
+        "",
+        `@schalkneethling:registry=http://${registry.host}/\n`,
+      );
+      const resolution = await resolveArtifactPackage({
+        id: "skill-project-goal",
+        cache: fixture.cache,
+        cwd: fixture.cwd,
+        env: fixture.env,
+      });
+      assert.deepEqual(resolution.repository, expected);
+    } finally {
+      await registry.close();
+    }
   }
 });
 

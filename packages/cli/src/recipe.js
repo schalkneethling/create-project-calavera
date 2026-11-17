@@ -15,6 +15,7 @@ import {
   assertStringArray,
 } from "./utils/assertions.js";
 import { isPlainObject } from "./utils/guards.js";
+import { quoteShellToken } from "./utils/shell.js";
 
 export const CONFIG_SCHEMA_URL = "https://calavera.schalkneethling.com/calavera.config.schema.json";
 
@@ -64,24 +65,33 @@ export const packageManagerCatalog = [
 export const projectLocalCommandCatalog = Object.freeze({
   npm: Object.freeze({
     label: "npm",
+    runCalavera: "npm create project-calavera",
+    // npm create passes flags on to Calavera only after a `--` separator.
+    flagsAfterSeparator: true,
     agentBootstrap: "npm create project-calavera -- --init",
     applyDryRun: "npm create project-calavera apply -- --dry-run",
     applyRecipe: "npm create project-calavera apply",
   }),
   pnpm: Object.freeze({
     label: "pnpm",
+    runCalavera: "pnpm dlx create-project-calavera",
+    flagsAfterSeparator: false,
     agentBootstrap: "pnpm dlx create-project-calavera --init",
     applyDryRun: "pnpm dlx create-project-calavera apply --dry-run",
     applyRecipe: "pnpm dlx create-project-calavera apply",
   }),
   yarn: Object.freeze({
     label: "Yarn",
+    runCalavera: "yarn dlx create-project-calavera",
+    flagsAfterSeparator: false,
     agentBootstrap: "yarn dlx create-project-calavera --init",
     applyDryRun: "yarn dlx create-project-calavera apply --dry-run",
     applyRecipe: "yarn dlx create-project-calavera apply",
   }),
   bun: Object.freeze({
     label: "Bun",
+    runCalavera: "bunx create-project-calavera",
+    flagsAfterSeparator: false,
     agentBootstrap: "bunx create-project-calavera --init",
     applyDryRun: "bunx create-project-calavera apply --dry-run",
     applyRecipe: "bunx create-project-calavera apply",
@@ -295,6 +305,23 @@ export function packageManagerIdsForRecipe() {
 export function projectLocalCommandsForPackageManager(packageManager = "npm") {
   assertKnownValue("packageManager", packageManager, packageManagerIds);
   return projectLocalCommandCatalog[packageManager];
+}
+
+/**
+ * A Calavera command as a person runs it in the project through `packageManager`'s runner, with
+ * each token quoted for the shell.
+ *
+ * @param {string} packageManager
+ * @param {string[]} positionals Command words and arguments, such as `["artifacts", "update", id]`.
+ * @param {string[]} flags Options and their values, such as `["--tag", "next"]`.
+ */
+export function projectLocalCalaveraCommand(packageManager, positionals, flags) {
+  const commands = projectLocalCommandsForPackageManager(packageManager);
+  const separator = flags.length > 0 && commands.flagsAfterSeparator ? ["--"] : [];
+  return [
+    commands.runCalavera,
+    ...[...positionals, ...separator, ...flags].map(quoteShellToken),
+  ].join(" ");
 }
 
 export function projectLocalCommandSteps(packageManager = "npm") {

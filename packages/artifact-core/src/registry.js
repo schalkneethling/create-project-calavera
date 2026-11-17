@@ -53,6 +53,9 @@ export async function resolveArtifactPackage(request) {
     offline: request.offline ?? false,
     registry: npm.registry,
     warnings: npm.warnings,
+    // The package's own `repository` metadata, as published, or null when it has none. Calavera
+    // derives a release-notes link from it.
+    repository: /** @type {unknown} */ (manifest.repository ?? null),
   };
 }
 

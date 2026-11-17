@@ -28,6 +28,7 @@ import {
   prepareArtifactSources,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
+import { formatArtifactStatus } from "./artifact-status-report.js";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   githubRepositoryControlManagedFiles,
@@ -118,6 +119,7 @@ import {
   validateRecipeResponse,
 } from "./recipe.js";
 import { assertKnownValue } from "./utils/assertions.js";
+import { quoteShellToken } from "./utils/shell.js";
 import {
   FAILURE_OUTPUT_LINES,
   formatErrorChain,
@@ -1885,16 +1887,6 @@ export function createVpCreateCommand(packageManager, forwardedArgs) {
       // npm create consumes the first --, so a forwarded -- still reaches Vite+.
       return { command: "npm", args: ["create", "vite-plus@latest", "--", ...forwardedArgs] };
   }
-}
-
-/**
- * Quotes a token for display when a shell would otherwise split or expand it.
- *
- * @param {string} token
- * @returns {string}
- */
-function quoteShellToken(token) {
-  return /^[\w@%+=:,./^~-]+$/.test(token) ? token : `'${token.replaceAll("'", `'\\''`)}'`;
 }
 
 /**
@@ -6328,6 +6320,17 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.info(`Pointer: ${pointer}`);
     }
 
+    return;
+  }
+
+  if (result.command === "artifacts status" || result.command === "artifacts doctor") {
+    for (const { level, message } of formatArtifactStatus(
+      /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
+        /** @type {unknown} */ (result)
+      ),
+    )) {
+      logger[level](message);
+    }
     return;
   }
 
