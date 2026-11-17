@@ -183,8 +183,8 @@ export function formatArtifactStatus(result) {
       "These artifacts follow different channels, and --all would move every one to a single channel, so run each Update command above instead.",
     );
   }
-  // #991: a targeted update installs only the artifact it names, while `--all` also installs the
-  // selections without a lock entry.
+  // #991: a targeted update leaves the selections without a lock entry alone, while `--all`
+  // installs them.
   if (
     result.artifacts.some(({ updateCommand }) => updateCommand !== null) &&
     result.artifacts.some(({ version }) => version === null)
@@ -193,7 +193,7 @@ export function formatArtifactStatus(result) {
       ? ", or update every artifact, which installs them on the channel its --tag names, or latest without --tag"
       : "";
     info(
-      `Each Update command above installs and locks only the artifact it names, so it leaves the artifacts that are not installed yet as they are. To install them, run their Install command${all}.`,
+      `A targeted update, artifacts update <id>, advances only the artifact it names and leaves the artifacts that are not installed yet as they are. To install them, run their Install command${all}.`,
     );
   }
   if (updates.length === 0 && result.artifacts.every(({ version }) => version !== null)) {

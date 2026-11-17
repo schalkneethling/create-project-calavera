@@ -146,7 +146,7 @@ function statusOptions({
 // The sentence status prints when an update is available and the recipe selects artifacts that
 // are not installed yet (#991).
 const UPDATE_TARGETS_ONE =
-  "Each Update command above installs and locks only the artifact it names, so it leaves the artifacts that are not installed yet as they are.";
+  "A targeted update, artifacts update <id>, advances only the artifact it names and leaves the artifacts that are not installed yet as they are.";
 
 /** @param {ReturnType<typeof formatArtifactStatus>} lines */
 function messages(lines) {
@@ -1010,6 +1010,41 @@ test("a targeted update of an unlocked selection installs only that selection", 
           ["skill-css-tokens", "0.3.0"],
         ],
       );
+    },
+  );
+});
+
+test("a targeted update dry run reports only the artifact it names", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-css-tokens"],
+      locked: [{ id: "skill-project-goal", version: "0.2.1" }],
+    },
+    async () => {
+      const before = await snapshotDirectory();
+      const planned = await runArtifactCommand(
+        {
+          config: "calavera.config.json",
+          dryRun: true,
+          artifactAction: "update",
+          artifactId: "skill-project-goal",
+        },
+        stubRegistry(
+          new Map([
+            ["skill-project-goal", "0.3.0"],
+            ["skill-css-tokens", "0.3.0"],
+          ]),
+        ),
+      );
+      assert.deepEqual(
+        planned.artifacts.map(({ id, version }) => [id, version]),
+        [["skill-project-goal", "0.3.0"]],
+      );
+      assert.ok(
+        !planned.changes.some(({ path }) => path.includes("css-tokens")),
+        JSON.stringify(planned.changes),
+      );
+      assert.deepEqual(await snapshotDirectory(), before);
     },
   );
 });
