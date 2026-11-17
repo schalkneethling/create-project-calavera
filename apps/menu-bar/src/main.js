@@ -118,8 +118,15 @@ function render(
       (diagnostics.length > 0 ? diagnostics.join("; ") : `${result.updates.length} update(s)`);
     article.append(heading, summary);
     for (const update of result.updates) {
+      const label = `${update.id}: ${update.current} → ${update.available}`;
+      if (!update.command) {
+        const unavailable = document.createElement("p");
+        unavailable.textContent = `${label}. No update command until the recipe is readable.`;
+        article.append(unavailable);
+        continue;
+      }
       const button = document.createElement("button");
-      button.textContent = `${update.id}: ${update.current} → ${update.available}`;
+      button.textContent = label;
       button.addEventListener("click", async () => {
         await navigator.clipboard.writeText(update.command);
         if (!settings.terminalApplication) {

@@ -20,7 +20,11 @@ import {
 } from "./ai/artifacts.js";
 import { assertFirstSelection } from "./ai/recipe-items.js";
 import { artifactReleaseNotesUrl } from "./artifact-status-report.js";
-import { artifactCommand, artifactTagFlags, artifactUpdateCommand } from "./recipe.js";
+import {
+  artifactCommand,
+  artifactTagFlags,
+  artifactUpdateCommand,
+} from "./project-local-commands.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import { fileExists } from "./utils/fs.js";
 import { formatGeneratedText } from "./utils/generated-text.js";

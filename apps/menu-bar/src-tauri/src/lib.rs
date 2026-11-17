@@ -32,7 +32,9 @@ fn registered_path(path: String) -> Result<PathBuf, String> {
 // project, so the app reads only the registered project's files.
 fn recipe_path(project: &Path, config: &str) -> Result<PathBuf, String> {
     let relative = Path::new(config);
-    let stays_inside = relative.components().next().is_some()
+    let stays_inside = relative
+        .components()
+        .any(|component| matches!(component, Component::Normal(_)))
         && relative
             .components()
             .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
@@ -151,7 +153,7 @@ mod tests {
             recipe_path(&project, "./calavera.config.json").unwrap(),
             project.join("./calavera.config.json")
         );
-        for config in ["", "/etc/calavera.json", "../calavera.config.json", "recipes/../../x.json"] {
+        for config in ["", ".", "/etc/calavera.json", "../calavera.config.json", "recipes/../../x.json"] {
             assert!(recipe_path(&project, config).is_err(), "{config} was accepted");
         }
     }

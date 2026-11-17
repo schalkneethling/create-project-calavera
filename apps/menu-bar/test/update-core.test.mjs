@@ -54,10 +54,26 @@ test("quotes an artifact id the lock names for the shell", async () => {
   assert.match(update.command, / artifacts update 'artifact; malicious-command'$/);
 });
 
+test("offers no update command without a readable recipe, as artifacts status does", async () => {
+  const [update] = await inspectUpdates(
+    { path: "/project", tag: "latest", config: "recipe/calavera.json" },
+    {
+      recipe: null,
+      lock: {
+        artifacts: [{ id: "skill-project-goal", package: "example", version: "1.0.0" }],
+      },
+    },
+    fetcher,
+  );
+  assert.equal(update.available, "2.0.0");
+  assert.equal(update.command, null);
+});
+
 test("uses an explicitly selected prerelease channel", async () => {
   const [update] = await inspectUpdates(
     { path: "/project", tag: "next" },
     {
+      recipe: buildRecipe("minimal", [], "npm"),
       lock: {
         artifacts: [
           { id: "skill-project-goal", package: "example", version: "2.0.0", tag: "latest" },

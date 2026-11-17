@@ -1,4 +1,7 @@
-import { artifactUpdateCommand, CONFIG_FILE } from "../../../packages/cli/src/recipe.js";
+import {
+  artifactUpdateCommand,
+  CONFIG_FILE,
+} from "../../../packages/cli/src/project-local-commands.js";
 
 export const POLL_INTERVAL = 6 * 60 * 60 * 1000;
 
@@ -34,8 +37,11 @@ export async function inspectUpdates(project, snapshot, fetcher = fetch) {
         id: artifact.id,
         current: artifact.version,
         available: version,
-        // The command `artifacts status --json` reports as `updateCommand` (#995).
-        command: artifactUpdateCommand(snapshot.recipe, recipePath(project), artifact.id, tag),
+        // The command `artifacts status --json` reports as `updateCommand` while the registered
+        // channel matches the lock's channel (#995). Without a recipe, status reports none.
+        command: isRecipe(snapshot.recipe)
+          ? artifactUpdateCommand(snapshot.recipe, recipePath(project), artifact.id, tag)
+          : null,
       });
     }
   }
