@@ -79,6 +79,7 @@ import {
   planGitignoreBlocks,
   planHtmlValidateIgnoreChanges,
 } from "./ignore-lines.js";
+import { errorAfterCleanups } from "./utils/cleanup.js";
 import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
 import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
@@ -3506,8 +3507,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   );
   // Planned again from the sources apply installs from, and still before any skill is written.
   const wiringPlan = await planWiring(artifactPlan.sources).catch(async (error) => {
-    await artifactPlan.dispose();
-    throw error;
+    throw await errorAfterCleanups(error, [artifactPlan.dispose]);
   });
   // #838: the AI result is planned without writing, so the state, which records it, is formatted
   // before any artifact output is copied. The outputs are copied after that, below.
@@ -3517,17 +3517,14 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     previousState,
     artifactPlan.sources,
   ).catch(async (error) => {
-    await artifactPlan.dispose();
-    throw error;
+    throw await errorAfterCleanups(error, [artifactPlan.dispose]);
   });
   // #838: the state is formatted after the last planning step and before apply writes any project
-  // file or artifact output. Two writes come earlier: the auto-install transaction, which formats
-  // and commits its own records atomically, and the restore of a locked payload that is missing
-  // from .calavera/packages/, which rebuilds what the lock already records. It is
-  // formatted in the dry run as well, so the dry run stops where apply would and a formatter that
-  // fails leaves the project unchanged. A managed file's record is its path and the hash of the
-  // text apply writes, as writeManagedFile writes it below. The quality script is final here,
-  // because no script rename targets it.
+  // file or artifact output. One write comes earlier: the auto-install transaction, which formats
+  // and commits its own records atomically. The state is formatted in the dry run as well, so the
+  // dry run stops where apply would and a formatter that fails leaves the project unchanged. A
+  // managed file's record is its path and the hash of the text apply writes, as writeManagedFile
+  // writes it below. The quality script is final here, because no script rename targets it.
   let stateText;
   try {
     stateText = await formatStateText(
@@ -3544,11 +3541,17 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       loadFormatter,
     );
     if (!applyOptions.dryRun) {
+      // #988: a locked package that is missing from .calavera/packages/ was rebuilt outside the
+      // project during planning, and is copied into place only now, after the last planning step,
+      // as the first write apply makes after the auto-install.
+      await artifactPlan.restore();
       await buildAiApplyResult(recipe, applyOptions, previousState, artifactPlan.sources);
     }
-  } finally {
-    await artifactPlan.dispose();
+  } catch (error) {
+    // #988: a failed cleanup is reported with the failure that stopped apply, not in its place.
+    throw await errorAfterCleanups(error, [artifactPlan.dispose]);
   }
+  await artifactPlan.dispose();
   // A dry run plans the auto-installed outputs in both results; apply writes them during the
   // install, so only the install reports them.
   const autoInstalledPaths = new Set(artifactPlan.changes.map(({ path }) => path));

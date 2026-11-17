@@ -10,6 +10,7 @@ import fsPromises, {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -406,15 +407,206 @@ test("dry_run_apply and apply_recipe auto-install unlocked artifacts the same wa
   });
 });
 
+test("apply restores a locked package that is missing from .calavera/packages and leaves no staging folder", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    const installed = await snapshot();
+    await rm(".calavera/packages", { recursive: true });
+
+    await applyRecipeObject(recipe, applyOptions, registry);
+
+    // #988: the restored package is byte-for-byte the one the install wrote, and the restore
+    // stages outside the project.
+    assert.deepEqual(await snapshot(), installed);
+  });
+});
+
 /**
- * Snapshot without `.calavera/.staging/`, where restoring a locked payload stages before this
- * change and leaves the directory behind on failure.
+ * Records every temporary folder Calavera creates to rebuild a locked package, so a test can check
+ * that each one is gone once the command returns or throws.
+ *
+ * @param {import("node:test").TestContext} t
  */
-async function snapshotWithoutRestoreStaging() {
-  return Object.fromEntries(
-    Object.entries(await snapshot()).filter(([path]) => !path.startsWith(".calavera/.staging")),
-  );
+function recordRebuildFolders(t) {
+  const mkdtemp = fsPromises.mkdtemp;
+  /** @type {string[]} */
+  const folders = [];
+  t.mock.method(fsPromises, "mkdtemp", async (/** @type {string} */ prefix, ...rest) => {
+    const folder = await mkdtemp(prefix, ...rest);
+    if (prefix.includes("calavera-locked-artifact-")) folders.push(folder);
+    return folder;
+  });
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
+    syncBuiltinESMExports();
+  });
+  return folders;
 }
+
+test("apply and its dry run remove the temporary folders they rebuild a locked package in, whether they finish or stop", async (t) => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    const folders = recordRebuildFolders(t);
+
+    await rm(".calavera/packages", { recursive: true });
+    await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    await assert.rejects(
+      applyRecipeObject(
+        recipe,
+        applyOptions,
+        stubRegistry(new Map(), {
+          failFor: "skill-project-goal",
+          error: new Error("ENOTCACHED: skill-project-goal is not in the offline cache"),
+        }),
+      ),
+      /ENOTCACHED/,
+    );
+
+    assert.equal(folders.length, 3, "each run rebuilds the missing package once");
+    for (const folder of folders) {
+      await assert.rejects(stat(folder), { code: "ENOENT" }, `${folder} was left behind`);
+    }
+  });
+});
+
+test("apply replaces a locked package whose payload no longer matches the lock", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    const installed = await snapshot();
+    await writeFile(
+      ".calavera/packages/skill-project-goal/0.1.0/payload/project-goal/SKILL.md",
+      "changed\n",
+    );
+
+    await applyRecipeObject(recipe, applyOptions, registry);
+
+    assert.deepEqual(await snapshot(), installed);
+  });
+});
+
+test("apply that installs an unlocked artifact also restores a missing locked package, and removes every temporary folder", async (t) => {
+  await inProject(async () => {
+    const releases = new Map([["skill-project-goal", "0.1.0"]]);
+    const registry = stubRegistry(releases);
+    await applyRecipeObject(recipeWith(["skill-project-goal"]), applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    releases.set("skill-code-review", "0.3.0");
+    const folders = recordRebuildFolders(t);
+
+    await applyRecipeObject(
+      recipeWith(["skill-project-goal", "skill-code-review"]),
+      applyOptions,
+      registry,
+    );
+
+    assert.equal(
+      (
+        await stat(".calavera/packages/skill-project-goal/0.1.0/payload/project-goal/SKILL.md")
+      ).isFile(),
+      true,
+    );
+    assert.equal((await stat(".agents/skills/code-review/SKILL.md")).isFile(), true);
+    assert.equal(folders.length, 1, "apply rebuilds the missing locked package once");
+    await assert.rejects(stat(folders[0]), { code: "ENOENT" });
+    assert.deepEqual(
+      await fsPromises.readdir(".calavera/.transactions"),
+      [],
+      "the install's staging folder was left behind",
+    );
+  });
+});
+
+test("when removing the install's staging folder fails, apply still removes the rebuild folder and reports the failure", async (t) => {
+  await inProject(async () => {
+    const releases = new Map([["skill-project-goal", "0.1.0"]]);
+    const registry = stubRegistry(releases);
+    await applyRecipeObject(recipeWith(["skill-project-goal"]), applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    releases.set("skill-code-review", "0.3.0");
+    const folders = recordRebuildFolders(t);
+    const remove = fsPromises.rm;
+    const busy = new Error("EBUSY: resource busy");
+    t.mock.method(
+      fsPromises,
+      "rm",
+      (/** @type {string} */ path, /** @type {import("node:fs").RmOptions} */ rmOptions) =>
+        // Only the cleanup after the install committed fails, not the install's own preparation.
+        String(path).includes(join(".calavera", ".transactions", "")) &&
+        readFileSync(LOCK_PATH, "utf8").includes("skill-code-review")
+          ? Promise.reject(busy)
+          : remove(path, rmOptions),
+    );
+    syncBuiltinESMExports();
+
+    await assert.rejects(
+      applyRecipeObject(
+        recipeWith(["skill-project-goal", "skill-code-review"]),
+        applyOptions,
+        registry,
+      ),
+      (/** @type {Error} */ error) => {
+        assert.ok(error instanceof AggregateError);
+        assert.deepEqual(error.errors, [busy]);
+        assert.match(error.message, /EBUSY: resource busy/);
+        return true;
+      },
+    );
+    assert.equal(folders.length, 1, "apply rebuilds the missing locked package once");
+    await assert.rejects(
+      stat(folders[0]),
+      { code: "ENOENT" },
+      "the rebuild folder was left behind",
+    );
+  });
+});
+
+test("when a locked package cannot be rebuilt and removing its rebuild folder fails, apply reports both failures", async (t) => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    const offlineMiss = new Error("ENOTCACHED: skill-project-goal is not in the offline cache");
+    const busy = new Error("EBUSY: resource busy");
+    const remove = fsPromises.rm;
+    t.mock.method(
+      fsPromises,
+      "rm",
+      (/** @type {string} */ path, /** @type {import("node:fs").RmOptions} */ rmOptions) =>
+        String(path).includes("calavera-locked-artifact-")
+          ? Promise.reject(busy)
+          : remove(path, rmOptions),
+    );
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+    });
+
+    await assert.rejects(
+      applyRecipeObject(
+        recipe,
+        applyOptions,
+        stubRegistry(new Map(), { failFor: "skill-project-goal", error: offlineMiss }),
+      ),
+      (/** @type {Error} */ error) => {
+        assert.ok(error instanceof AggregateError);
+        assert.deepEqual(error.errors, [offlineMiss, busy]);
+        assert.equal(error.cause, offlineMiss);
+        return true;
+      },
+    );
+  });
+});
 
 test("a local edit to a locked artifact stops apply before an unlocked artifact is installed", async () => {
   await inProject(async () => {
@@ -463,7 +655,7 @@ test("a locked payload that cannot be restored stops apply before an unlocked ar
       failFor: "skill-project-goal",
       error: offlineMiss,
     });
-    const before = await snapshotWithoutRestoreStaging();
+    const before = await snapshot();
 
     await assert.rejects(
       () =>
@@ -479,7 +671,7 @@ test("a locked payload that cannot be restored stops apply before an unlocked ar
       false,
       "the unlocked artifact is not resolved once a locked payload fails",
     );
-    assert.deepEqual(await snapshotWithoutRestoreStaging(), before);
+    assert.deepEqual(await snapshot(), before);
   });
 });
 

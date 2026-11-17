@@ -22,6 +22,7 @@ import { assertFirstSelection } from "./ai/recipe-items.js";
 import { artifactReleaseNotesUrl } from "./artifact-status-report.js";
 import { packageManagerIdsForRecipe, projectLocalCalaveraCommand } from "./recipe.js";
 import { createEmptyState, normalizeState } from "./state.js";
+import { errorAfterCleanups, runCleanups } from "./utils/cleanup.js";
 import { fileExists } from "./utils/fs.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
@@ -133,15 +134,16 @@ export async function runArtifactCommand(options, services = {}) {
  * Otherwise the install commits through the artifact transaction, and only after `preflight`
  * accepts the sources of every selection, so a conflict anywhere in the recipe's artifacts stops
  * apply before the install commits. When the install stops, the artifact lock, the artifact
- * outputs, and the Calavera state are left as they were. Call `dispose` once the sources are no
- * longer needed.
+ * outputs, and the Calavera state are left as they were. A locked payload that is missing from
+ * `.calavera/packages/` is rebuilt outside the project; call `restore` after apply's last planning
+ * step, to copy it into place (#988). Call `dispose` once the sources are no longer needed.
  *
  * @param {{ ai?: unknown }} recipe
  * @param {boolean} dryRun
  * @param {ArtifactServices} [services]
  * @param {(sources: Map<string, string>) => Promise<unknown>} [preflight] Checks the complete set of sources before the install commits.
  * @param {ArtifactLockEntry[]} [approved] Entries a dry run reported; an unlocked selection listed here installs at exactly that version and tag instead of resolving its tag again.
- * @returns {Promise<{ sources: Map<string, string>, installed: ArtifactLockEntry[], changes: AiChange[], dispose: () => Promise<void> } & ArtifactRegistryNotes>}
+ * @returns {Promise<{ sources: Map<string, string>, installed: ArtifactLockEntry[], changes: AiChange[], restore: () => Promise<void>, dispose: () => Promise<void> } & ArtifactRegistryNotes>}
  */
 export async function prepareArtifactSources(
   recipe,
@@ -156,48 +158,63 @@ export async function prepareArtifactSources(
   const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
   const unlocked = selections.filter(({ id }) => !lockedIds.has(id));
   if (unlocked.length === 0) {
+    const locked = await lockedArtifactSources(recipe, dryRun, services);
     return {
-      sources: await lockedArtifactSources(recipe, dryRun, services),
+      sources: locked.sources,
       installed: [],
       changes: [],
-      dispose: async () => {},
+      restore: locked.restore,
+      dispose: locked.dispose,
       registries: [],
       warnings: [],
     };
   }
 
-  // Restore the locked selections first, so a missing locked payload stops apply before the
-  // install of the unlocked selections commits.
-  const lockedSources = await lockedArtifactSources(
+  // Stage the locked selections first, so a missing locked payload that cannot be rebuilt stops
+  // apply before the install of the unlocked selections commits.
+  const locked = await lockedArtifactSources(
     { ai: selections.filter(({ id }) => lockedIds.has(id)) },
     dryRun,
     services,
   );
-  const staged = await installUnlockedArtifacts(
-    unlocked,
-    lock,
-    dryRun,
-    artifactRegistry(services),
-    preflight && ((stagedSources) => preflight(new Map([...lockedSources, ...stagedSources]))),
-    new Map(approved.map((entry) => [entry.id, entry])),
-    artifactFormatterLoader(services),
-  );
+  /** @type {Awaited<ReturnType<typeof installUnlockedArtifacts>> | undefined} */
+  let staged;
   try {
+    staged = await installUnlockedArtifacts(
+      unlocked,
+      lock,
+      dryRun,
+      artifactRegistry(services),
+      preflight && ((stagedSources) => preflight(new Map([...locked.sources, ...stagedSources]))),
+      new Map(approved.map((entry) => [entry.id, entry])),
+      artifactFormatterLoader(services),
+    );
     // A dry run leaves the lock untouched, so the staged install supplies the unlocked sources.
-    const installedSources = dryRun
-      ? staged.sourcePaths
+    // Apply reads them from the packages the install just committed.
+    const installed = dryRun
+      ? undefined
       : await lockedArtifactSources({ ai: unlocked }, false, services);
+    const stagedInstall = staged;
     return {
-      sources: new Map([...lockedSources, ...installedSources]),
-      installed: staged.entries,
-      changes: staged.changes,
-      dispose: staged.dispose,
-      registries: staged.registries,
-      warnings: staged.warnings,
+      sources: new Map([...locked.sources, ...(installed?.sources ?? stagedInstall.sourcePaths)]),
+      installed: stagedInstall.entries,
+      changes: stagedInstall.changes,
+      restore: async () => {
+        await locked.restore();
+        await installed?.restore();
+      },
+      // Each folder is removed even when removing another fails (#988).
+      dispose: () =>
+        runCleanups([
+          stagedInstall.dispose,
+          locked.dispose,
+          ...(installed ? [installed.dispose] : []),
+        ]),
+      registries: stagedInstall.registries,
+      warnings: stagedInstall.warnings,
     };
   } catch (error) {
-    await staged.dispose();
-    throw error;
+    throw await errorAfterCleanups(error, [...(staged ? [staged.dispose] : []), locked.dispose]);
   }
 }
 
@@ -322,13 +339,36 @@ async function installUnlockedArtifacts(
 }
 
 /**
+ * Finds the payload of each locked selection in `recipe`. A payload that is missing from
+ * `.calavera/packages/`, or that no longer matches its lock entry, is rebuilt from the lock through
+ * the offline cache into a temporary folder outside the project, and the returned sources point
+ * there, so a caller can plan against them before it writes anything (#988). Unless this is a dry
+ * run, call `restore` after the command's last planning step, to copy the rebuilt packages into
+ * `.calavera/packages/`. Call `dispose` to remove the temporary folders.
+ *
  * @param {{ ai?: unknown }} recipe
  * @param {boolean} [dryRun]
  * @param {ArtifactServices} [services]
+ * @returns {Promise<{ sources: Map<string, string>, restore: () => Promise<void>, dispose: () => Promise<void> }>}
  */
 export async function lockedArtifactSources(recipe, dryRun = false, services = {}) {
   await recoverArtifactTransaction({ readOnly: dryRun });
   const { resolve: resolvePackage, extract: extractPackage } = artifactRegistry(services);
+  /** @type {Map<string, string>} */
+  const sources = new Map();
+  /** @type {{ stage: string, finalRoot: string }[]} */
+  const restores = [];
+  /** @type {string[]} */
+  const temporaryRoots = [];
+  const dispose = () =>
+    runCleanups(temporaryRoots.map((root) => () => rm(root, { recursive: true, force: true })));
+  const restore = async () => {
+    for (const { stage, finalRoot } of restores) {
+      await rm(finalRoot, { recursive: true, force: true });
+      await mkdir(dirname(finalRoot), { recursive: true });
+      await cp(stage, finalRoot, { recursive: true });
+    }
+  };
   const packageSelections = Array.isArray(recipe.ai)
     ? recipe.ai.filter(
         (/** @type {unknown} */ item) =>
@@ -338,37 +378,39 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
           ("id" in item || "src" in item),
       )
     : [];
-  if (packageSelections.length === 0) return new Map();
+  if (packageSelections.length === 0) return { sources, restore, dispose };
 
   const selections = normalizeSelections(packageSelections);
   const lock = await readLock();
   const lockedById = new Map(lock.artifacts.map((entry) => [entry.id, entry]));
-  const sources = new Map();
 
-  for (const selection of selections) {
-    const entry = lockedById.get(selection.id);
-    if (!entry) {
-      throw new Error(
-        `Artifact ${selection.id} is not locked. Run create-project-calavera artifacts install.`,
-      );
-    }
-    const artifact = artifactForId(selection.id);
-    if (!artifact) throw new Error(`Unknown Calavera artifact: ${selection.id}.`);
-    const payloadPath = resolve(PACKAGE_PATH, selection.id, entry.version, artifact.payload);
-    const validLocalPayload =
-      (await fileExists(payloadPath)) &&
-      (await hashArtifactPayload(payloadPath)) === entry.payloadHash;
+  try {
+    for (const selection of selections) {
+      const entry = lockedById.get(selection.id);
+      if (!entry) {
+        throw new Error(
+          `Artifact ${selection.id} is not locked. Run create-project-calavera artifacts install.`,
+        );
+      }
+      const artifact = artifactForId(selection.id);
+      if (!artifact) throw new Error(`Unknown Calavera artifact: ${selection.id}.`);
+      const payloadPath = resolve(PACKAGE_PATH, selection.id, entry.version, artifact.payload);
+      const validLocalPayload =
+        (await fileExists(payloadPath)) &&
+        (await hashArtifactPayload(payloadPath)) === entry.payloadHash;
+      if (validLocalPayload) {
+        sources.set(selection.id, payloadPath);
+        continue;
+      }
 
-    if (!validLocalPayload) {
-      const temporaryRoot = dryRun
-        ? await mkdtemp(join(tmpdir(), "calavera-locked-artifact-"))
-        : resolve(".calavera/.staging", selection.id);
-      const stage = dryRun ? join(temporaryRoot, "package") : temporaryRoot;
+      const temporaryRoot = await mkdtemp(join(tmpdir(), "calavera-locked-artifact-"));
+      temporaryRoots.push(temporaryRoot);
+      const stage = join(temporaryRoot, "package");
+      // A dry run resolves through a copy of the cache, so it leaves the project's cache unchanged.
       const cache = dryRun ? join(temporaryRoot, "cache") : resolve(CACHE_PATH);
       if (dryRun && (await fileExists(CACHE_PATH))) {
         await cp(resolve(CACHE_PATH), cache, { recursive: true });
       }
-      await rm(stage, { recursive: true, force: true });
       await mkdir(stage, { recursive: true });
       const resolution = await resolvePackage({
         id: selection.id,
@@ -381,18 +423,15 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
       if (extracted.payloadHash !== entry.payloadHash) {
         throw new Error(`Locked payload hash mismatch for ${selection.id}.`);
       }
-      if (dryRun) {
-        sources.set(selection.id, extracted.payloadPath);
-        continue;
+      sources.set(selection.id, extracted.payloadPath);
+      if (!dryRun) {
+        restores.push({ stage, finalRoot: resolve(PACKAGE_PATH, selection.id, entry.version) });
       }
-      const finalRoot = resolve(PACKAGE_PATH, selection.id, entry.version);
-      await rm(finalRoot, { recursive: true, force: true });
-      await mkdir(dirname(finalRoot), { recursive: true });
-      await cp(stage, finalRoot, { recursive: true });
     }
-    sources.set(selection.id, payloadPath);
+  } catch (error) {
+    throw await errorAfterCleanups(error, [dispose]);
   }
-  return sources;
+  return { sources, restore, dispose };
 }
 
 /** @param {ArtifactOptions} options */
@@ -741,7 +780,9 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
     };
   } catch (error) {
     // A commit that failed part way leaves its journal and staging for recovery.
-    if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) await dispose();
+    if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) {
+      throw await errorAfterCleanups(error, [dispose]);
+    }
     throw error;
   }
 }

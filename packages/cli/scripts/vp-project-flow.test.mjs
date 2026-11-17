@@ -756,11 +756,8 @@ test("vp create library: Given a registry stand-in that serves a payload whose h
         payloadHash: "f".repeat(64),
       }),
     };
-    // The refused restore leaves its staging directory, which holds no project file.
-    const snapshot = async () =>
-      new Map(
-        [...(await snapshotTree(root))].filter(([path]) => !path.includes(".calavera/.staging")),
-      );
+    // #988: the refused restore leaves no staging folder behind.
+    const snapshot = () => snapshotTree(root);
     const before = await snapshot();
 
     await inDirectory(project, () =>
