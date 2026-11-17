@@ -157,11 +157,14 @@ test("Given the guard deselected, apply --dry-run in a terminal says why each bl
       env: { ...process.env, NO_COLOR: "1" },
     });
 
+    // #617: the artifact is named once, and each removal sits under it.
+    assert.match(output, new RegExp(`^ {2}${id}, which the recipe no longer selects$`, "m"));
     for (const hook of hooks) {
       assert.match(
         output,
         new RegExp(
-          `Would remove the ${id} block from \\.vite-hooks/${hook}, because the recipe no longer selects ${id}`,
+          `^ {4}Would remove its block from \\.vite-hooks/${hook}, because the recipe no longer selects it: `,
+          "m",
         ),
       );
     }
@@ -169,7 +172,8 @@ test("Given the guard deselected, apply --dry-run in a terminal says why each bl
       assert.match(
         output,
         new RegExp(
-          `Would remove the ${event} group for ${id} from \\.claude/settings\\.json, because the recipe no longer selects ${id}`,
+          `^ {4}Would remove the ${event} group from \\.claude/settings\\.json, because the recipe no longer selects it: `,
+          "m",
         ),
       );
     }

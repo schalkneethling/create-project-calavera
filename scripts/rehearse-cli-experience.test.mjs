@@ -809,6 +809,32 @@ test("dependencies are named items, so a missing or repeated dependency fails th
   assert.deepEqual(namedItems({ dependencies: [{ name: "knip" }] }), ["knip"]);
 });
 
+test("a quoted value and a fixed statement do not count as listings (#617)", () => {
+  // A script's command and an ignore block's lines are the text apply writes, quoted as JSON.
+  const output = [
+    "Integrations:",
+    "  stylelint",
+    "Files:",
+    "  Would update package.json",
+    "Scripts:",
+    '  Would add script lint:styles: "stylelint \\"**/*.css\\" --allow-empty-input"',
+  ].join("\n");
+  assert.deepEqual(listingViolations(output, ["stylelint", "package.json"]), []);
+  // The ADR-0011 report names the manifest that holds the Vite+ signal; it lists nothing.
+  const report =
+    "Vite+ detection: managed. This project is vp-managed (vite-plus-dependency signal at package.json).";
+  const withReport = `Project:\n  ${report}\n${output}`;
+  assert.deepEqual(listingViolations(withReport, ["package.json"]), [
+    "package.json is printed 2 times",
+  ]);
+  assert.deepEqual(listingViolations(withReport, ["package.json"], [report]), []);
+  // A name outside the quotes still counts.
+  assert.deepEqual(
+    listingViolations(`${output}\n  Scripts already set: stylelint`, ["stylelint"]),
+    ["stylelint is printed 2 times"],
+  );
+});
+
 test("the cache must be ignored by a line inside a Calavera-marked block of the root .gitignore", () => {
   const gitignore = [
     "node_modules",

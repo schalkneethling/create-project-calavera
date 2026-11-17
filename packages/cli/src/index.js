@@ -28,6 +28,12 @@ import {
   prepareArtifactSources,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
+import {
+  applySummaryLines,
+  formatArtifactInput,
+  formatArtifactRegistry,
+  formatIntegrationInput,
+} from "./apply-summary.js";
 import { formatArtifactStatus } from "./artifact-status-report.js";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
@@ -146,7 +152,7 @@ import {
   writeOpenCodeMcpConfig,
 } from "./utils/mcp-config.js";
 import { groupedPromptOptions } from "./utils/prompt-options.js";
-import { pluralizeCount, style, titleCase } from "./utils/text.js";
+import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text.js";
 
 /**
  * @typedef {"npm" | "pnpm" | "yarn" | "bun"} PackageManager
@@ -197,6 +203,7 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @property {string} [packageManager]
  * @property {{ packageManager?: { name?: string } | Array<{ name?: string }> }} [devEngines]
  * @property {unknown[] | { packages?: unknown }} [workspaces]
+ * @property {unknown} [devDependencies] Read only to say which planned packages the project already lists (#617).
  *
  * @typedef {object} Integration
  * @property {string} id
@@ -381,7 +388,7 @@ const VARLOCK_POINTER =
   "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
 
 const ARTIFACT_CACHE_POINTER =
-  "Calavera ignores .calavera/cache/ through its artifact-cache block in .gitignore, because the folder is a local npm download cache and does not belong in Git. Commit .calavera/artifacts.lock.json and .calavera/packages/, which hold the exact artifact versions and payloads the project uses.";
+  "Calavera ignores .calavera/cache/ through its artifact-cache block, because the folder is a local npm download cache and does not belong in Git. Commit .calavera/artifacts.lock.json and .calavera/packages/, which hold the exact artifact versions and payloads the project uses.";
 
 /** @type {Record<PackageManager, PackageManagerCommands>} */
 const packageManagerCommands = {
@@ -1127,7 +1134,8 @@ async function planDevDependencyInstall(
     /** @type {[string, string[]]} */
     const spawn = [process.execPath, [vpBin, ...command[1]]];
     notes.push(
-      `Vite+ runs this with the package manager the project pins; apply runs it as: ${formatCommand(spawn)}`,
+      // #617: the command's packages are named once, in the command itself.
+      `Vite+ runs this with the package manager the project pins; apply runs it through the project's own vp: ${formatCommand([process.execPath, [vpBin]])}`,
     );
     return { command, spawn, problem: undefined, notes };
   } catch (error) {
@@ -1140,6 +1148,33 @@ async function planDevDependencyInstall(
     notes.push(`Apply with the install stops before writing anything: ${problem.message}`);
     return { command, spawn: undefined, problem, notes };
   }
+}
+
+/**
+ * Says which packages of the install command the project already lists in devDependencies, so a
+ * dry run that changes no file still explains why apply runs the install, and what it can change
+ * (#749, #617). Apply does not skip them: the package manager decides whether to move them.
+ *
+ * @param {string[]} dependencies
+ * @param {PackageJSON} packageJSON
+ * @returns {string[]}
+ */
+function declaredDevDependencyNotes(dependencies, packageJSON) {
+  const devDependencies = isPlainObject(packageJSON.devDependencies)
+    ? packageJSON.devDependencies
+    : {};
+  const declared = dependencies.filter((name) => Object.hasOwn(devDependencies, name));
+  if (declared.length === 0) return [];
+  if (declared.length === dependencies.length) {
+    return [
+      "Every package in this command is already a dev dependency of the project; apply still runs the command, which can update their versions and the lockfile.",
+    ];
+  }
+  return [
+    declared.length === 1
+      ? `${declared[0]} is already a dev dependency of the project; apply still installs it with the others, which can update its version and the lockfile.`
+      : `${declared.join(", ")} are already dev dependencies of the project; apply still installs them with the others, which can update their versions and the lockfile.`,
+  ];
 }
 
 /** @type {PackageManager[]} */
@@ -3590,7 +3625,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     packageManager,
     dependencies: dependencyList,
     installCommand: installPlan ? formatCommand(installPlan.command) : null,
-    installNotes: installPlan?.notes ?? [],
+    installNotes: installPlan
+      ? [...installPlan.notes, ...declaredDevDependencyNotes(dependencyList, detectedPackageJSON)]
+      : [],
     integrations: integrations.map((integration) => integration.id),
     projectInspection,
     vitePlus: vitePlusReport(projectInspection.vitePlus),
@@ -5013,31 +5050,6 @@ function formatApplySummary(result) {
   ].join("\n");
 }
 
-/** @param {ResolvedInput} input */
-function formatArtifactInput({ artifact, name, ...input }) {
-  return `${artifact} ${name} = ${formatInputValue(input)}`;
-}
-
-/** @param {ResolvedIntegrationInput} input */
-function formatIntegrationInput({ integration, name, ...input }) {
-  return `${integration} ${name} = ${formatInputValue(input)}`;
-}
-
-/**
- * The value and where it came from. A default names what Git showed, so the person can tell
- * whether it is the branch they mean before they approve it (#846).
- *
- * @param {import("./ai/artifact-inputs.js").InputValue} input
- */
-function formatInputValue({ value, source, defaultSource }) {
-  const origin = {
-    recorded: "recorded in the recipe",
-    prompt: "your answer",
-    default: `the default${defaultSource ? ` (${defaultSource.detail})` : ""}, because the recipe records no value; apply needs it recorded in the recipe`,
-  }[source];
-  return `${value} (${origin})`;
-}
-
 /**
  * The lines a dry run shows for one artifact's wiring, so the approval covers the exact text.
  *
@@ -5207,11 +5219,6 @@ async function promptForInputValue({ prompt, defaultValue, error }, label) {
   });
   exitIfCancel(answer);
   return typeof answer === "string" ? answer : "";
-}
-
-/** @param {ArtifactRegistryReport} registry */
-function formatArtifactRegistry({ origin, source }) {
-  return source === "default" ? origin : `${origin} (from the ${source})`;
 }
 
 /**
@@ -6276,163 +6283,10 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     );
   }
 
-  if (result.command === "apply" && result.dryRun) {
-    logger.info("Calavera apply dry run complete. No files were changed.");
-    logger.info(`Package manager: ${result.packageManager}`);
-
-    if (result.integrations.length > 0) {
-      logger.info(`Integrations: ${result.integrations.join(", ")}`);
+  if (result.command === "apply") {
+    for (const { level, text } of applySummaryLines(result)) {
+      logger[level](text);
     }
-
-    if (result.dependencies.length > 0) {
-      logger.info(`Dev dependencies: ${result.dependencies.join(", ")}`);
-      if (result.installCommand) {
-        logger.info(`Dev dependency install command: ${result.installCommand}`);
-      }
-
-      for (const note of result.installNotes) {
-        logger.info(note);
-      }
-    } else {
-      logger.info("Dev dependencies: none");
-    }
-
-    for (const line of result.vitePlus.lines) {
-      logger.info(line);
-    }
-
-    for (const finding of result.projectInspection.findings) {
-      logger.info(`Inspection ${finding.severity}: ${finding.message}`);
-    }
-
-    for (const registry of result.artifactRegistries) {
-      logger.info(`Artifact registry: ${formatArtifactRegistry(registry)}`);
-    }
-
-    for (const warning of result.artifactWarnings) {
-      logger.warn(warning);
-    }
-
-    for (const artifact of result.autoInstalledArtifacts) {
-      logger.info(
-        `Would resolve and lock artifact ${artifact.id} at ${artifact.package}@${artifact.version}`,
-      );
-    }
-
-    for (const input of result.artifactInputs) {
-      logger.info(`Input: ${formatArtifactInput(input)}`);
-    }
-
-    for (const input of result.integrationInputs) {
-      logger.info(`Input: ${formatIntegrationInput(input)}`);
-    }
-
-    for (const warning of result.inputWarnings) {
-      logger.warn(warning);
-    }
-
-    for (const line of result.wiringChanges.flatMap(formatWiringChange)) {
-      logger.info(line);
-    }
-
-    for (const warning of result.wiringWarnings) {
-      logger.warn(warning);
-    }
-
-    for (const change of result.ignoreChanges) {
-      logger.info(formatIgnoreChange(change));
-    }
-
-    for (const change of result.changes) {
-      if (change.type === "write") {
-        if (change.category === "ai") {
-          logger.info(`Would write AI ${change.aiType} ${change.name} to ${change.path}`);
-        } else if (change.ownership === "calavera") {
-          logger.info(`Would write and own ${change.path}`);
-        } else if (change.action === "scaffold") {
-          logger.info(`Would scaffold ${change.path}`);
-        } else if (change.action === "merge") {
-          logger.info(`Would merge ${change.path}`);
-        } else {
-          logger.info(`Would write ${change.path}`);
-        }
-      }
-
-      if (change.type === "unchanged") {
-        logger.info(`Unchanged ${change.path}`);
-
-        if (change.scripts && change.scripts.length > 0) {
-          logger.info(`Scripts already set: ${change.scripts.join(", ")}`);
-        }
-
-        for (const omittedScript of change.omittedScripts ?? []) {
-          logger.info(`Would omit script ${omittedScript.script}: ${omittedScript.reason}`);
-        }
-
-        for (const { step, reason } of change.omittedQualitySteps ?? []) {
-          logger.info(`Would omit ${step} from script quality: ${reason}`);
-        }
-      }
-
-      if (change.type === "update") {
-        logger.info(`Would update ${change.path}`);
-
-        // Only the package.json change carries scripts. A renamed script is
-        // listed here, with renamedScripts on the change carrying the same rename.
-        if (change.scripts) {
-          for (const { script, value, previous, renamedFrom } of result.scriptChanges) {
-            if (renamedFrom !== undefined) {
-              logger.info(
-                `Would rename script ${renamedFrom} to ${script}: ${quoteScriptValue(value)}`,
-              );
-            } else if (previous === undefined) {
-              logger.info(`Would add script ${script}: ${quoteScriptValue(value)}`);
-            } else {
-              logger.info(
-                `Would change script ${script} from ${quoteScriptValue(previous)} to ${quoteScriptValue(value)}`,
-              );
-            }
-          }
-
-          const changedScripts = new Set(result.scriptChanges.map(({ script }) => script));
-          const unchangedScripts = change.scripts.filter((script) => !changedScripts.has(script));
-          if (unchangedScripts.length > 0) {
-            logger.info(`Scripts already set: ${unchangedScripts.join(", ")}`);
-          }
-        }
-
-        if (change.removedDefaultTestScript) {
-          logger.info("Would remove the default npm test placeholder script");
-        }
-
-        if (change.removedQualityScript !== undefined) {
-          logger.info(
-            `Would remove script quality: ${quoteScriptValue(change.removedQualityScript)}`,
-          );
-        }
-
-        for (const omittedScript of change.omittedScripts ?? []) {
-          logger.info(`Would omit script ${omittedScript.script}: ${omittedScript.reason}`);
-        }
-
-        for (const { step, reason } of change.omittedQualitySteps ?? []) {
-          logger.info(`Would omit ${step} from script quality: ${reason}`);
-        }
-      }
-    }
-
-    if (
-      result.changes.length > 0 &&
-      result.changes.every(({ type }) => type === "unchanged") &&
-      result.autoInstalledArtifacts.length === 0
-    ) {
-      logger.info("Nothing to change: the project already matches this recipe.");
-    }
-
-    for (const pointer of result.pointers ?? []) {
-      logger.info(`Pointer: ${pointer}`);
-    }
-
     return;
   }
 
@@ -6456,38 +6310,6 @@ function printResult(result, asJSON = false, commandDryRun = false) {
 
     for (const warning of /** @type {string[]} */ (result.warnings)) {
       logger.warn(warning);
-    }
-  }
-
-  if (result.command === "apply") {
-    for (const input of result.artifactInputs) {
-      logger.info(`Input: ${formatArtifactInput(input)}`);
-    }
-
-    for (const input of result.integrationInputs) {
-      logger.info(`Input: ${formatIntegrationInput(input)}`);
-    }
-
-    for (const warning of result.inputWarnings) {
-      logger.warn(warning);
-    }
-
-    for (const warning of result.artifactWarnings) {
-      logger.warn(warning);
-    }
-
-    for (const warning of result.wiringWarnings) {
-      logger.warn(warning);
-    }
-
-    for (const artifact of result.autoInstalledArtifacts) {
-      logger.info(
-        `Resolved and locked artifact ${artifact.id} at ${artifact.package}@${artifact.version}`,
-      );
-    }
-
-    for (const pointer of result.pointers) {
-      logger.info(pointer);
     }
   }
 }
@@ -6515,26 +6337,6 @@ function formatAgentBootstrapChange(change, dryRun) {
     default:
       return undefined;
   }
-}
-
-/**
- * A package.json script value as a single line of terminal output. JSON
- * quoting escapes quotes, backslashes, and C0 control characters; control and
- * format characters JSON leaves as they are, such as DEL, C1 controls, and
- * bidirectional overrides, and the line and paragraph separators, are escaped
- * as `\uXXXX` too, so a value cannot recolor, reorder, or break the line.
- * Nothing in the value is expanded.
- *
- * @param {unknown} value
- * @returns {string}
- */
-function quoteScriptValue(value) {
-  return JSON.stringify(value).replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, (character) =>
-    Array.from(
-      { length: character.length },
-      (_, index) => `\\u${character.charCodeAt(index).toString(16).padStart(4, "0")}`,
-    ).join(""),
-  );
 }
 
 async function main() {

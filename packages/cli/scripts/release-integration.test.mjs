@@ -259,16 +259,14 @@ test("a first apply of a Composer-built recipe with artifacts installs them thro
     assert.ok(packed);
     assert.match(
       preview.stdout,
-      new RegExp(
-        `Would resolve and lock artifact ${id} at ${escapeRegExp(`${packed.packageName}@${packed.version}`)}`,
-      ),
+      new RegExp(`^ {2}Would lock ${id} ${escapeRegExp(packed.version)}( and write[ :]|; )`, "m"),
     );
   }
   assert.deepEqual(await snapshotDirectory(projectDirectory), before, "the dry run wrote files");
 
   const applied = await runCli(["apply", "--yes", "--no-install"]);
   for (const id of ids) {
-    assert.match(applied.stdout, new RegExp(`Resolved and locked artifact ${id} at `));
+    assert.match(applied.stdout, new RegExp(`^ {2}Locked ${id} `, "m"));
   }
   const originalDirectory = process.cwd();
   try {

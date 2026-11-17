@@ -353,14 +353,22 @@ function printedName(output, item) {
  *
  * @param {string} output
  * @param {string[]} items Paths, dependency names, and artifact IDs the command handles.
+ * @param {string[]} [statements] Fixed lines the result carries that state a fact about the
+ *   project rather than list an item, such as the ADR-0011 Vite+ report in `vitePlus.lines`, which
+ *   names the manifest that holds the Vite+ signal.
  * @returns {string[]} One line per violation.
  */
-export function listingViolations(output, items) {
+export function listingViolations(output, items, statements = []) {
   // A command, such as the "vp add -D" install command, names packages to run them, not to list
   // them, so its line does not count as a mention. #617 keeps one line per integration with the
   // package in parentheses only when the names differ, so an integration line that names its
-  // package does count.
-  const lines = output.split("\n").filter((line) => !isCommandLine(line));
+  // package does count. A quoted value is the exact text a command writes, such as a script's
+  // command or the lines of an ignore block, so a name inside it does not count either.
+  const fixed = new Set(statements);
+  const lines = output
+    .split("\n")
+    .filter((line) => !isCommandLine(line) && !fixed.has(line.trim()))
+    .map((line) => line.replace(QUOTED_VALUE, '""'));
   output = lines.join("\n");
   const firstHeading = lines.findIndex(isHeading);
   const names = new Map(items.map((item) => [item, printedName(output, item)]));
@@ -379,6 +387,9 @@ export function listingViolations(output, items) {
         .map(([item]) => `${item} is printed 0 times`),
     );
 }
+
+// A JSON string literal, as Calavera quotes a script value or an ignore line.
+const QUOTED_VALUE = /"(?:[^"\\]|\\.)*"/g;
 
 /**
  * Whether a line is a command, with an optional label such as "Dev dependency install command:".
@@ -480,9 +491,10 @@ async function assertNextStepsRun(context, projectDirectory, output, label) {
 /**
  * @param {CommandResult} result
  * @param {string[]} items
+ * @param {string[]} [statements] See `listingViolations`.
  */
-function assertListing(result, items) {
-  const violations = listingViolations(result.output, items);
+function assertListing(result, items, statements = []) {
+  const violations = listingViolations(result.output, items, statements);
   if (violations.length > 0) {
     throw new CheckFailure({
       expected: "every file, dependency, and artifact printed once, under a heading",
@@ -838,7 +850,8 @@ const flowChecks = [
       assertExitZero(json);
       assertExitZero(result);
       await assertUnchanged(context, project, before, result.display);
-      assertListing(result, namedItems(parseJson(json)));
+      const report = parseJson(json);
+      assertListing(result, namedItems(report), report.vitePlus?.lines);
       await assertNextStepsRun(context, project, result.output, "apply-dry-run");
     },
   },
@@ -884,7 +897,7 @@ const flowChecks = [
       });
       assertExitZero(result);
       await assertUnchanged(context, project, before, result.display);
-      assertListing(result, namedItems(report));
+      assertListing(result, namedItems(report), report.vitePlus?.lines);
       await assertNextStepsRun(context, project, result.output, "second-dry-run");
     },
   },
