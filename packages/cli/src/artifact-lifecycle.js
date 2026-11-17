@@ -22,6 +22,7 @@ import { assertFirstSelection } from "./ai/recipe-items.js";
 import { artifactReleaseNotesUrl } from "./artifact-status-report.js";
 import { packageManagerIdsForRecipe, projectLocalCalaveraCommand } from "./recipe.js";
 import { createEmptyState, normalizeState } from "./state.js";
+import { errorAfterCleanups, runCleanups } from "./utils/cleanup.js";
 import { fileExists } from "./utils/fs.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
@@ -202,18 +203,18 @@ export async function prepareArtifactSources(
         await locked.restore();
         await installed?.restore();
       },
-      dispose: async () => {
-        await stagedInstall.dispose();
-        await locked.dispose();
-        await installed?.dispose();
-      },
+      // Each folder is removed even when removing another fails (#988).
+      dispose: () =>
+        runCleanups([
+          stagedInstall.dispose,
+          locked.dispose,
+          ...(installed ? [installed.dispose] : []),
+        ]),
       registries: stagedInstall.registries,
       warnings: stagedInstall.warnings,
     };
   } catch (error) {
-    await staged?.dispose();
-    await locked.dispose();
-    throw error;
+    throw await errorAfterCleanups(error, [...(staged ? [staged.dispose] : []), locked.dispose]);
   }
 }
 
@@ -359,9 +360,8 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
   const restores = [];
   /** @type {string[]} */
   const temporaryRoots = [];
-  const dispose = async () => {
-    await Promise.all(temporaryRoots.map((root) => rm(root, { recursive: true, force: true })));
-  };
+  const dispose = () =>
+    runCleanups(temporaryRoots.map((root) => () => rm(root, { recursive: true, force: true })));
   const restore = async () => {
     for (const { stage, finalRoot } of restores) {
       await rm(finalRoot, { recursive: true, force: true });
@@ -429,8 +429,7 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
       }
     }
   } catch (error) {
-    await dispose();
-    throw error;
+    throw await errorAfterCleanups(error, [dispose]);
   }
   return { sources, restore, dispose };
 }

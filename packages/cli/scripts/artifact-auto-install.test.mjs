@@ -10,6 +10,7 @@ import fsPromises, {
   stat,
   writeFile,
 } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -520,6 +521,50 @@ test("apply that installs an unlocked artifact also restores a missing locked pa
       await fsPromises.readdir(".calavera/.transactions"),
       [],
       "the install's staging folder was left behind",
+    );
+  });
+});
+
+test("when removing the install's staging folder fails, apply still removes the rebuild folder and reports the failure", async (t) => {
+  await inProject(async () => {
+    const releases = new Map([["skill-project-goal", "0.1.0"]]);
+    const registry = stubRegistry(releases);
+    await applyRecipeObject(recipeWith(["skill-project-goal"]), applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    releases.set("skill-code-review", "0.3.0");
+    const folders = recordRebuildFolders(t);
+    const remove = fsPromises.rm;
+    const busy = new Error("EBUSY: resource busy");
+    t.mock.method(
+      fsPromises,
+      "rm",
+      (/** @type {string} */ path, /** @type {import("node:fs").RmOptions} */ rmOptions) =>
+        // Only the cleanup after the install committed fails, not the install's own preparation.
+        String(path).includes(join(".calavera", ".transactions", "")) &&
+        readFileSync(LOCK_PATH, "utf8").includes("skill-code-review")
+          ? Promise.reject(busy)
+          : remove(path, rmOptions),
+    );
+    syncBuiltinESMExports();
+
+    await assert.rejects(
+      applyRecipeObject(
+        recipeWith(["skill-project-goal", "skill-code-review"]),
+        applyOptions,
+        registry,
+      ),
+      (/** @type {Error} */ error) => {
+        assert.ok(error instanceof AggregateError);
+        assert.deepEqual(error.errors, [busy]);
+        assert.match(error.message, /EBUSY: resource busy/);
+        return true;
+      },
+    );
+    assert.equal(folders.length, 1, "apply rebuilds the missing locked package once");
+    await assert.rejects(
+      stat(folders[0]),
+      { code: "ENOENT" },
+      "the rebuild folder was left behind",
     );
   });
 });
