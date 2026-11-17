@@ -221,6 +221,61 @@ test("CLI apply and apply --dry-run from a workspace member refuse github-reposi
   assert.deepEqual(await snapshotTree(repository.root), before, "the refusal changed a file");
 });
 
+/**
+ * The issues `doctor --json` reports in `cwd`.
+ *
+ * @param {string} cwd
+ * @returns {Promise<{ ok: boolean, issues: { level: string, message: string }[] }>}
+ */
+async function doctorReport(cwd) {
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
+    cwd,
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  return JSON.parse(stdout);
+}
+
+// #997: doctor names apply's refusal instead of only the root-only integration's missing files.
+test("doctor from a workspace member reports apply's refusal of a root-only integration as an error", async () => {
+  await using repository = await createRepository();
+  const recipe = repositoryControlsRecipe();
+  await writeFile(
+    join(repository.member, "calavera.config.json"),
+    `${JSON.stringify(recipe, null, 2)}\n`,
+  );
+  const applyRefusal = await inDirectory(repository.member, () =>
+    applyRecipeObject(recipe, { json: true, dryRun: true, assumeYes: true }).then(
+      () => assert.fail("apply did not refuse the recipe"),
+      (/** @type {Error} */ error) => error.message,
+    ),
+  );
+  assert.match(applyRefusal, refusal(repository.member, repository.root));
+
+  const report = await doctorReport(repository.member);
+
+  assert.equal(report.ok, false);
+  assert.deepEqual(
+    report.issues.filter(({ level }) => level === "error"),
+    [{ level: "error", message: applyRefusal }],
+  );
+});
+
+test("doctor at the repository root does not report the root-only refusal", async () => {
+  await using repository = await createRepository();
+  await writeFile(
+    join(repository.root, "calavera.config.json"),
+    `${JSON.stringify(repositoryControlsRecipe(), null, 2)}\n`,
+  );
+
+  const report = await doctorReport(repository.root);
+
+  assert.equal(report.ok, true);
+  assert.ok(
+    report.issues.every(({ message }) => !message.includes("applies at the repository root")),
+    JSON.stringify(report.issues),
+  );
+});
+
 test("dry_run_apply at the repository root still plans the repository-controls files", async () => {
   await using repository = await createRepository();
 

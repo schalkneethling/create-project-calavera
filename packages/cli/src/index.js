@@ -39,6 +39,7 @@ import {
   assertGitHookArtifactsAtRepositoryRoot,
   assertRootOnlyIntegrationsAtRepositoryRoot,
   findRepositoryRoot,
+  rootOnlyIntegrationRefusal,
 } from "./repository-root.js";
 import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
 import { defaultBranchWarnings, resolveIntegrationInputs } from "./integration-inputs.js";
@@ -5531,6 +5532,16 @@ async function doctor(options) {
       integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
     );
     const projectDirectory = process.cwd();
+    // #997: apply refuses a root-only integration outside the repository root, so doctor reports
+    // apply's own refusal, with the same package manager apply would name in its remedy.
+    const rootOnlyRefusal = rootOnlyIntegrationRefusal(
+      integrations,
+      projectDirectory,
+      resolveApplyPackageManager(recipe, options, await readPackageJSONIfPresent()),
+    );
+    if (rootOnlyRefusal !== undefined) {
+      issues.push({ level: "error", message: rootOnlyRefusal });
+    }
     const repositoryRoot =
       rootOnlyIds.size > 0
         ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
