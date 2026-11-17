@@ -303,9 +303,12 @@ async function exists(path) {
 }
 
 const RECIPE_BLOCK_HEADING = "Your project needs a recipe before Calavera changes anything.";
+// #602: --new leaves the shell in the parent directory, so changing into the project comes first.
+const CD_STEP_HEADING = "First, change into the new project:";
 
 /**
- * The next-steps block --new prints after a successful scaffold and bootstrap.
+ * The next-steps group --new prints after a successful scaffold and bootstrap: the `cd` step, then
+ * the two ways to get a recipe, with the apply commands only after the step that saves one (#602).
  *
  * @param {string} target
  * @param {{ cd: string, applyDryRun: string, applyRecipe: string }} commands
@@ -313,11 +316,13 @@ const RECIPE_BLOCK_HEADING = "Your project needs a recipe before Calavera change
  */
 function recipeBlock(target, { cd, applyDryRun, applyRecipe }) {
   return [
+    "Next steps:",
+    CD_STEP_HEADING,
+    `  ${cd}`,
     RECIPE_BLOCK_HEADING,
-    `  Either: open ${target} in your agent and use the prompt above.`,
+    `  Either: open ${target} in your agent and use the prompt below.`,
     "  Or: compose one at https://calavera.schalkneethling.com/ and save",
     `      calavera.config.json into ${target}, then:`,
-    `        ${cd}`,
     `        ${applyDryRun}`,
     `        ${applyRecipe}`,
   ].join("\n");
@@ -753,9 +758,8 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
     ),
     result.stdout,
   );
-  assert.ok(
-    result.stdout.indexOf(NEXT_PROMPT_HEADING) < result.stdout.indexOf(RECIPE_BLOCK_HEADING),
-  );
+  // #602: the agent prompt is used after the project is open, so it follows the cd step.
+  assert.ok(result.stdout.indexOf(CD_STEP_HEADING) < result.stdout.indexOf(NEXT_PROMPT_HEADING));
 });
 
 test("--new names the scaffolded project's package manager and quotes the target in the next steps", async () => {
@@ -1587,11 +1591,15 @@ test("--new --config copies the recipe byte for byte after the managed check and
   assert.ok(
     result.stdout.includes(
       [
+        "Next steps:",
+        CD_STEP_HEADING,
+        `  cd ${target}`,
         `Your project has a recipe at ${copied}. Calavera has not applied it.`,
         "  Preview it, then apply it after you approve the preview:",
-        `    cd ${target}`,
         "    npm create project-calavera apply -- --dry-run",
         "    npm create project-calavera apply",
+        "",
+        NEXT_PROMPT_HEADING,
       ].join("\n"),
     ),
     result.stdout,
@@ -1682,16 +1690,16 @@ test("--new prints the bootstrap summary in labeled groups, with the prompt as i
       "  Installed skills are available under .agents/skills/.",
       "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
       "",
-      NEXT_PROMPT_HEADING,
-      "",
-      await readmeAgentPrompt(),
-      "",
-      "Next steps:",
       recipeBlock(target, {
         cd: `cd ${target}`,
         applyDryRun: "npm create project-calavera apply -- --dry-run",
         applyRecipe: "npm create project-calavera apply",
       }),
+      "",
+      NEXT_PROMPT_HEADING,
+      "",
+      await readmeAgentPrompt(),
+      "",
       "",
     ].join("\n"),
   );

@@ -24,23 +24,27 @@ and 2. Vite+ asks its own questions and writes the scaffold; see
 [`--new`](docs/agent-first-calavera-workflow.md#start-a-new-vite-project-with---new)
 for details.
 
-After `--new` or `--init`, Calavera prints the next steps. The project needs a
-recipe before Calavera changes anything, so the block offers the agent prompt or
-the hosted Composer, with the save location and the commands for the project's
-package manager. After `--new`, from the parent folder, it reads:
+After `--new` or `--init`, Calavera prints the next steps, then the agent
+prompt. `--new` cannot change your shell's directory, so its first step is the
+`cd` into the new project. The project needs a recipe before Calavera changes
+anything, so the block offers the agent prompt or the hosted Composer, and it
+shows the commands that preview and apply a recipe only after the step that
+saves one. After `--new`, from the parent folder, it reads:
 
 ```text
+Next steps:
+First, change into the new project:
+  cd /home/me/code/my-app
 Your project needs a recipe before Calavera changes anything.
-  Either: open /home/me/code/my-app in your agent and use the prompt above.
+  Either: open /home/me/code/my-app in your agent and use the prompt below.
   Or: compose one at https://calavera.schalkneethling.com/ and save
       calavera.config.json into /home/me/code/my-app, then:
-        cd /home/me/code/my-app
         npm create project-calavera apply -- --dry-run
         npm create project-calavera apply
 ```
 
-`--init` prints the same block without the `cd` line; `--init --json` returns it
-as a `nextSteps` array.
+`--init` runs inside the project, so it prints the same block without the `cd`
+step; `--init --json` returns it, without the heading, as a `nextSteps` array.
 
 If you composed a recipe first, pass it with `--config` before `--new`:
 `npm create project-calavera -- --config ~/Downloads/calavera.config.json --new`.

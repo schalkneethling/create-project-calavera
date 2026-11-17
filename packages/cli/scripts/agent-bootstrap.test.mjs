@@ -184,7 +184,7 @@ test("--init prints the recipe next steps without a cd line", async () => {
       result.stdout.includes(
         [
           "Your project needs a recipe before Calavera changes anything.",
-          `  Either: open ${directory} in your agent and use the prompt above.`,
+          `  Either: open ${directory} in your agent and use the prompt below.`,
           "  Or: compose one at https://calavera.schalkneethling.com/ and save",
           `      calavera.config.json into ${directory}, then:`,
           "        yarn dlx create-project-calavera apply --dry-run",
@@ -207,12 +207,42 @@ test("--init --json carries the recipe next steps as nextSteps", async () => {
     assert.equal(result.code, 0, result.stderr);
     assert.deepEqual(parsed.nextSteps, [
       "Your project needs a recipe before Calavera changes anything.",
-      `  Either: open ${directory} in your agent and use the prompt above.`,
+      `  Either: open ${directory} in your agent and use the prompt below.`,
       "  Or: compose one at https://calavera.schalkneethling.com/ and save",
       `      calavera.config.json into ${directory}, then:`,
       "        npm create project-calavera apply -- --dry-run",
       "        npm create project-calavera apply",
     ]);
+  });
+});
+
+test("--init with an existing recipe prints its preview and apply commands without a cd line, before the prompt (#602)", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({ name: "demo", packageManager: "pnpm@10.0.0" }),
+    );
+    await writeFile("calavera.config.json", "{}\n");
+
+    const result = await runCli(directory, ["--init", "--mcp-harness", "skip"]);
+    const nextSteps = result.stdout.indexOf("Next steps:");
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.notEqual(nextSteps, -1, result.stdout);
+    assert.equal(
+      result.stdout.slice(nextSteps),
+      [
+        "Next steps:",
+        `Your project has a recipe at ${join(directory, "calavera.config.json")}. Calavera has not applied it.`,
+        "  Preview it, then apply it after you approve the preview:",
+        "    pnpm dlx create-project-calavera apply --dry-run",
+        "    pnpm dlx create-project-calavera apply",
+        "",
+        ...(await nextPromptGroup()),
+        "",
+      ].join("\n"),
+    );
   });
 });
 
@@ -244,7 +274,7 @@ function initNextSteps(directory) {
   return [
     "Next steps:",
     "Your project needs a recipe before Calavera changes anything.",
-    `  Either: open ${directory} in your agent and use the prompt above.`,
+    `  Either: open ${directory} in your agent and use the prompt below.`,
     "  Or: compose one at https://calavera.schalkneethling.com/ and save",
     `      calavera.config.json into ${directory}, then:`,
     "        pnpm dlx create-project-calavera apply --dry-run",
@@ -287,8 +317,9 @@ test("--init groups the summary and names each file once when it writes the MCP 
         "Notes:",
         "  Installed skills are available under .agents/skills/.",
         "",
-        ...(await nextPromptGroup()),
         ...initNextSteps(directory),
+        "",
+        ...(await nextPromptGroup()),
         "",
       ].join("\n"),
     );
@@ -321,8 +352,9 @@ test("--init groups the summary when MCP needs manual setup (#601)", async () =>
         "  Installed skills are available under .agents/skills/.",
         "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
         "",
-        ...(await nextPromptGroup()),
         ...initNextSteps(directory),
+        "",
+        ...(await nextPromptGroup()),
         "",
       ].join("\n"),
     );
@@ -364,8 +396,9 @@ test("--init names a skipped AGENTS.md once and says to merge the fallback guida
         "  Merge AGENTS.calavera.md into AGENTS.md by hand.",
         "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
         "",
-        ...(await nextPromptGroup()),
         ...initNextSteps(directory),
+        "",
+        ...(await nextPromptGroup()),
         "",
       ].join("\n"),
     );
