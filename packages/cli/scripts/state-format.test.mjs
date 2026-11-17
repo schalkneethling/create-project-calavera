@@ -280,6 +280,42 @@ test("Given a locked hook whose output is missing, in a Vite+ project inside a f
   });
 });
 
+test("Given a locked hook whose package is missing from .calavera/packages, in a Vite+ project inside a folder whose .editorconfig sets four-space indentation, when apply would add Calavera's .editorconfig, then apply stops without restoring the package or leaving a staging folder", async () => {
+  await using parent = await createTemporaryFixture("state-locked-package", {
+    ".editorconfig": "root = true\n\n[*]\nindent_style = space\nindent_size = 4\n",
+  });
+  const root = join(parent.root, "library");
+  await cp(releaseFixturePath("library"), root, { recursive: true });
+  await writeVitePlusFormatter(root);
+  const hook = { id: "hook-block-dangerous-commands" };
+  const options = { ...applyOptions, writeConfig: false };
+  const registry = stubRegistry(new Map([["hook-block-dangerous-commands", "0.4.0"]]));
+  const stop = /Calavera's \.editorconfig would change how vp fmt formats \.calavera\/state\.json/;
+
+  await inDirectory(root, async () => {
+    await applyRecipeObject(
+      { ...buildRecipe("default", [], "pnpm", []), ai: [hook] },
+      options,
+      registry,
+    );
+    // #988: the restore point. The lock still records the package, so apply rebuilds it from the
+    // cache, but only once nothing can stop apply.
+    await rm(".calavera/packages", { recursive: true });
+    const before = await snapshotDirectory();
+    const withEditorConfig = {
+      ...buildRecipe("default", ["editorconfig"], "pnpm", []),
+      ai: [hook],
+    };
+
+    await assert.rejects(applyRecipeObject(withEditorConfig, options, registry), stop);
+    assert.deepEqual(
+      await snapshotDirectory(),
+      before,
+      "apply restored the locked package, or left a staging folder, before it stopped",
+    );
+  });
+});
+
 test("Given a Vite+ project inside a folder whose .editorconfig sets four-space indentation, when clean would remove Calavera's .editorconfig, then clean stops before changing anything, and runs once the person removes it", async () => {
   await using parent = await createTemporaryFixture("state-clean-editorconfig", {
     ".editorconfig": "root = true\n\n[*]\nindent_style = space\nindent_size = 4\n",

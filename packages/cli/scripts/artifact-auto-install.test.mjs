@@ -406,15 +406,21 @@ test("dry_run_apply and apply_recipe auto-install unlocked artifacts the same wa
   });
 });
 
-/**
- * Snapshot without `.calavera/.staging/`, where restoring a locked payload stages before this
- * change and leaves the directory behind on failure.
- */
-async function snapshotWithoutRestoreStaging() {
-  return Object.fromEntries(
-    Object.entries(await snapshot()).filter(([path]) => !path.startsWith(".calavera/.staging")),
-  );
-}
+test("apply restores a locked package that is missing from .calavera/packages and leaves no staging folder", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    const installed = await snapshot();
+    await rm(".calavera/packages", { recursive: true });
+
+    await applyRecipeObject(recipe, applyOptions, registry);
+
+    // #988: the restored package is byte-for-byte the one the install wrote, and the restore
+    // stages outside the project.
+    assert.deepEqual(await snapshot(), installed);
+  });
+});
 
 test("a local edit to a locked artifact stops apply before an unlocked artifact is installed", async () => {
   await inProject(async () => {
@@ -463,7 +469,7 @@ test("a locked payload that cannot be restored stops apply before an unlocked ar
       failFor: "skill-project-goal",
       error: offlineMiss,
     });
-    const before = await snapshotWithoutRestoreStaging();
+    const before = await snapshot();
 
     await assert.rejects(
       () =>
@@ -479,7 +485,7 @@ test("a locked payload that cannot be restored stops apply before an unlocked ar
       false,
       "the unlocked artifact is not resolved once a locked payload fails",
     );
-    assert.deepEqual(await snapshotWithoutRestoreStaging(), before);
+    assert.deepEqual(await snapshot(), before);
   });
 });
 

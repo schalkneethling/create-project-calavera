@@ -1041,28 +1041,33 @@ test("locked dry-run restoration uses temporary storage without project writes",
       })}\n`,
     );
     const artifact = artifactForId("skill-project-goal");
-    const sources = await lockedArtifactSources({ ai: [{ id: "skill-project-goal" }] }, true, {
-      resolve: async (request) => ({
-        artifact,
-        packageName: artifact.packageName,
-        version: request.version,
-        resolved: "https://registry.example/project-goal.tgz",
-        integrity: `sha512-${"a".repeat(86)}==`,
-        tag: request.tag,
-        cache: request.cache,
-        offline: true,
-      }),
-      extract: async (_resolution, destination) => {
-        const payloadPath = join(destination, "payload", "project-goal");
-        await mkdir(payloadPath, { recursive: true });
-        await writeFile(join(payloadPath, "SKILL.md"), "restored\n");
-        return { manifest: { payload: "payload/project-goal" }, payloadPath, payloadHash };
+    const { sources, dispose } = await lockedArtifactSources(
+      { ai: [{ id: "skill-project-goal" }] },
+      true,
+      {
+        resolve: async (request) => ({
+          artifact,
+          packageName: artifact.packageName,
+          version: request.version,
+          resolved: "https://registry.example/project-goal.tgz",
+          integrity: `sha512-${"a".repeat(86)}==`,
+          tag: request.tag,
+          cache: request.cache,
+          offline: true,
+        }),
+        extract: async (_resolution, destination) => {
+          const payloadPath = join(destination, "payload", "project-goal");
+          await mkdir(payloadPath, { recursive: true });
+          await writeFile(join(payloadPath, "SKILL.md"), "restored\n");
+          return { manifest: { payload: "payload/project-goal" }, payloadPath, payloadHash };
+        },
       },
-    });
+    );
 
     assert.equal(sources.get("skill-project-goal")?.startsWith(tmpdir()), true);
     await assertPathMissing(".calavera/.staging");
     await assertPathMissing(".calavera/packages");
+    await dispose();
   } finally {
     process.chdir(originalDirectory);
     await rm(projectDirectory, { force: true, recursive: true });
