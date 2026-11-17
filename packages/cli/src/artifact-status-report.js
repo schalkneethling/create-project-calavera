@@ -61,18 +61,19 @@ function githubRepository(url) {
 }
 
 /**
- * The path segments of a `repository.directory`, or undefined when it would leave the repository.
+ * The path segments of a `repository.directory`, or undefined when there is none or it would leave
+ * the repository. Every artifact is one package of a monorepo, so a changelog at the repository
+ * root would belong to another package.
  *
  * @param {unknown} directory
  * @returns {string[] | undefined}
  */
 function repositoryDirectory(directory) {
-  if (directory === undefined) return [];
   if (typeof directory !== "string" || directory.startsWith("/") || directory.includes("\\")) {
     return undefined;
   }
   const segments = directory.split("/").filter((segment) => segment !== "" && segment !== ".");
-  return segments.includes("..") ? undefined : segments;
+  return segments.length === 0 || segments.includes("..") ? undefined : segments;
 }
 
 /**
@@ -90,8 +91,8 @@ function versionAnchor(version) {
 /**
  * The link to the release notes for `version`: the `CHANGELOG.md` in the package's directory on
  * the default branch of the GitHub repository its published `repository` metadata names, at that
- * version's heading. Undefined metadata, a repository outside GitHub, or a directory that leaves
- * the repository gives null, because Calavera never guesses a link from a package name.
+ * version's heading. Missing metadata, a repository outside GitHub, or a missing directory, or one
+ * that leaves the repository, gives null, because Calavera never guesses a link.
  *
  * @param {unknown} repository The `repository` member of the published package manifest.
  * @param {string} version
@@ -154,7 +155,7 @@ export function formatArtifactStatus(result) {
         `${artifact.id}  ${artifact.version} → ${artifact.latestVersion} (${artifact.tag})${health}`,
       );
       info(
-        `  Release notes: ${artifact.releaseNotesUrl ?? "the package metadata names no GitHub repository, so there is no link"}`,
+        `  Release notes: ${artifact.releaseNotesUrl ?? "none, because the package metadata names no GitHub repository and package directory to link to"}`,
       );
       info(
         `  Update: ${artifact.updateCommand ?? "the recipe does not select this artifact, so artifacts update cannot update it"}`,
@@ -177,9 +178,12 @@ export function formatArtifactStatus(result) {
   if (result.updateAllCommand) {
     info(`Update every artifact: ${result.updateAllCommand}`);
   } else if (result.artifacts.filter(({ updateCommand }) => updateCommand !== null).length > 1) {
-    // Status withholds `--all` from several updatable artifacts only when their channels differ.
+    // Status withholds `--all` from several updatable artifacts when a selection is not installed
+    // or the channels differ.
     info(
-      "These artifacts follow different channels, and --all would move every one to a single channel, so run each Update command above instead.",
+      result.artifacts.some(({ version }) => version === null)
+        ? "--all would also install the artifacts that are not installed, so run each Update command above instead."
+        : "These artifacts follow different channels, and --all would move every one to a single channel, so run each Update command above instead.",
     );
   }
   if (updates.length === 0 && result.artifacts.every(({ version }) => version !== null)) {

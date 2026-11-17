@@ -378,7 +378,7 @@ test("missing or untrusted release metadata leaves the update visible without a 
       const printed = messages(formatArtifactStatus(result));
       assert.ok(
         printed.includes(
-          "  Release notes: the package metadata names no GitHub repository, so there is no link",
+          "  Release notes: none, because the package metadata names no GitHub repository and package directory to link to",
         ),
         printed.join("\n"),
       );
@@ -394,8 +394,8 @@ test("release notes accept the repository forms npm publishes", async () => {
     "github:schalkneethling/create-project-calavera",
     "schalkneethling/create-project-calavera",
     "https://github.com/schalkneethling/create-project-calavera",
-    { url: "git+https://github.com/schalkneethling/create-project-calavera.git" },
-    { url: "git@github.com:schalkneethling/create-project-calavera.git" },
+    "git+https://github.com/schalkneethling/create-project-calavera.git",
+    "git@github.com:schalkneethling/create-project-calavera.git",
   ];
   for (const repository of forms) {
     await inProject(
@@ -403,14 +403,13 @@ test("release notes accept the repository forms npm publishes", async () => {
       async () => {
         const registry = statusRegistry(
           { "skill-project-goal": { latest: "0.3.0" } },
-          { "skill-project-goal": repository },
+          { "skill-project-goal": { url: repository, directory: "packages/goal" } },
         );
         const [artifact] = (await runArtifactCommand(statusOptions(), registry)).artifacts;
-        // Without a directory, the changelog is the one at the repository root.
         assert.equal(
           artifact.releaseNotesUrl,
-          "https://github.com/schalkneethling/create-project-calavera/blob/HEAD/CHANGELOG.md#030",
-          JSON.stringify(repository),
+          "https://github.com/schalkneethling/create-project-calavera/blob/HEAD/packages/goal/CHANGELOG.md#030",
+          repository,
         );
       },
     );
@@ -595,22 +594,33 @@ test("release notes refuse repository metadata that names no single GitHub repos
     undefined,
     null,
     42,
-    { url: 42 },
-    "not a url",
-    "https://github.com/schalkneethling",
-    "https://github.com/schalkneethling/create-project-calavera/tree/main",
-    "https://github.com/./create-project-calavera",
-    "https://github.com/schalkneethling/..",
-    "https://github.com/schalkneethling/create project",
-    "https://github.com.example/schalkneethling/create-project-calavera",
-    "github:schalkneethling/repo/extra",
-    "github:./create-project-calavera",
-    "github:schalkneethling/..",
-    "owner/repo/extra",
+    // Each URL below comes with a valid directory, so only the URL refuses the link.
+    ...[
+      42,
+      "not a url",
+      "https://github.com/schalkneethling",
+      "https://github.com/schalkneethling/create-project-calavera/tree/main",
+      "https://github.com/./create-project-calavera",
+      "https://github.com/schalkneethling/..",
+      "https://github.com/schalkneethling/create project",
+      "https://github.com.example/schalkneethling/create-project-calavera",
+      "github:schalkneethling/repo/extra",
+      "github:./create-project-calavera",
+      "github:schalkneethling/..",
+      "github:schalkneethling/.",
+      "github:/create-project-calavera",
+      "github:schalkneethling/",
+      "github:sch@lk/create-project-calavera",
+      "owner/repo/extra",
+    ].map((url) => ({ url, directory: "packages/goal" })),
     { url: github, directory: "/packages/artifacts/skill-project-goal" },
     { url: github, directory: "packages\\artifacts" },
     { url: github, directory: "packages/../.." },
     { url: github, directory: 7 },
+    // Without a package directory, the root changelog would be another package's.
+    github,
+    { url: github },
+    { url: github, directory: "./" },
   ]) {
     assert.equal(artifactReleaseNotesUrl(repository, "0.3.0"), null, JSON.stringify(repository));
   }
@@ -634,12 +644,11 @@ test("release notes normalize the directory and anchor the version heading", () 
     `${base}/packages/my%20artifact/CHANGELOG.md#100-rc1build5`,
   );
   assert.equal(
-    artifactReleaseNotesUrl("https://github.com/schalkneethling/site.github.io.git", "0.3.0"),
-    "https://github.com/schalkneethling/site.github.io/blob/HEAD/CHANGELOG.md#030",
-  );
-  assert.equal(
-    artifactReleaseNotesUrl("https://github.com/schalkneethling/create-project-calavera/", "0.3.0"),
-    `${base}/CHANGELOG.md#030`,
+    artifactReleaseNotesUrl(
+      { url: "https://github.com/schalkneethling/site.github.io.git", directory: "docs" },
+      "0.3.0",
+    ),
+    "https://github.com/schalkneethling/site.github.io/blob/HEAD/docs/CHANGELOG.md#030",
   );
 });
 
@@ -706,10 +715,10 @@ test("status output explains an update for an artifact the recipe does not selec
   );
   assert.deepEqual(lines, [
     "skill-project-goal  0.2.1 → 0.3.0 (latest)",
-    "  Release notes: the package metadata names no GitHub repository, so there is no link",
+    "  Release notes: none, because the package metadata names no GitHub repository and package directory to link to",
     "  Update: update one",
     "skill-code-review  0.2.1 → 0.3.0 (latest)",
-    "  Release notes: the package metadata names no GitHub repository, so there is no link",
+    "  Release notes: none, because the package metadata names no GitHub repository and package directory to link to",
     "  Update: the recipe does not select this artifact, so artifacts update cannot update it",
   ]);
 });
@@ -740,6 +749,10 @@ test("a locked artifact the recipe no longer selects gets no update command", as
       assert.equal(
         result.updateAllCommand,
         "npm create project-calavera artifacts update -- --all",
+      );
+      assert.equal(
+        messages(formatArtifactStatus(result)).at(-1),
+        `Update every artifact: ${result.updateAllCommand}`,
       );
     },
   );
@@ -805,4 +818,71 @@ test("printed commands quote a recipe path the shell would split", () => {
     projectLocalCalaveraCommand("bun", ["artifacts", "install"], []),
     "bunx create-project-calavera artifacts install",
   );
+});
+
+test("selections without a lock entry withhold the all-artifacts command", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-code-review", "skill-css-tokens"],
+      locked: [
+        { id: "skill-project-goal", version: "0.2.1" },
+        { id: "skill-code-review", version: "0.2.1" },
+      ],
+    },
+    async () => {
+      const result = await runArtifactCommand(
+        statusOptions(),
+        statusRegistry({
+          "skill-project-goal": { latest: "0.3.0" },
+          "skill-code-review": { latest: "0.3.0" },
+          "skill-css-tokens": { latest: "0.3.0" },
+        }),
+      );
+      assert.equal(result.updateAllCommand, null);
+      assert.ok(
+        messages(formatArtifactStatus(result)).includes(
+          "--all would also install the artifacts that are not installed, so run each Update command above instead.",
+        ),
+      );
+    },
+  );
+});
+
+test("generated commands parse to the update they describe for every package manager", async () => {
+  for (const packageManager of /** @type {const} */ (["npm", "pnpm", "yarn", "bun"])) {
+    await inProject(
+      {
+        ids: ["skill-project-goal", "skill-release-with-confidence"],
+        locked: [
+          { id: "skill-project-goal", version: "0.3.0-next.0", tag: "next" },
+          { id: "skill-release-with-confidence", version: "0.3.0-next.0", tag: "next" },
+        ],
+        packageManager,
+        config: "recipes/calavera.json",
+      },
+      async () => {
+        const result = await runArtifactCommand(
+          statusOptions({ config: "recipes/calavera.json" }),
+          statusRegistry({
+            "skill-project-goal": { next: "0.3.0-next.1" },
+            "skill-release-with-confidence": { next: "0.3.0-next.1" },
+          }),
+        );
+        const targeted = parseArgs(
+          calaveraArguments(result.artifacts[0].updateCommand, packageManager),
+        );
+        assert.deepEqual(
+          [targeted.artifactAction, targeted.artifactId, targeted.artifactTag, targeted.config],
+          ["update", "skill-project-goal", "next", "recipes/calavera.json"],
+          packageManager,
+        );
+        const all = parseArgs(calaveraArguments(result.updateAllCommand, packageManager));
+        assert.deepEqual(
+          [all.artifactAction, all.artifactAll, all.artifactTag, all.config],
+          ["update", true, "next", "recipes/calavera.json"],
+          packageManager,
+        );
+      },
+    );
+  }
 });

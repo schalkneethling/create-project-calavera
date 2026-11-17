@@ -489,8 +489,9 @@ async function artifactStatus(options, registry) {
       installCommand: command(["install"]),
     });
   }
-  // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only
-  // while every locked selection follows the same channel.
+  // `--all` moves every selected artifact to the one channel `--tag` names and installs every
+  // selection without a lock entry, so it is offered only while every selection is locked and
+  // follows the same channel.
   const selectedChannels = new Set(
     lock.artifacts.filter(({ id }) => selectedIds.has(id)).map(({ tag }) => tag),
   );
@@ -498,6 +499,7 @@ async function artifactStatus(options, registry) {
   const [channel] = selectedChannels;
   const updateAll =
     selections.length > 1 &&
+    selections.every(({ id }) => lockedIds.has(id)) &&
     selectedChannels.size === 1 &&
     artifacts.some(({ updateCommand }) => updateCommand !== null);
   return {
