@@ -4466,7 +4466,8 @@ async function yarnFailureHint(readYarnVersion, readYarnCorepackRoot, cwd) {
     return { hint: `${unsure} ${failureReason(error)}.`, cause: error };
   }
 
-  const corepackRoot = /^COREPACK_ROOT=(.*)$/m.exec(probe)?.[1];
+  // . stops at a line terminator, \r included, so the value ends where its line does.
+  const corepackRoot = /^COREPACK_ROOT=(.*)/m.exec(probe)?.[1];
 
   if (corepackRoot === undefined) {
     return { hint: `${unsure} yarn node printed no COREPACK_ROOT line.` };

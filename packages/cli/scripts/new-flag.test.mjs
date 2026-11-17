@@ -1170,6 +1170,9 @@ test("--new sets no cause when the Yarn version was read", async () => {
 for (const [output, expected] of [
   [NO_COREPACK, "yarn 1"],
   ["COREPACK_ROOT=", "yarn 1"],
+  // Windows ends lines with \r\n, and execa removes only the final newline.
+  ["yarn node v1.22.22\r\nCOREPACK_ROOT=\r\nDone in 0.05s.", "yarn 1"],
+  ["yarn node v1.22.22\r\nCOREPACK_ROOT=C:\\corepack\r\nDone in 0.05s.", "corepack"],
   ["yarn node v1.22.22\nCOREPACK_ROOT=/corepack\nDone in 0.05s.", "corepack"],
   ["COREPACK_ROOT=/corepack", "corepack"],
   ["yarn node v1.22.22\nDone in 0.05s.", "guess"],
