@@ -34,7 +34,8 @@ import { describeArtifactInputs } from "./ai/artifact-inputs.js";
 import { describeIntegrationInputs } from "./integration-inputs.js";
 import { manifestChoices, pathAtAncestor } from "./manifest-decision.js";
 import { assertKnownValue, assertPlainObject, assertStringArray } from "./utils/assertions.js";
-import { errorChain, formatErrorChain } from "./utils/error-chain.js";
+import { errorChain, fallbackErrorText, formatErrorChain } from "./utils/error-chain.js";
+import { redactSecrets } from "./utils/redact.js";
 import { assertWorkspacePath } from "./utils/fs.js";
 
 /**
@@ -670,7 +671,13 @@ export async function runMcpEntrypoint(options = {}) {
   } catch (error) {
     // The error chain, redacted, as the CLI prints it: each cause on its own
     // line, and the stack frames of each error when CALAVERA_DEBUG is on.
-    stderr.write(`[${SERVER_NAME}] failed to start MCP server\n${formatErrorChain(error, env)}\n`);
+    let text;
+    try {
+      text = formatErrorChain(error, env);
+    } catch {
+      text = redactSecrets(fallbackErrorText(error), env);
+    }
+    stderr.write(`[${SERVER_NAME}] failed to start MCP server\n${text}\n`);
     setExitCode(1);
   }
 }

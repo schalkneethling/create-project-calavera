@@ -300,3 +300,18 @@ export function formatErrorChain(error, env = process.env) {
     ),
   ].join("\n");
 }
+
+/**
+ * The error's own message, for when `formatErrorChain` throws: a failure to
+ * format the error must not hide the error itself.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+export function fallbackErrorText(error) {
+  try {
+    return String(error instanceof Error ? error.message : error);
+  } catch {
+    return "Calavera stopped with an error it could not display.";
+  }
+}

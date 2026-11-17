@@ -135,6 +135,7 @@ import { assertKnownValue } from "./utils/assertions.js";
 import { quoteShellToken } from "./utils/shell.js";
 import {
   FAILURE_OUTPUT_LINES,
+  fallbackErrorText,
   formatErrorChain,
   truncateFailureLine,
 } from "./utils/error-chain.js";
@@ -6757,18 +6758,6 @@ export async function runCli() {
     }
     logger.error(text);
     process.exitCode = 1;
-  }
-}
-
-/**
- * @param {unknown} error
- * @returns {string}
- */
-function fallbackErrorText(error) {
-  try {
-    return String(error instanceof Error ? error.message : error);
-  } catch {
-    return "Calavera stopped with an error it could not display.";
   }
 }
 

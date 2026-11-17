@@ -179,12 +179,44 @@ test("MCP startup failure prints the stack frames of each error with CALAVERA_DE
 
   assert.ok(!stderr.includes(envSecret), "the secret in a cause's message is redacted");
   assert.ok(stderr.endsWith(`failed to start MCP server\n${formatted}\n`), stderr);
-  assert.equal(formatted.match(/^Caused by: /gmu)?.length, 2);
+  assert.equal(stderr.match(/^Caused by: /gmu)?.length, 2);
   // The wrapper's frames, then each cause's frames, indented under it.
-  assert.match(formatted, /^Could not open the MCP transport\.\n\s+at\s/u);
-  assert.match(
-    formatted,
-    /\nCaused by: stdio pipe refused the handshake for \[redacted\]\n\s+at\s/u,
+  assert.match(stderr, /\nCould not open the MCP transport\.\n\s+at\s/u);
+  assert.match(stderr, /\nCaused by: stdio pipe refused the handshake for \[redacted\]\n\s+at\s/u);
+  assert.match(stderr, /\nCaused by: TypeError: stream is not writable\n\s+at\s/u);
+});
+
+test("MCP startup failure still prints the error, redacted, when the chain cannot be formatted", async () => {
+  // A chain this deep overflows the call stack of the recursive chain walk.
+  let error = new Error("innermost cause");
+  for (let depth = 0; depth < 20_000; depth += 1) {
+    error = new Error(`level ${depth}`, { cause: error });
+  }
+  error.message = `transport failed for ${envSecret}`;
+
+  const exitCodes = [];
+  const stderrWrites = [];
+  await runMcpEntrypoint({
+    cwd: "/example/project",
+    env: { NPM_TOKEN: envSecret },
+    stderr: {
+      write(chunk) {
+        stderrWrites.push(String(chunk));
+        return true;
+      },
+    },
+    setExitCode(code) {
+      exitCodes.push(code);
+    },
+    async startServer() {
+      throw error;
+    },
+  });
+  const stderr = stderrWrites.join("");
+
+  assert.deepEqual(exitCodes, [1]);
+  assert.ok(
+    stderr.endsWith("failed to start MCP server\ntransport failed for [redacted]\n"),
+    stderr,
   );
-  assert.match(formatted, /\nCaused by: TypeError: stream is not writable\n\s+at\s/u);
 });
