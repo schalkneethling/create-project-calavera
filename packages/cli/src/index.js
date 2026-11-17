@@ -3522,8 +3522,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     vitePlusStatus: vitePlusDetection.status,
   });
 
-  // #603: a value the person typed is recorded in the copy, so configText, when set, replaces the
-  // copied bytes.
+  // #603: a value the person typed is recorded in the project's recipe, so configText, when set,
+  // is written instead of the copied bytes, and the change is a write, not a copy.
   if (configText === undefined && applyOptions.recipeCopy !== undefined) {
     const { source, bytes, unchanged } = applyOptions.recipeCopy;
     changes.push({
@@ -3548,7 +3548,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       path: relative(process.cwd(), configPath),
       action: "write",
       ownership: "project",
-      ...(applyOptions.recipeCopy !== undefined ? { from: applyOptions.recipeCopy.source } : {}),
     });
     if (!applyOptions.dryRun && !configUnchanged) {
       await writeFile(configPath, configText);

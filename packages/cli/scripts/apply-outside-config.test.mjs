@@ -278,7 +278,7 @@ for (const [name, config] of [
   });
 }
 
-test("an answer typed during apply is recorded in the project's copy, not in the outside recipe", async () => {
+test("an answer typed during apply is written to the project's recipe, not to the outside recipe", async () => {
   await using fixture = await copyReleaseFixture("library");
   await using downloads = await mkdtempDisposable(join(tmpdir(), "calavera-outside-config-"));
   const source = join(await realpath(downloads.path), "calavera.config.json");
@@ -314,11 +314,52 @@ test("an answer typed during apply is recorded in the project's copy, not in the
         path: "calavera.config.json",
         action: "write",
         ownership: "project",
-        from: source,
       },
     ],
+    "the recipe is rewritten with the answer, so the change is not reported as a copy",
   );
   const copied = JSON.parse(await readFile(join(project, "calavera.config.json"), "utf8"));
   assert.equal(copied.integrationOptions?.stryker?.testRunner, "node:test");
   assert.equal(await readFile(source, "utf8"), strykerRecipeText, "the source is not changed");
+});
+
+test("--config naming a recipe in a subfolder of the project copies nothing, as before", async () => {
+  await using fixture = await downloadedRecipe();
+  await mkdir(join(fixture.project, "recipes"));
+  await writeFile(join(fixture.project, "recipes/team.json"), recipeText);
+  const before = await snapshotDirectory(fixture.project);
+
+  const result = await inDirectory(fixture.project, () =>
+    applyRecipe(applyOptions("recipes/team.json", { dryRun: true })),
+  );
+
+  assert.deepEqual(
+    result.changes.filter(({ path }) => path === "calavera.config.json"),
+    [],
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.project), before);
+});
+
+test("an outside --config from a folder without package.json is refused, even with --manifest-choice", async () => {
+  // The owner decision of 2026-11-14 keeps this rule apart from the #430 manifest choice: a recipe
+  // outside the working directory needs a package.json here, whatever choice is given.
+  await using fixture = await downloadedRecipe();
+  await writeFile(join(fixture.project, "calavera.config.json"), recipeText);
+  const subfolder = join(fixture.project, "docs");
+  await mkdir(subfolder);
+  const before = await snapshotDirectory(fixture.project);
+
+  const { code, stdout, stderr } = await runCli(subfolder, [
+    "apply",
+    "--config",
+    "../calavera.config.json",
+    "--manifest-choice",
+    "apply-at-ancestor",
+    "--no-install",
+  ]);
+
+  assert.notEqual(code, 0);
+  const output = `${stdout}${stderr}`;
+  assert.ok(output.includes(`${subfolder} has no package.json`), output);
+  assert.deepEqual(await snapshotDirectory(fixture.project), before);
 });

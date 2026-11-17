@@ -92,6 +92,10 @@ nothing. The project root is the current directory, and it must contain a
 offering to create `package.json`. When the project already has a different
 `calavera.config.json`, apply stops without writing anything, because it never
 replaces a project's recipe.
+When apply asks for a value that the recipe does not record, it writes the
+recipe with that value to `calavera.config.json` instead of an exact copy, and
+leaves the downloaded file unchanged. A `--config` path inside the project, such
+as `recipes/team.json`, is used where it is and is not copied.
 
 `npm create` needs the `--` separator before Calavera flags such as `--init`
 and `--dry-run`. Do not use `npm create project-calavera --init`; npm treats
