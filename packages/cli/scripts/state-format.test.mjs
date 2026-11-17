@@ -415,3 +415,34 @@ test("editorConfigRemovalChange compares the settings Oxfmt uses with and withou
   await writeFile(join(project, ".editorconfig"), renderEditorConfig(CALAVERA_EDITORCONFIG));
   assert.equal(await editorConfigRemovalChange(project, STATE_PATH), undefined);
 });
+
+test("Given a Vite+ project whose vp fmt cannot format the state, when agent-init runs, then the dry run and agent-init both stop before writing anything", async () => {
+  await using project = await copyReleaseFixture("library");
+  // #986: the guidance and MCP notes still format, so the first step to fail is the state.
+  // agent-init used to copy the skill files before that step.
+  await writeVitePlusFormatter(project.root, { failFor: STATE_PATH });
+  const options = { json: true, assumeYes: true, mcpHarness: "claude-code" };
+  const stop = /could not format \.calavera\/state\.json \(exit code 2\):\nvp stub: cannot format/;
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    await assert.rejects(agentBootstrap({ ...options, dryRun: true }), stop);
+    await assert.rejects(agentBootstrap(options), stop);
+    assert.deepEqual(await snapshotDirectory(), before, "agent-init wrote files before it stopped");
+  });
+});
+
+test("Given a Vite+ project, when agent-init runs as a dry run, then it lists the skill files and the state and writes nothing", async () => {
+  await using project = await copyReleaseFixture("library");
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    // #986: agent-init plans the skill files without writing, then copies them only outside a
+    // dry run, after the state is formatted.
+    const dryRun = await agentBootstrap({ json: true, dryRun: true, mcpHarness: "claude-code" });
+    const listed = dryRun.changes.map(({ path }) => path);
+    assert.ok(listed.includes(".agents/skills/calavera"), listed.join(", "));
+    assert.ok(listed.includes(STATE_PATH), listed.join(", "));
+    assert.deepEqual(await snapshotDirectory(), before, "the dry run changed the project");
+  });
+});

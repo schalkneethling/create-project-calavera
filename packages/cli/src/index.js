@@ -4340,21 +4340,31 @@ export async function agentBootstrap(options = {}) {
   ]);
 
   const previousState = await readStateIfPresent();
+  const skillSources = agentBootstrapSkillSources();
+  // #986: the skill records are planned without writing, as apply plans them (#838), so the state
+  // that records them is formatted before any skill file is copied.
   const aiResult = await buildAiApplyResult(
     AGENT_BOOTSTRAP_SKILL_RECIPE,
-    { dryRun: bootstrapOptions.dryRun },
+    { dryRun: true },
     previousState,
-    agentBootstrapSkillSources(),
+    skillSources,
   );
   /** @type {Change[]} */
   const changes = [...aiResult.changes];
-  // #838: formatted in the dry run as well, and before the guidance and MCP files are written. The
-  // skill files are already written by now, so a formatter failure here leaves them without a
-  // state record.
+  // #838: formatted in the dry run as well, and before agent-init writes anything, so a formatter
+  // failure leaves the project unchanged.
   const stateText = await formatStateText(
     mergeAiArtifactsIntoState(previousState, aiResult.artifacts),
     loadFormatter,
   );
+  if (!bootstrapOptions.dryRun) {
+    await buildAiApplyResult(
+      AGENT_BOOTSTRAP_SKILL_RECIPE,
+      { dryRun: false },
+      previousState,
+      skillSources,
+    );
+  }
 
   const fallbackGuidanceAwaitsMerge = await writeAgentBootstrapGuidance(
     bootstrapOptions,
