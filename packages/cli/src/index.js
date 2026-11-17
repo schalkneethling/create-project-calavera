@@ -4380,6 +4380,21 @@ export async function agentBootstrap(options = {}) {
     );
   }
 
+  // #957: the state file is listed like the skill files: once when the bootstrap writes or changes
+  // it, and not at all when it already holds this text. A change in layout alone is an update too.
+  const currentStateText = (await fileExists(STATE_FILE))
+    ? await readFile(STATE_FILE, "utf8")
+    : undefined;
+  if (currentStateText === undefined) {
+    changes.push({ type: "write", path: STATE_FILE });
+  } else if (currentStateText !== stateText) {
+    changes.push({
+      type: "update",
+      path: STATE_FILE,
+      reason: "Brought up to date.",
+    });
+  }
+
   // #601: the pointers carry only what the list of changes does not already say, so the summary
   // names each file once. A file that was written, updated, or skipped is in `changes`. The merge
   // note follows fallbackGuidanceAwaitsMerge, not the change type, because an up-to-date fallback

@@ -1942,6 +1942,7 @@ test("--new prints the bootstrap summary in labeled groups, with the prompt as i
       "  Wrote .coderabbit.yaml",
       "  Wrote AGENTS.md",
       "  Wrote .agents/calavera/mcp.md",
+      "  Wrote .calavera/state.json",
       "",
       "Notes:",
       "  Installed skills are available under .agents/skills/.",
