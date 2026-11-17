@@ -475,6 +475,55 @@ test("apply and its dry run remove the temporary folders they rebuild a locked p
   });
 });
 
+test("apply replaces a locked package whose payload no longer matches the lock", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    const installed = await snapshot();
+    await writeFile(
+      ".calavera/packages/skill-project-goal/0.1.0/payload/project-goal/SKILL.md",
+      "changed\n",
+    );
+
+    await applyRecipeObject(recipe, applyOptions, registry);
+
+    assert.deepEqual(await snapshot(), installed);
+  });
+});
+
+test("apply that installs an unlocked artifact also restores a missing locked package, and removes every temporary folder", async (t) => {
+  await inProject(async () => {
+    const releases = new Map([["skill-project-goal", "0.1.0"]]);
+    const registry = stubRegistry(releases);
+    await applyRecipeObject(recipeWith(["skill-project-goal"]), applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    releases.set("skill-code-review", "0.3.0");
+    const folders = recordRebuildFolders(t);
+
+    await applyRecipeObject(
+      recipeWith(["skill-project-goal", "skill-code-review"]),
+      applyOptions,
+      registry,
+    );
+
+    assert.equal(
+      (
+        await stat(".calavera/packages/skill-project-goal/0.1.0/payload/project-goal/SKILL.md")
+      ).isFile(),
+      true,
+    );
+    assert.equal((await stat(".agents/skills/code-review/SKILL.md")).isFile(), true);
+    assert.equal(folders.length, 1, "apply rebuilds the missing locked package once");
+    await assert.rejects(stat(folders[0]), { code: "ENOENT" });
+    assert.deepEqual(
+      await fsPromises.readdir(".calavera/.transactions"),
+      [],
+      "the install's staging folder was left behind",
+    );
+  });
+});
+
 test("a local edit to a locked artifact stops apply before an unlocked artifact is installed", async () => {
   await inProject(async () => {
     const releases = new Map([["skill-project-goal", "0.1.0"]]);
