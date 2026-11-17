@@ -73,30 +73,14 @@ export function declaredManagedFiles(integrationIds) {
     .flatMap(({ files }) => files);
 }
 
-// The order inspection has always listed existing configs in, which differs from the order apply
-// writes them in (#926). Every declared integration needs a place here.
-const existingConfigReportOrder = [
-  "editorconfig",
-  "github-repository-controls",
-  "html-validate",
-  "knip",
-  "react-doctor",
-  "stylelint",
-  "stryker",
-];
-
+// Inspection lists each integration's existing configs in the order apply writes the integrations
+// (#926). Within an integration, `existingConfigFiles` keeps its own order.
 export const integrationConfigFiles = Object.freeze(
   Object.fromEntries(
-    managedFileDeclarations
-      .toSorted(
-        (left, right) =>
-          existingConfigReportOrder.indexOf(left.integration) -
-          existingConfigReportOrder.indexOf(right.integration),
-      )
-      .map(({ integration, files, existingConfigFiles }) => [
-        integration,
-        existingConfigFiles ?? files.map(({ path }) => path),
-      ]),
+    managedFileDeclarations.map(({ integration, files, existingConfigFiles }) => [
+      integration,
+      existingConfigFiles ?? files.map(({ path }) => path),
+    ]),
   ),
 );
 
