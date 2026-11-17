@@ -64,16 +64,33 @@ export function assertRootOnlyIntegrationsAtRepositoryRoot(
   projectDirectory,
   packageManager,
 ) {
+  const message = rootOnlyIntegrationRefusal(integrations, projectDirectory, packageManager);
+
+  if (message !== undefined) {
+    throw new Error(message);
+  }
+}
+
+/**
+ * The message apply's root-only hard stop raises, or undefined when apply would not stop. doctor
+ * reports the same message, so the rule and its remedy live in one place (#997).
+ *
+ * @param {{ id: string }[]} integrations resolved recipe integrations
+ * @param {string} projectDirectory
+ * @param {keyof typeof projectLocalCommandCatalog} packageManager
+ * @returns {string | undefined}
+ */
+export function rootOnlyIntegrationRefusal(integrations, projectDirectory, packageManager) {
   const selectedIds = new Set(integrations.map(({ id }) => id));
   const rootOnly = integrationCatalog.find(
     (integration) => integration.appliesAt === "repository-root" && selectedIds.has(integration.id),
   );
 
   if (!rootOnly) {
-    return;
+    return undefined;
   }
 
-  assertAtRepositoryRoot(rootOnly.id, "", projectDirectory, packageManager);
+  return repositoryRootRefusal(rootOnly.id, "", projectDirectory, packageManager);
 }
 
 /**
@@ -96,30 +113,36 @@ export function assertGitHookArtifactsAtRepositoryRoot(
     return;
   }
 
-  assertAtRepositoryRoot(
+  const message = repositoryRootRefusal(
     id,
     " It writes Git hooks, and Git runs every hook from the repository root, so its hook lines would not find their scripts from here.",
     projectDirectory,
     packageManager,
   );
+
+  if (message !== undefined) {
+    throw new Error(message);
+  }
 }
 
 /**
+ * The refusal for `id` when `projectDirectory` is not the repository root, or undefined at the
+ * root.
+ *
  * @param {string} id
  * @param {string} why An extra sentence after the first, or an empty string.
  * @param {string} projectDirectory
  * @param {keyof typeof projectLocalCommandCatalog} packageManager
+ * @returns {string | undefined}
  */
-function assertAtRepositoryRoot(id, why, projectDirectory, packageManager) {
+function repositoryRootRefusal(id, why, projectDirectory, packageManager) {
   const project = resolve(projectDirectory);
   const root = findRepositoryRoot(project) ?? project;
 
   if (root === project) {
-    return;
+    return undefined;
   }
 
   const command = projectLocalCommandCatalog[packageManager].applyDryRun;
-  throw new Error(
-    `${id} applies at the repository root, not in a workspace member.${why} This project is ${project}; the repository root is ${root}. Apply a recipe that selects ${id} from the repository root (cd ${root} && ${command}, adding --config <path> when the recipe is saved elsewhere), or remove ${id} from this recipe.`,
-  );
+  return `${id} applies at the repository root, not in a workspace member.${why} This project is ${project}; the repository root is ${root}. Apply a recipe that selects ${id} from the repository root (cd ${root} && ${command}, adding --config <path> when the recipe is saved elsewhere), or remove ${id} from this recipe.`;
 }
