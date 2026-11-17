@@ -192,3 +192,16 @@ test("inspection of a project this release applied still reports a lint script o
     );
   });
 });
+
+test("a second artifacts-only apply writes the state the first one wrote, byte for byte", async () => {
+  const artifactsOnly = { ...buildRecipe("minimal", [], "npm"), ai: recipe.ai };
+  await inProject({}, async () => {
+    await applyRecipeObject(artifactsOnly, applyOptions, registry());
+    const first = await readFile(".calavera/state.json", "utf8");
+    assert.match(first, /"profile": "minimal"/);
+
+    await applyRecipeObject(artifactsOnly, applyOptions, registry());
+
+    assert.equal(await readFile(".calavera/state.json", "utf8"), first);
+  });
+});

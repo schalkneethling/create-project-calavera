@@ -54,6 +54,9 @@ export function stateShowsEarlierApply(state) {
 export function createEmptyState() {
   return {
     version: 1,
+    // Present though unset, in the place normalizeState gives it, so a state file keeps one key
+    // order whether apply records the profile on the first run or a later one.
+    profile: undefined,
     integrations: [],
     files: [],
     managedFiles: [],
