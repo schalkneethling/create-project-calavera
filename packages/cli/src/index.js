@@ -1149,7 +1149,7 @@ const supportedPackageManagers = /** @type {PackageManager[]} */ (
 /** @type {McpHarness[]} */
 const supportedMcpHarnesses = ["claude-code", "codex", "cursor", "opencode", "skip"];
 const supportedProfiles = profileIdsForRecipe();
-// The profile a run takes when nobody chooses one: --yes, or a prompt that returns no value.
+// The profile that --yes takes when --profile is not given.
 const defaultProfile = "default";
 const recipePackageManagers = packageManagerIdsForRecipe();
 const args = process.argv.slice(2);
@@ -5972,7 +5972,7 @@ Options:
   --config <path>      Recipe path, defaults to calavera.config.json
                        Before --new: copy this recipe into the new project
   --package-manager    npm, pnpm, yarn, or bun
-  --profile            default or minimal; with --yes, defaults to default
+  --profile            default or minimal; --yes without it uses default
   --tool <id>          Add an integration by id or label; repeatable
   --ai-artifact <id>   Add a bundled AI artifact; repeatable
   --tag <channel>      Artifact release channel: latest (default) or next
