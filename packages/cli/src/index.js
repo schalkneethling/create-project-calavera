@@ -4326,8 +4326,8 @@ export async function agentBootstrap(options = {}) {
 
   // #669: the Markdown Calavera writes is formatted by the project's formatter before anything is
   // written, so a Vite+ project's vp check accepts it, and a project whose formatter cannot load
-  // stops with nothing written. The MCP JSON is formatted when it is planned, after the guidance
-  // is written; the formatter has already run by then, but a failure there leaves AGENTS.md in
+  // stops with nothing written. The MCP JSON is formatted when it is planned, after the skill files
+  // are copied and the guidance is written; the formatter has already run by then, but a failure there leaves AGENTS.md in
   // place and is reported as a manual MCP setup.
   const loadFormatter = projectFormatterLoader(process.cwd());
   const [guidanceText, mcpInstructions] = await Promise.all([
@@ -4351,8 +4351,8 @@ export async function agentBootstrap(options = {}) {
   );
   /** @type {Change[]} */
   const changes = [...aiResult.changes];
-  // #838: formatted in the dry run as well, and before agent-init writes anything, so a formatter
-  // failure leaves the project unchanged.
+  // #838: formatted in the dry run as well, and before agent-init writes any file, so a project
+  // whose formatter cannot format the state is left unchanged.
   const stateText = await formatStateText(
     mergeAiArtifactsIntoState(previousState, aiResult.artifacts),
     loadFormatter,

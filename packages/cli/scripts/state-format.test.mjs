@@ -437,11 +437,12 @@ test("Given a Vite+ project, when agent-init runs as a dry run, then it lists th
 
   await inDirectory(project.root, async () => {
     const before = await snapshotDirectory();
-    // #986: agent-init plans the skill files without writing, then copies them only outside a
-    // dry run, after the state is formatted.
+    // #986: agent-init now plans the skill files in a dry run before it formats the state, so this
+    // guards that a dry run still only lists them, and the CodeRabbit config they bring.
     const dryRun = await agentBootstrap({ json: true, dryRun: true, mcpHarness: "claude-code" });
     const listed = dryRun.changes.map(({ path }) => path);
     assert.ok(listed.includes(".agents/skills/calavera"), listed.join(", "));
+    assert.ok(listed.includes(".coderabbit.yaml"), listed.join(", "));
     assert.ok(listed.includes(STATE_PATH), listed.join(", "));
     assert.deepEqual(await snapshotDirectory(), before, "the dry run changed the project");
   });
