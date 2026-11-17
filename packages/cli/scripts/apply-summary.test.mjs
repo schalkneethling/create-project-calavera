@@ -1116,3 +1116,28 @@ test("a legacy artifact entry is named by its catalog ID, with the version apply
     );
   });
 });
+
+test("a legacy entry's wiring sits under it, not under an artifact the recipe no longer selects", () => {
+  const lines = applySummaryLines(
+    emptyResult({
+      recipe: {
+        version: 1,
+        integrations: [],
+        ai: [{ type: "hook", src: "hooks/block-dangerous-commands", target: "claude-code" }],
+      },
+      wiringChanges: /** @type {any} */ ([
+        {
+          artifact: "hook-block-dangerous-commands",
+          path: ".claude/settings.json",
+          kind: "claude-settings",
+          type: "unchanged",
+        },
+      ]),
+    }),
+  ).map(({ text }) => text);
+  assert.deepEqual(lines.slice(lines.indexOf("Artifacts:")), [
+    "Artifacts:",
+    "  hook-block-dangerous-commands",
+    "    .claude/settings.json already holds its hook groups",
+  ]);
+});

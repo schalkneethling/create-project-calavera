@@ -362,7 +362,10 @@ function artifactLines(result) {
   // an item the recipe selects by its legacy type and src.
   const catalogIds = normalizePackageSelections(result.recipe.ai).map(({ id }) => id);
   for (const artifact of resolveAiArtifacts(result.recipe)) {
-    const id = catalogIds[artifact.index] ?? artifact.source;
+    const id = catalogIds[artifact.index];
+    if (id === undefined) {
+      throw new Error(`No catalog selection for the AI item at index ${artifact.index}.`);
+    }
     named.add(id);
     const written = aiArtifactOutputPaths(artifact).filter((path) => writtenPaths.has(path));
     const locked = result.autoInstalledArtifacts.find((entry) => entry.id === id);
