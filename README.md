@@ -751,7 +751,7 @@ approves the proposed recipe and dry-run result.
 ## Common Flags
 
 - `--config calavera.config.json`
-- `--profile default|minimal`
+- `--profile default|minimal`; `init --yes` without it uses `default`
 - `--package-manager npm|pnpm|yarn|bun`; in a Vite+-managed project it does not
   change the dev dependency install command, `vp add -D`
 - `--integration <id-or-label>` or `--tool <id-or-label>` for scripted
