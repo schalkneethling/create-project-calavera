@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
 };
 use serde::Serialize;
@@ -28,11 +28,32 @@ fn registered_path(path: String) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+// The recipe path is the one `--config` names, relative to the project. It may not leave the
+// project, so the app reads only the registered project's files.
+fn recipe_path(project: &Path, config: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(config);
+    let stays_inside = relative.components().next().is_some()
+        && relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
+    if !stays_inside {
+        return Err(format!("The recipe path {config} must be relative to the project and stay inside it."));
+    }
+    let path = project.join(relative);
+    if path.exists() {
+        let resolved = fs::canonicalize(&path).map_err(|error| error.to_string())?;
+        if !resolved.starts_with(project) {
+            return Err(format!("The recipe path {config} resolves outside the project."));
+        }
+    }
+    Ok(path)
+}
+
 #[tauri::command]
-fn inspect_project(path: String) -> Result<ProjectSnapshot, String> {
+fn inspect_project(path: String, config: String) -> Result<ProjectSnapshot, String> {
     let path = registered_path(path)?;
     Ok(ProjectSnapshot {
-        recipe: read_json(&path.join("calavera.config.json"))?,
+        recipe: read_json(&recipe_path(&path, &config)?)?,
         lock: read_json(&path.join(".calavera/artifacts.lock.json"))?,
         state: read_json(&path.join(".calavera/state.json"))?,
         path,
@@ -112,4 +133,26 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Calavera menu-bar companion");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::recipe_path;
+    use std::fs;
+
+    #[test]
+    fn recipe_path_stays_inside_the_project() {
+        let project = fs::canonicalize(std::env::temp_dir()).unwrap();
+        assert_eq!(
+            recipe_path(&project, "recipes/calavera.json").unwrap(),
+            project.join("recipes/calavera.json")
+        );
+        assert_eq!(
+            recipe_path(&project, "./calavera.config.json").unwrap(),
+            project.join("./calavera.config.json")
+        );
+        for config in ["", "/etc/calavera.json", "../calavera.config.json", "recipes/../../x.json"] {
+            assert!(recipe_path(&project, config).is_err(), "{config} was accepted");
+        }
+    }
 }

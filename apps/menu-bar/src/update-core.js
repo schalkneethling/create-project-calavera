@@ -1,17 +1,16 @@
+import { artifactUpdateCommand, CONFIG_FILE } from "../../../packages/cli/src/recipe.js";
+
 export const POLL_INTERVAL = 6 * 60 * 60 * 1000;
 
-function shellQuote(value) {
-  return `'${String(value).replaceAll("'", "'\\''")}'`;
+// The recipe path of a registered project; projects registered before #995 have none saved.
+export function recipePath(project) {
+  return project.config || CONFIG_FILE;
 }
 
-export function updateCommand(id, tag = "latest") {
-  return `create-project-calavera artifacts update ${shellQuote(id)} --tag ${shellQuote(tag)}`;
-}
-
-export function snapshotDiagnostics(snapshot) {
+export function snapshotDiagnostics(snapshot, config = CONFIG_FILE) {
   const diagnostics = [];
   const components = [
-    ["recipe", "recipe (calavera.config.json)", isRecipe],
+    ["recipe", `recipe (${config})`, isRecipe],
     ["lock", "artifact lock (.calavera/artifacts.lock.json)", isArtifactLock],
     ["state", "managed state (.calavera/state.json)", isManagedState],
   ];
@@ -26,7 +25,8 @@ export async function inspectUpdates(project, snapshot, fetcher = fetch) {
   const updates = [];
   for (const artifact of snapshot.lock?.artifacts ?? []) {
     const metadata = await registryMetadata(artifact.package, fetcher);
-    const version = metadata["dist-tags"]?.[project.tag ?? artifact.tag ?? "latest"];
+    const tag = project.tag ?? artifact.tag ?? "latest";
+    const version = metadata["dist-tags"]?.[tag];
     if (version && version !== artifact.version) {
       updates.push({
         key: `${project.path}:${artifact.id}:${version}`,
@@ -34,7 +34,8 @@ export async function inspectUpdates(project, snapshot, fetcher = fetch) {
         id: artifact.id,
         current: artifact.version,
         available: version,
-        command: updateCommand(artifact.id, project.tag),
+        // The command `artifacts status --json` reports as `updateCommand` (#995).
+        command: artifactUpdateCommand(snapshot.recipe, recipePath(project), artifact.id, tag),
       });
     }
   }

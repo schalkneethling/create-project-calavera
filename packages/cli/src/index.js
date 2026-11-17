@@ -120,6 +120,7 @@ import {
 import {
   assertKnownProfile,
   composeRecipe,
+  CONFIG_FILE,
   explainRecipeResponse,
   listAiArtifactOptions,
   listIntegrationOptions,
@@ -338,7 +339,6 @@ import { pluralizeCount, style, titleCase } from "./utils/text.js";
  * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | ArtifactCommandResult} CommandResult
  */
 
-const CONFIG_FILE = "calavera.config.json";
 const COMPOSER_URL = "https://calavera.schalkneethling.com/";
 const STATE_FILE = ".calavera/state.json";
 const AGENT_BOOTSTRAP_GUIDANCE_FILE = "AGENTS.md";

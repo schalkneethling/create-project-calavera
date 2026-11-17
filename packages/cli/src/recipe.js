@@ -17,6 +17,9 @@ import {
 import { isPlainObject } from "./utils/guards.js";
 import { quoteShellToken } from "./utils/shell.js";
 
+/** The recipe path Calavera reads when `--config` names no other. */
+export const CONFIG_FILE = "calavera.config.json";
+
 export const CONFIG_SCHEMA_URL = "https://calavera.schalkneethling.com/calavera.config.schema.json";
 
 /**
@@ -322,6 +325,52 @@ export function projectLocalCalaveraCommand(packageManager, positionals, flags) 
     commands.runCalavera,
     ...[...positionals, ...separator, ...flags].map(quoteShellToken),
   ].join(" ");
+}
+
+/**
+ * A `create-project-calavera artifacts` command as `artifacts status` prints it: run through the
+ * recipe's package manager (npm when the recipe names none), and naming the recipe when it is not
+ * at the default path, so the command runs as printed from the project directory. The menu-bar
+ * app copies the same command (#995).
+ *
+ * @param {unknown} recipe The parsed recipe.
+ * @param {string} config The recipe path, as `--config` names it.
+ * @param {string[]} positionals Words after `artifacts`, such as `["update", id]`.
+ * @param {string[]} [flags]
+ */
+export function artifactCommand(recipe, config, positionals, flags = []) {
+  const packageManager =
+    isPlainObject(recipe) && packageManagerIds.includes(String(recipe.packageManager))
+      ? String(recipe.packageManager)
+      : "npm";
+  const configFlags = config === CONFIG_FILE ? [] : ["--config", config];
+  return projectLocalCalaveraCommand(
+    packageManager,
+    ["artifacts", ...positionals],
+    [...flags, ...configFlags],
+  );
+}
+
+/**
+ * The flags that keep an update on `tag`. `artifacts update` follows `latest` unless `--tag`
+ * names another channel.
+ *
+ * @param {string | undefined} tag
+ */
+export function artifactTagFlags(tag) {
+  return tag === "next" ? ["--tag", "next"] : [];
+}
+
+/**
+ * The command that updates artifact `id` on channel `tag`.
+ *
+ * @param {unknown} recipe
+ * @param {string} config
+ * @param {string} id
+ * @param {string | undefined} tag
+ */
+export function artifactUpdateCommand(recipe, config, id, tag) {
+  return artifactCommand(recipe, config, ["update", id], artifactTagFlags(tag));
 }
 
 export function projectLocalCommandSteps(packageManager = "npm") {

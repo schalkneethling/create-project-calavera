@@ -9,6 +9,7 @@ import {
   inspectAppUpdate,
   inspectUpdates,
   POLL_INTERVAL,
+  recipePath,
   snapshotDiagnostics,
   unseenUpdates,
 } from "./update-core.js";
@@ -38,11 +39,12 @@ form.addEventListener("submit", async (event) => {
   const data = new FormData(form);
   const project = {
     path: String(data.get("path")).trim(),
+    config: String(data.get("config")).trim(),
     cliVersion: String(data.get("cliVersion")).trim(),
     tag: String(data.get("tag")),
   };
   try {
-    await invoke("inspect_project", { path: project.path });
+    await invoke("inspect_project", { path: project.path, config: recipePath(project) });
   } catch (error) {
     statusElement.textContent = `Could not register project: ${String(error)}`;
     return;
@@ -78,7 +80,10 @@ async function performCheckAll() {
   }
   for (const project of settings.projects) {
     try {
-      const snapshot = await invoke("inspect_project", { path: project.path });
+      const snapshot = await invoke("inspect_project", {
+        path: project.path,
+        config: recipePath(project),
+      });
       const updates = await inspectUpdates(project, snapshot);
       const unseen = unseenUpdates(updates, settings.notificationHistory);
       for (const update of unseen) await notify(update, project.path);
@@ -105,7 +110,9 @@ function render(
     const heading = document.createElement("h2");
     heading.textContent = result.project.path;
     const summary = document.createElement("p");
-    const diagnostics = result.snapshot ? snapshotDiagnostics(result.snapshot) : [];
+    const diagnostics = result.snapshot
+      ? snapshotDiagnostics(result.snapshot, recipePath(result.project))
+      : [];
     summary.textContent =
       result.error ??
       (diagnostics.length > 0 ? diagnostics.join("; ") : `${result.updates.length} update(s)`);
