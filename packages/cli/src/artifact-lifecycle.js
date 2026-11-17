@@ -419,7 +419,8 @@ async function migrateRecipe(options) {
 
 /** @param {ArtifactOptions} options @param {{ resolve: typeof resolveArtifactPackage }} registry */
 async function artifactStatus(options, registry) {
-  const recipe = (await fileExists(options.config)) ? await readJson(options.config) : {};
+  const recipeFound = await fileExists(options.config);
+  const recipe = recipeFound ? await readJson(options.config) : {};
   const selections = normalizePackageSelections(recipe.ai);
   const selectedIds = new Set(selections.map(({ id }) => id));
   // Printed commands run through the project's runner and name the recipe when it is not the
@@ -481,7 +482,8 @@ async function artifactStatus(options, registry) {
           ? command(["update", entry.id], tagFlags(entry.tag))
           : null,
       installCommand: null,
-      selected: selectedIds.has(entry.id),
+      // #992: without a recipe, status cannot say which lock entries an install would drop.
+      selected: recipeFound ? selectedIds.has(entry.id) : null,
     });
   }
   const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
@@ -593,7 +595,8 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     command: updating ? "artifacts update" : "artifacts install",
     dryRun: options.dryRun,
     artifacts: result.entries,
-    // #992: the lock written above keeps only the selections, so these entries are gone from it.
+    // #992: the lock written above holds only staged selections, so it no longer holds the entries
+    // of artifacts the recipe does not select.
     removedLockEntries: currentLock.artifacts
       .filter(({ id }) => !selectedIds.has(id))
       .map(({ id, version, tag }) => ({ id, version, tag })),

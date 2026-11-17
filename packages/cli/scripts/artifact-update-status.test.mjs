@@ -1183,10 +1183,14 @@ test("status output names an unselected artifact even when it has an update", ()
       offline: false,
       updateAllCommand: null,
       checkUpdatesCommand: null,
-      artifacts: [entry({ latestVersion: "0.3.0", updateAvailable: true, selected: false })],
+      artifacts: [
+        entry({ id: "skill-code-review", latestVersion: "0.2.1" }),
+        entry({ latestVersion: "0.3.0", updateAvailable: true, selected: false }),
+      ],
     }),
   );
   assert.deepEqual(lines, [
+    "skill-code-review  0.2.1, up to date (latest)",
     "skill-project-goal  0.2.1 → 0.3.0 (latest)",
     NOT_SELECTED,
     "  Release notes: none, because the package metadata names no GitHub repository and package directory to link to",
@@ -1238,11 +1242,22 @@ for (const artifactAction of ["update", "install"]) {
           lock.artifacts.map(({ id }) => id),
           ["skill-project-goal"],
         );
-        // The installed files stay, as status and the warning say.
+        // The installed files stay, as status and the warning say: the outputs, the package
+        // directory, and the state records that let `clean` remove them later.
         const tokenFiles = (/** @type {Record<string, string>} */ snapshot) =>
-          Object.entries(snapshot).filter(([path]) => path.startsWith(tokens.destination));
-        assert.ok(tokenFiles(before).length > 0);
+          Object.entries(snapshot).filter(
+            ([path]) =>
+              path.startsWith(tokens.destination) ||
+              path.startsWith(join(".calavera", "packages", "skill-css-tokens")),
+          );
+        assert.ok(tokenFiles(before).some(([path]) => path.startsWith(".calavera")));
+        assert.ok(tokenFiles(before).some(([path]) => path.startsWith(tokens.destination)));
         assert.deepEqual(tokenFiles(await snapshotDirectory()), tokenFiles(before));
+        const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+        assert.ok(
+          state.aiArtifacts.some(({ path }) => path.startsWith(tokens.destination)),
+          JSON.stringify(state.aiArtifacts),
+        );
 
         const again = await runArtifactCommand({ ...options, dryRun: true }, releases);
         assert.deepEqual(again.removedLockEntries, []);
@@ -1251,3 +1266,53 @@ for (const artifactAction of ["update", "install"]) {
     );
   });
 }
+
+test("status names only install when the recipe selects no artifact, which update refuses", async () => {
+  await inProject({ ids: [], locked: [{ id: "skill-css-tokens", version: "0.2.1" }] }, async () => {
+    const result = await runArtifactCommand(statusOptions({ checkUpdates: false }), {
+      resolve: async () => assert.fail("Offline status contacts no registry."),
+      extract: async () => assert.fail("Status never extracts a package."),
+    });
+    assert.equal(result.artifacts[0].selected, false);
+    assert.deepEqual(messages(formatArtifactStatus(result)).slice(0, 2), [
+      "skill-css-tokens  0.2.1 (latest)",
+      "  Not selected: the recipe selects no artifacts, so the next artifacts install removes its lock entry and leaves its installed files in place.",
+    ]);
+    await assert.rejects(
+      runArtifactCommand(
+        {
+          config: "calavera.config.json",
+          dryRun: true,
+          artifactAction: "update",
+          artifactAll: true,
+        },
+        stubRegistry(new Map()),
+      ),
+      /requires an artifact ID or --all/,
+    );
+    const planned = await runArtifactCommand(
+      { config: "calavera.config.json", dryRun: true, artifactAction: "install" },
+      stubRegistry(new Map()),
+    );
+    assert.deepEqual(
+      planned.removedLockEntries.map(({ id }) => id),
+      ["skill-css-tokens"],
+    );
+  });
+});
+
+test("status without a recipe does not claim the recipe deselected its artifacts", async () => {
+  await inProject(
+    { ids: ["skill-css-tokens"], locked: [{ id: "skill-css-tokens", version: "0.2.1" }] },
+    async () => {
+      await rm("calavera.config.json");
+      const result = await runArtifactCommand(statusOptions({ checkUpdates: false }), {
+        resolve: async () => assert.fail("Offline status contacts no registry."),
+        extract: async () => assert.fail("Status never extracts a package."),
+      });
+      assert.equal(result.artifacts[0].selected, null);
+      const printed = messages(formatArtifactStatus(result));
+      assert.ok(!printed.some((line) => line.includes("Not selected")), printed.join("\n"));
+    },
+  );
+});
