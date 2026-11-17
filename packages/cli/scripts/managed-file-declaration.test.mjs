@@ -1,9 +1,10 @@
 // Issue #458: every command that plans, writes, checks, or cleans managed files reads them from one
 // declaration. The first tests pin which files each command included before the refactor, so the
-// refactor cannot change them. Inspection lists them in apply's write order (#926).
+// refactor cannot change them. Inspection lists them in apply's write order (#926). Since #925,
+// doctor also checks the github-repository-controls files, which it skipped before.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtempDisposable, writeFile } from "node:fs/promises";
+import { mkdir, mkdtempDisposable, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -146,8 +147,10 @@ test("inspection reports existing-config findings in apply's write order (#926)"
   }
 });
 
-test("doctor checks every planned file except the github-repository-controls files", async () => {
+test("doctor checks every planned file", async () => {
   await using directory = await mkdtempDisposable(join(tmpdir(), "calavera-458-"));
+  // The project is its own repository root, even when the temporary folder is inside a checkout.
+  await mkdir(join(directory.path, ".git"));
   await writeFile(
     join(directory.path, "calavera.config.json"),
     `${JSON.stringify({
@@ -164,15 +167,58 @@ test("doctor checks every planned file except the github-repository-controls fil
     env: { ...process.env, NO_COLOR: "1" },
   }).catch((error) => error);
   const prefix = "Missing managed file: ";
-  const missing = JSON.parse(stdout)
+  const messages = JSON.parse(stdout)
     .issues.map(({ message }) => message)
-    .filter((message) => message.startsWith(prefix))
-    .map((message) => message.slice(prefix.length).split(". Run ")[0]);
+    .filter((message) => message.startsWith(prefix));
 
-  // #925: doctor has never checked the github-repository-controls files.
+  // #925: the github-repository-controls files are checked like every other managed file, and at
+  // the repository root the remedy is the plain one.
   assert.deepEqual(
-    missing,
-    plannedPaths.filter((path) => !repositoryControlFiles.includes(path)),
+    messages,
+    plannedPaths.map(
+      (path) => `${prefix}${path}. Run create-project-calavera apply to regenerate managed files.`,
+    ),
+  );
+});
+
+test("doctor run from a workspace member checks the repository-controls files at the repository root", async () => {
+  await using directory = await mkdtempDisposable(join(tmpdir(), "calavera-925-"));
+  const root = directory.path;
+  const member = join(root, "packages", "app");
+  await mkdir(join(root, ".git"));
+  await mkdir(member, { recursive: true });
+  await writeFile(
+    join(member, "calavera.config.json"),
+    `${JSON.stringify({
+      version: 1,
+      profile: "web",
+      packageManager: "npm",
+      integrations: ["knip", "github-repository-controls"],
+      integrationOptions,
+    })}\n`,
+  );
+  // knip applies in the member, so its file is checked there, not at the repository root.
+  await writeFile(join(member, "knip.json"), "{}\n");
+  // Every repository-controls file but the last exists at the repository root, none in the member.
+  const [missingFile, ...presentFiles] = repositoryControlFiles.toReversed();
+  for (const path of presentFiles) {
+    await mkdir(join(root, path, ".."), { recursive: true });
+    await writeFile(join(root, path), "");
+  }
+
+  const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
+    cwd: member,
+    env: { ...process.env, NO_COLOR: "1" },
+  }).catch((error) => error);
+  const messages = JSON.parse(stdout)
+    .issues.map(({ message }) => message)
+    .filter((message) => message.startsWith("Missing managed file: "));
+
+  assert.equal(messages.length, 1, messages.join("\n"));
+  // process.cwd() is the real path, so on macOS the root is /private/var/..., not /var/....
+  assert.equal(
+    messages[0],
+    `Missing managed file: ../../${missingFile}. Run create-project-calavera apply from the repository root, ${await realpath(root)}, to regenerate managed files, adding --config <path> when the recipe is saved elsewhere.`,
   );
 });
 
@@ -216,12 +262,12 @@ test("every integration that writes a managed file appears exactly once in the o
   assert.deepEqual(paths, [...new Set(paths)], "no file is declared by two integrations");
 });
 
-test("doctor's list is the declared files of the selected integrations, minus those it skips", () => {
+test("doctor's list is the declared files of the selected integrations", () => {
   assert.equal(typeof projectInspection.declaredManagedFiles, "function");
   const files = projectInspection.declaredManagedFiles(["knip", "github-repository-controls"]);
   assert.deepEqual(files, [
-    { path: "knip.json" },
-    ...repositoryControlFiles.map((path) => ({ path, checkedByDoctor: false })),
+    { integration: "knip", path: "knip.json" },
+    ...repositoryControlFiles.map((path) => ({ integration: "github-repository-controls", path })),
   ]);
   assert.deepEqual(projectInspection.declaredManagedFiles(["varlock"]), []);
 });
