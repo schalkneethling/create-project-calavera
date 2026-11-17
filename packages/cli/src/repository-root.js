@@ -144,7 +144,5 @@ function repositoryRootRefusal(id, why, projectDirectory, packageManager) {
   }
 
   const command = projectLocalCommandCatalog[packageManager].applyDryRun;
-  return (
-    `${id} applies at the repository root, not in a workspace member.${why} This project is ${project}; the repository root is ${root}. Apply a recipe that selects ${id} from the repository root (cd ${root} && ${command}, adding --config <path> when the recipe is saved elsewhere), or remove ${id} from this recipe.`
-  );
+  return `${id} applies at the repository root, not in a workspace member.${why} This project is ${project}; the repository root is ${root}. Apply a recipe that selects ${id} from the repository root (cd ${root} && ${command}, adding --config <path> when the recipe is saved elsewhere), or remove ${id} from this recipe.`;
 }
