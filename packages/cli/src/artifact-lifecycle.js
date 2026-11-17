@@ -21,14 +21,17 @@ import {
 import { assertFirstSelection } from "./ai/recipe-items.js";
 import { GITIGNORE_PATH, planGitignoreBlocks } from "./ignore-lines.js";
 import { artifactReleaseNotesUrl } from "./artifact-status-report.js";
-import { packageManagerIdsForRecipe, projectLocalCalaveraCommand } from "./recipe.js";
+import {
+  artifactCommand,
+  artifactTagFlags,
+  artifactUpdateCommand,
+} from "./project-local-commands.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import { errorAfterCleanups, runCleanups } from "./utils/cleanup.js";
 import { fileExists } from "./utils/fs.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
 
-const CONFIG_FILE = "calavera.config.json";
 const LOCK_PATH = ".calavera/artifacts.lock.json";
 const STATE_PATH = ".calavera/state.json";
 const CACHE_ROOT = ".calavera/cache";
@@ -553,21 +556,9 @@ async function artifactStatus(options, registry, loadFormatter) {
   const recipe = recipeFound ? await readJson(options.config) : {};
   const selections = normalizePackageSelections(recipe.ai);
   const selectedIds = new Set(selections.map(({ id }) => id));
-  // Printed commands run through the project's runner and name the recipe when it is not the
-  // default one, so each runs as printed from the project directory.
-  const packageManager = packageManagerIdsForRecipe().includes(String(recipe.packageManager))
-    ? String(recipe.packageManager)
-    : "npm";
-  const configFlags = options.config === CONFIG_FILE ? [] : ["--config", options.config];
   /** @param {string[]} positionals @param {string[]} [flags] */
-  const command = (positionals, flags = []) =>
-    projectLocalCalaveraCommand(
-      packageManager,
-      ["artifacts", ...positionals],
-      [...flags, ...configFlags],
-    );
-  /** @param {string | undefined} tag */
-  const tagFlags = (tag) => (tag === "next" ? ["--tag", "next"] : []);
+  const command = (positionals, flags) =>
+    artifactCommand(recipe, options.config, positionals, flags);
   const lock = await readLock();
   const state = await readState();
   const stateByPath = new Map(state.aiArtifacts.map((item) => [item.path, item]));
@@ -633,7 +624,7 @@ async function artifactStatus(options, registry, loadFormatter) {
         // `artifacts update` refuses an artifact the recipe does not select.
         updateCommand:
           updateAvailable && selectedIds.has(entry.id)
-            ? command(["update", entry.id], tagFlags(entry.tag))
+            ? artifactUpdateCommand(recipe, options.config, entry.id, entry.tag)
             : null,
         installCommand: null,
         // #992: without a recipe, status cannot say which lock entries an install would drop.
@@ -686,7 +677,9 @@ async function artifactStatus(options, registry, loadFormatter) {
       command: `artifacts ${options.artifactAction}`,
       dryRun: options.dryRun,
       offline: !options.checkUpdates,
-      updateAllCommand: updateAll ? command(["update"], ["--all", ...tagFlags(channel)]) : null,
+      updateAllCommand: updateAll
+        ? command(["update"], ["--all", ...artifactTagFlags(channel)])
+        : null,
       checkUpdatesCommand: options.checkUpdates ? null : command(["status"], ["--check-updates"]),
       ok: artifacts.every(
         ({ installed, managed, locallyEdited }) => installed && managed && !locallyEdited,

@@ -17,6 +17,7 @@ import {
   formatRemovedLockEntries,
 } from "../src/artifact-status-report.js";
 import { parseArgs } from "../src/index.js";
+import { artifactUpdateCommand } from "../src/project-local-commands.js";
 import {
   buildRecipe,
   projectLocalCalaveraCommand,
@@ -480,6 +481,32 @@ test("printed update commands parse to the update they describe", () => {
     assert.equal(all.artifactAll, true);
     assert.equal(all.artifactTag, "latest");
   }
+});
+
+// #995: the menu-bar app copies these commands, so each package manager's runner and separator
+// are pinned here rather than read back from the catalog.
+test("each package manager prints its own runner, and npm alone needs a separator", () => {
+  const expected = {
+    npm: "npm create project-calavera artifacts update skill-project-goal -- --tag next --config recipes/calavera.json",
+    pnpm: "pnpm dlx create-project-calavera artifacts update skill-project-goal --tag next --config recipes/calavera.json",
+    yarn: "yarn dlx create-project-calavera artifacts update skill-project-goal --tag next --config recipes/calavera.json",
+    bun: "bunx create-project-calavera artifacts update skill-project-goal --tag next --config recipes/calavera.json",
+  };
+  for (const [packageManager, command] of Object.entries(expected)) {
+    assert.equal(
+      artifactUpdateCommand(
+        { packageManager },
+        "recipes/calavera.json",
+        "skill-project-goal",
+        "next",
+      ),
+      command,
+    );
+  }
+  assert.equal(
+    artifactUpdateCommand({}, "calavera.config.json", "skill-project-goal", "latest"),
+    "npm create project-calavera artifacts update skill-project-goal",
+  );
 });
 
 test("the printed commands run the update and keep the local-edit safeguard", async () => {

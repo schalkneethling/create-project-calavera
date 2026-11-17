@@ -1,6 +1,6 @@
 use std::{
     fs,
-    path::{Path, PathBuf},
+    path::{Component, Path, PathBuf},
     process::Command,
 };
 use serde::Serialize;
@@ -12,6 +12,7 @@ use tauri::{menu::{Menu, MenuItem}, tray::TrayIconBuilder, Manager};
 struct ProjectSnapshot {
     path: PathBuf,
     recipe: Option<Value>,
+    recipe_error: Option<String>,
     lock: Option<Value>,
     state: Option<Value>,
 }
@@ -28,11 +29,42 @@ fn registered_path(path: String) -> Result<PathBuf, String> {
     Ok(path)
 }
 
+// The recipe path is the one `--config` names, relative to the project. It may not leave the
+// project, so the app reads only the registered project's files.
+fn recipe_path(project: &Path, config: &str) -> Result<PathBuf, String> {
+    let relative = Path::new(config);
+    let stays_inside = relative
+        .components()
+        .any(|component| matches!(component, Component::Normal(_)))
+        && relative
+            .components()
+            .all(|component| matches!(component, Component::Normal(_) | Component::CurDir));
+    if !stays_inside {
+        return Err(format!("The recipe path {config} must be relative to the project and stay inside it."));
+    }
+    let path = project.join(relative);
+    if path.exists() {
+        let resolved = fs::canonicalize(&path).map_err(|error| error.to_string())?;
+        if !resolved.starts_with(project) {
+            return Err(format!("The recipe path {config} resolves outside the project."));
+        }
+    }
+    Ok(path)
+}
+
 #[tauri::command]
-fn inspect_project(path: String) -> Result<ProjectSnapshot, String> {
+fn inspect_project(path: String, config: String) -> Result<ProjectSnapshot, String> {
     let path = registered_path(path)?;
+    // A recipe path that leaves the project is refused and fails the check, as at registration.
+    // A recipe that cannot be read or parsed is reported with its cause instead of failing the
+    // whole check, so the project's updates stay listed.
+    let (recipe, recipe_error) = match read_json(&recipe_path(&path, &config)?) {
+        Ok(recipe) => (recipe, None),
+        Err(error) => (None, Some(error)),
+    };
     Ok(ProjectSnapshot {
-        recipe: read_json(&path.join("calavera.config.json"))?,
+        recipe,
+        recipe_error,
         lock: read_json(&path.join(".calavera/artifacts.lock.json"))?,
         state: read_json(&path.join(".calavera/state.json"))?,
         path,
@@ -112,4 +144,133 @@ pub fn run() {
         })
         .run(tauri::generate_context!())
         .expect("error while running Calavera menu-bar companion");
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{inspect_project, recipe_path};
+    use std::{
+        fs,
+        os::unix::fs::symlink,
+        path::{Path, PathBuf},
+    };
+
+    // A project directory and a sibling directory outside it, removed when the test ends.
+    struct Tree {
+        root: PathBuf,
+        project: PathBuf,
+        outside: PathBuf,
+    }
+
+    impl Tree {
+        fn new(name: &str) -> Self {
+            let root = fs::canonicalize(std::env::temp_dir())
+                .unwrap()
+                .join(format!("calavera-menu-bar-{name}-{}", std::process::id()));
+            let _ = fs::remove_dir_all(&root);
+            let project = root.join("project");
+            let outside = root.join("outside");
+            fs::create_dir_all(&project).unwrap();
+            fs::create_dir_all(&outside).unwrap();
+            Tree { root, project, outside }
+        }
+
+        fn write(&self, path: &Path, contents: &str) {
+            fs::create_dir_all(path.parent().unwrap()).unwrap();
+            fs::write(path, contents).unwrap();
+        }
+    }
+
+    impl Drop for Tree {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn a_linked_recipe_file_outside_the_project_is_refused() {
+        let tree = Tree::new("linked-file");
+        tree.write(&tree.outside.join("calavera.json"), "{}");
+        symlink(tree.outside.join("calavera.json"), tree.project.join("calavera.config.json"))
+            .unwrap();
+        let error = recipe_path(&tree.project, "calavera.config.json").unwrap_err();
+        assert!(error.contains("resolves outside the project"), "{error}");
+    }
+
+    #[test]
+    fn a_linked_parent_directory_outside_the_project_is_refused() {
+        let tree = Tree::new("linked-directory");
+        tree.write(&tree.outside.join("calavera.json"), "{}");
+        symlink(&tree.outside, tree.project.join("recipes")).unwrap();
+        let error = recipe_path(&tree.project, "recipes/calavera.json").unwrap_err();
+        assert!(error.contains("resolves outside the project"), "{error}");
+    }
+
+    #[test]
+    fn links_that_stay_inside_the_project_are_accepted() {
+        let tree = Tree::new("linked-inside");
+        tree.write(&tree.project.join("config/calavera.json"), "{}");
+        symlink(tree.project.join("config/calavera.json"), tree.project.join("calavera.config.json"))
+            .unwrap();
+        symlink(tree.project.join("config"), tree.project.join("recipes")).unwrap();
+        assert_eq!(
+            recipe_path(&tree.project, "calavera.config.json").unwrap(),
+            tree.project.join("calavera.config.json")
+        );
+        assert_eq!(
+            recipe_path(&tree.project, "recipes/calavera.json").unwrap(),
+            tree.project.join("recipes/calavera.json")
+        );
+    }
+
+    #[test]
+    fn an_unreadable_recipe_keeps_the_rest_of_the_snapshot_and_its_cause() {
+        let tree = Tree::new("invalid-recipe");
+        tree.write(&tree.project.join("calavera.config.json"), "{ not json");
+        tree.write(
+            &tree.project.join(".calavera/artifacts.lock.json"),
+            r#"{ "schemaVersion": 1, "artifacts": [] }"#,
+        );
+        let snapshot = inspect_project(
+            tree.project.to_string_lossy().into_owned(),
+            "calavera.config.json".into(),
+        )
+        .unwrap();
+        assert!(snapshot.recipe.is_none());
+        assert!(snapshot.lock.is_some());
+        let error = snapshot.recipe_error.clone().expect("the read error");
+        assert!(!error.is_empty());
+        // The webview reads the error as `recipeError`.
+        let serialized = serde_json::to_value(&snapshot).unwrap();
+        assert_eq!(serialized["recipeError"], serde_json::Value::String(error));
+        assert!(serialized["recipe"].is_null());
+    }
+
+    #[test]
+    fn a_missing_recipe_is_not_an_error() {
+        let tree = Tree::new("missing-recipe");
+        let snapshot = inspect_project(
+            tree.project.to_string_lossy().into_owned(),
+            "calavera.config.json".into(),
+        )
+        .unwrap();
+        assert!(snapshot.recipe.is_none());
+        assert!(snapshot.recipe_error.is_none());
+    }
+
+    #[test]
+    fn recipe_path_stays_inside_the_project() {
+        let project = fs::canonicalize(std::env::temp_dir()).unwrap();
+        assert_eq!(
+            recipe_path(&project, "recipes/calavera.json").unwrap(),
+            project.join("recipes/calavera.json")
+        );
+        assert_eq!(
+            recipe_path(&project, "./calavera.config.json").unwrap(),
+            project.join("./calavera.config.json")
+        );
+        for config in ["", ".", "/etc/calavera.json", "../calavera.config.json", "recipes/../../x.json"] {
+            assert!(recipe_path(&project, config).is_err(), "{config} was accepted");
+        }
+    }
 }
