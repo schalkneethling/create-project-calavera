@@ -214,6 +214,28 @@ test("names missing and incompatible project-state components", () => {
   );
 });
 
+test("an unreadable recipe is named with its cause, and its updates stay listed without a command", async () => {
+  const snapshot = {
+    recipe: null,
+    recipeError: "key must be a string at line 1 column 3",
+    lock: {
+      schemaVersion: 1,
+      artifacts: [{ id: "skill-project-goal", package: "example", version: "1.0.0" }],
+    },
+    state: { version: 1, managedFiles: [], aiArtifacts: [] },
+  };
+  assert.deepEqual(snapshotDiagnostics(snapshot, "recipes/calavera.json"), [
+    "Unreadable recipe (recipes/calavera.json): key must be a string at line 1 column 3",
+  ]);
+  const [update] = await inspectUpdates(
+    { path: "/project", tag: "latest", config: "recipes/calavera.json" },
+    snapshot,
+    fetcher,
+  );
+  assert.equal(update.available, "2.0.0");
+  assert.equal(update.command, null);
+});
+
 test("a project registered without a recipe path reads the default recipe", () => {
   assert.equal(recipePath({ path: "/project" }), "calavera.config.json");
   assert.equal(

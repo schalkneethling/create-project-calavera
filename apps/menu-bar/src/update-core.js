@@ -18,7 +18,9 @@ export function snapshotDiagnostics(snapshot, config = CONFIG_FILE) {
     ["state", "managed state (.calavera/state.json)", isManagedState],
   ];
   for (const [key, label, validator] of components) {
-    if (snapshot[key] == null) diagnostics.push(`Missing ${label}`);
+    if (key === "recipe" && snapshot.recipeError) {
+      diagnostics.push(`Unreadable ${label}: ${snapshot.recipeError}`);
+    } else if (snapshot[key] == null) diagnostics.push(`Missing ${label}`);
     else if (!validator(snapshot[key])) diagnostics.push(`Incompatible ${label}`);
   }
   return diagnostics;
@@ -38,7 +40,8 @@ export async function inspectUpdates(project, snapshot, fetcher = fetch) {
         current: artifact.version,
         available: version,
         // The command `artifacts status --json` reports as `updateCommand` while the registered
-        // channel matches the lock's channel (#995). Without a recipe, status reports none.
+        // channel matches the lock's channel (#995). Without a usable recipe, the app offers none;
+        // status reports none for a missing recipe and fails on an unreadable one.
         command: isRecipe(snapshot.recipe)
           ? artifactUpdateCommand(snapshot.recipe, recipePath(project), artifact.id, tag)
           : null,
