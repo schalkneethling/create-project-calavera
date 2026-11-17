@@ -4382,6 +4382,21 @@ export async function agentBootstrap(options = {}) {
   // note follows fallbackGuidanceAwaitsMerge, not the change type, because an up-to-date fallback
   // is also reported as a skip; only a fallback kept as a local edit gets no note.
 
+  // #957: the state file is listed like the skill files it records: once when the bootstrap writes
+  // or changes it, and not at all when it already holds this text.
+  const currentStateText = (await fileExists(STATE_FILE))
+    ? await readFile(STATE_FILE, "utf8")
+    : undefined;
+  if (currentStateText === undefined) {
+    changes.push({ type: "write", path: STATE_FILE });
+  } else if (currentStateText !== stateText) {
+    changes.push({
+      type: "update",
+      path: STATE_FILE,
+      reason: "Record the Calavera skill files the bootstrap manages.",
+    });
+  }
+
   if (!bootstrapOptions.dryRun) {
     await mkdir(".calavera", { recursive: true });
     await writeFile(STATE_FILE, stateText);

@@ -313,6 +313,7 @@ test("--init groups the summary and names each file once when it writes the MCP 
         "  Wrote .coderabbit.yaml",
         "  Wrote AGENTS.md",
         "  Wrote .mcp.json",
+        "  Wrote .calavera/state.json",
         "",
         "Notes:",
         "  Installed skills are available under .agents/skills/.",
@@ -347,6 +348,7 @@ test("--init groups the summary when MCP needs manual setup (#601)", async () =>
         "  Wrote .coderabbit.yaml",
         "  Wrote AGENTS.md",
         "  Wrote .agents/calavera/mcp.md",
+        "  Wrote .calavera/state.json",
         "",
         "Notes:",
         "  Installed skills are available under .agents/skills/.",
@@ -390,6 +392,7 @@ test("--init names a skipped AGENTS.md once and says to merge the fallback guida
         "  Would skip AGENTS.md: Existing AGENTS.md left unchanged; Calavera guidance would be written separately.",
         "  Would write AGENTS.calavera.md",
         "  Would write .agents/calavera/mcp.md",
+        "  Would write .calavera/state.json",
         "",
         "Notes:",
         "  Installed skills are available under .agents/skills/.",
@@ -458,5 +461,41 @@ test("--init keeps the merge note on a rerun before the generated fallback is me
       result.pointers.includes("Merge AGENTS.calavera.md into AGENTS.md by hand."),
       JSON.stringify(result.pointers),
     );
+  });
+});
+
+test("--init lists .calavera/state.json once when it updates it, and not when it is unchanged (#957)", async () => {
+  await withTempProject(async () => {
+    const first = await agentBootstrap({ mcpHarness: "skip" });
+    assert.deepEqual(
+      first.changes.filter((change) => change.path === ".calavera/state.json"),
+      [{ type: "write", path: ".calavera/state.json" }],
+    );
+
+    const unchanged = await agentBootstrap({ mcpHarness: "skip" });
+    assert.equal(
+      unchanged.changes.filter((change) => change.path === ".calavera/state.json").length,
+      0,
+    );
+
+    // The same record in another layout is text the bootstrap rewrites, so it is an update.
+    const written = await readFile(".calavera/state.json", "utf8");
+    await writeFile(".calavera/state.json", JSON.stringify(JSON.parse(written)));
+
+    const dryRun = await agentBootstrap({ mcpHarness: "skip", dryRun: true });
+    const updated = await agentBootstrap({ mcpHarness: "skip" });
+    for (const result of [dryRun, updated]) {
+      assert.deepEqual(
+        result.changes.filter((change) => change.path === ".calavera/state.json"),
+        [
+          {
+            type: "update",
+            path: ".calavera/state.json",
+            reason: "Record the Calavera skill files the bootstrap manages.",
+          },
+        ],
+      );
+    }
+    assert.equal(await readFile(".calavera/state.json", "utf8"), written);
   });
 });
