@@ -271,7 +271,7 @@ hold a partial scaffold that belongs to Vite+.
 
 After the bootstrap, Calavera prints a summary in labeled groups separated by
 blank lines. "Changes" lists each file the bootstrap wrote, updated, or skipped,
-once, including `.calavera/state.json`, Calavera's record of the skill files it
+once, including `.calavera/state.json`, Calavera's record of the files it
 manages. The Calavera skill, `.coderabbit.yaml`, and `.calavera/state.json` are
 not listed when they are already up to date. "Notes" says where installed skills live and what you still need to do by
 hand, such as merging `AGENTS.calavera.md` or setting up MCP from

@@ -491,7 +491,7 @@ test("--init lists .calavera/state.json once when it updates it, and not when it
           {
             type: "update",
             path: ".calavera/state.json",
-            reason: "Record the Calavera skill files the bootstrap manages.",
+            reason: "Brought up to date.",
           },
         ],
       );
