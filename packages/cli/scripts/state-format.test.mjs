@@ -13,7 +13,11 @@ import { fileURLToPath } from "node:url";
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { agentBootstrap, applyRecipeObject } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
-import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "../src/utils/editorconfig.js";
+import {
+  CALAVERA_EDITORCONFIG,
+  editorConfigRemovalChange,
+  renderEditorConfig,
+} from "../src/utils/editorconfig.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 import {
@@ -319,4 +323,59 @@ test("Given a Vite+ project inside a folder whose .editorconfig sets four-space 
   const { before: state, after } = await formatAsTheHookDoes(root, [STATE_PATH]);
   assert.match(state[0], /^\{\n {4}"version": 1,/);
   assert.equal(after[0], state[0], "vp fmt rewrote the state clean wrote");
+});
+
+test("Given a Vite+ project with no other .editorconfig, when clean removes Calavera's .editorconfig, then it does not stop, and vp fmt keeps the state it writes", async () => {
+  await using project = await copyReleaseFixture("library");
+  await inDirectory(project.root, () => applyRecipeObject(recipe, applyOptions));
+  await writeFile(
+    join(project.root, "calavera.config.json"),
+    `${JSON.stringify(buildRecipe("default", ["knip"], "pnpm", []), null, 2)}\n`,
+  );
+
+  const clean = spawnSync(process.execPath, [cli, "clean", "--yes", "--json"], {
+    cwd: project.root,
+    encoding: "utf8",
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  assert.equal(clean.status, 0, clean.stderr);
+  assert.ok(
+    JSON.parse(clean.stdout).changes.some(
+      (/** @type {{ type: string, path: string }} */ { type, path }) =>
+        type === "delete" && path === ".editorconfig",
+    ),
+    clean.stdout,
+  );
+  const { before, after } = await formatAsTheHookDoes(project.root, [STATE_PATH]);
+  assert.equal(after[0], before[0], "vp fmt rewrote the state clean wrote");
+});
+
+test("editorConfigRemovalChange compares the settings Oxfmt uses with and without the project root's .editorconfig", async () => {
+  await using parent = await createTemporaryFixture("editorconfig-removal", {
+    ".editorconfig": "root = true\n\n[*]\nindent_size = 4\n",
+    "project/.editorconfig": renderEditorConfig(CALAVERA_EDITORCONFIG),
+    // Oxfmt never reads a subfolder's .editorconfig, so neither does the comparison.
+    "project/.calavera/.editorconfig": "[*]\nindent_size = 8\n",
+  });
+  const project = join(parent.root, "project");
+
+  assert.deepEqual(await editorConfigRemovalChange(project, STATE_PATH), {
+    property: "indent_size",
+    current: 2,
+    planned: 4,
+    sources: [join(parent.root, ".editorconfig")],
+  });
+
+  // A project file that is not root = true still sets the values removal takes away.
+  await writeFile(join(project, ".editorconfig"), "[*]\nindent_size = 2\n");
+  assert.equal((await editorConfigRemovalChange(project, STATE_PATH))?.planned, 4);
+
+  // Without a project file, there is nothing to remove.
+  await rm(join(project, ".editorconfig"));
+  assert.equal(await editorConfigRemovalChange(project, STATE_PATH), undefined);
+
+  // Calavera's settings are Oxfmt's defaults, so removing them with no parent file changes nothing.
+  await rm(join(parent.root, ".editorconfig"));
+  await writeFile(join(project, ".editorconfig"), renderEditorConfig(CALAVERA_EDITORCONFIG));
+  assert.equal(await editorConfigRemovalChange(project, STATE_PATH), undefined);
 });

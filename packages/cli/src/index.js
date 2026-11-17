@@ -3387,8 +3387,10 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     await artifactPlan.dispose();
     throw error;
   });
-  // #838: the state is formatted after the last planning step and before the first write to the
-  // project apart from the artifact install, which commits its own formatted records. It is
+  // #838: the state is formatted after the last planning step and before apply writes any project
+  // file or artifact output. Two writes come earlier: the auto-install transaction, which formats
+  // and commits its own records atomically, and the restore of a locked payload that is missing
+  // from .calavera/packages/, which rebuilds what the lock already records. It is
   // formatted in the dry run as well, so the dry run stops where apply would and a formatter that
   // fails leaves the project unchanged. A managed file's record is its path and the hash of the
   // text apply writes, as writeManagedFile writes it below. The quality script is final here,
@@ -5680,6 +5682,29 @@ async function clean(options) {
     };
   }
 
+  // A skipped item keeps its record, so the next clean still reports it, or removes it once the
+  // person restores it.
+  const keptFilePaths = new Set(staleFilesWithLocalEdits.map(({ path }) => path));
+  const keptManagedFiles = managedFilesFromState(state).filter(
+    (file) => expectedFiles.has(file.path) || keptFilePaths.has(file.path),
+  );
+  const keptAiPaths = new Set(staleAiArtifactsWithLocalEdits.map(({ path }) => path));
+  // #838: formatted before clean asks for approval or removes anything, in the dry run as well, so
+  // a formatter that cannot run, or a removal that would change its settings, stops clean first.
+  const stateText = await formatStateText(
+    {
+      ...state,
+      files: keptManagedFiles.map((file) => file.path),
+      managedFiles: keptManagedFiles,
+      aiArtifacts: state.aiArtifacts.filter(
+        (artifact) => expectedAiPaths.has(artifact.path) || keptAiPaths.has(artifact.path),
+      ),
+      // The records of removed wiring describe text the files no longer hold.
+      aiWiring: state.aiWiring.filter(({ artifact }) => selectedAiIds.has(artifact)),
+    },
+    loadFormatter,
+  );
+
   if (!options.assumeYes && !options.dryRun) {
     const staleCount = staleFilesSafeToRemove.length + staleAiArtifactsSafeToRemove.length;
     const removals = [
@@ -5735,29 +5760,6 @@ async function clean(options) {
     })),
   ];
   const kept = keptSummary([...staleFilesWithLocalEdits, ...staleAiArtifactsWithLocalEdits]);
-
-  // A skipped item keeps its record, so the next clean still reports it, or removes it once the
-  // person restores it.
-  const keptFilePaths = new Set(staleFilesWithLocalEdits.map(({ path }) => path));
-  const keptManagedFiles = managedFilesFromState(state).filter(
-    (file) => expectedFiles.has(file.path) || keptFilePaths.has(file.path),
-  );
-  const keptAiPaths = new Set(staleAiArtifactsWithLocalEdits.map(({ path }) => path));
-  // #838: formatted before anything is removed, in the dry run as well, so a formatter that
-  // cannot run stops clean with nothing changed.
-  const stateText = await formatStateText(
-    {
-      ...state,
-      files: keptManagedFiles.map((file) => file.path),
-      managedFiles: keptManagedFiles,
-      aiArtifacts: state.aiArtifacts.filter(
-        (artifact) => expectedAiPaths.has(artifact.path) || keptAiPaths.has(artifact.path),
-      ),
-      // The records of removed wiring describe text the files no longer hold.
-      aiWiring: state.aiWiring.filter(({ artifact }) => selectedAiIds.has(artifact)),
-    },
-    loadFormatter,
-  );
 
   if (!options.dryRun) {
     // The wiring goes first, so a failure part way never leaves a hook that runs a deleted script.
