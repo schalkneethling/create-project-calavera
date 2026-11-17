@@ -481,6 +481,7 @@ async function artifactStatus(options, registry) {
           ? command(["update", entry.id], tagFlags(entry.tag))
           : null,
       installCommand: null,
+      selected: selectedIds.has(entry.id),
     });
   }
   const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
@@ -512,6 +513,7 @@ async function artifactStatus(options, registry) {
       releaseNotesUrl: null,
       updateCommand: null,
       installCommand: command(["install"]),
+      selected: true,
     });
   }
   // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only
@@ -591,6 +593,10 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     command: updating ? "artifacts update" : "artifacts install",
     dryRun: options.dryRun,
     artifacts: result.entries,
+    // #992: the lock written above keeps only the selections, so these entries are gone from it.
+    removedLockEntries: currentLock.artifacts
+      .filter(({ id }) => !selectedIds.has(id))
+      .map(({ id, version, tag }) => ({ id, version, tag })),
     changes: result.changes,
     registries: result.registries,
     warnings: result.warnings,
