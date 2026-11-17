@@ -796,8 +796,9 @@ approves the proposed recipe and dry-run result.
 
 When Calavera stops with an error, it prints the error and each cause under it, with secrets
 redacted. To also see the stack frames of each error in the chain, set the `CALAVERA_DEBUG`
-environment variable to `1` or `true`. The CLI then prints the frames after each error, and the MCP
-server adds a `stack` field to each error in a tool's error result. The frames are redacted with the
+environment variable to `1` or `true`. The CLI, and the MCP server when it fails to start, then
+print the frames after each error, and the MCP server adds a `stack` field to each error in a tool's
+error result. The frames are redacted with the
 same rules as the messages. An error that carries no frames, such as many file system errors from
 Node.js, prints no stack.
 
