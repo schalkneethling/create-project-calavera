@@ -1,7 +1,7 @@
 # Cross-Repo Sequencing Map: css-evolve and Calavera
 
 **Status:** Draft 1, 9 September 2026. Owner: Schalk Neethling. Both agents read this at the start of every session and update the status column when a handoff is delivered or consumed.
-**Revised:** 7 November 2026, when handoff H0 was delivered and Section 0 was reset for the next increment; 13 November 2026, when Section 0 recorded what 6.2.0 shipped and the owner's choice of issues for the next release; 14 November 2026, when Section 0 recorded the `cli-experience` release's name, goal, exit condition, decisions, and waves; 16 November 2026, when Section 0 recorded wave 1 and placed the issues the owner added to the release.
+**Revised:** 7 November 2026, when handoff H0 was delivered and Section 0 was reset for the next increment; 13 November 2026, when Section 0 recorded what 6.2.0 shipped and the owner's choice of issues for the next release; 14 November 2026, when Section 0 recorded the `cli-experience` release's name, goal, exit condition, decisions, and waves; 16 November 2026, when Section 0 recorded wave 1 and placed the issues the owner added to the release; 17 November 2026, when Section 0 recorded wave 2 and placed its follow-ups.
 **Purpose:** One timeline with every point where one project delivers a frozen surface the other consumes, so neither agent starts work that is blocked and neither invents the other side's API.
 
 ---
@@ -33,6 +33,7 @@ The owner asked on 2026-11-14 for the rehearsal to be automated, deterministic, 
 - #740 ran its probe before #909, as recommended, and merged through #931: the pnpm and Yarn runners now spawn `pnpm dlx create-vite-plus@latest` and `yarn dlx create-vite-plus@latest`. The probe showed that Yarn 1 still needs #909's fallback to npm when Yarn 1 is installed without Corepack; the details are on #740 and #909, and in ADR-0010.
 - Shipped in `create-project-calavera` 6.2.1 on 15 November 2026: the Yarn 1 hint from #911.
 - **Wave 1 delivered** (merged 2026-11-15 and 2026-11-16): #432 (#929), #839 (#924), #840 (#930), #458 (#927), #740 (#931), #230 (#928), and #918 (#938).
+- **Wave 2 delivered** (merged 2026-11-16 and 2026-11-17): #228 (#949), #841 (#953), #909 (#951), #601 (#950), #933 (#963, the README and skill lists; the `mcp.md` list moved to #934), #663 (#952), #430 (#954), #937 (#967), and #939 (#969).
 - #671 waits on #689 only, because #688 is closed.
 
 **Owner decisions of 2026-11-14,** each recorded on its issue:
@@ -56,18 +57,26 @@ The owner asked on 2026-11-14 for the rehearsal to be automated, deterministic, 
 - #230: apply removes an existing `quality` script only when `.calavera/state.json` records that Calavera wrote exactly that value. Aliases from 6.2.1 and earlier have no record, so they are kept and reported.
 - The owner added the follow-ups found during wave 1 to the release; their places are in the waves table.
 
+**Owner decisions of 2026-11-16 and 2026-11-17,** each recorded on the issue or pull request named:
+
+- #933: split. The README and skill tool lists ship under #933; the tool list in the generated `.agents/calavera/mcp.md` moves to #934, so the new `mcp.md` text is registered once, under the real release version (#933, #934).
+- #909: following the launcher changes the default for pnpm, Bun, and Yarn 2 or later users, so its changeset is a minor bump. The Yarn 2 or later run was recorded under Yarn 4.18.1 (#909).
+- #601: the content of the `pointers` field in `--init --json` changes with the printed summary, because one list feeds both (#950).
+- #925: `doctor` checks the four github-repository-controls files like every other managed file, and resolves the repository root first when it runs from a workspace package (#925).
+- The owner added the follow-ups found during wave 2 to the release; their places are in the waves table.
+
 **Order of work** (planned with the owner on 2026-11-14; the owner chose one wave at a time)**:** six workstreams, grouped by the code they touch, because nearly every issue edits `packages/cli/src/index.js`. Within a workstream, issues run one after another; the workstreams run side by side. The owner chose to run one wave at a time: a wave ends when its pull requests merge, every open worktree rebases on `main`, and the owner hears the result before the next wave starts.
 
-| Wave    | A. Runner  | B. Output                                             | C. Footprint | D. Catalog, MCP, and Composer | E. Detection | F. Standalone |
-| ------- | ---------- | ----------------------------------------------------- | ------------ | ----------------------------- | ------------ | ------------- |
-| 1       | #740       | #840                                                  | #458         | #839                          | #432         | #230, #918    |
-| 2       | #909       | #601                                                  | #841, #937   | #228, #933                    | #430         | #663, #939    |
-| 3       | #689, #936 | #602                                                  | #838, #925   | #580                          | #926         | #398, #940    |
-| 4       | #671       | #617                                                  | #678 ADR     | #232                          | #935         | #603          |
-| 5       | —          | #331, #675 (ADR first), then #247 closed or moved out | #678         | —                             | #431         | #354          |
-| After 5 | —          | #934                                                  | —            | —                             | —            | —             |
+| Wave    | A. Runner  | B. Output                                             | C. Footprint     | D. Catalog, MCP, and Composer | E. Detection | F. Standalone |
+| ------- | ---------- | ----------------------------------------------------- | ---------------- | ----------------------------- | ------------ | ------------- |
+| 1       | #740       | #840                                                  | #458             | #839                          | #432         | #230, #918    |
+| 2       | #909       | #601                                                  | #841, #937       | #228, #933                    | #430         | #663, #939    |
+| 3       | #689, #936 | #602                                                  | #838, #925       | #580, #964                    | #926         | #398, #940    |
+| 4       | #671, #958 | #617, #957                                            | #678 ADR, #960   | #232, #962, #965              | #935         | #603, #959    |
+| 5       | #970       | #331, #675 (ADR first), then #247 closed or moved out | #678, #956, #968 | #966                          | #431, #961   | #354          |
+| After 5 | —          | #934                                                  | —                | —                             | —            | —             |
 
-Wave 1 is delivered. #936 follows #909 because both change the Yarn runner's failure handling. #925 needs an owner decision on whether `doctor` checks the repository-controls files before work starts. #935 must merge before #934. #934 runs after wave 5, once the Version Packages pull request is open and the next version is known, and merges before it. #232 follows #580 in column D because both change the Composer. When wave 5 has merged, the #918 rehearsal runs on the release candidate as the evidence for the exit condition, and the release follows.
+Waves 1 and 2 are delivered. #936 follows #909 because both change the Yarn runner's failure handling. #958 follows #671 because both change what `--new` prints about its runner. #957 follows #617 because both change a summary Calavera prints. #956 and #968 are in wave 5 to keep column C's waves short, not because they depend on #678. #960 follows the #678 ADR because both decide what Calavera leaves in a project. #962 and #965 both change the bundled skill, so they run one after the other. #959 follows #603 in column F. #968 and #961 each need an owner decision before their wave starts. #970 runs in wave 5 because it may change the Yarn check of the rehearsal that follows. #935 must merge before #934. #934 runs after wave 5, once the Version Packages pull request is open and the next version is known, and merges before it. #232 follows #580 in column D because both change the Composer. When wave 5 has merged, the #918 rehearsal runs on the release candidate as the evidence for the exit condition, and the release follows.
 
 **Explicitly not now:** #914 (Lighthouse) and #915 (Mergiraf) go to a later release (owner decision, 2026-11-14). Issues without the label stay out, including #673, #737 (blocked on stryker-mutator/stryker-js#6111), #746, #842, and #843.
 
