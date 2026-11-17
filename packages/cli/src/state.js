@@ -34,6 +34,21 @@ const VITE_HOOK_NAMES = new Set(
  */
 
 /**
+ * Whether apply wrote `state` before. Only after an earlier apply are the project's config and
+ * scripts Calavera's to compare and rename (ADR-0013, Decision 6). The state file alone does not
+ * show that, because `artifacts install`, `artifacts update`, `artifacts status --check-updates`,
+ * and the bootstrap write it too (#960). The profile does: no other command sets it, and apply
+ * records it on every run. Releases before this one skipped it only for an apply that installed
+ * nothing but artifacts into a project without a profile, which wrote no script to rename.
+ *
+ * @param {CalaveraState} state
+ * @returns {boolean}
+ */
+export function stateShowsEarlierApply(state) {
+  return state.profile !== undefined;
+}
+
+/**
  * @returns {CalaveraState}
  */
 export function createEmptyState() {

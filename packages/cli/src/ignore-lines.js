@@ -113,7 +113,7 @@ export function planGitignoreBlocks({ contents, declared, records, command = "ap
 
   for (const record of records) {
     if (declaredIds.has(record.integration) || text === undefined) continue;
-    const found = findBlock(GITIGNORE_PATH, text, record.integration);
+    const found = findBlock(GITIGNORE_PATH, text, record.integration, command);
     if ("reason" in found) {
       conflicts.push(found.reason);
       continue;
@@ -150,7 +150,7 @@ export function planGitignoreBlocks({ contents, declared, records, command = "ap
       continue;
     }
 
-    const found = findBlock(GITIGNORE_PATH, text, integration);
+    const found = findBlock(GITIGNORE_PATH, text, integration, command);
     if ("reason" in found) {
       conflicts.push(found.reason);
       continue;

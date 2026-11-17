@@ -547,8 +547,9 @@ async function artifactStatus(options, registry, loadFormatter) {
         `artifacts ${options.artifactAction} --check-updates`,
       )
     : undefined;
-  if (cacheBlock && !options.dryRun)
-    await commitArtifactCacheBlock(cacheBlock, state, loadFormatter);
+  if (cacheBlock) {
+    await commitArtifactCacheBlock(cacheBlock, state, loadFormatter, options.dryRun);
+  }
   const temporaryCache =
     resolvesPackages && options.dryRun
       ? await mkdtemp(join(tmpdir(), "calavera-artifact-status-"))
@@ -664,19 +665,23 @@ async function artifactStatus(options, registry, loadFormatter) {
  * Commits the artifact cache block and its state record through the artifact transaction, so an
  * interrupted write leaves both as they were (#960). The commands commit it before they resolve
  * anything, so a cache the registry fills is ignored even when the command fails afterwards, and
- * `.gitignore` is written right after it was read. Writes nothing when neither file changes.
+ * `.gitignore` is written right after it was read. Writes nothing when neither file changes. A dry
+ * run formats the state it would record and writes nothing, so it stops where the command would
+ * when the project's formatter cannot load or rejects the text (#838).
  *
  * @param {ArtifactCacheBlockPlan} cacheBlock
  * @param {ReturnType<typeof createEmptyState>} state
  * @param {() => Promise<ProjectFormatter>} loadFormatter
+ * @param {boolean} dryRun
  */
-async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter) {
+async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun) {
   if (!cacheBlock.writesState) return;
   const stateText = await formatRecordText(
     STATE_PATH,
     { ...state, gitignoreBlocks: cacheBlock.gitignoreBlocks },
     loadFormatter,
   );
+  if (dryRun) return;
   const stagingRoot = resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
   const stagedState = join(stagingRoot, "records", "state.json");
   const stagedGitignore = join(stagingRoot, "records", "gitignore");
@@ -742,7 +747,7 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     await artifactCacheIgnoreLines(recipe),
     command,
   );
-  if (!options.dryRun) await commitArtifactCacheBlock(cacheBlock, state, loadFormatter);
+  await commitArtifactCacheBlock(cacheBlock, state, loadFormatter, options.dryRun);
   const result = await stageArtifactInstall(
     Array.isArray(recipe.ai)
       ? {

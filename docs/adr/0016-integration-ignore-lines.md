@@ -134,5 +134,6 @@ Amendment 1 left the cache block to `apply`, so a project that only ran `artifac
 - The commands plan only the `artifact-cache` block. The integrations' blocks and their records belong to apply, so the commands pass them through unchanged, and they never remove the cache block.
 - Each command commits the block and its record in an artifact transaction of its own, right after planning them and before it contacts the registry. A cache that the registry fills is therefore ignored even when the command fails afterwards, and the block and its record stay in place after such a failure. `artifacts status --check-updates` plans the block only while it has a lock entry or a selection to check.
 - A block that is already in the file with the declared lines but has no record keeps its bytes and gains its record, as it does in apply.
-- A dry run writes nothing. `artifacts status --check-updates --dry-run` resolves through a temporary cache, as the install dry run already did.
+- A dry run writes nothing. It still formats the state record it would write, so it stops where the command would when the project's formatter cannot load (#838). `artifacts status --check-updates --dry-run` resolves through a temporary cache, as the install dry run already did.
+- A conflict about a broken marker, like a conflict about an edited block, names the command to run again.
 - When a command adds the block, it prints the pointer apply prints, and its dry run prints the block's lines.

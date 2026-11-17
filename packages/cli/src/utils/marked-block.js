@@ -30,9 +30,11 @@ export function markers(owner) {
  * @param {string} path
  * @param {string} contents
  * @param {string} owner
+ * @param {string} [command] The command the reason tells the person to run again once the
+ *   markers are fixed.
  * @returns {FoundBlock | { reason: string }}
  */
-export function findBlock(path, contents, owner) {
+export function findBlock(path, contents, owner, command = "apply") {
   const { start, end } = markers(owner);
   // Lines keep their own endings. A file with Windows line endings gets them on the lines
   // Calavera adds too, and every comparison ignores the carriage return.
@@ -54,7 +56,7 @@ export function findBlock(path, contents, owner) {
   );
   if (changedMarker !== undefined) {
     return {
-      reason: `${path}: a marker line was changed: "${changedMarker}". Calavera only recognizes "${start}" and "${end}" as whole lines. Restore them, or remove the block, both markers included, and run apply again.`,
+      reason: `${path}: a marker line was changed: "${changedMarker}". Calavera only recognizes "${start}" and "${end}" as whole lines. Restore them, or remove the block, both markers included, and run ${command} again.`,
     };
   }
 
@@ -74,7 +76,7 @@ export function findBlock(path, contents, owner) {
             : undefined;
   if (markerProblem !== undefined) {
     return {
-      reason: `${path}: the Calavera block for ${owner} ${markerProblem}, so Calavera cannot tell where its block ends. Make the file hold exactly one "${start}" line followed later by one "${end}" line, or remove both markers and the lines between them, and run apply again.`,
+      reason: `${path}: the Calavera block for ${owner} ${markerProblem}, so Calavera cannot tell where its block ends. Make the file hold exactly one "${start}" line followed later by one "${end}" line, or remove both markers and the lines between them, and run ${command} again.`,
     };
   }
 

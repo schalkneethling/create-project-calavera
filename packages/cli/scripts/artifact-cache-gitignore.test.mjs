@@ -659,3 +659,60 @@ for (const { name, options, setup } of commands) {
     });
   });
 }
+
+for (const { name, rerun, options, setup } of commands) {
+  test(`${name} names itself, not apply, when a cache block marker is broken`, async () => {
+    await inProject(undefined, async () => {
+      await setup();
+      // A start marker without its end marker, so Calavera cannot tell where the block ends.
+      await writeFile(
+        ".gitignore",
+        "node_modules/\n# calavera:artifact-cache:start\n.calavera/cache/\n",
+      );
+
+      for (const dryRun of [true, false]) {
+        await assert.rejects(
+          runArtifactCommand({ ...options, dryRun }, cachingRegistry()),
+          (/** @type {Error} */ error) => {
+            assert.match(error.message, /has a start marker without an end marker/);
+            assert.ok(error.message.includes(`and run ${rerun} again.`), error.message);
+            assert.doesNotMatch(error.message, /run apply again/);
+            return true;
+          },
+        );
+      }
+    });
+  });
+
+  // #838: the dry run stops where the command would, so it formats the state it would record.
+  test(`${name} --dry-run stops where the command does when the formatter cannot load`, async () => {
+    await inProject(`node_modules/\n${fixtureBlock}`, async () => {
+      await setup();
+      await writeFile(".gitignore", `node_modules/\n${fixtureBlock}`);
+      const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+      await writeFile(
+        ".calavera/state.json",
+        `${JSON.stringify({ ...state, gitignoreBlocks: [fixtureRecord] })}\n`,
+      );
+      const before = await snapshotDirectory();
+
+      for (const dryRun of [true, false]) {
+        const registry = cachingRegistry();
+        await assert.rejects(
+          runArtifactCommand(
+            { ...options, dryRun },
+            {
+              ...registry,
+              loadFormatter: async () => {
+                throw new Error("the project formatter cannot load");
+              },
+            },
+          ),
+          /the project formatter cannot load/,
+        );
+        assert.deepEqual(registry.requests, [], `dryRun: ${dryRun}`);
+      }
+      assert.deepEqual(await snapshotDirectory(), before);
+    });
+  });
+}

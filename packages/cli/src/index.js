@@ -115,6 +115,7 @@ import {
   managedFilesFromState,
   normalizeState,
   optionalStringArray,
+  stateShowsEarlierApply,
 } from "./state.js";
 import {
   declaredManagedFiles,
@@ -2881,7 +2882,7 @@ export async function inspectProject(recipe, options = {}) {
   // Vite+ steps are planned too, because they decide whether quality exists:
   // without them, a single Calavera script is no quality at all (#230).
   const plannedScripts = await (async () => {
-    if (!recipe || manifestFinding || !(await fileExists(STATE_FILE))) {
+    if (!recipe || manifestFinding || !stateShowsEarlierApply(previousState)) {
       return {};
     }
     const plannedPackageManager = resolveApplyPackageManager(recipe, {}, packageJSON);
@@ -3344,8 +3345,10 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     );
   }
   // Only a project Calavera already applied to can have a config or scripts
-  // that are unchanged; on a first apply the whole plan is new.
-  const previouslyApplied = await fileExists(STATE_FILE);
+  // that are unchanged; on a first apply the whole plan is new. Other commands
+  // write the state file too, so its profile, not its existence, shows an
+  // earlier apply.
+  const previouslyApplied = stateShowsEarlierApply(previousState);
   const reownManagedFiles = normalizeManagedFilePathSet(applyOptions.reownManagedFiles ?? []);
   const dependencyList = unique(
     integrations.flatMap((integration) =>
@@ -3812,7 +3815,9 @@ function mergeRecipeIntoState(
   return {
     ...previousState,
     version: 1,
-    profile: preservesToolingRecipe ? previousState.profile : profile,
+    // An apply that installs only artifacts keeps the profile an earlier apply recorded, and records
+    // its own when there is none, because the profile is what shows a later apply that it ran.
+    profile: preservesToolingRecipe ? (previousState.profile ?? profile) : profile,
     integrations: preservesToolingRecipe ? previousState.integrations : integrations,
     files: nextManagedFiles.map((file) => file.path),
     managedFiles: nextManagedFiles,
