@@ -39,7 +39,7 @@ import {
   prepareArtifactSources,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
-import { formatArtifactStatus } from "./artifact-status-report.js";
+import { formatArtifactStatus, formatRemovedLockEntries } from "./artifact-status-report.js";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   githubRepositoryControlManagedFiles,
@@ -6597,6 +6597,14 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     }
 
     for (const warning of /** @type {string[]} */ (result.warnings)) {
+      logger.warn(warning);
+    }
+
+    for (const warning of formatRemovedLockEntries(
+      /** @type {Parameters<typeof formatRemovedLockEntries>[0]} */ (
+        /** @type {unknown} */ (result)
+      ),
+    )) {
       logger.warn(warning);
     }
   }
