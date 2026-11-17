@@ -4300,10 +4300,12 @@ export const NPM_STALE_CACHE_HINT =
  * The environment `vp create` receives (#689): Calavera's own, without the
  * npm exec settings that describe how Calavera was launched. `npx --package`
  * sets `npm_config_package` and `npx -c` sets `npm_config_call` for the
- * process they start. When Calavera passed them on, npm looked for the
- * runner's command inside create-project-calavera and exited 127: both
- * `npm create vite-plus@latest` itself and the `npx` that Vite+ starts for
- * the template (#670). npm reads the
+ * process they start, and an npm command Calavera's child starts would read
+ * them too. With `npm_config_package`, `npm create vite-plus@latest` and the
+ * `npx` that Vite+ starts for the template looked for their command inside
+ * create-project-calavera and exited 127 (#670). With `npm_config_call`,
+ * `npm create vite-plus@latest` ran Calavera's own command line again instead
+ * of create-vite-plus (libnpmexec runs `call` before its arguments). npm reads the
  * `npm_config_` prefix in any case, so the match ignores case. Every other
  * variable passes through unchanged.
  *

@@ -249,8 +249,8 @@ forward `--package-manager` after `--new`, which Vite+ then uses instead. The
 confirmation and `--dry-run` output name the package manager Vite+ will use.
 Vite+ 1.0.0
 requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`. If Calavera itself was
-started with `npx --package`, Calavera removes the npm settings that this sets
-before it starts `vp create`; see
+started with `npx --package` or `npx -c`, Calavera removes `npm_config_package`
+and `npm_config_call` from the environment of `vp create`; see
 [Known Issue: `vp create` Exits With Code 127 Through npm](#known-issue-vp-create-exits-with-code-127-through-npm).
 
 Calavera continues into the bootstrap only when `vp create` exits with code 0
@@ -347,8 +347,11 @@ The second cause was how Calavera itself was started. With
 `npx --package create-project-calavera`,
 `npm exec --package create-project-calavera`, or `npx -c`, npm sets
 `npm_config_package` or `npm_config_call` for Calavera. When Calavera passed
-them on, even `npm create vite-plus@latest` looked for `create-vite-plus` inside
-create-project-calavera and exited with code 127 before Vite+ started. Calavera
+`npm_config_package` on, even `npm create vite-plus@latest` looked for
+`create-vite-plus` inside create-project-calavera and exited with code 127
+before Vite+ started. When it passed `npm_config_call` on,
+`npm create vite-plus@latest` ran Calavera's own command line again instead of
+`create-vite-plus`. Calavera
 now removes both settings from the environment it gives `vp create`, whichever
 runner it uses
 ([Calavera issue 689](https://github.com/schalkneethling/create-project-calavera/issues/689)).

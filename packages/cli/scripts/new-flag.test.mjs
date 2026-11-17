@@ -41,8 +41,8 @@ const fixturesUrl = pathToFileURL(
 
 /**
  * The runner stub. It records its name, argv, cwd, VP_CLI_BIN, PATH, and whole
- * environment, exits 127 as the nested npx does when it inherits
- * npm_config_package or npm_config_call (#689), strips the
+ * environment, fails as npm does when it inherits npm_config_package or
+ * npm_config_call (#689), strips the
  * runner's own arguments to find what \`vp create\` receives, then acts on STUB_MODE:
  * `scaffold` writes a Vite+ project into the `--directory` target (or
  * STUB_TARGET) and, as `vp create` installs dependencies, a vite-plus whose
@@ -89,12 +89,20 @@ appendFileSync(
   }) + "\\n",
 );
 
-// The nested npx that Vite+ starts for the template fails this way when it
-// inherits npm_config_package or npm_config_call (#670, #689). npm reads the
-// npm_config_ prefix in any case, so this check does too.
-if (Object.keys(process.env).some((key) => /^npm_config_(package|call)$/i.test(key))) {
-  console.error("sh: create-vite@latest: command not found");
+// How npm fails when it inherits these settings (#670, #689). npm reads the
+// npm_config_ prefix in any case, so these checks do too. With package, it
+// looks for create-vite-plus in the wrong package and exits 127. With call,
+// it runs the inherited command line instead of create-vite-plus, which this
+// stub reports as exit 3.
+const inherited = (name) =>
+  Object.keys(process.env).some((key) => key.toLowerCase() === "npm_config_" + name);
+if (inherited("package")) {
+  console.error("sh: create-vite-plus: command not found");
   process.exit(127);
+}
+if (inherited("call")) {
+  console.error("ran the inherited npm_config_call instead of create-vite-plus");
+  process.exit(3);
 }
 
 // npm create vite-plus@latest -- <args>, bunx create-vite-plus@latest <args>,
@@ -200,7 +208,8 @@ function cliEnvironment(workspace, env) {
   // The package manager running these tests sets a user agent that would choose
   // the runner (#909), so a test that wants one passes it in env.
   delete inherited.npm_config_user_agent;
-  // So do npx and npm exec (#689), so a test that wants those settings passes them in env.
+  // npx and npm exec set npm_config_package and npm_config_call (#689), so a test that
+  // wants those settings passes them in env.
   for (const key of Object.keys(inherited)) {
     if (/^npm_config_(package|call)$/i.test(key)) delete inherited[key];
   }
