@@ -1,0 +1,188 @@
+// Issue #838: the Vite+ pre-commit hook runs `vp staged`, which runs `vp check --fix` on the
+// staged files, so a file Calavera writes in another shape is rewritten in the next commit. Like
+// the generated files (#669), `.calavera/state.json` and `.calavera/artifacts.lock.json` are
+// written in the shape the project's own `vp fmt` produces. The stand-in `vp fmt` below runs this
+// repository's Oxfmt on exactly the files it is given, as the hook does with the staged files.
+import assert from "node:assert/strict";
+import { spawnSync } from "node:child_process";
+import { readFile, writeFile } from "node:fs/promises";
+import { join } from "node:path";
+import test from "node:test";
+import { fileURLToPath } from "node:url";
+
+import { runArtifactCommand } from "../src/artifact-lifecycle.js";
+import { agentBootstrap, applyRecipeObject } from "../src/index.js";
+import { buildRecipe } from "../src/recipe.js";
+import { stubRegistry } from "./artifact-registry-stub.mjs";
+import { snapshotDirectory } from "./project-snapshot.mjs";
+import { copyReleaseFixture } from "./vite-plus-fixtures.mjs";
+
+const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
+const STATE_PATH = ".calavera/state.json";
+const LOCK_PATH = ".calavera/artifacts.lock.json";
+
+// Two integrations keep the state's arrays short enough for Oxfmt to put each on one line, which
+// is the change the hook made in #749.
+const recipe = buildRecipe("default", ["editorconfig", "knip"], "pnpm", []);
+const applyOptions = {
+  json: true,
+  noInstall: true,
+  assumeYes: true,
+  writeConfig: true,
+  config: "calavera.config.json",
+};
+
+/**
+ * Runs `callback` with `directory` as the working directory, as the CLI runs.
+ *
+ * @template T
+ * @param {string} directory
+ * @param {() => Promise<T>} callback
+ * @returns {Promise<T>}
+ */
+async function inDirectory(directory, callback) {
+  const previous = process.cwd();
+  process.chdir(directory);
+  try {
+    return await callback();
+  } finally {
+    process.chdir(previous);
+  }
+}
+
+/**
+ * Formats `paths` in place with the project's own `vp fmt`, as `vp check --fix` formats the staged
+ * files in the pre-commit hook, and returns each file's text before and after.
+ *
+ * @param {string} root
+ * @param {string[]} paths
+ */
+async function formatAsTheHookDoes(root, paths) {
+  const before = await Promise.all(paths.map((path) => readFile(join(root, path), "utf8")));
+  const format = spawnSync(
+    process.execPath,
+    [join(root, "node_modules/vite-plus/bin/vp"), "fmt", "--write", ...paths],
+    { cwd: root, encoding: "utf8" },
+  );
+  assert.equal(format.status, 0, `${format.stdout}${format.stderr}`);
+  const after = await Promise.all(paths.map((path) => readFile(join(root, path), "utf8")));
+  return { before, after };
+}
+
+test("Given a Vite+ project, when apply writes .calavera/state.json, then vp fmt keeps it byte-for-byte, and the second dry run reports no change", async () => {
+  await using project = await copyReleaseFixture("library");
+  await inDirectory(project.root, () => applyRecipeObject(recipe, applyOptions));
+
+  const { before, after } = await formatAsTheHookDoes(project.root, [STATE_PATH]);
+  assert.match(before[0], /"integrations": \["editorconfig", "knip"\]/);
+  assert.equal(after[0], before[0], "vp fmt rewrote .calavera/state.json");
+
+  await inDirectory(project.root, async () => {
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true });
+    assert.deepEqual(
+      dryRun.changes.filter(({ type }) => type !== "unchanged").map(({ path }) => path),
+      [],
+    );
+  });
+});
+
+test("Given a Vite+ project, when agent-init and clean rewrite .calavera/state.json, then vp fmt keeps it byte-for-byte", async () => {
+  await using project = await copyReleaseFixture("library");
+  await inDirectory(project.root, async () => {
+    await applyRecipeObject(recipe, applyOptions);
+    await agentBootstrap({ json: true, assumeYes: true, mcpHarness: "claude-code" });
+  });
+
+  const bootstrapped = await formatAsTheHookDoes(project.root, [STATE_PATH]);
+  assert.match(bootstrapped.before[0], /"aiArtifacts": \[\n/);
+  assert.equal(
+    bootstrapped.after[0],
+    bootstrapped.before[0],
+    "vp fmt rewrote the agent-init state",
+  );
+
+  // Deselecting knip leaves its file for clean to remove, and clean records what it kept.
+  await writeFile(
+    join(project.root, "calavera.config.json"),
+    `${JSON.stringify(buildRecipe("default", ["editorconfig"], "pnpm", []), null, 2)}\n`,
+  );
+  const clean = spawnSync(process.execPath, [cli, "clean", "--yes", "--json"], {
+    cwd: project.root,
+    encoding: "utf8",
+    env: { ...process.env, NO_COLOR: "1" },
+  });
+  assert.equal(clean.status, 0, clean.stderr);
+  assert.ok(
+    JSON.parse(clean.stdout).changes.some(
+      (/** @type {{ type: string, path: string }} */ { type, path }) =>
+        type === "delete" && path === "knip.json",
+    ),
+    clean.stdout,
+  );
+
+  const cleaned = await formatAsTheHookDoes(project.root, [STATE_PATH]);
+  assert.match(cleaned.before[0], /"files": \["\.editorconfig"\]/);
+  assert.equal(cleaned.after[0], cleaned.before[0], "vp fmt rewrote the state clean wrote");
+});
+
+test("Given a Vite+ project that formats with tabs, when apply and artifacts install write the state and the artifact lock, then vp fmt keeps both byte-for-byte", async () => {
+  await using project = await copyReleaseFixture("library");
+  await writeFile(join(project.root, ".oxfmtrc.json"), '{ "useTabs": true }\n');
+  const registry = stubRegistry(
+    new Map([
+      ["skill-project-goal", "0.1.0"],
+      ["hook-block-dangerous-commands", "0.4.0"],
+    ]),
+  );
+
+  await inDirectory(project.root, () =>
+    applyRecipeObject({ ...recipe, ai: [{ id: "skill-project-goal" }] }, applyOptions, registry),
+  );
+  const applied = await formatAsTheHookDoes(project.root, [STATE_PATH, LOCK_PATH]);
+  assert.match(applied.before[1], /^\{\n\t"schemaVersion": 1,/);
+  assert.deepEqual(
+    applied.after,
+    applied.before,
+    "vp fmt rewrote the state or the lock apply wrote",
+  );
+
+  // artifacts install commits the state and the lock without apply writing the state after it.
+  await writeFile(
+    join(project.root, "calavera.config.json"),
+    `${JSON.stringify(
+      { ...recipe, ai: [{ id: "skill-project-goal" }, { id: "hook-block-dangerous-commands" }] },
+      null,
+      2,
+    )}\n`,
+  );
+  await inDirectory(project.root, () =>
+    runArtifactCommand(
+      { config: "calavera.config.json", dryRun: false, artifactAction: "install" },
+      registry,
+    ),
+  );
+  const installed = await formatAsTheHookDoes(project.root, [STATE_PATH, LOCK_PATH]);
+  assert.match(installed.before[0], /^\{\n\t"version": 1,/);
+  assert.match(installed.before[1], /"id": "hook-block-dangerous-commands"/);
+  assert.deepEqual(
+    installed.after,
+    installed.before,
+    "vp fmt rewrote the state or the lock artifacts install wrote",
+  );
+});
+
+test("Given a Vite+ project whose vite-plus is not installed, when nothing but the state needs the formatter, then the dry run and apply stop before writing anything", async () => {
+  await using project = await copyReleaseFixture("library", { vitePlus: false });
+  // .editorconfig is not formatted, and without writeConfig no recipe file is written, so only
+  // the state needs vp fmt.
+  const editorConfigOnly = buildRecipe("default", ["editorconfig"], "pnpm", []);
+  const options = { ...applyOptions, writeConfig: false };
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    const stop = /cannot find its vite-plus package, so it cannot format the files it writes/;
+    await assert.rejects(applyRecipeObject(editorConfigOnly, { ...options, dryRun: true }), stop);
+    await assert.rejects(applyRecipeObject(editorConfigOnly, options), stop);
+    assert.deepEqual(await snapshotDirectory(), before, "apply wrote files before it stopped");
+  });
+});

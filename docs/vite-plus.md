@@ -174,7 +174,9 @@ be used, `apply` stops at that point; install the project's dependencies, then
 run `apply` again. `apply --no-install` does not get around this, because Calavera
 also formats the JSON and Markdown files it writes with the project's own
 `vp fmt`, in memory and before the dry run, so the files pass `vp check` as
-written. In a project Vite+ does not manage, those files are written
+written. That includes `.calavera/state.json` and
+`.calavera/artifacts.lock.json`, so the Vite+ pre-commit hook, which formats
+the staged files, commits them as Calavera wrote them. In a project Vite+ does not manage, those files are written
 unformatted.
 
 Oxfmt also reads indentation, line endings, the final newline, line length,

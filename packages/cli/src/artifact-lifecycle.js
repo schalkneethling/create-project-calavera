@@ -21,6 +21,8 @@ import {
 import { assertFirstSelection } from "./ai/recipe-items.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import { fileExists } from "./utils/fs.js";
+import { formatGeneratedText } from "./utils/generated-text.js";
+import { projectFormatterLoader } from "./utils/project-formatter.js";
 
 const LOCK_PATH = ".calavera/artifacts.lock.json";
 const STATE_PATH = ".calavera/state.json";
@@ -51,13 +53,24 @@ export async function artifactCacheIgnoreLines(recipe) {
 /**
  * @typedef {{ config: string, dryRun: boolean, artifactAction?: string, artifactId?: string, artifactTag?: "latest" | "next", artifactAll?: boolean, checkUpdates?: boolean }} ArtifactOptions
  * @typedef {{ id: string, type: "skill" | "hook" | "agent", package: string, version: string, resolved: string, integrity: string, tag: "latest" | "next", manifestVersion: number, destination: string, payloadHash: string, target?: string }} ArtifactLockEntry
- * @typedef {{ resolve?: typeof resolveArtifactPackage, extract?: typeof extractArtifactPackage }} ArtifactServices
+ * @typedef {{ resolve?: typeof resolveArtifactPackage, extract?: typeof extractArtifactPackage, loadFormatter?: () => Promise<ProjectFormatter> }} ArtifactServices
+ *   `loadFormatter` loads the formatter for the state and lock an install writes; without it, the
+ *   project's own formatter in the working directory.
  * @typedef {{ resolve: typeof resolveArtifactPackage, extract: typeof extractArtifactPackage }} ArtifactRegistry
  * @typedef {{ id: string, target?: string }} ArtifactSelection
  * @typedef {import("./ai/artifacts.js").AiChange} AiChange
+ * @typedef {import("./utils/project-formatter.js").ProjectFormatter} ProjectFormatter
  * @typedef {{ origin: string, source: string }} ArtifactRegistryReport The registry (protocol, host, and port) an artifact resolves from, and the npm configuration it came from.
  * @typedef {{ registries: ArtifactRegistryReport[], warnings: string[] }} ArtifactRegistryNotes
  */
+
+/**
+ * @param {ArtifactServices} services
+ * @returns {() => Promise<ProjectFormatter>}
+ */
+function artifactFormatterLoader(services) {
+  return services.loadFormatter ?? projectFormatterLoader(process.cwd());
+}
 
 /** @param {ArtifactServices} services @returns {ArtifactRegistry} */
 function artifactRegistry(services) {
@@ -93,6 +106,7 @@ function registryNotes() {
 export async function runArtifactCommand(options, services = {}) {
   await recoverArtifactTransaction();
   const registry = artifactRegistry(services);
+  const loadFormatter = artifactFormatterLoader(services);
   switch (options.artifactAction) {
     case "migrate":
       return migrateRecipe(options);
@@ -100,9 +114,9 @@ export async function runArtifactCommand(options, services = {}) {
     case "doctor":
       return artifactStatus(options, registry);
     case "install":
-      return installArtifacts(options, false, registry);
+      return installArtifacts(options, false, registry, loadFormatter);
     case "update":
-      return installArtifacts(options, true, registry);
+      return installArtifacts(options, true, registry, loadFormatter);
     default:
       throw new Error("Artifacts command must be install, status, doctor, migrate, or update.");
   }
@@ -163,6 +177,7 @@ export async function prepareArtifactSources(
     artifactRegistry(services),
     preflight && ((stagedSources) => preflight(new Map([...lockedSources, ...stagedSources]))),
     new Map(approved.map((entry) => [entry.id, entry])),
+    artifactFormatterLoader(services),
   );
   try {
     // A dry run leaves the lock untouched, so the staged install supplies the unlocked sources.
@@ -194,8 +209,17 @@ export async function prepareArtifactSources(
  * @param {ArtifactRegistry} registry
  * @param {((sources: Map<string, string>) => Promise<unknown>) | undefined} preflight
  * @param {Map<string, ArtifactLockEntry>} approvedById Selections to install at an approved version.
+ * @param {() => Promise<ProjectFormatter>} loadFormatter Formats the state and lock the install writes.
  */
-async function installUnlockedArtifacts(unlocked, lock, dryRun, registry, preflight, approvedById) {
+async function installUnlockedArtifacts(
+  unlocked,
+  lock,
+  dryRun,
+  registry,
+  preflight,
+  approvedById,
+  loadFormatter,
+) {
   const createdDirectories = [".calavera", CACHE_ROOT, CACHE_PATH, TRANSACTION_ROOT];
   // The transaction creates the parent directories of the outputs it moves into place, and a
   // rollback restores files only, so remove the parents this attempt created, deepest first.
@@ -223,6 +247,7 @@ async function installUnlockedArtifacts(unlocked, lock, dryRun, registry, prefli
         advanceIds: new Set(),
         dryRun,
         keptEntries: lock.artifacts,
+        loadFormatter,
         preflight:
           preflight &&
           (async (sources) => {
@@ -467,8 +492,9 @@ async function artifactStatus(options, registry) {
  * @param {ArtifactOptions} options
  * @param {boolean} updating
  * @param {ArtifactRegistry} registry
+ * @param {() => Promise<ProjectFormatter>} loadFormatter
  */
-async function installArtifacts(options, updating, registry) {
+async function installArtifacts(options, updating, registry, loadFormatter) {
   const recipe = await readJson(options.config);
   const selections = normalizeSelections(recipe.ai);
   const currentLock = await readLock();
@@ -495,6 +521,7 @@ async function installArtifacts(options, updating, registry) {
       artifactTag: options.artifactTag,
       dryRun: options.dryRun,
       keptEntries: [],
+      loadFormatter,
     },
     registry,
   );
@@ -519,12 +546,16 @@ async function installArtifacts(options, updating, registry) {
  *
  * @param {{ ai?: unknown }} recipe
  * @param {ArtifactSelection[]} selections
- * @param {{ lockedById: Map<string, ArtifactLockEntry>, advanceIds: Set<string>, artifactTag?: "latest" | "next", dryRun: boolean, keptEntries: ArtifactLockEntry[], preflight?: (sources: Map<string, string>) => Promise<void> }} plan
+ * @param {{ lockedById: Map<string, ArtifactLockEntry>, advanceIds: Set<string>, artifactTag?: "latest" | "next", dryRun: boolean, keptEntries: ArtifactLockEntry[], loadFormatter: () => Promise<ProjectFormatter>, preflight?: (sources: Map<string, string>) => Promise<void> }} plan
+ *   `loadFormatter` formats the state and the lock the transaction commits (#838).
  * @param {ArtifactRegistry} registry
  * @returns {Promise<{ entries: ArtifactLockEntry[], changes: AiChange[], sourcePaths: Map<string, string>, dispose: () => Promise<void> } & ArtifactRegistryNotes>}
  */
 async function stageArtifactInstall(recipe, selections, plan, registry) {
-  const { lockedById, advanceIds, artifactTag, dryRun } = plan;
+  const { lockedById, advanceIds, artifactTag, dryRun, loadFormatter } = plan;
+  // A project whose formatter cannot load stops the dry run and the install alike, before
+  // anything is resolved or staged.
+  await loadFormatter();
   const stagingRoot = dryRun
     ? await mkdtemp(join(tmpdir(), "calavera-artifact-stage-"))
     : resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
@@ -587,11 +618,13 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
       };
       const stagedState = join(stagingRoot, "records", "state.json");
       const stagedLock = join(stagingRoot, "records", "artifacts.lock.json");
-      await writeJson(stagedState, nextState);
-      await writeJson(stagedLock, {
-        schemaVersion: 1,
-        artifacts: [...plan.keptEntries, ...nextEntries],
-      });
+      await writeStagedJson(stagedState, STATE_PATH, nextState, loadFormatter);
+      await writeStagedJson(
+        stagedLock,
+        LOCK_PATH,
+        { schemaVersion: 1, artifacts: [...plan.keptEntries, ...nextEntries] },
+        loadFormatter,
+      );
 
       const operations = selections.map((selection) => {
         const entry = nextEntries.find(({ id }) => id === selection.id);
@@ -698,10 +731,23 @@ async function writeAtomicJson(path, value) {
   await rename(temporary, absolute);
 }
 
-/** @param {string} path @param {unknown} value */
-async function writeJson(path, value) {
+/**
+ * Writes `value` to the staged file `path` in the text the project's formatter gives the file at
+ * `target`, so the Vite+ pre-commit hook leaves the committed file as written (#838).
+ *
+ * @param {string} path
+ * @param {string} target The project path the transaction moves the staged file to.
+ * @param {unknown} value
+ * @param {() => Promise<ProjectFormatter>} loadFormatter
+ */
+async function writeStagedJson(path, target, value, loadFormatter) {
+  const text = await formatGeneratedText(
+    target,
+    `${JSON.stringify(value, null, 2)}\n`,
+    loadFormatter,
+  );
   await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  await writeFile(path, text, { flag: "wx" });
 }
 
 /** @param {string} parent @param {string} child */

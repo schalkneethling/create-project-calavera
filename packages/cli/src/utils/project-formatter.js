@@ -5,6 +5,7 @@ import { dirname, join } from "node:path";
 
 import { execa } from "execa";
 
+import { detectVitePlus } from "../vite-plus-detection.js";
 import { editorConfigFormattingChange, renderEditorConfig } from "./editorconfig.js";
 
 // A file Calavera writes into a Vite+ project must already be in the shape `vp check` expects, or
@@ -104,6 +105,30 @@ export async function loadProjectFormatter(
       return result.stdout;
     },
   };
+}
+
+/**
+ * Returns a function that loads the formatter for the files Calavera writes in `directory` the
+ * first time a file needs it, and the same formatter after that. Without `vitePlusStatus`, the
+ * project is detected when the formatter loads.
+ *
+ * @param {string} directory
+ * @param {"managed" | "unmanaged" | "unknown"} [vitePlusStatus]
+ * @param {{ editorConfig?: import("./editorconfig.js").EditorConfigSettings }} [options]
+ *   `editorConfig` is the `.editorconfig` the same run writes, so formatting stops when it would
+ *   change the settings the formatter uses.
+ * @returns {() => Promise<ProjectFormatter>}
+ */
+export function projectFormatterLoader(directory, vitePlusStatus, options = {}) {
+  /** @type {Promise<ProjectFormatter> | undefined} */
+  let formatter;
+  return () =>
+    (formatter ??= (async () =>
+      loadProjectFormatter(
+        directory,
+        vitePlusStatus ?? (await detectVitePlus(directory)).status,
+        options,
+      ))());
 }
 
 /**
