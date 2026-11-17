@@ -606,25 +606,31 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
     const state = await readState();
     const outputRoot = join(stagingRoot, "outputs");
     const applied = await buildAiApplyResult(recipe, { dryRun, outputRoot }, state, sourcePaths);
-    if (!dryRun) {
-      if (plan.preflight) await plan.preflight(sourcePaths);
-      const paths = new Set(applied.artifacts.map(({ path }) => path));
-      const nextState = {
+    const paths = new Set(applied.artifacts.map(({ path }) => path));
+    // #838: formatted in the dry run as well, so the dry run stops where the install would.
+    const stateText = await formatRecordText(
+      STATE_PATH,
+      {
         ...state,
         aiArtifacts: [
           ...state.aiArtifacts.filter(({ path }) => !paths.has(path)),
           ...applied.artifacts,
         ],
-      };
+      },
+      loadFormatter,
+    );
+    const lockText = await formatRecordText(
+      LOCK_PATH,
+      { schemaVersion: 1, artifacts: [...plan.keptEntries, ...nextEntries] },
+      loadFormatter,
+    );
+    if (!dryRun) {
+      if (plan.preflight) await plan.preflight(sourcePaths);
       const stagedState = join(stagingRoot, "records", "state.json");
       const stagedLock = join(stagingRoot, "records", "artifacts.lock.json");
-      await writeStagedJson(stagedState, STATE_PATH, nextState, loadFormatter);
-      await writeStagedJson(
-        stagedLock,
-        LOCK_PATH,
-        { schemaVersion: 1, artifacts: [...plan.keptEntries, ...nextEntries] },
-        loadFormatter,
-      );
+      await mkdir(dirname(stagedState), { recursive: true });
+      await writeFile(stagedState, stateText, { flag: "wx" });
+      await writeFile(stagedLock, lockText, { flag: "wx" });
 
       const operations = selections.map((selection) => {
         const entry = nextEntries.find(({ id }) => id === selection.id);
@@ -732,22 +738,16 @@ async function writeAtomicJson(path, value) {
 }
 
 /**
- * Writes `value` to the staged file `path` in the text the project's formatter gives the file at
- * `target`, so the Vite+ pre-commit hook leaves the committed file as written (#838).
+ * The text the artifact transaction commits as the record at `path`: `value` as JSON, formatted by
+ * the project's formatter, so the Vite+ pre-commit hook leaves the committed file as written (#838).
  *
- * @param {string} path
- * @param {string} target The project path the transaction moves the staged file to.
+ * @param {string} path The project path of the record, which picks the formatter's settings.
  * @param {unknown} value
  * @param {() => Promise<ProjectFormatter>} loadFormatter
+ * @returns {Promise<string>}
  */
-async function writeStagedJson(path, target, value, loadFormatter) {
-  const text = await formatGeneratedText(
-    target,
-    `${JSON.stringify(value, null, 2)}\n`,
-    loadFormatter,
-  );
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, text, { flag: "wx" });
+async function formatRecordText(path, value, loadFormatter) {
+  return formatGeneratedText(path, `${JSON.stringify(value, null, 2)}\n`, loadFormatter);
 }
 
 /** @param {string} parent @param {string} child */

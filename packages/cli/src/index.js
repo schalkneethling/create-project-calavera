@@ -2409,7 +2409,6 @@ function jsonContentsMatch(path, installedContents, targetContents) {
  * @param {Change[]} changes
  * @param {CalaveraState} previousState
  * @param {Set<string>} reownManagedFiles
- * @returns {Promise<ManagedFileState>}
  */
 async function writeManagedFile(path, contents, dryRun, changes, previousState, reownManagedFiles) {
   const unchanged = await managedFileUnchanged(path, contents, previousState);
@@ -2420,13 +2419,8 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState, 
     ownership: "calavera",
   });
 
-  const managedFile = {
-    path,
-    hash: textHash(contents),
-  };
-
   if (dryRun || unchanged) {
-    return managedFile;
+    return;
   }
 
   await assertSafeManagedFileWrite(path, contents, previousState, reownManagedFiles);
@@ -2437,8 +2431,6 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState, 
   }
 
   await writeFile(path, contents);
-
-  return managedFile;
 }
 
 /**
@@ -3326,8 +3318,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const { scripts, omittedScripts, omittedQualitySteps, earlierQualityValues } = scriptPlan;
   /** @type {Change[]} */
   const changes = [];
-  /** @type {ManagedFileState[]} */
-  const managedFiles = [];
   const removedDefaultTestScript = removeDefaultTestScript(packageJSON);
   // #230: when the plan omits a requested quality, a value the state records that apply wrote
   // is Calavera's, whatever recipe it was written for, so apply removes it. Only a state file
@@ -3410,8 +3400,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     vitePlusStatus: vitePlusDetection.status,
   });
 
+  let configUnchanged = true;
   if (configText !== undefined) {
-    const configUnchanged =
+    configUnchanged =
       previouslyApplied &&
       (await fileExists(configPath)) &&
       (await readFile(configPath, "utf8")) === configText;
@@ -3421,9 +3412,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       action: "write",
       ownership: "project",
     });
-    if (!applyOptions.dryRun && !configUnchanged) {
-      await writeFile(configPath, configText);
-    }
   }
 
   // ADR-0013, Decision 6: only after an earlier apply is a script under its
@@ -3494,26 +3482,16 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     ...(omittedQualitySteps.length > 0 ? { omittedQualitySteps } : {}),
   });
 
-  // managedFileDeclarations in project-inspection.js sets which managed files apply writes, in order.
-  for (const plan of managedFilePlans) {
-    managedFiles.push(
-      await writeManagedFile(
-        plan.path,
-        plan.contents,
-        applyOptions.dryRun,
-        changes,
-        previousState,
-        reownManagedFiles,
-      ),
-    );
-  }
-  // #838: formatted in the dry run as well, so the dry run stops where apply would.
+  // #838: the state is formatted after the last planning step and before the first write to the
+  // project, in the dry run as well, so the dry run stops where apply would and a formatter that
+  // fails leaves the project unchanged. A managed file's record is its path and the hash of the text
+  // apply writes, which writeManagedFile returns below.
   const stateText = await formatStateText(
     mergeRecipeIntoState(
       previousState,
       recipe.profile,
       integrations.map((integration) => integration.id),
-      managedFiles,
+      managedFilePlans.map(({ path, contents }) => ({ path, hash: textHash(contents) })),
       aiResult.artifacts,
       wiringPlan.records,
       gitignorePlan.records,
@@ -3521,6 +3499,22 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     ),
     loadFormatter,
   );
+
+  if (!applyOptions.dryRun && !configUnchanged) {
+    await writeFile(configPath, /** @type {string} */ (configText));
+  }
+
+  // managedFileDeclarations in project-inspection.js sets which managed files apply writes, in order.
+  for (const plan of managedFilePlans) {
+    await writeManagedFile(
+      plan.path,
+      plan.contents,
+      applyOptions.dryRun,
+      changes,
+      previousState,
+      reownManagedFiles,
+    );
+  }
 
   if (gitignorePlan.type !== undefined && !varlockWritesGitignore) {
     changes.push({
@@ -4183,7 +4177,9 @@ export async function agentBootstrap(options = {}) {
   );
   /** @type {Change[]} */
   const changes = [...aiResult.changes];
-  // #838: formatted before the guidance and MCP files are written, in the dry run as well.
+  // #838: formatted in the dry run as well, and before the guidance and MCP files are written. The
+  // skill files are already written by now, so a formatter failure here leaves them without a
+  // state record.
   const stateText = await formatStateText(
     mergeAiArtifactsIntoState(previousState, aiResult.artifacts),
     loadFormatter,

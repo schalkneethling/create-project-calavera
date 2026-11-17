@@ -5,7 +5,7 @@
 // repository's Oxfmt on exactly the files it is given, as the hook does with the staged files.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { readFile, writeFile } from "node:fs/promises";
+import { cp, readFile, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -15,7 +15,12 @@ import { agentBootstrap, applyRecipeObject } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
-import { copyReleaseFixture } from "./vite-plus-fixtures.mjs";
+import {
+  copyReleaseFixture,
+  createTemporaryFixture,
+  releaseFixturePath,
+  writeVitePlusFormatter,
+} from "./vite-plus-fixtures.mjs";
 
 const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const STATE_PATH = ".calavera/state.json";
@@ -184,5 +189,48 @@ test("Given a Vite+ project whose vite-plus is not installed, when nothing but t
     await assert.rejects(applyRecipeObject(editorConfigOnly, { ...options, dryRun: true }), stop);
     await assert.rejects(applyRecipeObject(editorConfigOnly, options), stop);
     assert.deepEqual(await snapshotDirectory(), before, "apply wrote files before it stopped");
+  });
+});
+
+test("Given a Vite+ project inside a folder whose .editorconfig sets four-space indentation, when only the state needs the formatter, then the dry run and apply both stop before writing anything", async () => {
+  await using parent = await createTemporaryFixture("state-parent-editorconfig", {
+    ".editorconfig": "root = true\n\n[*]\nindent_style = space\nindent_size = 4\n",
+  });
+  const root = join(parent.root, "library");
+  await cp(releaseFixturePath("library"), root, { recursive: true });
+  await writeVitePlusFormatter(root);
+  // Apply writes Calavera's .editorconfig, which would change how vp fmt formats the state. The
+  // dry run cannot see that file on disk, so apply has to stop before writing it, as the dry run does.
+  const editorConfigOnly = buildRecipe("default", ["editorconfig"], "pnpm", []);
+  const options = { ...applyOptions, writeConfig: false };
+  const stop = /Calavera's \.editorconfig would change how vp fmt formats \.calavera\/state\.json/;
+
+  await inDirectory(root, async () => {
+    const before = await snapshotDirectory();
+    await assert.rejects(applyRecipeObject(editorConfigOnly, { ...options, dryRun: true }), stop);
+    await assert.rejects(applyRecipeObject(editorConfigOnly, options), stop);
+    assert.deepEqual(await snapshotDirectory(), before, "apply wrote files before it stopped");
+  });
+});
+
+test("Given a Vite+ project whose vp fmt prints a banner, when artifacts install runs as a dry run, then it formats the state and the lock and stops as the install would", async () => {
+  await using project = await copyReleaseFixture("library");
+  await writeVitePlusFormatter(project.root, { banner: "dotenv: injected 2 variables" });
+  await writeFile(
+    join(project.root, "calavera.config.json"),
+    `${JSON.stringify({ ...recipe, ai: [{ id: "skill-project-goal" }] }, null, 2)}\n`,
+  );
+  const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    await assert.rejects(
+      runArtifactCommand(
+        { config: "calavera.config.json", dryRun: true, artifactAction: "install" },
+        registry,
+      ),
+      /returned text for \.calavera\/state\.json that does not hold the values Calavera sent/,
+    );
+    assert.deepEqual(await snapshotDirectory(), before, "the dry run changed the project");
   });
 });
