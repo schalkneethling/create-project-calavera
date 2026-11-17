@@ -3043,19 +3043,18 @@ async function planRecipeCopy(source) {
 
   const bytes = await readFile(source);
   const target = join(directory, CONFIG_FILE);
-  // fileExists follows a link, so a link whose target is missing reads as no file, and the copy
-  // would then be written wherever the link points, possibly outside the project.
-  const isLink = await lstat(target).then(
-    (stats) => stats.isSymbolicLink(),
-    () => false,
-  );
-  const existing = (await fileExists(target)) ? await readFile(target) : undefined;
+  // lstat does not follow links. A link of any kind, dangling or not, would make the copy, or a
+  // later rewrite of the recipe, land wherever it points, possibly outside the project, and a
+  // directory cannot be copied over, so only a regular file or nothing may be there.
+  const targetStats = await lstat(target).catch(() => undefined);
 
-  if (isLink && existing === undefined) {
+  if (targetStats !== undefined && !targetStats.isFile()) {
     throw new Error(
-      `apply refused: ${target} is a symbolic link to a file that does not exist, so copying ${source} there would write wherever the link points. Remove the link, or restore the file it points to, then run apply again. Calavera stopped before writing anything.`,
+      `apply refused: ${target} is ${targetStats.isSymbolicLink() ? "a symbolic link" : "a directory or other entry"}, not a regular file, so apply cannot copy ${source} there without writing somewhere else. Replace it with the recipe file itself, or remove it, then run apply again. Calavera stopped before writing anything.`,
     );
   }
+
+  const existing = targetStats === undefined ? undefined : await readFile(target);
 
   if (existing !== undefined && !existing.equals(bytes)) {
     throw new Error(
@@ -3547,7 +3546,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       from: source,
     });
     if (!applyOptions.dryRun && !unchanged) {
-      await writeFile(CONFIG_FILE, bytes);
+      // planRecipeCopy found no file here, so an exclusive create fails, instead of following it,
+      // if a file or link appeared since.
+      await writeFile(CONFIG_FILE, bytes, { flag: "wx" });
     }
   }
 

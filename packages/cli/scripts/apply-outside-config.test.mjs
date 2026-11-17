@@ -260,28 +260,67 @@ for (const dryRun of [true, false]) {
   });
 }
 
-for (const dryRun of [true, false]) {
-  test(`a dangling link at calavera.config.json is refused before any write (dryRun: ${dryRun})`, async () => {
-    await using fixture = await downloadedRecipe();
-    const elsewhere = join(fixture.root, "elsewhere");
-    await mkdir(elsewhere);
-    const target = join(fixture.project, "calavera.config.json");
-    await symlink(join(elsewhere, "recipe.json"), target);
-    const before = await snapshotDirectory(fixture.project);
+// A link at calavera.config.json would make the copy, or a later rewrite of the recipe, land
+// wherever the link points, possibly outside the project; a directory there cannot be copied over.
+const notARegularFile = [
+  [
+    "a dangling link",
+    async (fixture, elsewhere) => {
+      await symlink(join(elsewhere, "recipe.json"), join(fixture.project, "calavera.config.json"));
+    },
+  ],
+  [
+    "a link to the outside recipe itself",
+    async (fixture) => {
+      await symlink(fixture.source, join(fixture.project, "calavera.config.json"));
+    },
+  ],
+  [
+    "a directory",
+    async (fixture) => {
+      await mkdir(join(fixture.project, "calavera.config.json"));
+    },
+  ],
+];
 
-    await assert.rejects(
-      inDirectory(fixture.project, () => applyRecipe(applyOptions(fixture.source, { dryRun }))),
-      (error) => {
-        assert.ok(error instanceof Error);
-        assert.ok(error.message.includes(target), error.message);
-        assert.match(error.message, /symbolic link/);
-        assert.match(error.message, /stopped before writing anything/);
-        return true;
+for (const [name, arrange] of notARegularFile) {
+  for (const dryRun of [true, false]) {
+    test(
+      `${name} at calavera.config.json is refused before any write (dryRun: ${dryRun})`,
+      {
+        // A file symbolic link on Windows needs Developer Mode or an extra privilege.
+        skip: process.platform === "win32" && name !== "a directory",
+      },
+      async () => {
+        await using fixture = await downloadedRecipe();
+        const elsewhere = join(fixture.root, "elsewhere");
+        await mkdir(elsewhere);
+        await arrange(fixture, elsewhere);
+        const target = join(fixture.project, "calavera.config.json");
+        const before = await snapshotDirectory(fixture.project);
+
+        await assert.rejects(
+          inDirectory(fixture.project, () =>
+            applyRecipe({ ...applyOptions(fixture.source, { dryRun }), writeConfig: true }),
+          ),
+          (error) => {
+            assert.ok(error instanceof Error);
+            assert.ok(error.message.includes(target), error.message);
+            assert.match(error.message, /not a regular file/);
+            assert.match(error.message, /stopped before writing anything/);
+            return true;
+          },
+        );
+        assert.deepEqual(await snapshotDirectory(fixture.project), before);
+        assert.deepEqual(await readdir(elsewhere), [], "nothing is written where a link points");
+        assert.equal(
+          await readFile(fixture.source, "utf8"),
+          recipeText,
+          "the source is not changed",
+        );
       },
     );
-    assert.deepEqual(await snapshotDirectory(fixture.project), before);
-    assert.deepEqual(await readdir(elsewhere), [], "nothing is written where the link points");
-  });
+  }
 }
 
 for (const [name, config] of [
