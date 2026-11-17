@@ -200,10 +200,12 @@ Vite+ owns every question and every file the scaffold writes. Calavera starts
 (template, target directory, and the rest), and Calavera does not answer them.
 As of Vite+ 1.3.0, Vite+ does not ask for the project's package manager: it uses
 the package manager of the runner Calavera starts, unless `--package-manager` is
-forwarded after `--new`. When `--new` runs inside an existing workspace, Vite+
-uses that workspace's package manager instead, even when `--package-manager` is
-forwarded. Vite+ also installs the project's dependencies; that
-step needs network access and cannot be skipped.
+forwarded after `--new`. When `--new` runs inside an existing project, Vite+
+uses the package manager it detects there unless `--package-manager` is
+forwarded. Inside a monorepo, Vite+ uses the package manager it detects for the
+monorepo even when `--package-manager` is forwarded. A `VP_PACKAGE_MANAGER`
+environment variable overrides all of these. Vite+ also installs the project's
+dependencies; that step needs network access and cannot be skipped.
 
 `--new` ends Calavera's own flags. Every token after it goes to `vp create`
 unchanged, including a `--` that introduces template options, so Calavera flags
@@ -243,10 +245,11 @@ or names a Yarn whose version it cannot read. The runners are
 `npm create vite-plus@latest --`, `pnpm dlx create-vite-plus@latest`,
 `yarn dlx create-vite-plus@latest` (Yarn 2 or later), and
 `bunx create-vite-plus@latest`. Each one runs `create-vite-plus`, the entry
-point Vite+ provides for starting a project. Outside an existing workspace, the
+point Vite+ provides for starting a project. Outside an existing project, the
 runner's package manager becomes the project's package manager, unless you
 forward `--package-manager` after `--new`, which Vite+ then uses instead. The
-confirmation and `--dry-run` output name the package manager Vite+ will use.
+confirmation and `--dry-run` output describe which package manager Vite+ will
+use, including inside an existing project or a monorepo.
 Vite+ 1.0.0
 requires Node.js `^22.18.0 || ^24.11.0 || >=26.0.0`. Whichever runner it
 uses, Calavera removes `npm_config_package` and `npm_config_call` from the

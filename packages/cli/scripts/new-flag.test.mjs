@@ -514,11 +514,14 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
     result.stdout,
     /Vite\+ uses pnpm as the project's package manager unless --package-manager is forwarded after --new\./,
   );
-  // Vite+ 1.4.0 prefers an enclosing workspace's package manager over a forwarded one.
+  // Vite+ 1.6.0 (dist/create/bin.js) picks VP_PACKAGE_MANAGER first, then, inside a monorepo,
+  // the detected package manager before a forwarded one; elsewhere, a forwarded one before the
+  // detected one; then the launcher's (#958).
   assert.match(
     result.stdout,
-    /Inside an existing workspace, Vite\+ uses that workspace's package manager instead, even when --package-manager is forwarded\./,
+    /- Inside an existing project, Vite\+ uses the package manager it detects there unless --package-manager is forwarded\. Inside a monorepo, Vite\+ uses the package manager it detects for the monorepo even when --package-manager is forwarded\. A VP_PACKAGE_MANAGER environment variable overrides all of these\.\n/,
   );
+  assert.doesNotMatch(result.stdout, /Inside an existing workspace/);
   assert.match(result.stdout, /cannot be skipped/);
   assert.match(result.stdout, /may offer to remove/);
   assert.match(result.stdout, /does not undo/);
