@@ -38,3 +38,23 @@ export function titleCase(value) {
 export function pluralizeCount(count, singular, plural = `${singular}s`) {
   return `${count} ${count === 1 ? singular : plural}`;
 }
+
+/**
+ * A package.json script value as a single line of terminal output. JSON
+ * quoting escapes quotes, backslashes, and C0 control characters; control and
+ * format characters JSON leaves as they are, such as DEL, C1 controls, and
+ * bidirectional overrides, and the line and paragraph separators, are escaped
+ * as `\uXXXX` too, so a value cannot recolor, reorder, or break the line.
+ * Nothing in the value is expanded.
+ *
+ * @param {unknown} value
+ * @returns {string}
+ */
+export function quoteScriptValue(value) {
+  return JSON.stringify(value).replace(/[\p{Cc}\p{Cf}\u2028\u2029]/gu, (character) =>
+    Array.from(
+      { length: character.length },
+      (_, index) => `\\u${character.charCodeAt(index).toString(16).padStart(4, "0")}`,
+    ).join(""),
+  );
+}

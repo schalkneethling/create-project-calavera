@@ -344,7 +344,7 @@ test("at the root of a Vite+-managed pnpm workspace, the dry run and apply name 
 
   const human = await runCli(workspace, ["apply", "--dry-run"]);
   assert.equal(human.code, 0, human.stderr);
-  assert.match(human.stdout, /^Dev dependency install command: vp add -D -w knip$/m);
+  assert.match(human.stdout, /^ {2}Install command: vp add -D -w knip$/m);
 
   const dryRun = await runCli(workspace, ["apply", "--dry-run", "--json"]);
   assert.equal(dryRun.code, 0, dryRun.stderr);
@@ -371,7 +371,7 @@ test("at the root of a pnpm workspace Vite+ does not manage, the dry run and app
 
   const human = await runCli(workspace, ["apply", "--dry-run"]);
   assert.equal(human.code, 0, human.stderr);
-  assert.match(human.stdout, /^Dev dependency install command: pnpm add --save-dev -w knip$/m);
+  assert.match(human.stdout, /^ {2}Install command: pnpm add --save-dev -w knip$/m);
 
   const dryRun = await runCli(workspace, ["apply", "--dry-run", "--json"]);
   assert.equal(dryRun.code, 0, dryRun.stderr);
@@ -392,11 +392,16 @@ test("apply --dry-run names vp add -D, and how apply runs it, in a Vite+-managed
     `^Vite\\+ runs this with the package manager the project pins; apply runs it as: \\S+ ${workspace.project}/node_modules/vite-plus/bin/vp add -D knip$`,
     "m",
   );
+  // #617: the summary leaves out the arguments the Install command line above already names.
+  const summarized = new RegExp(
+    `^ {2}Vite\\+ runs this with the package manager the project pins; apply runs it with: \\S+ ${workspace.project}/node_modules/vite-plus/bin/vp$`,
+    "m",
+  );
 
   const human = await runCli(workspace, ["apply", "--dry-run"]);
   assert.equal(human.code, 0, human.stderr);
-  assert.match(human.stdout, /^Dev dependency install command: vp add -D knip$/m);
-  assert.match(human.stdout, spawned);
+  assert.match(human.stdout, /^ {2}Install command: vp add -D knip$/m);
+  assert.match(human.stdout, summarized);
 
   const machine = await runCli(workspace, ["apply", "--dry-run", "--json"]);
   assert.equal(machine.code, 0, machine.stderr);
@@ -419,10 +424,10 @@ test("apply --dry-run says an explicit package manager does not change the insta
   const result = await runCli(workspace, ["apply", "--dry-run", "--package-manager", "npm"]);
 
   assert.equal(result.code, 0, result.stderr);
-  assert.match(result.stdout, /^Dev dependency install command: vp add -D knip$/m);
+  assert.match(result.stdout, /^ {2}Install command: vp add -D knip$/m);
   assert.match(
     result.stdout,
-    /^The package manager given to Calavera \(npm\) does not change this command: Vite\+ installs with the package manager the project pins\.$/m,
+    /^ {2}The package manager given to Calavera \(npm\) does not change this command: Vite\+ installs with the package manager the project pins\.$/m,
   );
 });
 
@@ -431,7 +436,7 @@ test("apply --dry-run names the package manager's own command in a project Vite+
 
   const human = await runCli(workspace, ["apply", "--dry-run"]);
   assert.equal(human.code, 0, human.stderr);
-  assert.match(human.stdout, /^Dev dependency install command: pnpm add --save-dev knip$/m);
+  assert.match(human.stdout, /^ {2}Install command: pnpm add --save-dev knip$/m);
 
   const machine = await runCli(workspace, ["apply", "--dry-run", "--json"]);
   const result = JSON.parse(machine.stdout);

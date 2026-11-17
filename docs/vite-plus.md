@@ -197,9 +197,12 @@ Calavera's, `clean` and its dry run stop before changing anything, because
 `.editorconfig` yourself, or keep `editorconfig` in the recipe, then run
 `clean` again.
 
-The dry run makes the same decision. `apply --dry-run` prints, for example,
-`Dev dependency install command: vp add -D knip`, followed by the exact
-command apply runs, or by the reason apply would stop. `dry_run_apply` and
+The dry run makes the same decision. Under its Integrations heading,
+`apply --dry-run` prints, for example, `Install command: vp add -D knip`,
+followed by the Node.js and `vp` that apply runs it with, or by the reason
+apply would stop. When the project already lists every package in
+`devDependencies`, a note says that apply still runs the command, which can
+update their versions and the lockfile. `dry_run_apply` and
 `apply --dry-run --json` report these as `installCommand` and `installNotes`
 (ADR-0012, Decision 3). A project detection reports as unmanaged, or as
 unknown outside a Vite+ workspace, keeps its package manager's own command,

@@ -796,28 +796,28 @@ test("the CLI dry run prints every line apply adds, keeps, replaces, or removes"
     const replace = await cliDryRun(directory, ["ignore-fixture", "html-validate"]);
     assert.match(
       replace,
-      /Would replace the ignore-fixture block in \.gitignore: "\.fixture-tmp\/" with "\.fixture-tmp\/", "reports\/fixture\/"/,
+      /\.gitignore\n {4}Would replace the ignore-fixture block: "\.fixture-tmp\/" with "\.fixture-tmp\/", "reports\/fixture\/"/,
     );
     assert.match(
       replace,
-      /Would add the ignore-fixture lines to \.htmlvalidateignore: "reports\/fixture\/"/,
+      /\.htmlvalidateignore\n(?: {4}.*\n)* {4}Would add the ignore-fixture lines: "reports\/fixture\/"/,
     );
 
     await applyRecipeObject(recipeWith(["ignore-fixture", "html-validate"]), applyOptions);
     const unchanged = await cliDryRun(directory, ["ignore-fixture", "html-validate"]);
     assert.match(
       unchanged,
-      /\.gitignore already holds the ignore-fixture block: "\.fixture-tmp\/", "reports\/fixture\/"/,
+      /\.gitignore\n {4}Already holds the ignore-fixture block: "\.fixture-tmp\/", "reports\/fixture\/"/,
     );
 
     const removal = await cliDryRun(directory, ["html-validate"]);
     assert.match(
       removal,
-      /Would remove the ignore-fixture block from \.gitignore, because ignore-fixture no longer adds lines to it: "\.fixture-tmp\/", "reports\/fixture\/"/,
+      /\.gitignore\n {4}Would remove the ignore-fixture block, because ignore-fixture no longer adds lines to it: "\.fixture-tmp\/", "reports\/fixture\/"/,
     );
     assert.match(
       removal,
-      /Would remove from \.htmlvalidateignore, because no selected integration declares them: "reports\/fixture\/"/,
+      /\.htmlvalidateignore\n(?: {4}.*\n)* {4}Would remove lines no selected integration declares: "reports\/fixture\/"/,
     );
   });
 });
@@ -838,7 +838,7 @@ test("the CLI dry run says an .htmlvalidateignore line order apply would change 
     const quoted = (/** @type {string[]} */ lines) => lines.map((line) => `"${line}"`).join(", ");
     assert.ok(
       dryRun.includes(
-        `Would replace the html-validate lines in .htmlvalidateignore: ${quoted(reordered)} with ${quoted(written.trimEnd().split("\n"))}`,
+        `.htmlvalidateignore\n    Would replace the html-validate lines: ${quoted(reordered)} with ${quoted(written.trimEnd().split("\n"))}`,
       ),
       dryRun,
     );

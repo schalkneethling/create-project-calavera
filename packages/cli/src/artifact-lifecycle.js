@@ -746,8 +746,13 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
   }
 }
 
-/** @param {unknown} ai */
-function normalizePackageSelections(ai) {
+/**
+ * The catalog selections of a recipe's `ai` items, in order: an item selected by its legacy type
+ * and src is named by its catalog ID, as its lock entry is.
+ *
+ * @param {unknown} ai
+ */
+export function normalizePackageSelections(ai) {
   if (!Array.isArray(ai)) return [];
   return normalizeSelections(
     ai.filter(

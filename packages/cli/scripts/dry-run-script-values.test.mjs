@@ -117,7 +117,8 @@ test("dry_run_apply lists added and changed scripts with their values", async ()
 test("the human dry run shows each added and changed script, and names the unchanged ones", async () => {
   await inProject(async () => {
     const stdout = await runCli(["apply", "--dry-run", "--package-manager", "pnpm"]);
-    const lines = stdout.split("\n");
+    // #617: the script lines sit under the Scripts heading, indented.
+    const lines = stdout.split("\n").map((line) => line.trim());
 
     assert.ok(
       lines.includes(
@@ -212,7 +213,8 @@ test("a renamed script is one entry with its old name and value, and one human l
     ]);
 
     const stdout = await runCli(["apply", "--dry-run", "--package-manager", "pnpm"]);
-    const lines = stdout.split("\n");
+    // #617: the script lines sit under the Scripts heading, indented.
+    const lines = stdout.split("\n").map((line) => line.trim());
 
     assert.ok(
       lines.includes(
@@ -245,6 +247,7 @@ test("the human dry run escapes control and format characters in script values",
       assert.ok(
         stdout
           .split("\n")
+          .map((line) => line.trim())
           .includes(
             `Would change script quality from "echo \\u001b[31mred\\u202ereversed\\u2028next\\u007f" to "${quality}"`,
           ),
@@ -272,7 +275,12 @@ test("a script whose current value is not a string shows that value", async () =
 
       const stdout = await runCli(["apply", "--dry-run", "--package-manager", "pnpm"]);
 
-      assert.ok(stdout.split("\n").includes(`Would change script quality from 42 to "${quality}"`));
+      assert.ok(
+        stdout
+          .split("\n")
+          .map((line) => line.trim())
+          .includes(`Would change script quality from 42 to "${quality}"`),
+      );
     },
     { scripts: { quality: 42 } },
   );

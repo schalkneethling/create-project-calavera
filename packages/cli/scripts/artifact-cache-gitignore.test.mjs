@@ -169,7 +169,8 @@ test("the block leaves with the cache, and the dry run says why", async () => {
     assert.equal(run.status, 0, `${run.stdout}${run.stderr}`);
     assert.match(
       `${run.stdout}${run.stderr}`,
-      /Would remove the artifact-cache block from \.gitignore, because the recipe selects no artifacts and \.calavera\/cache\/ does not exist: "\.calavera\/cache\/"/,
+      // #617: the block's line sits under the line for the file, so the path is named once.
+      /^ {2}Would update \.gitignore\n {4}Would remove the artifact-cache block, because the recipe selects no artifacts and \.calavera\/cache\/ does not exist: "\.calavera\/cache\/"$/m,
     );
 
     await applyRecipeObject(recipeWith([]), applyOptions);
