@@ -457,16 +457,21 @@ apply tools:
 13. `dry_run_apply`
 14. `apply_recipe`
 
-WebMCP exposes the browser-safe composition subset:
+WebMCP exposes the browser-safe subset: Baseline lookup, recipe composition,
+and recipe download, but not project inspection or apply:
 
 1. `list_profiles`
 2. `list_integrations`
 3. `describe_integration`
 4. `list_ai_artifacts`
-5. `compose_recipe`
-6. `validate_recipe`
-7. `explain_recipe`
-8. `download_recipe`
+5. `list_baseline_targets`
+6. `describe_baseline_target`
+7. `search_baseline_features`
+8. `recommend_baseline_target`
+9. `compose_recipe`
+10. `validate_recipe`
+11. `explain_recipe`
+12. `download_recipe`
 
 Use standard MCP when the agent can run from the project root. Use WebMCP when
 the agent is helping compose a recipe in the browser and the user will download
