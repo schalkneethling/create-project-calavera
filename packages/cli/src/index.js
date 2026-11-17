@@ -4327,6 +4327,7 @@ export function vpCreateEnvironment(env) {
  * @typedef {object} NewProjectRuntime
  * @property {(invocation: RunnerInvocation) => Promise<RunnerExit>} [spawnRunner]
  * @property {(cwd: string) => Promise<string | undefined>} [readYarnVersion]
+ * @property {(cwd: string) => Promise<string>} [readYarnCorepackRoot]
  * @property {Record<string, string | undefined>} [env] Where `npm_config_user_agent` is read, and the base of the environment `vp create` receives; `process.env` by default.
  */
 
@@ -4356,32 +4357,85 @@ async function readInstalledYarnVersion(cwd) {
 }
 
 /**
+ * Asks the `yarn` that runs in `cwd` whether Corepack ran it (#936). Corepack
+ * sets COREPACK_ROOT in its own process before it runs yarn there, and Yarn 1's
+ * `node` command passes that environment to the Node process it starts, so
+ * `yarn node` prints a `COREPACK_ROOT=` line whose value is empty unless
+ * Corepack ran yarn. COREPACK_ROOT is removed from the environment yarn
+ * receives, in any case as Windows reads it, so a value Calavera inherited, for
+ * example from a Corepack pnpm that started it, cannot pass for Corepack.
+ * Without COREPACK_ROOT, Yarn 1 refuses to run in a project whose
+ * `packageManager` names Yarn 2 or later, so SKIP_YARN_COREPACK_CHECK turns
+ * that check off, as Yarn 1's cli.js reads it. Stdin and the time limit are as
+ * for readInstalledYarnVersion. It rejects when yarn cannot start, exits
+ * non-zero, or times out.
+ *
+ * @param {string} cwd
+ * @returns {Promise<string>}
+ */
+async function readInstalledYarnCorepackRoot(cwd) {
+  const { stdout } = await execa(
+    "yarn",
+    ["node", "-e", 'console.log("COREPACK_ROOT=" + (process.env.COREPACK_ROOT ?? ""))'],
+    {
+      cwd,
+      // extendEnv: false, so the COREPACK_ROOT removed here is not merged back from process.env.
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "COREPACK_ROOT"),
+        ),
+        SKIP_YARN_COREPACK_CHECK: "1",
+      },
+      extendEnv: false,
+      stdin: "ignore",
+      timeout: YARN_VERSION_TIMEOUT_MS,
+    },
+  );
+
+  return stdout;
+}
+
+/**
+ * The first line of a failure, for a hint. execa's shortMessage names the
+ * command and the failure without its output.
+ *
+ * @param {unknown} error
+ */
+function failureReason(error) {
+  return error instanceof ExecaError
+    ? error.shortMessage.split("\n")[0]
+    : error instanceof Error
+      ? error.message.split("\n")[0]
+      : String(error);
+}
+
+/**
  * The hint for a failed `yarn dlx` run (#911). The runner inherits stdio, so
  * Calavera cannot read Yarn's error; the Yarn version decides instead. Yarn 0
  * and 1 have no dlx command. Yarn 2 or later has one, so the cause is
  * elsewhere and no Yarn hint is added. An unreadable version keeps the hint
  * that states its own condition, with the reason the version was unreadable.
  *
+ * Under Yarn 0 or 1, Corepack decides whether that Yarn ran `yarn dlx` (#936).
+ * Corepack runs `yarn dlx` with its own Yarn 2 or later unless the project
+ * pins a Yarn in its `packageManager` field, while `yarn --version` reports the
+ * default Yarn, which can be Yarn 1. So when Corepack ran yarn, the hint does
+ * not name Yarn 1 as the cause, and when Calavera cannot tell, it keeps the
+ * hint that states its own condition.
+ *
  * @param {(cwd: string) => Promise<string | undefined>} readYarnVersion
+ * @param {(cwd: string) => Promise<string>} readYarnCorepackRoot
  * @param {string} cwd
  * @returns {Promise<{ hint: string, cause?: unknown }>}
  */
-async function yarnFailureHint(readYarnVersion, cwd) {
+async function yarnFailureHint(readYarnVersion, readYarnCorepackRoot, cwd) {
   let output;
 
   try {
     output = await readYarnVersion(cwd);
   } catch (error) {
-    // execa's shortMessage names the command and the failure without its output.
-    const reason =
-      error instanceof ExecaError
-        ? error.shortMessage.split("\n")[0]
-        : error instanceof Error
-          ? error.message.split("\n")[0]
-          : String(error);
-
     return {
-      hint: ` ${YARN_DLX_HINT} Calavera could not read the Yarn version: ${reason}.`,
+      hint: ` ${YARN_DLX_HINT} Calavera could not read the Yarn version: ${failureReason(error)}.`,
       cause: error,
     };
   }
@@ -4402,11 +4456,31 @@ async function yarnFailureHint(readYarnVersion, cwd) {
 
   const [, version, major] = match;
 
+  if (Number(major) >= 2) {
+    return { hint: "" };
+  }
+
+  const unsure = ` ${YARN_DLX_HINT} yarn --version reports Yarn ${version}, but Calavera could not tell whether Corepack ran yarn:`;
+  let probe;
+
+  try {
+    probe = await readYarnCorepackRoot(cwd);
+  } catch (error) {
+    return { hint: `${unsure} ${failureReason(error)}.`, cause: error };
+  }
+
+  // . stops at a line terminator, \r included, so the value ends where its line does.
+  const corepackRoot = /^COREPACK_ROOT=(.*)/m.exec(probe)?.[1];
+
+  if (corepackRoot === undefined) {
+    return { hint: `${unsure} yarn node printed no COREPACK_ROOT line.` };
+  }
+
   return {
     hint:
-      Number(major) < 2
+      corepackRoot === ""
         ? ` The yarn in this directory is Yarn ${version}, which has no dlx command, so it could not start Vite+. Use Yarn 2 or later, for example through Corepack, or pass another --package-manager before --new.`
-        : "",
+        : ` yarn --version reports Yarn ${version}, but Corepack runs yarn dlx with Yarn 2 or later unless the project pins Yarn 1, for example in the packageManager field of package.json. If it does, pin Yarn 2 or later or pass another --package-manager before --new.`,
   };
 }
 
@@ -4753,7 +4827,11 @@ export async function newProject(options, runtime = {}) {
   if (exit.exitCode !== 0) {
     const yarn =
       runnerCommand.command === "yarn"
-        ? await yarnFailureHint(runtime.readYarnVersion ?? readInstalledYarnVersion, cwd)
+        ? await yarnFailureHint(
+            runtime.readYarnVersion ?? readInstalledYarnVersion,
+            runtime.readYarnCorepackRoot ?? readInstalledYarnCorepackRoot,
+            cwd,
+          )
         : undefined;
 
     throw new Error(
