@@ -4296,17 +4296,33 @@ const NEW_HARD_STOP_SUFFIX =
 export const NPM_STALE_CACHE_HINT =
   'This applies only if the npm output above shows "npm error code ERESOLVE" and names a vite-plus version: an older create-vite-plus or vite-plus in the npx cache can cause that. To fix it, run "npm cache npx ls", find the rows that show create-vite-plus or vite-plus, run "npm cache npx rm <key>" with the key from each row, then run this command again. If the npm output shows a different error, this does not apply; read the npm or Vite+ output above.';
 
-// Exit 127 means a shell did not find a command, which no cache change fixes.
-export const NPM_EXIT_127_HINT =
-  'This applies only if the output above shows "command not found", for example for create-vite@latest. A likely cause is that Calavera itself was started with "npx --package" or "npm exec --package": npm then passes npm_config_package to the npx that Vite+ starts for the template, and that npx looks for its command in the wrong package. To avoid it, start Calavera with "npm create project-calavera" or "pnpm create project-calavera" if you did not already, or pass --package-manager pnpm before --new, with pnpm installed, and do not forward --package-manager npm after --new. See https://github.com/schalkneethling/create-project-calavera/blob/main/docs/agent-first-calavera-workflow.md#known-issue-vp-create-exits-with-code-127-through-npm. If the output shows a different error, this does not apply; read the npm or Vite+ output above.';
+/**
+ * The environment `vp create` receives (#689): Calavera's own, without the
+ * npm exec settings that describe how Calavera was launched. `npx --package`
+ * sets `npm_config_package` and `npx -c` sets `npm_config_call` for the
+ * process they start. When Calavera passed them on, npm looked for the
+ * runner's command inside create-project-calavera and exited 127: both
+ * `npm create vite-plus@latest` itself and the `npx` that Vite+ starts for
+ * the template (#670). npm reads the
+ * `npm_config_` prefix in any case, so the match ignores case. Every other
+ * variable passes through unchanged.
+ *
+ * @param {Record<string, string | undefined>} env
+ * @returns {Record<string, string | undefined>}
+ */
+export function vpCreateEnvironment(env) {
+  return Object.fromEntries(
+    Object.entries(env).filter(([key]) => !/^npm_config_(package|call)$/i.test(key)),
+  );
+}
 
 /**
- * @typedef {{ command: string, args: string[], cwd: string }} RunnerInvocation
+ * @typedef {{ command: string, args: string[], cwd: string, env: Record<string, string | undefined> }} RunnerInvocation
  * @typedef {{ exitCode: number | null, signal: string | null }} RunnerExit
  * @typedef {object} NewProjectRuntime
  * @property {(invocation: RunnerInvocation) => Promise<RunnerExit>} [spawnRunner]
  * @property {(cwd: string) => Promise<string | undefined>} [readYarnVersion]
- * @property {Record<string, string | undefined>} [env] Where `npm_config_user_agent` is read; `process.env` by default.
+ * @property {Record<string, string | undefined>} [env] Where `npm_config_user_agent` is read, and the base of the environment `vp create` receives; `process.env` by default.
  */
 
 const YARN_DLX_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or later.";
@@ -4395,8 +4411,15 @@ async function yarnFailureHint(readYarnVersion, cwd) {
  * @param {RunnerInvocation} invocation
  * @returns {Promise<RunnerExit>}
  */
-async function spawnInheritedRunner({ command, args, cwd }) {
-  const result = await execa(command, args, { cwd, stdio: "inherit", reject: false });
+async function spawnInheritedRunner({ command, args, cwd, env }) {
+  // extendEnv: false, so the settings vpCreateEnvironment removed are not merged back from process.env.
+  const result = await execa(command, args, {
+    cwd,
+    env,
+    extendEnv: false,
+    stdio: "inherit",
+    reject: false,
+  });
 
   if (result.exitCode === undefined && result.signal === undefined) {
     throw new Error(
@@ -4649,10 +4672,9 @@ export async function newProject(options, runtime = {}) {
     );
   }
 
+  const env = runtime.env ?? process.env;
   const runnerPackageManager =
-    options.packageManager ??
-    launchingPackageManager((runtime.env ?? process.env).npm_config_user_agent) ??
-    "npm";
+    options.packageManager ?? launchingPackageManager(env.npm_config_user_agent) ?? "npm";
   const runnerCommand = createVpCreateCommand(runnerPackageManager, forwardedArgs);
   const runner = formatShellCommand(runnerCommand);
   const recipe =
@@ -4706,7 +4728,11 @@ export async function newProject(options, runtime = {}) {
   const before = forwardedTarget === undefined ? await snapshotManifests(cwd) : new Map();
   let exit;
   try {
-    exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({ ...runnerCommand, cwd });
+    exit = await (runtime.spawnRunner ?? spawnInheritedRunner)({
+      ...runnerCommand,
+      cwd,
+      env: vpCreateEnvironment(env),
+    });
   } catch (error) {
     if (options.packageManager !== undefined) {
       throw error;
@@ -4729,9 +4755,10 @@ export async function newProject(options, runtime = {}) {
       `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
         yarn !== undefined
           ? yarn.hint
-          : runnerCommand.command !== "npm"
+          : // Exit 127 means a shell did not find a command, which no cache change fixes.
+            runnerCommand.command !== "npm" || exit.exitCode === 127
             ? ""
-            : ` ${exit.exitCode === 127 ? NPM_EXIT_127_HINT : NPM_STALE_CACHE_HINT}`
+            : ` ${NPM_STALE_CACHE_HINT}`
       }`,
       yarn?.cause === undefined ? undefined : { cause: yarn.cause },
     );
