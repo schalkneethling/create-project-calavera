@@ -73,6 +73,26 @@ Find the equivalent commands for your package manager in the
 | Yarn            | `yarn dlx create-project-calavera --init` | `yarn dlx create-project-calavera apply --dry-run` | `yarn dlx create-project-calavera apply` |
 | Bun             | `bunx create-project-calavera --init`     | `bunx create-project-calavera apply --dry-run`     | `bunx create-project-calavera apply`     |
 
+To apply a recipe saved outside the project, such as one downloaded from the
+[Web Composer](#web-composer), run these commands from the project root and pass
+the recipe with `--config <path>`:
+
+| Package manager | Preview a downloaded recipe                                                                  | Apply a downloaded recipe                                                          |
+| --------------- | -------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| npm             | `npm create project-calavera apply -- --config ~/Downloads/calavera.config.json --dry-run`   | `npm create project-calavera apply -- --config ~/Downloads/calavera.config.json`   |
+| pnpm            | `pnpm dlx create-project-calavera apply --config ~/Downloads/calavera.config.json --dry-run` | `pnpm dlx create-project-calavera apply --config ~/Downloads/calavera.config.json` |
+| Yarn            | `yarn dlx create-project-calavera apply --config ~/Downloads/calavera.config.json --dry-run` | `yarn dlx create-project-calavera apply --config ~/Downloads/calavera.config.json` |
+| Bun             | `bunx create-project-calavera apply --config ~/Downloads/calavera.config.json --dry-run`     | `bunx create-project-calavera apply --config ~/Downloads/calavera.config.json`     |
+
+Apply copies the recipe, byte for byte, into the project root as
+`calavera.config.json`, so later commands such as `apply`, `update`, `doctor`,
+and `clean` find it without `--config`. The dry run lists the copy and writes
+nothing. The project root is the current directory, and it must contain a
+`package.json`: without one, apply refuses and names the directory instead of
+offering to create `package.json`. When the project already has a different
+`calavera.config.json`, apply stops without writing anything, because it never
+replaces a project's recipe.
+
 `npm create` needs the `--` separator before Calavera flags such as `--init`
 and `--dry-run`. Do not use `npm create project-calavera --init`; npm treats
 `--init` as its own option and Calavera falls back to the recipe CLI. Yarn
@@ -974,6 +994,16 @@ comfortable with. After saving the file, run the displayed next commands from
 the project folder that contains `calavera.config.json`. The optional bootstrap
 command prepares agent guidance; the dry-run command previews local changes; the
 apply command writes approved changes.
+
+When the recipe was saved outside the project, for example in your downloads
+folder, run the commands from the project root and pass the recipe with
+`--config <path>`: preview with
+`npm create project-calavera apply -- --config ~/Downloads/calavera.config.json --dry-run`,
+then apply with
+`npm create project-calavera apply -- --config ~/Downloads/calavera.config.json`.
+Apply copies the recipe into the project root as `calavera.config.json`. The
+[agent-first command table](#agent-first-command-table) lists the commands for
+each package manager.
 
 When the browser exposes WebMCP, the composer registers a browser parity surface
 for the MCP recipe composition workflow:
