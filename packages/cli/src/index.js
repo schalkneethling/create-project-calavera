@@ -4355,11 +4355,15 @@ async function readInstalledYarnVersion(cwd) {
 
 /**
  * Asks the `yarn` that runs in `cwd` whether Corepack ran it (#936). Corepack
- * runs the package manager in its own process after setting COREPACK_ROOT, so
+ * sets COREPACK_ROOT in its own process before it runs yarn there, and Yarn 1's
+ * `node` command passes that environment to the Node process it starts, so
  * `yarn node` prints a `COREPACK_ROOT=` line whose value is empty unless
  * Corepack ran yarn. COREPACK_ROOT is removed from the environment yarn
- * receives, so a value Calavera inherited, for example from a Corepack pnpm
- * that started it, cannot pass for Corepack. Stdin and the time limit are as
+ * receives, in any case as Windows reads it, so a value Calavera inherited, for
+ * example from a Corepack pnpm that started it, cannot pass for Corepack.
+ * Without COREPACK_ROOT, Yarn 1 refuses to run in a project whose
+ * `packageManager` names Yarn 2 or later, so SKIP_YARN_COREPACK_CHECK turns
+ * that check off, as Yarn 1's cli.js reads it. Stdin and the time limit are as
  * for readInstalledYarnVersion. It rejects when yarn cannot start, exits
  * non-zero, or times out.
  *
@@ -4373,9 +4377,12 @@ async function readInstalledYarnCorepackRoot(cwd) {
     {
       cwd,
       // extendEnv: false, so the COREPACK_ROOT removed here is not merged back from process.env.
-      env: Object.fromEntries(
-        Object.entries(process.env).filter(([key]) => key !== "COREPACK_ROOT"),
-      ),
+      env: {
+        ...Object.fromEntries(
+          Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "COREPACK_ROOT"),
+        ),
+        SKIP_YARN_COREPACK_CHECK: "1",
+      },
       extendEnv: false,
       stdin: "ignore",
       timeout: YARN_VERSION_TIMEOUT_MS,

@@ -261,7 +261,7 @@ The pnpm and Yarn rows become `pnpm dlx create-vite-plus@latest <forwarded>` and
 
 No `VP_CLI_BIN` or `PATH` change is added to the child environment. Decision 1's per-runner check stays in force: a release that fails it for any row returns here.
 
-The Corepack finding affects the Yarn failure hint from #911, which this change leaves as it is. The hint runs `yarn --version` in the working directory and, under Yarn 1, says that Yarn has no `dlx` command. With a Corepack Yarn 1 default and no `packageManager` field, `yarn --version` prints 1.22.22 while `yarn dlx` runs Yarn 4.18.0, so if that run fails for another reason, such as the network or Vite+, the hint names Yarn 1 as the cause when it is not. This needs its own issue, because #911 is closed. #936 resolves it: under Yarn 0 or 1, the hint now asks `yarn node` whether Corepack set `COREPACK_ROOT`, and when Corepack ran yarn, the hint no longer names Yarn 1 as the cause.
+The Corepack finding affects the Yarn failure hint from #911, which this change leaves as it is. The hint runs `yarn --version` in the working directory and, under Yarn 1, says that Yarn has no `dlx` command. With a Corepack Yarn 1 default and no `packageManager` field, `yarn --version` prints 1.22.22 while `yarn dlx` runs Yarn 4.18.0, so if that run fails for another reason, such as the network or Vite+, the hint names Yarn 1 as the cause when it is not. This needs its own issue, because #911 is closed.
 
 ## Amendment: The Launching Package Manager Chooses the Runner
 

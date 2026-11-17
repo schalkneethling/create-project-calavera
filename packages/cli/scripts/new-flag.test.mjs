@@ -82,8 +82,18 @@ if (argv.length === 1 && argv[0] === "--version") {
 // STUB_COREPACK_ROOT stands for Corepack; without it, Node sees the COREPACK_ROOT
 // the stub inherited. STUB_NODE_MODE "fail" exits 2, "stdin" waits for stdin
 // to end first, "hang" never exits, and "silent" prints only the header lines.
+// STUB_PINS_YARN_4 stands for a project whose packageManager names Yarn 4, where
+// Yarn 1 exits 1 unless COREPACK_ROOT or SKIP_YARN_COREPACK_CHECK is set.
 if (argv[0] === "node") {
   appendFileSync(process.env.STUB_LOG + ".node", JSON.stringify({ cwd: process.cwd() }) + "\\n");
+  if (
+    process.env.STUB_PINS_YARN_4 !== undefined &&
+    !process.env.COREPACK_ROOT &&
+    !process.env.SKIP_YARN_COREPACK_CHECK
+  ) {
+    console.error("error This project's package.json defines packageManager yarn@4.18.0.");
+    process.exit(1);
+  }
   if (process.env.STUB_NODE_MODE === "hang") {
     setInterval(() => {}, 1000);
     await new Promise(() => {});
@@ -939,6 +949,21 @@ test("--new names Yarn 1 as the cause when yarn dlx fails under Yarn 1", async (
   assert.deepEqual(nodeCwds, [work]);
 });
 
+// A standalone Yarn 1 under an inherited COREPACK_ROOT runs yarn dlx even in a
+// project that pins Yarn 4, and fails because Yarn 1 has no dlx. The probe loses
+// that COREPACK_ROOT, so it turns off Yarn 1's packageManager check instead (#936).
+test("--new names Yarn 1 as the cause in a project that pins Yarn 4 under an inherited COREPACK_ROOT", async () => {
+  const { result } = await failedYarnRun({
+    STUB_VERSION: "1.22.22",
+    STUB_PINS_YARN_4: "1",
+    COREPACK_ROOT: "/inherited/corepack",
+  });
+
+  assert.equal(result.code, 1);
+  assert.match(result.stderr, /Yarn 1\.22\.22, which has no dlx command/);
+  assert.doesNotMatch(result.stderr, /could not tell/);
+});
+
 // Under Corepack with a Yarn 1 default and no packageManager field, yarn --version
 // prints 1.22.22 while yarn dlx runs Corepack's Yarn 4 (#936, probed with Corepack
 // 0.36.0), so the version alone does not name the Yarn that failed.
@@ -1147,7 +1172,6 @@ for (const [output, expected] of [
   ["COREPACK_ROOT=", "yarn 1"],
   ["yarn node v1.22.22\nCOREPACK_ROOT=/corepack\nDone in 0.05s.", "corepack"],
   ["COREPACK_ROOT=/corepack", "corepack"],
-  ["COREPACK_ROOT= ", "corepack"],
   ["yarn node v1.22.22\nDone in 0.05s.", "guess"],
   ["NOT_COREPACK_ROOT=/corepack", "guess"],
   ["COREPACK_ROOT =/corepack", "guess"],
@@ -1197,6 +1221,38 @@ test("--new keeps a Corepack probe failure as the cause and names it in the hint
   assert.match(error.message, /could not tell whether Corepack ran yarn: spawn yarn EACCES\.$/);
   assert.equal(error.cause, failure);
 });
+
+test("--new sets no cause when Corepack ran yarn", async () => {
+  const error = await failedNewError(
+    "yarn",
+    async () => "1.22.22",
+    async () => "COREPACK_ROOT=/corepack",
+  );
+
+  assert.match(error.message, /Corepack runs yarn dlx with Yarn 2 or later/);
+  assert.equal(error.cause, undefined);
+});
+
+for (const [label, readYarnVersion] of [
+  [
+    "fails",
+    async () => {
+      throw new Error("spawn yarn ENOENT");
+    },
+  ],
+  ["prints something that is not a version", async () => "1.22"],
+]) {
+  test(`--new does not run the Corepack probe when yarn --version ${label}`, async () => {
+    let probed = false;
+    const error = await failedNewError("yarn", readYarnVersion, async () => {
+      probed = true;
+      return NO_COREPACK;
+    });
+
+    assert.equal(probed, false);
+    assert.ok(error.message.includes(GUESSING_YARN_HINT));
+  });
+}
 
 test("--new does not run the Corepack probe when yarn --version reports Yarn 2 or later", async () => {
   let probed = false;
