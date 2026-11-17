@@ -15,7 +15,7 @@ import {
   recipeToolInputDescriptions,
   validateRecipeResponse,
 } from "../../packages/cli/src/recipe.js";
-import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../../packages/cli/src/ai/catalog.js";
+import { DEFAULT_AI_TARGET } from "../../packages/cli/src/ai/catalog.js";
 import {
   baselineMetadata,
   describeBaselineTarget,
@@ -71,23 +71,11 @@ const profiles = profileIdsForRecipe();
 const packageManagers = packageManagerIdsForRecipe();
 const allAiArtifactOptions = listAiArtifactOptions();
 const NEW_PROJECT_CLI_RANGE = ">=4.0.0";
-const statusLabels = {
-  recommended: "Recommended",
-  optional: "Optional",
-  "framework-specific": "Framework",
-  experimental: "Experimental",
-};
 const statusChipClasses = {
   recommended: "chip-recommended",
   optional: "chip-optional",
   "framework-specific": "chip-framework",
   experimental: "chip-experimental",
-};
-const targetLabels = {
-  "claude-code": "Claude Code",
-  codex: "Codex",
-  cursor: "Cursor",
-  opencode: "OpenCode",
 };
 let cliCompatibility = {
   version: SAFE_CLI_FALLBACK_VERSION,
@@ -290,7 +278,7 @@ function integrationRow(integration) {
     chip: element(
       "span",
       { class: `chip ${statusChipClasses[integration.status] ?? "chip-optional"}` },
-      [statusLabels[integration.status] ?? integration.status],
+      [integration.statusLabel],
     ),
     details,
   });
@@ -377,16 +365,17 @@ function renderIntegrations() {
   renderCssOverflow();
 }
 
-function artifactTargets(artifactId) {
-  return aiArtifactCatalog.find(({ id }) => id === artifactId)?.targets ?? [];
+/** @param {string} artifactId */
+function artifactTargetIds(artifactId) {
+  return (allAiArtifactOptions.find(({ id }) => id === artifactId)?.targets ?? []).map(
+    ({ id }) => id,
+  );
 }
 
-/** @param {string[]} targets */
+/** @param {ReturnType<typeof listAiArtifactOptions>[number]["targets"]} targets */
 function targetOptions(targets) {
-  return targets.map((target) =>
-    element("option", { value: target, selected: target === aiTargetAll.value || undefined }, [
-      targetLabels[target] ?? target,
-    ]),
+  return targets.map(({ id, label }) =>
+    element("option", { value: id, selected: id === aiTargetAll.value || undefined }, [label]),
   );
 }
 
@@ -410,7 +399,7 @@ function artifactRow(artifact) {
         element(
           "select",
           { id: `ai-target-${artifact.id}`, "data-ai-target": artifact.id, disabled: true },
-          targetOptions(artifactTargets(artifact.id)),
+          targetOptions(artifact.targets),
         ),
       ]),
     );
@@ -433,15 +422,17 @@ function selectArtifactGroup(group) {
 }
 
 function renderAiTargetAll() {
-  const targets = [...new Set(visibleAiArtifacts().flatMap(({ id }) => artifactTargets(id)))];
+  const targets = new Map(
+    visibleAiArtifacts()
+      .flatMap(({ targets }) => targets)
+      .map((target) => [target.id, target.label]),
+  );
   const current = aiTargetAll.value || DEFAULT_AI_TARGET;
   aiTargetAll.replaceChildren(
-    ...targets.map((target) =>
-      element("option", { value: target }, [targetLabels[target] ?? target]),
-    ),
+    ...[...targets].map(([id, label]) => element("option", { value: id }, [label])),
   );
-  aiTargetAll.value = targets.includes(current) ? current : (targets[0] ?? "");
-  aiTargetAll.closest(".inline-field").hidden = targets.length === 0;
+  aiTargetAll.value = targets.has(current) ? current : ([...targets.keys()][0] ?? "");
+  aiTargetAll.closest(".inline-field").hidden = targets.size === 0;
 }
 
 function renderAiArtifacts() {
@@ -570,7 +561,7 @@ function syncAiTargetStates() {
 function applyTargetToSelectedArtifacts(target) {
   for (const checkbox of form.querySelectorAll('[name="aiArtifact"]:checked')) {
     const select = form.querySelector(`[data-ai-target="${checkbox.value}"]`);
-    if (select && artifactTargets(checkbox.value).includes(target)) {
+    if (select && artifactTargetIds(checkbox.value).includes(target)) {
       select.value = target;
       targetOverrides.delete(checkbox.value);
     }
@@ -1242,7 +1233,7 @@ form.addEventListener("change", (event) => {
     !targetOverrides.has(event.target.value)
   ) {
     const select = form.querySelector(`[data-ai-target="${event.target.value}"]`);
-    if (select && artifactTargets(event.target.value).includes(aiTargetAll.value)) {
+    if (select && artifactTargetIds(event.target.value).includes(aiTargetAll.value)) {
       select.value = aiTargetAll.value;
     }
   }

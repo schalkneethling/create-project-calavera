@@ -1,6 +1,11 @@
-import { artifactCatalog, DEFAULT_ARTIFACT_TARGET } from "@schalkneethling/calavera-artifact-core";
+import {
+  ARTIFACT_TARGET_LABELS,
+  artifactCatalog,
+  DEFAULT_ARTIFACT_TARGET,
+} from "@schalkneethling/calavera-artifact-core";
 
 export const DEFAULT_AI_TARGET = DEFAULT_ARTIFACT_TARGET;
+export const AI_TARGET_LABELS = ARTIFACT_TARGET_LABELS;
 
 export const aiArtifactCatalog = artifactCatalog.map((artifact) => ({
   id: artifact.id,
