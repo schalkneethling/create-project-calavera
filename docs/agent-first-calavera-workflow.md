@@ -274,8 +274,8 @@ blank lines. "Changes" lists each file the bootstrap wrote, updated, or skipped,
 once, including `.calavera/state.json`, Calavera's record of the files it
 manages. The Calavera skill, `.coderabbit.yaml`, and `.calavera/state.json` are
 not listed when they are already up to date. "Notes" says where installed skills live and what you still need to do by
-hand, such as merging `AGENTS.calavera.md` or setting up MCP from the setup
-notes that "Changes" lists. "Next steps" follows, and "Next prompt" comes last:
+hand, such as merging the fallback guidance or setting up MCP from the setup
+notes, each of which "Changes" lists. "Next steps" follows, and "Next prompt" comes last:
 the agent prompt alone on one line between blank lines, so you can copy all of
 it into your agent as one message.
 

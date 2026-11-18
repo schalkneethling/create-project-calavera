@@ -4428,7 +4428,9 @@ export async function agentBootstrap(options = {}) {
       ...aiResult.pointers,
       ...(fallbackGuidanceAwaitsMerge
         ? [
-            `Merge ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
+            // #1020: the fallback is always written, updated, or skipped under Changes when it
+            // awaits a merge, so the note points there instead of naming it a second time.
+            `Merge the fallback guidance listed under Changes into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
           ]
         : []),
       // Only a manual MCP setup carries a reason.
