@@ -219,16 +219,18 @@ The CLI help text (`index.js:6029-6043`), the README command list, and the bundl
 ## Amendment 1: A Base Skill That Holds Content Its Hash Does Not Cover Needs an Interactive Approval
 
 - **Date:** 2026-11-18
-- **Decided by:** the owner, on #678 (https://github.com/schalkneethling/create-project-calavera/issues/678#issuecomment-6987549944)
 - **Pull request:** https://github.com/schalkneethling/create-project-calavera/pull/1050 (#678, layer 1)
 
 Decision 2 checks the base skill with `hashAiInstall` against its `aiArtifacts` record. That hash covers only the regular files in `.agents/skills/calavera`, because `collectFiles` skips every other entry (`packages/cli/src/utils/hash.js:18-33`). A symbolic link or an empty folder that the person added therefore leaves the hash unchanged, and the skill matched its record. Under Decision 5, `eject --yes` would then remove the skill together with the link or folder, which no record covers and nobody approved.
 
-The owner decided on 2026-11-18 that any symbolic link or empty folder inside `.agents/skills/calavera` counts as content that no record covers, the same rule Decision 5 applies to package folders. `eject` applies it as follows:
+The owner decided on 2026-11-18 that any symbolic link or empty folder inside `.agents/skills/calavera` counts as content that no record covers, the same rule Decision 5 applies to package folders (https://github.com/schalkneethling/create-project-calavera/issues/678#issuecomment-6987549944). `eject` applies it as follows:
 
 - A base skill whose hash matches its record but that holds a symbolic link or an empty folder, at any depth, is listed as "edits cannot be detected" and names each such entry. It does not match Calavera's records, so `--yes` leaves it, and the state with it, for an interactive approval.
-- A base skill whose hash differs from its record is listed as edited, as before, and its reason also names those entries.
-- A `.agents/skills/calavera` that is itself a symbolic link is treated the same way, because the hash then describes the folder the link leads to.
+- A base skill that is edited, or that has no record, is listed as edited, as before, and its reason also names those entries, so the person sees them before approving.
+- A folder inside the skill that `eject` cannot list may hold anything, so it never counts as covered, and the reason says so.
+- A `.agents/skills/calavera` that is itself a symbolic link is treated the same way, because the hash then describes the folder the link leads to. After approval, `eject` removes the link and never the folder it leads to, wherever that folder is.
 - The check reads the entries again before it removes anything, as it reads the hash again, so an entry added after the dry run stops the removal.
 
 The check itself is unchanged: `hashAiInstall` still decides whether the files are edited. The amendment adds what the hash cannot see. Other entries that `collectFiles` skips, such as named pipes, are not part of the owner's decision and are not checked.
+
+This amendment extends the lists of content that `--yes` leaves in Decision 5 and in Consequences: besides the recipe and the package folders, a `--yes` run also leaves a base skill that holds a symbolic link or an empty folder, and the state with it.

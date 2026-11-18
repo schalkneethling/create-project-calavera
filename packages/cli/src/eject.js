@@ -24,7 +24,7 @@ import {
   rmdir,
   writeFile,
 } from "node:fs/promises";
-import { basename, join } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
@@ -131,6 +131,22 @@ function messageOf(error) {
 }
 
 /**
+ * Returns the absolute path of an item `eject` may remove or edit, or throws when the path leads
+ * out of the project. A deleted symbolic link is removed as a link, because `rm` never follows it,
+ * so only the folder that holds the link must be inside the project, wherever the link points. An
+ * edit writes through a link, so its whole path must stay inside.
+ *
+ * @param {EjectItem} item
+ */
+async function assertEjectPath(item) {
+  if (item.action === "delete" && (await lstat(item.path)).isSymbolicLink()) {
+    await assertWorkspacePath(dirname(item.path), process.cwd(), "Eject path");
+    return resolve(item.path);
+  }
+  return assertWorkspacePath(item.path, process.cwd(), "Eject path");
+}
+
+/**
  * Recovers a pending artifact transaction, the way every `artifacts` command does, unless this is
  * a dry run: recovery writes files, so a dry run refuses instead, as `apply --dry-run` does
  * (ADR-0017, Decision 7).
@@ -215,10 +231,15 @@ async function uncoveredSkillEntries(path = BASE_SKILL_PATH) {
   return uncovered.sort();
 }
 
+/** @param {string} text */
+const capitalized = (text) => `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
+
 /**
- * The base skill's hash as `hashAiInstall` computes it, or why it could not be computed, with the
- * entries the hash does not cover (ADR-0017, Amendment 1). `seen` combines both, so a change to
- * either after the plan stops `executeEject`.
+ * The base skill's hash as `hashAiInstall` computes it, or why it could not be computed, with what
+ * the hash does not cover (ADR-0017, Amendment 1). `uncoveredNote` names the symbolic links and
+ * empty folders, and any folder eject could not list, as a clause that starts in lowercase; it is
+ * empty when the hash covers everything. `seen` combines all of it, so a change to any part after
+ * the plan stops `executeEject`.
  */
 async function baseSkillCheck() {
   let hash;
@@ -228,14 +249,27 @@ async function baseSkillCheck() {
     hash = `unreadable: ${messageOf(error)}`;
   }
   /** @type {string[]} */
-  let uncovered;
+  let uncovered = [];
+  let listProblem = "";
   try {
     uncovered = await uncoveredSkillEntries();
   } catch (error) {
-    // A folder eject cannot read may hold anything, so it never counts as covered.
-    uncovered = [`${BASE_SKILL_PATH} (could not be read: ${messageOf(error)})`];
+    // A folder eject cannot list may hold anything, so it never counts as covered.
+    listProblem = messageOf(error);
   }
-  return { hash, uncovered, seen: [hash, ...uncovered].join("\n") };
+  const notes = [
+    uncovered.length > 0
+      ? `the record's hash does not cover symbolic links or empty folders, so ${CANNOT_DETECT} for: ${uncovered.join(", ")}.`
+      : "",
+    listProblem === ""
+      ? ""
+      : `Calavera could not list every entry of ${BASE_SKILL_PATH} (${listProblem}), so ${CANNOT_DETECT} for what it could not list.`,
+  ].filter((note) => note !== "");
+  return {
+    hash,
+    uncoveredNote: notes.join(" "),
+    seen: [hash, ...uncovered, listProblem].join("\n"),
+  };
 }
 
 /**
@@ -265,39 +299,40 @@ async function planBaseSkill(state, stateProblem) {
     path: BASE_SKILL_PATH,
     action: /** @type {const} */ ("delete"),
   };
+  const { hash: installed, uncoveredNote, seen } = await baseSkillCheck();
+  /** @param {string} reason */
+  const withNote = (reason) =>
+    uncoveredNote === "" ? reason : `${reason} ${capitalized(uncoveredNote)}`;
   if (!record) {
     return [
       {
         ...base,
         edits: "edited",
         matchesRecords: false,
-        seen: (await baseSkillCheck()).seen,
-        reason:
+        seen,
+        reason: withNote(
           stateProblem ??
-          `${STATE_PATH} holds no record of the base Calavera skill, so eject cannot tell whether you edited it.`,
+            `${STATE_PATH} holds no record of the base Calavera skill, so eject cannot tell whether you edited it.`,
+        ),
       },
     ];
   }
-  const { hash: installed, uncovered, seen } = await baseSkillCheck();
-  const uncoveredNote = `the record's hash does not cover symbolic links or empty folders, so edits cannot be detected for: ${uncovered.join(", ")}.`;
   if (installed !== record.hash) {
-    const edits = `The base Calavera skill has local edits (installed=${installed}, state=${record.hash}).`;
     return [
       {
         ...base,
         edits: "edited",
         matchesRecords: false,
         seen,
-        reason:
-          uncovered.length === 0
-            ? edits
-            : `${edits} ${uncoveredNote.charAt(0).toUpperCase()}${uncoveredNote.slice(1)}`,
+        reason: withNote(
+          `The base Calavera skill has local edits (installed=${installed}, state=${record.hash}).`,
+        ),
       },
     ];
   }
   // Content no record covers is unknown, so `--yes` leaves it for an interactive approval
   // (ADR-0017, Amendment 1).
-  return uncovered.length === 0
+  return uncoveredNote === ""
     ? [{ ...base, edits: "unedited", matchesRecords: true, seen }]
     : [
         {
@@ -508,8 +543,8 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
 
   // Every path is checked before anything is removed, so a link that leads out of the project
   // stops the plan, not a later delete.
-  for (const { path } of items) {
-    await assertWorkspacePath(path, process.cwd(), "Eject path");
+  for (const item of items) {
+    await assertEjectPath(item);
   }
 
   const kept = [...(await unnamedCalaveraEntries()), ...packages.kept].sort();
@@ -675,7 +710,7 @@ export async function executeEject(items) {
       continue;
     }
     try {
-      const target = await assertWorkspacePath(item.path, process.cwd(), "Eject path");
+      const target = await assertEjectPath(item);
       if (item.action === "edit") {
         await writeFile(target, /** @type {string} */ (item.contents));
       } else if (item.kind === "package-folder") {

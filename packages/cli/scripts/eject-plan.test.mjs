@@ -946,6 +946,28 @@ for (const [label, addUncovered, entry] of [
   ],
   ["an empty folder", async () => mkdir(`${SKILL_PATH}/drafts`), `${SKILL_PATH}/drafts`],
   [
+    "a symbolic link inside a folder",
+    async () => {
+      await write(`${SKILL_PATH}/references/guide.md`, "# Guide\n");
+      await symlink("guide.md", `${SKILL_PATH}/references/link`);
+    },
+    `${SKILL_PATH}/references/link`,
+  ],
+  [
+    "a folder that holds only an empty folder",
+    async () => mkdir(`${SKILL_PATH}/outer/inner`, { recursive: true }),
+    `${SKILL_PATH}/outer/inner`,
+  ],
+  [
+    "a symbolic link to a folder, which it does not follow",
+    async () => {
+      await write(".agents/elsewhere/empty-inside/.keep", "");
+      await rm(".agents/elsewhere/empty-inside/.keep");
+      await symlink("../../elsewhere", `${SKILL_PATH}/linked`);
+    },
+    `${SKILL_PATH}/linked`,
+  ],
+  [
     "an empty folder inside a folder",
     async () => {
       await write(`${SKILL_PATH}/references/guide.md`, "# Guide\n");
@@ -1019,6 +1041,7 @@ test("an uncovered entry added after the plan stops the removal", async () => {
       executeEject(selectEjectItems(plan, { assumeYes: false }).remove),
       /\.agents\/skills\/calavera changed since eject listed/,
     );
+    assert.equal(await readFile(`${SKILL_PATH}/SKILL.md`, "utf8"), "# Calavera\n");
   });
 });
 
@@ -1045,7 +1068,10 @@ test(
       try {
         const skill = item(await planEject({ dryRun: true }), SKILL_PATH);
         assert.equal(skill.matchesRecords, false);
-        assert.match(skill.reason ?? "", /could not be read/);
+        assert.match(
+          skill.reason ?? "",
+          /Calavera could not list every entry of \.agents\/skills\/calavera \(EACCES.*\), so edits cannot be detected for what it could not list\.$/,
+        );
       } finally {
         await chmod(`${SKILL_PATH}/private`, 0o755);
       }
@@ -1065,5 +1091,44 @@ test("a base skill names every uncovered entry, in a stable order", async () => 
       item(await planEject({ dryRun: true }), SKILL_PATH).reason ?? "",
       /for: \.agents\/skills\/calavera\/a-empty, \.agents\/skills\/calavera\/z-link\.$/,
     );
+  });
+});
+
+test("a base skill with no record names the entries its hash does not cover", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false, skillRecord: false });
+    await mkdir(`${SKILL_PATH}/drafts`);
+    assert.equal(
+      item(await planEject({ dryRun: true }), SKILL_PATH).reason,
+      ".calavera/state.json holds no record of the base Calavera skill, so eject cannot tell whether you edited it. The record's hash does not cover symbolic links or empty folders, so edits cannot be detected for: .agents/skills/calavera/drafts.",
+    );
+  });
+});
+
+test("an approved run removes a base skill that links out of the project, and only the link", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false });
+    await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+    await write(join(outside.path, "SKILL.md"), "# Theirs\n");
+    await rm(SKILL_PATH, { recursive: true });
+    await symlink(outside.path, SKILL_PATH);
+    const plan = await planEject({ dryRun: false });
+    assert.equal(item(plan, SKILL_PATH).matchesRecords, false);
+    const outcome = await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
+    assert.deepEqual(outcome.failed, []);
+    assert.ok(paths(outcome.removed).includes(SKILL_PATH));
+    assert.equal(await readFile(join(outside.path, "SKILL.md"), "utf8"), "# Theirs\n");
+    await assert.rejects(lstat(SKILL_PATH), { code: "ENOENT" });
+  });
+});
+
+test("an edit never writes through a symbolic link that leads out of the project", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false });
+    await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+    await write(join(outside.path, "gitignore"), `node_modules/\n${CACHE_BLOCK}`);
+    await rm(".gitignore");
+    await symlink(join(outside.path, "gitignore"), ".gitignore");
+    await assert.rejects(planEject({ dryRun: true }), /Eject path must stay inside/);
   });
 });
