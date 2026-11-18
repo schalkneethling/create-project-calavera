@@ -497,3 +497,48 @@ test("Given a Vite+ project whose vp fmt cannot format calavera.config.json, whe
     );
   });
 });
+
+test("Given a Vite+ project whose recipe names a legacy artifact path, when artifacts migrate runs as a dry run, then it reports the migration and writes nothing", async () => {
+  await using project = await copyReleaseFixture("library");
+  await writeFile(
+    join(project.root, "calavera.config.json"),
+    `${JSON.stringify({ ...recipe, ai: [{ type: "skill", src: "skills/project-goal" }] }, null, 2)}\n`,
+  );
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    const result = await runArtifactCommand({
+      config: "calavera.config.json",
+      dryRun: true,
+      artifactAction: "migrate",
+    });
+    assert.equal(result.migrated, 1);
+    assert.deepEqual(result.recipe.ai, [{ id: "skill-project-goal" }]);
+    assert.deepEqual(await snapshotDirectory(), before, "the dry run changed the project");
+  });
+});
+
+test("Given a recipe with no legacy artifact path, when artifacts migrate runs, then it neither loads the formatter nor rewrites calavera.config.json", async () => {
+  await using project = await copyReleaseFixture("library");
+  // #987: the migration formats only the recipe it rewrites, so a recipe in a shape vp fmt would
+  // change stays as the person left it when there is nothing to migrate.
+  await writeFile(
+    join(project.root, "calavera.config.json"),
+    `${JSON.stringify({ ...recipe, ai: [{ id: "skill-project-goal" }] }, null, 2)}\n`,
+  );
+  const services = {
+    loadFormatter: async () => {
+      throw new Error("artifacts migrate loaded the formatter with nothing to migrate");
+    },
+  };
+
+  await inDirectory(project.root, async () => {
+    const before = await snapshotDirectory();
+    const result = await runArtifactCommand(
+      { config: "calavera.config.json", dryRun: false, artifactAction: "migrate" },
+      services,
+    );
+    assert.equal(result.migrated, 0);
+    assert.deepEqual(await snapshotDirectory(), before, "artifacts migrate rewrote the recipe");
+  });
+});
