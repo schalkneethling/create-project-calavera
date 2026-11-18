@@ -1,0 +1,5 @@
+---
+"create-project-calavera": patch
+---
+
+When `--new` fails under the Yarn runner, the `yarn --version` and `yarn node` reads behind the Yarn failure hint now run with `COREPACK_ENABLE_AUTO_PIN=0`, so these reads no longer let Corepack add a `packageManager` field to a `package.json` above the working directory while Calavera is only reporting the error, even when you have set `COREPACK_ENABLE_AUTO_PIN=1`. The `yarn dlx` run itself is unchanged, so Corepack can still pin during that run (#999).
