@@ -1072,6 +1072,8 @@ test(
           skill.reason ?? "",
           /Calavera could not list every entry of \.agents\/skills\/calavera \(EACCES.*\), so edits cannot be detected for what it could not list\.$/,
         );
+        // Only the folder it could not list is named; nothing claims an uncovered entry.
+        assert.equal((skill.reason ?? "").includes("does not cover symbolic links"), false);
       } finally {
         await chmod(`${SKILL_PATH}/private`, 0o755);
       }
