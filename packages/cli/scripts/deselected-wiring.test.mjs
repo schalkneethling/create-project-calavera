@@ -699,6 +699,45 @@ test("Given an apply that deselected the guard and an edit inside its skill dire
   });
 });
 
+test("Given an apply that deselected the guard and an edit inside its skill directory, clean --dry-run keeps only the skill and lists it under Artifacts, as a clean that also removes something does", async () => {
+  await inWiredProject(async (registry) => {
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    const skillFile = `${skillDirectory}/SKILL.md`;
+    await writeFile(skillFile, `${await readFile(skillFile, "utf8")}\nMy own note.\n`);
+
+    // #331: clean keeps every stale item, so it returns before planning any removal; its skip
+    // change carries the same artifact fields as one from a clean that removes something.
+    const result = cleanJson(["--dry-run"]);
+    assert.deepEqual(
+      result.changes.map(({ type, path, category, aiType, name }) => ({
+        type,
+        path,
+        category,
+        aiType,
+        name,
+      })),
+      [
+        {
+          type: "skip",
+          path: skillDirectory,
+          category: "ai",
+          aiType: "skill",
+          name: "protected-branch-guard",
+        },
+      ],
+    );
+
+    const { status, stdout, stderr } = runClean(["--dry-run"]);
+    assert.equal(status, 0, stderr);
+    assert.match(
+      stdout,
+      /^No stale managed items were safe to remove\.\n\nArtifacts:\n {2}Would skip \.agents\/skills\/protected-branch-guard: AI artifact has local edits/m,
+    );
+    assert.doesNotMatch(stdout, /^Files:$/m);
+  });
+});
+
 test("Given a deselected guard whose edited block the person kept by deleting its markers, clean keeps the skill directory that block still runs and says why", async () => {
   await inWiredProject(async (registry) => {
     await writeConfig(deselectedRecipe());

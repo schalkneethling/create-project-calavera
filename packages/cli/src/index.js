@@ -6009,6 +6009,13 @@ async function clean(options) {
     staleAiArtifactsSafeToRemove.push(artifact);
   }
 
+  // #331: one builder for both returns below, so a kept artifact carries its category, type, and
+  // name whether or not clean also removes something.
+  const { files: keptFiles, artifacts: keptArtifacts } = cleanSkipChanges(
+    staleFilesWithLocalEdits,
+    staleAiArtifactsWithLocalEdits,
+  );
+
   if (
     staleFilesSafeToRemove.length === 0 &&
     staleAiArtifactsSafeToRemove.length === 0 &&
@@ -6017,20 +6024,7 @@ async function clean(options) {
     return {
       command: "clean",
       wiringChanges: [],
-      changes: [
-        ...staleFilesWithLocalEdits.map(({ path, reason, skipReasons }) => ({
-          type: "skip",
-          path,
-          reason,
-          skipReasons,
-        })),
-        ...staleAiArtifactsWithLocalEdits.map(({ path, reason, skipReasons }) => ({
-          type: "skip",
-          path,
-          reason,
-          skipReasons,
-        })),
-      ],
+      changes: [...keptFiles, ...keptArtifacts],
       message: [
         cleanHeadline({
           dryRun: options.dryRun,
@@ -6099,12 +6093,7 @@ async function clean(options) {
       ownership: /** @type {const} */ ("project"),
     })),
     ...staleFilesSafeToRemove.map((file) => ({ type: "delete", path: file.path })),
-    ...staleFilesWithLocalEdits.map(({ path, reason, skipReasons }) => ({
-      type: "skip",
-      path,
-      reason,
-      skipReasons,
-    })),
+    ...keptFiles,
     ...staleAiArtifactsSafeToRemove.map((artifact) => ({
       type: "delete",
       path: artifact.path,
@@ -6112,15 +6101,7 @@ async function clean(options) {
       aiType: artifact.type,
       name: artifact.name,
     })),
-    ...staleAiArtifactsWithLocalEdits.map((artifact) => ({
-      type: "skip",
-      path: artifact.path,
-      category: "ai",
-      aiType: artifact.type,
-      name: artifact.name,
-      reason: artifact.reason,
-      skipReasons: artifact.skipReasons,
-    })),
+    ...keptArtifacts,
   ];
   const kept = keptSummary([...staleFilesWithLocalEdits, ...staleAiArtifactsWithLocalEdits]);
 
@@ -6160,6 +6141,33 @@ async function clean(options) {
     ]
       .filter(isNotEmptyString)
       .join(" "),
+  };
+}
+
+/**
+ * The skip changes for the stale managed files and artifacts clean keeps, each with its reason.
+ *
+ * @param {Array<{ path: string, reason: string, skipReasons: CleanSkipReason[] }>} files
+ * @param {Array<AiArtifactState & { reason: string, skipReasons: CleanSkipReason[] }>} artifacts
+ * @returns {{ files: Change[], artifacts: Change[] }}
+ */
+function cleanSkipChanges(files, artifacts) {
+  return {
+    files: files.map(({ path, reason, skipReasons }) => ({
+      type: "skip",
+      path,
+      reason,
+      skipReasons,
+    })),
+    artifacts: artifacts.map(({ path, type, name, reason, skipReasons }) => ({
+      type: "skip",
+      path,
+      category: "ai",
+      aiType: type,
+      name,
+      reason,
+      skipReasons,
+    })),
   };
 }
 
