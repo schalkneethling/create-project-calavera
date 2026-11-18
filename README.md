@@ -818,7 +818,8 @@ approves the proposed recipe and dry-run result.
 - `--apply` with `init` to preview and then confirm applying the composed recipe
 - `--dry-run`
 - `--no-install`
-- `--yes`
+- `--yes`; `init` without a terminal, or with `--json`, refuses any prompt it would
+  show and names `--yes` and the flag that answers that prompt
 - `--json`
 
 ## Debugging Errors

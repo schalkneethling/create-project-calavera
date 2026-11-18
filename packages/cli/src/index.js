@@ -5401,6 +5401,26 @@ async function promptForInputValue({ prompt, defaultValue, error }, label) {
 }
 
 /**
+ * #998: init refuses a prompt it cannot show, as --new does, instead of letting the prompt end
+ * when standard input closes, which exited 0 without a recipe, or print into --json output.
+ *
+ * @param {CliOptions} options
+ * @param {string} question The prompt's message.
+ * @param {string} answeringFlags The flags that answer the prompt without asking it.
+ */
+function assertInitCanAsk(options, question, answeringFlags) {
+  const reasons = [
+    ...(options.json ? ["--json was given, so the prompt would corrupt the JSON output"] : []),
+    ...(process.stdin.isTTY ? [] : ["stdin is not a terminal"]),
+  ];
+  if (reasons.length > 0) {
+    throw new Error(
+      `init refused: Calavera cannot ask "${question}" because ${reasons.join(", and ")}. Pass --yes to use the defaults, or answer it with ${answeringFlags}.`,
+    );
+  }
+}
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<string>}
  */
@@ -5409,6 +5429,10 @@ async function promptForProfile(options) {
   // their defaults. Asking anyway left a run without a terminal to exit 0 with no recipe written.
   if (options.profile === undefined && options.assumeYes) {
     return defaultProfile;
+  }
+
+  if (options.profile === undefined) {
+    assertInitCanAsk(options, "Choose a tooling profile", "--profile");
   }
 
   const selected =
@@ -5432,6 +5456,10 @@ async function promptForProfile(options) {
  * @returns {Promise<PackageManager>}
  */
 async function promptForPackageManager(options, detectedPackageManager) {
+  if (options.packageManager === undefined && !options.assumeYes) {
+    assertInitCanAsk(options, "Choose a package manager", "--package-manager");
+  }
+
   const selected =
     options.packageManager ??
     (options.assumeYes
@@ -5469,6 +5497,7 @@ async function promptForIntegrations(options, profile) {
     return defaults;
   }
 
+  assertInitCanAsk(options, "Choose integration packs", "--profile or --tool");
   const selected = await groupMultiselect({
     message: "Choose integration packs",
     options: groupedPromptOptions(listIntegrationOptions(profile)),
@@ -5497,6 +5526,7 @@ async function promptForAiArtifacts(options) {
     return options.aiArtifacts;
   }
 
+  assertInitCanAsk(options, "Choose AI artifacts", "--ai-artifact");
   const artifactOptions = listAiArtifactOptions();
   const selected = await groupMultiselect({
     message: "Choose AI artifacts",
