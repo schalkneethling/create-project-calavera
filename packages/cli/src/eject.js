@@ -24,7 +24,7 @@ import {
   rmdir,
   writeFile,
 } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
@@ -87,6 +87,16 @@ const CANNOT_DETECT = "edits cannot be detected";
  *   lock entry names, the payload checked against the entry's `payloadHash`.
  * @property {string[]} [removedLines] For an edit, the lines it removes, markers excluded.
  * @property {string} [contents] For an edit, the file's text afterward.
+ * @property {string} [seen] What the item's check read when the plan was made: the file's text for
+ *   an edit, the installed hash for the base skill, and the payload hash for a package folder.
+ *   `executeEject` reads it again and removes nothing when any item changed since the plan.
+ *
+ * @typedef {object} EjectOutcome What `executeEject` did with each item it was given.
+ * @property {EjectItem[]} removed
+ * @property {{ item: EjectItem, error: Error }[]} failed Items whose removal failed, with the cause.
+ * @property {{ item: EjectItem, reason: string }[]} skipped Items left because an item they depend
+ *   on failed: the record a failed item still needs, or the `.gitignore` block of a cache that
+ *   could not be deleted.
  *
  * @typedef {object} EjectPlan
  * @property {EjectItem[]} items Every footprint item that exists, in no particular order.
@@ -141,6 +151,25 @@ async function recoverPendingTransaction(dryRun) {
 }
 
 /**
+ * The artifact lock, with every entry an object that names an ID and a version, so the package
+ * folders can be matched against it.
+ */
+async function readCheckedLock() {
+  const lock = await readLock();
+  const malformed = lock.artifacts.findIndex(
+    (entry) =>
+      entry === null ||
+      typeof entry !== "object" ||
+      typeof entry.id !== "string" ||
+      typeof entry.version !== "string",
+  );
+  if (malformed !== -1) {
+    throw new Error(`artifact entry ${malformed} does not name a string id and version`);
+  }
+  return lock;
+}
+
+/**
  * Reads a record a check needs. A record that cannot be read is treated as missing, so the items it
  * checks are listed as edited, as ADR-0017 Decision 2 treats a missing record, and the reason says
  * why.
@@ -158,6 +187,29 @@ async function readRecord(path, read) {
       value: undefined,
       problem: `Calavera could not read ${path} (${messageOf(error)}), so the items it checks are listed as edited or as unknown.`,
     };
+  }
+}
+
+/** The base skill's hash as `hashAiInstall` computes it, or why it could not be computed. */
+async function baseSkillHash() {
+  try {
+    return await hashAiInstall("skill", BASE_SKILL_PATH);
+  } catch (error) {
+    return `unreadable: ${messageOf(error)}`;
+  }
+}
+
+/**
+ * The payload's hash as apply computes it, or undefined when it cannot be computed, such as when
+ * the payload is missing.
+ *
+ * @param {string} payloadPath
+ */
+async function payloadHashOf(payloadPath) {
+  try {
+    return await hashArtifactPayload(payloadPath);
+  } catch {
+    return undefined;
   }
 }
 
@@ -186,19 +238,15 @@ async function planBaseSkill(state, stateProblem) {
       },
     ];
   }
-  let installed;
-  try {
-    installed = await hashAiInstall("skill", BASE_SKILL_PATH);
-  } catch (error) {
-    installed = `unreadable: ${messageOf(error)}`;
-  }
+  const installed = await baseSkillHash();
   return installed === record.hash
-    ? [{ ...base, edits: "unedited", matchesRecords: true }]
+    ? [{ ...base, edits: "unedited", matchesRecords: true, seen: installed }]
     : [
         {
           ...base,
           edits: "edited",
           matchesRecords: false,
+          seen: installed,
           reason: `The base Calavera skill has local edits (installed=${installed}, state=${record.hash}).`,
         },
       ];
@@ -216,12 +264,8 @@ async function planBaseSkill(state, stateProblem) {
  */
 async function planCacheBlock(state, stateProblem) {
   if (!(await present(GITIGNORE_PATH))) return [];
-  const found = findBlock(
-    GITIGNORE_PATH,
-    await readFile(GITIGNORE_PATH, "utf8"),
-    ARTIFACT_CACHE_BLOCK,
-    "eject",
-  );
+  const text = await readFile(GITIGNORE_PATH, "utf8");
+  const found = findBlock(GITIGNORE_PATH, text, ARTIFACT_CACHE_BLOCK, "eject");
   if ("reason" in found) {
     throw new Error(`eject stopped before removing anything: ${found.reason}`);
   }
@@ -239,6 +283,7 @@ async function planCacheBlock(state, stateProblem) {
     matchesRecords: unedited,
     removedLines: found.current === "" ? [] : found.current.split("\n"),
     contents: withoutGitignoreBlock(found),
+    seen: text,
   };
   if (!unedited) {
     item.reason =
@@ -267,7 +312,9 @@ async function planPackageFolders(lockEntries, lockProblem) {
   const items = [];
   /** @type {string[]} */
   const kept = [];
-  if (!(await present(PACKAGE_PATH)) || !(await isRealDirectory(PACKAGE_PATH))) {
+  if (!(await present(PACKAGE_PATH))) return { items, kept };
+  if (!(await isRealDirectory(PACKAGE_PATH))) {
+    kept.push(PACKAGE_PATH);
     return { items, kept };
   }
   for (const id of await readdir(PACKAGE_PATH)) {
@@ -276,7 +323,11 @@ async function planPackageFolders(lockEntries, lockProblem) {
       kept.push(idPath);
       continue;
     }
-    for (const version of await readdir(idPath)) {
+    const versions = await readdir(idPath);
+    // An empty folder holds no package, so no item names it; it is listed, because it keeps
+    // `.calavera/` from becoming empty.
+    if (versions.length === 0) kept.push(idPath);
+    for (const version of versions) {
       const path = `${idPath}/${version}`;
       if (!(await isRealDirectory(path))) {
         kept.push(path);
@@ -302,15 +353,13 @@ async function planPackageFolders(lockEntries, lockProblem) {
         continue;
       }
       const payloadPath = `${path}/${artifact.payload}`;
-      let payloadHash;
-      try {
-        payloadHash = await hashArtifactPayload(payloadPath);
-      } catch {
-        payloadHash = undefined;
-      }
+      const payloadHash = await payloadHashOf(payloadPath);
+      item.seen = payloadHash ?? "missing";
       item.payload = {
         path: payloadPath,
-        edits: payloadHash === entry.payloadHash ? "unedited" : "edited",
+        // A missing payload, or an entry without a hash, never counts as unedited.
+        edits:
+          payloadHash !== undefined && payloadHash === entry.payloadHash ? "unedited" : "edited",
       };
       item.reason = `The payload at ${payloadPath} is ${item.payload.edits}; for the rest of the folder, and for symbolic links under the payload, ${CANNOT_DETECT}.`;
       items.push(item);
@@ -341,6 +390,13 @@ async function unnamedCalaveraEntries() {
  * @returns {Promise<EjectPlan>}
  */
 export async function planEject({ dryRun, config = CONFIG_FILE }) {
+  // eject never writes package.json (ADR-0017, Decision 4), so a recipe path that names it is
+  // refused rather than listed for deletion.
+  if (basename(config) === "package.json") {
+    throw new Error(
+      `eject stopped before removing anything, because the recipe path ${config} names a package.json, which eject never changes. Pass the path of the Calavera recipe, or leave --config out to use ${CONFIG_FILE}.`,
+    );
+  }
   await recoverPendingTransaction(dryRun);
 
   const hasState = await present(STATE_PATH);
@@ -349,7 +405,7 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
     ? await readRecord(STATE_PATH, readState)
     : { value: undefined, problem: undefined };
   const { value: lock, problem: lockProblem } = hasLock
-    ? await readRecord(LOCK_PATH, readLock)
+    ? await readRecord(LOCK_PATH, readCheckedLock)
     : { value: undefined, problem: undefined };
 
   /** @type {EjectItem[]} */
@@ -490,32 +546,104 @@ async function removePackageFolder(path) {
 }
 
 /**
+ * What the item's check reads now, to compare with what it read when the plan was made.
+ *
+ * @param {EjectItem} item
+ * @returns {Promise<string | undefined>}
+ */
+async function currentlySeen(item) {
+  if (item.kind === "artifact-cache-block") {
+    return (await present(item.path)) ? readFile(item.path, "utf8") : "missing";
+  }
+  if (item.kind === "base-skill") return baseSkillHash();
+  if (item.payload) return (await payloadHashOf(item.payload.path)) ?? "missing";
+  return undefined;
+}
+
+/**
+ * The items `item` depends on: removing it while one of them failed would break Decision 7's
+ * guarantees. The `.gitignore` block stays while the cache it hides stays, the lock stays while a
+ * package folder it checks stays, and the state stays while the base skill or the block it
+ * checks stays.
+ *
+ * @param {EjectItem} item
+ * @returns {EjectItemKind[]}
+ */
+function dependsOn(item) {
+  if (item.kind === "artifact-cache-block") return ["cache"];
+  if (item.kind === "lock") return ["package-folder"];
+  if (item.kind === "state") return ["base-skill", "artifact-cache-block"];
+  return [];
+}
+
+/**
  * Removes `items`, which the person approved or which match Calavera's records, in the order
- * `ejectSteps` gives. Then it removes the folders that exist only to hold Calavera's package copies,
- * and `.calavera/`, when removing the items left them empty (ADR-0017, Decision 2). A folder that
- * still holds anything stays.
+ * `ejectSteps` gives. First it reads each item's check again, and removes nothing when an item
+ * changed since the plan, so it never removes text the approved list did not show. An item whose
+ * removal fails does not stop the others; only the items that depend on it are skipped. Then it
+ * removes the package ID folders it emptied, `.calavera/packages/`, `.calavera/.staging/`, and
+ * `.calavera/`, when they are empty (ADR-0017, Decision 2). A folder that still holds anything
+ * stays.
  *
  * @param {EjectItem[]} items
+ * @returns {Promise<EjectOutcome>}
  */
 export async function executeEject(items) {
-  for (const item of ejectSteps(items)) {
-    const target = await assertWorkspacePath(item.path, process.cwd(), "Eject path");
-    if (item.action === "edit") {
-      await writeFile(target, /** @type {string} */ (item.contents));
-    } else if (item.kind === "package-folder") {
-      await removePackageFolder(item.path);
-    } else {
-      await rm(target, { recursive: true, force: true });
+  const changed = [];
+  for (const item of items) {
+    // An item without a check has no `seen`, and `currentlySeen` returns undefined for it too.
+    if ((await currentlySeen(item)) !== item.seen) {
+      changed.push(item.path);
     }
   }
-  if (items.length === 0) return;
+  if (changed.length > 0) {
+    throw new Error(
+      `eject stopped before removing anything, because ${changed.join(", ")} changed since eject listed what it would remove. Run eject again to see the new list.`,
+    );
+  }
 
-  if ((await present(PACKAGE_PATH)) && (await isRealDirectory(PACKAGE_PATH))) {
-    for (const id of await readdir(PACKAGE_PATH)) {
-      await removeIfEmpty(`${PACKAGE_PATH}/${id}`);
+  /** @type {EjectOutcome} */
+  const outcome = { removed: [], failed: [], skipped: [] };
+  /** @type {Set<EjectItemKind>} */
+  const leftKinds = new Set();
+  for (const item of ejectSteps(items)) {
+    const blocker = dependsOn(item).find((kind) => leftKinds.has(kind));
+    if (blocker !== undefined) {
+      leftKinds.add(item.kind);
+      outcome.skipped.push({
+        item,
+        reason: `Kept, because removing the ${blocker} item it depends on failed. Run eject again once that is fixed.`,
+      });
+      continue;
+    }
+    try {
+      const target = await assertWorkspacePath(item.path, process.cwd(), "Eject path");
+      if (item.action === "edit") {
+        await writeFile(target, /** @type {string} */ (item.contents));
+      } else if (item.kind === "package-folder") {
+        await removePackageFolder(item.path);
+      } else {
+        await rm(target, { recursive: true, force: true });
+      }
+      outcome.removed.push(item);
+    } catch (error) {
+      leftKinds.add(item.kind);
+      outcome.failed.push({
+        item,
+        error: error instanceof Error ? error : new Error(String(error)),
+      });
     }
   }
+  if (items.length === 0) return outcome;
+
+  const idFolders = new Set(
+    outcome.removed
+      .filter(({ kind }) => kind === "package-folder")
+      .map(({ path }) => path.slice(0, path.lastIndexOf("/"))),
+  );
+  for (const folder of idFolders) await removeIfEmpty(folder);
   await removeIfEmpty(PACKAGE_PATH);
   await removeIfEmpty(STAGING_ROOT);
   await removeIfEmpty(CALAVERA_ROOT);
+  return outcome;
 }
