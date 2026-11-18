@@ -94,10 +94,19 @@ async function inWiredProject(callback) {
   }
 }
 
-/** @returns {Promise<{ level: string, message: string }[]>} */
+/**
+ * The issues `doctor --json` reports. doctor exits 1 when it reports an error (#1030), so the exit
+ * code is checked against `ok` instead of being treated as a failure.
+ *
+ * @returns {Promise<{ level: string, message: string }[]>}
+ */
 async function doctorIssues() {
-  const output = execFileSync(process.execPath, [cli, "doctor", "--json"], { encoding: "utf8" });
-  return JSON.parse(output).issues;
+  const { status, stdout, stderr } = spawnSync(process.execPath, [cli, "doctor", "--json"], {
+    encoding: "utf8",
+  });
+  const report = JSON.parse(stdout);
+  assert.equal(status, report.ok ? 0 : 1, `doctor exited ${status}\n${stderr}`);
+  return report.issues;
 }
 
 /**
