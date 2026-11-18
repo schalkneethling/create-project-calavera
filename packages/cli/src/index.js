@@ -170,7 +170,7 @@ import {
   writeMcpServersJsonConfig,
   writeOpenCodeMcpConfig,
 } from "./utils/mcp-config.js";
-import { groupedPromptOptions } from "./utils/prompt-options.js";
+import { artifactTargetPromptOptions, groupedPromptOptions } from "./utils/prompt-options.js";
 import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text.js";
 
 /**
@@ -5495,10 +5495,11 @@ async function promptForAiArtifacts(options) {
       continue;
     }
 
-    const target = await text({
-      message: `Target directory for ${artifact.label}`,
-      defaultValue: artifact.defaultTarget,
-      placeholder: artifact.defaultTarget,
+    // #990: recipe validation accepts only the artifact's target IDs, so the prompt offers those.
+    const target = await select({
+      message: `Target for ${artifact.label}`,
+      options: artifactTargetPromptOptions(artifact),
+      initialValue: artifact.defaultTarget,
     });
 
     exitIfCancel(target);
