@@ -1,4 +1,12 @@
 // @ts-check
+// Run Stryker on the lines a change touched, and only the test files that cover them:
+//
+//   pnpm test:mutation --mutate packages/cli/src/<file>.js:<start>-<end> \
+//     --testFiles packages/cli/scripts/<file>.test.mjs
+//
+// Without --testFiles, Stryker's first run of all CLI test files together takes longer than its
+// 5-minute dryRunTimeoutMinutes limit (more than 9 minutes when measured for #985), so the run
+// fails before it tests any mutant. Raising the limit would still leave a run too slow to use.
 /** @type {import('@stryker-mutator/api/core').PartialStrykerOptions} */
 const config = {
   packageManager: "pnpm",
@@ -7,6 +15,13 @@ const config = {
   testRunner: "tap",
   tap: {
     testFiles: ["packages/cli/scripts/*.test.mjs"],
+    // Many tests call process.chdir(). With forceBail, the runner kills a test process at its
+    // first failure, and the process writes Stryker's result file into its current directory, a
+    // temporary project, where the runner cannot find it. The mutant is then reported as a runtime
+    // error instead of killed. Turning it off costs time: a test file that kills a mutant now runs
+    // to its end instead of stopping at its first failure. Stryker still stops at the first
+    // failing file.
+    forceBail: false,
     // Instrumented code runs several times slower, so the redaction timing budget
     // cannot hold under Stryker. The normal test suite still enforces it.
     nodeArgs: [
