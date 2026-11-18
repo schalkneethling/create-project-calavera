@@ -1273,3 +1273,39 @@ test("a .gitignore whose first line starts with link: is removed as planned", as
     assert.equal(await readFile(".gitignore", "utf8"), "link:notes\n");
   });
 });
+
+for (const [label, folder] of [
+  ["a package folder a lock entry names", PACKAGE_ROOT],
+  ["a package folder no lock entry names", ".calavera/packages/skill-retired/1.0.0"],
+]) {
+  test(`${label} replaced by a link after the plan is not removed`, async () => {
+    await inProject(async () => {
+      await writeFootprint();
+      await write(".calavera/packages/skill-retired/1.0.0/package.json", "{}\n");
+      await write("mine/kept.txt", "mine\n");
+      const plan = await planEject({ dryRun: false });
+      await rm(folder, { recursive: true });
+      await symlink(join(process.cwd(), "mine"), folder);
+      const before = await snapshotDirectory();
+      await assert.rejects(
+        executeEject(selectEjectItems(plan, { assumeYes: false }).remove),
+        new RegExp(`because ${folder.replaceAll(".", "\\.").replaceAll("/", "\\/")} changed since`),
+      );
+      assert.deepEqual(await snapshotDirectory(), before);
+    });
+  });
+}
+
+test("a .gitignore the person deleted after the plan counts as removed", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false });
+    const plan = await planEject({ dryRun: false });
+    await rm(".gitignore");
+    const outcome = await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
+    assert.deepEqual(outcome.failed, []);
+    assert.deepEqual(outcome.skipped, []);
+    assert.ok(paths(outcome.removed).includes(".gitignore"));
+    await assert.rejects(lstat(".gitignore"), { code: "ENOENT" });
+    await assert.rejects(lstat(".calavera"), { code: "ENOENT" });
+  });
+});

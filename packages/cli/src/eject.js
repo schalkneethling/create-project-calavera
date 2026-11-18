@@ -89,8 +89,11 @@ const CANNOT_DETECT = "edits cannot be detected";
  * @property {string[]} [removedLines] For an edit, the lines it removes, markers excluded.
  * @property {string} [contents] For an edit, the file's text afterward.
  * @property {string} [seen] What the item's check read when the plan was made: the file's text for
- *   an edit, the installed hash for the base skill, and the payload hash for a package folder.
- *   `executeEject` reads it again and removes nothing when any item changed since the plan.
+ *   the `artifact-cache` block edit; the installed hash and the uncovered entries for the base
+ *   skill; whether the path is a symbolic link, and its target if so, for the state, the lock, the
+ *   cache, and the transient folders; and that link identity plus the payload hash for a package
+ *   folder. The recipe has none. `executeEject` reads it again and removes nothing when any item
+ *   changed since the plan.
  *
  * @typedef {object} EjectOutcome What `executeEject` did with each item it was given.
  * @property {EjectItem[]} removed
@@ -144,6 +147,27 @@ async function linkIdentity(path) {
   return (await lstat(path)).isSymbolicLink()
     ? `${LINK_PREFIX}${await readlink(path)}`
     : "not a link";
+}
+
+/**
+ * Whether the item is already gone, which ADR-0017 Decision 2 counts as removed: its file or
+ * folder no longer exists. For the `artifact-cache` block, that is a `.gitignore` the person
+ * deleted, which no longer holds the block either.
+ *
+ * @param {EjectItem} item
+ */
+async function alreadyGone(item) {
+  return !(await present(item.path));
+}
+
+/**
+ * What a package folder's check reads: whether the folder is a link, and its payload hash.
+ *
+ * @param {string} identity From `linkIdentity`.
+ * @param {string | undefined} payloadHash
+ */
+function packageFolderSeen(identity, payloadHash) {
+  return `${identity}\n${payloadHash ?? "missing"}`;
 }
 
 /**
@@ -454,6 +478,10 @@ async function planPackageFolders(lockEntries, lockProblem) {
         edits: "cannot-detect",
         matchesRecords: false,
       };
+      // The plan keeps a link in a package folder's place, so a folder that becomes a link after
+      // the plan counts as changed, whether or not a lock entry names it.
+      const identity = await linkIdentity(path);
+      item.seen = identity;
       if (!entry || !artifact) {
         item.reason = !entry
           ? `${lockProblem ?? `No entry in ${LOCK_PATH} names this package folder`}; ${CANNOT_DETECT}.`
@@ -463,7 +491,7 @@ async function planPackageFolders(lockEntries, lockProblem) {
       }
       const payloadPath = `${path}/${artifact.payload}`;
       const payloadHash = await payloadHashOf(payloadPath);
-      item.seen = payloadHash ?? "missing";
+      item.seen = packageFolderSeen(identity, payloadHash);
       item.payload = {
         path: payloadPath,
         // A missing payload, or an entry without a hash, never counts as unedited.
@@ -700,8 +728,12 @@ async function currentlySeen(item) {
       return (await present(item.path)) ? readFile(item.path, "utf8") : "missing";
     case "base-skill":
       return (await baseSkillCheck()).seen;
-    case "package-folder":
-      return item.payload ? ((await payloadHashOf(item.payload.path)) ?? "missing") : undefined;
+    case "package-folder": {
+      const identity = await linkIdentity(item.path);
+      return item.payload
+        ? packageFolderSeen(identity, await payloadHashOf(item.payload.path))
+        : identity;
+    }
     case "recipe":
       return undefined;
   }
@@ -739,7 +771,7 @@ export async function executeEject(items) {
   const changed = [];
   for (const item of items) {
     // An item already gone counts as removed, so its check has nothing left to compare.
-    if (item.action === "delete" && !(await present(item.path))) continue;
+    if (await alreadyGone(item)) continue;
     // An item without a check has no `seen`, and `currentlySeen` returns undefined for it too.
     if ((await currentlySeen(item)) !== item.seen) {
       changed.push(item.path);
@@ -767,7 +799,7 @@ export async function executeEject(items) {
     }
     // ADR-0017 Decision 2: a footprint item that is already gone counts as removed, so an item the
     // person deleted after the plan is not a failure, and the items that depend on it go too.
-    if (item.action === "delete" && !(await present(item.path))) {
+    if (await alreadyGone(item)) {
       outcome.removed.push(item);
       continue;
     }
