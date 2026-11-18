@@ -195,12 +195,16 @@ process.exit(${exitCode});
  * project directory, here `.oxfmtrc.json` and `.editorconfig`, so a test can configure them.
  *
  * @param {string} directory
- * @param {{ bin?: Record<string, string>, banner?: string, hang?: boolean }} [options] `bin`
+ * @param {{ bin?: Record<string, string>, banner?: string, hang?: boolean, failFor?: string }} [options] `bin`
  *   replaces the package's bin, such as to leave out vp. `banner` is printed first, as a
  *   vite.config.ts that logs does. `hang` keeps vp running forever, as a vite.config.ts that waits
- *   on something that never completes does.
+ *   on something that never completes does. `failFor` makes vp exit with an error when it formats
+ *   that path, as a formatter that cannot parse one file does, and formats every other path.
  */
-export async function writeVitePlusFormatter(directory, { bin, banner, hang = false } = {}) {
+export async function writeVitePlusFormatter(
+  directory,
+  { bin, banner, hang = false, failFor } = {},
+) {
   const packageDirectory = join(directory, "node_modules/vite-plus");
   await mkdir(join(packageDirectory, "bin"), { recursive: true });
   await writeFile(
@@ -222,7 +226,7 @@ if (command !== "fmt") {
   console.error(\`vp stub: only fmt is supported, not \${command}\`);
   process.exit(1);
 }
-${banner === undefined ? "" : `console.log(${JSON.stringify(banner)});\n`}${hang ? "await new Promise(() => setInterval(() => {}, 60_000));\n" : ""}const result = spawnSync(process.execPath, [${JSON.stringify(oxfmtBin)}, ...args], { stdio: "inherit" });
+${failFor === undefined ? "" : `if (args.includes(${JSON.stringify(`--stdin-filepath=${failFor}`)})) {\n  console.error(${JSON.stringify(`vp stub: cannot format ${failFor}`)});\n  process.exit(2);\n}\n`}${banner === undefined ? "" : `console.log(${JSON.stringify(banner)});\n`}${hang ? "await new Promise(() => setInterval(() => {}, 60_000));\n" : ""}const result = spawnSync(process.execPath, [${JSON.stringify(oxfmtBin)}, ...args], { stdio: "inherit" });
 process.exit(result.status ?? 1);
 `,
   );
