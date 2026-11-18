@@ -19,6 +19,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  readlink,
   rename,
   rm,
   rmdir,
@@ -128,6 +129,21 @@ async function isRealDirectory(path) {
 /** @param {unknown} error */
 function messageOf(error) {
   return error instanceof Error ? error.message : String(error);
+}
+
+const LINK_PREFIX = "link:";
+
+/**
+ * What identifies a symbolic link at `path`: the target it points to. A path that is no longer a
+ * link, or that points elsewhere, gives another value, so `executeEject` sees the change and
+ * removes nothing, rather than deleting a real folder the person put there after the plan.
+ *
+ * @param {string} path
+ */
+async function linkIdentity(path) {
+  return (await lstat(path)).isSymbolicLink()
+    ? `${LINK_PREFIX}${await readlink(path)}`
+    : "not a link";
 }
 
 /**
@@ -521,6 +537,7 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
         ...extra,
         edits: "cannot-detect",
         matchesRecords: false,
+        seen: await linkIdentity(path),
         reason: `${path} is a symbolic link, which no record covers; ${CANNOT_DETECT}. eject removes only the link, not what it leads to.`,
       });
       return;
@@ -571,8 +588,8 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
  * an item it leaves still needs that record for its check: the state while it leaves the base skill
  * or the `artifact-cache` block, and the lock while it leaves a package folder (ADR-0017,
  * Decision 5). While it leaves the cache, which it does only when the cache is a symbolic link, it
- * also keeps the cache's `.gitignore` block, so the cache never shows in `git status`, and the state
- * that records the block.
+ * also keeps the cache's `.gitignore` block, so the cache never shows in `git status`, and it keeps
+ * the state only while that block is kept (ADR-0017, Amendment 2).
  *
  * @param {EjectPlan} plan
  * @param {{ assumeYes: boolean }} options `assumeYes` for a `--yes` run, false for an approved one.
@@ -582,11 +599,14 @@ export function selectEjectItems(plan, { assumeYes }) {
   if (!assumeYes) return { remove: plan.items, leave: [] };
   const unapproved = plan.items.filter(({ matchesRecords }) => !matchesRecords);
   const leftKinds = new Set(unapproved.map(({ kind }) => kind));
-  const keepState =
-    leftKinds.has("base-skill") || leftKinds.has("artifact-cache-block") || leftKinds.has("cache");
-  const keepLock = leftKinds.has("package-folder");
-  // The block keeps the cache out of `git status`, so it stays while the cache does.
+  // ADR-0017 Amendment 2: the block keeps the cache out of `git status`, so it stays while a
+  // linked cache does. The state stays while a block that it records stays.
   const keepBlock = leftKinds.has("cache");
+  const blockStays = plan.items.some(
+    ({ kind, matchesRecords }) => kind === "artifact-cache-block" && (!matchesRecords || keepBlock),
+  );
+  const keepState = leftKinds.has("base-skill") || blockStays;
+  const keepLock = leftKinds.has("package-folder");
   const leaves = (/** @type {EjectItem} */ item) =>
     !item.matchesRecords ||
     (item.kind === "artifact-cache-block" && keepBlock) ||
@@ -665,6 +685,7 @@ async function removePackageFolder(path) {
  * @returns {Promise<string | undefined>}
  */
 async function currentlySeen(item) {
+  if (item.seen?.startsWith(LINK_PREFIX)) return linkIdentity(item.path);
   if (item.kind === "artifact-cache-block") {
     return (await present(item.path)) ? readFile(item.path, "utf8") : "missing";
   }

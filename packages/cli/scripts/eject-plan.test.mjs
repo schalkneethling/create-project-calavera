@@ -1208,3 +1208,40 @@ test("an item the person removed between the plan and the removal counts as remo
     await assert.rejects(lstat(".calavera"), { code: "ENOENT" });
   });
 });
+
+for (const [label, swap] of [
+  ["a real folder", async (/** @type {string} */ path) => write(`${path}/theirs.txt`, "mine\n")],
+  [
+    "a link that points elsewhere",
+    async (/** @type {string} */ path) => symlink("elsewhere", path),
+  ],
+]) {
+  test(`a linked cache replaced by ${label} after the plan is not removed`, async () => {
+    await inProject(async () => {
+      await writeFootprint({ packageFolder: false });
+      await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+      await rm(".calavera/cache", { recursive: true });
+      await symlink(outside.path, ".calavera/cache");
+      const plan = await planEject({ dryRun: false });
+      await rm(".calavera/cache");
+      await swap(".calavera/cache");
+      const before = await snapshotDirectory();
+      await assert.rejects(
+        executeEject(selectEjectItems(plan, { assumeYes: false }).remove),
+        /eject stopped before removing anything, because \.calavera\/cache changed since eject listed/,
+      );
+      assert.deepEqual(await snapshotDirectory(), before);
+    });
+  });
+}
+
+test("--yes keeps no record for a linked cache when there is no artifact-cache block", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false, gitignore: "node_modules/\n" });
+    await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+    await rm(".calavera/cache", { recursive: true });
+    await symlink(outside.path, ".calavera/cache");
+    const { leave } = selectEjectItems(await planEject({ dryRun: false }), { assumeYes: true });
+    assert.deepEqual(paths(leave), [".calavera/cache", "calavera.config.json"]);
+  });
+});

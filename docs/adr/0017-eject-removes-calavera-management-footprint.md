@@ -234,3 +234,14 @@ The owner decided on 2026-11-18 that any symbolic link or empty folder inside `.
 The check itself is unchanged: `hashAiInstall` still decides whether the files are edited. The amendment adds what the hash cannot see. Other entries that `collectFiles` skips, such as named pipes, are not part of the owner's decision and are not checked.
 
 This amendment extends the lists of content that `--yes` leaves in Decision 5 and in Consequences: besides the recipe and the package folders, a `--yes` run also leaves a base skill that holds a symbolic link or an empty folder, and the state with it.
+
+## Amendment 2: `--yes` Keeps the Cache Block While It Leaves a Linked Cache
+
+- **Date:** 2026-11-18
+- **Pull request:** https://github.com/schalkneethling/create-project-calavera/pull/1050 (#678, layer 1)
+
+A symbolic link where Calavera keeps its own files leads to content no record covers, so `eject` lists it as "edits cannot be detected" and `--yes` leaves it, as it leaves a link in place of a package folder. For `.calavera/cache` that creates a case Decision 5 does not name: `--yes` would leave the cache and remove the `artifact-cache` block that keeps it out of Git, so the cache would show in `git status`. Decision 7 orders the removal of the cache before its block to prevent exactly that.
+
+The owner decided on 2026-11-18 that when `eject --yes` leaves `.calavera/cache` because it is a symbolic link, it also keeps the cache's `artifact-cache` block in `.gitignore`, so the leftover cache never shows in `git status`, and it keeps the state only while that block is kept (https://github.com/schalkneethling/create-project-calavera/issues/678#issuecomment-6988833013). A linked cache in a project that has no `artifact-cache` block therefore keeps no record. The interactive run that removes the link removes the block and the state with it.
+
+This amendment extends the records `--yes` keeps in Decision 5: besides the state while it leaves the base skill or an `artifact-cache` block, and the lock while any package folder remains, `--yes` keeps the `artifact-cache` block while it leaves a linked cache.
