@@ -11,7 +11,10 @@ const vitePreviewOutput =
 
 async function loadConfig(env) {
   const saved = { ...process.env };
-  Object.assign(process.env, env);
+  for (const [key, value] of Object.entries(env)) {
+    if (value === undefined) delete process.env[key];
+    else process.env[key] = value;
+  }
   try {
     // A fresh query string re-evaluates the module, as a Playwright worker does.
     const module = await import(`${configUrl.href}?run=${Math.random()}`);
@@ -25,12 +28,17 @@ async function loadConfig(env) {
 }
 
 test("the Composer preview server never reuses a server that is already running", async () => {
-  const { webServer } = await loadConfig({});
+  const { use, webServer } = await loadConfig({ COMPOSER_PREVIEW_PORT: undefined });
 
   assert.notEqual(webServer.reuseExistingServer, true);
   assert.equal(webServer.url, undefined, "a fixed URL lets a run find another worktree's server");
   assert.equal(webServer.port, undefined, "a fixed port lets a run find another worktree's server");
-  assert.match(webServer.command, /pnpm preview --port 0 --strictPort$/);
+  assert.match(webServer.command, /pnpm preview --port 0$/);
+  assert.equal(
+    use.baseURL,
+    undefined,
+    "a fallback URL would point at a server this run did not start",
+  );
 });
 
 test("the tests run against the port the preview server reports, not a fixed one", async () => {
