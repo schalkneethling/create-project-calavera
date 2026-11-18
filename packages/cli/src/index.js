@@ -40,6 +40,7 @@ import {
   prepareArtifactSources,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
+import { removedToolchainIntegrations } from "./catalog.js";
 import {
   applySummaryLines,
   formatArtifactInput,
@@ -5655,6 +5656,31 @@ export async function initRecipe(options) {
 }
 
 /**
+ * One warning for each JavaScript or TypeScript toolchain integration a recipe still selects in a
+ * project Vite+ manages (#431). The removals (ADR-0002 to ADR-0006) made these ids unknown, so
+ * apply refuses the recipe while `resolveRecipeIntegrations` drops them silently. Detection is the
+ * same ADR-0001 function `inspect_project` reads; any status other than `managed` yields nothing.
+ *
+ * @param {Recipe} recipe
+ * @param {VitePlusDetection} detection
+ * @param {string} configPath
+ * @returns {{ level: "warning", message: string }[]}
+ */
+export function removedToolchainWarnings(recipe, detection, configPath) {
+  if (detection.status !== "managed") {
+    return [];
+  }
+
+  const selected = new Set(recipe.integrations ?? []);
+  return removedToolchainIntegrations
+    .filter(({ id }) => selected.has(id))
+    .map(({ id, provides }) => ({
+      level: "warning",
+      message: `${configPath} selects ${id}, a JavaScript and TypeScript ${provides} integration that Calavera removed. Vite+ manages this project (${detection.signal} signal at ${detection.manifestPath}) and provides ${provides}, so remove ${id} from ${configPath}; apply refuses the recipe until you do.`,
+    }));
+}
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<DoctorResult>}
  */
@@ -5681,6 +5707,9 @@ async function doctor(options) {
 
   if (hasConfig) {
     const recipe = await readRecipe(options.config);
+    issues.push(
+      ...removedToolchainWarnings(recipe, await detectVitePlus(process.cwd()), options.config),
+    );
     const integrations = resolveRecipeIntegrations(recipe);
     const aiArtifacts = resolveAiArtifacts(recipe);
     // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the
