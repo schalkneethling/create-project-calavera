@@ -354,6 +354,41 @@ test("init --apply with create-here formats the recipe it writes with vp fmt whe
   );
 });
 
+test("init --apply with create-here does not run vp fmt when the parent is not managed by Vite+", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using tools = await createTemporaryFixture("manifest-choice-init-unmanaged-tools", {});
+  const bin = join(tools.root, "bin");
+  await writePackageManagerStubs(bin);
+  // vite-plus is installed above the inspected directory but declared nowhere, so only the
+  // verdict, not a missing package, keeps vp fmt from running.
+  const fmtLog = join(tools.root, "vp-fmt.log");
+  await writeVitePlusStub(fixture.root, {
+    logPath: join(tools.root, "vp.log"),
+    fmtLogPath: fmtLog,
+  });
+
+  const result = await runCli(
+    { project: fixture.project, bin, packageManagerLog: join(tools.root, "package-manager.log") },
+    [
+      "init",
+      "--apply",
+      "--yes",
+      "--json",
+      "--no-install",
+      "--profile",
+      "minimal",
+      "--manifest-choice",
+      "create-here",
+    ],
+  );
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    JSON.parse(result.stdout).applyResult,
+    "init --apply did not apply, so the test shows nothing",
+  );
+  assert.deepEqual(await readStubInvocations(fmtLog), []);
+});
+
 test("apply-at-ancestor inspects the ancestor again and applies there, leaving the inspected directory untouched", async () => {
   await using workspace = await directoryUnderManagedWorkspace();
   const projectBefore = await snapshotDirectory(workspace.project);
