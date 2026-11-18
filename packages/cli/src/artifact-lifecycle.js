@@ -32,13 +32,13 @@ import { fileExists } from "./utils/fs.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
 
-const LOCK_PATH = ".calavera/artifacts.lock.json";
-const STATE_PATH = ".calavera/state.json";
-const CACHE_ROOT = ".calavera/cache";
+export const LOCK_PATH = ".calavera/artifacts.lock.json";
+export const STATE_PATH = ".calavera/state.json";
+export const CACHE_ROOT = ".calavera/cache";
 const CACHE_PATH = `${CACHE_ROOT}/npm`;
-const PACKAGE_PATH = ".calavera/packages";
-const TRANSACTION_PATH = ".calavera/artifact-transaction.json";
-const TRANSACTION_ROOT = ".calavera/.transactions";
+export const PACKAGE_PATH = ".calavera/packages";
+export const TRANSACTION_PATH = ".calavera/artifact-transaction.json";
+export const TRANSACTION_ROOT = ".calavera/.transactions";
 
 // #841: the npm cache that artifact packages resolve through is not committed (owner decision,
 // 2026-11-14). Apply keeps it out of Git with its own marked `.gitignore` block (ADR-0016,
@@ -999,14 +999,14 @@ function normalizeSelections(ai) {
 }
 
 /** @returns {Promise<{ schemaVersion: number, artifacts: ArtifactLockEntry[] }>} */
-async function readLock() {
+export async function readLock() {
   if (!(await fileExists(LOCK_PATH))) return { schemaVersion: 1, artifacts: [] };
   const lock = await readJson(LOCK_PATH);
   if (!Array.isArray(lock.artifacts)) throw new Error("Invalid artifact lockfile.");
   return /** @type {{ schemaVersion: number, artifacts: ArtifactLockEntry[] }} */ (lock);
 }
 
-async function readState() {
+export async function readState() {
   return (await fileExists(STATE_PATH))
     ? normalizeState(await readJson(STATE_PATH))
     : createEmptyState();
@@ -1116,8 +1116,13 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
   await rm(TRANSACTION_PATH, { force: true });
 }
 
-/** @param {{ readOnly?: boolean }} [options] */
-async function recoverArtifactTransaction(options = {}) {
+/**
+ * Rolls back an artifact transaction that an interrupted command left pending, and removes its
+ * journal. With `readOnly`, as in a dry run, it throws instead, because the rollback writes files.
+ *
+ * @param {{ readOnly?: boolean }} [options]
+ */
+export async function recoverArtifactTransaction(options = {}) {
   if (!(await fileExists(TRANSACTION_PATH))) return;
   if (options.readOnly) {
     throw new Error("A pending artifact transaction requires recovery before a dry run.");
