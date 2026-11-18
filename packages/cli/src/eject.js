@@ -147,7 +147,9 @@ const LINK_PREFIX = "link:";
  */
 async function entryIdentity(path) {
   const stats = await lstat(path);
-  if (stats.isSymbolicLink()) return `${LINK_PREFIX}${await readlink(path)}`;
+  // The target is JSON-encoded, so it holds no raw line break and can never run into a value that
+  // follows it in a `seen` string.
+  if (stats.isSymbolicLink()) return `${LINK_PREFIX}${JSON.stringify(await readlink(path))}`;
   if (stats.isDirectory()) return "folder";
   return stats.isFile() ? "file" : "other";
 }
@@ -312,7 +314,8 @@ async function baseSkillCheck() {
   return {
     hash,
     uncoveredNote: notes.join(" "),
-    seen: [hash, ...uncovered, listProblem].join("\n"),
+    // Encoded as JSON, so an entry whose name holds a line break never reads as two entries.
+    seen: JSON.stringify([hash, uncovered, listProblem]),
   };
 }
 

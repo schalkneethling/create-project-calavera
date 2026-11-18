@@ -1388,3 +1388,41 @@ test("a linked .gitignore retargeted to identical text after the plan stops the 
     assert.deepEqual(await snapshotDirectory(), before);
   });
 });
+
+test("a linked .gitignore retargeted to a name with a line break stops the run", async () => {
+  await inProject(async () => {
+    // Joined with a line break, "link:first" plus "a\n<block>" reads the same as
+    // "link:first\na" plus "<block>", so the target name must not run into the text.
+    await writeFootprint({ packageFolder: false, gitignore: `a\n${CACHE_BLOCK}` });
+    await cp(".gitignore", "first");
+    await writeFile("first\na", CACHE_BLOCK);
+    await rm(".gitignore");
+    await symlink("first", ".gitignore");
+    const plan = await planEject({ dryRun: false });
+    await rm(".gitignore");
+    await symlink("first\na", ".gitignore");
+    const before = await snapshotDirectory();
+    await assert.rejects(
+      executeEject(selectEjectItems(plan, { assumeYes: false }).remove),
+      /eject stopped before removing anything, because \.gitignore changed since/,
+    );
+    assert.deepEqual(await snapshotDirectory(), before);
+  });
+});
+
+test("a base skill whose uncovered entries are renamed to look like other entries stops the run", async () => {
+  await inProject(async () => {
+    // Joined with line breaks, the entries "x" and "y" read the same as one entry "x\ny".
+    await writeFootprint({ packageFolder: false });
+    await mkdir(`${SKILL_PATH}/x`);
+    await mkdir(`${SKILL_PATH}/y`);
+    const plan = await planEject({ dryRun: false });
+    await rm(`${SKILL_PATH}/x`, { recursive: true });
+    await rm(`${SKILL_PATH}/y`, { recursive: true });
+    await mkdir(`${SKILL_PATH}/x\n${SKILL_PATH}/y`, { recursive: true });
+    await assert.rejects(
+      executeEject(selectEjectItems(plan, { assumeYes: false }).remove),
+      /\.agents\/skills\/calavera changed since/,
+    );
+  });
+});
