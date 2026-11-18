@@ -151,7 +151,7 @@ The owner creates implementation issues after accepting this ADR. Consequences l
 
 The proposed follow-up issues, for the owner to create after acceptance:
 
-1. Move the input schema of each shared tool into the core, with Node.js-only parts marked, generate the Zod and JSON Schema forms from it, and add a test that MCP and WebMCP accept the same inputs for each shared tool name. This closes the unintended differences, starting with the repeated CodeQL language list.
+1. Move the input and output schemas of each shared tool into the core, with Node.js-only parts marked, generate the Zod and JSON Schema forms from them, and add a test that MCP and WebMCP accept the same inputs and declare the same output schema for each shared tool name. This closes every unintended difference, including the repeated CodeQL language list and the output schemas that WebMCP lacks for `list_integrations` and `describe_integration`.
 2. Add a read-only MCP tool for artifact status over the core function behind `artifacts status`, to finish CAL-041.
 3. Change the bundled skill so that the agent uses only the tools the MCP server lists (Decision 7). Today the skill names a fixed list of tools and tells the agent to stop and repair the registration when they are not available, which does not separate a missing server from an older one. `packages/cli/scripts/mcp-tool-list-docs.test.mjs` requires that list to equal the tools the server registers, so the follow-up changes that test too.
 
