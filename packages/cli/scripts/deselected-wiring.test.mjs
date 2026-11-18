@@ -25,6 +25,7 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { listingViolations, namedItems } from "../../../scripts/rehearsal-checks.mjs";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
@@ -494,29 +495,38 @@ test("Given the guard applied and wired, when the recipe drops it and clean --dr
   });
 });
 
-test("Given the guard deselected, clean --dry-run in a terminal says why each block and group would be removed", async () => {
+test("Given the guard deselected, clean --dry-run in a terminal says why each block and group would be removed, and names each file once, under a heading", async () => {
   await inWiredProject(async () => {
     await writeConfig(deselectedRecipe());
     const { status, stdout, stderr } = runClean(["--dry-run"]);
     assert.equal(status, 0, stderr);
 
+    assert.match(stdout, /^Wiring:$/m);
     for (const hook of hooks) {
       assert.match(
         stdout,
         new RegExp(
-          `Would remove the ${id} block from \\.vite-hooks/${hook}, because the recipe no longer selects ${id}`,
+          `^ {2}Would update \\.vite-hooks/${hook}\\n {4}Would remove the ${id} block, because the recipe no longer selects ${id}: "`,
+          "m",
         ),
       );
     }
+    assert.match(stdout, /^ {2}Would update \.claude\/settings\.json$/m);
     for (const event of ["SessionStart", "PreToolUse"]) {
       assert.match(
         stdout,
         new RegExp(
-          `Would remove the ${event} group for ${id} from \\.claude/settings\\.json, because the recipe no longer selects ${id}`,
+          `^ {4}Would remove the ${event} group for ${id}, because the recipe no longer selects ${id}: `,
+          "m",
         ),
       );
     }
-    assert.match(stdout, /Would remove \.agents\/skills\/protected-branch-guard/);
+    assert.match(
+      stdout,
+      /^Artifacts:\n {2}Would remove \.agents\/skills\/protected-branch-guard$/m,
+    );
+    // #331: the rehearsal's listing check (#918) on the same project's JSON result.
+    assert.deepEqual(listingViolations(stdout, namedItems(cleanJson(["--dry-run"]))), []);
   });
 });
 
@@ -525,11 +535,14 @@ test("Given the guard deselected, when clean runs before apply, then the hooks i
     await writeConfig(deselectedRecipe());
     const { status, stdout, stderr } = runClean(["--yes"]);
     assert.equal(status, 0, stderr);
-    assert.match(stdout, /Removed \.agents\/skills\/protected-branch-guard/);
+    assert.match(stdout, /^ {2}Removed \.agents\/skills\/protected-branch-guard$/m);
     for (const path of wiringPaths) {
       assert.match(
         stdout,
-        new RegExp(`Removed the ${id} wiring from ${path.replaceAll(".", "\\.")}`),
+        new RegExp(
+          `^ {2}Updated ${path.replaceAll(".", "\\.")}\\n {4}Removed the (?:${id} block|\\w+ group for ${id}), `,
+          "m",
+        ),
       );
     }
 
@@ -683,6 +696,45 @@ test("Given an apply that deselected the guard and an edit inside its skill dire
     );
     assert.match(result.changes[0].reason, /AI artifact has local edits/);
     assert.deepEqual(await snapshot(), before);
+  });
+});
+
+test("Given an apply that deselected the guard and an edit inside its skill directory, clean --dry-run keeps only the skill and lists it under Artifacts, as a clean that also removes something does", async () => {
+  await inWiredProject(async (registry) => {
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    const skillFile = `${skillDirectory}/SKILL.md`;
+    await writeFile(skillFile, `${await readFile(skillFile, "utf8")}\nMy own note.\n`);
+
+    // #331: clean keeps every stale item, so it returns before planning any removal; its skip
+    // change carries the same artifact fields as one from a clean that removes something.
+    const result = cleanJson(["--dry-run"]);
+    assert.deepEqual(
+      result.changes.map(({ type, path, category, aiType, name }) => ({
+        type,
+        path,
+        category,
+        aiType,
+        name,
+      })),
+      [
+        {
+          type: "skip",
+          path: skillDirectory,
+          category: "ai",
+          aiType: "skill",
+          name: "protected-branch-guard",
+        },
+      ],
+    );
+
+    const { status, stdout, stderr } = runClean(["--dry-run"]);
+    assert.equal(status, 0, stderr);
+    assert.match(
+      stdout,
+      /^No stale managed items were safe to remove\.\n\nArtifacts:\n {2}Would skip \.agents\/skills\/protected-branch-guard: AI artifact has local edits/m,
+    );
+    assert.doesNotMatch(stdout, /^Files:$/m);
   });
 });
 

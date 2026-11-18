@@ -3201,7 +3201,7 @@ test("clean treats a matching managed run-if-files helper as stale", async () =>
   }
 });
 
-test("clean human output reports planned and completed deletes and locally edited skips", async () => {
+test("clean human output names each planned and completed delete and each locally edited skip once, under a heading", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-clean-output-"));
   const safePath = ".editorconfig";
@@ -3259,15 +3259,17 @@ test("clean human output reports planned and completed deletes and locally edite
       { env: environment },
     );
 
+    // #331: the kept file is named once, under Files, with its reason; the sentence the JSON
+    // message adds about kept items is left out.
     assert.match(
       skipOnlyDryRunStdout,
-      /No stale managed items were safe to remove\. Kept knip\.json, because it has local edits\. Clean keeps your version\. To have clean remove an item, restore the content Calavera wrote, or delete the item yourself\./,
+      /^No stale managed items were safe to remove\.\n\nFiles:\n {2}Would skip knip\.json: Managed file has local edits \(installed=[0-9a-f]+, state=[0-9a-f]+\)\. Clean keeps your version\. To have clean remove it, restore the content Calavera wrote, or delete it yourself\.$/m,
     );
-    assert.match(
-      skipOnlyDryRunStdout,
-      /Would skip knip\.json: Managed file has local edits \(installed=[0-9a-f]+, state=[0-9a-f]+\)\. Clean keeps your version\. To have clean remove it, restore the content Calavera wrote, or delete it yourself\./,
+    assert.equal(skipOnlyDryRunStdout.match(/knip\.json/g)?.length, 1);
+    assert.equal(
+      skipOnlyJsonResult.message,
+      "No stale managed items were safe to remove. Kept knip.json, because it has local edits. Clean keeps your version. To have clean remove an item, restore the content Calavera wrote, or delete the item yourself.",
     );
-    assert.doesNotMatch(skipOnlyDryRunStdout, /^Skipped knip\.json:/m);
     assert.equal(await readFile(safePath, "utf8"), safeContents);
     assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
 
@@ -3282,9 +3284,10 @@ test("clean human output reports planned and completed deletes and locally edite
       { env: environment },
     );
 
-    assert.match(dryRunStdout, /Dry run complete\. No files were removed\./);
-    assert.match(dryRunStdout, /Would remove \.editorconfig/);
-    assert.match(dryRunStdout, /Would skip knip\.json: Managed file has local edits/);
+    assert.match(
+      dryRunStdout,
+      /^Dry run complete\. No files were removed\.\n\nFiles:\n {2}Would remove \.editorconfig\n {2}Would skip knip\.json: Managed file has local edits/m,
+    );
     assert.equal(await readFile(safePath, "utf8"), safeContents);
     assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
 
@@ -3296,10 +3299,9 @@ test("clean human output reports planned and completed deletes and locally edite
 
     assert.match(
       cleanStdout,
-      /Removed stale managed files\. Kept knip\.json, because it has local edits\./,
+      /^Removed stale managed files\.\n\nFiles:\n {2}Removed \.editorconfig\n {2}Skipped knip\.json: Managed file has local edits/m,
     );
-    assert.match(cleanStdout, /Removed \.editorconfig/);
-    assert.match(cleanStdout, /Skipped knip\.json: Managed file has local edits/);
+    assert.doesNotMatch(cleanStdout, /Would /);
     await assertPathMissing(safePath);
     assert.equal(await readFile(editedPath, "utf8"), localEditedContents);
   } finally {
