@@ -548,6 +548,9 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
       action: "delete",
       edits: "not-checked",
       matchesRecords: true,
+      // Recorded so a real file or folder that becomes a link after the plan counts as changed:
+      // `--yes` never removes a link the person did not approve (ADR-0017, Amendment 2).
+      seen: await linkIdentity(path),
       ...extra,
     });
   };
@@ -685,13 +688,23 @@ async function removePackageFolder(path) {
  * @returns {Promise<string | undefined>}
  */
 async function currentlySeen(item) {
-  if (item.seen?.startsWith(LINK_PREFIX)) return linkIdentity(item.path);
-  if (item.kind === "artifact-cache-block") {
-    return (await present(item.path)) ? readFile(item.path, "utf8") : "missing";
+  // The check depends on the item's kind, never on the text it recorded: the cache block's
+  // `seen` is the whole `.gitignore`, which may hold any text.
+  switch (item.kind) {
+    case "state":
+    case "lock":
+    case "cache":
+    case "transient":
+      return linkIdentity(item.path);
+    case "artifact-cache-block":
+      return (await present(item.path)) ? readFile(item.path, "utf8") : "missing";
+    case "base-skill":
+      return (await baseSkillCheck()).seen;
+    case "package-folder":
+      return item.payload ? ((await payloadHashOf(item.payload.path)) ?? "missing") : undefined;
+    case "recipe":
+      return undefined;
   }
-  if (item.kind === "base-skill") return (await baseSkillCheck()).seen;
-  if (item.payload) return (await payloadHashOf(item.payload.path)) ?? "missing";
-  return undefined;
 }
 
 /**

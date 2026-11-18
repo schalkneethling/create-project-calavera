@@ -1245,3 +1245,31 @@ test("--yes keeps no record for a linked cache when there is no artifact-cache b
     assert.deepEqual(paths(leave), [".calavera/cache", "calavera.config.json"]);
   });
 });
+
+test("a real cache replaced by a link after the plan is not removed", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false });
+    await write("mine/kept.txt", "mine\n");
+    const plan = await planEject({ dryRun: false });
+    assert.equal(item(plan, ".calavera/cache").matchesRecords, true);
+    await rm(".calavera/cache", { recursive: true });
+    await symlink("../mine", ".calavera/cache");
+    const before = await snapshotDirectory();
+    await assert.rejects(
+      executeEject(selectEjectItems(plan, { assumeYes: true }).remove),
+      /eject stopped before removing anything, because \.calavera\/cache changed since eject listed/,
+    );
+    assert.deepEqual(await snapshotDirectory(), before);
+  });
+});
+
+test("a .gitignore whose first line starts with link: is removed as planned", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false, gitignore: `link:notes\n${CACHE_BLOCK}` });
+    const outcome = await executeEject(
+      selectEjectItems(await planEject({ dryRun: false }), { assumeYes: false }).remove,
+    );
+    assert.deepEqual(outcome.failed, []);
+    assert.equal(await readFile(".gitignore", "utf8"), "link:notes\n");
+  });
+});
