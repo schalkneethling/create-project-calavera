@@ -46,18 +46,20 @@ async function directoryUnderManagedWorkspace() {
   const tools = await createTemporaryFixture("manifest-choice-tools", {});
   const project = join(workspace.root, "packages/fresh");
   const vpLog = join(tools.root, "vp.log");
+  const fmtLog = join(tools.root, "vp-fmt.log");
 
   await mkdir(join(workspace.root, ".git"));
   await mkdir(project);
   await writeFile(join(project, "calavera.config.json"), json(recipe));
   await writePackageManagerStubs(join(tools.root, "bin"));
-  await writeVitePlusStub(workspace.root, { logPath: vpLog });
+  await writeVitePlusStub(workspace.root, { logPath: vpLog, fmtLogPath: fmtLog });
 
   return {
     root: workspace.root,
     project,
     bin: join(tools.root, "bin"),
     vpLog,
+    fmtLog,
     packageManagerLog: join(tools.root, "package-manager.log"),
     async [Symbol.asyncDispose]() {
       await workspace[Symbol.asyncDispose]();
@@ -273,6 +275,118 @@ test("create-here writes the manifest and the recipe's files only in the inspect
     outsideProject(before),
     "create-here wrote outside the inspected directory",
   );
+});
+
+// #961: under create-here the formatter follows the parent's Vite+ verdict, as the install command
+// and the quality script do, so the files apply writes pass the parent's vp check.
+test("create-here formats the files apply writes with vp fmt when the parent is managed by Vite+", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  /** @param {{ argv: string[] }[]} runs */
+  const formattedPaths = (runs) =>
+    runs.map(({ argv }) => argv.find((arg) => arg.startsWith("--stdin-filepath=")));
+
+  const dryRun = await runCli(workspace, [
+    "apply",
+    "--dry-run",
+    "--json",
+    "--manifest-choice",
+    "create-here",
+  ]);
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  const plannedRuns = await readStubInvocations(workspace.fmtLog);
+  assert.ok(plannedRuns.length > 0, "the dry run did not format with vp fmt");
+  assert.ok(plannedRuns.every(({ cwd }) => cwd === workspace.project));
+
+  const applied = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
+  assert.equal(applied.code, 0, applied.stderr);
+  const runs = (await readStubInvocations(workspace.fmtLog)).slice(plannedRuns.length);
+  assert.ok(
+    formattedPaths(runs).includes("--stdin-filepath=.calavera/state.json"),
+    `apply did not format its state file with vp fmt: ${JSON.stringify(runs)}`,
+  );
+  assert.ok(runs.every(({ cwd }) => cwd === workspace.project));
+});
+
+test("create-here does not run vp fmt when the parent is not managed by Vite+", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  // vite-plus is installed above the inspected directory but declared nowhere, so only the
+  // verdict, not a missing package, keeps vp fmt from running.
+  const fmtLog = join(fixture.root, "vp-fmt.log");
+  await writeVitePlusStub(fixture.root, {
+    logPath: join(fixture.root, "vp.log"),
+    fmtLogPath: fmtLog,
+  });
+
+  for (const dryRun of [true, false]) {
+    await inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        dryRun,
+        assumeYes: true,
+        noInstall: true,
+        manifestChoice: "create-here",
+      }),
+    );
+  }
+  assert.deepEqual(await readStubInvocations(fmtLog), []);
+});
+
+test("init --apply with create-here formats the recipe it writes with vp fmt when the parent is managed by Vite+", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+
+  const result = await runCli(workspace, [
+    "init",
+    "--apply",
+    "--yes",
+    "--json",
+    "--profile",
+    "minimal",
+    "--manifest-choice",
+    "create-here",
+  ]);
+  assert.equal(result.code, 0, result.stderr);
+  const runs = await readStubInvocations(workspace.fmtLog);
+  assert.ok(
+    runs.some(
+      ({ argv, cwd }) =>
+        argv.includes("--stdin-filepath=calavera.config.json") && cwd === workspace.project,
+    ),
+    `init did not format calavera.config.json with vp fmt: ${JSON.stringify(runs)}`,
+  );
+});
+
+test("init --apply with create-here does not run vp fmt when the parent is not managed by Vite+", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using tools = await createTemporaryFixture("manifest-choice-init-unmanaged-tools", {});
+  const bin = join(tools.root, "bin");
+  await writePackageManagerStubs(bin);
+  // vite-plus is installed above the inspected directory but declared nowhere, so only the
+  // verdict, not a missing package, keeps vp fmt from running.
+  const fmtLog = join(tools.root, "vp-fmt.log");
+  await writeVitePlusStub(fixture.root, {
+    logPath: join(tools.root, "vp.log"),
+    fmtLogPath: fmtLog,
+  });
+
+  const result = await runCli(
+    { project: fixture.project, bin, packageManagerLog: join(tools.root, "package-manager.log") },
+    [
+      "init",
+      "--apply",
+      "--yes",
+      "--json",
+      "--no-install",
+      "--profile",
+      "minimal",
+      "--manifest-choice",
+      "create-here",
+    ],
+  );
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    JSON.parse(result.stdout).applyResult,
+    "init --apply did not apply, so the test shows nothing",
+  );
+  assert.deepEqual(await readStubInvocations(fmtLog), []);
 });
 
 test("apply-at-ancestor inspects the ancestor again and applies there, leaving the inspected directory untouched", async () => {

@@ -147,16 +147,21 @@ export async function writePackageManagerStubs(bin) {
  * `logPath`, then exits with `exitCode`, so a test can assert what apply ran
  * with no network access and no real install. `vp fmt` is the exception: it
  * runs this repository's Oxfmt, as `writeVitePlusFormatter` does, and is not
- * recorded, because apply formats the files it writes with it (#669). Like `vp add` in a pnpm
+ * recorded in `logPath`, because apply formats the files it writes with it (#669). A test that
+ * needs to know whether apply formatted gives `fmtLogPath`, where each `vp fmt` run records its
+ * argv and working directory the same way (#961). Like `vp add` in a pnpm
  * workspace, it refuses a root install without `-w` (`pnpmAddingToRootCheck`).
  * A failing bin also writes a line to standard output, which apply captures.
  * `manifest` replaces the manifest's text, to give it a shape apply has to
  * refuse.
  *
  * @param {string} directory
- * @param {{ logPath: string, exitCode?: number, manifest?: string }} options
+ * @param {{ logPath: string, fmtLogPath?: string, exitCode?: number, manifest?: string }} options
  */
-export async function writeVitePlusStub(directory, { logPath, exitCode = 0, manifest }) {
+export async function writeVitePlusStub(
+  directory,
+  { logPath, fmtLogPath, exitCode = 0, manifest },
+) {
   const packageDirectory = join(directory, "node_modules/vite-plus");
   await mkdir(join(packageDirectory, "bin"), { recursive: true });
   await writeFile(
@@ -175,7 +180,7 @@ export async function writeVitePlusStub(directory, { logPath, exitCode = 0, mani
 const { appendFileSync } = require("node:fs");
 const argv = process.argv.slice(2);
 if (argv[0] === "fmt") {
-  const result = require("node:child_process").spawnSync(process.execPath, [${JSON.stringify(oxfmtBin)}, ...argv.slice(1)], { stdio: "inherit" });
+${fmtLogPath === undefined ? "" : `  appendFileSync(${JSON.stringify(fmtLogPath)}, JSON.stringify({ argv, cwd: process.cwd() }) + "\\n");\n`}  const result = require("node:child_process").spawnSync(process.execPath, [${JSON.stringify(oxfmtBin)}, ...argv.slice(1)], { stdio: "inherit" });
   process.exit(result.status ?? 1);
 }
 appendFileSync(${JSON.stringify(logPath)}, JSON.stringify({ argv, cwd: process.cwd() }) + "\\n");

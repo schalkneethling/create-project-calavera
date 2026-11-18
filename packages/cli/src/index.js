@@ -3387,11 +3387,17 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   // and the project's own vp check accepts them. The formatter loads only when a file needs it.
   // When apply also writes Calavera's .editorconfig, formatting stops if that file would change the
   // settings the formatter uses, because the formatter can only read the settings on disk.
-  const loadFormatter = projectFormatterLoader(process.cwd(), vitePlusDetection.status, {
-    editorConfig: integrations.some(({ id }) => id === "editorconfig")
-      ? CALAVERA_EDITORCONFIG
-      : undefined,
-  });
+  // Under create-here the formatter follows the parent's verdict, as the install and the quality
+  // script do (#961), so the parent's vp check accepts the files apply writes.
+  const loadFormatter = projectFormatterLoader(
+    process.cwd(),
+    delegatesToVitePlus(vitePlusDetection) ? "managed" : vitePlusDetection.status,
+    {
+      editorConfig: integrations.some(({ id }) => id === "editorconfig")
+        ? CALAVERA_EDITORCONFIG
+        : undefined,
+    },
+  );
   const managedFilePlans = await formatManagedFilePlans(
     plannedManagedFiles(integrations, recipe.integrationOptions),
     loadFormatter,
@@ -5523,9 +5529,11 @@ export async function initRecipe(options) {
   // #430: init writes the recipe before it applies, so a manifest choice that would not apply here
   // stops before anything is asked or written. That includes a choice where there is no decision,
   // because ignoring abandon would write and apply the recipe.
+  /** @type {ManifestDecision | undefined} */
+  let decision;
   if (options.apply) {
     const detection = await detectVitePlus(process.cwd());
-    const decision = manifestDecision(process.cwd(), detection);
+    decision = manifestDecision(process.cwd(), detection);
     if (!decision && options.manifestChoice !== undefined) {
       throw manifestChoiceNotApplicableError(process.cwd(), detection);
     }
@@ -5572,10 +5580,11 @@ export async function initRecipe(options) {
   const explanation = explainRecipeResponse(recipe);
 
   // #669: formatted as apply formats it, so a Vite+ project's vp check accepts the recipe file.
+  // A decision here means create-here, so the recipe follows the parent's verdict (#961).
   const configText = await formatGeneratedText(
     relative(process.cwd(), resolve(options.config)),
     `${JSON.stringify(recipe, null, 2)}\n`,
-    projectFormatterLoader(process.cwd()),
+    projectFormatterLoader(process.cwd(), decision?.ancestor.status),
   );
   if (!options.dryRun) {
     await writeFile(options.config, configText);
