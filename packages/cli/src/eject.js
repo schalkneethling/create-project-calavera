@@ -509,16 +509,30 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
    * @param {Partial<EjectItem>} [extra]
    */
   const own = async (kind, path, extra = {}) => {
-    if (await present(path)) {
+    if (!(await present(path))) return;
+    // A symbolic link where Calavera keeps its own file or folder leads to content no record
+    // covers, wherever it points, so it needs an interactive approval, as a link in place of a
+    // package folder or of the base skill does. Approval removes only the link.
+    if ((await lstat(path)).isSymbolicLink()) {
       items.push({
         kind,
         path,
         action: "delete",
-        edits: "not-checked",
-        matchesRecords: true,
         ...extra,
+        edits: "cannot-detect",
+        matchesRecords: false,
+        reason: `${path} is a symbolic link, which no record covers; ${CANNOT_DETECT}. eject removes only the link, not what it leads to.`,
       });
+      return;
     }
+    items.push({
+      kind,
+      path,
+      action: "delete",
+      edits: "not-checked",
+      matchesRecords: true,
+      ...extra,
+    });
   };
 
   await own("state", STATE_PATH, stateProblem ? { reason: stateProblem } : {});
@@ -556,7 +570,9 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
  * item. A `--yes` run removes only the items that match Calavera's records, and keeps a record while
  * an item it leaves still needs that record for its check: the state while it leaves the base skill
  * or the `artifact-cache` block, and the lock while it leaves a package folder (ADR-0017,
- * Decision 5).
+ * Decision 5). While it leaves the cache, which it does only when the cache is a symbolic link, it
+ * also keeps the cache's `.gitignore` block, so the cache never shows in `git status`, and the state
+ * that records the block.
  *
  * @param {EjectPlan} plan
  * @param {{ assumeYes: boolean }} options `assumeYes` for a `--yes` run, false for an approved one.
@@ -566,10 +582,14 @@ export function selectEjectItems(plan, { assumeYes }) {
   if (!assumeYes) return { remove: plan.items, leave: [] };
   const unapproved = plan.items.filter(({ matchesRecords }) => !matchesRecords);
   const leftKinds = new Set(unapproved.map(({ kind }) => kind));
-  const keepState = leftKinds.has("base-skill") || leftKinds.has("artifact-cache-block");
+  const keepState =
+    leftKinds.has("base-skill") || leftKinds.has("artifact-cache-block") || leftKinds.has("cache");
   const keepLock = leftKinds.has("package-folder");
+  // The block keeps the cache out of `git status`, so it stays while the cache does.
+  const keepBlock = leftKinds.has("cache");
   const leaves = (/** @type {EjectItem} */ item) =>
     !item.matchesRecords ||
+    (item.kind === "artifact-cache-block" && keepBlock) ||
     (item.kind === "state" && keepState) ||
     (item.kind === "lock" && keepLock);
   return {
@@ -684,6 +704,8 @@ function dependsOn(item) {
 export async function executeEject(items) {
   const changed = [];
   for (const item of items) {
+    // An item already gone counts as removed, so its check has nothing left to compare.
+    if (item.action === "delete" && !(await present(item.path))) continue;
     // An item without a check has no `seen`, and `currentlySeen` returns undefined for it too.
     if ((await currentlySeen(item)) !== item.seen) {
       changed.push(item.path);
@@ -707,6 +729,12 @@ export async function executeEject(items) {
         item,
         reason: `Kept, because removing the ${blocker} item it depends on failed. Run eject again once that is fixed.`,
       });
+      continue;
+    }
+    // ADR-0017 Decision 2: a footprint item that is already gone counts as removed, so an item the
+    // person deleted after the plan is not a failure, and the items that depend on it go too.
+    if (item.action === "delete" && !(await present(item.path))) {
+      outcome.removed.push(item);
       continue;
     }
     try {

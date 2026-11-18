@@ -1134,3 +1134,77 @@ test("an edit never writes through a symbolic link that leads out of the project
     await assert.rejects(planEject({ dryRun: true }), /Eject path must stay inside/);
   });
 });
+
+// A symbolic link at a path Calavera owns leads to content no record covers, wherever it points,
+// so it needs an interactive approval, as a link in place of a package folder does.
+for (const path of [
+  ".calavera/cache",
+  ".calavera/.staging",
+  ".calavera/.transactions",
+  ".calavera/state.json",
+  ".calavera/artifacts.lock.json",
+]) {
+  test(`a symbolic link at ${path} needs an interactive approval, and only the link goes`, async () => {
+    await inProject(async () => {
+      await writeFootprint({ packageFolder: false });
+      await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+      const original = await readFile(path).catch(() => undefined);
+      await rm(path, { recursive: true, force: true });
+      const linkTarget = join(outside.path, "target");
+      if (original === undefined) {
+        await write(join(linkTarget, "kept"), "theirs\n");
+      } else {
+        await write(linkTarget, original.toString());
+      }
+      await symlink(linkTarget, path);
+
+      const plan = await planEject({ dryRun: false });
+      const linked = item(plan, path);
+      assert.equal(linked.edits, "cannot-detect");
+      assert.equal(linked.matchesRecords, false);
+      assert.equal(
+        linked.reason,
+        `${path} is a symbolic link, which no record covers; edits cannot be detected. eject removes only the link, not what it leads to.`,
+      );
+      assert.ok(paths(selectEjectItems(plan, { assumeYes: true }).leave).includes(path));
+
+      const outcome = await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
+      assert.deepEqual(outcome.failed, []);
+      await assert.rejects(lstat(path), { code: "ENOENT" });
+      assert.ok((await lstat(linkTarget)) !== undefined);
+    });
+  });
+}
+
+test("--yes keeps the cache block while it leaves a linked cache", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false });
+    await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+    await rm(".calavera/cache", { recursive: true });
+    await symlink(outside.path, ".calavera/cache");
+    const { leave } = selectEjectItems(await planEject({ dryRun: false }), { assumeYes: true });
+    // Removing the block would show the cache in `git status`, and the state records the block.
+    assert.deepEqual(paths(leave), [
+      ".calavera/cache",
+      ".calavera/state.json",
+      ".gitignore",
+      "calavera.config.json",
+    ]);
+  });
+});
+
+test("an item the person removed between the plan and the removal counts as removed", async () => {
+  await inProject(async () => {
+    await writeFootprint();
+    const plan = await planEject({ dryRun: false });
+    await rm(".calavera/cache", { recursive: true });
+    await rm(SKILL_PATH, { recursive: true });
+    await rm(PACKAGE_ROOT, { recursive: true });
+    const outcome = await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
+    assert.deepEqual(outcome.failed, []);
+    assert.deepEqual(outcome.skipped, []);
+    assert.deepEqual(paths(outcome.removed), paths(plan.items));
+    assert.equal(await readFile(".gitignore", "utf8"), "node_modules/\n");
+    await assert.rejects(lstat(".calavera"), { code: "ENOENT" });
+  });
+});
