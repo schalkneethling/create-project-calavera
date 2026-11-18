@@ -26,6 +26,7 @@ import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory as snapshot } from "./project-snapshot.mjs";
+import { vitePlusFixtureRelease, writeVitePlusFormatter } from "./vite-plus-fixtures.mjs";
 
 const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.meta.url));
 const LOCK_PATH = ".calavera/artifacts.lock.json";
@@ -473,6 +474,122 @@ test("apply and its dry run remove the temporary folders they rebuild a locked p
     for (const folder of folders) {
       await assert.rejects(stat(folder), { code: "ENOENT" }, `${folder} was left behind`);
     }
+  });
+});
+
+test("a dry run with every artifact locked removes its rebuild folders when the rebuild stops", async (t) => {
+  await inProject(async () => {
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(
+      recipe,
+      applyOptions,
+      stubRegistry(new Map([["skill-project-goal", "0.1.0"]])),
+    );
+    await rm(".calavera/packages", { recursive: true });
+    const folders = recordRebuildFolders(t);
+
+    await assert.rejects(
+      applyRecipeObject(
+        recipe,
+        { ...applyOptions, dryRun: true },
+        stubRegistry(new Map(), {
+          failFor: "skill-project-goal",
+          error: new Error("ENOTCACHED: skill-project-goal is not in the offline cache"),
+        }),
+      ),
+      /ENOTCACHED/,
+    );
+
+    // #989: the folder is removed when the locked package cannot be rebuilt from the offline cache.
+    assert.equal(folders.length, 1, "the dry run starts rebuilding the missing package once");
+    await assert.rejects(
+      stat(folders[0]),
+      { code: "ENOENT" },
+      "the rebuild folder was left behind",
+    );
+  });
+});
+
+test("a dry run with every artifact locked removes its rebuild folders when planning the outputs stops", async (t) => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    await writeFile(".agents/skills/project-goal/SKILL.md", "local edit\n");
+    const folders = recordRebuildFolders(t);
+
+    await assert.rejects(
+      applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry),
+      /Refusing to overwrite existing AI artifact: \.agents\/skills\/project-goal/,
+    );
+
+    // #989: the folder is removed when the package is rebuilt and planning then refuses an edited
+    // output.
+    assert.equal(folders.length, 1, "the dry run rebuilds the missing package once");
+    await assert.rejects(
+      stat(folders[0]),
+      { code: "ENOENT" },
+      "the rebuild folder was left behind",
+    );
+  });
+});
+
+test("a dry run with every artifact locked removes its rebuild folders when planning the wiring stops", async (t) => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-protected-branch-guard", "0.1.0"]]));
+    const recipe = {
+      ...buildRecipe("minimal", [], "npm"),
+      ai: [{ id: "skill-protected-branch-guard", inputs: { protectedBranch: "main" } }],
+    };
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    const prePush = ".vite-hooks/pre-push";
+    await writeFile(prePush, (await readFile(prePush, "utf8")).replace("main", "main # mine"));
+    const folders = recordRebuildFolders(t);
+
+    await assert.rejects(
+      applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry),
+      /\.vite-hooks\/pre-push: the Calavera block for .* was edited/,
+    );
+
+    // #989: the folder is removed when planning the wiring, not the outputs, stops the dry run.
+    assert.equal(folders.length, 1, "the dry run rebuilds the missing package once");
+    await assert.rejects(
+      stat(folders[0]),
+      { code: "ENOENT" },
+      "the rebuild folder was left behind",
+    );
+  });
+});
+
+test("a dry run with every artifact locked removes its rebuild folders when formatting the state stops", async (t) => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(".calavera/packages", { recursive: true });
+    // #838: the project's Vite+ formatter loads, so planning runs, but cannot format the state.
+    await writeFile(
+      "package.json",
+      `${JSON.stringify({ name: "fixture", scripts: {}, devDependencies: { "vite-plus": vitePlusFixtureRelease } }, null, 2)}\n`,
+    );
+    await writeVitePlusFormatter(process.cwd(), { failFor: ".calavera/state.json" });
+    const folders = recordRebuildFolders(t);
+
+    await assert.rejects(
+      applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry),
+      /cannot format \.calavera\/state\.json/,
+    );
+
+    // #989: the folder is removed when formatting the state, the last step before apply disposes
+    // the rebuilt sources, stops the dry run.
+    assert.equal(folders.length, 1, "the dry run rebuilds the missing package once");
+    await assert.rejects(
+      stat(folders[0]),
+      { code: "ENOENT" },
+      "the rebuild folder was left behind",
+    );
   });
 });
 
