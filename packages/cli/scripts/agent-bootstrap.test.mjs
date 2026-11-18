@@ -6,6 +6,8 @@ import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { listingViolations } from "../../../scripts/rehearsal-checks.mjs";
+import { snapshotDirectory } from "./project-snapshot.mjs";
 import { agentBootstrap, parseArgs } from "../src/index.js";
 import {
   NEXT_PROMPT_HEADING,
@@ -39,6 +41,23 @@ function runCli(cwd, args) {
     );
   });
 }
+
+/**
+ * The files a run wrote, changed, or removed, compared the way the #918 rehearsal's init-output
+ * check compares its snapshots (scripts/rehearsal-checks.mjs).
+ *
+ * @param {string} directory
+ * @param {Record<string, string>} before A `snapshotDirectory` result from before the run.
+ */
+async function changedFiles(directory, before) {
+  const after = await snapshotDirectory(directory);
+  return Object.keys({ ...before, ...after })
+    .filter((path) => before[path] !== after[path] && !path.endsWith("/"))
+    .map((path) => path.replace(`${directory}/`, ""));
+}
+
+/** The note that asks for the fallback guidance to be merged into AGENTS.md (#601, #1020). */
+const MERGE_NOTE = "Merge the fallback guidance listed under Changes into AGENTS.md by hand.";
 
 async function withTempProject(run) {
   const previousCwd = process.cwd();
@@ -128,8 +147,8 @@ test("agent bootstrap can append guidance to existing AGENTS.md", async () => {
     assert.match(agentsMd, /# Calavera Agent Guidance/);
     assert.doesNotMatch(agentsMd, /<!-- calavera-agent-bootstrap -->/);
     assert.doesNotMatch(agentsMd, /AGENTS\.calavera\.md/);
-    // Appended guidance needs no merge, so no pointer names the fallback file (#601).
-    assert.ok(!result.pointers.some((pointer) => pointer.includes("AGENTS.calavera.md")));
+    // Appended guidance needs no merge, so no pointer asks for one (#601).
+    assert.ok(!result.pointers.includes(MERGE_NOTE), JSON.stringify(result.pointers));
     await assert.rejects(readFile("AGENTS.calavera.md", "utf8"), { code: "ENOENT" });
   });
 });
@@ -335,9 +354,15 @@ test("--init groups the summary when MCP needs manual setup (#601)", async () =>
       JSON.stringify({ name: "demo", packageManager: "pnpm@10.0.0" }),
     );
 
+    const before = await snapshotDirectory(directory);
     const result = await runCli(directory, ["--init", "--mcp-harness", "skip"]);
 
     assert.equal(result.code, 0, result.stderr);
+    // #1020: the #918 rehearsal checks that every file --init --mcp-harness skip writes is printed
+    // once, under a heading, so the note that points to the MCP setup notes does not name the file
+    // the Changes group already lists. Unlike the rehearsal, this project has no AGENTS.md.
+    const written = await changedFiles(directory, before);
+    assert.deepEqual(listingViolations(result.stdout, written), []);
     assert.equal(
       result.stdout,
       [
@@ -352,7 +377,52 @@ test("--init groups the summary when MCP needs manual setup (#601)", async () =>
         "",
         "Notes:",
         "  Installed skills are available under .agents/skills/.",
-        "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+        "  Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
+        "",
+        ...initNextSteps(directory),
+        "",
+        ...(await nextPromptGroup()),
+        "",
+      ].join("\n"),
+    );
+  });
+});
+
+test("--init in a project that has AGENTS.md prints every file it writes once, as the #918 rehearsal checks (#1020)", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({ name: "demo", packageManager: "pnpm@10.0.0" }),
+    );
+    // The Vite+ library scaffold the rehearsal runs --init in already has an AGENTS.md.
+    await writeFile("AGENTS.md", "# Existing project guidance\n");
+    const before = await snapshotDirectory(directory);
+
+    // The rehearsal's init-output step runs exactly these arguments (scripts/rehearsal-checks.mjs).
+    const result = await runCli(directory, ["--init", "--yes", "--mcp-harness", "skip"]);
+
+    assert.equal(result.code, 0, result.stderr);
+    const written = await changedFiles(directory, before);
+    assert.ok(written.includes("AGENTS.calavera.md"), JSON.stringify(written));
+    assert.deepEqual(listingViolations(result.stdout, written), []);
+    assert.equal(
+      result.stdout,
+      [
+        "Calavera agent bootstrap complete.",
+        "",
+        "Changes:",
+        "  Wrote .agents/skills/calavera",
+        "  Wrote .coderabbit.yaml",
+        "  Skipped AGENTS.md: Existing AGENTS.md left unchanged; Calavera guidance was written separately.",
+        "  Wrote AGENTS.calavera.md",
+        "  Wrote .agents/calavera/mcp.md",
+        "  Wrote .calavera/state.json",
+        "",
+        "Notes:",
+        "  Installed skills are available under .agents/skills/.",
+        `  ${MERGE_NOTE}`,
+        "  Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
         "",
         ...initNextSteps(directory),
         "",
@@ -396,8 +466,8 @@ test("--init names a skipped AGENTS.md once and says to merge the fallback guida
         "",
         "Notes:",
         "  Installed skills are available under .agents/skills/.",
-        "  Merge AGENTS.calavera.md into AGENTS.md by hand.",
-        "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+        `  ${MERGE_NOTE}`,
+        "  Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
         "",
         ...initNextSteps(directory),
         "",
@@ -419,7 +489,7 @@ test("--init names an MCP config it could not write once, in a note with one per
     assert.ok(mcpNote, JSON.stringify(result.pointers));
     assert.equal(
       mcpNote,
-      "Could not write project MCP config at .mcp.json: .mcp.json mcpServers must be an object. Follow .agents/calavera/mcp.md for manual setup.",
+      "Could not write project MCP config at .mcp.json: .mcp.json mcpServers must be an object. Follow the MCP setup notes listed under Changes for manual setup.",
     );
     assert.equal(result.changes.filter((change) => change.path === ".mcp.json").length, 0);
   });
@@ -437,7 +507,7 @@ test("--init does not ask for a merge of fallback guidance it left unchanged (#6
         (change) => change.type === "skip" && change.path === "AGENTS.calavera.md",
       ),
     );
-    assert.ok(!result.pointers.some((pointer) => pointer.includes("AGENTS.calavera.md")));
+    assert.ok(!result.pointers.includes(MERGE_NOTE), JSON.stringify(result.pointers));
   });
 });
 
@@ -457,10 +527,7 @@ test("--init keeps the merge note on a rerun before the generated fallback is me
       ),
       JSON.stringify(result.changes),
     );
-    assert.ok(
-      result.pointers.includes("Merge AGENTS.calavera.md into AGENTS.md by hand."),
-      JSON.stringify(result.pointers),
-    );
+    assert.ok(result.pointers.includes(MERGE_NOTE), JSON.stringify(result.pointers));
   });
 });
 

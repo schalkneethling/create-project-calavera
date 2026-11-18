@@ -40,6 +40,7 @@ import {
   prepareArtifactSources,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
+import { removedToolchainIntegrations } from "./catalog.js";
 import {
   applySummaryLines,
   formatArtifactInput,
@@ -355,6 +356,10 @@ const STATE_FILE = ".calavera/state.json";
 const AGENT_BOOTSTRAP_GUIDANCE_FILE = "AGENTS.md";
 const AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE = "AGENTS.calavera.md";
 const AGENT_BOOTSTRAP_MCP_FILE = ".agents/calavera/mcp.md";
+// #1020: a manual MCP setup always writes, updates, or skips AGENT_BOOTSTRAP_MCP_FILE, so the Changes
+// group already names it. The note points there instead of naming the file a second time.
+const AGENT_BOOTSTRAP_MANUAL_MCP_SETUP =
+  "Follow the MCP setup notes listed under Changes for manual setup.";
 const AGENT_BOOTSTRAP_MARKER = "<!-- calavera-agent-bootstrap -->";
 const AGENT_BOOTSTRAP_SECTION_START = "<!-- calavera-agent-bootstrap:start -->";
 const AGENT_BOOTSTRAP_SECTION_END = "<!-- calavera-agent-bootstrap:end -->";
@@ -4053,7 +4058,7 @@ async function writeAgentBootstrapMcpConfig(
     return {
       harness,
       action: "manual",
-      reason: `Skipped project MCP auto-config. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+      reason: `Skipped project MCP auto-config. ${AGENT_BOOTSTRAP_MANUAL_MCP_SETUP}`,
     };
   }
 
@@ -4091,7 +4096,7 @@ async function writeAgentBootstrapMcpConfig(
       reason: `Could not write project MCP config at ${path}: ${(error instanceof Error
         ? error.message
         : String(error)
-      ).replace(/\.$/, "")}. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+      ).replace(/\.$/, "")}. ${AGENT_BOOTSTRAP_MANUAL_MCP_SETUP}`,
     };
   }
 
@@ -4424,7 +4429,9 @@ export async function agentBootstrap(options = {}) {
       ...aiResult.pointers,
       ...(fallbackGuidanceAwaitsMerge
         ? [
-            `Merge ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
+            // #1020: the fallback is always written, updated, or skipped under Changes when it
+            // awaits a merge, so the note points there instead of naming it a second time.
+            `Merge the fallback guidance listed under Changes into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
           ]
         : []),
       // Only a manual MCP setup carries a reason.
@@ -5655,6 +5662,31 @@ export async function initRecipe(options) {
 }
 
 /**
+ * One warning for each JavaScript or TypeScript toolchain integration a recipe still selects in a
+ * project Vite+ manages (#431). The removals (ADR-0002 to ADR-0006) made these ids unknown, so
+ * apply refuses the recipe while `resolveRecipeIntegrations` drops them silently. Detection is the
+ * same ADR-0001 function `inspect_project` reads; any status other than `managed` yields nothing.
+ *
+ * @param {Recipe} recipe
+ * @param {VitePlusDetection} detection
+ * @param {string} configPath
+ * @returns {{ level: "warning", message: string }[]}
+ */
+export function removedToolchainWarnings(recipe, detection, configPath) {
+  if (detection.status !== "managed") {
+    return [];
+  }
+
+  const selected = new Set(recipe.integrations ?? []);
+  return removedToolchainIntegrations
+    .filter(({ id }) => selected.has(id))
+    .map(({ id, provides }) => ({
+      level: "warning",
+      message: `${configPath} selects ${id}, a JavaScript and TypeScript ${provides} integration that Calavera removed. Vite+ manages this project (${detection.signal} signal at ${detection.manifestPath}) and provides ${provides}, so remove ${id} from ${configPath}; apply refuses the recipe until you do.`,
+    }));
+}
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<DoctorResult>}
  */
@@ -5681,6 +5713,9 @@ async function doctor(options) {
 
   if (hasConfig) {
     const recipe = await readRecipe(options.config);
+    issues.push(
+      ...removedToolchainWarnings(recipe, await detectVitePlus(process.cwd()), options.config),
+    );
     const integrations = resolveRecipeIntegrations(recipe);
     const aiArtifacts = resolveAiArtifacts(recipe);
     // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the
