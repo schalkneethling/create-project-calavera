@@ -625,6 +625,9 @@ Inspect the current project:
 npm create project-calavera doctor
 ```
 
+`doctor` exits with status 1 when it reports an error, with or without `--json`,
+so a CI step that runs it fails. Warnings do not change the exit status.
+
 Update managed tooling from the recipe:
 
 ```bash

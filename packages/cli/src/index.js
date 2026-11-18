@@ -6625,7 +6625,13 @@ async function main() {
   }
 
   if (options.command === "doctor") {
-    printResult(await doctor(options), options.json);
+    const result = await doctor(options);
+    printResult(result, options.json);
+    // #1030: `ok` is false only when an issue has the level "error", so warnings stay advisory
+    // and a CI step that runs doctor fails only on an error.
+    if (!result.ok) {
+      process.exitCode = 1;
+    }
     return;
   }
 

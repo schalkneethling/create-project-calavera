@@ -2,7 +2,7 @@
 // only at the repository root, so applying the integration from a workspace
 // member is refused with a hard stop, before any file is planned or written.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawnSync } from "node:child_process";
 import {
   chmod,
   mkdir,
@@ -222,17 +222,22 @@ test("CLI apply and apply --dry-run from a workspace member refuse github-reposi
 });
 
 /**
- * The issues `doctor --json` reports in `cwd`.
+ * The issues `doctor --json` reports in `cwd`. doctor exits 1 when it reports an error (#1030), so
+ * the exit code is checked against `ok` instead of being treated as a failure.
  *
  * @param {string} cwd
  * @returns {Promise<{ ok: boolean, issues: { level: string, message: string }[] }>}
  */
 async function doctorReport(cwd) {
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
+  const { status, stdout, stderr } = spawnSync(process.execPath, [cliPath, "doctor", "--json"], {
     cwd,
+    encoding: "utf8",
     env: { ...process.env, NO_COLOR: "1" },
   });
-  return JSON.parse(stdout);
+  assert.ok(status === 0 || status === 1, `doctor exited ${status}\n${stderr}`);
+  const report = JSON.parse(stdout);
+  assert.equal(status, report.ok ? 0 : 1, `doctor exited ${status}\n${stderr}`);
+  return report;
 }
 
 // #997: doctor names apply's refusal instead of only the root-only integration's missing files.
