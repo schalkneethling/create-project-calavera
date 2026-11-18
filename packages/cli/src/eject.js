@@ -88,12 +88,12 @@ const CANNOT_DETECT = "edits cannot be detected";
  *   lock entry names, the payload checked against the entry's `payloadHash`.
  * @property {string[]} [removedLines] For an edit, the lines it removes, markers excluded.
  * @property {string} [contents] For an edit, the file's text afterward.
- * @property {string} [seen] What the item's check read when the plan was made: the file's text for
- *   the `artifact-cache` block edit; the installed hash and the uncovered entries for the base
- *   skill; whether the path is a symbolic link, and its target if so, for the state, the lock, the
- *   cache, and the transient folders; and that link identity plus the payload hash for a package
- *   folder. The recipe has none. `executeEject` reads it again and removes nothing when any item
- *   changed since the plan.
+ * @property {string} [seen] What the item's check read when the plan was made. For every kind
+ *   but the base skill, it starts with the entry identity from `entryIdentity`: a file, a folder,
+ *   or a symbolic link and its target. The `artifact-cache` block adds the `.gitignore` text, and
+ *   a package folder that a lock entry names adds its payload hash. The base skill records its
+ *   installed hash and the entries that hash does not cover. `executeEject` reads it again and
+ *   removes nothing when any item changed since the plan.
  *
  * @typedef {object} EjectOutcome What `executeEject` did with each item it was given.
  * @property {EjectItem[]} removed
@@ -137,16 +137,18 @@ function messageOf(error) {
 const LINK_PREFIX = "link:";
 
 /**
- * What identifies a symbolic link at `path`: the target it points to. A path that is no longer a
- * link, or that points elsewhere, gives another value, so `executeEject` sees the change and
- * removes nothing, rather than deleting a real folder the person put there after the plan.
+ * What identifies the entry at `path`: whether it is a file, a folder, or a symbolic link and the
+ * target it points to. An entry that changes type after the plan, such as a folder replaced by a
+ * file or by a link, or a link that points elsewhere, gives another value, so `executeEject` sees
+ * the change and removes nothing, rather than deleting what the person put there.
  *
  * @param {string} path
  */
-async function linkIdentity(path) {
-  return (await lstat(path)).isSymbolicLink()
-    ? `${LINK_PREFIX}${await readlink(path)}`
-    : "not a link";
+async function entryIdentity(path) {
+  const stats = await lstat(path);
+  if (stats.isSymbolicLink()) return `${LINK_PREFIX}${await readlink(path)}`;
+  if (stats.isDirectory()) return "folder";
+  return stats.isFile() ? "file" : "other";
 }
 
 /**
@@ -161,9 +163,10 @@ async function alreadyGone(item) {
 }
 
 /**
- * What a package folder's check reads: whether the folder is a link, and its payload hash.
+ * What a package folder's check reads: its entry identity (a folder, a file, or a link and its
+ * target), and its payload hash.
  *
- * @param {string} identity From `linkIdentity`.
+ * @param {string} identity From `entryIdentity`.
  * @param {string | undefined} payloadHash
  */
 function packageFolderSeen(identity, payloadHash) {
@@ -397,6 +400,7 @@ async function planBaseSkill(state, stateProblem) {
  */
 async function planCacheBlock(state, stateProblem) {
   if (!(await present(GITIGNORE_PATH))) return [];
+  const identity = await entryIdentity(GITIGNORE_PATH);
   const text = await readFile(GITIGNORE_PATH, "utf8");
   const found = findBlock(GITIGNORE_PATH, text, ARTIFACT_CACHE_BLOCK, "eject");
   if ("reason" in found) {
@@ -416,7 +420,7 @@ async function planCacheBlock(state, stateProblem) {
     matchesRecords: unedited,
     removedLines: found.current === "" ? [] : found.current.split("\n"),
     contents: withoutGitignoreBlock(found),
-    seen: text,
+    seen: `${identity}\n${text}`,
   };
   if (!unedited) {
     item.reason =
@@ -478,9 +482,9 @@ async function planPackageFolders(lockEntries, lockProblem) {
         edits: "cannot-detect",
         matchesRecords: false,
       };
-      // The plan keeps a link in a package folder's place, so a folder that becomes a link after
-      // the plan counts as changed, whether or not a lock entry names it.
-      const identity = await linkIdentity(path);
+      // The plan keeps a link or a file in a package folder's place, so a folder that becomes
+      // either after the plan counts as changed, whether or not a lock entry names it.
+      const identity = await entryIdentity(path);
       item.seen = identity;
       if (!entry || !artifact) {
         item.reason = !entry
@@ -565,7 +569,7 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
         ...extra,
         edits: "cannot-detect",
         matchesRecords: false,
-        seen: await linkIdentity(path),
+        seen: await entryIdentity(path),
         reason: `${path} is a symbolic link, which no record covers; ${CANNOT_DETECT}. eject removes only the link, not what it leads to.`,
       });
       return;
@@ -576,9 +580,10 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
       action: "delete",
       edits: "not-checked",
       matchesRecords: true,
-      // Recorded so a real file or folder that becomes a link after the plan counts as changed:
-      // `--yes` never removes a link the person did not approve (ADR-0017, Amendment 2).
-      seen: await linkIdentity(path),
+      // Recorded so an entry that changes type after the plan counts as changed: `--yes` never
+      // removes a link the person did not approve (ADR-0017, Amendment 2), and no run deletes a
+      // folder where the plan saw a file, or the reverse.
+      seen: await entryIdentity(path),
       ...extra,
     });
   };
@@ -595,6 +600,7 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
       action: "delete",
       edits: "cannot-detect",
       matchesRecords: false,
+      seen: await entryIdentity(config),
       reason: `The project's recipe; ${CANNOT_DETECT}.`,
     });
   }
@@ -723,19 +729,21 @@ async function currentlySeen(item) {
     case "lock":
     case "cache":
     case "transient":
-      return linkIdentity(item.path);
-    case "artifact-cache-block":
-      return (await present(item.path)) ? readFile(item.path, "utf8") : "missing";
+    case "recipe":
+      return entryIdentity(item.path);
+    case "artifact-cache-block": {
+      const identity = await entryIdentity(item.path);
+      // A `.gitignore` that is no longer a file is reported as changed, not read.
+      return identity === "file" ? `${identity}\n${await readFile(item.path, "utf8")}` : identity;
+    }
     case "base-skill":
       return (await baseSkillCheck()).seen;
     case "package-folder": {
-      const identity = await linkIdentity(item.path);
+      const identity = await entryIdentity(item.path);
       return item.payload
         ? packageFolderSeen(identity, await payloadHashOf(item.payload.path))
         : identity;
     }
-    case "recipe":
-      return undefined;
   }
 }
 

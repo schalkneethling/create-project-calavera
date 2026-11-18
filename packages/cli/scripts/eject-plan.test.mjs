@@ -6,8 +6,9 @@
 // call the planner directly.
 import assert from "node:assert/strict";
 import {
-  mkdir,
+  cp,
   lstat,
+  mkdir,
   mkdtempDisposable,
   readFile,
   realpath,
@@ -1282,8 +1283,10 @@ for (const [label, folder] of [
     await inProject(async () => {
       await writeFootprint();
       await write(".calavera/packages/skill-retired/1.0.0/package.json", "{}\n");
-      await write("mine/kept.txt", "mine\n");
       const plan = await planEject({ dryRun: false });
+      // The link leads to a copy of the folder, so the payload hash still matches, and only the
+      // link identity tells the change apart.
+      await cp(folder, "mine", { recursive: true });
       await rm(folder, { recursive: true });
       await symlink(join(process.cwd(), "mine"), folder);
       const before = await snapshotDirectory();
@@ -1309,3 +1312,43 @@ test("a .gitignore the person deleted after the plan counts as removed", async (
     await assert.rejects(lstat(".calavera"), { code: "ENOENT" });
   });
 });
+
+/** @param {string} path */
+const escaped = (path) => path.replaceAll(".", "\\.").replaceAll("/", "\\/");
+
+for (const [label, path, swap] of [
+  ["a package folder a lock entry names", PACKAGE_ROOT, "file"],
+  ["a package folder no lock entry names", ".calavera/packages/skill-retired/1.0.0", "file"],
+  ["the cache folder", ".calavera/cache", "file"],
+  ["the transient staging folder", ".calavera/.staging", "file"],
+  ["the transient transactions folder", ".calavera/.transactions", "file"],
+  ["the base skill folder", SKILL_PATH, "file"],
+  ["the state file", ".calavera/state.json", "folder"],
+  ["the lock file", ".calavera/artifacts.lock.json", "folder"],
+  ["the recipe", "calavera.config.json", "folder"],
+  [".gitignore", ".gitignore", "folder"],
+]) {
+  test(`${label} replaced by a ${swap} after the plan is not removed`, async () => {
+    await inProject(async () => {
+      await writeFootprint();
+      await write(".calavera/packages/skill-retired/1.0.0/package.json", "{}\n");
+      await write(".calavera/.staging/leftover/file", "x\n");
+      await write(".calavera/.transactions/old/file", "x\n");
+      const plan = await planEject({ dryRun: false });
+      await rm(path, { recursive: true });
+      if (swap === "file") {
+        await writeFile(path, "mine\n");
+      } else {
+        await write(`${path}/mine.txt`, "mine\n");
+      }
+      const before = await snapshotDirectory();
+      await assert.rejects(
+        executeEject(selectEjectItems(plan, { assumeYes: false }).remove),
+        new RegExp(
+          `eject stopped before removing anything, because (.+, )?${escaped(path)}(, .+)? changed since`,
+        ),
+      );
+      assert.deepEqual(await snapshotDirectory(), before);
+    });
+  });
+}
