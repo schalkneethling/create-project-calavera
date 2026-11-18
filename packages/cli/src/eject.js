@@ -190,13 +190,52 @@ async function readRecord(path, read) {
   }
 }
 
-/** The base skill's hash as `hashAiInstall` computes it, or why it could not be computed. */
-async function baseSkillHash() {
-  try {
-    return await hashAiInstall("skill", BASE_SKILL_PATH);
-  } catch (error) {
-    return `unreadable: ${messageOf(error)}`;
+/**
+ * The entries of the base skill that its record's hash does not cover: `hashAiInstall` hashes only
+ * regular files, so it skips symbolic links and empty folders. A skill folder that is itself a
+ * symbolic link is listed too, because the hash then describes the folder the link leads to.
+ *
+ * @param {string} [path]
+ * @returns {Promise<string[]>}
+ */
+async function uncoveredSkillEntries(path = BASE_SKILL_PATH) {
+  if ((await lstat(path)).isSymbolicLink()) return [path];
+  /** @type {string[]} */
+  const uncovered = [];
+  for (const entry of await readdir(path, { withFileTypes: true })) {
+    const entryPath = `${path}/${entry.name}`;
+    if (entry.isSymbolicLink()) {
+      uncovered.push(entryPath);
+    } else if (entry.isDirectory()) {
+      const inside = await uncoveredSkillEntries(entryPath);
+      if ((await readdir(entryPath)).length === 0) uncovered.push(entryPath);
+      uncovered.push(...inside);
+    }
   }
+  return uncovered.sort();
+}
+
+/**
+ * The base skill's hash as `hashAiInstall` computes it, or why it could not be computed, with the
+ * entries the hash does not cover (ADR-0017, Amendment 1). `seen` combines both, so a change to
+ * either after the plan stops `executeEject`.
+ */
+async function baseSkillCheck() {
+  let hash;
+  try {
+    hash = await hashAiInstall("skill", BASE_SKILL_PATH);
+  } catch (error) {
+    hash = `unreadable: ${messageOf(error)}`;
+  }
+  /** @type {string[]} */
+  let uncovered;
+  try {
+    uncovered = await uncoveredSkillEntries();
+  } catch (error) {
+    // A folder eject cannot read may hold anything, so it never counts as covered.
+    uncovered = [`${BASE_SKILL_PATH} (could not be read: ${messageOf(error)})`];
+  }
+  return { hash, uncovered, seen: [hash, ...uncovered].join("\n") };
 }
 
 /**
@@ -232,22 +271,41 @@ async function planBaseSkill(state, stateProblem) {
         ...base,
         edits: "edited",
         matchesRecords: false,
+        seen: (await baseSkillCheck()).seen,
         reason:
           stateProblem ??
           `${STATE_PATH} holds no record of the base Calavera skill, so eject cannot tell whether you edited it.`,
       },
     ];
   }
-  const installed = await baseSkillHash();
-  return installed === record.hash
-    ? [{ ...base, edits: "unedited", matchesRecords: true, seen: installed }]
+  const { hash: installed, uncovered, seen } = await baseSkillCheck();
+  const uncoveredNote = `the record's hash does not cover symbolic links or empty folders, so edits cannot be detected for: ${uncovered.join(", ")}.`;
+  if (installed !== record.hash) {
+    const edits = `The base Calavera skill has local edits (installed=${installed}, state=${record.hash}).`;
+    return [
+      {
+        ...base,
+        edits: "edited",
+        matchesRecords: false,
+        seen,
+        reason:
+          uncovered.length === 0
+            ? edits
+            : `${edits} ${uncoveredNote.charAt(0).toUpperCase()}${uncoveredNote.slice(1)}`,
+      },
+    ];
+  }
+  // Content no record covers is unknown, so `--yes` leaves it for an interactive approval
+  // (ADR-0017, Amendment 1).
+  return uncovered.length === 0
+    ? [{ ...base, edits: "unedited", matchesRecords: true, seen }]
     : [
         {
           ...base,
-          edits: "edited",
+          edits: "cannot-detect",
           matchesRecords: false,
-          seen: installed,
-          reason: `The base Calavera skill has local edits (installed=${installed}, state=${record.hash}).`,
+          seen,
+          reason: `The base Calavera skill matches its record, but ${uncoveredNote}`,
         },
       ];
 }
@@ -555,7 +613,7 @@ async function currentlySeen(item) {
   if (item.kind === "artifact-cache-block") {
     return (await present(item.path)) ? readFile(item.path, "utf8") : "missing";
   }
-  if (item.kind === "base-skill") return baseSkillHash();
+  if (item.kind === "base-skill") return (await baseSkillCheck()).seen;
   if (item.payload) return (await payloadHashOf(item.payload.path)) ?? "missing";
   return undefined;
 }

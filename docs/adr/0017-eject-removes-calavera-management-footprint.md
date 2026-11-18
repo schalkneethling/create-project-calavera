@@ -215,3 +215,20 @@ The CLI help text (`index.js:6029-6043`), the README command list, and the bundl
 **Delete an edited whole-file `AGENTS.md` after approval.** Not chosen by the owner on 2026-11-17. The file has no section markers, so deleting it would also delete the person's own guidance.
 
 **Let `--yes` remove edited items.** Not chosen by the owner on 2026-11-17. Nobody would have seen the edit before it was removed.
+
+## Amendment 1: A Base Skill That Holds Content Its Hash Does Not Cover Needs an Interactive Approval
+
+- **Date:** 2026-11-18
+- **Decided by:** the owner, on #678 (https://github.com/schalkneethling/create-project-calavera/issues/678#issuecomment-6987549944)
+- **Pull request:** https://github.com/schalkneethling/create-project-calavera/pull/1050 (#678, layer 1)
+
+Decision 2 checks the base skill with `hashAiInstall` against its `aiArtifacts` record. That hash covers only the regular files in `.agents/skills/calavera`, because `collectFiles` skips every other entry (`packages/cli/src/utils/hash.js:18-33`). A symbolic link or an empty folder that the person added therefore leaves the hash unchanged, and the skill matched its record. Under Decision 5, `eject --yes` would then remove the skill together with the link or folder, which no record covers and nobody approved.
+
+The owner decided on 2026-11-18 that any symbolic link or empty folder inside `.agents/skills/calavera` counts as content that no record covers, the same rule Decision 5 applies to package folders. `eject` applies it as follows:
+
+- A base skill whose hash matches its record but that holds a symbolic link or an empty folder, at any depth, is listed as "edits cannot be detected" and names each such entry. It does not match Calavera's records, so `--yes` leaves it, and the state with it, for an interactive approval.
+- A base skill whose hash differs from its record is listed as edited, as before, and its reason also names those entries.
+- A `.agents/skills/calavera` that is itself a symbolic link is treated the same way, because the hash then describes the folder the link leads to.
+- The check reads the entries again before it removes anything, as it reads the hash again, so an entry added after the dry run stops the removal.
+
+The check itself is unchanged: `hashAiInstall` still decides whether the files are edited. The amendment adds what the hash cannot see. Other entries that `collectFiles` skips, such as named pipes, are not part of the owner's decision and are not checked.

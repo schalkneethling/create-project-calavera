@@ -931,3 +931,121 @@ for (const [label, entry] of [
     });
   });
 }
+
+// ADR-0017 Amendment 1 (owner decision of 2026-11-18 on #678): `hashAiInstall` skips symbolic
+// links and empty folders, so a base skill that holds either has content no record covers, and
+// `--yes` leaves it for an interactive approval.
+for (const [label, addUncovered, entry] of [
+  [
+    "a symbolic link",
+    async () => symlink("SKILL.md", `${SKILL_PATH}/notes-link`),
+    `${SKILL_PATH}/notes-link`,
+  ],
+  ["an empty folder", async () => mkdir(`${SKILL_PATH}/drafts`), `${SKILL_PATH}/drafts`],
+  [
+    "an empty folder inside a folder",
+    async () => {
+      await write(`${SKILL_PATH}/references/guide.md`, "# Guide\n");
+      await mkdir(`${SKILL_PATH}/references/empty`);
+    },
+    `${SKILL_PATH}/references/empty`,
+  ],
+]) {
+  test(`a base skill that holds ${label} needs an interactive approval`, async () => {
+    await inProject(async () => {
+      await writeFootprint({ packageFolder: false });
+      await addUncovered();
+      // The record is taken after the change, so the hash still matches: only the uncovered
+      // entry tells this skill apart from an unedited one.
+      const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+      state.aiArtifacts[0].hash = await hashAiInstall("skill", SKILL_PATH);
+      await writeFile(".calavera/state.json", JSON.stringify(state));
+
+      const plan = await planEject({ dryRun: false });
+      const skill = item(plan, SKILL_PATH);
+      assert.equal(skill.edits, "cannot-detect");
+      assert.equal(skill.matchesRecords, false);
+      assert.equal(
+        skill.reason,
+        `The base Calavera skill matches its record, but the record's hash does not cover symbolic links or empty folders, so edits cannot be detected for: ${entry}.`,
+      );
+      const { remove, leave } = selectEjectItems(plan, { assumeYes: true });
+      assert.deepEqual(
+        paths(leave),
+        [SKILL_PATH, ".calavera/state.json", "calavera.config.json"].sort(),
+      );
+      assert.equal(paths(remove).includes(SKILL_PATH), false);
+    });
+  });
+}
+
+test("an edited base skill names the entries its hash does not cover too", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false });
+    await writeFile(`${SKILL_PATH}/SKILL.md`, "# Edited\n");
+    await mkdir(`${SKILL_PATH}/drafts`);
+    const skill = item(await planEject({ dryRun: true }), SKILL_PATH);
+    assert.equal(skill.edits, "edited");
+    assert.match(
+      skill.reason ?? "",
+      /^The base Calavera skill has local edits \(installed=.+\)\. The record's hash does not cover symbolic links or empty folders, so edits cannot be detected for: \.agents\/skills\/calavera\/drafts\.$/,
+    );
+  });
+});
+
+test("a base skill that is itself a symbolic link needs an interactive approval", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false });
+    await write(".agents/skills/real-calavera/SKILL.md", "# Calavera\n");
+    await rm(SKILL_PATH, { recursive: true });
+    await symlink("real-calavera", SKILL_PATH);
+    const skill = item(await planEject({ dryRun: true }), SKILL_PATH);
+    assert.equal(skill.edits, "cannot-detect");
+    assert.equal(skill.matchesRecords, false);
+    assert.match(skill.reason ?? "", /edits cannot be detected for: \.agents\/skills\/calavera\.$/);
+  });
+});
+
+test("an uncovered entry added after the plan stops the removal", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false });
+    const plan = await planEject({ dryRun: false });
+    assert.equal(item(plan, SKILL_PATH).edits, "unedited");
+    await mkdir(`${SKILL_PATH}/drafts`);
+    await assert.rejects(
+      executeEject(selectEjectItems(plan, { assumeYes: false }).remove),
+      /\.agents\/skills\/calavera changed since eject listed/,
+    );
+  });
+});
+
+test("an approved run removes a base skill that has no record", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false, skillRecord: false });
+    const outcome = await executeEject(
+      selectEjectItems(await planEject({ dryRun: false }), { assumeYes: false }).remove,
+    );
+    assert.ok(paths(outcome.removed).includes(SKILL_PATH));
+  });
+});
+
+test(
+  "a base skill folder eject cannot read never counts as covered",
+  { skip: isRoot },
+  async () => {
+    await inProject(async () => {
+      await writeFootprint({ packageFolder: false });
+      await mkdir(`${SKILL_PATH}/private`);
+      await write(`${SKILL_PATH}/private/notes.md`, "mine\n");
+      const { chmod } = await import("node:fs/promises");
+      await chmod(`${SKILL_PATH}/private`, 0o000);
+      try {
+        const skill = item(await planEject({ dryRun: true }), SKILL_PATH);
+        assert.equal(skill.matchesRecords, false);
+        assert.match(skill.reason ?? "", /could not be read/);
+      } finally {
+        await chmod(`${SKILL_PATH}/private`, 0o755);
+      }
+    });
+  },
+);
