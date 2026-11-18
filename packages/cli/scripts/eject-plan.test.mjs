@@ -193,7 +193,10 @@ test("an edited base skill is listed as edited, and so is one with no record", a
     const edited = item(await planEject({ dryRun: true }), SKILL_PATH);
     assert.equal(edited.edits, "edited");
     assert.equal(edited.matchesRecords, false);
-    assert.match(edited.reason ?? "", /^The base Calavera skill has local edits \(installed=/);
+    assert.match(
+      edited.reason ?? "",
+      /^The base Calavera skill has local edits \(installed=[0-9a-f]{7}, state=[0-9a-f]{7}\)\.$/,
+    );
   });
 
   await inProject(async () => {
@@ -1049,3 +1052,18 @@ test(
     });
   },
 );
+
+test("a base skill names every uncovered entry, in a stable order", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false });
+    await symlink("SKILL.md", `${SKILL_PATH}/z-link`);
+    await mkdir(`${SKILL_PATH}/a-empty`);
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    state.aiArtifacts[0].hash = await hashAiInstall("skill", SKILL_PATH);
+    await writeFile(".calavera/state.json", JSON.stringify(state));
+    assert.match(
+      item(await planEject({ dryRun: true }), SKILL_PATH).reason ?? "",
+      /for: \.agents\/skills\/calavera\/a-empty, \.agents\/skills\/calavera\/z-link\.$/,
+    );
+  });
+});
