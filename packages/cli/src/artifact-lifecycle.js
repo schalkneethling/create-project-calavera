@@ -144,8 +144,8 @@ async function planArtifactCacheBlock(state, declared, command) {
  * @typedef {{ config: string, dryRun: boolean, artifactAction?: string, artifactId?: string, artifactTag?: "latest" | "next", artifactAll?: boolean, checkUpdates?: boolean }} ArtifactOptions
  * @typedef {{ id: string, type: "skill" | "hook" | "agent", package: string, version: string, resolved: string, integrity: string, tag: "latest" | "next", manifestVersion: number, destination: string, payloadHash: string, target?: string }} ArtifactLockEntry
  * @typedef {{ resolve?: typeof resolveArtifactPackage, extract?: typeof extractArtifactPackage, loadFormatter?: () => Promise<ProjectFormatter> }} ArtifactServices
- *   `loadFormatter` loads the formatter for the state and lock an install writes; without it, the
- *   project's own formatter in the working directory.
+ *   `loadFormatter` loads the formatter for the state and lock an install writes, and for the
+ *   recipe a migration writes; without it, the project's own formatter in the working directory.
  * @typedef {{ resolve: typeof resolveArtifactPackage, extract: typeof extractArtifactPackage }} ArtifactRegistry
  * @typedef {{ id: string, target?: string }} ArtifactSelection
  * @typedef {import("./ai/artifacts.js").AiChange} AiChange
@@ -203,7 +203,7 @@ export async function runArtifactCommand(options, services = {}) {
   const loadFormatter = artifactFormatterLoader(services);
   switch (options.artifactAction) {
     case "migrate":
-      return migrateRecipe(options);
+      return migrateRecipe(options, loadFormatter);
     case "status":
     case "doctor":
       return artifactStatus(options, registry, loadFormatter);
@@ -524,8 +524,11 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
   return { sources, restore, dispose };
 }
 
-/** @param {ArtifactOptions} options */
-async function migrateRecipe(options) {
+/**
+ * @param {ArtifactOptions} options
+ * @param {() => Promise<ProjectFormatter>} loadFormatter Formats the recipe the migration writes.
+ */
+async function migrateRecipe(options, loadFormatter) {
   const recipe = await readJson(options.config);
   if (!Array.isArray(recipe.ai)) return { command: "artifacts migrate", migrated: 0 };
   let migrated = 0;
@@ -537,7 +540,16 @@ async function migrateRecipe(options) {
     const target = "target" in item ? item.target : undefined;
     return { id: artifact.id, ...(target ? { target } : {}) };
   });
-  if (!options.dryRun && migrated > 0) await writeAtomicJson(options.config, { ...recipe, ai });
+  if (migrated > 0) {
+    // #987: formatted as apply formats the recipe (#669), so the Vite+ pre-commit hook leaves it
+    // as written. A dry run formats it too, so it stops where the migration would.
+    const recipeText = await formatRecordText(
+      relative(process.cwd(), resolve(options.config)),
+      { ...recipe, ai },
+      loadFormatter,
+    );
+    if (!options.dryRun) await writeAtomicText(options.config, recipeText);
+  }
   return {
     command: "artifacts migrate",
     dryRun: options.dryRun,
@@ -1019,18 +1031,25 @@ async function readJson(path) {
 
 /** @param {string} path @param {unknown} value */
 async function writeAtomicJson(path, value) {
+  await writeAtomicText(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/** @param {string} path @param {string} text */
+async function writeAtomicText(path, text) {
   const absolute = resolve(path);
   await mkdir(dirname(absolute), { recursive: true });
   const temporary = `${absolute}.${process.pid}.tmp`;
-  await writeFile(temporary, `${JSON.stringify(value, null, 2)}\n`, { flag: "wx" });
+  await writeFile(temporary, text, { flag: "wx" });
   await rename(temporary, absolute);
 }
 
 /**
- * The text the artifact transaction commits as the record at `path`: `value` as JSON, formatted by
- * the project's formatter, so the Vite+ pre-commit hook leaves the committed file as written (#838).
+ * The text an artifact command writes as the JSON file at `path`, such as the state and lock the
+ * artifact transaction commits (#838) or the recipe `artifacts migrate` rewrites (#987): `value` as
+ * JSON, formatted by the project's formatter, so the Vite+ pre-commit hook leaves the committed file
+ * as written.
  *
- * @param {string} path The project path of the record, which picks the formatter's settings.
+ * @param {string} path The project path of the file, which picks the formatter's settings.
  * @param {unknown} value
  * @param {() => Promise<ProjectFormatter>} loadFormatter
  * @returns {Promise<string>}
