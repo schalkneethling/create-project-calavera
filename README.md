@@ -102,12 +102,41 @@ and `--dry-run`. Do not use `npm create project-calavera --init`; npm treats
 `--init` as its own option and Calavera falls back to the recipe CLI. Yarn
 requires Yarn 2+ for `dlx`; Yarn 1.x users can use
 `npx --package create-project-calavera create-project-calavera --init`.
+
 Direct binary launchers such as `npx --package` do not need an extra `--` before
 Calavera flags: use
 `npx --package create-project-calavera create-project-calavera --help`, not
 `npx --package create-project-calavera create-project-calavera -- --help`.
 MCP server registrations launch `create-project-calavera-mcp` directly and
 should not add `--help`.
+
+Yarn 4.18.1 does not install a package version until the version is older than
+its [`npmMinimalAgeGate`](https://yarnpkg.com/configuration/yarnrc#npmMinimalAgeGate)
+setting, which defaults to one day. Until a new Calavera release is that old,
+`yarn dlx create-project-calavera` runs the previous release, and a command that
+names the new release, such as
+`yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`,
+stops with `All versions satisfying "<version>" are quarantined`. The gate also
+applies to Vite+ when `--new` runs `yarn dlx create-vite-plus@latest`. To get a
+new release during that time, turn the gate off for one command, for example
+`YARN_NPM_MINIMAL_AGE_GATE=0 yarn dlx create-project-calavera --init` in Bash or
+Zsh. Yarn reads a setting from an environment variable named `YARN_` followed by
+the setting name in snake case, and the variable replaces the global
+`npmMinimalAgeGate` value from `.yarnrc.yml` for that command only. The
+`--no-time-gate` flag exists only on `yarn add` and `yarn up`, not on
+`yarn dlx`.
+
+The MCP server registration that `--init` writes names the Calavera release that
+ran, and your agent starts it without that variable. If you turned the gate off
+for `--init`, the server therefore fails to start until the release is one day
+old. To avoid this, exempt Calavera from the gate instead by adding it to
+[`npmPreapprovedPackages`](https://yarnpkg.com/configuration/yarnrc#npmPreapprovedPackages)
+in your `.yarnrc.yml`:
+
+```yaml
+npmPreapprovedPackages:
+  - create-project-calavera
+```
 
 Agents should treat `dry_run_apply` as the approval boundary. They should show
 the package manager, integrations, dependency packages and their install
