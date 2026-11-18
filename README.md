@@ -815,7 +815,8 @@ approves the proposed recipe and dry-run result.
   files are handled
 - `--mcp-harness claude-code|codex|cursor|opencode|skip` with `--init` to
   script project-local MCP auto-config
-- `--apply` with `init` to preview and then confirm applying the composed recipe
+- `--apply` with `init` to preview and then confirm applying the composed recipe;
+  without a terminal, or with `--json`, add `--yes` to apply without the confirmation
 - `--dry-run`
 - `--no-install`
 - `--yes`; `init` without a terminal, or with `--json`, refuses any prompt it would

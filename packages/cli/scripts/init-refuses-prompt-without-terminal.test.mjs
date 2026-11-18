@@ -74,6 +74,32 @@ test("init --json without --yes refuses and keeps the prompt out of standard out
   assert.equal(await exists(join(fixture.root, "calavera.config.json")), false);
 });
 
+test("init --apply --json without --yes refuses the apply confirmation before it writes the recipe", async () => {
+  await using fixture = await createTemporaryFixture("init-apply-refuses-without-yes", {
+    "package.json": json(plainViteManifest),
+  });
+
+  // Every recipe prompt is answered, so only the apply confirmation is left to ask.
+  const result = runWithoutTerminal(fixture.root, [
+    "init",
+    "--profile",
+    "minimal",
+    "--package-manager",
+    "npm",
+    "--ai-artifact",
+    "skill-frontend-engineering",
+    "--apply",
+    "--json",
+    "--no-install",
+  ]);
+
+  assert.equal(result.status, 1, `init did not fail:\n${result.stdout}\n${result.stderr}`);
+  assert.match(result.stderr, /cannot ask "Apply these Calavera-managed changes now\?"/);
+  assert.match(result.stderr, /Pass --yes to apply after the dry run without asking/);
+  assert.equal(result.stdout, "");
+  assert.equal(await exists(join(fixture.root, "calavera.config.json")), false);
+});
+
 /**
  * Composes a recipe in-process with --json and without --yes, so Stryker sees which tests reach
  * each prompt's refusal; it cannot see into the child processes the tests above start.
@@ -115,6 +141,10 @@ test("init --json without --yes names the flag that answers each prompt it canno
     [
       { profile: "minimal", packageManager: "npm" },
       /cannot ask "Choose AI artifacts".*--yes.*--ai-artifact/,
+    ],
+    [
+      { profile: "minimal", packageManager: "npm", aiArtifacts, apply: true },
+      /cannot ask "Apply these Calavera-managed changes now\?".*--yes.*remove --apply/,
     ],
   ];
   for (const [given, message] of cases) {
