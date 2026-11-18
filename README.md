@@ -102,6 +102,22 @@ and `--dry-run`. Do not use `npm create project-calavera --init`; npm treats
 `--init` as its own option and Calavera falls back to the recipe CLI. Yarn
 requires Yarn 2+ for `dlx`; Yarn 1.x users can use
 `npx --package create-project-calavera create-project-calavera --init`.
+
+Yarn 4 does not install a package version until the version is older than its
+[`npmMinimalAgeGate`](https://yarnpkg.com/configuration/yarnrc#npmMinimalAgeGate)
+setting, which is one day in Yarn 4.18.1. Until a new Calavera release is that
+old, `yarn dlx create-project-calavera` runs the previous release, and a command
+that names the new release, such as
+`yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`,
+stops with `All versions satisfying "<version>" are quarantined`. The gate also
+applies to Vite+ when `--new` runs `yarn dlx create-vite-plus@latest`. To get a
+new release during that time, turn the gate off for one command, for example
+`YARN_NPM_MINIMAL_AGE_GATE=0 yarn dlx create-project-calavera --init` in Bash or
+Zsh. Yarn reads a setting from an environment variable named `YARN_` followed by
+the setting name in snake case, and the variable overrides `.yarnrc.yml` for
+that command only. `yarn dlx` has no flag for this, because `--no-time-gate`
+exists only on `yarn add` and `yarn up`.
+
 Direct binary launchers such as `npx --package` do not need an extra `--` before
 Calavera flags: use
 `npx --package create-project-calavera create-project-calavera --help`, not

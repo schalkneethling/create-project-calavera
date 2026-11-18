@@ -237,6 +237,12 @@ export function buildEnvironment(
     YARN_CACHE_FOLDER: dirs.yarnCache,
     YARN_GLOBAL_FOLDER: join(dirs.home, ".yarn", "berry"),
     YARN_ENABLE_TELEMETRY: "0",
+    // Yarn 4 skips versions younger than npmMinimalAgeGate (one day in Yarn 4.18.1). The
+    // registry serves the release candidate with a publish time in 2000, but Vite+ keeps its real
+    // publish times, and Vite+ pins its own dependencies exactly. Within a day of a Vite+ release,
+    // `yarn dlx create-vite-plus@latest` would run the previous release while the report names
+    // the new one, so the run turns the gate off (#970).
+    YARN_NPM_MINIMAL_AGE_GATE: "0",
     BUN_CONFIG_REGISTRY: `${registryUrl}/`,
     BUN_INSTALL_CACHE_DIR: dirs.bunCache,
     BUN_INSTALL: join(dirs.home, ".bun"),
