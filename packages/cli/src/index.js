@@ -5402,6 +5402,26 @@ async function promptForInputValue({ prompt, defaultValue, error }, label) {
 }
 
 /**
+ * #998: init refuses a prompt it cannot show, as --new does, instead of letting the prompt end
+ * when standard input closes, which exited 0 without a recipe, or print into --json output.
+ *
+ * @param {CliOptions} options
+ * @param {string} question The prompt's message.
+ * @param {string} remedy The sentence that names the flags that answer the prompt without asking it.
+ */
+function assertInitCanAsk(options, question, remedy) {
+  const reasons = [
+    ...(options.json ? ["--json was given, so the prompt would corrupt the JSON output"] : []),
+    ...(process.stdin.isTTY ? [] : ["stdin is not a terminal"]),
+  ];
+  if (reasons.length > 0) {
+    throw new Error(
+      `init refused: Calavera cannot ask "${question}" because ${reasons.join(", and ")}. ${remedy}`,
+    );
+  }
+}
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<string>}
  */
@@ -5410,6 +5430,14 @@ async function promptForProfile(options) {
   // their defaults. Asking anyway left a run without a terminal to exit 0 with no recipe written.
   if (options.profile === undefined && options.assumeYes) {
     return defaultProfile;
+  }
+
+  if (options.profile === undefined) {
+    assertInitCanAsk(
+      options,
+      "Choose a tooling profile",
+      "Pass --yes to use the defaults, or answer it with --profile.",
+    );
   }
 
   const selected =
@@ -5433,6 +5461,14 @@ async function promptForProfile(options) {
  * @returns {Promise<PackageManager>}
  */
 async function promptForPackageManager(options, detectedPackageManager) {
+  if (options.packageManager === undefined && !options.assumeYes) {
+    assertInitCanAsk(
+      options,
+      "Choose a package manager",
+      "Pass --yes to use the defaults, or answer it with --package-manager.",
+    );
+  }
+
   const selected =
     options.packageManager ??
     (options.assumeYes
@@ -5498,6 +5534,11 @@ async function promptForAiArtifacts(options) {
     return options.aiArtifacts;
   }
 
+  assertInitCanAsk(
+    options,
+    "Choose AI artifacts",
+    "Pass --yes to use the defaults, or answer it with --ai-artifact.",
+  );
   const artifactOptions = listAiArtifactOptions();
   const selected = await groupMultiselect({
     message: "Choose AI artifacts",
@@ -5571,6 +5612,14 @@ export async function initRecipe(options) {
   const packageManager = await promptForPackageManager(options, detectedPackageManager);
   const integrations = await promptForIntegrations(options, profile);
   const aiArtifacts = await promptForAiArtifacts(options);
+  // The apply confirmation comes after the recipe is written, so refuse it before writing.
+  if (options.apply && !options.assumeYes) {
+    assertInitCanAsk(
+      options,
+      "Apply these Calavera-managed changes now?",
+      "Pass --yes to apply after the dry run without asking, or remove --apply to only write the recipe.",
+    );
+  }
   // The recipe written below records every input, so apply neither asks again nor refuses it.
   const interactive = canPrompt(options);
   const { recipe: recipeWithArtifactInputs, inputs: artifactInputs } = await resolveArtifactInputs(
