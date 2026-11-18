@@ -23,6 +23,7 @@ import {
   rename,
   rm,
   rmdir,
+  stat,
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
@@ -733,8 +734,13 @@ async function currentlySeen(item) {
       return entryIdentity(item.path);
     case "artifact-cache-block": {
       const identity = await entryIdentity(item.path);
-      // A `.gitignore` that is no longer a file is reported as changed, not read.
-      return identity === "file" ? `${identity}\n${await readFile(item.path, "utf8")}` : identity;
+      // The plan read the text through a link too, so the text is read whenever the path leads
+      // to a file. A `.gitignore` that no longer leads to a file is reported as changed, not read.
+      const leadsToFile = await stat(item.path).then(
+        (stats) => stats.isFile(),
+        () => false,
+      );
+      return leadsToFile ? `${identity}\n${await readFile(item.path, "utf8")}` : identity;
     }
     case "base-skill":
       return (await baseSkillCheck()).seen;

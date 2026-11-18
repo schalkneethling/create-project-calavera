@@ -1352,3 +1352,39 @@ for (const [label, path, swap] of [
     });
   });
 }
+
+test("a linked .gitignore that is unchanged after the plan loses its block as planned", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false, gitignore: `node_modules/\n${CACHE_BLOCK}` });
+    await cp(".gitignore", "shared-gitignore");
+    await rm(".gitignore");
+    await symlink("shared-gitignore", ".gitignore");
+    const outcome = await executeEject(
+      selectEjectItems(await planEject({ dryRun: false }), { assumeYes: false }).remove,
+    );
+    assert.deepEqual(outcome.failed, []);
+    assert.ok(paths(outcome.removed).includes(".gitignore"));
+    // The edit writes through the link, so the link stays and its target loses the block.
+    assert.equal((await lstat(".gitignore")).isSymbolicLink(), true);
+    assert.equal(await readFile("shared-gitignore", "utf8"), "node_modules/\n");
+  });
+});
+
+test("a linked .gitignore retargeted to identical text after the plan stops the run", async () => {
+  await inProject(async () => {
+    await writeFootprint({ packageFolder: false, gitignore: `node_modules/\n${CACHE_BLOCK}` });
+    await cp(".gitignore", "first-gitignore");
+    await cp(".gitignore", "second-gitignore");
+    await rm(".gitignore");
+    await symlink("first-gitignore", ".gitignore");
+    const plan = await planEject({ dryRun: false });
+    await rm(".gitignore");
+    await symlink("second-gitignore", ".gitignore");
+    const before = await snapshotDirectory();
+    await assert.rejects(
+      executeEject(selectEjectItems(plan, { assumeYes: false }).remove),
+      /eject stopped before removing anything, because \.gitignore changed since/,
+    );
+    assert.deepEqual(await snapshotDirectory(), before);
+  });
+});
