@@ -288,9 +288,9 @@ test("every home, cache, and store of a run is inside its root, and no caller se
   assert.equal(env.PATH?.includes("/Users/dev"), false);
 });
 
-test("Yarn's minimum package age gate is off in every run, including a caller who set one (#970)", () => {
-  // Yarn 4 skips versions younger than npmMinimalAgeGate. On the day Vite+ releases, yarn dlx
-  // create-vite-plus@latest would run the previous release while the report names the new one.
+test("Yarn's minimum package age gate is off in every run, and a caller's gate is not inherited (#970)", () => {
+  // Yarn 4.18.1 holds back versions younger than npmMinimalAgeGate. On the day Vite+ releases,
+  // yarn dlx create-vite-plus@latest would run the previous release while the report names the new one.
   const env = buildEnvironment(runDirectories("/run"), "http://127.0.0.1:4873", {
     nodeDirectory: "/node/bin",
     base: { YARN_NPM_MINIMAL_AGE_GATE: "1d" },
