@@ -19,11 +19,12 @@ const emptyRecipe = json({
 });
 
 /**
- * Runs doctor in `cwd` and resolves with its exit code, whatever it is.
+ * Runs doctor in `cwd` and resolves with its exit code, whatever it is. A run killed by a signal
+ * resolves with a null code, so it cannot pass as an exit 0.
  *
  * @param {string} cwd
  * @param {string[]} args
- * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ * @returns {Promise<{ code: number | null, stdout: string, stderr: string }>}
  */
 function runDoctor(cwd, args) {
   return new Promise((resolve) => {
@@ -32,7 +33,11 @@ function runDoctor(cwd, args) {
       [cliPath, "doctor", ...args],
       { cwd, env: { ...process.env, NO_COLOR: "1" } },
       (error, stdout, stderr) => {
-        resolve({ code: error ? Number(error.code) : 0, stdout, stderr });
+        resolve({
+          code: error ? (typeof error.code === "number" ? error.code : null) : 0,
+          stdout,
+          stderr,
+        });
       },
     );
   });
@@ -78,6 +83,8 @@ for (const { label, args } of outputModes) {
         report.issues.map(({ level }) => level),
         ["warning"],
       );
+    } else {
+      assert.match(stderr + stdout, /Missing package\.json/);
     }
   });
 

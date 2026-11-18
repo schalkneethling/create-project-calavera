@@ -1,7 +1,8 @@
 // Issue #431: doctor reads the ADR-0001 detection result and, in a project
 // Vite+ manages, warns about each JavaScript or TypeScript toolchain
 // integration a recipe written before the removals (ADR-0002 to ADR-0006)
-// still selects. doctor stays advisory: it writes nothing and exits 0.
+// still selects. These warnings stay advisory: doctor writes nothing, and a
+// warning alone leaves its exit status at 0 (#1030 covers errors).
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";

@@ -14,8 +14,8 @@ project's own `package.json` or the nearest ancestor manifest that declares
 it, matched exactly as Vite+ matches it for its own self-check; see
 [ADR-0001](./adr/0001-vite-plus-detection-signal.md) for the full signal set,
 the corroborating signals, and the fixture table. Catalog metadata still
-describes the project shapes an integration suits, and `doctor` stays
-advisory:
+describes the project shapes an integration suits, and the Vite+ warnings
+`doctor` reports stay advisory, so they do not change its exit status:
 
 - Catalog metadata should describe framework-specific integrations, including
   whether an integration is useful for Vite, Vite+, React, Vue, Svelte, or another

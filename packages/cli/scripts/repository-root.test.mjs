@@ -234,6 +234,7 @@ async function doctorReport(cwd) {
     encoding: "utf8",
     env: { ...process.env, NO_COLOR: "1" },
   });
+  assert.ok(status === 0 || status === 1, `doctor exited ${status}\n${stderr}`);
   const report = JSON.parse(stdout);
   assert.equal(status, report.ok ? 0 : 1, `doctor exited ${status}\n${stderr}`);
   return report;
