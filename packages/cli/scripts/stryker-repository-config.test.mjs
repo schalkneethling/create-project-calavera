@@ -7,6 +7,8 @@ import test from "node:test";
 import Ajv from "ajv";
 import config from "../../../stryker.config.mjs";
 
+// The schema rejects unknown keys under `tap`, but not at its top level, so a misspelled top-level
+// option still passes.
 test("the repository's Stryker config is valid under the installed @stryker-mutator/core schema", async () => {
   const schema = JSON.parse(
     await readFile(
@@ -25,7 +27,7 @@ test("the repository's Stryker config is valid under the installed @stryker-muta
   assert.equal(validate(config), true, JSON.stringify(validate.errors, null, 2));
 });
 
-test("the tap runner lets a failing test file finish instead of killing it", () => {
+test("the repository's Stryker config turns off tap.forceBail", () => {
   // With forceBail, the tap runner kills a test process at its first failure. The process then
   // writes Stryker's result file into its current directory, which is a temporary project when a
   // test has called process.chdir(), so the runner cannot find the file and reports the mutant as
