@@ -241,7 +241,11 @@ With `create-here`, `apply` creates `package.json` with the package manager's
 not scaffolded by `vp create`, which always writes a `package.json`, and `init`
 writes only that file, without linking `node_modules`. The development
 dependency install that follows still goes through `vp add -D` when the
-ancestor is managed (ADR-0012, Decision 1).
+ancestor is managed (ADR-0012, Decision 1). The files Calavera writes follow
+the same verdict: when the ancestor is managed, `apply` formats them with the
+ancestor's `vp fmt` before it writes them, and so does `init --apply` for the
+recipe, so the ancestor's `vp check` accepts them (#961). When the ancestor is
+not managed, Calavera writes them unformatted.
 
 ## What the quality script runs
 
