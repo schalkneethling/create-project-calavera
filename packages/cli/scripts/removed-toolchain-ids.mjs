@@ -2,6 +2,25 @@
 // decision C2, shared by the removal tests and the Vite+ project flow test so
 // the flow test cannot drift from what each removal took out.
 
+// The fourteen Oxlint plugin packs ADR-0002 lists by name, with the parent entry.
+export const removedOxlintIds = Object.freeze([
+  "oxlint",
+  "oxlint-eslint",
+  "oxlint-typescript",
+  "oxlint-unicorn",
+  "oxlint-oxc",
+  "oxlint-import",
+  "oxlint-react",
+  "oxlint-jsx-a11y",
+  "oxlint-node",
+  "oxlint-promise",
+  "oxlint-vitest",
+  "oxlint-jest",
+  "oxlint-nextjs",
+  "oxlint-vue",
+  "oxlint-jsdoc",
+]);
+
 export const removedEslintIds = Object.freeze([
   "eslint",
   "typescript-eslint",

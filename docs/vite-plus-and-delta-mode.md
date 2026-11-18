@@ -21,7 +21,13 @@ advisory:
   whether an integration is useful for Vite, Vite+, React, Vue, Svelte, or another
   project shape.
 - `doctor` can surface advisory messages when a recipe and detected project files
-  appear mismatched.
+  appear mismatched. In a project Vite+ manages, it reads the same detection
+  function as `inspect_project` and warns about each JavaScript or TypeScript
+  toolchain integration the recipe still selects, such as `oxlint` or
+  `typescript`. Those integrations were removed from the catalog
+  (ADR-0002 to ADR-0006), so `apply` refuses the recipe until they are
+  removed. The warning names the integration and the matched detection signal,
+  and `doctor` still writes nothing.
 
 Generated package scripts should stay ordinary package-manager scripts. Calavera
 should not replace them with `vp` commands or assume that a Vite+ project wants a
