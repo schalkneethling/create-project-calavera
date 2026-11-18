@@ -52,17 +52,44 @@ const fixturesUrl = pathToFileURL(
  * directory that also receives a Vite+ manifest.
  */
 const stubSource = `#!/usr/bin/env node
-import { appendFileSync, mkdirSync, writeFileSync } from "node:fs";
-import { basename, join, resolve } from "node:path";
+import { appendFileSync, existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { basename, dirname, join, resolve } from "node:path";
 import { json, libraryManifest, plainViteManifest, vitePlusConfig, writeVitePlusFormatter } from ${JSON.stringify(fixturesUrl.href)};
 
 const argv = process.argv.slice(2);
+
+// Corepack's auto-pin (#999): Corepack adds a packageManager field when no
+// package.json from the working directory up sets one. STUB_COREPACK_VERSION
+// picks the rule: "0.32.0" pins unless COREPACK_ENABLE_AUTO_PIN is "0", as
+// Corepack 0.32.0 and earlier do; any other value, or none, pins only when it is
+// "1", as Corepack 0.33.0 to 0.36.0 do. Corepack writes the outermost
+// package.json it found; this stub writes the nearest one instead, so it never
+// walks past the test's own manifest. The Yarn reads below call this, as
+// Corepack would pin before it runs them. The runner does not, although
+// Corepack also pins for yarn dlx.
+function autoPin() {
+  const value = process.env.COREPACK_ENABLE_AUTO_PIN;
+  const pins = process.env.STUB_COREPACK_VERSION === "0.32.0" ? value !== "0" : value === "1";
+  if (!pins) return;
+  for (let directory = process.cwd(); ; directory = dirname(directory)) {
+    const manifestPath = join(directory, "package.json");
+    if (existsSync(manifestPath)) {
+      const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
+      if (manifest.packageManager === undefined) {
+        writeFileSync(manifestPath, json({ ...manifest, packageManager: "yarn@4.18.1" }));
+      }
+      return;
+    }
+    if (dirname(directory) === directory) return;
+  }
+}
 
 // "yarn --version" (#911): print STUB_VERSION, or fail when it is unset. It is
 // logged separately, so runner invocations stay the only entries in STUB_LOG.
 // STUB_VERSION_MODE "stdin" waits for stdin to end first, as a prompt would,
 // and "hang" never exits.
 if (argv.length === 1 && argv[0] === "--version") {
+  autoPin();
   appendFileSync(process.env.STUB_LOG + ".version", JSON.stringify({ cwd: process.cwd() }) + "\\n");
   if (process.env.STUB_VERSION_MODE === "hang") {
     setInterval(() => {}, 1000);
@@ -85,6 +112,7 @@ if (argv.length === 1 && argv[0] === "--version") {
 // STUB_PINS_YARN_4 stands for a project whose packageManager names Yarn 4, where
 // Yarn 1 exits 1 unless COREPACK_ROOT or SKIP_YARN_COREPACK_CHECK is set.
 if (argv[0] === "node") {
+  autoPin();
   appendFileSync(process.env.STUB_LOG + ".node", JSON.stringify({ cwd: process.cwd() }) + "\\n");
   if (
     process.env.STUB_PINS_YARN_4 !== undefined &&
@@ -984,6 +1012,38 @@ test("--new does not blame Yarn 1 when Corepack ran yarn", async () => {
   assert.match(result.stderr, /Yarn 2 or later unless the project pins Yarn 1/);
   assert.deepEqual(nodeCwds, [work]);
 });
+
+// A write while Calavera only reports an error is not one the user approved (#999).
+// Under Corepack, a failed yarn dlx usually pins first; the reads matter when it did
+// not, for example when Corepack could not download the Yarn that yarn dlx needs.
+// Both rules run, because only "0" turns auto-pin off under each of them.
+for (const corepackVersion of ["0.32.0", "0.36.0"]) {
+  test(`--new leaves package.json untouched while it reads Yarn under Corepack ${corepackVersion}'s auto-pin`, async () => {
+    await using workspace = await createTemporaryWorkspace(`yarn-auto-pin-${corepackVersion}`);
+    // --new refuses a directory with a package.json, so the one Corepack pins is above it.
+    const manifestPath = join(workspace.root, "package.json");
+    const manifest = json({ name: "workspace-root", private: true });
+    await writeFile(manifestPath, manifest);
+
+    const result = await runCli(
+      workspace,
+      ["--yes", "--package-manager", "yarn", "--new", "vite:library"],
+      {
+        STUB_MODE: "fail",
+        STUB_VERSION: "1.22.22",
+        STUB_COREPACK_VERSION: corepackVersion,
+        COREPACK_ENABLE_AUTO_PIN: "1",
+      },
+    );
+
+    assert.equal(result.code, 1);
+    assert.match(result.stderr, /Yarn 1\.22\.22, which has no dlx command/);
+    // Both reads ran, so each had the chance to pin.
+    assert.equal(await exists(`${workspace.log}.version`), true);
+    assert.equal(await exists(`${workspace.log}.node`), true);
+    assert.equal(await readFile(manifestPath, "utf8"), manifest);
+  });
+}
 
 test("--new does not ask whether Corepack ran yarn when yarn --version reports Yarn 2 or later", async () => {
   const { result, nodeCwds } = await failedYarnRun({ STUB_VERSION: "4.18.1" });

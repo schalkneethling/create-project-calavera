@@ -4537,10 +4537,23 @@ const YARN_DLX_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or
 export const YARN_VERSION_TIMEOUT_MS = 5000;
 
 /**
+ * Corepack's auto-pin: when no `package.json` from the working directory up
+ * sets `packageManager`, Corepack writes that field into the outermost
+ * `package.json` it found. Corepack 0.32.0 and earlier pin unless
+ * COREPACK_ENABLE_AUTO_PIN is "0"; Corepack 0.33.0 and later pin only when it
+ * is "1". So "0" is the one value that turns auto-pin off in every version,
+ * and from Node.js 25 on, users install whichever Corepack they choose from
+ * npm. The Yarn reads below run while Calavera only reports an error, which is
+ * no approval to change a project, so they set the variable to "0" (#999).
+ */
+const NO_COREPACK_AUTO_PIN = { COREPACK_ENABLE_AUTO_PIN: "0" };
+
+/**
  * Reads the version of the `yarn` that runs in `cwd`, where Corepack resolves
  * the same Yarn the runner used. Stdin is closed, so a prompt (such as
  * Corepack's download prompt) fails at once instead of waiting, and a time
- * limit stops a yarn that hangs. It rejects when yarn cannot start, exits
+ * limit stops a yarn that hangs. Corepack's auto-pin is off, as
+ * NO_COREPACK_AUTO_PIN explains. It rejects when yarn cannot start, exits
  * non-zero, or times out.
  *
  * @param {string} cwd
@@ -4549,6 +4562,7 @@ export const YARN_VERSION_TIMEOUT_MS = 5000;
 async function readInstalledYarnVersion(cwd) {
   const { stdout } = await execa("yarn", ["--version"], {
     cwd,
+    env: NO_COREPACK_AUTO_PIN,
     stdin: "ignore",
     timeout: YARN_VERSION_TIMEOUT_MS,
   });
@@ -4566,9 +4580,9 @@ async function readInstalledYarnVersion(cwd) {
  * example from a Corepack pnpm that started it, cannot pass for Corepack.
  * Without COREPACK_ROOT, Yarn 1 refuses to run in a project whose
  * `packageManager` names Yarn 2 or later, so SKIP_YARN_COREPACK_CHECK turns
- * that check off, as Yarn 1's cli.js reads it. Stdin and the time limit are as
- * for readInstalledYarnVersion. It rejects when yarn cannot start, exits
- * non-zero, or times out.
+ * that check off, as Yarn 1's cli.js reads it. Stdin, the time limit, and
+ * Corepack's auto-pin are as for readInstalledYarnVersion. It rejects when
+ * yarn cannot start, exits non-zero, or times out.
  *
  * @param {string} cwd
  * @returns {Promise<string>}
@@ -4585,6 +4599,7 @@ async function readInstalledYarnCorepackRoot(cwd) {
           Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "COREPACK_ROOT"),
         ),
         SKIP_YARN_COREPACK_CHECK: "1",
+        ...NO_COREPACK_AUTO_PIN,
       },
       extendEnv: false,
       stdin: "ignore",
