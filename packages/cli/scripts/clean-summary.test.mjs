@@ -111,7 +111,7 @@ test("a clean dry run lists each wiring file, file, and artifact once, under hea
       "",
       "Artifacts:",
       `  Would remove ${skillDirectory}`,
-      "  Would skip .agents/skills/old-skill: .vite-hooks/post-merge still mentions it after clean, so deleting it would break what runs there. Remove those lines or groups, then run clean again.",
+      "  Would skip .agents/skills/old-skill: .vite-hooks/post-merge still mentions this item after clean, so deleting it would break what runs there. Remove those lines or groups, then run clean again.",
     ].join("\n"),
   );
 });
@@ -229,7 +229,7 @@ test("a kept item's reason names a longer path that starts with the item's path,
 
   assert.equal(
     cleanSummaryLines(result, true).at(-1)?.text,
-    `  Would skip ${path}: .vite-hooks/pre-commit runs ${path}/scripts/run.sh and ${path}-extra, and mentions it. Fix it.`,
+    `  Would skip ${path}: .vite-hooks/pre-commit runs ${path}/scripts/run.sh and ${path}-extra, and mentions this item. Fix this item.`,
   );
 });
 
@@ -272,7 +272,42 @@ test("a kept item's reason that starts with the item's path, and a settings file
       '    Removed the Stop group for guard, because the recipe no longer selects guard: {"hooks":[]}',
       "",
       "Artifacts:",
-      `  Skipped ${path}: it is still mentioned.`,
+      `  Skipped ${path}: this item is still mentioned.`,
     ],
+  );
+});
+
+test("a skip reason keeps the name of a wiring file it refers to, so the person knows which file to change", () => {
+  const path = ".agents/skills/guard";
+  /** @type {import("../src/index.js").CleanResult} */
+  const result = {
+    command: "clean",
+    dryRun: true,
+    wiringChanges: [
+      {
+        artifact: "guard",
+        path: ".vite-hooks/pre-commit",
+        kind: "vite-hook",
+        type: "update",
+        removedBlock: "sh run.sh",
+        deselected: true,
+      },
+    ],
+    changes: [
+      { type: "update", path: ".vite-hooks/pre-commit", action: "update", ownership: "project" },
+      {
+        type: "skip",
+        path,
+        category: "ai",
+        reason: `Calavera cannot read .vite-hooks/pre-commit (EACCES), so it cannot tell whether it runs ${path}. Make that file readable, then run clean again.`,
+        skipReasons: ["unreadable"],
+      },
+    ],
+    message: "unused",
+  };
+
+  assert.equal(
+    cleanSummaryLines(result, true).at(-1)?.text,
+    `  Would skip ${path}: Calavera cannot read .vite-hooks/pre-commit (EACCES), so it cannot tell whether it runs this item. Make that file readable, then run clean again.`,
   );
 });

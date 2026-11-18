@@ -1,10 +1,11 @@
 // @ts-check
 // The human-readable summary of `clean --dry-run` and `clean` (#331): a headline, then labeled
 // groups, as the apply summary prints them (#617), with each wiring file, managed file, and
-// artifact named once. Wiring sits first, because clean changes it before it removes anything;
+// artifact listed once. A skip reason may still name a wiring file it refers to, such as a hook
+// that still runs a kept skill, because the person needs that name to act. Wiring sits first, because clean changes it before it removes anything;
 // each wiring file is one line, with each artifact's blocks and groups under it. Each kept item
 // carries its own reason and remedy, so the summary leaves out the sentence the `--json` message
-// adds about kept items. The `--json` and MCP results keep their shape and text.
+// adds about kept items. The `--json` result keeps its shape and text.
 import { DETAIL, ITEM, info, pushGroup, tense } from "./summary-lines.js";
 import { quoteScriptValue } from "./utils/text.js";
 
@@ -103,8 +104,9 @@ function itemLine({ type, path, reason = "" }, dryRun) {
 }
 
 /**
- * The reason with each mention of the kept item's own path replaced by "it", because the item's
- * line already names it. A longer path that starts with it, such as a script inside a kept skill
+ * The reason with each mention of the kept item's own path replaced by "this item", because the
+ * item's line already names it. "It" would be unclear in reasons that already use "it" for
+ * Calavera or a hook, such as "so it cannot tell whether it runs this item". A longer path that starts with it, such as a script inside a kept skill
  * directory, stays as it is.
  *
  * @param {string} reason
@@ -118,7 +120,7 @@ function withoutOwnPath(reason, path) {
     const after = reason.slice(index + path.length, index + path.length + 2);
     // A period that ends the sentence is not part of the path.
     if (PATH_CHARACTER.test(before) || /^(?:[\w/@-]|\.[\w/@-])/.test(after)) continue;
-    text += `${reason.slice(from, index)}it`;
+    text += `${reason.slice(from, index)}this item`;
     from = index + path.length;
   }
   return text + reason.slice(from);
