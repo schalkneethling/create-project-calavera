@@ -18,6 +18,7 @@ import {
 import { GITIGNORE_PATH } from "./ignore-lines.js";
 import { resolveRecipeIntegrations } from "./recipe.js";
 import { integrationDependencies } from "./stryker-options.js";
+import { DETAIL, ITEM, info, pushGroup, tense, warn } from "./summary-lines.js";
 import { quoteScriptValue } from "./utils/text.js";
 
 /**
@@ -25,7 +26,7 @@ import { quoteScriptValue } from "./utils/text.js";
  * @typedef {import("./index.js").Change} Change
  * @typedef {import("./ai/artifact-wiring.js").WiringChange} WiringChange
  * @typedef {import("./ignore-lines.js").IgnoreChange} IgnoreChange
- * @typedef {{ level: "info" | "success" | "warn", text: string }} SummaryLine
+ * @typedef {import("./summary-lines.js").SummaryLine} SummaryLine
  */
 
 /**
@@ -34,9 +35,6 @@ import { quoteScriptValue } from "./utils/text.js";
  */
 export const VP_RUNNER_NOTE_PREFIX =
   "Vite+ runs this with the package manager the project pins; apply runs it as: ";
-
-const ITEM = "  ";
-const DETAIL = "    ";
 
 // Inspection findings the Project group already states: the package manager line, and the
 // ADR-0011 Vite+ report, which names the detection status, the signal, and any signal conflict.
@@ -87,37 +85,6 @@ export function applySummaryLines(result) {
   ]);
 
   return lines;
-}
-
-/**
- * @param {SummaryLine[]} lines
- * @param {string} heading
- * @param {SummaryLine[]} items
- */
-function pushGroup(lines, heading, items) {
-  if (items.length === 0) return;
-  lines.push(info(""), info(`${heading}:`), ...items);
-}
-
-/** @param {string} text @returns {SummaryLine} */
-function info(text) {
-  return { level: "info", text };
-}
-
-/** @param {string} text @returns {SummaryLine} */
-function warn(text) {
-  return { level: "warn", text };
-}
-
-/**
- * The present tense of a dry run or the past tense of an apply.
- *
- * @param {boolean} dryRun
- * @param {string} planned Such as "Would write".
- * @param {string} done Such as "Wrote".
- */
-function tense(dryRun, planned, done) {
-  return dryRun ? planned : done;
 }
 
 /** @param {ApplyResult} result @returns {SummaryLine[]} */

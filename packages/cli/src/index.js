@@ -48,6 +48,7 @@ import {
   formatIntegrationInput,
   VP_RUNNER_NOTE_PREFIX,
 } from "./apply-summary.js";
+import { cleanHeadline, cleanSummaryLines } from "./clean-summary.js";
 import { formatArtifactStatus, formatRemovedLockEntries } from "./artifact-status-report.js";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
@@ -6030,10 +6031,17 @@ async function clean(options) {
           skipReasons,
         })),
       ],
-      message:
-        staleFilesWithLocalEdits.length > 0 || staleAiArtifactsWithLocalEdits.length > 0
-          ? `No stale managed items were safe to remove. ${keptSummary([...staleFilesWithLocalEdits, ...staleAiArtifactsWithLocalEdits])}`
-          : "No stale managed files found.",
+      message: [
+        cleanHeadline({
+          dryRun: options.dryRun,
+          removed: 0,
+          wiringFiles: 0,
+          kept: staleFilesWithLocalEdits.length + staleAiArtifactsWithLocalEdits.length,
+        }),
+        keptSummary([...staleFilesWithLocalEdits, ...staleAiArtifactsWithLocalEdits]),
+      ]
+        .filter(isNotEmptyString)
+        .join(" "),
     };
   }
 
@@ -6142,13 +6150,12 @@ async function clean(options) {
     changes,
     wiringChanges: wiringPlan.changes,
     message: [
-      options.dryRun
-        ? "Dry run complete. No files were removed."
-        : staleFilesSafeToRemove.length + staleAiArtifactsSafeToRemove.length === 0
-          ? "Removed the wiring of artifacts the recipe no longer selects."
-          : changedWiringFiles.length === 0
-            ? "Removed stale managed files."
-            : "Removed stale managed files and the wiring of artifacts the recipe no longer selects.",
+      cleanHeadline({
+        dryRun: options.dryRun,
+        removed: staleFilesSafeToRemove.length + staleAiArtifactsSafeToRemove.length,
+        wiringFiles: changedWiringFiles.length,
+        kept: staleFilesWithLocalEdits.length + staleAiArtifactsWithLocalEdits.length,
+      }),
       kept,
     ]
       .filter(isNotEmptyString)
@@ -6360,31 +6367,9 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   }
 
   if (result.command === "clean") {
-    const dryRun = result.dryRun ?? commandDryRun;
-    logger.info(result.message);
-
-    for (const change of result.wiringChanges) {
-      for (const line of dryRun
-        ? formatWiringChange(change)
-        : [`Removed the ${change.artifact} wiring from ${change.path}`]) {
-        logger.info(line);
-      }
+    for (const { text } of cleanSummaryLines(result, result.dryRun ?? commandDryRun)) {
+      logger.info(text);
     }
-
-    for (const change of result.changes) {
-      if (change.type === "delete") {
-        logger.info(dryRun ? `Would remove ${change.path}` : `Removed ${change.path}`);
-      }
-
-      if (change.type === "skip") {
-        logger.info(
-          dryRun
-            ? `Would skip ${change.path}: ${change.reason}`
-            : `Skipped ${change.path}: ${change.reason}`,
-        );
-      }
-    }
-
     return;
   }
 
