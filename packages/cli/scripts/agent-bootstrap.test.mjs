@@ -1,11 +1,12 @@
 import { execFile } from "node:child_process";
-import { mkdtemp, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, readdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import assert from "node:assert/strict";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { listingViolations } from "../../../scripts/rehearsal-checks.mjs";
 import { agentBootstrap, parseArgs } from "../src/index.js";
 import {
   NEXT_PROMPT_HEADING,
@@ -338,6 +339,13 @@ test("--init groups the summary when MCP needs manual setup (#601)", async () =>
     const result = await runCli(directory, ["--init", "--mcp-harness", "skip"]);
 
     assert.equal(result.code, 0, result.stderr);
+    // #1020: the #918 rehearsal checks that every file --init --mcp-harness skip writes is printed
+    // once, under a heading, so the note that points to the MCP setup notes does not name the file
+    // the Changes group already lists. Unlike the rehearsal, this project has no AGENTS.md.
+    const written = (await readdir(directory, { recursive: true, withFileTypes: true }))
+      .filter((entry) => entry.isFile() && entry.name !== "package.json")
+      .map((entry) => join(entry.parentPath, entry.name).replace(`${directory}/`, ""));
+    assert.deepEqual(listingViolations(result.stdout, written), []);
     assert.equal(
       result.stdout,
       [
@@ -352,7 +360,7 @@ test("--init groups the summary when MCP needs manual setup (#601)", async () =>
         "",
         "Notes:",
         "  Installed skills are available under .agents/skills/.",
-        "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+        "  Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
         "",
         ...initNextSteps(directory),
         "",
@@ -397,7 +405,7 @@ test("--init names a skipped AGENTS.md once and says to merge the fallback guida
         "Notes:",
         "  Installed skills are available under .agents/skills/.",
         "  Merge AGENTS.calavera.md into AGENTS.md by hand.",
-        "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+        "  Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
         "",
         ...initNextSteps(directory),
         "",
@@ -419,7 +427,7 @@ test("--init names an MCP config it could not write once, in a note with one per
     assert.ok(mcpNote, JSON.stringify(result.pointers));
     assert.equal(
       mcpNote,
-      "Could not write project MCP config at .mcp.json: .mcp.json mcpServers must be an object. Follow .agents/calavera/mcp.md for manual setup.",
+      "Could not write project MCP config at .mcp.json: .mcp.json mcpServers must be an object. Follow the MCP setup notes listed under Changes for manual setup.",
     );
     assert.equal(result.changes.filter((change) => change.path === ".mcp.json").length, 0);
   });

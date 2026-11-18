@@ -355,6 +355,10 @@ const STATE_FILE = ".calavera/state.json";
 const AGENT_BOOTSTRAP_GUIDANCE_FILE = "AGENTS.md";
 const AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE = "AGENTS.calavera.md";
 const AGENT_BOOTSTRAP_MCP_FILE = ".agents/calavera/mcp.md";
+// #1020: a manual MCP setup always writes, updates, or skips AGENT_BOOTSTRAP_MCP_FILE, so the Changes
+// group already names it. The note points there instead of naming the file a second time.
+const AGENT_BOOTSTRAP_MANUAL_MCP_SETUP =
+  "Follow the MCP setup notes listed under Changes for manual setup.";
 const AGENT_BOOTSTRAP_MARKER = "<!-- calavera-agent-bootstrap -->";
 const AGENT_BOOTSTRAP_SECTION_START = "<!-- calavera-agent-bootstrap:start -->";
 const AGENT_BOOTSTRAP_SECTION_END = "<!-- calavera-agent-bootstrap:end -->";
@@ -4053,7 +4057,7 @@ async function writeAgentBootstrapMcpConfig(
     return {
       harness,
       action: "manual",
-      reason: `Skipped project MCP auto-config. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+      reason: `Skipped project MCP auto-config. ${AGENT_BOOTSTRAP_MANUAL_MCP_SETUP}`,
     };
   }
 
@@ -4091,7 +4095,7 @@ async function writeAgentBootstrapMcpConfig(
       reason: `Could not write project MCP config at ${path}: ${(error instanceof Error
         ? error.message
         : String(error)
-      ).replace(/\.$/, "")}. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+      ).replace(/\.$/, "")}. ${AGENT_BOOTSTRAP_MANUAL_MCP_SETUP}`,
     };
   }
 

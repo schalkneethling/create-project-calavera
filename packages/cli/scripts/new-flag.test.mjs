@@ -1946,7 +1946,7 @@ test("--new prints the bootstrap summary in labeled groups, with the prompt as i
       "",
       "Notes:",
       "  Installed skills are available under .agents/skills/.",
-      "  Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+      "  Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
       "",
       recipeBlock(target, {
         cd: `cd ${target}`,
