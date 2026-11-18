@@ -356,6 +356,10 @@ const STATE_FILE = ".calavera/state.json";
 const AGENT_BOOTSTRAP_GUIDANCE_FILE = "AGENTS.md";
 const AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE = "AGENTS.calavera.md";
 const AGENT_BOOTSTRAP_MCP_FILE = ".agents/calavera/mcp.md";
+// #1020: a manual MCP setup always writes, updates, or skips AGENT_BOOTSTRAP_MCP_FILE, so the Changes
+// group already names it. The note points there instead of naming the file a second time.
+const AGENT_BOOTSTRAP_MANUAL_MCP_SETUP =
+  "Follow the MCP setup notes listed under Changes for manual setup.";
 const AGENT_BOOTSTRAP_MARKER = "<!-- calavera-agent-bootstrap -->";
 const AGENT_BOOTSTRAP_SECTION_START = "<!-- calavera-agent-bootstrap:start -->";
 const AGENT_BOOTSTRAP_SECTION_END = "<!-- calavera-agent-bootstrap:end -->";
@@ -4054,7 +4058,7 @@ async function writeAgentBootstrapMcpConfig(
     return {
       harness,
       action: "manual",
-      reason: `Skipped project MCP auto-config. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+      reason: `Skipped project MCP auto-config. ${AGENT_BOOTSTRAP_MANUAL_MCP_SETUP}`,
     };
   }
 
@@ -4092,7 +4096,7 @@ async function writeAgentBootstrapMcpConfig(
       reason: `Could not write project MCP config at ${path}: ${(error instanceof Error
         ? error.message
         : String(error)
-      ).replace(/\.$/, "")}. Follow ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup.`,
+      ).replace(/\.$/, "")}. ${AGENT_BOOTSTRAP_MANUAL_MCP_SETUP}`,
     };
   }
 
@@ -4425,7 +4429,9 @@ export async function agentBootstrap(options = {}) {
       ...aiResult.pointers,
       ...(fallbackGuidanceAwaitsMerge
         ? [
-            `Merge ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
+            // #1020: the fallback is always written, updated, or skipped under Changes when it
+            // awaits a merge, so the note points there instead of naming it a second time.
+            `Merge the fallback guidance listed under Changes into ${AGENT_BOOTSTRAP_GUIDANCE_FILE} by hand.`,
           ]
         : []),
       // Only a manual MCP setup carries a reason.

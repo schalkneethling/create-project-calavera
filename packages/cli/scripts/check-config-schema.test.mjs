@@ -1722,7 +1722,8 @@ test("agent bootstrap dry-run previews guidance without writing files", async ()
     assert.deepEqual(result.mcp, {
       harness: "skip",
       action: "manual",
-      reason: "Skipped project MCP auto-config. Follow .agents/calavera/mcp.md for manual setup.",
+      reason:
+        "Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
     });
     assert.match(result.nextPrompt, /Use Calavera for this project/);
     await assert.rejects(() => stat("AGENTS.md"), /ENOENT/);
