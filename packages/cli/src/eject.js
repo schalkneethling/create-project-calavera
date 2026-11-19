@@ -8,9 +8,10 @@
 // which has no record and is checked against the texts Calavera writes: `AGENTS.md` written as a
 // whole file, the marked section in an existing `AGENTS.md`, `AGENTS.calavera.md`, and
 // `.agents/calavera/mcp.md`. It also plans the `calavera` MCP entry in the four harness files the
-// bootstrap writes, checked against the launch command for each package manager. `.coderabbit.yaml`
-// follows in a later layer of #678, and the command is registered last, so nothing offers `eject`
-// before it removes the whole footprint.
+// bootstrap writes, checked against the launch command for each package manager, and a
+// `.coderabbit.yaml` that Calavera created whole, checked against the texts every release wrote.
+// The command is registered last (#678), so nothing offers `eject` before it removes the whole
+// footprint.
 //
 // The plan looks for each item directly, not only through the state file, because a project whose
 // state file is gone still holds the rest of the footprint (ADR-0017, Decision 2). Nothing here
@@ -48,7 +49,12 @@ import {
   AGENT_BOOTSTRAP_SECTION_END,
   AGENT_BOOTSTRAP_SECTION_START,
 } from "./agent-bootstrap-files.js";
-import { hashAiInstall } from "./ai/artifacts.js";
+import {
+  CODE_RABBIT_CONFIG_FIRST_LINE,
+  CODE_RABBIT_CONFIG_PATH,
+  CODE_RABBIT_PACKAGES_FILTER,
+  hashAiInstall,
+} from "./ai/artifacts.js";
 import {
   ARTIFACT_CACHE_BLOCK,
   CACHE_ROOT,
@@ -64,6 +70,7 @@ import {
 import { GITIGNORE_PATH, withoutGitignoreBlock } from "./ignore-lines.js";
 import { CONFIG_FILE } from "./project-local-commands.js";
 import { assertWorkspacePath } from "./utils/fs.js";
+import { isCodeRabbitTextCalaveraWrote } from "./utils/earlier-coderabbit.js";
 import { findEarlierGuidance, normalizePinnedVersion } from "./utils/earlier-guidance.js";
 import { isPlainObject } from "./utils/guards.js";
 import { rewriteLossProblem, toJSONText, writeJSON } from "./utils/json-rewrite.js";
@@ -104,10 +111,11 @@ const CALAVERA_ENTRIES = new Set(
 const CANNOT_DETECT = "edits cannot be detected";
 
 /**
- * @typedef {"state" | "lock" | "recipe" | "cache" | "transient" | "base-skill" | "artifact-cache-block" | "package-folder" | "guidance-file" | "guidance-section" | "fallback-guidance" | "mcp-notes" | "mcp-entry"} EjectItemKind
+ * @typedef {"state" | "lock" | "recipe" | "cache" | "transient" | "base-skill" | "artifact-cache-block" | "package-folder" | "guidance-file" | "guidance-section" | "fallback-guidance" | "mcp-notes" | "mcp-entry" | "coderabbit-config"} EjectItemKind
  *   `guidance-file` is `AGENTS.md` written as a whole file, `guidance-section` the marked section
  *   in an existing `AGENTS.md`, `fallback-guidance` is `AGENTS.calavera.md`, `mcp-notes` is
- *   `.agents/calavera/mcp.md`, and `mcp-entry` is the `calavera` entry in an MCP harness file.
+ *   `.agents/calavera/mcp.md`, `mcp-entry` is the `calavera` entry in an MCP harness file, and
+ *   `coderabbit-config` is a `.coderabbit.yaml` that Calavera created whole.
  *
  * @typedef {object} EjectItem One footprint item `eject` removes.
  * @property {EjectItemKind} kind
@@ -131,7 +139,7 @@ const CANNOT_DETECT = "edits cannot be detected";
  * @property {string} [seen] What the item's check read when the plan was made. For every kind
  *   but the base skill, it holds the entry identity from `entryIdentity`: a file, a folder, or a
  *   symbolic link, its target, and the path its chain of links resolves to. The `artifact-cache`
- *   block, the guidance kinds, and the MCP entries record the identity and the file's text as a JSON array, through
+ *   block, the guidance kinds, the MCP entries, and `.coderabbit.yaml` record the identity and the file's text as a JSON array, through
  *   `textSeen`, and a package folder that a lock entry names adds its payload hash. The base skill records its installed hash and the entries that hash does not cover.
  *   `executeEject` reads it again and removes nothing when any item changed since the plan.
  *
@@ -558,11 +566,12 @@ async function planCacheBlock(state, stateProblem) {
 }
 
 /**
- * Plans a guidance file that `eject` deletes whole when its text is one Calavera wrote. A symbolic
- * link in its place leads to content no record covers, so it needs an interactive approval, and
- * approval removes only the link, as for a link where Calavera keeps its own files.
+ * Plans a file that `eject` deletes whole when its text is one Calavera wrote: a guidance file or a
+ * `.coderabbit.yaml` that Calavera created. A symbolic link in its place leads to content no record
+ * covers, so it needs an interactive approval, and approval removes only the link, as for a link
+ * where Calavera keeps its own files.
  *
- * @param {"guidance-file" | "fallback-guidance" | "mcp-notes"} kind
+ * @param {"guidance-file" | "fallback-guidance" | "mcp-notes" | "coderabbit-config"} kind
  * @param {string} path
  * @param {{ identity: string, text: string }} entry
  * @param {boolean} written Whether the text is one Calavera wrote.
@@ -570,7 +579,7 @@ async function planCacheBlock(state, stateProblem) {
  *   false.
  * @returns {EjectItem}
  */
-function guidanceFileItem(kind, path, { identity, text }, written, editedReason) {
+function textFileItem(kind, path, { identity, text }, written, editedReason) {
   /** @type {EjectItem} */
   const item = {
     kind,
@@ -675,7 +684,7 @@ async function planAgentsGuidance(guidance) {
     if (!text.includes(AGENT_BOOTSTRAP_MARKER)) return { items: [], reported: [] };
     if (sameText(text, guidance.file) || findEarlierGuidance("guidance", text) !== undefined) {
       return {
-        items: [guidanceFileItem("guidance-file", path, { identity, text }, true)],
+        items: [textFileItem("guidance-file", path, { identity, text }, true)],
         reported: [],
       };
     }
@@ -762,7 +771,7 @@ async function planCalaveraGuidanceFile(kind, path, written, editedReason) {
   }
   const { identity, text } = entry;
   return {
-    items: [guidanceFileItem(kind, path, { identity, text }, written(text), editedReason)],
+    items: [textFileItem(kind, path, { identity, text }, written(text), editedReason)],
     reported: [],
   };
 }
@@ -795,6 +804,70 @@ async function planGuidance(guidance) {
   return {
     items: parts.flatMap(({ items }) => items),
     reported: parts.flatMap(({ reported }) => reported),
+  };
+}
+
+/**
+ * Plans `.coderabbit.yaml` (ADR-0017, Decision 2). Calavera records nothing about the file, so
+ * `eject` decides by its first line: Calavera writes it when it creates the file whole and never
+ * when it adds its filters to an existing file (owner confirmation of 2026-11-17 on #678). A file
+ * that starts with that line is Calavera's: it is unedited when its text is one a release wrote,
+ * created or updated, and otherwise it is listed as edited and removed after approval (Decision
+ * 6). Any other file existed before Calavera added its filters, so `eject` leaves it and reports
+ * each line that holds the `!.calavera/packages/**` filter, for the person to remove (Decision 4).
+ * Anything other than a file at the path is reported and left, because `eject` cannot read it.
+ *
+ * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
+ */
+async function planCodeRabbitConfig() {
+  const path = CODE_RABBIT_CONFIG_PATH;
+  const entry = await readTextEntry(path);
+  if (entry === undefined) return { items: [], reported: [] };
+  const { identity, text } = entry;
+  if (text === undefined) {
+    return {
+      items: [],
+      reported: [
+        {
+          path,
+          reason: `${path} is not a file, so eject cannot tell whether Calavera created it, and leaves it.`,
+        },
+      ],
+    };
+  }
+  const lines = text.split("\n");
+  const [firstLine] = lines;
+  // `split` always returns at least one line, even for an empty text.
+  if (firstLine?.replace(/\r$/, "") === CODE_RABBIT_CONFIG_FIRST_LINE) {
+    return {
+      items: [
+        textFileItem(
+          "coderabbit-config",
+          path,
+          { identity, text },
+          isCodeRabbitTextCalaveraWrote(text),
+          `${path} starts with the line Calavera writes when it creates the file, but its text differs from every text a Calavera release wrote, so it holds edits.`,
+        ),
+      ],
+      reported: [],
+    };
+  }
+  const filterLines = lines.flatMap((line, index) =>
+    line.includes(CODE_RABBIT_PACKAGES_FILTER) ? [index + 1] : [],
+  );
+  if (filterLines.length === 0) return { items: [], reported: [] };
+  const where =
+    filterLines.length === 1
+      ? `Line ${filterLines[0]} holds`
+      : `Lines ${filterLines.slice(0, -1).join(", ")} and ${filterLines.at(-1)} hold`;
+  return {
+    items: [],
+    reported: [
+      {
+        path,
+        reason: `${path} existed before Calavera added its review filters, so eject leaves the file as it is. ${where} the "${CODE_RABBIT_PACKAGES_FILTER}" filter Calavera added; remove it yourself if you no longer want it.`,
+      },
+    ],
   };
 }
 
@@ -1259,8 +1332,8 @@ async function unnamedCalaveraEntries() {
 }
 
 /**
- * Plans the removal of the footprint items Calavera records itself, and of the bootstrap's
- * guidance (ADR-0017, Decision 2). Unless this is a dry run, a pending artifact transaction is
+ * Plans the removal of the footprint items Calavera records itself, of the bootstrap's guidance and
+ * MCP entries, and of a `.coderabbit.yaml` that Calavera created (ADR-0017, Decision 2). Unless this is a dry run, a pending artifact transaction is
  * recovered first, so the plan describes the project as the rollback left it. Nothing else is
  * written.
  *
@@ -1354,6 +1427,8 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFo
   items.push(...guidanceItems.items);
   const mcpEntries = await planMcpEntries(guidance, loadFormatter);
   items.push(...mcpEntries.items);
+  const codeRabbit = await planCodeRabbitConfig();
+  items.push(...codeRabbit.items);
   const separate = await withoutSharedFiles(items);
   items.splice(0, items.length, ...separate.items);
 
@@ -1374,6 +1449,7 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFo
       ...guidanceItems.reported,
       ...cacheBlock.reported,
       ...mcpEntries.reported,
+      ...codeRabbit.reported,
       ...separate.reported,
     ],
     kept,
@@ -1436,6 +1512,7 @@ const STEP_ORDER = {
   "fallback-guidance": 2,
   "mcp-notes": 2,
   "mcp-entry": 2,
+  "coderabbit-config": 2,
   "package-folder": 3,
   lock: 4,
   state: 5,
@@ -1503,7 +1580,8 @@ async function currentlySeen(item) {
     case "guidance-section":
     case "fallback-guidance":
     case "mcp-notes":
-    case "mcp-entry": {
+    case "mcp-entry":
+    case "coderabbit-config": {
       // The plan read the text through a link too, so the text is read whenever the path leads
       // to a file. A path that no longer leads to a file is reported as changed, not read.
       const entry = await readTextEntry(item.path);

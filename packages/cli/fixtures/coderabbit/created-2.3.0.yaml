@@ -1,0 +1,11 @@
+# CodeRabbit configuration — https://docs.coderabbit.ai/reference/yaml-template
+#
+# The .claude/skills and .agents/skills directories contain vendored AI-agent
+# skill documentation copied from upstream packages. Findings in those files
+# belong upstream, so excluding them keeps reviews focused on project code.
+
+reviews:
+  path_filters:
+    - "!.claude/skills/**"
+    - "!.agents/skills/**"
+    - "!pnpm-lock.yaml"
