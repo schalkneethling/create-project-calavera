@@ -3802,35 +3802,129 @@ test("skill apply preserves existing CodeRabbit settings and path filters", asyn
   }
 });
 
-test("skill apply rejects incompatible CodeRabbit configuration before writing skills", async () => {
-  const originalDirectory = process.cwd();
-  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-invalid-"));
-  const recipe = buildRecipe("minimal", [], "npm", [
-    { type: "skill", src: "skills/frontend-engineering" },
-  ]);
+const CODE_RABBIT_FILTER_LIST = [
+  '    - "!.claude/skills/**"',
+  '    - "!.agents/skills/**"',
+  '    - "!.agents/agents/claude-code/**"',
+  '    - "!.calavera/packages/**"',
+  '    - "!pnpm-lock.yaml"',
+].join("\n");
 
-  try {
-    process.chdir(projectDirectory);
-    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
-    await lockArtifactFixtures(["skill-frontend-engineering"]);
-    await writeFile(".coderabbit.yaml", "reviews: []\n");
+// #1068: a `reviews` mapping without `path_filters`, an empty `reviews: {}`, and a file
+// with no `reviews` key each made apply throw instead of adding the filters.
+for (const { name, current, expected } of [
+  {
+    name: "a reviews mapping without path_filters",
+    current:
+      "# Team settings\nlanguage: en-US\nreviews:\n  # Keep reviews short.\n  profile: chill\n",
+    expected: `# Team settings\nlanguage: en-US\nreviews:\n  # Keep reviews short.\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    name: "an empty reviews mapping",
+    current: "# Team settings\nlanguage: en-US\nreviews: {}\n",
+    expected: `# Team settings\nlanguage: en-US\nreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    name: "no reviews key",
+    current: "# Team settings\nlanguage: en-US\n",
+    expected: `# Team settings\nlanguage: en-US\nreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    // A flow mapping that holds keys keeps the person's style, so the list is a flow list.
+    name: "a reviews flow mapping with keys",
+    current: "reviews: { profile: chill }\n",
+    expected:
+      'reviews: { profile: chill, path_filters: [ "!.claude/skills/**", "!.agents/skills/**", "!.agents/agents/claude-code/**", "!.calavera/packages/**", "!pnpm-lock.yaml" ] }\n',
+  },
+]) {
+  test(`skill apply adds CodeRabbit path filters as a YAML list to ${name}`, async () => {
+    const originalDirectory = process.cwd();
+    const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-add-filters-"));
+    const recipe = buildRecipe("minimal", [], "npm", [
+      { type: "skill", src: "skills/frontend-engineering" },
+    ]);
 
-    await assert.rejects(
-      () =>
-        applyRecipeObject(recipe, {
-          json: true,
-          noInstall: true,
-          assumeYes: true,
-        }),
-      /\.coderabbit\.yaml: reviews must be a mapping/,
-    );
-    await assertPathMissing(".agents/skills/frontend-engineering");
-    assert.equal(await readFile(".coderabbit.yaml", "utf8"), "reviews: []\n");
-  } finally {
-    process.chdir(originalDirectory);
-    await rm(projectDirectory, { force: true, recursive: true });
-  }
-});
+    try {
+      process.chdir(projectDirectory);
+      await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+      await lockArtifactFixtures(["skill-frontend-engineering"]);
+      await writeFile(".coderabbit.yaml", current);
+
+      const result = await applyRecipeObject(recipe, {
+        json: true,
+        noInstall: true,
+        assumeYes: true,
+      });
+      assert.equal(
+        result.changes.some(({ type, path }) => type === "update" && path === ".coderabbit.yaml"),
+        true,
+      );
+      assert.equal(await readFile(".coderabbit.yaml", "utf8"), expected);
+
+      const repeatedDryRun = await applyRecipeObject(recipe, {
+        dryRun: true,
+        json: true,
+        noInstall: true,
+        assumeYes: true,
+      });
+      assert.equal(
+        repeatedDryRun.changes.some(({ path }) => path === ".coderabbit.yaml"),
+        false,
+      );
+    } finally {
+      process.chdir(originalDirectory);
+      await rm(projectDirectory, { force: true, recursive: true });
+    }
+  });
+}
+
+for (const { current, error } of [
+  {
+    current: "reviews: [\n",
+    error: /Cannot update \.coderabbit\.yaml: Flow sequence in block collection/,
+  },
+  { current: "reviews: []\n", error: /\.coderabbit\.yaml: reviews must be a mapping/ },
+  // An empty value is null, not a missing key, so apply does not replace it.
+  { current: "reviews:\n", error: /\.coderabbit\.yaml: reviews must be a mapping/ },
+  {
+    current: "reviews:\n  path_filters:\n",
+    error: /\.coderabbit\.yaml: reviews\.path_filters must be an array/,
+  },
+  {
+    current: 'reviews:\n  path_filters: "src/**"\n',
+    error: /\.coderabbit\.yaml: reviews\.path_filters must be an array/,
+  },
+]) {
+  test(`skill apply rejects CodeRabbit configuration ${JSON.stringify(current)} before writing skills`, async () => {
+    const originalDirectory = process.cwd();
+    const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-invalid-"));
+    const recipe = buildRecipe("minimal", [], "npm", [
+      { type: "skill", src: "skills/frontend-engineering" },
+    ]);
+
+    try {
+      process.chdir(projectDirectory);
+      await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+      await lockArtifactFixtures(["skill-frontend-engineering"]);
+      await writeFile(".coderabbit.yaml", current);
+
+      await assert.rejects(
+        () =>
+          applyRecipeObject(recipe, {
+            json: true,
+            noInstall: true,
+            assumeYes: true,
+          }),
+        error,
+      );
+      await assertPathMissing(".agents/skills/frontend-engineering");
+      assert.equal(await readFile(".coderabbit.yaml", "utf8"), current);
+    } finally {
+      process.chdir(originalDirectory);
+      await rm(projectDirectory, { force: true, recursive: true });
+    }
+  });
+}
 
 test("an unedited hook from an earlier payload updates instead of stopping as a local edit", async () => {
   const originalDirectory = process.cwd();

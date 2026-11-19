@@ -84,18 +84,23 @@ async function planCodeRabbitSkillConfig() {
     );
   }
 
+  // `set` stores a plain JavaScript value as is, so new collections go through
+  // `createNode`; otherwise `isMap` and `isSeq` reject them (#1068).
+  if (document.get("reviews", true) === undefined) {
+    document.set("reviews", document.createNode({}));
+  }
   const reviews = document.get("reviews", true);
-  if (reviews === undefined) {
-    document.set("reviews", {});
-  } else if (!isMap(reviews)) {
+  if (!isMap(reviews)) {
     throw new Error(`Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews must be a mapping.`);
   }
 
-  let pathFilters = document.getIn(["reviews", "path_filters"], true);
-  if (pathFilters === undefined) {
-    document.setIn(["reviews", "path_filters"], []);
-    pathFilters = document.getIn(["reviews", "path_filters"], true);
+  if (reviews.get("path_filters", true) === undefined) {
+    // An empty `reviews: {}` is written in flow style; switch it to block style
+    // so the filters are written as a list, not on one line.
+    if (reviews.items.length === 0) reviews.flow = false;
+    reviews.set("path_filters", document.createNode([]));
   }
+  const pathFilters = reviews.get("path_filters", true);
   if (!isSeq(pathFilters)) {
     throw new Error(
       `Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews.path_filters must be an array.`,
