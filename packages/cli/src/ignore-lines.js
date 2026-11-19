@@ -75,6 +75,22 @@ function blockText(integration, lines, cr) {
 }
 
 /**
+ * The `.gitignore` text without the block `found` locates, both markers included. Every line
+ * outside the block keeps its bytes. Apply removes the block of an integration the recipe no longer
+ * selects this way, and `eject` removes the artifact cache block (ADR-0017).
+ *
+ * @param {import("./utils/marked-block.js").FoundBlock} found A block `findBlock` found.
+ * @returns {string}
+ */
+export function withoutGitignoreBlock(found) {
+  const after = found.lines.slice(found.endIndex + 1);
+  // When the end marker is the file's last line and has no line break, the line before the block
+  // still owns the line break that separated the two, so it keeps it.
+  if (after.length === 0 && found.startIndex > 0) after.push("");
+  return [...found.lines.slice(0, found.startIndex), ...after].join("\n");
+}
+
+/**
  * Plans the integrations' blocks in `.gitignore`. A recorded block whose integration no longer
  * declares lines is removed while it still holds the recorded lines. A declared block is appended
  * when it is missing, kept when it holds the declared lines, and replaced when it holds the
@@ -127,11 +143,7 @@ export function planGitignoreBlocks({ contents, declared, records, command = "ap
       );
       continue;
     }
-    const after = found.lines.slice(found.endIndex + 1);
-    // When the end marker is the file's last line and has no line break, the line before the block
-    // still owns the line break that separated the two, so it keeps it.
-    if (after.length === 0 && found.startIndex > 0) after.push("");
-    text = [...found.lines.slice(0, found.startIndex), ...after].join("\n");
+    text = withoutGitignoreBlock(found);
     changes.push({
       path: GITIGNORE_PATH,
       integration: record.integration,
