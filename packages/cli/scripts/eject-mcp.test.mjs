@@ -1061,3 +1061,30 @@ test("codex: the report of an edited table names the table and the file", async 
     );
   });
 });
+
+test("codex: a key the person added that would duplicate one above once Calavera's lines go is kept and reported", async () => {
+  await inProject(async () => {
+    // Removing Calavera's three lines would move `enabled = true` into [other], which already
+    // holds `enabled`, so the result is not TOML.
+    await write(CODEX, `[other]\nenabled = false\n\n${codexBlock}enabled = true\n`);
+    await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
+  });
+});
+
+for (const { harness, path } of HARNESSES) {
+  for (const [label, text] of [
+    ["an empty", ""],
+    ["a whitespace-only", "  \n\t\n"],
+  ]) {
+    test(`${harness}: ${label} harness file holds no entry and is left untouched`, async () => {
+      await inProject(async () => {
+        await write(path, text);
+        const found = await plan();
+        assert.equal(found.nothingToDo, true);
+        assert.deepEqual(found.reported, []);
+        await executeEject(selectEjectItems(found, { assumeYes: false }).remove);
+        assert.equal(await readFile(path, "utf8"), text);
+      });
+    });
+  }
+}

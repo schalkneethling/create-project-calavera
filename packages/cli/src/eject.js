@@ -889,7 +889,9 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   } catch (error) {
     /** @type {import("jsonc-parser").ParseError[]} */
     const errors = [];
-    const jsonc = parseJsonc(text, errors, { allowTrailingComma: true });
+    // An empty or whitespace-only file holds no entry, as it did before JSONC was read, so it is
+    // left untouched rather than a stop.
+    const jsonc = parseJsonc(text, errors, { allowTrailingComma: true, allowEmptyContent: true });
     // eject never changes a file outside the project, so it has no need to read it.
     if (!inside) return mcpEntryOutside(path);
     const [problem] = errors;
@@ -977,9 +979,16 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
  * @param {string} contents
  */
 function removesOnlyTheEntry(text, contents) {
-  // Removing whole lines from valid TOML, none of which opens or closes a string, leaves valid
-  // TOML, so this parse does not fail; if it ever did, the plan would stop with nothing written.
-  const after = parseToml(contents);
+  /** @type {Record<string, unknown>} */
+  let after;
+  try {
+    after = parseToml(contents);
+  } catch {
+    // The result can fail to parse: a key the person added after Calavera's lines moves into the
+    // table above once those lines go, and that table may already hold the key. Removing the
+    // lines would then break the file, so the entry is not Calavera's text alone.
+    return false;
+  }
   const expected = parseToml(text);
   delete (/** @type {Record<string, unknown>} */ (expected.mcp_servers).calavera);
   if (isDeepStrictEqual(after, expected)) return true;
