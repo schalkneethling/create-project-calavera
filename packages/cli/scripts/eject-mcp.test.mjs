@@ -161,6 +161,7 @@ for (const { harness, path, written } of HARNESSES) {
       const dry = await plan({ dryRun: true });
       const before = await snapshotDirectory();
       const entry = item(dry, path);
+      assert.deepEqual(dry.reported, []);
       assert.equal(entry.kind, "mcp-entry");
       assert.equal(entry.action, "edit");
       assert.equal(entry.edits, "unedited");
@@ -323,12 +324,18 @@ for (const { harness, path, written } of JSON_HARNESSES) {
       await write(path, `// my servers\n${written(npmLaunch)}`);
       await write(".agents/calavera/mcp.md", guidance.mcp[0] ?? "");
       const before = await snapshotDirectory();
-      await assert.rejects(
-        plan(),
-        new RegExp(
-          `eject stopped before removing anything: ${path.replaceAll(".", "\\.")} cannot be parsed as JSON`,
-        ),
-      );
+      await assert.rejects(plan(), (error) => {
+        assert.ok(error instanceof Error);
+        assert.match(
+          error.message,
+          new RegExp(
+            `eject stopped before removing anything: ${path.replaceAll(".", "\\.")} cannot be parsed as JSON`,
+          ),
+        );
+        // The parser's own error stays as the cause, so the failure can be diagnosed.
+        assert.ok(error.cause instanceof SyntaxError);
+        return true;
+      });
       assert.deepEqual(await snapshotDirectory(), before);
     });
   });
@@ -423,6 +430,7 @@ test(".mcp.json: an mcp key and a calavera entry outside mcpServers are left alo
 test("a JSON harness file whose top level is not an object holds no entry", async () => {
   await inProject(async () => {
     await write(".mcp.json", "[]\n");
+    await write("opencode.json", "null\n");
     await write(".cursor/mcp.json", json({ mcpServers: [npmLaunch] }));
     const found = await plan();
     assert.equal(found.nothingToDo, true);
@@ -681,6 +689,47 @@ test("a .gitignore that links out of the project without the block is neither pl
     await symlink(join(outside.path, "gitignore"), ".gitignore");
     const found = await plan();
     assert.equal(found.nothingToDo, true);
+    assert.deepEqual(found.reported, []);
+  });
+});
+
+test(".mcp.json: a $schema with the OpenCode value stays, because only opencode.json gets one from Calavera", async () => {
+  await inProject(async () => {
+    await write(".mcp.json", json({ $schema: SCHEMA, ...createMcpServersJsonConfig(npmLaunch) }));
+    await ejectApproved();
+    assert.deepEqual(JSON.parse(await readFile(".mcp.json", "utf8")), { $schema: SCHEMA });
+  });
+});
+
+test("codex: an indented header is not the table Calavera writes, so it is kept and reported", async () => {
+  await inProject(async () => {
+    await write(CODEX, `${MODEL}\n  ${codexBlock}`);
+    await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
+  });
+});
+
+test("codex: an array of tables under the calavera table makes the entry edited", async () => {
+  await inProject(async () => {
+    await write(CODEX, `${codexBlock}\n[[mcp_servers.calavera.tools]]\nname = "x"\n`);
+    await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
+  });
+});
+
+test("codex: another array of tables leaves the calavera table unedited", async () => {
+  await inProject(async () => {
+    const theirs = '[[profiles]]\nname = "fast"\n';
+    await write(CODEX, `${theirs}\n${codexBlock}`);
+    const { found } = await ejectApproved();
+    assert.deepEqual(found.reported, []);
+    assert.equal(await readFile(CODEX, "utf8"), theirs);
+  });
+});
+
+test("a .gitignore inside the project has its block planned, and nothing is reported", async () => {
+  await inProject(async () => {
+    await write(".gitignore", `node_modules/\n${CACHE_BLOCK}`);
+    const found = await plan();
+    assert.equal(item(found, ".gitignore").kind, "artifact-cache-block");
     assert.deepEqual(found.reported, []);
   });
 });

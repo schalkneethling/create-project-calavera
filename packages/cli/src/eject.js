@@ -879,11 +879,9 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   if (!isPlainObject(servers) || !Object.hasOwn(servers, "calavera")) return NO_MCP_ENTRY;
   if (!inside) return mcpEntryOutside(path);
   const calavera = servers.calavera;
+  // An entry that holds the placeholder normalizes to undefined, which equals no expected entry.
   const normalized = withPinNormalized(calavera);
-  if (
-    normalized === undefined ||
-    !expected.some((candidate) => isDeepStrictEqual(normalized, withPinNormalized(candidate)))
-  ) {
+  if (!expected.some((candidate) => isDeepStrictEqual(normalized, withPinNormalized(candidate)))) {
     return mcpEntryKept(
       path,
       `The calavera entry under ${key} in ${path} differs from the launch command Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
@@ -968,18 +966,18 @@ async function planCodexMcpEntry(path, expected) {
   const { start, end: next } = /** @type {{ start: number, end: number }} */ (
     findTomlTableRange(text, CODEX_TABLE_HEADER)
   );
+  // The header is neither blank nor a comment, so the walk stops at it at the latest.
   let end = next - 1;
-  while (end > start && (bare[end] === "" || bare[end]?.startsWith("#"))) end -= 1;
+  while (bare[end] === "" || /** @type {string} */ (bare[end]).startsWith("#")) end -= 1;
   const table = lines.slice(start, end + 1).map((line) => line.replace(/\r$/, ""));
   const normalized = normalizePinnedVersion(table.join("\n"))?.normalized;
+  const name = CODEX_TABLE_HEADER.slice(1, -1);
   const subtable = bare.some(
-    (line) =>
-      line.startsWith(`${CODEX_TABLE_HEADER.slice(0, -1)}.`) ||
-      line.startsWith(`[${CODEX_TABLE_HEADER.slice(0, -1)}`),
+    (line) => line.startsWith(`[${name}.`) || line.startsWith(`[[${name}`),
   );
+  // A table that holds the placeholder normalizes to undefined, which equals no expected table.
   const written =
     !subtable &&
-    normalized !== undefined &&
     expected.some((block) => normalizePinnedVersion(block.trimEnd())?.normalized === normalized);
   if (!written) {
     return mcpEntryKept(
