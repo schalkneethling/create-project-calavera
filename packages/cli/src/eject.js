@@ -171,24 +171,26 @@ const LINK_PREFIX = "link:";
 
 /**
  * What identifies the entry at `path`: whether it is a file, a folder, or a symbolic link and the
- * target it points to. An entry that changes type after the plan, such as a folder replaced by a
- * file or by a link, or a link that points elsewhere, gives another value, so `executeEject` sees
- * the change and removes nothing, rather than deleting what the person put there.
+ * target it points to, and the real path it resolves to, through every symbolic link on the way,
+ * whether the link is the entry itself, one further along a chain, or a parent folder. An entry
+ * that changes type after the plan, such as a folder replaced by a file or by a link, a link that
+ * points elsewhere, or an entry whose parent folder now leads elsewhere, gives another value, so
+ * `executeEject` sees the change and removes nothing, rather than deleting what the plan never
+ * listed.
  *
  * @param {string} path
  */
 async function entryIdentity(path) {
   const stats = await lstat(path);
-  // The target is JSON-encoded, so it holds no raw line break and can never run into a value that
-  // follows it in a `seen` string. The path the whole chain of links resolves to is recorded too,
-  // so retargeting a link further along the chain also counts as a change; a chain that leads
-  // nowhere records null.
+  // A chain of links that leads nowhere records null.
+  const resolved = await realpath(path).catch(() => null);
+  // The type is one of four fixed words, and the rest is JSON, so the value holds no raw line break
+  // and splits only one way.
   if (stats.isSymbolicLink()) {
-    const resolved = await realpath(path).catch(() => null);
     return `${LINK_PREFIX}${JSON.stringify([await readlink(path), resolved])}`;
   }
-  if (stats.isDirectory()) return "folder";
-  return stats.isFile() ? "file" : "other";
+  const type = stats.isDirectory() ? "folder" : stats.isFile() ? "file" : "other";
+  return `${type}:${JSON.stringify([resolved])}`;
 }
 
 /**
@@ -389,11 +391,15 @@ async function baseSkillCheck() {
       ? ""
       : `Calavera could not list every entry of ${BASE_SKILL_PATH} (${listProblem}), so ${CANNOT_DETECT} for what it could not list.`,
   ].filter((note) => note !== "");
+  // The identity records where the skill folder resolves, so a parent folder such as
+  // `.agents/skills` that leads elsewhere after the plan counts as a change. A skill gone between
+  // two reads records "missing", which no plan records.
+  const identity = await entryIdentity(BASE_SKILL_PATH).catch(() => "missing");
   return {
     hash,
     uncoveredNote: notes.join(" "),
     // Encoded as JSON, so an entry whose name holds a line break never reads as two entries.
-    seen: JSON.stringify([hash, uncovered, listProblem]),
+    seen: JSON.stringify([identity, hash, uncovered, listProblem]),
   };
 }
 

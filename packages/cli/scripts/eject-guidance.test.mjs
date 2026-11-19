@@ -693,6 +693,25 @@ for (const { path, text, kind } of RECHECKS) {
   });
 }
 
+test("a linked .agents/calavera retargeted to identical notes after the plan stops the removal", async () => {
+  await inProject(async () => {
+    await write("shared/a/mcp.md", guidance.mcp[0] ?? "");
+    await write("shared/b/mcp.md", guidance.mcp[0] ?? "");
+    await mkdir(".agents", { recursive: true });
+    await symlink("../shared/a", ".agents/calavera");
+    const found = await plan();
+    assert.equal(item(found, MCP_NOTES).matchesRecords, true);
+    await rm(".agents/calavera");
+    await symlink("../shared/b", ".agents/calavera");
+    await assert.rejects(
+      executeEject(selectEjectItems(found, { assumeYes: true }).remove),
+      /\.agents\/calavera\/mcp\.md changed since eject listed/,
+    );
+    assert.equal(await readFile("shared/b/mcp.md", "utf8"), guidance.mcp[0]);
+    assert.equal(await readFile("shared/a/mcp.md", "utf8"), guidance.mcp[0]);
+  });
+});
+
 test("a linked guidance file retargeted to identical text after the plan stops the removal", async () => {
   await inProject(async () => {
     await write("one/guidance.md", guidance.fallback);

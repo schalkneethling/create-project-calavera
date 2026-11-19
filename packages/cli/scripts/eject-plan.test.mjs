@@ -1444,3 +1444,36 @@ test("a base skill whose uncovered entries are renamed to look like other entrie
     );
   });
 });
+
+test("a linked parent folder retargeted to an identical copy after the plan stops the removal", async () => {
+  // `.calavera` holds the state, and `.agents/skills` holds the base skill. Each is a link to a
+  // folder; after the plan, it leads to another folder with the same content, which the plan
+  // never listed.
+  for (const [parent, child] of [
+    [".calavera", ".calavera/state.json"],
+    [".agents/skills", SKILL_PATH],
+  ]) {
+    await inProject(async () => {
+      await writeFootprint({ packageFolder: false });
+      await rm(".calavera/cache", { recursive: true });
+      await rm(".calavera/artifacts.lock.json");
+      await cp(parent, "shared/a", { recursive: true });
+      await cp(parent, "shared/b", { recursive: true });
+      await rm(parent, { recursive: true });
+      await symlink(join(process.cwd(), "shared/a"), parent);
+      const plan = await planEject({ guidance, dryRun: false });
+      assert.ok(
+        plan.items.some(({ path }) => path === child),
+        child,
+      );
+      await rm(parent);
+      await symlink(join(process.cwd(), "shared/b"), parent);
+      const before = await snapshotDirectory();
+      await assert.rejects(
+        executeEject(selectEjectItems(plan, { assumeYes: false }).remove),
+        new RegExp(`${child.replaceAll(".", "\\.")}.* changed since eject listed`),
+      );
+      assert.deepEqual(await snapshotDirectory(), before);
+    });
+  }
+});
