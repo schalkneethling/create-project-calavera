@@ -51,6 +51,14 @@ import {
 import { cleanHeadline, cleanSummaryLines } from "./clean-summary.js";
 import { formatArtifactStatus, formatRemovedLockEntries } from "./artifact-status-report.js";
 import {
+  AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+  AGENT_BOOTSTRAP_GUIDANCE_FILE,
+  AGENT_BOOTSTRAP_MARKER,
+  AGENT_BOOTSTRAP_MCP_FILE,
+  AGENT_BOOTSTRAP_SECTION_END,
+  AGENT_BOOTSTRAP_SECTION_START,
+} from "./agent-bootstrap-files.js";
+import {
   GITHUB_REPOSITORY_CONTROLS_ID,
   githubRepositoryControlManagedFiles,
   normalizeGithubRepositoryControlsOptions,
@@ -354,16 +362,10 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
 
 const COMPOSER_URL = "https://calavera.schalkneethling.com/";
 const STATE_FILE = ".calavera/state.json";
-const AGENT_BOOTSTRAP_GUIDANCE_FILE = "AGENTS.md";
-const AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE = "AGENTS.calavera.md";
-const AGENT_BOOTSTRAP_MCP_FILE = ".agents/calavera/mcp.md";
 // #1020: a manual MCP setup always writes, updates, or skips AGENT_BOOTSTRAP_MCP_FILE, so the Changes
 // group already names it. The note points there instead of naming the file a second time.
 const AGENT_BOOTSTRAP_MANUAL_MCP_SETUP =
   "Follow the MCP setup notes listed under Changes for manual setup.";
-const AGENT_BOOTSTRAP_MARKER = "<!-- calavera-agent-bootstrap -->";
-const AGENT_BOOTSTRAP_SECTION_START = "<!-- calavera-agent-bootstrap:start -->";
-const AGENT_BOOTSTRAP_SECTION_END = "<!-- calavera-agent-bootstrap:end -->";
 export const AGENT_BOOTSTRAP_SKILL_RECIPE = {
   ai: [{ type: "skill", src: "skills/calavera" }],
 };
@@ -4170,6 +4172,31 @@ async function formatAgentBootstrapGuidance(loadFormatter) {
     ),
   ]);
   return { file, section, fallback };
+}
+
+/**
+ * The texts the bootstrap writes now, formatted by the project's formatter as it formats them: the
+ * guidance in each of its forms, and the MCP setup notes for each supported package manager.
+ * `eject` compares a project's guidance files with them, because Calavera keeps no record of what
+ * it wrote there (ADR-0017, Decision 2).
+ *
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ * @returns {Promise<AgentBootstrapGuidanceText & { mcp: string[] }>}
+ */
+export async function agentBootstrapTexts(loadFormatter) {
+  const [guidance, mcp] = await Promise.all([
+    formatAgentBootstrapGuidance(loadFormatter),
+    Promise.all(
+      supportedPackageManagers.map((packageManager) =>
+        formatGeneratedText(
+          AGENT_BOOTSTRAP_MCP_FILE,
+          createAgentBootstrapMcpInstructions(packageManager),
+          loadFormatter,
+        ),
+      ),
+    ),
+  ]);
+  return { ...guidance, mcp };
 }
 
 /**

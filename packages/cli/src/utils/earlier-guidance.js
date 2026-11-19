@@ -183,6 +183,38 @@ function sha256(text) {
 }
 
 /**
+ * Replaces the version that `text` pins in `create-project-calavera@<version>` with a placeholder,
+ * so two texts that differ only in the pinned release compare equal. `eject` uses it for the
+ * launch commands of the MCP entries, and `findEarlierGuidance` for the setup notes (ADR-0017,
+ * Decision 2).
+ *
+ * @param {string} text
+ * @returns {{ normalized: string, pin: string | undefined } | undefined} The text with its pin
+ *   replaced, and the version it pinned, or undefined when no release can have written the text:
+ *   it already holds the placeholder.
+ */
+export function normalizePinnedVersion(text) {
+  // The placeholder only stands in for a version inside this module. A text that already holds it
+  // was edited: with one pin left as the placeholder, normalizing the others would produce exactly
+  // a known text and the edit would be overwritten.
+  if (text.includes(VERSION_PLACEHOLDER)) return undefined;
+  const pins = new Set([...text.matchAll(PINNED_VERSION)].map((match) => match[1]));
+  // A text that pins two different versions was never written by one release: only the first is
+  // replaced below, so the other stays in the text and cannot match a text that pins one version.
+  const [pin] = pins;
+  return {
+    normalized:
+      pin === undefined
+        ? text
+        : text.replaceAll(
+            `create-project-calavera@${pin}`,
+            `create-project-calavera@${VERSION_PLACEHOLDER}`,
+          ),
+    pin,
+  };
+}
+
+/**
  * Finds the earlier Calavera release whose text `text` is.
  *
  * @param {EarlierGuidanceKind} kind
@@ -192,22 +224,9 @@ function sha256(text) {
  *   is not one a release wrote, which makes it a local edit.
  */
 export function findEarlierGuidance(kind, text) {
-  const unixText = text.replaceAll("\r\n", "\n");
-  // The placeholder only stands in for a version inside this module. A file that already holds it
-  // was edited: with one pin left as the placeholder, normalizing the others would produce exactly
-  // a known text and the edit would be overwritten.
-  if (unixText.includes(VERSION_PLACEHOLDER)) return undefined;
-  const pins = new Set([...unixText.matchAll(PINNED_VERSION)].map((match) => match[1]));
-  // A text that pins two different versions was never written by one release: only the first is
-  // replaced below, so the other stays in the text and the digest cannot match.
-  const [pin] = pins;
-  const normalized =
-    pin === undefined
-      ? unixText
-      : unixText.replaceAll(
-          `create-project-calavera@${pin}`,
-          `create-project-calavera@${VERSION_PLACEHOLDER}`,
-        );
+  const pinned = normalizePinnedVersion(text.replaceAll("\r\n", "\n"));
+  if (pinned === undefined) return undefined;
+  const { normalized, pin } = pinned;
   const digest = sha256(normalized);
 
   const template = EARLIER_TEMPLATES[kind].find(

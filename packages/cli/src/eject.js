@@ -4,9 +4,12 @@
 // footprint, and keeps the tooling Calavera installed. This module plans and carries out the
 // removal of the items Calavera records itself: the state, the recipe, the artifact lock and the
 // extracted package folders, the artifact cache and the transient folders, the base Calavera
-// skill, and the `artifact-cache` block in `.gitignore`. The guidance, the MCP entries, and
-// `.coderabbit.yaml` follow in later layers of #678, and the command is registered last, so nothing
-// offers `eject` before it removes the whole footprint.
+// skill, and the `artifact-cache` block in `.gitignore`. It also plans the bootstrap's guidance,
+// which has no record and is checked against the texts Calavera writes: `AGENTS.md` written as a
+// whole file, the marked section in an existing `AGENTS.md`, `AGENTS.calavera.md`, and
+// `.agents/calavera/mcp.md`. The MCP entries and `.coderabbit.yaml` follow in later layers of #678,
+// and the command is registered last, so nothing offers `eject` before it removes the whole
+// footprint.
 //
 // The plan looks for each item directly, not only through the state file, because a project whose
 // state file is gone still holds the rest of the footprint (ADR-0017, Decision 2). Nothing here
@@ -31,6 +34,14 @@ import { basename, dirname, join, resolve } from "node:path";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
 
+import {
+  AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+  AGENT_BOOTSTRAP_GUIDANCE_FILE,
+  AGENT_BOOTSTRAP_MARKER,
+  AGENT_BOOTSTRAP_MCP_FILE,
+  AGENT_BOOTSTRAP_SECTION_END,
+  AGENT_BOOTSTRAP_SECTION_START,
+} from "./agent-bootstrap-files.js";
 import { hashAiInstall } from "./ai/artifacts.js";
 import {
   ARTIFACT_CACHE_BLOCK,
@@ -47,7 +58,8 @@ import {
 import { GITIGNORE_PATH, withoutGitignoreBlock } from "./ignore-lines.js";
 import { CONFIG_FILE } from "./project-local-commands.js";
 import { assertWorkspacePath } from "./utils/fs.js";
-import { findBlock } from "./utils/marked-block.js";
+import { findEarlierGuidance } from "./utils/earlier-guidance.js";
+import { findBlock, findMarkedBlock } from "./utils/marked-block.js";
 
 const CALAVERA_ROOT = ".calavera";
 // Where `eject` moves a package folder before it deletes it, so a delete that stops part way
@@ -57,6 +69,9 @@ const STAGING_ROOT = ".calavera/.staging";
 // The path the bootstrap installs the base Calavera skill to, and that `skill-calavera` installs to
 // when a recipe selects it.
 const BASE_SKILL_PATH = ".agents/skills/calavera";
+// The folder that holds the MCP setup notes. `eject` removes it once removing the notes has left
+// it empty (ADR-0017, Decision 2).
+const MCP_NOTES_ROOT = dirname(AGENT_BOOTSTRAP_MCP_FILE);
 
 /** The entries of `.calavera/` that belong to the footprint; any other entry is the person's. */
 const CALAVERA_ENTRIES = new Set(
@@ -74,7 +89,10 @@ const CALAVERA_ENTRIES = new Set(
 const CANNOT_DETECT = "edits cannot be detected";
 
 /**
- * @typedef {"state" | "lock" | "recipe" | "cache" | "transient" | "base-skill" | "artifact-cache-block" | "package-folder"} EjectItemKind
+ * @typedef {"state" | "lock" | "recipe" | "cache" | "transient" | "base-skill" | "artifact-cache-block" | "package-folder" | "guidance-file" | "guidance-section" | "fallback-guidance" | "mcp-notes"} EjectItemKind
+ *   `guidance-file` is `AGENTS.md` written as a whole file, `guidance-section` the marked section
+ *   in an existing `AGENTS.md`, `fallback-guidance` is `AGENTS.calavera.md`, and `mcp-notes` is
+ *   `.agents/calavera/mcp.md`.
  *
  * @typedef {object} EjectItem One footprint item `eject` removes.
  * @property {EjectItemKind} kind
@@ -91,10 +109,10 @@ const CANNOT_DETECT = "edits cannot be detected";
  * @property {string} [contents] For an edit, the file's text afterward.
  * @property {string} [seen] What the item's check read when the plan was made. For every kind
  *   but the base skill, it starts with the entry identity from `entryIdentity`: a file, a folder,
- *   or a symbolic link and its target. The `artifact-cache` block adds the `.gitignore` text, and
- *   a package folder that a lock entry names adds its payload hash. The base skill records its
- *   installed hash and the entries that hash does not cover. `executeEject` reads it again and
- *   removes nothing when any item changed since the plan.
+ *   or a symbolic link and its target. The `artifact-cache` block and the guidance kinds add the
+ *   file's text, through `textSeen`, and a package folder that a lock entry names adds its payload
+ *   hash. The base skill records its installed hash and the entries that hash does not cover.
+ *   `executeEject` reads it again and removes nothing when any item changed since the plan.
  *
  * @typedef {object} EjectOutcome What `executeEject` did with each item it was given.
  * @property {EjectItem[]} removed
@@ -103,11 +121,24 @@ const CANNOT_DETECT = "edits cannot be detected";
  *   on failed: the record a failed item still needs, or the `.gitignore` block of a cache that
  *   could not be deleted.
  *
+ * @typedef {object} EjectReport Footprint text `eject` keeps, for the person to act on
+ *   (ADR-0017, Decision 4). It does not count as work for `eject` (Decision 8).
+ * @property {string} path
+ * @property {string} reason What `eject` found, why it keeps it, and what the person can do.
+ *
  * @typedef {object} EjectPlan
  * @property {EjectItem[]} items Every footprint item that exists, in no particular order.
- * @property {string[]} kept Files in `.calavera/` that `eject` does not name, so it keeps them and
- *   the folders that hold them.
- * @property {boolean} nothingToDo Whether no footprint item exists.
+ * @property {EjectReport[]} reported Footprint text that `eject` keeps and reports.
+ * @property {string[]} kept Files in `.calavera/` and `.agents/calavera/` that `eject` does not
+ *   name, so it keeps them and the folders that hold them.
+ * @property {boolean} nothingToDo Whether no footprint item exists. Reported text does not count.
+ *
+ * @typedef {object} AgentGuidanceTexts The texts the bootstrap writes now, formatted by the
+ *   project's formatter, from `agentBootstrapTexts` in `index.js`.
+ * @property {string} file `AGENTS.md` written as a whole file.
+ * @property {string} section The marked section appended to an existing `AGENTS.md`.
+ * @property {string} fallback `AGENTS.calavera.md`.
+ * @property {string[]} mcp `.agents/calavera/mcp.md`, one text for each package manager.
  */
 
 /**
@@ -152,6 +183,46 @@ async function entryIdentity(path) {
   if (stats.isSymbolicLink()) return `${LINK_PREFIX}${JSON.stringify(await readlink(path))}`;
   if (stats.isDirectory()) return "folder";
   return stats.isFile() ? "file" : "other";
+}
+
+/**
+ * What a file's check reads: its entry identity, and its text when the path leads to a file,
+ * through a symbolic link too. Encoded as a JSON array, so no text, whatever it holds, can make two
+ * different reads look the same.
+ *
+ * @param {string} identity From `entryIdentity`.
+ * @param {string | undefined} text Undefined when the path does not lead to a file.
+ */
+function textSeen(identity, text) {
+  return JSON.stringify(text === undefined ? [identity] : [identity, text]);
+}
+
+/**
+ * Reads the entry at `path` for a check of its text: its identity, and its text when the path
+ * leads to a file. Nothing when no entry exists.
+ *
+ * @param {string} path
+ * @returns {Promise<{ identity: string, text: string | undefined } | undefined>}
+ */
+async function readTextEntry(path) {
+  if (!(await present(path))) return undefined;
+  const identity = await entryIdentity(path);
+  const leadsToFile = await stat(path).then(
+    (stats) => stats.isFile(),
+    () => false,
+  );
+  return { identity, text: leadsToFile ? await readFile(path, "utf8") : undefined };
+}
+
+/**
+ * Whether two texts are the same, with a Windows line ending (`\r\n`) counting as the Unix one
+ * (`\n`), as `findEarlierGuidance` counts it.
+ *
+ * @param {string} text
+ * @param {string} written
+ */
+function sameText(text, written) {
+  return text.replaceAll("\r\n", "\n") === written.replaceAll("\r\n", "\n");
 }
 
 /**
@@ -424,7 +495,7 @@ async function planCacheBlock(state, stateProblem) {
     matchesRecords: unedited,
     removedLines: found.current === "" ? [] : found.current.split("\n"),
     contents: withoutGitignoreBlock(found),
-    seen: `${identity}\n${text}`,
+    seen: textSeen(identity, text),
   };
   if (!unedited) {
     item.reason =
@@ -434,6 +505,225 @@ async function planCacheBlock(state, stateProblem) {
         : "The artifact-cache block was edited since Calavera wrote it.";
   }
   return [item];
+}
+
+/**
+ * Plans a guidance file that `eject` deletes whole when its text is one Calavera wrote. A symbolic
+ * link in its place leads to content no record covers, so it needs an interactive approval, and
+ * approval removes only the link, as for a link where Calavera keeps its own files.
+ *
+ * @param {"guidance-file" | "fallback-guidance" | "mcp-notes"} kind
+ * @param {string} path
+ * @param {{ identity: string, text: string }} entry
+ * @param {boolean} written Whether the text is one Calavera wrote.
+ * @param {string} editedReason
+ * @returns {EjectItem}
+ */
+function guidanceFileItem(kind, path, { identity, text }, written, editedReason) {
+  /** @type {EjectItem} */
+  const item = {
+    kind,
+    path,
+    action: "delete",
+    edits: written ? "unedited" : "edited",
+    matchesRecords: written,
+    seen: textSeen(identity, text),
+  };
+  if (identity.startsWith(LINK_PREFIX)) {
+    return {
+      ...item,
+      edits: written ? "cannot-detect" : "edited",
+      matchesRecords: false,
+      reason: `${path} is a symbolic link, which no record covers; ${CANNOT_DETECT}.${written ? "" : ` ${editedReason}`} eject removes only the link, not what it leads to.`,
+    };
+  }
+  return written ? item : { ...item, reason: editedReason };
+}
+
+const MARKER_ONLY_REASON = `${AGENT_BOOTSTRAP_GUIDANCE_FILE} holds guidance marked ${AGENT_BOOTSTRAP_MARKER}, such as guidance merged by hand from ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE}. eject cannot tell where it ends, so it leaves it; remove it yourself if you no longer want it.`;
+
+/**
+ * The text of `AGENTS.md` once the guidance section is removed: the markers, the lines between
+ * them, and the blank line Calavera added before the start marker go, and every other line stays.
+ *
+ * @param {import("./utils/marked-block.js").FoundBlock} found
+ */
+function withoutGuidanceSection(found) {
+  const before = found.lines.slice(0, found.startIndex);
+  // The bootstrap appends the section after one blank line (`upsertAgentBootstrapGuidanceSection`
+  // in index.js).
+  if (before.length > 0 && before.at(-1)?.replace(/\r$/, "") === "") before.pop();
+  const after = found.lines.slice(found.endIndex + 1);
+  // When the end marker is the file's last line and has no line break, the line before the
+  // section still owns the line break that separated the two, so it keeps it.
+  if (after.length === 0 && before.length > 0) after.push("");
+  return [...before, ...after].join("\n");
+}
+
+/**
+ * Plans the guidance in `AGENTS.md` (ADR-0017, Decision 2). A marked section that equals the
+ * current section text is removed from the file; any other section, edited or written by an
+ * earlier release, is kept and reported. Without section markers, a file that holds a text
+ * Calavera wrote as a whole file is deleted, an edited one is kept and reported, and guidance that
+ * carries only the marker elsewhere in the file, such as a hand merge, is reported. A broken or
+ * changed section marker is a hard stop (Decision 7).
+ *
+ * @param {AgentGuidanceTexts} guidance
+ * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
+ */
+async function planAgentsGuidance(guidance) {
+  const path = AGENT_BOOTSTRAP_GUIDANCE_FILE;
+  const entry = await readTextEntry(path);
+  // `AGENTS.md` is the project's file, so anything there that is not a file holds no guidance.
+  if (entry?.text === undefined) return { items: [], reported: [] };
+  const { identity, text } = entry;
+  const found = findMarkedBlock(
+    path,
+    text,
+    {
+      start: AGENT_BOOTSTRAP_SECTION_START,
+      end: AGENT_BOOTSTRAP_SECTION_END,
+      names: ["calavera-agent-bootstrap:start", "calavera-agent-bootstrap:end"],
+      label: "the Calavera guidance section",
+    },
+    "eject",
+  );
+  if ("reason" in found) {
+    throw new Error(`eject stopped before removing anything: ${found.reason}`);
+  }
+
+  if (found.startIndex === -1) {
+    if (!text.includes(AGENT_BOOTSTRAP_MARKER)) return { items: [], reported: [] };
+    if (sameText(text, guidance.file) || findEarlierGuidance("guidance", text) !== undefined) {
+      return {
+        items: [guidanceFileItem("guidance-file", path, { identity, text }, true, "")],
+        reported: [],
+      };
+    }
+    const wholeFile = text.split("\n", 1)[0]?.replace(/\r$/, "") === AGENT_BOOTSTRAP_MARKER;
+    return {
+      items: [],
+      reported: [
+        {
+          path,
+          reason: wholeFile
+            ? `${path} holds Calavera's guidance with changes, and it has no section markers, so eject cannot separate Calavera's text from yours. eject leaves the file; remove Calavera's guidance from it yourself if you no longer want it.`
+            : MARKER_ONLY_REASON,
+        },
+      ],
+    };
+  }
+
+  const bare = found.lines.map((line) => line.replace(/\r$/, ""));
+  const section = bare.slice(found.startIndex, found.endIndex + 1).join("\n");
+  const contents = withoutGuidanceSection(found);
+  /** @type {EjectItem[]} */
+  const items = [];
+  /** @type {EjectReport[]} */
+  const reported = [];
+  if (section === guidance.section.replaceAll("\r\n", "\n").trimEnd()) {
+    items.push({
+      kind: "guidance-section",
+      path,
+      action: "edit",
+      edits: "unedited",
+      matchesRecords: true,
+      removedLines: found.current === "" ? [] : found.current.split("\n"),
+      contents,
+      seen: textSeen(identity, text),
+    });
+  } else {
+    // Without a table of earlier section texts, a section an earlier release wrote and one the
+    // person edited look the same, so both are kept (ADR-0017, Decision 2).
+    reported.push({
+      path,
+      reason: `The Calavera guidance section in ${path} differs from the section Calavera writes now, because it was edited or an earlier release wrote it. eject leaves it; remove the section, both markers included, yourself if you no longer want it.`,
+    });
+  }
+  if (contents.includes(AGENT_BOOTSTRAP_MARKER)) {
+    reported.push({ path, reason: MARKER_ONLY_REASON });
+  }
+  return { items, reported };
+}
+
+/**
+ * Plans a guidance file that only Calavera writes, `AGENTS.calavera.md` or
+ * `.agents/calavera/mcp.md`. Its text is checked against the current texts and the texts every
+ * release wrote. An edited file is listed as edited and removed after approval (ADR-0017,
+ * Decision 6). Anything other than a file at its path is reported and left.
+ *
+ * @param {"fallback-guidance" | "mcp-notes"} kind
+ * @param {string} path
+ * @param {(text: string) => boolean} written Whether a text is one Calavera wrote.
+ * @param {string} editedReason
+ * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
+ */
+async function planCalaveraGuidanceFile(kind, path, written, editedReason) {
+  const entry = await readTextEntry(path);
+  if (entry === undefined) return { items: [], reported: [] };
+  if (entry.text === undefined) {
+    return {
+      items: [],
+      reported: [
+        {
+          path,
+          reason: `${path} is not a file, so eject cannot check it against the text Calavera writes, and leaves it. Remove it yourself if Calavera's guidance is all it holds.`,
+        },
+      ],
+    };
+  }
+  const { identity, text } = entry;
+  return {
+    items: [guidanceFileItem(kind, path, { identity, text }, written(text), editedReason)],
+    reported: [],
+  };
+}
+
+/**
+ * Plans every guidance item of the footprint (ADR-0017, Decision 2).
+ *
+ * @param {AgentGuidanceTexts} guidance
+ * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
+ */
+async function planGuidance(guidance) {
+  const parts = [
+    await planAgentsGuidance(guidance),
+    await planCalaveraGuidanceFile(
+      "fallback-guidance",
+      AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+      (text) =>
+        sameText(text, guidance.fallback) || findEarlierGuidance("guidance", text) !== undefined,
+      `${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE} differs from the guidance every Calavera release wrote, so it holds edits.`,
+    ),
+    await planCalaveraGuidanceFile(
+      "mcp-notes",
+      AGENT_BOOTSTRAP_MCP_FILE,
+      (text) =>
+        guidance.mcp.some((notes) => sameText(text, notes)) ||
+        findEarlierGuidance("mcp", text) !== undefined,
+      `${AGENT_BOOTSTRAP_MCP_FILE} differs from the MCP setup notes every Calavera release wrote, so it holds edits.`,
+    ),
+  ];
+  return {
+    items: parts.flatMap(({ items }) => items),
+    reported: parts.flatMap(({ reported }) => reported),
+  };
+}
+
+/**
+ * The entries of `.agents/calavera/` other than the MCP setup notes. `eject` keeps them, so it
+ * keeps the folder too. Listed only when `eject` removes the notes, because otherwise it does not
+ * touch the folder.
+ *
+ * @param {EjectItem[]} items
+ * @returns {Promise<string[]>}
+ */
+async function unnamedMcpNotesEntries(items) {
+  if (!items.some(({ kind }) => kind === "mcp-notes")) return [];
+  if (!(await isRealDirectory(MCP_NOTES_ROOT))) return [];
+  return (await readdir(MCP_NOTES_ROOT))
+    .map((name) => `${MCP_NOTES_ROOT}/${name}`)
+    .filter((path) => path !== AGENT_BOOTSTRAP_MCP_FILE);
 }
 
 /**
@@ -527,14 +817,17 @@ async function unnamedCalaveraEntries() {
 }
 
 /**
- * Plans the removal of the footprint items Calavera records itself (ADR-0017, Decision 2). Unless
- * this is a dry run, a pending artifact transaction is recovered first, so the plan describes the
- * project as the rollback left it. Nothing else is written.
+ * Plans the removal of the footprint items Calavera records itself, and of the bootstrap's
+ * guidance (ADR-0017, Decision 2). Unless this is a dry run, a pending artifact transaction is
+ * recovered first, so the plan describes the project as the rollback left it. Nothing else is
+ * written.
  *
- * @param {{ dryRun: boolean, config?: string }} options `config` is the recipe's path.
+ * @param {{ dryRun: boolean, config?: string, guidance: AgentGuidanceTexts }} options `config` is
+ *   the recipe's path. `guidance` holds the texts the bootstrap writes now, from
+ *   `agentBootstrapTexts`, which the guidance files are checked against.
  * @returns {Promise<EjectPlan>}
  */
-export async function planEject({ dryRun, config = CONFIG_FILE }) {
+export async function planEject({ dryRun, config = CONFIG_FILE, guidance }) {
   // eject never writes package.json (ADR-0017, Decision 4), so a recipe path that names it is
   // refused rather than listed for deletion.
   if (basename(config) === "package.json") {
@@ -612,6 +905,8 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
   items.push(...(await planCacheBlock(state, stateProblem)));
   const packages = await planPackageFolders(lock?.artifacts, lockProblem);
   items.push(...packages.items);
+  const guidanceItems = await planGuidance(guidance);
+  items.push(...guidanceItems.items);
 
   // Every path is checked before anything is removed, so a link that leads out of the project
   // stops the plan, not a later delete.
@@ -619,8 +914,12 @@ export async function planEject({ dryRun, config = CONFIG_FILE }) {
     await assertEjectPath(item);
   }
 
-  const kept = [...(await unnamedCalaveraEntries()), ...packages.kept].sort();
-  return { items, kept, nothingToDo: items.length === 0 };
+  const kept = [
+    ...(await unnamedCalaveraEntries()),
+    ...packages.kept,
+    ...(await unnamedMcpNotesEntries(items)),
+  ].sort();
+  return { items, reported: guidanceItems.reported, kept, nothingToDo: items.length === 0 };
 }
 
 /**
@@ -673,6 +972,10 @@ const STEP_ORDER = {
   recipe: 2,
   "base-skill": 2,
   transient: 2,
+  "guidance-file": 2,
+  "guidance-section": 2,
+  "fallback-guidance": 2,
+  "mcp-notes": 2,
   "package-folder": 3,
   lock: 4,
   state: 5,
@@ -735,15 +1038,17 @@ async function currentlySeen(item) {
     case "transient":
     case "recipe":
       return entryIdentity(item.path);
-    case "artifact-cache-block": {
-      const identity = await entryIdentity(item.path);
+    case "artifact-cache-block":
+    case "guidance-file":
+    case "guidance-section":
+    case "fallback-guidance":
+    case "mcp-notes": {
       // The plan read the text through a link too, so the text is read whenever the path leads
-      // to a file. A `.gitignore` that no longer leads to a file is reported as changed, not read.
-      const leadsToFile = await stat(item.path).then(
-        (stats) => stats.isFile(),
-        () => false,
+      // to a file. A path that no longer leads to a file is reported as changed, not read.
+      const entry = /** @type {{ identity: string, text: string | undefined }} */ (
+        await readTextEntry(item.path)
       );
-      return leadsToFile ? `${identity}\n${await readFile(item.path, "utf8")}` : identity;
+      return textSeen(entry.identity, entry.text);
     }
     case "base-skill":
       return (await baseSkillCheck()).seen;
@@ -778,7 +1083,8 @@ function dependsOn(item) {
  * changed since the plan, so it never removes text the approved list did not show. An item whose
  * removal fails does not stop the others; only the items that depend on it are skipped. Then it
  * removes the package ID folders it emptied, `.calavera/packages/`, `.calavera/.staging/`, and
- * `.calavera/`, when they are empty (ADR-0017, Decision 2). A folder that still holds anything
+ * `.calavera/`, when they are empty, and `.agents/calavera/` when it removed the MCP setup notes
+ * from it and nothing else remains (ADR-0017, Decision 2). A folder that still holds anything
  * stays.
  *
  * @param {EjectItem[]} items
@@ -849,5 +1155,8 @@ export async function executeEject(items) {
   await removeIfEmpty(PACKAGE_PATH);
   await removeIfEmpty(STAGING_ROOT);
   await removeIfEmpty(CALAVERA_ROOT);
+  if (outcome.removed.some(({ kind }) => kind === "mcp-notes")) {
+    await removeIfEmpty(MCP_NOTES_ROOT);
+  }
   return outcome;
 }
