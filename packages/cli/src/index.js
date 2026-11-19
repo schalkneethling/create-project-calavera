@@ -51,6 +51,7 @@ import {
 } from "./apply-summary.js";
 import { cleanHeadline, cleanSummaryLines } from "./clean-summary.js";
 import {
+  assertEjectConfig,
   executeEject,
   footprintIn,
   planEject,
@@ -6318,6 +6319,7 @@ async function clean(options) {
 export async function ejectProject(options, runtime = {}) {
   const interactive = runtime.interactive ?? canPrompt(options);
   const refuse = !options.dryRun && !options.assumeYes && !interactive;
+  assertEjectConfig(options.config);
   const packageJSON = await readEjectPackageJSON();
   const pendingTransaction = await fileExists(EJECT_TRANSACTION_PATH);
   /** @param {EjectResult["status"]} status @param {string} message @param {EjectResultItem[]} items @param {Pick<EjectResult, "reported" | "kept">} [found] */
@@ -6369,14 +6371,17 @@ export async function ejectProject(options, runtime = {}) {
       ...visible,
       outcome,
       ...(error === undefined ? {} : { error }),
-      ...(item.matchesRecords && yesLeaves.has(item) ? { keptRecord: true } : {}),
+      ...((outcome === "planned" || outcome === "left") &&
+      item.matchesRecords &&
+      yesLeaves.has(item)
+        ? { keptRecord: true }
+        : {}),
     };
   };
   const planned = plan.items.map((item) => describe(item, "planned"));
   const listed = `eject would remove ${pluralizeCount(plan.items.length, "item")}${yesSummary(
     plan.items.filter((item) => yesLeaves.has(item)),
-    "would leave",
-    "would keep",
+    false,
   )}.`;
   const recovered = pendingTransaction && !options.dryRun;
 
@@ -6437,41 +6442,37 @@ export async function ejectProject(options, runtime = {}) {
   for (const item of leave) done.set(item, describe(item, "left"));
   const items = plan.items.flatMap((item) => done.get(item) ?? []);
   const notRemoved = outcome.failed.length + outcome.skipped.length;
-  const removed = `Removed ${pluralizeCount(outcome.removed.length, "item")}`;
+  const removed = `${recovered ? "eject recovered the pending artifact transaction first, as every artifacts command does. " : ""}Removed ${pluralizeCount(outcome.removed.length, "item")}${yesSummary(leave, true)}.`;
+  const approveLeft =
+    leave.length > 0 ? " Run eject in a terminal to review and approve what is left." : "";
   if (notRemoved > 0) {
     return result(
       "failed",
-      `${removed}. ${pluralizeCount(notRemoved, "item")} could not be removed; each one says why below. Fix the cause, then run eject again.`,
+      `${removed} ${pluralizeCount(notRemoved, "item")} could not be removed; each one says why below. Fix the cause, then run eject again.${approveLeft}`,
       items,
       found,
     );
   }
-  if (leave.length > 0) {
-    return result(
-      "ejected",
-      outcome.removed.length === 0
-        ? `Nothing left here matches Calavera's records exactly, so only items that need your approval remain. Run eject in a terminal to review and approve them.`
-        : `${removed}${yesSummary(leave, "left", "kept")}. Run eject in a terminal to review and approve what is left.`,
-      items,
-      found,
-    );
-  }
-  return result("ejected", `${removed}.`, items, found);
+  return result("ejected", `${removed}${approveLeft}`, items, found);
 }
 
 /**
  * What `--yes` leaves, in words: the items that need an approval, and the records it keeps while
- * one of them needs them. Empty when it leaves nothing.
+ * one of them needs them. Empty when it leaves nothing. A kept record never comes without an item
+ * that needs an approval, because only such an item needs a record.
  *
  * @param {import("./eject.js").EjectItem[]} leave From `selectEjectItems` with `assumeYes`.
- * @param {string} leaves Such as "left".
- * @param {string} keeps Such as "kept".
+ * @param {boolean} done Whether `--yes` has run, so the words are in the past tense.
  */
-function yesSummary(leave, leaves, keeps) {
+function yesSummary(leave, done) {
+  if (leave.length === 0) return "";
   const approvals = leave.filter(({ matchesRecords }) => !matchesRecords).length;
   const records = leave.length - approvals;
-  if (leave.length === 0) return "";
-  return `; --yes ${leaves} ${pluralizeCount(approvals, "item")} for an interactive approval${records > 0 ? `, and ${keeps} ${pluralizeCount(records, "record")} that ${records === 1 ? "an item it leaves needs" : "the items it leaves need"}` : ""}`;
+  const [leaves, keeps, left] = done
+    ? ["left", "kept", "left"]
+    : ["would leave", "would keep", "leaves"];
+  const needing = approvals === 1 ? `the item it ${left} needs` : `the items it ${left} need`;
+  return `; --yes ${leaves} ${pluralizeCount(approvals, "item")} for an interactive approval${records > 0 ? `, and ${keeps} ${pluralizeCount(records, "record")} that ${needing}` : ""}`;
 }
 
 /**
@@ -6520,7 +6521,7 @@ async function ejectPackageJsonReport({ manifest: packageJSON, problem }) {
   if (problem !== undefined) {
     return {
       scripts: [],
-      problem: `${problem}, so eject cannot report the scripts or the development dependency that call Calavera. eject never changes package.json; fix it and run eject again to see them.`,
+      problem: `${problem}, so eject cannot report the scripts or the development dependency that call Calavera, or name a footprint in the workspace packages it lists. eject never changes package.json; fix it and run eject again to see them.`,
     };
   }
   const scripts = Object.entries(packageJSON.scripts ?? {}).flatMap(([name, value]) =>

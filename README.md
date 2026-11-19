@@ -715,7 +715,8 @@ Without a terminal, or with `--json`, `eject` refuses unless you pass `--yes`.
 With `--yes`, it removes only the items that match Calavera's records exactly.
 It leaves, and lists, everything else: what it cannot check, such as the recipe
 and the extracted artifact packages in `.calavera/packages/`, any item you
-edited, and the state or lock while an item it leaves still needs them. Run
+edited, and the records an item it leaves still needs: the state, the lock,
+or the cache block in `.gitignore`. Run
 `eject` in a terminal to approve those.
 
 `eject` never changes `package.json`. It reports each script that runs

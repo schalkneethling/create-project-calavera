@@ -35,7 +35,7 @@ export function ejectSummaryLines(result) {
 
   pushGroup(lines, "Would remove", withOutcome("planned").flatMap(itemLines));
   pushGroup(lines, "Removed", withOutcome("removed").flatMap(itemLines));
-  pushGroup(lines, "Left for an interactive approval", withOutcome("left").flatMap(itemLines));
+  pushGroup(lines, "Left for an interactive run", withOutcome("left").flatMap(itemLines));
   pushGroup(
     lines,
     "Failed",

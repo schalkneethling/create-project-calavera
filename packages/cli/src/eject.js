@@ -1332,6 +1332,21 @@ async function unnamedCalaveraEntries() {
 }
 
 /**
+ * Stops `eject` when the recipe path names a `package.json`: eject never writes `package.json`
+ * (ADR-0017, Decision 4), so it refuses rather than list one for deletion. It runs before anything
+ * else, the recovery of a pending transaction included.
+ *
+ * @param {string} config The recipe's path.
+ */
+export function assertEjectConfig(config) {
+  if (basename(config) === "package.json") {
+    throw new Error(
+      `eject stopped before removing anything, because the recipe path ${config} names a package.json, which eject never changes. Pass the path of the Calavera recipe, or leave --config out to use ${CONFIG_FILE}.`,
+    );
+  }
+}
+
+/**
  * Plans the removal of the footprint items Calavera records itself, of the bootstrap's guidance and
  * MCP entries, and of a `.coderabbit.yaml` that Calavera created (ADR-0017, Decision 2). Unless this is a dry run, a pending artifact transaction is
  * recovered first, so the plan describes the project as the rollback left it. Nothing else is
@@ -1345,13 +1360,7 @@ async function unnamedCalaveraEntries() {
  * @returns {Promise<EjectPlan>}
  */
 export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFormatter }) {
-  // eject never writes package.json (ADR-0017, Decision 4), so a recipe path that names it is
-  // refused rather than listed for deletion.
-  if (basename(config) === "package.json") {
-    throw new Error(
-      `eject stopped before removing anything, because the recipe path ${config} names a package.json, which eject never changes. Pass the path of the Calavera recipe, or leave --config out to use ${CONFIG_FILE}.`,
-    );
-  }
+  assertEjectConfig(config);
   await recoverPendingTransaction(dryRun);
 
   const hasState = await present(STATE_PATH);
@@ -1714,13 +1723,18 @@ export async function executeEject(items) {
  * @param {string} value The script's command.
  */
 export function scriptRunsCalavera(value) {
-  return CALAVERA_EXECUTABLE.test(value) || CALAVERA_CREATE.test(value);
+  return (
+    CALAVERA_EXECUTABLE.test(value) || CALAVERA_INSTALLED.test(value) || CALAVERA_CREATE.test(value)
+  );
 }
 
 // Not after a name character or a scope, and not followed by a longer name, a file extension, or a
 // path separator, so a folder of that name in a path does not count.
 const CALAVERA_EXECUTABLE =
   /(?<![\w.@-])(?<!@[\w.-]+\/)create-project-calavera(?:-mcp)?(?![\w/-]|\.\w)/;
+// The installed package's folder, which a script runs a file from, such as
+// `node node_modules/create-project-calavera/bin/create-project-calavera.js`.
+const CALAVERA_INSTALLED = /(?<![\w.@-])node_modules\/create-project-calavera\//;
 const CALAVERA_CREATE = /(?<![\w.@/-])(?:create|init)\s+project-calavera(?![\w-]|\.\w)/;
 
 /** The executable every MCP registration Calavera writes launches, in each harness file. */

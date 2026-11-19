@@ -279,7 +279,7 @@ test("--yes removes only items that match Calavera's records, lists what it left
     }
     assert.equal(await exists("calavera.config.json"), true);
     const output = human(result);
-    assert.match(output, /^Left for an interactive approval:$/m);
+    assert.match(output, /^Left for an interactive run:$/m);
     assert.deepEqual(listingViolations(output, namedItems(result)), []);
 
     const second = await eject(["--yes"]);
@@ -288,7 +288,10 @@ test("--yes removes only items that match Calavera's records, lists what it left
       second.items.map(({ outcome }) => outcome),
       ["left"],
     );
-    assert.match(second.message, /only items that need your approval remain/i);
+    assert.equal(
+      second.message,
+      "Removed 0 items; --yes left 1 item for an interactive approval. Run eject in a terminal to review and approve what is left.",
+    );
   });
 });
 
@@ -660,7 +663,7 @@ test("the summary prints each group, label, and detail exactly", () => {
     "  calavera.config.json (edits cannot be detected)",
     "    The recipe at this item; edits cannot be detected.",
     "",
-    "Left for an interactive approval:",
+    "Left for an interactive run:",
     "  AGENTS.md (edited)",
     "    Afterward:",
     '      "no final line break"',
@@ -711,7 +714,7 @@ test("the headline counts what a run removes and what --yes leaves", async () =>
     const edited = await eject(["--dry-run"]);
     assert.equal(
       edited.message,
-      `Dry run complete. Nothing was changed. eject would remove ${count} items; --yes would leave 2 items for an interactive approval, and would keep 1 record that an item it leaves needs.`,
+      `Dry run complete. Nothing was changed. eject would remove ${count} items; --yes would leave 2 items for an interactive approval, and would keep 1 record that the items it leaves need.`,
     );
     assert.match(
       human(edited),
@@ -720,11 +723,11 @@ test("the headline counts what a run removes and what --yes leaves", async () =>
     const yes = await eject(["--yes"]);
     assert.equal(
       yes.message,
-      `Removed ${count - 3} items; --yes left 2 items for an interactive approval, and kept 1 record that an item it leaves needs. Run eject in a terminal to review and approve what is left.`,
+      `Removed ${count - 3} items; --yes left 2 items for an interactive approval, and kept 1 record that the items it left need. Run eject in a terminal to review and approve what is left.`,
     );
     assert.match(
       human(yes),
-      /^Left for an interactive approval:\n(?:.*\n)*? {2}\.calavera\/state\.json \(Calavera's own record; --yes keeps it while an item it leaves needs it\)$/m,
+      /^Left for an interactive run:\n(?:.*\n)*? {2}\.calavera\/state\.json \(Calavera's own record; --yes keeps it while an item it leaves needs it\)$/m,
     );
     const state = yes.items.find(({ kind }) => kind === "state");
     assert.equal(state?.outcome, "left");
@@ -1030,5 +1033,74 @@ test("a run whose only footprint was a pending transaction says that it recovere
       result.message,
       "eject recovered the pending artifact transaction first, as every artifacts command does. eject found no Calavera footprint to remove here.",
     );
+  });
+});
+
+test("scriptRunsCalavera counts a file run from the installed package's folder", () => {
+  assert.equal(
+    scriptRunsCalavera(
+      "node node_modules/create-project-calavera/bin/create-project-calavera.js apply",
+    ),
+    true,
+  );
+  assert.equal(scriptRunsCalavera("node ./node_modules/create-project-calavera/dist/cli.js"), true);
+  assert.equal(scriptRunsCalavera("node vendor_node_modules/create-project-calavera/x.js"), false);
+});
+
+test("a recipe path that names package.json stops eject before a refusal or a recovery", async () => {
+  await inProject(async (root) => {
+    await initProject();
+    await write(
+      ".calavera/artifact-transaction.json",
+      `${JSON.stringify({ schemaVersion: 1, transactionRoot: join(root, ".calavera/.transactions/t"), operations: [] })}\n`,
+    );
+    for (const args of [
+      ["--json", "--config", "package.json"],
+      ["--yes", "--config", "package.json"],
+    ]) {
+      await assert.rejects(eject(args), /names a package\.json, which eject never changes/);
+    }
+    assert.equal(await exists(".calavera/artifact-transaction.json"), true);
+  });
+});
+
+test("an approved run marks no removed item as a kept record, and --yes says that it recovered a transaction", async () => {
+  await inProject(async (root) => {
+    await initProject();
+    await writeFile(".agents/skills/calavera/SKILL.md", "# Edited\n");
+    const { result } = await ejectInteractively([], true);
+    for (const item of result.items) assert.equal("keptRecord" in item, false, item.path);
+
+    await initProject();
+    await write(
+      ".calavera/artifact-transaction.json",
+      `${JSON.stringify({ schemaVersion: 1, transactionRoot: join(root, ".calavera/.transactions/t"), operations: [] })}\n`,
+    );
+    const yes = await eject(["--yes"]);
+    assert.match(
+      yes.message,
+      /^eject recovered the pending artifact transaction first, as every artifacts command does\. Removed \d+ items; --yes left 1 item/,
+    );
+  });
+});
+
+test("a failed run also says what --yes left", async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip("root ignores folder permissions");
+    return;
+  }
+  await inProject(async () => {
+    await initProject();
+    await chmod(".agents/skills", 0o555);
+    try {
+      const result = await eject(["--yes"]);
+      assert.equal(result.status, "failed");
+      assert.match(
+        result.message,
+        /^Removed \d+ items; --yes left 1 item for an interactive approval\. 2 items could not be removed; each one says why below\. Fix the cause, then run eject again\. Run eject in a terminal to review and approve what is left\.$/,
+      );
+    } finally {
+      await chmod(".agents/skills", 0o755);
+    }
   });
 });

@@ -34,7 +34,7 @@ Treat files listed by `dry_run_apply` as Calavera-managed outputs. Do not hand-w
 
 Use `reownManagedFiles` only after the user explicitly approves treating listed Calavera-tracked files' current contents as intentional local state before dry-run/apply.
 
-When the user asks to stop Calavera managing the project and keep the tooling it installed, that is the CLI command `eject`, not an MCP tool, because it removes the Calavera MCP registration. Ask the user to run the dry run, pinned to the same explicit package version used for MCP setup: `npm create project-calavera@<version> eject -- --dry-run` for npm, `pnpm dlx create-project-calavera@<version> eject --dry-run` for pnpm, `yarn dlx create-project-calavera@<version> eject --dry-run` for Yarn, or `bunx create-project-calavera@<version> eject --dry-run` for Bun, and then the same command without `--dry-run` in their own terminal, where they approve the list it shows. Do not delete Calavera's files by hand or run `eject --yes` for them.
+When the user asks to stop Calavera managing the project and keep the tooling it installed, that is the CLI command `eject`, not an MCP tool, because it removes the Calavera MCP registration. Ask the user to run the dry run, pinned to a release that has `eject`, such as `latest`, because the version pinned for MCP setup may predate it: `npm create project-calavera@latest eject -- --dry-run` for npm, `pnpm dlx create-project-calavera@latest eject --dry-run` for pnpm, `yarn dlx create-project-calavera@latest eject --dry-run` for Yarn, or `bunx create-project-calavera@latest eject --dry-run` for Bun, and then the same command without `--dry-run` in their own terminal, where they approve the list it shows. Do not delete Calavera's files by hand or run `eject --yes` for them.
 
 ## MCP Setup
 
@@ -71,7 +71,7 @@ If the MCP server cannot be registered, use the hosted Calavera Web UI to compos
 
 https://calavera.schalkneethling.com
 
-After a recipe exists, preview local changes with the package-manager-specific apply dry-run command, pinned to the same explicit package version used for MCP setup: `npm create project-calavera@<version> apply -- --dry-run` for npm, `pnpm dlx create-project-calavera@<version> apply --dry-run` for pnpm, `yarn dlx create-project-calavera@<version> apply --dry-run` for Yarn, or `bunx create-project-calavera@<version> apply --dry-run` for Bun. Ask the user to approve the preview before running the matching apply command.
+After a recipe exists, preview local changes with the package-manager-specific apply dry-run command, pinned to a release that has `eject`, such as `latest`, because the version pinned for MCP setup may predate it: `npm create project-calavera@<version> apply -- --dry-run` for npm, `pnpm dlx create-project-calavera@<version> apply --dry-run` for pnpm, `yarn dlx create-project-calavera@<version> apply --dry-run` for Yarn, or `bunx create-project-calavera@<version> apply --dry-run` for Bun. Ask the user to approve the preview before running the matching apply command.
 
 ## User Prompt
 
