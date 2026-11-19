@@ -23,6 +23,7 @@ import {
   readFile,
   readdir,
   readlink,
+  realpath,
   rename,
   rm,
   rmdir,
@@ -108,10 +109,10 @@ const CANNOT_DETECT = "edits cannot be detected";
  * @property {string[]} [removedLines] For an edit, the lines it removes, markers excluded.
  * @property {string} [contents] For an edit, the file's text afterward.
  * @property {string} [seen] What the item's check read when the plan was made. For every kind
- *   but the base skill, it starts with the entry identity from `entryIdentity`: a file, a folder,
- *   or a symbolic link and its target. The `artifact-cache` block and the guidance kinds add the
- *   file's text, through `textSeen`, and a package folder that a lock entry names adds its payload
- *   hash. The base skill records its installed hash and the entries that hash does not cover.
+ *   but the base skill, it holds the entry identity from `entryIdentity`: a file, a folder, or a
+ *   symbolic link, its target, and the path its chain of links resolves to. The `artifact-cache`
+ *   block and the guidance kinds record the identity and the file's text as a JSON array, through
+ *   `textSeen`, and a package folder that a lock entry names adds its payload hash. The base skill records its installed hash and the entries that hash does not cover.
  *   `executeEject` reads it again and removes nothing when any item changed since the plan.
  *
  * @typedef {object} EjectOutcome What `executeEject` did with each item it was given.
@@ -179,8 +180,13 @@ const LINK_PREFIX = "link:";
 async function entryIdentity(path) {
   const stats = await lstat(path);
   // The target is JSON-encoded, so it holds no raw line break and can never run into a value that
-  // follows it in a `seen` string.
-  if (stats.isSymbolicLink()) return `${LINK_PREFIX}${JSON.stringify(await readlink(path))}`;
+  // follows it in a `seen` string. The path the whole chain of links resolves to is recorded too,
+  // so retargeting a link further along the chain also counts as a change; a chain that leads
+  // nowhere records null.
+  if (stats.isSymbolicLink()) {
+    const resolved = await realpath(path).catch(() => null);
+    return `${LINK_PREFIX}${JSON.stringify([await readlink(path), resolved])}`;
+  }
   if (stats.isDirectory()) return "folder";
   return stats.isFile() ? "file" : "other";
 }
@@ -545,6 +551,18 @@ function guidanceFileItem(kind, path, { identity, text }, written, editedReason)
 const MARKER_ONLY_REASON = `${AGENT_BOOTSTRAP_GUIDANCE_FILE} holds guidance marked ${AGENT_BOOTSTRAP_MARKER}, such as guidance merged by hand from ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE}. eject cannot tell where it ends, so it leaves it; remove it yourself if you no longer want it.`;
 
 /**
+ * Whether `path`, followed through any symbolic link, stays inside the project.
+ *
+ * @param {string} path
+ */
+async function insideProject(path) {
+  return assertWorkspacePath(path, process.cwd(), "Eject path").then(
+    () => true,
+    () => false,
+  );
+}
+
+/**
  * The text of `AGENTS.md` once the guidance section is removed: the markers, the lines between
  * them, and the blank line Calavera added before the start marker go, and every other line stays.
  *
@@ -552,10 +570,12 @@ const MARKER_ONLY_REASON = `${AGENT_BOOTSTRAP_GUIDANCE_FILE} holds guidance mark
  */
 function withoutGuidanceSection(found) {
   const before = found.lines.slice(0, found.startIndex);
-  // The bootstrap appends the section after one blank line (`upsertAgentBootstrapGuidanceSection`
-  // in index.js).
-  if (before.at(-1)?.replace(/\r$/, "") === "") before.pop();
   const after = found.lines.slice(found.endIndex + 1);
+  // The bootstrap appends the section after one blank line (`upsertAgentBootstrapGuidanceSection`
+  // in index.js). That line goes only when a blank line or the end of the file follows the
+  // section, so text the person wrote right after the end marker stays a separate paragraph.
+  const blank = (/** @type {string | undefined} */ line) => line?.replace(/\r$/, "") === "";
+  if (blank(before.at(-1)) && (after.length === 0 || blank(after[0]))) before.pop();
   // When the end marker is the file's last line and has no line break, the line before the
   // section still owns the line break that separated the two, so it keeps it. With no line
   // before the section, the pushed line joins to the same empty text.
@@ -624,7 +644,15 @@ async function planAgentsGuidance(guidance) {
   const items = [];
   /** @type {EjectReport[]} */
   const reported = [];
-  if (section === guidance.section.replaceAll("\r\n", "\n").trimEnd()) {
+  const unedited = section === guidance.section.replaceAll("\r\n", "\n").trimEnd();
+  if (unedited && !(await insideProject(path))) {
+    // The edit would write through a link to a file outside the project, which eject never
+    // changes. The file belongs to the person, so it is kept and reported, not a hard stop.
+    reported.push({
+      path,
+      reason: `${path} leads to a file outside the project, which eject never changes, so it leaves the Calavera guidance section there. Remove the section, both markers included, yourself if you no longer want it.`,
+    });
+  } else if (unedited) {
     items.push({
       kind: "guidance-section",
       path,
@@ -1048,10 +1076,11 @@ async function currentlySeen(item) {
     case "mcp-notes": {
       // The plan read the text through a link too, so the text is read whenever the path leads
       // to a file. A path that no longer leads to a file is reported as changed, not read.
-      const entry = /** @type {{ identity: string, text: string | undefined }} */ (
-        await readTextEntry(item.path)
-      );
-      return textSeen(entry.identity, entry.text);
+      const entry = await readTextEntry(item.path);
+      // Gone since `alreadyGone` looked: a value no plan records, so it counts as changed.
+      return entry === undefined
+        ? textSeen("missing", undefined)
+        : textSeen(entry.identity, entry.text);
     }
     case "base-skill":
       return (await baseSkillCheck()).seen;

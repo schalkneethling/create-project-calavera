@@ -356,6 +356,13 @@ test("a section at the start of AGENTS.md is removed with nothing before it", as
   });
 });
 
+test("a section followed directly by the person's text keeps the blank line between their paragraphs", async () => {
+  await inProject(async () => {
+    await write("AGENTS.md", `Para A.\n\n${guidance.section}Para B.\n`);
+    assert.equal(item(await plan(), "AGENTS.md").contents, "Para A.\n\nPara B.\n");
+  });
+});
+
 test("a section without a final line break is removed and the text before it keeps its own", async () => {
   await inProject(async () => {
     await write("AGENTS.md", withSection().trimEnd());
@@ -577,6 +584,38 @@ test("a broken link in place of a Calavera guidance file is reported and left", 
     const found = await plan();
     assert.equal(named(found, "AGENTS.calavera.md"), false);
     assert.match(report(found, "AGENTS.calavera.md").reason, /not a file/);
+  });
+});
+
+test("a section in an AGENTS.md that links out of the project is reported, and the rest of eject goes on", async () => {
+  await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+  await writeFile(join(outside.path, "AGENTS.md"), withSection());
+  await inProject(async () => {
+    await symlink(join(outside.path, "AGENTS.md"), "AGENTS.md");
+    await write("AGENTS.calavera.md", guidance.fallback);
+    const found = await plan();
+    assert.equal(named(found, "AGENTS.md"), false);
+    assert.match(report(found, "AGENTS.md").reason, /outside the project/);
+    assert.equal(item(found, "AGENTS.calavera.md").edits, "unedited");
+    await ejectApproved();
+  });
+  assert.equal(await readFile(join(outside.path, "AGENTS.md"), "utf8"), withSection());
+});
+
+test("a link in the middle of a chain retargeted after the plan stops the edit", async () => {
+  await inProject(async () => {
+    await write("one/AGENTS.md", withSection());
+    await write("two/AGENTS.md", withSection());
+    await symlink("one/AGENTS.md", "hop.md");
+    await symlink("hop.md", "AGENTS.md");
+    const found = await plan();
+    await rm("hop.md");
+    await symlink("two/AGENTS.md", "hop.md");
+    await assert.rejects(
+      executeEject(selectEjectItems(found, { assumeYes: true }).remove),
+      /AGENTS\.md changed since eject listed/,
+    );
+    assert.equal(await readFile("two/AGENTS.md", "utf8"), withSection());
   });
 });
 
