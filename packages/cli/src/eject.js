@@ -10,8 +10,8 @@
 // `.agents/calavera/mcp.md`. It also plans the `calavera` MCP entry in the four harness files the
 // bootstrap writes, checked against the launch command for each package manager, and a
 // `.coderabbit.yaml` that Calavera created whole, checked against the texts every release wrote.
-// The command is registered last (#678), so nothing offers `eject` before it removes the whole
-// footprint.
+// `ejectProject` in `index.js` registers the command and decides how the person approves the
+// list (#678).
 //
 // The plan looks for each item directly, not only through the state file, because a project whose
 // state file is gone still holds the rest of the footprint (ADR-0017, Decision 2). Nothing here
@@ -1699,4 +1699,81 @@ export async function executeEject(items) {
     await removeIfEmpty(MCP_NOTES_ROOT);
   }
   return outcome;
+}
+
+/**
+ * Whether a `package.json` script runs Calavera: either of the package's two executables,
+ * `create-project-calavera` and `create-project-calavera-mcp`, directly or through a package
+ * runner such as `npx` or `pnpm dlx`, or the package through `npm create`, `npm init`, `yarn
+ * create`, `pnpm create`, or `bun create`, which run `create-project-calavera`. `eject` reports such
+ * a script and never changes it (ADR-0017, Decision 4). A scoped package of the same name, such as
+ * `@someone/create-project-calavera`, is another package, and a longer name is another file.
+ *
+ * @param {string} value The script's command.
+ */
+export function scriptRunsCalavera(value) {
+  return CALAVERA_EXECUTABLE.test(value) || CALAVERA_CREATE.test(value);
+}
+
+// Not after a name character or a scope, and not followed by a longer name or a file extension.
+const CALAVERA_EXECUTABLE =
+  /(?<![\w.@-])(?<!@[\w.-]+\/)create-project-calavera(?:-mcp)?(?![\w-]|\.\w)/;
+const CALAVERA_CREATE = /(?<![\w.@/-])(?:create|init)\s+project-calavera(?![\w-]|\.\w)/;
+
+/** The executable every MCP registration Calavera writes launches, in each harness file. */
+const MCP_EXECUTABLE = "create-project-calavera-mcp";
+
+/**
+ * The footprint paths of ADR-0017 Decision 2 that exist in `directory`, relative to it, for a
+ * directory `eject` does not run in: the repository root seen from a workspace package, or a
+ * workspace package seen from the root (Decision 8). `eject` only names them, so the person can
+ * run `eject` there too; it removes nothing there, so this check needs no record. A path counts
+ * when it is one only Calavera writes, or when the file holds what Calavera writes into it: a
+ * guidance marker in `AGENTS.md`, the `artifact-cache` block marker in `.gitignore`, the MCP
+ * executable in a harness file, and Calavera's first line in `.coderabbit.yaml`.
+ *
+ * @param {string} directory
+ * @returns {Promise<string[]>}
+ */
+export async function footprintIn(directory) {
+  /** @param {string} path */
+  const at = (path) => join(directory, path);
+  /** @param {string} path */
+  const textOf = (path) => readFile(at(path), "utf8").catch(() => undefined);
+  /** @type {string[]} */
+  const found = [];
+  for (const path of [
+    STATE_PATH,
+    LOCK_PATH,
+    CACHE_ROOT,
+    PACKAGE_PATH,
+    STAGING_ROOT,
+    TRANSACTION_ROOT,
+    TRANSACTION_PATH,
+    CONFIG_FILE,
+    BASE_SKILL_PATH,
+    AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+    AGENT_BOOTSTRAP_MCP_FILE,
+  ]) {
+    if (await present(at(path))) found.push(path);
+  }
+  const guidanceText = await textOf(AGENT_BOOTSTRAP_GUIDANCE_FILE);
+  if (
+    guidanceText?.includes(AGENT_BOOTSTRAP_MARKER) ||
+    guidanceText?.includes(AGENT_BOOTSTRAP_SECTION_START)
+  ) {
+    found.push(AGENT_BOOTSTRAP_GUIDANCE_FILE);
+  }
+  if ((await textOf(GITIGNORE_PATH))?.includes(`calavera:${ARTIFACT_CACHE_BLOCK}:`)) {
+    found.push(GITIGNORE_PATH);
+  }
+  for (const harness of MCP_HARNESSES) {
+    const path = /** @type {string} */ (projectMcpConfigPath(harness));
+    if ((await textOf(path))?.includes(MCP_EXECUTABLE)) found.push(path);
+  }
+  const codeRabbit = await textOf(CODE_RABBIT_CONFIG_PATH);
+  if (codeRabbit?.split("\n", 1)[0]?.replace(/\r$/, "") === CODE_RABBIT_CONFIG_FIRST_LINE) {
+    found.push(CODE_RABBIT_CONFIG_PATH);
+  }
+  return found;
 }

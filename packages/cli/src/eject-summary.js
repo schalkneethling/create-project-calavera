@@ -1,0 +1,157 @@
+// @ts-check
+// The human-readable summary of `eject --dry-run`, the list `eject` shows before it asks for
+// approval, and what `eject` reports when it is done (#678, ADR-0017 Decisions 4, 5, and 8). It
+// follows the layout `clean` uses (#331): a headline, then labeled groups, with each item listed
+// once. An item's details sit under it: why it is edited or unknown, what the change does besides
+// removing Calavera's text, and, for an edit, the exact lines it removes and the text the file
+// holds afterward. Quoted values are the exact text, as `clean` and apply quote a script's command.
+// The `--json` result carries the same items without these lines.
+import { posix } from "node:path";
+
+import { withoutOwnPath } from "./clean-summary.js";
+import { DETAIL, ITEM, info, pushGroup } from "./summary-lines.js";
+import { quoteScriptValue } from "./utils/text.js";
+
+/**
+ * @typedef {import("./index.js").EjectResult} EjectResult
+ * @typedef {import("./index.js").EjectResultItem} EjectResultItem
+ * @typedef {import("./summary-lines.js").SummaryLine} SummaryLine
+ */
+
+/** The lines under an edit that show text: each one quoted, one level deeper than the label. */
+const TEXT = `${DETAIL}  `;
+
+/**
+ * The lines `eject` prints for `result`, in order.
+ *
+ * @param {EjectResult} result
+ * @returns {SummaryLine[]}
+ */
+export function ejectSummaryLines(result) {
+  /** @type {SummaryLine[]} */
+  const lines = [info(result.message)];
+  /** @param {EjectResultItem["outcome"]} outcome */
+  const withOutcome = (outcome) => result.items.filter((item) => item.outcome === outcome);
+
+  pushGroup(lines, "Would remove", withOutcome("planned").flatMap(itemLines));
+  pushGroup(lines, "Removed", withOutcome("removed").flatMap(itemLines));
+  pushGroup(lines, "Left for an interactive approval", withOutcome("left").flatMap(itemLines));
+  pushGroup(
+    lines,
+    "Failed",
+    withOutcome("failed").flatMap((item) => [
+      info(`${ITEM}${item.path}: ${withoutOwnPath(item.error ?? "", item.path)}`),
+      info(`${DETAIL}Fix the cause, then run eject again.`),
+    ]),
+  );
+  pushGroup(
+    lines,
+    "Skipped",
+    withOutcome("skipped").map((item) =>
+      info(`${ITEM}${item.path}: ${withoutOwnPath(item.error ?? "", item.path)}`),
+    ),
+  );
+  pushGroup(
+    lines,
+    "Kept",
+    result.kept.map((path) =>
+      info(`${ITEM}${path}: eject does not name it, so it keeps it and the folder that holds it.`),
+    ),
+  );
+  pushGroup(lines, "Left for you", reportedLines(result.reported));
+  pushGroup(lines, "Left in package.json", packageJsonLines(result.packageJson));
+  pushGroup(
+    lines,
+    "Elsewhere in the workspace",
+    result.elsewhere.map(({ directory, paths }) =>
+      info(
+        `${ITEM}${directory} also holds Calavera's footprint: ${paths.map((path) => posix.join(directory, path)).join(", ")}. Run eject there too if you want Calavera gone from it.`,
+      ),
+    ),
+  );
+  return lines;
+}
+
+/**
+ * What an item's check found, in words, and whether `--yes` leaves it.
+ *
+ * @param {EjectResultItem} item
+ */
+function editsLabel({ kind, edits, matchesRecords, outcome }) {
+  const found =
+    edits === "not-checked"
+      ? kind === "state" || kind === "lock"
+        ? "Calavera's own record"
+        : "Calavera's own files"
+      : edits === "cannot-detect"
+        ? "edits cannot be detected"
+        : edits;
+  // Only a list that comes before the removal says what --yes would do; a run that is done says
+  // what it did under its own heading.
+  return outcome === "planned" && !matchesRecords ? `${found}; --yes leaves it` : found;
+}
+
+/**
+ * @param {EjectResultItem} item
+ * @returns {SummaryLine[]}
+ */
+function itemLines(item) {
+  /** @type {SummaryLine[]} */
+  const lines = [info(`${ITEM}${item.path} (${editsLabel(item)})`)];
+  if (item.action === "edit") {
+    lines.push(
+      info(`${DETAIL}eject removes only Calavera's text from this file and keeps the file.`),
+    );
+  }
+  if (item.reason) lines.push(info(`${DETAIL}${withoutOwnPath(item.reason, item.path)}`));
+  if (item.note) lines.push(info(`${DETAIL}${withoutOwnPath(item.note, item.path)}`));
+  if (item.removedLines) {
+    lines.push(info(`${DETAIL}Removes:`), ...item.removedLines.map(quoted));
+  }
+  if (item.contents !== undefined) {
+    const text = item.contents.endsWith("\n") ? item.contents.slice(0, -1) : item.contents;
+    lines.push(info(`${DETAIL}Afterward:`), ...text.split("\n").map(quoted));
+  }
+  return lines;
+}
+
+/** @param {string} line */
+const quoted = (line) => info(`${TEXT}${quoteScriptValue(line)}`);
+
+/**
+ * Each reported path once, with every reason `eject` reports for it under it.
+ *
+ * @param {EjectResult["reported"]} reported
+ * @returns {SummaryLine[]}
+ */
+function reportedLines(reported) {
+  /** @type {Map<string, string[]>} */
+  const byPath = new Map();
+  for (const { path, reason } of reported) {
+    byPath.set(path, [...(byPath.get(path) ?? []), reason]);
+  }
+  return [...byPath].flatMap(([path, reasons]) => [
+    info(`${ITEM}${path}`),
+    ...reasons.map((reason) => info(`${DETAIL}${withoutOwnPath(reason, path)}`)),
+  ]);
+}
+
+/**
+ * @param {EjectResult["packageJson"]} packageJson
+ * @returns {SummaryLine[]}
+ */
+function packageJsonLines({ scripts, devDependency }) {
+  return [
+    ...scripts.map(({ name, value }) =>
+      info(
+        `${ITEM}The script ${quoteScriptValue(name)} runs Calavera: ${quoteScriptValue(value)}. It stops working once Calavera is gone, so change or remove it yourself.`,
+      ),
+    ),
+    ...(devDependency
+      ? [
+          info(`${ITEM}The development dependency ${devDependency.name} stays. To remove it, run:`),
+          info(`${DETAIL}${devDependency.removeCommand}`),
+        ]
+      : []),
+  ];
+}

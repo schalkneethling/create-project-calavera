@@ -112,7 +112,7 @@ function itemLine({ type, path, reason = "" }, dryRun) {
  * @param {string} reason
  * @param {string} path
  */
-function withoutOwnPath(reason, path) {
+export function withoutOwnPath(reason, path) {
   let text = "";
   let from = 0;
   for (let index = reason.indexOf(path); index >= 0; index = reason.indexOf(path, index + 1)) {

@@ -2,8 +2,7 @@
 // for the items Calavera records itself (ADR-0017). It covers the state, the recipe, the artifact
 // lock and package folders, the cache and the transient folders, the base Calavera skill, and the
 // `artifact-cache` block in `.gitignore`, with the write order, the recovery of a pending artifact
-// transaction, and the records `--yes` keeps. The command is registered in layer 5, so these tests
-// call the planner directly.
+// transaction, and the records `--yes` keeps. These tests call the planner directly; `eject-command.test.mjs` covers the command.
 import assert from "node:assert/strict";
 import {
   cp,

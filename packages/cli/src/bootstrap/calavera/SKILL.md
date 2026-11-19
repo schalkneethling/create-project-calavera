@@ -34,6 +34,8 @@ Treat files listed by `dry_run_apply` as Calavera-managed outputs. Do not hand-w
 
 Use `reownManagedFiles` only after the user explicitly approves treating listed Calavera-tracked files' current contents as intentional local state before dry-run/apply.
 
+When the user asks to stop Calavera managing the project and keep the tooling it installed, that is the CLI command `eject`, not an MCP tool, because it removes the Calavera MCP registration. Ask the user to run `npm create project-calavera eject -- --dry-run` (or `pnpm dlx create-project-calavera eject --dry-run`, `yarn dlx create-project-calavera eject --dry-run`, or `bunx create-project-calavera eject --dry-run`), and then the same command without `--dry-run` in their own terminal, where they approve the list it shows. Do not delete Calavera's files by hand or run `eject --yes` for them.
+
 ## MCP Setup
 
 If the Calavera MCP tools are not available, help the user register this server from the project root. Check the target project's `package.json` first and use the package manager declared by `packageManager` or `devEngines.packageManager`.

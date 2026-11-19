@@ -3,8 +3,7 @@
 // harness files the bootstrap writes, `.mcp.json`, `.cursor/mcp.json`, `opencode.json`, and
 // `.codex/config.toml`. It also covers the owner's decision of 2026-11-19 on #678 that a
 // `.gitignore` that links out of the project keeps its `artifact-cache` block and is reported,
-// rather than stopping the plan. The command is registered in layer 5, so these tests call the
-// planner directly.
+// rather than stopping the plan. These tests call the planner directly; `eject-command.test.mjs` covers the command.
 import assert from "node:assert/strict";
 import {
   lstat,
