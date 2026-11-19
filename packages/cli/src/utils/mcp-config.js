@@ -193,15 +193,11 @@ export function createCodexMcpTomlBlock(launchCommand) {
 }
 
 /**
- * The lines of the TOML table that starts with `header`: from the header to the line before the
- * next header, or to the end of the text. `eject` reads the Codex table through it too, so both
- * find the table the same way (ADR-0017, Decision 2).
- *
  * @param {string} contents
  * @param {string} header
  * @returns {{ start: number, end: number } | undefined}
  */
-export function findTomlTableRange(contents, header) {
+function findTomlTableRange(contents, header) {
   const lines = contents.split("\n");
   const start = lines.findIndex((line) => line.trim() === header);
 

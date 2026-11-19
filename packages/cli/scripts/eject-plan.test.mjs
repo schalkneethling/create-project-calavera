@@ -1176,7 +1176,7 @@ test("an approved run removes a base skill that links out of the project, and on
 
 // Owner decision of 2026-11-19 on #678: the block in a `.gitignore` that leads out of the project
 // is kept and reported, rather than stopping the plan.
-test("an edit never writes through a symbolic link that leads out of the project", async () => {
+test("a .gitignore that leads out of the project is never edited: its block is kept and reported", async () => {
   await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
   await inProject(async () => {
     await writeFootprint({ packageFolder: false });

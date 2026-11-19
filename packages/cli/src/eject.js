@@ -65,12 +65,12 @@ import { findEarlierGuidance, normalizePinnedVersion } from "./utils/earlier-gui
 import { isPlainObject } from "./utils/guards.js";
 import { rewriteLossProblem, toJSONText, writeJSON } from "./utils/json-rewrite.js";
 import { findBlock, findMarkedBlock } from "./utils/marked-block.js";
+import { tomlHeader } from "./utils/toml-header.js";
 import {
   OPENCODE_CONFIG_SCHEMA,
   createCodexMcpTomlBlock,
   createMcpServersJsonConfig,
   createOpenCodeMcpJsonConfig,
-  findTomlTableRange,
   projectMcpConfigPath,
 } from "./utils/mcp-config.js";
 
@@ -115,9 +115,11 @@ const CANNOT_DETECT = "edits cannot be detected";
  *   found. `not-checked` is Calavera's own record, cache, or transient folder, which has no check.
  * @property {boolean} matchesRecords Whether the item matches Calavera's records exactly, so
  *   `--yes` may remove it without an interactive approval (ADR-0017, Decision 5).
- * @property {string} [reason] Why the item is edited, or why its edits cannot be detected. For an
- *   unedited MCP entry in a JSON harness file, what the rewrite changes besides the entry: the
- *   formatter's layout of the rest of the file.
+ * @property {string} [reason] Why the item is edited, or why its edits cannot be detected.
+ * @property {string} [note] What the change does besides removing Calavera's text, which the
+ *   person approves with it: for an MCP entry in a JSON harness file, that the formatter also
+ *   changes the layout of the rest of the file. An item with a note never matches Calavera's
+ *   records, so `--yes` leaves it.
  * @property {{ path: string, edits: "unedited" | "edited" }} [payload] For a package folder that a
  *   lock entry names, the payload checked against the entry's `payloadHash`.
  * @property {string[]} [removedLines] For an edit, the lines it removes, markers excluded. For a
@@ -812,7 +814,7 @@ function mcpEntryOutside(path) {
     reported: [
       {
         path,
-        reason: `${path} leads to a file outside the project, which eject never changes, so it leaves the calavera MCP entry there. Remove the entry yourself if you no longer want it.`,
+        reason: `${path} leads to a file outside the project, which eject never changes, so it leaves any calavera MCP entry the file may hold. Remove the entry yourself if you no longer want it.`,
       },
     ],
   };
@@ -867,10 +869,13 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   try {
     config = JSON.parse(text);
   } catch (error) {
+    // A text without the key's name, written plainly or with a JSON escape, holds no entry, so a
+    // harness file Calavera never registered in, such as a JSONC `opencode.json`, is no stop.
+    if (!text.includes("calavera") && !text.includes("\\u")) return NO_MCP_ENTRY;
     // eject never changes a file outside the project, so it has no need to read it.
     if (!inside) return mcpEntryOutside(path);
     throw new Error(
-      `eject stopped before removing anything: ${path} cannot be parsed as JSON (${messageOf(error)}). Correct the file, or remove the calavera MCP entry from it yourself, then run eject again.`,
+      `eject stopped before removing anything: ${path} cannot be parsed as JSON (${messageOf(error)}), so eject cannot check its calavera MCP entry. Correct the file, or remove the calavera MCP entry from it yourself, then run eject again.`,
       { cause: error },
     );
   }
@@ -928,7 +933,10 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
     seen: textSeen(identity, text),
   };
   if ((await writeJSON(config, path, formatter)) !== text) {
-    item.reason = `eject rewrites the whole of ${path} through the project's formatter (${formatter.description}), which also changes the layout of the rest of the file; the text afterward shows the result.`;
+    // The rewrite changes text Calavera did not write, which only an approval of the text
+    // afterward covers, so `--yes` leaves it (ADR-0017, Decision 5).
+    item.matchesRecords = false;
+    item.note = `eject rewrites the whole of ${path} through the project's formatter (${formatter.description}), which also changes the layout of the rest of the file; the text afterward shows the result.`;
   }
   return { items: [item], reported: [] };
 }
@@ -939,11 +947,16 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
  * table runs from its header to its last line that is neither blank nor a comment before the next
  * header, so a comment that introduces the next table stays with it. The table is unedited when
  * its text equals the table Calavera writes for some package manager, with the pinned version
- * normalized (owner decision of 2026-11-17). Any other table is kept and reported as edited: a
- * comment inside it, another key, another layout, or a subtable such as
- * `[mcp_servers.calavera.env]`, which removing the table alone would leave behind. Calavera has no
- * TOML parser, so the only parse error `eject` can see is the table defined twice, which TOML does
- * not allow, and that is a hard stop (ADR-0017, Decision 7).
+ * normalized (owner decision of 2026-11-17). Any other table that names `mcp_servers.calavera` is
+ * kept and reported as edited: another spelling of the header, a comment inside the table, another
+ * key, another layout, or a subtable such as `[mcp_servers.calavera.env]`, which removing the table
+ * alone would leave behind.
+ *
+ * Calavera has no TOML parser, so `eject` reads the file as lines. The one parse error it can see
+ * is the table defined twice, which TOML does not allow, and that is a hard stop (ADR-0017,
+ * Decision 7). A multi-line string can hold lines that look like headers, so in a file that has
+ * one, the table is listed as "edits cannot be detected" and needs an interactive approval of the
+ * text afterward.
  *
  * @param {string} path
  * @param {string[]} expected The table Calavera writes, for each package manager.
@@ -954,52 +967,60 @@ async function planCodexMcpEntry(path, expected) {
   if (entry?.text === undefined) return NO_MCP_ENTRY;
   const { identity, text } = entry;
   const lines = text.split("\n");
-  const bare = lines.map((line) => line.replace(/\r$/, "").trim());
-  const headers = bare.filter((line) => line === CODEX_TABLE_HEADER).length;
-  if (headers === 0) return NO_MCP_ENTRY;
+  const bare = lines.map((line) => line.replace(/\r$/, ""));
+  const headers = bare.map(tomlHeader);
+  // Every header that names `mcp_servers.calavera` or a table under it.
+  const related = headers.flatMap((header, index) =>
+    header?.keys[0] === "mcp_servers" && header.keys[1] === "calavera" ? [{ header, index }] : [],
+  );
+  if (related.length === 0) return NO_MCP_ENTRY;
   if (!(await insideProject(path))) return mcpEntryOutside(path);
-  if (headers > 1) {
+  const defining = related.filter(({ header }) => header.keys.length === 2 && !header.array);
+  if (defining.length > 1) {
     throw new Error(
       `eject stopped before removing anything: ${path} defines ${CODEX_TABLE_HEADER} more than once, which TOML does not allow, so eject cannot tell which table is Calavera's. Keep one of them, then run eject again.`,
     );
   }
-  const { start, end: next } = /** @type {{ start: number, end: number }} */ (
-    findTomlTableRange(text, CODEX_TABLE_HEADER)
+  const edited = mcpEntryKept(
+    path,
+    `The ${CODEX_TABLE_HEADER} table in ${path} differs from the table Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
   );
+  // A subtable or an array of tables under the table makes the entry more than Calavera wrote, and
+  // removing the table alone would leave it behind. Another spelling of the header shows up in the
+  // text comparison below.
+  if (related.length !== 1 || defining.length !== 1) return edited;
+  const start = /** @type {{ index: number }} */ (defining[0]).index;
+  const following = headers.findIndex((header, index) => index > start && header !== undefined);
   // The header is neither blank nor a comment, so the walk stops at it at the latest.
-  let end = next - 1;
-  while (bare[end] === "" || /** @type {string} */ (bare[end]).startsWith("#")) end -= 1;
-  const table = lines.slice(start, end + 1).map((line) => line.replace(/\r$/, ""));
-  const normalized = normalizePinnedVersion(table.join("\n"))?.normalized;
-  const name = CODEX_TABLE_HEADER.slice(1, -1);
-  const subtable = bare.some(
-    (line) => line.startsWith(`[${name}.`) || line.startsWith(`[[${name}`),
-  );
+  let end = (following === -1 ? lines.length : following) - 1;
+  const blankOrComment = (/** @type {string} */ line) =>
+    line.trim() === "" || line.trim().startsWith("#");
+  while (blankOrComment(/** @type {string} */ (bare[end]))) end -= 1;
+  const table = bare.slice(start, end + 1);
   // A table that holds the placeholder normalizes to undefined, which equals no expected table.
-  const written =
-    !subtable &&
-    expected.some((block) => normalizePinnedVersion(block.trimEnd())?.normalized === normalized);
-  if (!written) {
-    return mcpEntryKept(
-      path,
-      `The ${CODEX_TABLE_HEADER} table in ${path} differs from the table Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
-    );
+  const normalized = normalizePinnedVersion(table.join("\n"))?.normalized;
+  if (
+    !expected.some((block) => normalizePinnedVersion(block.trimEnd())?.normalized === normalized)
+  ) {
+    return edited;
   }
-  return {
-    items: [
-      {
-        kind: "mcp-entry",
-        path,
-        action: "edit",
-        edits: "unedited",
-        matchesRecords: true,
-        removedLines: table,
-        contents: withoutLines(lines, start, end),
-        seen: textSeen(identity, text),
-      },
-    ],
-    reported: [],
+  /** @type {EjectItem} */
+  const item = {
+    kind: "mcp-entry",
+    path,
+    action: "edit",
+    edits: "unedited",
+    matchesRecords: true,
+    removedLines: table,
+    contents: withoutLines(lines, start, end),
+    seen: textSeen(identity, text),
   };
+  if (text.includes('"""') || text.includes("'''")) {
+    item.edits = "cannot-detect";
+    item.matchesRecords = false;
+    item.reason = `${path} holds a multi-line string, which can hold lines that look like a table, and eject reads the file as lines, not as TOML; ${CANNOT_DETECT}. Check the text afterward before you approve.`;
+  }
+  return { items: [item], reported: [] };
 }
 
 /**
@@ -1011,6 +1032,10 @@ async function planCodexMcpEntry(path, expected) {
  */
 async function planMcpEntries(guidance, loadFormatter) {
   const launches = guidance.mcpLaunchCommands;
+  /** @type {Promise<import("./utils/project-formatter.js").ProjectFormatter> | undefined} */
+  let formatter;
+  // Loaded once, and only when a JSON harness file holds an entry to remove.
+  const loadOnce = () => (formatter ??= loadFormatter());
   const parts = [];
   for (const harness of MCP_HARNESSES) {
     const path = /** @type {string} */ (projectMcpConfigPath(harness));
@@ -1022,7 +1047,7 @@ async function planMcpEntries(guidance, loadFormatter) {
           /** @type {{ mcp: Record<string, unknown> }} */ (createOpenCodeMcpJsonConfig(launch)).mcp
             .calavera,
       );
-      parts.push(await planJsonMcpEntry(path, "mcp", expected, loadFormatter));
+      parts.push(await planJsonMcpEntry(path, "mcp", expected, loadOnce));
     } else {
       const expected = launches.map(
         (launch) =>
@@ -1030,7 +1055,7 @@ async function planMcpEntries(guidance, loadFormatter) {
             createMcpServersJsonConfig(launch)
           ).mcpServers.calavera,
       );
-      parts.push(await planJsonMcpEntry(path, "mcpServers", expected, loadFormatter));
+      parts.push(await planJsonMcpEntry(path, "mcpServers", expected, loadOnce));
     }
   }
   return {

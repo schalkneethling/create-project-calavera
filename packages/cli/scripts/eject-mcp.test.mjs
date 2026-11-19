@@ -360,12 +360,50 @@ for (const { harness, path, written } of JSON_HARNESSES) {
       await write(path, JSON.stringify(JSON.parse(written(npmLaunch)), null, 4));
       const entry = item(await plan(), path);
       assert.equal(entry.edits, "unedited");
-      assert.match(entry.reason ?? "", /formatter/);
+      assert.equal(entry.reason, undefined);
+      assert.match(entry.note ?? "", /formatter/);
       assert.equal(entry.contents, "{}\n");
     });
     await inProject(async () => {
       await write(path, written(npmLaunch));
-      assert.equal(item(await plan(), path).reason, undefined);
+      const entry = item(await plan(), path);
+      assert.equal(entry.note, undefined);
+      assert.equal(entry.matchesRecords, true);
+    });
+  });
+
+  test(`${harness}: --yes leaves an entry whose removal would change the layout of the rest of the file`, async () => {
+    await inProject(async () => {
+      const text = JSON.stringify(
+        { ...JSON.parse(written(npmLaunch)), theirs: { keep: [1, 2] } },
+        null,
+        1,
+      );
+      await write(path, text);
+      const found = await plan();
+      assert.equal(item(found, path).matchesRecords, false);
+      const { remove, leave } = selectEjectItems(found, { assumeYes: true });
+      assert.equal(
+        remove.some((candidate) => candidate.path === path),
+        false,
+      );
+      assert.ok(leave.some((candidate) => candidate.path === path));
+      await executeEject(remove);
+      assert.equal(await readFile(path, "utf8"), text);
+      // An approved run, which showed the text afterward, removes it.
+      await ejectApproved();
+      const kept = /** @type {Record<string, unknown>} */ ({ theirs: { keep: [1, 2] } });
+      if (harness === "opencode") kept.$schema = SCHEMA;
+      assert.deepEqual(JSON.parse(await readFile(path, "utf8")), kept);
+    });
+  });
+
+  test(`${harness}: a file with a comment and no calavera entry is neither a stop nor reported`, async () => {
+    await inProject(async () => {
+      await write(path, `{\n  // my servers\n  "${key}": {}\n}\n`);
+      const found = await plan();
+      assert.equal(found.nothingToDo, true);
+      assert.deepEqual(found.reported, []);
     });
   });
 
@@ -441,6 +479,7 @@ test("a JSON harness file whose top level is not an object holds no entry", asyn
 // The Codex harness file, which eject edits as text, so the person's comments and layout stay.
 const CODEX = ".codex/config.toml";
 const codexBlock = createCodexMcpTomlBlock(npmLaunch);
+const CODEX_TABLE_LINE = "[mcp_servers.calavera]";
 const MODEL = '# My settings\nmodel = "o3"\n';
 
 test("codex: the table is removed with the blank line Calavera added, and every other line stays", async () => {
@@ -629,11 +668,13 @@ test("a harness file that is a link inside the project is edited through the lin
 
 test("an unparseable harness file that links out of the project is reported, not a stop", async () => {
   await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
-  await writeFile(join(outside.path, "mcp.json"), "{ not json");
+  await writeFile(join(outside.path, "mcp.json"), '{ "mcpServers": { "calavera": ');
   await inProject(async () => {
     await symlink(join(outside.path, "mcp.json"), ".mcp.json");
     const found = await plan();
     assert.match(report(found, ".mcp.json").reason, /outside the project/);
+    // eject cannot read the file, so it does not claim that the entry is there.
+    assert.match(report(found, ".mcp.json").reason, /may hold/);
   });
 });
 
@@ -731,5 +772,112 @@ test("a .gitignore inside the project has its block planned, and nothing is repo
     const found = await plan();
     assert.equal(item(found, ".gitignore").kind, "artifact-cache-block");
     assert.deepEqual(found.reported, []);
+  });
+});
+
+for (const header of [
+  "[mcp_servers.calavera] # mine",
+  "[ mcp_servers.calavera ]",
+  '[mcp_servers."calavera"]',
+  "[mcp_servers.'calavera']",
+]) {
+  test(`codex: the table under ${header} is not the header Calavera writes, so it is kept and reported`, async () => {
+    await inProject(async () => {
+      await write(CODEX, `${MODEL}\n${codexBlock.replace(CODEX_TABLE_LINE, header)}`);
+      await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
+    });
+  });
+}
+
+for (const subtable of ['[mcp_servers."calavera".env]', "[ mcp_servers . calavera . env ]"]) {
+  test(`codex: a subtable written as ${subtable} makes the entry edited`, async () => {
+    await inProject(async () => {
+      await write(CODEX, `${codexBlock}\n${subtable}\nDEBUG = "1"\n`);
+      await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
+    });
+  });
+}
+
+test("codex: a calavera table defined twice under different spellings stops eject", async () => {
+  await inProject(async () => {
+    await write(CODEX, `[mcp_servers."calavera"]\ncommand = "mine"\n\n${codexBlock}`);
+    const before = await snapshotDirectory();
+    await assert.rejects(plan(), /defines \[mcp_servers\.calavera\] more than once/);
+    assert.deepEqual(await snapshotDirectory(), before);
+  });
+});
+
+test("codex: a next header with a comment ends the table, and the person's table stays", async () => {
+  await inProject(async () => {
+    const after = "[next] # mine\nx = 1\n";
+    await write(CODEX, `${MODEL}\n${codexBlock}${after}`);
+    const { found } = await ejectApproved();
+    assert.deepEqual(found.reported, []);
+    assert.equal(await readFile(CODEX, "utf8"), `${MODEL}\n${after}`);
+  });
+});
+
+for (const quotes of ['"""', "'''"]) {
+  test(`codex: a file with a ${quotes} multi-line string needs approval, because eject reads TOML as lines`, async () => {
+    await inProject(async () => {
+      await write(CODEX, `[other]\nnote = ${quotes}\nExample\n${quotes}\n\n${codexBlock}`);
+      const found = await plan();
+      const entry = item(found, CODEX);
+      assert.equal(entry.edits, "cannot-detect");
+      assert.equal(entry.matchesRecords, false);
+      assert.match(entry.reason ?? "", /multi-line string/);
+      assert.deepEqual(selectEjectItems(found, { assumeYes: true }).remove, []);
+    });
+  });
+}
+
+test("the formatter is loaded once, however many JSON harness files hold an entry", async () => {
+  await inProject(async () => {
+    await write(".mcp.json", json(createMcpServersJsonConfig(npmLaunch)));
+    await write(".cursor/mcp.json", json(createMcpServersJsonConfig(npmLaunch)));
+    await write("opencode.json", json(createOpenCodeMcpJsonConfig(npmLaunch)));
+    let loads = 0;
+    await plan({
+      format: async () => {
+        loads += 1;
+        return unformatted;
+      },
+    });
+    assert.equal(loads, 1);
+  });
+});
+
+test("codex: blank lines with spaces and an indented comment before the next header stay with it", async () => {
+  await inProject(async () => {
+    const after = "   \n  # The next table\n[next]\nx = 1\n";
+    await write(CODEX, `${MODEL}\n${codexBlock}${after}`);
+    const { found } = await ejectApproved();
+    assert.deepEqual(found.reported, []);
+    // The line of spaces is the person's, so the blank line Calavera added before the table stays
+    // too, as it does when their text follows the table directly.
+    assert.equal(await readFile(CODEX, "utf8"), `${MODEL}\n${after}`);
+  });
+});
+
+test("codex: a key with an array value after the table belongs to it, so the table is edited", async () => {
+  await inProject(async () => {
+    await write(CODEX, `${MODEL}\n${codexBlock}tags = ["a"]\n`);
+    await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
+  });
+});
+
+test("codex: a calavera table under another name is neither planned nor reported", async () => {
+  await inProject(async () => {
+    await write(CODEX, codexBlock.replace(CODEX_TABLE_LINE, "[other.calavera]"));
+    const found = await plan();
+    assert.equal(found.nothingToDo, true);
+    assert.deepEqual(found.reported, []);
+  });
+});
+
+test("codex: a subtable of calavera without the table itself is reported as edited", async () => {
+  await inProject(async () => {
+    await write(CODEX, '[mcp_servers.calavera.env]\nDEBUG = "1"\n');
+    await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
   });
 });
