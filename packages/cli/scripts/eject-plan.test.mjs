@@ -34,11 +34,13 @@ const CACHE_BLOCK =
 const PACKAGE_ID = "skill-project-goal";
 const PACKAGE_VERSION = "0.1.0";
 const PACKAGE_ROOT = `.calavera/packages/${PACKAGE_ID}/${PACKAGE_VERSION}`;
-// The texts the guidance is checked against (layer 2); these tests hold no guidance.
-const guidance = await agentBootstrapTexts(async () => ({
+// The texts the guidance and the MCP entries are checked against (layers 2 and 3); these tests hold
+// neither.
+const loadFormatter = async () => ({
   description: "no formatter",
-  format: async (_path, text) => text,
-}));
+  format: async (/** @type {string} */ _path, /** @type {string} */ text) => text,
+});
+const guidance = await agentBootstrapTexts(loadFormatter);
 
 /**
  * Runs `callback` inside a new temporary project.
@@ -133,7 +135,7 @@ test("a dry run lists every recorded footprint item and changes nothing", async 
     await write(".calavera/.transactions/old/file", "x\n");
     const before = await snapshotDirectory();
 
-    const plan = await planEject({ guidance, dryRun: true });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: true });
 
     assert.deepEqual(paths(plan.items), [
       ".agents/skills/calavera",
@@ -154,7 +156,7 @@ test("a dry run lists every recorded footprint item and changes nothing", async 
 test("each item says whether it matches Calavera's records, and how its edits were checked", async () => {
   await inProject(async () => {
     await writeFootprint();
-    const plan = await planEject({ guidance, dryRun: true });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: true });
 
     for (const path of [
       ".calavera/state.json",
@@ -197,7 +199,7 @@ test("an edited base skill is listed as edited, and so is one with no record", a
   await inProject(async () => {
     await writeFootprint();
     await writeFile(`${SKILL_PATH}/SKILL.md`, "# Calavera, edited\n");
-    const edited = item(await planEject({ guidance, dryRun: true }), SKILL_PATH);
+    const edited = item(await planEject({ guidance, loadFormatter, dryRun: true }), SKILL_PATH);
     assert.equal(edited.edits, "edited");
     assert.equal(edited.matchesRecords, false);
     assert.match(
@@ -218,7 +220,7 @@ test("an edited base skill is listed as edited, and so is one with no record", a
       hash: await hashAiInstall("skill", SKILL_PATH),
     });
     await writeFile(".calavera/state.json", JSON.stringify(state));
-    const unrecorded = item(await planEject({ guidance, dryRun: true }), SKILL_PATH);
+    const unrecorded = item(await planEject({ guidance, loadFormatter, dryRun: true }), SKILL_PATH);
     assert.equal(unrecorded.edits, "edited");
     assert.equal(unrecorded.matchesRecords, false);
     assert.equal(
@@ -232,7 +234,10 @@ test("the base skill is part of the footprint even when the recipe selects skill
   await inProject(async () => {
     await writeFootprint();
     await writeFile("calavera.config.json", '{ "ai": [{ "id": "skill-calavera" }] }\n');
-    assert.equal(item(await planEject({ guidance, dryRun: true }), SKILL_PATH).action, "delete");
+    assert.equal(
+      item(await planEject({ guidance, loadFormatter, dryRun: true }), SKILL_PATH).action,
+      "delete",
+    );
   });
 });
 
@@ -240,7 +245,7 @@ test("an item that is already gone is not listed", async () => {
   await inProject(async () => {
     await writeFootprint({ packageFolder: false });
     await rm(SKILL_PATH, { recursive: true, force: true });
-    const plan = await planEject({ guidance, dryRun: true });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: true });
     assert.equal(
       plan.items.some(({ path }) => path === SKILL_PATH),
       false,
@@ -251,7 +256,7 @@ test("an item that is already gone is not listed", async () => {
 test("the artifact-cache block edit removes only Calavera's lines", async () => {
   await inProject(async () => {
     await writeFootprint({ gitignore: `node_modules/\n${CACHE_BLOCK}dist/\n` });
-    const block = item(await planEject({ guidance, dryRun: true }), ".gitignore");
+    const block = item(await planEject({ guidance, loadFormatter, dryRun: true }), ".gitignore");
     assert.equal(block.action, "edit");
     assert.deepEqual(block.removedLines, [".calavera/cache/"]);
     assert.equal(block.contents, "node_modules/\ndist/\n");
@@ -264,7 +269,7 @@ test("an edited artifact-cache block, or one with no record, is listed as edited
       gitignore:
         "# calavera:artifact-cache:start\n.calavera/cache/\n*.log\n# calavera:artifact-cache:end\n",
     });
-    const block = item(await planEject({ guidance, dryRun: true }), ".gitignore");
+    const block = item(await planEject({ guidance, loadFormatter, dryRun: true }), ".gitignore");
     assert.equal(block.edits, "edited");
     assert.equal(block.matchesRecords, false);
     assert.equal(block.contents, "");
@@ -273,7 +278,7 @@ test("an edited artifact-cache block, or one with no record, is listed as edited
 
   await inProject(async () => {
     await writeFootprint({ cacheRecord: false });
-    const block = item(await planEject({ guidance, dryRun: true }), ".gitignore");
+    const block = item(await planEject({ guidance, loadFormatter, dryRun: true }), ".gitignore");
     assert.equal(block.edits, "edited");
     assert.equal(block.matchesRecords, false);
     assert.equal(
@@ -290,7 +295,7 @@ test("a broken artifact-cache marker stops eject before it writes anything", asy
     });
     const before = await snapshotDirectory();
     await assert.rejects(
-      planEject({ guidance, dryRun: false }),
+      planEject({ guidance, loadFormatter, dryRun: false }),
       /eject stopped before removing anything: \.gitignore: the Calavera block for artifact-cache has a start marker without an end marker.*run eject again\.$/s,
     );
     assert.deepEqual(await snapshotDirectory(), before);
@@ -300,7 +305,7 @@ test("a broken artifact-cache marker stops eject before it writes anything", asy
 test("a cache with no block, and a block with no cache, are each handled alone", async () => {
   await inProject(async () => {
     await writeFootprint({ gitignore: "node_modules/\n" });
-    const plan = await planEject({ guidance, dryRun: true });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: true });
     assert.equal(
       plan.items.some(({ path }) => path === ".gitignore"),
       false,
@@ -311,7 +316,7 @@ test("a cache with no block, and a block with no cache, are each handled alone",
   await inProject(async () => {
     await writeFootprint();
     await rm(".calavera/cache", { recursive: true, force: true });
-    const plan = await planEject({ guidance, dryRun: true });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: true });
     assert.equal(item(plan, ".gitignore").action, "edit");
   });
 });
@@ -321,7 +326,7 @@ test("a package folder whose payload was edited lists the payload as edited", as
     await writeFootprint();
     const payload = /** @type {{ payload: string }} */ (artifactForId(PACKAGE_ID)).payload;
     await writeFile(`${PACKAGE_ROOT}/${payload}/SKILL.md`, "# Edited\n");
-    const folder = item(await planEject({ guidance, dryRun: true }), PACKAGE_ROOT);
+    const folder = item(await planEject({ guidance, loadFormatter, dryRun: true }), PACKAGE_ROOT);
     assert.equal(folder.payload?.edits, "edited");
     assert.equal(folder.matchesRecords, false);
   });
@@ -338,7 +343,7 @@ test("a package folder no lock entry names, or for an artifact the catalog lacks
     const lock = JSON.parse(await readFile(".calavera/artifacts.lock.json", "utf8"));
     lock.artifacts.push({ id: "skill-retired", version: "1.0.0", payloadHash: "x" });
     await writeFile(".calavera/artifacts.lock.json", JSON.stringify(lock));
-    const plan = await planEject({ guidance, dryRun: true });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: true });
     for (const path of [
       ".calavera/packages/skill-project-goal/9.9.9",
       ".calavera/packages/skill-code-review/0.1.0",
@@ -364,7 +369,7 @@ test("a package folder no lock entry names, or for an artifact the catalog lacks
   await inProject(async () => {
     await writeFootprint();
     await rm(".calavera/artifacts.lock.json");
-    const folder = item(await planEject({ guidance, dryRun: true }), PACKAGE_ROOT);
+    const folder = item(await planEject({ guidance, loadFormatter, dryRun: true }), PACKAGE_ROOT);
     assert.equal(folder.payload, undefined);
     assert.equal(folder.edits, "cannot-detect");
   });
@@ -373,9 +378,12 @@ test("a package folder no lock entry names, or for an artifact the catalog lacks
 test("--yes removes only items that match Calavera's records, and keeps the records a left item needs", async () => {
   await inProject(async () => {
     await writeFootprint();
-    const { remove, leave } = selectEjectItems(await planEject({ guidance, dryRun: false }), {
-      assumeYes: true,
-    });
+    const { remove, leave } = selectEjectItems(
+      await planEject({ guidance, loadFormatter, dryRun: false }),
+      {
+        assumeYes: true,
+      },
+    );
     // The package folder stays, so the lock that checks it stays too.
     assert.deepEqual(paths(leave), [
       ".calavera/artifacts.lock.json",
@@ -393,9 +401,12 @@ test("--yes removes only items that match Calavera's records, and keeps the reco
   await inProject(async () => {
     await writeFootprint({ packageFolder: false });
     await writeFile(`${SKILL_PATH}/SKILL.md`, "# Edited\n");
-    const { remove, leave } = selectEjectItems(await planEject({ guidance, dryRun: false }), {
-      assumeYes: true,
-    });
+    const { remove, leave } = selectEjectItems(
+      await planEject({ guidance, loadFormatter, dryRun: false }),
+      {
+        assumeYes: true,
+      },
+    );
     // The edited skill stays, so the state that records its hash stays too; the lock checks no
     // package folder, so it goes.
     assert.deepEqual(
@@ -410,9 +421,12 @@ test("--yes removes only items that match Calavera's records, and keeps the reco
       packageFolder: false,
       gitignore: "# calavera:artifact-cache:start\nedited/\n# calavera:artifact-cache:end\n",
     });
-    const { leave } = selectEjectItems(await planEject({ guidance, dryRun: false }), {
-      assumeYes: true,
-    });
+    const { leave } = selectEjectItems(
+      await planEject({ guidance, loadFormatter, dryRun: false }),
+      {
+        assumeYes: true,
+      },
+    );
     assert.deepEqual(paths(leave), [".calavera/state.json", ".gitignore", "calavera.config.json"]);
   });
 });
@@ -420,7 +434,7 @@ test("--yes removes only items that match Calavera's records, and keeps the reco
 test("an approved run removes every item", async () => {
   await inProject(async () => {
     await writeFootprint();
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     const { remove, leave } = selectEjectItems(plan, { assumeYes: false });
     assert.deepEqual(leave, []);
     assert.deepEqual(paths(remove), paths(plan.items));
@@ -431,7 +445,7 @@ test("the steps run in the order ADR-0017 Decision 7 sets", async () => {
   await inProject(async () => {
     await writeFootprint();
     await write(".calavera/.transactions/old/file", "x\n");
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     const order = ejectSteps(selectEjectItems(plan, { assumeYes: false }).remove).map(
       ({ path }) => path,
     );
@@ -450,7 +464,7 @@ test("an approved run removes the footprint, keeps everything else, and a second
   await inProject(async () => {
     await writeFootprint({ gitignore: `node_modules/\n${CACHE_BLOCK}` });
     await write(".agents/skills/project-goal/SKILL.md", "# Kept\n");
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
 
     const after = await snapshotDirectory();
@@ -464,7 +478,7 @@ test("an approved run removes the footprint, keeps everything else, and a second
     ]);
     assert.equal(await readFile(".gitignore", "utf8"), "node_modules/\n");
 
-    const again = await planEject({ guidance, dryRun: true });
+    const again = await planEject({ guidance, loadFormatter, dryRun: true });
     assert.equal(again.nothingToDo, true);
     assert.deepEqual(again.items, []);
   });
@@ -474,9 +488,11 @@ test("a --yes run leaves what needs approval, and the next approved run finishes
   await inProject(async () => {
     await writeFootprint();
     await executeEject(
-      selectEjectItems(await planEject({ guidance, dryRun: false }), { assumeYes: true }).remove,
+      selectEjectItems(await planEject({ guidance, loadFormatter, dryRun: false }), {
+        assumeYes: true,
+      }).remove,
     );
-    const second = await planEject({ guidance, dryRun: true });
+    const second = await planEject({ guidance, loadFormatter, dryRun: true });
     assert.deepEqual(paths(second.items), [
       ".calavera/artifacts.lock.json",
       PACKAGE_ROOT,
@@ -502,7 +518,7 @@ test("a file in .calavera that eject does not name is kept and listed, with its 
     await writeFootprint({ packageFolder: false });
     await write(".calavera/zz-notes.md", "mine\n");
     await write(".calavera/packages/README.md", "mine\n");
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     assert.deepEqual(plan.kept, [".calavera/packages/README.md", ".calavera/zz-notes.md"]);
 
     await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
@@ -521,7 +537,7 @@ test("a symbolic link where a package folder would be is kept, not followed", as
     const link = ".calavera/packages/skill-project-goal/0.1.0";
     await mkdir(dirname(link), { recursive: true });
     await symlink(outside.path, link);
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     assert.deepEqual(plan.kept, [link]);
     await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
     assert.equal(await readFile(join(outside.path, "package.json"), "utf8"), "{}\n");
@@ -551,12 +567,12 @@ test("a pending artifact transaction stops a dry run, and a real run recovers it
     );
     const before = await snapshotDirectory();
     await assert.rejects(
-      planEject({ guidance, dryRun: true }),
+      planEject({ guidance, loadFormatter, dryRun: true }),
       /pending artifact transaction.*eject without --dry-run/s,
     );
     assert.deepEqual(await snapshotDirectory(), before);
 
-    await planEject({ guidance, dryRun: false });
+    await planEject({ guidance, loadFormatter, dryRun: false });
     const after = Object.keys(await snapshotDirectory());
     // The rollback ran: the journal is gone, and the install it described was undone.
     assert.equal(after.includes(".calavera/artifact-transaction.json"), false);
@@ -566,7 +582,7 @@ test("a pending artifact transaction stops a dry run, and a real run recovers it
 
 test("a project with no footprint has nothing to do", async () => {
   await inProject(async () => {
-    const plan = await planEject({ guidance, dryRun: true });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: true });
     assert.equal(plan.nothingToDo, true);
     assert.deepEqual(plan.items, []);
     assert.deepEqual(plan.kept, []);
@@ -580,7 +596,7 @@ test("a multi-line block that matches its record is unedited, and an empty block
       gitignore:
         "# calavera:artifact-cache:start\n.calavera/cache/\n.calavera/tmp/\n# calavera:artifact-cache:end\n",
     });
-    const block = item(await planEject({ guidance, dryRun: true }), ".gitignore");
+    const block = item(await planEject({ guidance, loadFormatter, dryRun: true }), ".gitignore");
     assert.equal(block.edits, "unedited");
     assert.deepEqual(block.removedLines, [".calavera/cache/", ".calavera/tmp/"]);
   });
@@ -589,7 +605,7 @@ test("a multi-line block that matches its record is unedited, and an empty block
     await writeFootprint({
       gitignore: "a\n# calavera:artifact-cache:start\n# calavera:artifact-cache:end\n",
     });
-    const block = item(await planEject({ guidance, dryRun: true }), ".gitignore");
+    const block = item(await planEject({ guidance, loadFormatter, dryRun: true }), ".gitignore");
     assert.deepEqual(block.removedLines, []);
     assert.equal(block.contents, "a\n");
   });
@@ -598,7 +614,10 @@ test("a multi-line block that matches its record is unedited, and an empty block
 test("the transient folders are listed as Calavera's own", async () => {
   await inProject(async () => {
     await write(".calavera/.staging/leftover/file", "x\n");
-    const staging = item(await planEject({ guidance, dryRun: true }), ".calavera/.staging");
+    const staging = item(
+      await planEject({ guidance, loadFormatter, dryRun: true }),
+      ".calavera/.staging",
+    );
     assert.equal(staging.kind, "transient");
     assert.equal(staging.matchesRecords, true);
   });
@@ -609,7 +628,7 @@ test("a record that cannot be read is treated as missing, and the plan says why"
     await writeFootprint();
     await writeFile(".calavera/state.json", "{ not json");
     await writeFile(".calavera/artifacts.lock.json", "{ not json");
-    const plan = await planEject({ guidance, dryRun: true });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: true });
     const stateReason = item(plan, ".calavera/state.json").reason ?? "";
     assert.match(
       stateReason,
@@ -629,7 +648,7 @@ test("a failed recovery stops eject, names the journal, and keeps the cause", as
   await inProject(async () => {
     await writeFootprint({ packageFolder: false });
     await write(".calavera/artifact-transaction.json", '{ "schemaVersion": 2 }\n');
-    const error = await planEject({ guidance, dryRun: false }).then(
+    const error = await planEject({ guidance, loadFormatter, dryRun: false }).then(
       () => assert.fail("eject recovered an invalid journal"),
       (/** @type {Error} */ caught) => caught,
     );
@@ -649,7 +668,10 @@ test("a footprint path that leads out of the project stops the plan", async () =
     await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
     await write(join(outside.path, "skills/calavera/SKILL.md"), "# Not the project's\n");
     await symlink(outside.path, ".agents");
-    await assert.rejects(planEject({ guidance, dryRun: true }), /Eject path must stay inside/);
+    await assert.rejects(
+      planEject({ guidance, loadFormatter, dryRun: true }),
+      /Eject path must stay inside/,
+    );
   });
 });
 
@@ -664,7 +686,9 @@ test(
       const { chmod } = await import("node:fs/promises");
       await chmod(".agents/skills", 0o000);
       try {
-        await assert.rejects(planEject({ guidance, dryRun: true }), { code: "EACCES" });
+        await assert.rejects(planEject({ guidance, loadFormatter, dryRun: true }), {
+          code: "EACCES",
+        });
       } finally {
         await chmod(".agents/skills", 0o755);
       }
@@ -682,7 +706,7 @@ test(
       await write(`${PACKAGE_ROOT}/locked/file`, "x\n");
       const { chmod, readdir } = await import("node:fs/promises");
       await chmod(`${PACKAGE_ROOT}/locked`, 0o555);
-      const plan = await planEject({ guidance, dryRun: false });
+      const plan = await planEject({ guidance, loadFormatter, dryRun: false });
       const folder = item(plan, PACKAGE_ROOT);
       try {
         const outcome = await executeEject([folder, item(plan, ".calavera/artifacts.lock.json")]);
@@ -709,7 +733,7 @@ test(
         const [holder] = await readdir(".calavera/.staging");
         await chmod(`.calavera/.staging/${holder}/package/locked`, 0o755);
       }
-      const next = await planEject({ guidance, dryRun: false });
+      const next = await planEject({ guidance, loadFormatter, dryRun: false });
       assert.equal(item(next, ".calavera/.staging").kind, "transient");
     });
   },
@@ -721,7 +745,10 @@ test("another block's record is not the artifact-cache block's record", async ()
     const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
     state.gitignoreBlocks.push({ integration: "varlock", lines: [".calavera/cache/"] });
     await writeFile(".calavera/state.json", JSON.stringify(state));
-    assert.equal(item(await planEject({ guidance, dryRun: true }), ".gitignore").edits, "edited");
+    assert.equal(
+      item(await planEject({ guidance, loadFormatter, dryRun: true }), ".gitignore").edits,
+      "edited",
+    );
   });
 });
 
@@ -732,7 +759,7 @@ test("a base skill or payload that cannot be hashed is listed as edited", async 
     await writeFile(SKILL_PATH, "not a folder\n");
     const payload = /** @type {{ payload: string }} */ (artifactForId(PACKAGE_ID)).payload;
     await rm(`${PACKAGE_ROOT}/${payload}`, { recursive: true });
-    const plan = await planEject({ guidance, dryRun: true });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: true });
     assert.match(item(plan, SKILL_PATH).reason ?? "", /installed=unreadable: /);
     assert.equal(item(plan, PACKAGE_ROOT).payload?.edits, "edited");
   });
@@ -748,7 +775,9 @@ test("a run with nothing to remove leaves an empty .calavera folder, and one wit
   await inProject(async () => {
     await writeFootprint({ packageFolder: false });
     await executeEject(
-      selectEjectItems(await planEject({ guidance, dryRun: false }), { assumeYes: false }).remove,
+      selectEjectItems(await planEject({ guidance, loadFormatter, dryRun: false }), {
+        assumeYes: false,
+      }).remove,
     );
     assert.equal(
       Object.keys(await snapshotDirectory()).some((path) => path.startsWith(".calavera")),
@@ -760,7 +789,7 @@ test("a run with nothing to remove leaves an empty .calavera folder, and one wit
 test("eject removes nothing when an item changed after the plan was made", async () => {
   await inProject(async () => {
     await writeFootprint({ gitignore: `a\n${CACHE_BLOCK}` });
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     // The person adds a line, and edits the skill, while the approval prompt waits.
     await writeFile(".gitignore", `a\nnew-line\n${CACHE_BLOCK}`);
     await writeFile(`${SKILL_PATH}/SKILL.md`, "# Edited after the plan\n");
@@ -774,7 +803,7 @@ test("eject removes nothing when an item changed after the plan was made", async
 
   await inProject(async () => {
     await writeFootprint();
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     await writeFile(`${SKILL_PATH}/SKILL.md`, "# Edited after the plan\n");
     await assert.rejects(
       executeEject(selectEjectItems(plan, { assumeYes: false }).remove),
@@ -784,7 +813,7 @@ test("eject removes nothing when an item changed after the plan was made", async
 
   await inProject(async () => {
     await writeFootprint();
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     const payload = /** @type {{ payload: string }} */ (artifactForId(PACKAGE_ID)).payload;
     await writeFile(`${PACKAGE_ROOT}/${payload}/SKILL.md`, "# Edited after the plan\n");
     await assert.rejects(
@@ -807,7 +836,7 @@ test("a lock entry without a payload hash never makes a missing payload unedited
       }),
     );
     assert.equal(
-      item(await planEject({ guidance, dryRun: true }), PACKAGE_ROOT).payload?.edits,
+      item(await planEject({ guidance, loadFormatter, dryRun: true }), PACKAGE_ROOT).payload?.edits,
       "edited",
     );
   });
@@ -817,7 +846,7 @@ test("a lock with a malformed entry is treated as unreadable, and the plan names
   await inProject(async () => {
     await writeFootprint();
     await writeFile(".calavera/artifacts.lock.json", '{ "schemaVersion": 1, "artifacts": [null] }');
-    const plan = await planEject({ guidance, dryRun: true });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: true });
     assert.equal(
       item(plan, ".calavera/artifacts.lock.json").reason,
       "Calavera could not read .calavera/artifacts.lock.json (artifact entry 0 does not name a string id and version), so the items it checks are listed as edited or as unknown.",
@@ -831,7 +860,7 @@ test("a packages entry that is not a folder, and an empty package ID folder, are
     await writeFootprint({ packageFolder: false });
     await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
     await symlink(outside.path, ".calavera/packages");
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     assert.deepEqual(plan.kept, [".calavera/packages"]);
     await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
     assert.equal((await lstat(".calavera/packages")).isSymbolicLink(), true);
@@ -840,7 +869,7 @@ test("a packages entry that is not a folder, and an empty package ID folder, are
   await inProject(async () => {
     await writeFootprint();
     await mkdir(".calavera/packages/skill-empty");
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     assert.deepEqual(plan.kept, [".calavera/packages/skill-empty"]);
     await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
     // The folder it emptied goes; the one it did not name stays, and keeps .calavera/ with it.
@@ -855,11 +884,11 @@ test("a recipe path that names package.json is refused", async () => {
   await inProject(async () => {
     await writeFootprint();
     await assert.rejects(
-      planEject({ guidance, dryRun: true, config: "package.json" }),
+      planEject({ guidance, loadFormatter, dryRun: true, config: "package.json" }),
       /recipe path package\.json names a package\.json, which eject never changes/,
     );
     await assert.rejects(
-      planEject({ guidance, dryRun: true, config: "nested/package.json" }),
+      planEject({ guidance, loadFormatter, dryRun: true, config: "nested/package.json" }),
       /names a package\.json/,
     );
   });
@@ -876,8 +905,9 @@ test(
       await chmod(".calavera/cache/npm", 0o555);
       try {
         const outcome = await executeEject(
-          selectEjectItems(await planEject({ guidance, dryRun: false }), { assumeYes: false })
-            .remove,
+          selectEjectItems(await planEject({ guidance, loadFormatter, dryRun: false }), {
+            assumeYes: false,
+          }).remove,
         );
         assert.deepEqual(paths(outcome.failed.map(({ item: failed }) => failed)), [
           ".calavera/cache",
@@ -915,8 +945,9 @@ test(
       await chmod(SKILL_PATH, 0o555);
       try {
         const outcome = await executeEject(
-          selectEjectItems(await planEject({ guidance, dryRun: false }), { assumeYes: false })
-            .remove,
+          selectEjectItems(await planEject({ guidance, loadFormatter, dryRun: false }), {
+            assumeYes: false,
+          }).remove,
         );
         assert.deepEqual(paths(outcome.failed.map(({ item: failed }) => failed)), [SKILL_PATH]);
         assert.deepEqual(paths(outcome.skipped.map(({ item: skipped }) => skipped)), [
@@ -942,8 +973,10 @@ for (const [label, entry] of [
         JSON.stringify({ schemaVersion: 1, artifacts: [entry] }),
       );
       assert.match(
-        item(await planEject({ guidance, dryRun: true }), ".calavera/artifacts.lock.json").reason ??
-          "",
+        item(
+          await planEject({ guidance, loadFormatter, dryRun: true }),
+          ".calavera/artifacts.lock.json",
+        ).reason ?? "",
         /artifact entry 0 does not name a string id and version/,
       );
     });
@@ -1001,7 +1034,7 @@ for (const [label, addUncovered, entry] of [
       state.aiArtifacts[0].hash = await hashAiInstall("skill", SKILL_PATH);
       await writeFile(".calavera/state.json", JSON.stringify(state));
 
-      const plan = await planEject({ guidance, dryRun: false });
+      const plan = await planEject({ guidance, loadFormatter, dryRun: false });
       const skill = item(plan, SKILL_PATH);
       assert.equal(skill.edits, "cannot-detect");
       assert.equal(skill.matchesRecords, false);
@@ -1024,7 +1057,7 @@ test("an edited base skill names the entries its hash does not cover too", async
     await writeFootprint({ packageFolder: false });
     await writeFile(`${SKILL_PATH}/SKILL.md`, "# Edited\n");
     await mkdir(`${SKILL_PATH}/drafts`);
-    const skill = item(await planEject({ guidance, dryRun: true }), SKILL_PATH);
+    const skill = item(await planEject({ guidance, loadFormatter, dryRun: true }), SKILL_PATH);
     assert.equal(skill.edits, "edited");
     assert.match(
       skill.reason ?? "",
@@ -1039,7 +1072,7 @@ test("a base skill that is itself a symbolic link needs an interactive approval"
     await write(".agents/skills/real-calavera/SKILL.md", "# Calavera\n");
     await rm(SKILL_PATH, { recursive: true });
     await symlink("real-calavera", SKILL_PATH);
-    const skill = item(await planEject({ guidance, dryRun: true }), SKILL_PATH);
+    const skill = item(await planEject({ guidance, loadFormatter, dryRun: true }), SKILL_PATH);
     assert.equal(skill.edits, "cannot-detect");
     assert.equal(skill.matchesRecords, false);
     assert.match(skill.reason ?? "", /edits cannot be detected for: \.agents\/skills\/calavera\.$/);
@@ -1049,7 +1082,7 @@ test("a base skill that is itself a symbolic link needs an interactive approval"
 test("an uncovered entry added after the plan stops the removal", async () => {
   await inProject(async () => {
     await writeFootprint({ packageFolder: false });
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     assert.equal(item(plan, SKILL_PATH).edits, "unedited");
     await mkdir(`${SKILL_PATH}/drafts`);
     await assert.rejects(
@@ -1064,7 +1097,9 @@ test("an approved run removes a base skill that has no record", async () => {
   await inProject(async () => {
     await writeFootprint({ packageFolder: false, skillRecord: false });
     const outcome = await executeEject(
-      selectEjectItems(await planEject({ guidance, dryRun: false }), { assumeYes: false }).remove,
+      selectEjectItems(await planEject({ guidance, loadFormatter, dryRun: false }), {
+        assumeYes: false,
+      }).remove,
     );
     assert.ok(paths(outcome.removed).includes(SKILL_PATH));
   });
@@ -1081,7 +1116,7 @@ test(
       const { chmod } = await import("node:fs/promises");
       await chmod(`${SKILL_PATH}/private`, 0o000);
       try {
-        const skill = item(await planEject({ guidance, dryRun: true }), SKILL_PATH);
+        const skill = item(await planEject({ guidance, loadFormatter, dryRun: true }), SKILL_PATH);
         assert.equal(skill.matchesRecords, false);
         assert.match(
           skill.reason ?? "",
@@ -1105,7 +1140,7 @@ test("a base skill names every uncovered entry, in a stable order", async () => 
     state.aiArtifacts[0].hash = await hashAiInstall("skill", SKILL_PATH);
     await writeFile(".calavera/state.json", JSON.stringify(state));
     assert.match(
-      item(await planEject({ guidance, dryRun: true }), SKILL_PATH).reason ?? "",
+      item(await planEject({ guidance, loadFormatter, dryRun: true }), SKILL_PATH).reason ?? "",
       /for: \.agents\/skills\/calavera\/a-empty, \.agents\/skills\/calavera\/z-link\.$/,
     );
   });
@@ -1116,7 +1151,7 @@ test("a base skill with no record names the entries its hash does not cover", as
     await writeFootprint({ packageFolder: false, skillRecord: false });
     await mkdir(`${SKILL_PATH}/drafts`);
     assert.equal(
-      item(await planEject({ guidance, dryRun: true }), SKILL_PATH).reason,
+      item(await planEject({ guidance, loadFormatter, dryRun: true }), SKILL_PATH).reason,
       ".calavera/state.json holds no record of the base Calavera skill, so eject cannot tell whether you edited it. The record's hash does not cover symbolic links or empty folders, so edits cannot be detected for: .agents/skills/calavera/drafts.",
     );
   });
@@ -1129,7 +1164,7 @@ test("an approved run removes a base skill that links out of the project, and on
     await write(join(outside.path, "SKILL.md"), "# Theirs\n");
     await rm(SKILL_PATH, { recursive: true });
     await symlink(outside.path, SKILL_PATH);
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     assert.equal(item(plan, SKILL_PATH).matchesRecords, false);
     const outcome = await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
     assert.deepEqual(outcome.failed, []);
@@ -1139,15 +1174,31 @@ test("an approved run removes a base skill that links out of the project, and on
   });
 });
 
-test("an edit never writes through a symbolic link that leads out of the project", async () => {
+// Owner decision of 2026-11-19 on #678: the block in a `.gitignore` that leads out of the project
+// is kept and reported, rather than stopping the plan.
+test("a .gitignore that leads out of the project is never edited: its block is kept and reported", async () => {
+  await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
   await inProject(async () => {
     await writeFootprint({ packageFolder: false });
-    await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
     await write(join(outside.path, "gitignore"), `node_modules/\n${CACHE_BLOCK}`);
     await rm(".gitignore");
     await symlink(join(outside.path, "gitignore"), ".gitignore");
-    await assert.rejects(planEject({ guidance, dryRun: true }), /Eject path must stay inside/);
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
+    assert.equal(
+      plan.items.some(({ path }) => path === ".gitignore"),
+      false,
+    );
+    assert.deepEqual(
+      plan.reported.map(({ path }) => path),
+      [".gitignore"],
+    );
+    const outcome = await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
+    assert.deepEqual(outcome.failed, []);
   });
+  assert.equal(
+    await readFile(join(outside.path, "gitignore"), "utf8"),
+    `node_modules/\n${CACHE_BLOCK}`,
+  );
 });
 
 // A symbolic link at a path Calavera owns leads to content no record covers, wherever it points,
@@ -1173,7 +1224,7 @@ for (const path of [
       }
       await symlink(linkTarget, path);
 
-      const plan = await planEject({ guidance, dryRun: false });
+      const plan = await planEject({ guidance, loadFormatter, dryRun: false });
       const linked = item(plan, path);
       assert.equal(linked.edits, "cannot-detect");
       assert.equal(linked.matchesRecords, false);
@@ -1197,9 +1248,12 @@ test("--yes keeps the cache block while it leaves a linked cache", async () => {
     await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
     await rm(".calavera/cache", { recursive: true });
     await symlink(outside.path, ".calavera/cache");
-    const { leave } = selectEjectItems(await planEject({ guidance, dryRun: false }), {
-      assumeYes: true,
-    });
+    const { leave } = selectEjectItems(
+      await planEject({ guidance, loadFormatter, dryRun: false }),
+      {
+        assumeYes: true,
+      },
+    );
     // Removing the block would show the cache in `git status`, and the state records the block.
     assert.deepEqual(paths(leave), [
       ".calavera/cache",
@@ -1213,7 +1267,7 @@ test("--yes keeps the cache block while it leaves a linked cache", async () => {
 test("an item the person removed between the plan and the removal counts as removed", async () => {
   await inProject(async () => {
     await writeFootprint();
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     await rm(".calavera/cache", { recursive: true });
     await rm(SKILL_PATH, { recursive: true });
     await rm(PACKAGE_ROOT, { recursive: true });
@@ -1239,7 +1293,7 @@ for (const [label, swap] of [
       await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
       await rm(".calavera/cache", { recursive: true });
       await symlink(outside.path, ".calavera/cache");
-      const plan = await planEject({ guidance, dryRun: false });
+      const plan = await planEject({ guidance, loadFormatter, dryRun: false });
       await rm(".calavera/cache");
       await swap(".calavera/cache");
       const before = await snapshotDirectory();
@@ -1258,9 +1312,12 @@ test("--yes keeps no record for a linked cache when there is no artifact-cache b
     await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
     await rm(".calavera/cache", { recursive: true });
     await symlink(outside.path, ".calavera/cache");
-    const { leave } = selectEjectItems(await planEject({ guidance, dryRun: false }), {
-      assumeYes: true,
-    });
+    const { leave } = selectEjectItems(
+      await planEject({ guidance, loadFormatter, dryRun: false }),
+      {
+        assumeYes: true,
+      },
+    );
     assert.deepEqual(paths(leave), [".calavera/cache", "calavera.config.json"]);
   });
 });
@@ -1269,7 +1326,7 @@ test("a real cache replaced by a link after the plan is not removed", async () =
   await inProject(async () => {
     await writeFootprint({ packageFolder: false });
     await write("mine/kept.txt", "mine\n");
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     assert.equal(item(plan, ".calavera/cache").matchesRecords, true);
     await rm(".calavera/cache", { recursive: true });
     await symlink("../mine", ".calavera/cache");
@@ -1286,7 +1343,9 @@ test("a .gitignore whose first line starts with link: is removed as planned", as
   await inProject(async () => {
     await writeFootprint({ packageFolder: false, gitignore: `link:notes\n${CACHE_BLOCK}` });
     const outcome = await executeEject(
-      selectEjectItems(await planEject({ guidance, dryRun: false }), { assumeYes: false }).remove,
+      selectEjectItems(await planEject({ guidance, loadFormatter, dryRun: false }), {
+        assumeYes: false,
+      }).remove,
     );
     assert.deepEqual(outcome.failed, []);
     assert.equal(await readFile(".gitignore", "utf8"), "link:notes\n");
@@ -1301,7 +1360,7 @@ for (const [label, folder] of [
     await inProject(async () => {
       await writeFootprint();
       await write(".calavera/packages/skill-retired/1.0.0/package.json", "{}\n");
-      const plan = await planEject({ guidance, dryRun: false });
+      const plan = await planEject({ guidance, loadFormatter, dryRun: false });
       // The link leads to a copy of the folder, so the payload hash still matches, and only the
       // link identity tells the change apart.
       await cp(folder, "mine", { recursive: true });
@@ -1320,7 +1379,7 @@ for (const [label, folder] of [
 test("a .gitignore the person deleted after the plan counts as removed", async () => {
   await inProject(async () => {
     await writeFootprint({ packageFolder: false });
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     await rm(".gitignore");
     const outcome = await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
     assert.deepEqual(outcome.failed, []);
@@ -1352,7 +1411,7 @@ for (const [label, path, swap] of [
       await write(".calavera/packages/skill-retired/1.0.0/package.json", "{}\n");
       await write(".calavera/.staging/leftover/file", "x\n");
       await write(".calavera/.transactions/old/file", "x\n");
-      const plan = await planEject({ guidance, dryRun: false });
+      const plan = await planEject({ guidance, loadFormatter, dryRun: false });
       await rm(path, { recursive: true });
       if (swap === "file") {
         await writeFile(path, "mine\n");
@@ -1378,7 +1437,9 @@ test("a linked .gitignore that is unchanged after the plan loses its block as pl
     await rm(".gitignore");
     await symlink("shared-gitignore", ".gitignore");
     const outcome = await executeEject(
-      selectEjectItems(await planEject({ guidance, dryRun: false }), { assumeYes: false }).remove,
+      selectEjectItems(await planEject({ guidance, loadFormatter, dryRun: false }), {
+        assumeYes: false,
+      }).remove,
     );
     assert.deepEqual(outcome.failed, []);
     assert.ok(paths(outcome.removed).includes(".gitignore"));
@@ -1395,7 +1456,7 @@ test("a linked .gitignore retargeted to identical text after the plan stops the 
     await cp(".gitignore", "second-gitignore");
     await rm(".gitignore");
     await symlink("first-gitignore", ".gitignore");
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     await rm(".gitignore");
     await symlink("second-gitignore", ".gitignore");
     const before = await snapshotDirectory();
@@ -1416,7 +1477,7 @@ test("a linked .gitignore retargeted to a name with a line break stops the run",
     await writeFile("first\na", CACHE_BLOCK);
     await rm(".gitignore");
     await symlink("first", ".gitignore");
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     await rm(".gitignore");
     await symlink("first\na", ".gitignore");
     const before = await snapshotDirectory();
@@ -1434,7 +1495,7 @@ test("a base skill whose uncovered entries are renamed to look like other entrie
     await writeFootprint({ packageFolder: false });
     await mkdir(`${SKILL_PATH}/x`);
     await mkdir(`${SKILL_PATH}/y`);
-    const plan = await planEject({ guidance, dryRun: false });
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
     await rm(`${SKILL_PATH}/x`, { recursive: true });
     await rm(`${SKILL_PATH}/y`, { recursive: true });
     await mkdir(`${SKILL_PATH}/x\n${SKILL_PATH}/y`, { recursive: true });
@@ -1461,7 +1522,7 @@ test("a linked parent folder retargeted to an identical copy after the plan stop
       await cp(parent, "shared/b", { recursive: true });
       await rm(parent, { recursive: true });
       await symlink(join(process.cwd(), "shared/a"), parent);
-      const plan = await planEject({ guidance, dryRun: false });
+      const plan = await planEject({ guidance, loadFormatter, dryRun: false });
       assert.ok(
         plan.items.some(({ path }) => path === child),
         child,

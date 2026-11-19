@@ -4176,12 +4176,13 @@ async function formatAgentBootstrapGuidance(loadFormatter) {
 
 /**
  * The texts the bootstrap writes now, formatted by the project's formatter as it formats them: the
- * guidance in each of its forms, and the MCP setup notes for each supported package manager.
- * `eject` compares a project's guidance files with them, because Calavera keeps no record of what
- * it wrote there (ADR-0017, Decision 2).
+ * guidance in each of its forms, and the MCP setup notes for each supported package manager. It
+ * also gives the MCP launch command for each supported package manager, in the order of
+ * `supportedPackageManagers`. `eject` compares a project's guidance files and MCP entries with
+ * them, because Calavera keeps no record of what it wrote there (ADR-0017, Decision 2).
  *
  * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
- * @returns {Promise<AgentBootstrapGuidanceText & { mcp: string[] }>}
+ * @returns {Promise<AgentBootstrapGuidanceText & { mcp: string[], mcpLaunchCommands: { command: string, args: string[] }[] }>}
  */
 export async function agentBootstrapTexts(loadFormatter) {
   const [guidance, mcp] = await Promise.all([
@@ -4196,7 +4197,11 @@ export async function agentBootstrapTexts(loadFormatter) {
       ),
     ),
   ]);
-  return { ...guidance, mcp };
+  return {
+    ...guidance,
+    mcp,
+    mcpLaunchCommands: supportedPackageManagers.map(createMcpLaunchCommand),
+  };
 }
 
 /**

@@ -201,6 +201,12 @@ importers:
       execa:
         specifier: ^10.2.1
         version: 10.2.1
+      jsonc-parser:
+        specifier: ^3.3.1
+        version: 3.3.1
+      smol-toml:
+        specifier: ^1.9.1
+        version: 1.9.1
       yaml:
         specifier: ^2.9.1
         version: 2.9.1

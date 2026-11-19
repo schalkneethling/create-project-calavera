@@ -31,7 +31,8 @@ const FIXTURES = new URL("../fixtures/agent-guidance/", import.meta.url);
 
 /** @type {import("../src/utils/project-formatter.js").ProjectFormatter} */
 const unformatted = { description: "no formatter", format: async (_path, text) => text };
-const guidance = await agentBootstrapTexts(async () => unformatted);
+const loadFormatter = async () => unformatted;
+const guidance = await agentBootstrapTexts(loadFormatter);
 
 /**
  * Runs `callback` inside a new temporary project.
@@ -57,7 +58,8 @@ async function write(path, text) {
 }
 
 /** @param {{ dryRun?: boolean, texts?: typeof guidance }} [options] */
-const plan = ({ dryRun = false, texts = guidance } = {}) => planEject({ dryRun, guidance: texts });
+const plan = ({ dryRun = false, texts = guidance } = {}) =>
+  planEject({ dryRun, guidance: texts, loadFormatter });
 
 /** @param {Awaited<ReturnType<typeof planEject>>} found @param {string} path */
 function item(found, path) {

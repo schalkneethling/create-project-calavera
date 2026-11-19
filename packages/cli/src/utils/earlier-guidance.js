@@ -185,9 +185,8 @@ function sha256(text) {
 /**
  * Replaces the version that `text` pins in `create-project-calavera@<version>` with a placeholder,
  * so two texts that differ only in the pinned release compare equal. `findEarlierGuidance` uses it
- * for the setup notes. It is exported because ADR-0017 Decision 2 has `eject` compare the launch
- * commands of the MCP entries with the pinned version normalized the same way, which a later
- * layer of #678 adds.
+ * for the setup notes, and `eject` uses it to compare the `calavera` MCP entries with the launch
+ * commands, as ADR-0017 Decision 2 asks.
  *
  * @param {string} text
  * @returns {{ normalized: string, pin: string | undefined } | undefined} The text with its pin

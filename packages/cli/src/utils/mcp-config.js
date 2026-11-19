@@ -265,12 +265,18 @@ export async function writeCodexMcpConfig(path, launchCommand, dryRun, changes) 
 }
 
 /**
+ * The `$schema` Calavera writes into `opencode.json` when the file has none. `eject` removes a
+ * `$schema` with this value once nothing else remains in the file (ADR-0017, Decision 2).
+ */
+export const OPENCODE_CONFIG_SCHEMA = "https://opencode.ai/config.json";
+
+/**
  * @param {McpLaunchCommand} launchCommand
  * @returns {Record<string, unknown>}
  */
 export function createOpenCodeMcpJsonConfig(launchCommand) {
   return {
-    $schema: "https://opencode.ai/config.json",
+    $schema: OPENCODE_CONFIG_SCHEMA,
     mcp: {
       calavera: {
         type: "local",
@@ -303,9 +309,7 @@ export async function writeOpenCodeMcpConfig(path, launchCommand, dryRun, change
     {
       ...currentConfig,
       $schema:
-        typeof currentConfig.$schema === "string"
-          ? currentConfig.$schema
-          : "https://opencode.ai/config.json",
+        typeof currentConfig.$schema === "string" ? currentConfig.$schema : OPENCODE_CONFIG_SCHEMA,
       mcp: {
         ...(isPlainObject(mcp) ? mcp : {}),
         calavera: {
