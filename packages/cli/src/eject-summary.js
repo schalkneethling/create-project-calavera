@@ -86,10 +86,10 @@ function editsLabel({ kind, edits, matchesRecords, outcome, keptRecord }) {
       : edits === "cannot-detect"
         ? "edits cannot be detected"
         : edits;
-  // A record --yes keeps needs no approval of its own, so it says why it stays. Only a list that
-  // comes before the removal says what --yes would do; a run that is done says what it did under
-  // its own heading.
-  if (keptRecord && (outcome === "planned" || outcome === "left")) {
+  // A record --yes keeps needs no approval of its own, so it says why it stays. Only an item that
+  // --yes plans to leave, or left, is a kept record. Only a list that comes before the removal says
+  // what --yes would do; a run that is done says what it did under its own heading.
+  if (keptRecord) {
     return `${found}; --yes keeps it while an item it leaves needs it`;
   }
   return outcome === "planned" && !matchesRecords ? `${found}; --yes leaves it` : found;
@@ -110,8 +110,9 @@ function itemLines(item) {
   if (item.reason) lines.push(info(`${DETAIL}${withoutOwnPath(item.reason, item.path)}`));
   if (item.note) lines.push(info(`${DETAIL}${withoutOwnPath(item.note, item.path)}`));
   // The text an edit removes, and what the file holds afterward, belong to the list a person
-  // approves or still has to approve; a removal that is done does not print them again.
-  if (item.outcome === "removed" || item.outcome === "failed" || item.outcome === "skipped") {
+  // approves or still has to approve; a removal that is done does not print them again. Failed
+  // and skipped items have lines of their own.
+  if (item.outcome === "removed") {
     return lines;
   }
   if (item.removedLines) {

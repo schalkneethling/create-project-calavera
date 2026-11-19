@@ -307,7 +307,7 @@ test("a second run after an approved eject reports nothing to do", async () => {
     assert.equal(interactive.status, "nothing-to-do");
     assert.deepEqual(asked, []);
     assert.deepEqual(await snapshotDirectory(), before);
-    assert.match(human(result), /no Calavera footprint/i);
+    assert.equal(result.message, "eject found no Calavera footprint to remove here.");
   });
 });
 
@@ -1102,5 +1102,17 @@ test("a failed run also says what --yes left", async (t) => {
     } finally {
       await chmod(".agents/skills", 0o755);
     }
+  });
+});
+
+test("one item left with one kept record is worded in the singular", async () => {
+  await inProject(async () => {
+    await agentBootstrap({ mcpHarness: "skip", packageManager: "npm" });
+    await writeFile(".agents/skills/calavera/SKILL.md", "# Edited\n");
+    const result = await eject(["--dry-run"]);
+    assert.match(
+      result.message,
+      /; --yes would leave 1 item for an interactive approval, and would keep 1 record that the item it leaves needs\.$/,
+    );
   });
 });
