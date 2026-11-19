@@ -881,3 +881,38 @@ test("codex: a subtable of calavera without the table itself is reported as edit
     await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
   });
 });
+
+for (const [label, line] of [
+  ["a quoted key holding ] #", '[mcp_servers.calavera."x] #"]'],
+  ["a key with an escape TOML 1.0 does not have", '[mcp_servers.calavera."a\\eb"]'],
+]) {
+  test(`codex: a header eject cannot read, ${label}, makes the table need approval`, async () => {
+    await inProject(async () => {
+      await write(CODEX, `${codexBlock}\n[other]\n\n${line}\nFOO = "1"\n`);
+      const found = await plan();
+      const entry = item(found, CODEX);
+      assert.equal(entry.edits, "cannot-detect");
+      assert.equal(entry.matchesRecords, false);
+      assert.match(entry.reason ?? "", /cannot read as a table header/);
+      assert.deepEqual(selectEjectItems(found, { assumeYes: true }).remove, []);
+    });
+  });
+}
+
+test("codex: a header quoted inside a multi-line string is reported, not a stop", async () => {
+  await inProject(async () => {
+    await write(CODEX, `[other]\ndoc = """\n${CODEX_TABLE_LINE}\n"""\n\n${codexBlock}`);
+    await assertKeptAndReported(CODEX, /multi-line string/);
+  });
+});
+
+test("codex: the reason names every line eject cannot read as a header, and the multi-line string", async () => {
+  await inProject(async () => {
+    await write(CODEX, `${codexBlock}\n[other]\nnote = '''\nx\n'''\n  [a."x] #"]\n[b."\\e"]\n`);
+    const entry = item(await plan(), CODEX);
+    assert.equal(
+      entry.reason,
+      `${CODEX} holds a multi-line string, which can hold lines that look like a table. ${CODEX} holds lines that eject cannot read as a table header: [a."x] #"], [b."\\e"]. eject reads the file as lines, not as TOML; edits cannot be detected. Check the text afterward before you approve.`,
+    );
+  });
+});

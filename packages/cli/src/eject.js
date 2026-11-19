@@ -976,6 +976,14 @@ async function planCodexMcpEntry(path, expected) {
   if (related.length === 0) return NO_MCP_ENTRY;
   if (!(await insideProject(path))) return mcpEntryOutside(path);
   const defining = related.filter(({ header }) => header.keys.length === 2 && !header.array);
+  const multiline = text.includes('"""') || text.includes("'''");
+  if (defining.length > 1 && multiline) {
+    // A multi-line string can quote the header, so the second one may not be a table at all.
+    return mcpEntryKept(
+      path,
+      `${path} names ${CODEX_TABLE_HEADER} more than once, and it holds a multi-line string, which can quote a header. eject reads the file as lines, not as TOML, so it cannot tell which is Calavera's table, and leaves it. Remove the table yourself if you no longer want it.`,
+    );
+  }
   if (defining.length > 1) {
     throw new Error(
       `eject stopped before removing anything: ${path} defines ${CODEX_TABLE_HEADER} more than once, which TOML does not allow, so eject cannot tell which table is Calavera's. Keep one of them, then run eject again.`,
@@ -1015,10 +1023,21 @@ async function planCodexMcpEntry(path, expected) {
     contents: withoutLines(lines, start, end),
     seen: textSeen(identity, text),
   };
-  if (text.includes('"""') || text.includes("'''")) {
+  // A line that starts like a header but does not read as one may still be a header for TOML, such
+  // as a subtable of Calavera's table that removing the table would leave behind.
+  const unread = bare.filter((line, index) => line.trim().startsWith("[") && !headers[index]);
+  const doubts = [
+    multiline
+      ? `${path} holds a multi-line string, which can hold lines that look like a table.`
+      : "",
+    unread.length > 0
+      ? `${path} holds lines that eject cannot read as a table header: ${unread.map((line) => line.trim()).join(", ")}.`
+      : "",
+  ].filter((doubt) => doubt !== "");
+  if (doubts.length > 0) {
     item.edits = "cannot-detect";
     item.matchesRecords = false;
-    item.reason = `${path} holds a multi-line string, which can hold lines that look like a table, and eject reads the file as lines, not as TOML; ${CANNOT_DETECT}. Check the text afterward before you approve.`;
+    item.reason = `${doubts.join(" ")} eject reads the file as lines, not as TOML; ${CANNOT_DETECT}. Check the text afterward before you approve.`;
   }
   return { items: [item], reported: [] };
 }
