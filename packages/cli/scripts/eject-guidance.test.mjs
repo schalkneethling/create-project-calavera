@@ -126,6 +126,11 @@ test("normalizePinnedVersion replaces the pinned version and refuses a text that
     },
   );
   assert.equal(normalizePinnedVersion("create-project-calavera@{{version}}"), undefined);
+  // No version is pinned, so nothing is replaced, not even text that reads like a pin.
+  assert.deepEqual(normalizePinnedVersion("create-project-calavera@undefined"), {
+    normalized: "create-project-calavera@undefined",
+    pin: undefined,
+  });
 });
 
 test("agentBootstrapTexts formats every form of the guidance and the notes for each package manager", async () => {
@@ -186,6 +191,8 @@ test("the section and the fallback the bootstrap writes into an existing AGENTS.
     assert.equal(section.matchesRecords, true);
     assert.equal(section.contents, MINE);
     assert.equal(item(found, "AGENTS.calavera.md").edits, "unedited");
+    assert.equal(item(found, "AGENTS.calavera.md").action, "delete");
+    assert.deepEqual(found.reported, []);
 
     await executeEject(selectEjectItems(found, { assumeYes: true }).remove);
     assert.equal(await readFile("AGENTS.md", "utf8"), MINE);
@@ -198,8 +205,10 @@ test("a whole-file AGENTS.md an earlier release wrote is unedited and removed", 
     await write("AGENTS.md", await fixture(new URL("guidance/2.0.0.md", FIXTURES)));
     const found = await plan();
     assert.equal(item(found, "AGENTS.md").kind, "guidance-file");
+    assert.equal(item(found, "AGENTS.md").action, "delete");
     assert.equal(item(found, "AGENTS.md").edits, "unedited");
     assert.equal(item(found, "AGENTS.md").matchesRecords, true);
+    assert.deepEqual(found.reported, []);
     await ejectApproved();
     await assert.rejects(lstat("AGENTS.md"), { code: "ENOENT" });
   });
@@ -209,6 +218,53 @@ test("a whole-file AGENTS.md with Windows line endings is unedited", async () =>
   await inProject(async () => {
     await write("AGENTS.md", guidance.file.replaceAll("\n", "\r\n"));
     assert.equal(item(await plan(), "AGENTS.md").edits, "unedited");
+    // An earlier release's text with Windows line endings is unedited too.
+    const earlier = await fixture(new URL("guidance/2.0.0.md", FIXTURES));
+    await write("AGENTS.md", earlier.replaceAll("\n", "\r\n"));
+    assert.equal(item(await plan(), "AGENTS.md").edits, "unedited");
+  });
+});
+
+test("each guidance file is checked against the text the project's formatter gives", async () => {
+  // A formatter whose text no release table lists, so only the current texts can match.
+  const formatted = await agentBootstrapTexts(async () => ({
+    description: "star bullets",
+    format: async (_path, text) => text.replaceAll("\n- ", "\n* "),
+  }));
+  for (const [path, text] of [
+    ["AGENTS.md", formatted.file],
+    ["AGENTS.md", formatted.file.replaceAll("\n", "\r\n")],
+    ["AGENTS.calavera.md", formatted.fallback],
+    ...formatted.mcp.map((notes) => [MCP_NOTES, notes]),
+  ]) {
+    await inProject(async () => {
+      await write(path, text);
+      const found = await plan({ texts: formatted });
+      assert.equal(item(found, path).edits, "unedited", path);
+      assert.deepEqual(found.reported, []);
+    });
+  }
+});
+
+test("a file formatted with Windows line endings matches the same text with Unix ones", async () => {
+  const crlf = await agentBootstrapTexts(async () => ({
+    description: "star bullets and Windows line endings",
+    format: async (_path, text) => text.replaceAll("\n- ", "\n* ").replaceAll("\n", "\r\n"),
+  }));
+  await inProject(async () => {
+    await write("AGENTS.calavera.md", crlf.fallback.replaceAll("\r\n", "\n"));
+    assert.equal(item(await plan({ texts: crlf }), "AGENTS.calavera.md").edits, "unedited");
+  });
+});
+
+test("a section formatted with Windows line endings is unedited", async () => {
+  const crlf = await agentBootstrapTexts(async () => ({
+    description: "Windows line endings",
+    format: async (_path, text) => text.replaceAll("\n", "\r\n"),
+  }));
+  await inProject(async () => {
+    await write("AGENTS.md", `${MINE.replaceAll("\n", "\r\n")}\r\n${crlf.section}`);
+    assert.equal(item(await plan({ texts: crlf }), "AGENTS.md").edits, "unedited");
   });
 });
 
@@ -226,6 +282,9 @@ test("an edited whole-file AGENTS.md is kept and reported, even after approval",
     await ejectApproved();
     assert.deepEqual(await snapshotDirectory(), before);
     assert.equal(await readFile("AGENTS.md", "utf8"), edited);
+
+    await write("AGENTS.md", edited.replaceAll("\n", "\r\n"));
+    assert.match(report(await plan(), "AGENTS.md").reason, /no section markers/);
   });
 });
 
@@ -281,6 +340,22 @@ test("removing the section keeps every line around it and drops only the separat
   });
 });
 
+test("a section right after the person's text, with no blank line, removes no line of theirs", async () => {
+  await inProject(async () => {
+    await write("AGENTS.md", `${MINE}${guidance.section}`);
+    assert.equal(item(await plan(), "AGENTS.md").contents, MINE);
+  });
+});
+
+test("a section at the start of AGENTS.md is removed with nothing before it", async () => {
+  await inProject(async () => {
+    await write("AGENTS.md", `${guidance.section}\n${MINE}`);
+    assert.equal(item(await plan(), "AGENTS.md").contents, `\n${MINE}`);
+    await write("AGENTS.md", guidance.section);
+    assert.equal(item(await plan(), "AGENTS.md").contents, "");
+  });
+});
+
 test("a section without a final line break is removed and the text before it keeps its own", async () => {
   await inProject(async () => {
     await write("AGENTS.md", withSection().trimEnd());
@@ -324,7 +399,7 @@ test("a section next to marker-only guidance is removed and the rest is reported
 test("a broken guidance marker stops eject before it writes anything", async () => {
   const body = "\n\n# Calavera Agent Guidance\n\n";
   for (const [text, problem] of [
-    [`${MINE}\n${START}${body}`, /start marker without an end marker/],
+    [`${MINE}\n${START}${body}`, /the Calavera guidance section has a start marker without an end/],
     [`${MINE}\n${body}${END}\n`, /end marker without a start marker/],
     [`${MINE}\n${END}\n${body}${START}\n`, /end marker that comes before/],
     [
@@ -406,8 +481,16 @@ test("edited MCP setup notes are listed as edited, and notes pinning an unreleas
       const notes = item(await plan(), MCP_NOTES);
       assert.equal(notes.edits, "edited");
       assert.equal(notes.matchesRecords, false);
+      assert.match(notes.reason ?? "", /mcp\.md differs from the MCP setup notes/);
     });
   }
+});
+
+test("guidance that holds the version placeholder is edited, because no release wrote it", async () => {
+  await inProject(async () => {
+    await write("AGENTS.calavera.md", `${guidance.fallback}create-project-calavera@{{version}}\n`);
+    assert.equal(item(await plan(), "AGENTS.calavera.md").edits, "edited");
+  });
 });
 
 test(".agents/calavera stays, and is listed, while it holds a file eject does not name", async () => {
@@ -466,12 +549,35 @@ test("a guidance file that is a symbolic link needs approval, and approval remov
       const link = item(found, path);
       assert.equal(link.edits, "cannot-detect", path);
       assert.equal(link.matchesRecords, false, path);
-      assert.match(link.reason ?? "", /symbolic link/);
+      assert.equal(
+        link.reason,
+        `${path} is a symbolic link, which no record covers; edits cannot be detected. eject removes only the link, not what it leads to.`,
+      );
       await ejectApproved();
       await assert.rejects(lstat(path), { code: "ENOENT" });
       assert.equal(await readFile("target/guidance.md", "utf8"), text);
     });
   }
+});
+
+test("a linked guidance file with edited text is listed as edited, and its reason names both", async () => {
+  await inProject(async () => {
+    await write("target/guidance.md", `${guidance.fallback}- Mine.\n`);
+    await symlink("target/guidance.md", "AGENTS.calavera.md");
+    const link = item(await plan(), "AGENTS.calavera.md");
+    assert.equal(link.edits, "edited");
+    assert.equal(link.matchesRecords, false);
+    assert.match(link.reason ?? "", /symbolic link.*holds edits\. eject removes only the link/);
+  });
+});
+
+test("a broken link in place of a Calavera guidance file is reported and left", async () => {
+  await inProject(async () => {
+    await symlink("missing.md", "AGENTS.calavera.md");
+    const found = await plan();
+    assert.equal(named(found, "AGENTS.calavera.md"), false);
+    assert.match(report(found, "AGENTS.calavera.md").reason, /not a file/);
+  });
 });
 
 test("a section in an AGENTS.md that is a link is edited through the link", async () => {

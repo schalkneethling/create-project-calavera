@@ -194,7 +194,8 @@ async function entryIdentity(path) {
  * @param {string | undefined} text Undefined when the path does not lead to a file.
  */
 function textSeen(identity, text) {
-  return JSON.stringify(text === undefined ? [identity] : [identity, text]);
+  // JSON writes an undefined text as null, which no text read from a file can equal.
+  return JSON.stringify([identity, text]);
 }
 
 /**
@@ -516,7 +517,8 @@ async function planCacheBlock(state, stateProblem) {
  * @param {string} path
  * @param {{ identity: string, text: string }} entry
  * @param {boolean} written Whether the text is one Calavera wrote.
- * @param {string} editedReason
+ * @param {string} [editedReason] Why the text counts as edited; needed only when `written` is
+ *   false.
  * @returns {EjectItem}
  */
 function guidanceFileItem(kind, path, { identity, text }, written, editedReason) {
@@ -552,11 +554,12 @@ function withoutGuidanceSection(found) {
   const before = found.lines.slice(0, found.startIndex);
   // The bootstrap appends the section after one blank line (`upsertAgentBootstrapGuidanceSection`
   // in index.js).
-  if (before.length > 0 && before.at(-1)?.replace(/\r$/, "") === "") before.pop();
+  if (before.at(-1)?.replace(/\r$/, "") === "") before.pop();
   const after = found.lines.slice(found.endIndex + 1);
   // When the end marker is the file's last line and has no line break, the line before the
-  // section still owns the line break that separated the two, so it keeps it.
-  if (after.length === 0 && before.length > 0) after.push("");
+  // section still owns the line break that separated the two, so it keeps it. With no line
+  // before the section, the pushed line joins to the same empty text.
+  if (after.length === 0) after.push("");
   return [...before, ...after].join("\n");
 }
 
@@ -596,11 +599,11 @@ async function planAgentsGuidance(guidance) {
     if (!text.includes(AGENT_BOOTSTRAP_MARKER)) return { items: [], reported: [] };
     if (sameText(text, guidance.file) || findEarlierGuidance("guidance", text) !== undefined) {
       return {
-        items: [guidanceFileItem("guidance-file", path, { identity, text }, true, "")],
+        items: [guidanceFileItem("guidance-file", path, { identity, text }, true)],
         reported: [],
       };
     }
-    const wholeFile = text.split("\n", 1)[0]?.replace(/\r$/, "") === AGENT_BOOTSTRAP_MARKER;
+    const wholeFile = text.split(/\r?\n/, 1)[0] === AGENT_BOOTSTRAP_MARKER;
     return {
       items: [],
       reported: [
@@ -628,7 +631,8 @@ async function planAgentsGuidance(guidance) {
       action: "edit",
       edits: "unedited",
       matchesRecords: true,
-      removedLines: found.current === "" ? [] : found.current.split("\n"),
+      // The section equals the current one, so it is never empty.
+      removedLines: found.current.split("\n"),
       contents,
       seen: textSeen(identity, text),
     });
@@ -720,7 +724,6 @@ async function planGuidance(guidance) {
  */
 async function unnamedMcpNotesEntries(items) {
   if (!items.some(({ kind }) => kind === "mcp-notes")) return [];
-  if (!(await isRealDirectory(MCP_NOTES_ROOT))) return [];
   return (await readdir(MCP_NOTES_ROOT))
     .map((name) => `${MCP_NOTES_ROOT}/${name}`)
     .filter((path) => path !== AGENT_BOOTSTRAP_MCP_FILE);
