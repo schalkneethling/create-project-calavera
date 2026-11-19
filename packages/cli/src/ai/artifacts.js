@@ -37,14 +37,21 @@ import { normalizeAiItems } from "./recipe-items.js";
 const AI_HOOK_FILES = Object.freeze(["hook.mjs", "settings-fragment.json"]);
 const CODEX_AGENT_TARGET = "codex";
 export const CODE_RABBIT_CONFIG_PATH = ".coderabbit.yaml";
+// The filter that keeps Calavera's extracted artifact packages out of reviews. `eject` reports it
+// in a `.coderabbit.yaml` that Calavera did not create, because the packages go with `eject`.
+export const CODE_RABBIT_PACKAGES_FILTER = "!.calavera/packages/**";
 const CODE_RABBIT_SKILL_FILTERS = Object.freeze([
   "!.claude/skills/**",
   "!.agents/skills/**",
   "!.agents/agents/claude-code/**",
-  "!.calavera/packages/**",
+  CODE_RABBIT_PACKAGES_FILTER,
   "!pnpm-lock.yaml",
 ]);
-const CODE_RABBIT_SKILL_CONFIG = `# CodeRabbit configuration — https://docs.coderabbit.ai/reference/yaml-template
+// The first line of every `.coderabbit.yaml` Calavera creates whole. Adding filters to an existing
+// file never adds it, so `eject` recognizes a file Calavera created by it (ADR-0017, Decision 2).
+export const CODE_RABBIT_CONFIG_FIRST_LINE =
+  "# CodeRabbit configuration — https://docs.coderabbit.ai/reference/yaml-template";
+const CODE_RABBIT_SKILL_CONFIG = `${CODE_RABBIT_CONFIG_FIRST_LINE}
 #
 # The skill, agent, and package directories below contain vendored AI-agent
 # artifacts copied from upstream packages. Findings in those files belong
