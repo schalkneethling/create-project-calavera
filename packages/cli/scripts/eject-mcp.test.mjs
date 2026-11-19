@@ -20,6 +20,8 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import { TomlError } from "smol-toml";
+
 import { executeEject, planEject, selectEjectItems } from "../src/eject.js";
 import { agentBootstrap, agentBootstrapTexts } from "../src/index.js";
 import { normalizePinnedVersion } from "../src/utils/earlier-guidance.js";
@@ -321,7 +323,8 @@ for (const { harness, path, written } of JSON_HARNESSES) {
 
   test(`${harness}: a file that cannot be parsed stops eject before it writes anything`, async () => {
     await inProject(async () => {
-      await write(path, `// my servers\n${written(npmLaunch)}`);
+      // Not JSON, for its comment, and not JSONC either, because it ends early.
+      await write(path, `// my servers\n${written(npmLaunch).slice(0, -4)}`);
       await write(".agents/calavera/mcp.md", guidance.mcp[0] ?? "");
       const before = await snapshotDirectory();
       await assert.rejects(plan(), (error) => {
@@ -329,7 +332,7 @@ for (const { harness, path, written } of JSON_HARNESSES) {
         assert.match(
           error.message,
           new RegExp(
-            `eject stopped before removing anything: ${path.replaceAll(".", "\\.")} cannot be parsed as JSON`,
+            `eject stopped before removing anything: ${path.replaceAll(".", "\\.")} cannot be parsed as JSON, nor as JSON with comments \\(JSONC\\): CloseBraceExpected at offset \\d+`,
           ),
         );
         // The parser's own error stays as the cause, so the failure can be diagnosed.
@@ -397,6 +400,18 @@ for (const { harness, path, written } of JSON_HARNESSES) {
       assert.deepEqual(JSON.parse(await readFile(path, "utf8")), kept);
     });
   });
+
+  for (const [label, text] of [
+    ["a comment", `// My servers\n${written(npmLaunch)}`],
+    ["a trailing comma", written(npmLaunch).replace(/\n\}\n$/, ",\n}\n")],
+  ]) {
+    test(`${harness}: a JSONC file with ${label} keeps its calavera entry, reported, and is never rewritten`, async () => {
+      await inProject(async () => {
+        await write(path, text);
+        await assertKeptAndReported(path, /JSON with comments \(JSONC\)/);
+      });
+    });
+  }
 
   test(`${harness}: a file with a comment and no calavera entry is neither a stop nor reported`, async () => {
     await inProject(async () => {
@@ -546,15 +561,59 @@ test("codex: a subtable of the calavera table makes the entry edited", async () 
   });
 });
 
+/**
+ * Asserts that planning stops before anything is written, because the Codex file is not TOML, and
+ * that the parser's own error stays as the cause.
+ */
+async function assertTomlStop() {
+  const before = await snapshotDirectory();
+  await assert.rejects(plan(), (error) => {
+    assert.ok(error instanceof Error);
+    assert.match(
+      error.message,
+      /^eject stopped before removing anything: \.codex\/config\.toml cannot be parsed as TOML: Invalid TOML document: /,
+    );
+    assert.ok(error.cause instanceof TomlError);
+    return true;
+  });
+  assert.deepEqual(await snapshotDirectory(), before);
+}
+
 test("codex: a calavera table defined twice stops eject before it writes anything", async () => {
   await inProject(async () => {
     await write(CODEX, `${codexBlock}\n${codexBlock}`);
-    const before = await snapshotDirectory();
-    await assert.rejects(
-      plan(),
-      /eject stopped before removing anything: \.codex\/config\.toml defines \[mcp_servers\.calavera\] more than once/,
-    );
-    assert.deepEqual(await snapshotDirectory(), before);
+    await assertTomlStop();
+  });
+});
+
+test("codex: a file that is not TOML stops eject, even with no calavera table", async () => {
+  await inProject(async () => {
+    await write(CODEX, "model = \n");
+    await assertTomlStop();
+  });
+});
+
+test("codex: the table is found under an explicit [mcp_servers] header, which stays", async () => {
+  await inProject(async () => {
+    await write(CODEX, `[mcp_servers]\n\n${codexBlock}`);
+    await ejectApproved();
+    assert.equal(await readFile(CODEX, "utf8"), "[mcp_servers]\n");
+  });
+});
+
+const INLINE_ENTRY = `[mcp_servers]\ncalavera = { command = "npx", args = ${JSON.stringify(npmLaunch.args)} }\n`;
+
+test("codex: an inline calavera table is not the table Calavera writes, so it is kept and reported", async () => {
+  await inProject(async () => {
+    await write(CODEX, INLINE_ENTRY);
+    await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
+  });
+});
+
+test("codex: Calavera's text inside a string, with the entry defined elsewhere, is kept and reported", async () => {
+  await inProject(async () => {
+    await write(CODEX, `${INLINE_ENTRY}\n[other]\ndoc = """\n${codexBlock}"""\n`);
+    await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
   });
 });
 
@@ -801,9 +860,7 @@ for (const subtable of ['[mcp_servers."calavera".env]', "[ mcp_servers . calaver
 test("codex: a calavera table defined twice under different spellings stops eject", async () => {
   await inProject(async () => {
     await write(CODEX, `[mcp_servers."calavera"]\ncommand = "mine"\n\n${codexBlock}`);
-    const before = await snapshotDirectory();
-    await assert.rejects(plan(), /defines \[mcp_servers\.calavera\] more than once/);
-    assert.deepEqual(await snapshotDirectory(), before);
+    await assertTomlStop();
   });
 });
 
@@ -818,15 +875,16 @@ test("codex: a next header with a comment ends the table, and the person's table
 });
 
 for (const quotes of ['"""', "'''"]) {
-  test(`codex: a file with a ${quotes} multi-line string needs approval, because eject reads TOML as lines`, async () => {
+  test(`codex: a ${quotes} multi-line string that quotes the header stays, and --yes removes the table`, async () => {
     await inProject(async () => {
-      await write(CODEX, `[other]\nnote = ${quotes}\nExample\n${quotes}\n\n${codexBlock}`);
+      const theirs = `[other]\nnote = ${quotes}\n${CODEX_TABLE_LINE}\n${quotes}\n`;
+      await write(CODEX, `${theirs}\n${codexBlock}`);
       const found = await plan();
       const entry = item(found, CODEX);
-      assert.equal(entry.edits, "cannot-detect");
-      assert.equal(entry.matchesRecords, false);
-      assert.match(entry.reason ?? "", /multi-line string/);
-      assert.deepEqual(selectEjectItems(found, { assumeYes: true }).remove, []);
+      assert.equal(entry.edits, "unedited");
+      assert.equal(entry.matchesRecords, true);
+      await executeEject(selectEjectItems(found, { assumeYes: true }).remove);
+      assert.equal(await readFile(CODEX, "utf8"), theirs);
     });
   });
 }
@@ -882,37 +940,124 @@ test("codex: a subtable of calavera without the table itself is reported as edit
   });
 });
 
-for (const [label, line] of [
-  ["a quoted key holding ] #", '[mcp_servers.calavera."x] #"]'],
-  ["a key with an escape TOML 1.0 does not have", '[mcp_servers.calavera."a\\eb"]'],
-]) {
-  test(`codex: a header eject cannot read, ${label}, makes the table need approval`, async () => {
+for (const key of ['"x] #"', '"b]#c"', '"a]#"']) {
+  test(`codex: a subtable whose quoted key is ${key} makes the entry edited`, async () => {
     await inProject(async () => {
-      await write(CODEX, `${codexBlock}\n[other]\n\n${line}\nFOO = "1"\n`);
-      const found = await plan();
-      const entry = item(found, CODEX);
-      assert.equal(entry.edits, "cannot-detect");
-      assert.equal(entry.matchesRecords, false);
-      assert.match(entry.reason ?? "", /cannot read as a table header/);
-      assert.deepEqual(selectEjectItems(found, { assumeYes: true }).remove, []);
+      await write(CODEX, `${codexBlock}\n[other]\n\n[mcp_servers.calavera.${key}]\nFOO = "1"\n`);
+      await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
     });
   });
 }
 
-test("codex: a header quoted inside a multi-line string is reported, not a stop", async () => {
+// Two harness paths can lead to one file. Two edits built from the same text would each write the
+// whole file, and the second would put back what the first removed, so both are kept and reported.
+for (const [label, linked, config] of [
+  [
+    "opencode.json linked to .mcp.json",
+    "opencode.json",
+    () => ({ ...createMcpServersJsonConfig(npmLaunch), ...createOpenCodeMcpJsonConfig(npmLaunch) }),
+  ],
+  [
+    ".cursor/mcp.json linked to .mcp.json",
+    ".cursor/mcp.json",
+    () => createMcpServersJsonConfig(npmLaunch),
+  ],
+]) {
+  test(`${label}: both are kept and reported, naming both paths`, async () => {
+    await inProject(async () => {
+      await write(".mcp.json", json(config()));
+      await mkdir(dirname(linked), { recursive: true });
+      await symlink(join(process.cwd(), ".mcp.json"), linked);
+      const before = await readFile(".mcp.json", "utf8");
+      const found = await plan();
+      for (const path of [".mcp.json", linked]) {
+        assert.equal(named(found, path), false, path);
+        assert.match(
+          report(found, path).reason,
+          new RegExp(`\\.mcp\\.json and ${linked.replaceAll(".", "\\.")} lead to the same file`),
+        );
+      }
+      await executeEject(selectEjectItems(found, { assumeYes: false }).remove);
+      assert.equal(await readFile(".mcp.json", "utf8"), before);
+    });
+  });
+}
+
+test("a harness file linked to a file eject deletes is kept and reported with it", async () => {
   await inProject(async () => {
-    await write(CODEX, `[other]\ndoc = """\n${CODEX_TABLE_LINE}\n"""\n\n${codexBlock}`);
-    await assertKeptAndReported(CODEX, /multi-line string/);
+    // Contrived, but a delete and an edit of one file must not both run either.
+    await write(".calavera/state.json", json(createMcpServersJsonConfig(npmLaunch)));
+    await symlink(join(process.cwd(), ".calavera/state.json"), ".mcp.json");
+    const found = await plan();
+    assert.equal(named(found, ".mcp.json"), false);
+    assert.equal(named(found, ".calavera/state.json"), false);
+    assert.match(report(found, ".mcp.json").reason, /lead to the same file/);
   });
 });
 
-test("codex: the reason names every line eject cannot read as a header, and the multi-line string", async () => {
+test("codex: a file that is not TOML and links out of the project is reported, not a stop", async () => {
+  await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+  await writeFile(join(outside.path, "config.toml"), "model = \n");
   await inProject(async () => {
-    await write(CODEX, `${codexBlock}\n[other]\nnote = '''\nx\n'''\n  [a."x] #"]\n[b."\\e"]\n`);
-    const entry = item(await plan(), CODEX);
-    assert.equal(
-      entry.reason,
-      `${CODEX} holds a multi-line string, which can hold lines that look like a table. ${CODEX} holds lines that eject cannot read as a table header: [a."x] #"], [b."\\e"]. eject reads the file as lines, not as TOML; edits cannot be detected. Check the text afterward before you approve.`,
+    await mkdir(".codex");
+    await symlink(join(outside.path, "config.toml"), CODEX);
+    const found = await plan();
+    assert.match(report(found, CODEX).reason, /may hold/);
+  });
+});
+
+test("three harness paths that lead to one file are all named", async () => {
+  await inProject(async () => {
+    await write(
+      ".mcp.json",
+      json({ ...createMcpServersJsonConfig(npmLaunch), ...createOpenCodeMcpJsonConfig(npmLaunch) }),
+    );
+    await mkdir(".cursor");
+    await symlink(join(process.cwd(), ".mcp.json"), ".cursor/mcp.json");
+    await symlink(join(process.cwd(), ".mcp.json"), "opencode.json");
+    const found = await plan();
+    assert.match(
+      report(found, "opencode.json").reason,
+      /^\.mcp\.json, \.cursor\/mcp\.json and opencode\.json lead to the same file/,
+    );
+  });
+});
+
+test("a deleted link that leads to a harness file does not stop that file's edit", async () => {
+  await inProject(async () => {
+    await write(".mcp.json", json(createMcpServersJsonConfig(npmLaunch)));
+    // Approval removes the link itself, so it changes nothing the edit writes.
+    await symlink(join(process.cwd(), ".mcp.json"), "AGENTS.calavera.md");
+    const found = await plan();
+    assert.equal(item(found, "AGENTS.calavera.md").action, "delete");
+    assert.equal(item(found, ".mcp.json").action, "edit");
+    await ejectApproved();
+    await assert.rejects(lstat("AGENTS.calavera.md"), { code: "ENOENT" });
+    assert.equal(await readFile(".mcp.json", "utf8"), "{}\n");
+  });
+});
+
+test("two deletes of one file are not a conflict, because the second finds it gone", async () => {
+  await inProject(async () => {
+    await write(".calavera/state.json", "{}\n");
+    const found = await planEject({
+      dryRun: false,
+      config: ".calavera/state.json",
+      guidance,
+      loadFormatter,
+    });
+    assert.deepEqual(found.reported, []);
+    assert.deepEqual(found.items.map(({ kind }) => kind).sort(), ["recipe", "state"]);
+  });
+});
+
+test("codex: the report of an edited table names the table and the file", async () => {
+  await inProject(async () => {
+    await write(CODEX, codexBlock.replace('"npx"', '"mine"'));
+    const found = await plan();
+    assert.match(
+      report(found, CODEX).reason,
+      /^The \[mcp_servers\.calavera\] table in \.codex\/config\.toml differs from the table Calavera writes/,
     );
   });
 });

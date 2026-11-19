@@ -34,6 +34,9 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { parse as parseJsonc, printParseErrorCode } from "jsonc-parser";
+import { parse as parseToml } from "smol-toml";
+
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
 
@@ -65,7 +68,6 @@ import { findEarlierGuidance, normalizePinnedVersion } from "./utils/earlier-gui
 import { isPlainObject } from "./utils/guards.js";
 import { rewriteLossProblem, toJSONText, writeJSON } from "./utils/json-rewrite.js";
 import { findBlock, findMarkedBlock } from "./utils/marked-block.js";
-import { tomlHeader } from "./utils/toml-header.js";
 import {
   OPENCODE_CONFIG_SCHEMA,
   createCodexMcpTomlBlock,
@@ -842,6 +844,18 @@ function withPinNormalized(value) {
 }
 
 /**
+ * The `key` object of a parsed harness file when it holds a `calavera` entry, or undefined.
+ *
+ * @param {unknown} config
+ * @param {string} key
+ */
+function serversWithEntry(config, key) {
+  if (!isPlainObject(config)) return undefined;
+  const servers = config[key];
+  return isPlainObject(servers) && Object.hasOwn(servers, "calavera") ? servers : undefined;
+}
+
+/**
  * Plans the `calavera` entry in a JSON harness file: `.mcp.json` and `.cursor/mcp.json` under
  * `mcpServers`, and `opencode.json` under `mcp`. The entry is unedited when it equals the entry
  * Calavera writes for some package manager, with the pinned version normalized (owner decision of
@@ -849,9 +863,13 @@ function withPinNormalized(value) {
  * or `mcp` object, which then goes too, and in `opencode.json` the `$schema` Calavera writes goes
  * once nothing else remains. The file stays, even when it is left empty. JSON has no comments, and
  * `eject` rewrites the whole file through the project's formatter, as the bootstrap writes it, so
- * the reason says when that changes the layout of the rest of the file. A rewrite that would lose
- * what the person wrote, as `rewriteLossProblem` finds it, keeps the entry and reports it. A file
- * that cannot be parsed is a hard stop (ADR-0017, Decision 7).
+ * the note says when that changes the layout of the rest of the file. A rewrite that would lose
+ * what the person wrote, as `rewriteLossProblem` finds it, keeps the entry and reports it.
+ *
+ * A file that is not plain JSON is read as JSON with comments (JSONC), which OpenCode documents
+ * for `opencode.json`. Its `calavera` entry is kept and reported, because a rewrite would lose the
+ * comments, so `eject` never rewrites such a file. Only a file that is neither JSON nor JSONC is a
+ * hard stop (ADR-0017, Decision 7; owner decision of 2026-11-19 on #678).
  *
  * @param {string} path
  * @param {"mcpServers" | "mcp"} key
@@ -869,19 +887,26 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   try {
     config = JSON.parse(text);
   } catch (error) {
-    // A text without the key's name, written plainly or with a JSON escape, holds no entry, so a
-    // harness file Calavera never registered in, such as a JSONC `opencode.json`, is no stop.
-    if (!text.includes("calavera") && !text.includes("\\u")) return NO_MCP_ENTRY;
+    /** @type {import("jsonc-parser").ParseError[]} */
+    const errors = [];
+    const jsonc = parseJsonc(text, errors, { allowTrailingComma: true });
     // eject never changes a file outside the project, so it has no need to read it.
     if (!inside) return mcpEntryOutside(path);
-    throw new Error(
-      `eject stopped before removing anything: ${path} cannot be parsed as JSON (${messageOf(error)}), so eject cannot check its calavera MCP entry. Correct the file, or remove the calavera MCP entry from it yourself, then run eject again.`,
-      { cause: error },
+    const [problem] = errors;
+    if (problem !== undefined) {
+      throw new Error(
+        `eject stopped before removing anything: ${path} cannot be parsed as JSON, nor as JSON with comments (JSONC): ${printParseErrorCode(problem.error)} at offset ${problem.offset}. Correct the file, or remove the calavera MCP entry from it yourself, then run eject again.`,
+        { cause: error },
+      );
+    }
+    if (serversWithEntry(jsonc, key) === undefined) return NO_MCP_ENTRY;
+    return mcpEntryKept(
+      path,
+      `${path} is JSON with comments (JSONC), not plain JSON. eject would rewrite the whole file to remove the calavera MCP entry and lose the comments, so it never rewrites this file and leaves the entry. Remove it yourself if you no longer want it.`,
     );
   }
-  if (!isPlainObject(config)) return NO_MCP_ENTRY;
-  const servers = config[key];
-  if (!isPlainObject(servers) || !Object.hasOwn(servers, "calavera")) return NO_MCP_ENTRY;
+  const servers = serversWithEntry(config, key);
+  if (servers === undefined) return NO_MCP_ENTRY;
   if (!inside) return mcpEntryOutside(path);
   const calavera = servers.calavera;
   // An entry that holds the placeholder normalizes to undefined, which equals no expected entry.
@@ -906,9 +931,11 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   );
   const emptied = Object.keys(others).length === 0;
   /** @type {Record<string, unknown>} */
+  // `serversWithEntry` found the object in `config`, so `config` is an object too.
+  const file = /** @type {Record<string, unknown>} */ (config);
   const next = emptied
-    ? Object.fromEntries(Object.entries(config).filter(([name]) => name !== key))
-    : { ...config, [key]: others };
+    ? Object.fromEntries(Object.entries(file).filter(([name]) => name !== key))
+    : { ...file, [key]: others };
   /** @type {[string, unknown][]} */
   const removed = [];
   // Calavera keeps no record of adding `$schema`, so a `$schema` with the value it writes, in a
@@ -942,21 +969,39 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
 }
 
 /**
- * Plans the `[mcp_servers.calavera]` table in `.codex/config.toml`. The bootstrap appends the
- * table as text, so `eject` removes it as text and every other line, comments included, stays. The
- * table runs from its header to its last line that is neither blank nor a comment before the next
- * header, so a comment that introduces the next table stays with it. The table is unedited when
- * its text equals the table Calavera writes for some package manager, with the pinned version
- * normalized (owner decision of 2026-11-17). Any other table that names `mcp_servers.calavera` is
- * kept and reported as edited: another spelling of the header, a comment inside the table, another
- * key, another layout, or a subtable such as `[mcp_servers.calavera.env]`, which removing the table
- * alone would leave behind.
+ * Whether `contents`, the Codex file once Calavera's table is removed, holds exactly what `text`
+ * holds without the `calavera` entry: the same settings, and nothing else gone. An explicit
+ * `[mcp_servers]` header the person wrote may stay as an empty table.
  *
- * Calavera has no TOML parser, so `eject` reads the file as lines. The one parse error it can see
- * is the table defined twice, which TOML does not allow, and that is a hard stop (ADR-0017,
- * Decision 7). A multi-line string can hold lines that look like headers, so in a file that has
- * one, the table is listed as "edits cannot be detected" and needs an interactive approval of the
- * text afterward.
+ * @param {string} text
+ * @param {string} contents
+ */
+function removesOnlyTheEntry(text, contents) {
+  // Removing whole lines from valid TOML, none of which opens or closes a string, leaves valid
+  // TOML, so this parse does not fail; if it ever did, the plan would stop with nothing written.
+  const after = parseToml(contents);
+  const expected = parseToml(text);
+  delete (/** @type {Record<string, unknown>} */ (expected.mcp_servers).calavera);
+  if (isDeepStrictEqual(after, expected)) return true;
+  // Without an explicit `[mcp_servers]` header, the table goes once `calavera` is its only entry.
+  // When it holds other servers, `after` still holds them, so this comparison fails as it should.
+  delete expected.mcp_servers;
+  return isDeepStrictEqual(after, expected);
+}
+
+/**
+ * Plans the `[mcp_servers.calavera]` table in `.codex/config.toml`. The file is parsed as TOML with
+ * `smol-toml`, and a file that is not TOML is a hard stop, with the parser's error as the cause
+ * (ADR-0017, Decision 7). The entry is unedited when the file holds the table Calavera writes
+ * for some package manager, with the pinned version normalized (owner decision of 2026-11-17),
+ * and removing that text removes the whole entry and nothing else, which parsing the result
+ * shows. Any other entry is kept and reported as edited, such as one with another key, a
+ * subtable, a comment inside the table, or another layout or header spelling: removing Calavera's
+ * lines would then leave part of the entry behind, or the lines are not there to remove. Text that
+ * only looks like the table, such as lines inside a multi-line string, is never removed either.
+ *
+ * `eject` removes the table's lines, and the blank line Calavera added before them, so every other
+ * line, comments included, stays.
  *
  * @param {string} path
  * @param {string[]} expected The table Calavera writes, for each package manager.
@@ -966,80 +1011,59 @@ async function planCodexMcpEntry(path, expected) {
   const entry = await readTextEntry(path);
   if (entry?.text === undefined) return NO_MCP_ENTRY;
   const { identity, text } = entry;
-  const lines = text.split("\n");
-  const bare = lines.map((line) => line.replace(/\r$/, ""));
-  const headers = bare.map(tomlHeader);
-  // Every header that names `mcp_servers.calavera` or a table under it.
-  const related = headers.flatMap((header, index) =>
-    header?.keys[0] === "mcp_servers" && header.keys[1] === "calavera" ? [{ header, index }] : [],
-  );
-  if (related.length === 0) return NO_MCP_ENTRY;
-  if (!(await insideProject(path))) return mcpEntryOutside(path);
-  const defining = related.filter(({ header }) => header.keys.length === 2 && !header.array);
-  const multiline = text.includes('"""') || text.includes("'''");
-  if (defining.length > 1 && multiline) {
-    // A multi-line string can quote the header, so the second one may not be a table at all.
-    return mcpEntryKept(
-      path,
-      `${path} names ${CODEX_TABLE_HEADER} more than once, and it holds a multi-line string, which can quote a header. eject reads the file as lines, not as TOML, so it cannot tell which is Calavera's table, and leaves it. Remove the table yourself if you no longer want it.`,
-    );
-  }
-  if (defining.length > 1) {
+  const inside = await insideProject(path);
+  /** @type {Record<string, unknown>} */
+  let config;
+  try {
+    config = parseToml(text);
+  } catch (error) {
+    // eject never changes a file outside the project, so it has no need to read it.
+    if (!inside) return mcpEntryOutside(path);
     throw new Error(
-      `eject stopped before removing anything: ${path} defines ${CODEX_TABLE_HEADER} more than once, which TOML does not allow, so eject cannot tell which table is Calavera's. Keep one of them, then run eject again.`,
+      `eject stopped before removing anything: ${path} cannot be parsed as TOML: ${messageOf(error).split("\n", 1)[0]}. Correct the file, then run eject again.`,
+      { cause: error },
     );
   }
+  if (serversWithEntry(config, "mcp_servers") === undefined) return NO_MCP_ENTRY;
+  if (!inside) return mcpEntryOutside(path);
   const edited = mcpEntryKept(
     path,
     `The ${CODEX_TABLE_HEADER} table in ${path} differs from the table Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
   );
-  // A subtable or an array of tables under the table makes the entry more than Calavera wrote, and
-  // removing the table alone would leave it behind. Another spelling of the header shows up in the
-  // text comparison below.
-  if (related.length !== 1 || defining.length !== 1) return edited;
-  const start = /** @type {{ index: number }} */ (defining[0]).index;
-  const following = headers.findIndex((header, index) => index > start && header !== undefined);
-  // The header is neither blank nor a comment, so the walk stops at it at the latest.
-  let end = (following === -1 ? lines.length : following) - 1;
-  const blankOrComment = (/** @type {string} */ line) =>
-    line.trim() === "" || line.trim().startsWith("#");
-  while (blankOrComment(/** @type {string} */ (bare[end]))) end -= 1;
-  const table = bare.slice(start, end + 1);
-  // A table that holds the placeholder normalizes to undefined, which equals no expected table.
-  const normalized = normalizePinnedVersion(table.join("\n"))?.normalized;
-  if (
-    !expected.some((block) => normalizePinnedVersion(block.trimEnd())?.normalized === normalized)
-  ) {
-    return edited;
+  const lines = text.split("\n");
+  const bare = lines.map((line) => line.replace(/\r$/, ""));
+  for (const start of bare.keys()) {
+    for (const block of expected) {
+      const written = block.trimEnd().split("\n");
+      const end = start + written.length - 1;
+      const table = bare.slice(start, end + 1);
+      // A table that holds the placeholder normalizes to undefined, which equals no written table.
+      if (
+        normalizePinnedVersion(table.join("\n"))?.normalized !==
+        normalizePinnedVersion(written.join("\n"))?.normalized
+      ) {
+        continue;
+      }
+      const contents = withoutLines(lines, start, end);
+      if (!removesOnlyTheEntry(text, contents)) continue;
+      return {
+        items: [
+          {
+            kind: "mcp-entry",
+            path,
+            action: "edit",
+            edits: "unedited",
+            matchesRecords: true,
+            removedLines: table,
+            contents,
+            seen: textSeen(identity, text),
+          },
+        ],
+        reported: [],
+      };
+    }
   }
-  /** @type {EjectItem} */
-  const item = {
-    kind: "mcp-entry",
-    path,
-    action: "edit",
-    edits: "unedited",
-    matchesRecords: true,
-    removedLines: table,
-    contents: withoutLines(lines, start, end),
-    seen: textSeen(identity, text),
-  };
-  // A line that starts like a header but does not read as one may still be a header for TOML, such
-  // as a subtable of Calavera's table that removing the table would leave behind.
-  const unread = bare.filter((line, index) => line.trim().startsWith("[") && !headers[index]);
-  const doubts = [
-    multiline
-      ? `${path} holds a multi-line string, which can hold lines that look like a table.`
-      : "",
-    unread.length > 0
-      ? `${path} holds lines that eject cannot read as a table header: ${unread.map((line) => line.trim()).join(", ")}.`
-      : "",
-  ].filter((doubt) => doubt !== "");
-  if (doubts.length > 0) {
-    item.edits = "cannot-detect";
-    item.matchesRecords = false;
-    item.reason = `${doubts.join(" ")} eject reads the file as lines, not as TOML; ${CANNOT_DETECT}. Check the text afterward before you approve.`;
-  }
-  return { items: [item], reported: [] };
+  return edited;
 }
 
 /**
@@ -1080,6 +1104,43 @@ async function planMcpEntries(guidance, loadFormatter) {
   return {
     items: parts.flatMap(({ items }) => items),
     reported: parts.flatMap(({ reported }) => reported),
+  };
+}
+
+/**
+ * Splits off the items that change one file through two or more paths, such as `opencode.json`
+ * linked to `.mcp.json`. Each edit is built from the file's text at plan time and writes the whole
+ * file, so a second write would put back what the first removed, and a delete would remove what
+ * an edit keeps. `eject` keeps every such item and reports it, naming each path, rather than merge
+ * the changes, because the person decides how the paths should share one file. The real path is
+ * where `entryIdentity` resolves the entry. A deleted symbolic link is removed as a link, so it
+ * changes no file it leads to and is never grouped.
+ *
+ * @param {EjectItem[]} items
+ * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
+ */
+async function withoutSharedFiles(items) {
+  /** @type {Map<string, EjectItem[]>} */
+  const byFile = new Map();
+  for (const item of items) {
+    if (item.action === "delete" && (await lstat(item.path)).isSymbolicLink()) continue;
+    const real = await realpath(item.path);
+    byFile.set(real, [...(byFile.get(real) ?? []), item]);
+  }
+  const shared = [...byFile.values()].filter(
+    (group) => group.length > 1 && group.some(({ action }) => action === "edit"),
+  );
+  const conflicted = new Set(shared.flat());
+  return {
+    items: items.filter((item) => !conflicted.has(item)),
+    reported: shared.flatMap((group) => {
+      const names = group.map(({ path }) => path);
+      const both = `${names.slice(0, -1).join(", ")} and ${names.at(-1)}`;
+      return group.map(({ path }) => ({
+        path,
+        reason: `${both} lead to the same file, so changing it through one path would undo or lose the change through the other. eject leaves ${path} as it is; remove Calavera's text from that file yourself if you no longer want it.`,
+      }));
+    }),
   };
 }
 
@@ -1284,6 +1345,8 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFo
   items.push(...guidanceItems.items);
   const mcpEntries = await planMcpEntries(guidance, loadFormatter);
   items.push(...mcpEntries.items);
+  const separate = await withoutSharedFiles(items);
+  items.splice(0, items.length, ...separate.items);
 
   // Every path is checked before anything is removed, so a link that leads out of the project
   // stops the plan, not a later delete.
@@ -1298,7 +1361,12 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFo
   ].sort();
   return {
     items,
-    reported: [...guidanceItems.reported, ...cacheBlock.reported, ...mcpEntries.reported],
+    reported: [
+      ...guidanceItems.reported,
+      ...cacheBlock.reported,
+      ...mcpEntries.reported,
+      ...separate.reported,
+    ],
     kept,
     nothingToDo: items.length === 0,
   };
