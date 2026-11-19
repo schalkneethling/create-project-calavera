@@ -35,6 +35,7 @@ import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
 import {
   ARTIFACT_CACHE_BLOCK,
+  TRANSACTION_PATH as EJECT_TRANSACTION_PATH,
   artifactCacheIgnoreLines,
   artifactCachePointers,
   prepareArtifactSources,
@@ -370,11 +371,12 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {import("./artifact-lifecycle.js").ArtifactServices} ArtifactServices
  * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | EjectResult | ArtifactCommandResult} CommandResult
  *
- * @typedef {Omit<import("./eject.js").EjectItem, "seen"> & { outcome: "planned" | "removed" | "left" | "failed" | "skipped", error?: string }} EjectResultItem
+ * @typedef {Omit<import("./eject.js").EjectItem, "seen"> & { outcome: "planned" | "removed" | "left" | "failed" | "skipped", error?: string, keptRecord?: true }} EjectResultItem
  *   One footprint item and what this run did with it: `planned` in a dry run, a refused run, or a
  *   cancelled one; `left` for an item `--yes` leaves for an interactive approval. `error` holds
- *   the cause of a failed removal, or why a skipped item was kept. The check values the plan
- *   records stay internal, because they hold whole file texts.
+ *   the cause of a failed removal, or why a skipped item was kept. `keptRecord` marks a record
+ *   that matches but that `--yes` keeps while an item it leaves needs it (Decision 5). The check
+ *   values the plan records stay internal.
  *
  * @typedef {object} EjectResult
  * @property {"eject"} command
@@ -386,7 +388,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {EjectResultItem[]} items
  * @property {import("./eject.js").EjectReport[]} reported
  * @property {string[]} kept
- * @property {{ scripts: { name: string, value: string }[], devDependency?: { name: string, removeCommand: string } }} packageJson
+ * @property {{ scripts: { name: string, value: string }[], devDependency?: { name: string, removeCommand: string }, problem?: string }} packageJson
  *   What `eject` reports in `package.json` and never changes (ADR-0017, Decision 4).
  * @property {{ directory: string, paths: string[] }[]} elsewhere A footprint in another directory
  *   of the workspace, relative to this one, which `eject` names and does not remove (Decision 8).
@@ -6316,51 +6318,83 @@ async function clean(options) {
 export async function ejectProject(options, runtime = {}) {
   const interactive = runtime.interactive ?? canPrompt(options);
   const refuse = !options.dryRun && !options.assumeYes && !interactive;
-  const loadFormatter = projectFormatterLoader(process.cwd());
-  const guidance = await agentBootstrapTexts(loadFormatter);
-  // A refused run writes nothing, so it plans as a dry run: it does not recover a pending
-  // artifact transaction either (Decision 7).
-  const plan = await planEject({
-    dryRun: options.dryRun || refuse,
-    config: options.config,
-    guidance,
-    loadFormatter,
-  }).catch((error) => {
-    if (!refuse) throw error;
-    throw new Error(ejectRefusal(options), { cause: error });
-  });
-  const packageJSON = await readPackageJSONIfPresent();
-  /** @param {import("./eject.js").EjectItem} item @param {EjectResultItem["outcome"]} outcome @param {string} [error] */
-  const withOutcome = ({ seen: _seen, ...item }, outcome, error) =>
-    /** @type {EjectResultItem} */ (
-      error === undefined ? { ...item, outcome } : { ...item, outcome, error }
-    );
-  /** @param {EjectResult["status"]} status @param {string} message @param {EjectResultItem[]} items */
-  const result = async (status, message, items) => ({
+  const packageJSON = await readEjectPackageJSON();
+  const pendingTransaction = await fileExists(EJECT_TRANSACTION_PATH);
+  /** @param {EjectResult["status"]} status @param {string} message @param {EjectResultItem[]} items @param {Pick<EjectResult, "reported" | "kept">} [found] */
+  const result = async (status, message, items, found = { reported: [], kept: [] }) => ({
     command: /** @type {const} */ ("eject"),
     dryRun: options.dryRun,
     status,
     message,
     items,
-    reported: plan.reported,
-    kept: plan.kept,
+    ...found,
     packageJson: await ejectPackageJsonReport(packageJSON),
-    elsewhere: await ejectFootprintElsewhere(packageJSON),
+    elsewhere: await ejectFootprintElsewhere(packageJSON.manifest),
   });
-  const planned = plan.items.map((item) => withOutcome(item, "planned"));
-  const leavesWithYes = plan.items.filter(({ matchesRecords }) => !matchesRecords).length;
-  const listed = `eject would remove ${pluralizeCount(plan.items.length, "item")}${leavesWithYes > 0 ? `; --yes would leave ${leavesWithYes} of them for an interactive approval` : ""}.`;
+
+  // A refused run writes nothing, so it cannot recover a pending artifact transaction, and
+  // without that recovery it cannot list the footprint (Decision 7).
+  if (refuse && pendingTransaction) {
+    return result(
+      "refused",
+      `${ejectRefusal(options)} ${EJECT_TRANSACTION_PATH} also records a pending artifact transaction, which eject recovers before it lists anything; a run in a terminal or with --yes recovers it first.`,
+      [],
+    );
+  }
+
+  const loadFormatter = projectFormatterLoader(process.cwd());
+  const guidance = await agentBootstrapTexts(loadFormatter);
+  // A refused run plans as a dry run, so it writes nothing.
+  const plan = await planEject({
+    dryRun: options.dryRun || refuse,
+    config: options.config,
+    guidance,
+    loadFormatter,
+  });
+  const found = { reported: plan.reported, kept: plan.kept };
+  // What --yes would do, so the list the person sees says it: the items it leaves for an
+  // approval, and the records it keeps while one of those items needs them (Decision 5).
+  const yesLeaves = new Set(selectEjectItems(plan, { assumeYes: true }).leave);
+  /**
+   * The item as the result shows it, without the check values, which hold whole file texts.
+   *
+   * @param {import("./eject.js").EjectItem} item
+   * @param {EjectResultItem["outcome"]} outcome
+   * @param {string} [error]
+   * @returns {EjectResultItem}
+   */
+  const describe = (item, outcome, error) => {
+    const { seen: _seen, ...visible } = item;
+    return {
+      ...visible,
+      outcome,
+      ...(error === undefined ? {} : { error }),
+      ...(item.matchesRecords && yesLeaves.has(item) ? { keptRecord: true } : {}),
+    };
+  };
+  const planned = plan.items.map((item) => describe(item, "planned"));
+  const listed = `eject would remove ${pluralizeCount(plan.items.length, "item")}${yesSummary(
+    plan.items.filter((item) => yesLeaves.has(item)),
+    "would leave",
+    "would keep",
+  )}.`;
+  const recovered = pendingTransaction && !options.dryRun;
 
   if (plan.nothingToDo) {
-    return result("nothing-to-do", "eject found no Calavera footprint to remove here.", []);
+    return result(
+      "nothing-to-do",
+      `${recovered ? "eject recovered the pending artifact transaction first, as every artifacts command does. " : ""}eject found no Calavera footprint to remove here.`,
+      [],
+      found,
+    );
   }
 
   if (options.dryRun) {
-    return result("dry-run", `Dry run complete. Nothing was changed. ${listed}`, planned);
+    return result("dry-run", `Dry run complete. Nothing was changed. ${listed}`, planned, found);
   }
 
   if (refuse) {
-    return result("refused", ejectRefusal(options), planned);
+    return result("refused", ejectRefusal(options), planned, found);
   }
 
   if (!options.assumeYes) {
@@ -6370,7 +6404,7 @@ export async function ejectProject(options, runtime = {}) {
         for (const { text } of lines) logger.info(text);
       });
     // The same list the dry run prints, so the approval covers exactly what it names.
-    show(ejectSummaryLines(await result("dry-run", listed, planned)));
+    show(ejectSummaryLines(await result("dry-run", listed, planned, found)));
     const ask =
       runtime.confirm ??
       (async (message) => {
@@ -6381,35 +6415,35 @@ export async function ejectProject(options, runtime = {}) {
       `Remove the ${pluralizeCount(plan.items.length, "item")} listed above, including any marked edited?`,
     );
     if (!approved) {
-      return result("cancelled", "eject cancelled. Nothing was changed.", planned);
+      return result(
+        "cancelled",
+        recovered
+          ? "eject cancelled. It recovered the pending artifact transaction first, as every artifacts command does, and changed nothing else."
+          : "eject cancelled. Nothing was changed.",
+        planned,
+        found,
+      );
     }
   }
 
   const { remove, leave } = selectEjectItems(plan, { assumeYes: options.assumeYes });
   const outcome = await executeEject(remove);
   /** @type {Map<import("./eject.js").EjectItem, EjectResultItem>} */
-  const done = new Map(
-    [
-      ...outcome.removed.map((item) => [item, withOutcome(item, "removed")]),
-      ...outcome.failed.map(({ item, error }) => [
-        item,
-        withOutcome(item, "failed", error.message),
-      ]),
-      ...outcome.skipped.map(({ item, reason }) => [item, withOutcome(item, "skipped", reason)]),
-      ...leave.map((item) => [item, withOutcome(item, "left")]),
-    ].map(
-      ([item, value]) =>
-        /** @type {[import("./eject.js").EjectItem, EjectResultItem]} */ ([item, value]),
-    ),
-  );
+  const done = new Map();
+  for (const item of outcome.removed) done.set(item, describe(item, "removed"));
+  for (const { item, error } of outcome.failed)
+    done.set(item, describe(item, "failed", error.message));
+  for (const { item, reason } of outcome.skipped) done.set(item, describe(item, "skipped", reason));
+  for (const item of leave) done.set(item, describe(item, "left"));
   const items = plan.items.flatMap((item) => done.get(item) ?? []);
   const notRemoved = outcome.failed.length + outcome.skipped.length;
-  const removed = `Removed ${pluralizeCount(outcome.removed.length, "item")}.`;
+  const removed = `Removed ${pluralizeCount(outcome.removed.length, "item")}`;
   if (notRemoved > 0) {
     return result(
       "failed",
-      `${removed} ${pluralizeCount(notRemoved, "item")} could not be removed; each one says why below. Fix the cause, then run eject again.`,
+      `${removed}. ${pluralizeCount(notRemoved, "item")} could not be removed; each one says why below. Fix the cause, then run eject again.`,
       items,
+      found,
     );
   }
   if (leave.length > 0) {
@@ -6417,11 +6451,47 @@ export async function ejectProject(options, runtime = {}) {
       "ejected",
       outcome.removed.length === 0
         ? `Nothing left here matches Calavera's records exactly, so only items that need your approval remain. Run eject in a terminal to review and approve them.`
-        : `${removed} --yes left ${pluralizeCount(leave.length, "item")} that ${leave.length === 1 ? "needs" : "need"} your approval. Run eject in a terminal to review and approve ${leave.length === 1 ? "it" : "them"}.`,
+        : `${removed}${yesSummary(leave, "left", "kept")}. Run eject in a terminal to review and approve what is left.`,
       items,
+      found,
     );
   }
-  return result("ejected", removed, items);
+  return result("ejected", `${removed}.`, items, found);
+}
+
+/**
+ * What `--yes` leaves, in words: the items that need an approval, and the records it keeps while
+ * one of them needs them. Empty when it leaves nothing.
+ *
+ * @param {import("./eject.js").EjectItem[]} leave From `selectEjectItems` with `assumeYes`.
+ * @param {string} leaves Such as "left".
+ * @param {string} keeps Such as "kept".
+ */
+function yesSummary(leave, leaves, keeps) {
+  const approvals = leave.filter(({ matchesRecords }) => !matchesRecords).length;
+  const records = leave.length - approvals;
+  if (leave.length === 0) return "";
+  return `; --yes ${leaves} ${pluralizeCount(approvals, "item")} for an interactive approval${records > 0 ? `, and ${keeps} ${pluralizeCount(records, "record")} that ${records === 1 ? "an item it leaves needs" : "the items it leaves need"}` : ""}`;
+}
+
+/**
+ * The project's `package.json`, which `eject` only reads for its reports. A file that cannot be
+ * read stops nothing, because `eject` never writes it; the report says why it is missing.
+ *
+ * @returns {Promise<{ manifest: PackageJSON, problem?: string }>}
+ */
+async function readEjectPackageJSON() {
+  try {
+    const manifest = await readPackageJSONIfPresent();
+    return isPlainObject(manifest)
+      ? { manifest }
+      : { manifest: {}, problem: "package.json does not hold a JSON object" };
+  } catch (error) {
+    return {
+      manifest: {},
+      problem: `package.json could not be read (${error instanceof Error ? error.message : String(error)})`,
+    };
+  }
 }
 
 /**
@@ -6443,10 +6513,16 @@ function ejectRefusal(options) {
  * when Vite+ manages the project. `eject` reports them and never writes `package.json` (ADR-0017,
  * Decision 4).
  *
- * @param {PackageJSON} packageJSON
+ * @param {{ manifest: PackageJSON, problem?: string }} read From `readEjectPackageJSON`.
  * @returns {Promise<EjectResult["packageJson"]>}
  */
-async function ejectPackageJsonReport(packageJSON) {
+async function ejectPackageJsonReport({ manifest: packageJSON, problem }) {
+  if (problem !== undefined) {
+    return {
+      scripts: [],
+      problem: `${problem}, so eject cannot report the scripts or the development dependency that call Calavera. eject never changes package.json; fix it and run eject again to see them.`,
+    };
+  }
   const scripts = Object.entries(packageJSON.scripts ?? {}).flatMap(([name, value]) =>
     typeof value === "string" && scriptRunsCalavera(value) ? [{ name, value }] : [],
   );
@@ -6494,7 +6570,9 @@ async function ejectFootprintElsewhere(packageJSON) {
   }
   /** @type {EjectResult["elsewhere"]} */
   const elsewhere = [];
-  for (const location of locations) {
+  // A workspace that lists `.` among its packages, or a root met twice, is not elsewhere.
+  for (const location of new Set(locations)) {
+    if (location === directory) continue;
     const paths = await footprintIn(location);
     if (paths.length > 0) {
       elsewhere.push({ directory: relative(directory, location).split(sep).join("/"), paths });
@@ -6667,7 +6745,8 @@ Options:
   --agents-md <mode>   append or fallback when AGENTS.md already exists
   --mcp-harness <host> claude-code, codex, cursor, opencode, or skip
   --json               Print JSON output
-  --yes                Use defaults and skip prompts
+  --yes                Use defaults and skip prompts; with eject, remove only the
+                       items that match Calavera's records exactly
   --no-install         Write files without installing dependencies during apply
   --reown-managed-file <path>
                       Treat a tracked managed file's current contents as approved

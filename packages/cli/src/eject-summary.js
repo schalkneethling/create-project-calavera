@@ -77,7 +77,7 @@ export function ejectSummaryLines(result) {
  *
  * @param {EjectResultItem} item
  */
-function editsLabel({ kind, edits, matchesRecords, outcome }) {
+function editsLabel({ kind, edits, matchesRecords, outcome, keptRecord }) {
   const found =
     edits === "not-checked"
       ? kind === "state" || kind === "lock"
@@ -86,8 +86,12 @@ function editsLabel({ kind, edits, matchesRecords, outcome }) {
       : edits === "cannot-detect"
         ? "edits cannot be detected"
         : edits;
-  // Only a list that comes before the removal says what --yes would do; a run that is done says
-  // what it did under its own heading.
+  // A record --yes keeps needs no approval of its own, so it says why it stays. Only a list that
+  // comes before the removal says what --yes would do; a run that is done says what it did under
+  // its own heading.
+  if (keptRecord && (outcome === "planned" || outcome === "left")) {
+    return `${found}; --yes keeps it while an item it leaves needs it`;
+  }
   return outcome === "planned" && !matchesRecords ? `${found}; --yes leaves it` : found;
 }
 
@@ -105,6 +109,11 @@ function itemLines(item) {
   }
   if (item.reason) lines.push(info(`${DETAIL}${withoutOwnPath(item.reason, item.path)}`));
   if (item.note) lines.push(info(`${DETAIL}${withoutOwnPath(item.note, item.path)}`));
+  // The text an edit removes, and what the file holds afterward, belong to the list a person
+  // approves or still has to approve; a removal that is done does not print them again.
+  if (item.outcome === "removed" || item.outcome === "failed" || item.outcome === "skipped") {
+    return lines;
+  }
   if (item.removedLines) {
     lines.push(info(`${DETAIL}Removes:`), ...item.removedLines.map(quoted));
   }
@@ -140,8 +149,9 @@ function reportedLines(reported) {
  * @param {EjectResult["packageJson"]} packageJson
  * @returns {SummaryLine[]}
  */
-function packageJsonLines({ scripts, devDependency }) {
+function packageJsonLines({ scripts, devDependency, problem }) {
   return [
+    ...(problem === undefined ? [] : [info(`${ITEM}${problem}`)]),
     ...scripts.map(({ name, value }) =>
       info(
         `${ITEM}The script ${quoteScriptValue(name)} runs Calavera: ${quoteScriptValue(value)}. It stops working once Calavera is gone, so change or remove it yourself.`,

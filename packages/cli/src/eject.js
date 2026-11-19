@@ -10,8 +10,8 @@
 // `.agents/calavera/mcp.md`. It also plans the `calavera` MCP entry in the four harness files the
 // bootstrap writes, checked against the launch command for each package manager, and a
 // `.coderabbit.yaml` that Calavera created whole, checked against the texts every release wrote.
-// `ejectProject` in `index.js` registers the command and decides how the person approves the
-// list (#678).
+// The CLI's `eject` command calls `ejectProject` in `index.js`, which decides how the person
+// approves the list (#678).
 //
 // The plan looks for each item directly, not only through the state file, because a project whose
 // state file is gone still holds the rest of the footprint (ADR-0017, Decision 2). Nothing here
@@ -1707,7 +1707,9 @@ export async function executeEject(items) {
  * runner such as `npx` or `pnpm dlx`, or the package through `npm create`, `npm init`, `yarn
  * create`, `pnpm create`, or `bun create`, which run `create-project-calavera`. `eject` reports such
  * a script and never changes it (ADR-0017, Decision 4). A scoped package of the same name, such as
- * `@someone/create-project-calavera`, is another package, and a longer name is another file.
+ * `@someone/create-project-calavera`, is another package, and a longer name, or a folder of that
+ * name in a path, is another file. A bare word such as `cd create-project-calavera` still counts,
+ * which only adds a report the person can ignore.
  *
  * @param {string} value The script's command.
  */
@@ -1715,9 +1717,10 @@ export function scriptRunsCalavera(value) {
   return CALAVERA_EXECUTABLE.test(value) || CALAVERA_CREATE.test(value);
 }
 
-// Not after a name character or a scope, and not followed by a longer name or a file extension.
+// Not after a name character or a scope, and not followed by a longer name, a file extension, or a
+// path separator, so a folder of that name in a path does not count.
 const CALAVERA_EXECUTABLE =
-  /(?<![\w.@-])(?<!@[\w.-]+\/)create-project-calavera(?:-mcp)?(?![\w-]|\.\w)/;
+  /(?<![\w.@-])(?<!@[\w.-]+\/)create-project-calavera(?:-mcp)?(?![\w/-]|\.\w)/;
 const CALAVERA_CREATE = /(?<![\w.@/-])(?:create|init)\s+project-calavera(?![\w-]|\.\w)/;
 
 /** The executable every MCP registration Calavera writes launches, in each harness file. */

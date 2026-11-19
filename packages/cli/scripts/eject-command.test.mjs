@@ -685,7 +685,7 @@ test("the headline counts what a run removes and what --yes leaves", async () =>
     const count = dryRun.items.length;
     assert.equal(
       dryRun.message,
-      `Dry run complete. Nothing was changed. eject would remove ${count} items; --yes would leave 1 of them for an interactive approval.`,
+      `Dry run complete. Nothing was changed. eject would remove ${count} items; --yes would leave 1 item for an interactive approval.`,
     );
     const { asked, result: cancelled } = await ejectInteractively([], false);
     assert.deepEqual(asked, [
@@ -693,13 +693,26 @@ test("the headline counts what a run removes and what --yes leaves", async () =>
     ]);
     assert.equal(cancelled.message, "eject cancelled. Nothing was changed.");
 
-    // An edited skill is left, and so is the state that records it.
+    // An edited skill is left for an approval, and the state is kept because it records the skill.
+    // The dry run says so before --yes runs (Decision 5).
     await writeFile(".agents/skills/calavera/SKILL.md", "# Edited\n");
+    const edited = await eject(["--dry-run"]);
+    assert.equal(
+      edited.message,
+      `Dry run complete. Nothing was changed. eject would remove ${count} items; --yes would leave 2 items for an interactive approval, and would keep 1 record that an item it leaves needs.`,
+    );
+    assert.match(
+      human(edited),
+      /^ {2}\.calavera\/state\.json \(Calavera's own record; --yes keeps it while an item it leaves needs it\)$/m,
+    );
     const yes = await eject(["--yes"]);
     assert.equal(
       yes.message,
-      `Removed ${count - 3} items. --yes left 3 items that need your approval. Run eject in a terminal to review and approve them.`,
+      `Removed ${count - 3} items; --yes left 2 items for an interactive approval, and kept 1 record that an item it leaves needs. Run eject in a terminal to review and approve what is left.`,
     );
+    const state = yes.items.find(({ kind }) => kind === "state");
+    assert.equal(state?.outcome, "left");
+    assert.equal(state?.keptRecord, true);
     for (const item of yes.items) assert.equal("error" in item, false);
   });
 });
@@ -723,12 +736,12 @@ test("one item left by --yes is worded in the singular", async () => {
     const result = await eject(["--yes"]);
     assert.match(
       result.message,
-      /--yes left 1 item that needs your approval\. Run eject in a terminal to review and approve it\.$/,
+      /; --yes left 1 item for an interactive approval\. Run eject in a terminal to review and approve what is left\.$/,
     );
   });
 });
 
-test("a refused run names each reason it cannot ask, and wraps a planning failure with its cause", async () => {
+test("a refused run names each reason it cannot ask, and a pending transaction in its result", async () => {
   await inProject(async (root) => {
     await initProject();
     const refused = await ejectProject(parseArgs(["eject", "--json"]), { interactive: false });
@@ -745,13 +758,15 @@ test("a refused run names each reason it cannot ask, and wraps a planning failur
       ".calavera/artifact-transaction.json",
       `${JSON.stringify({ schemaVersion: 1, transactionRoot: join(root, ".calavera/.transactions/t"), operations: [] })}\n`,
     );
-    await assert.rejects(eject(), (error) => {
-      assert.ok(error instanceof Error);
-      assert.match(error.message, /^eject cannot ask for confirmation because/);
-      assert.ok(error.cause instanceof Error);
-      assert.match(error.cause.message, /pending artifact transaction/);
-      return true;
-    });
+    const before = await snapshotDirectory();
+    const pending = await ejectProject(parseArgs(["eject", "--json"]), { interactive: false });
+    assert.equal(pending.status, "refused");
+    assert.deepEqual(pending.items, []);
+    assert.equal(
+      pending.message,
+      `${refused.message} .calavera/artifact-transaction.json also records a pending artifact transaction, which eject recovers before it lists anything; a run in a terminal or with --yes recovers it first.`,
+    );
+    assert.deepEqual(await snapshotDirectory(), before);
   });
 });
 
@@ -864,5 +879,109 @@ test("a project that names no package manager gets npm's remove command", async 
       );
     },
     { devDependencies: { "create-project-calavera": "^6.2.1" } },
+  );
+});
+
+test("a declined run says that it recovered a pending transaction", async () => {
+  await inProject(async (root) => {
+    await initProject();
+    await write(
+      ".calavera/artifact-transaction.json",
+      `${JSON.stringify({ schemaVersion: 1, transactionRoot: join(root, ".calavera/.transactions/t"), operations: [] })}\n`,
+    );
+    const { result } = await ejectInteractively([], false);
+    assert.equal(
+      result.message,
+      "eject cancelled. It recovered the pending artifact transaction first, as every artifacts command does, and changed nothing else.",
+    );
+  });
+});
+
+test("a workspace that lists its own root among its packages names no other location", async () => {
+  await inProject(async () => {
+    await initProject();
+    await write("pnpm-workspace.yaml", 'packages:\n  - "."\n  - "packages/*"\n');
+    await write("packages/app/package.json", '{ "name": "app" }\n');
+    const result = await eject(["--dry-run"]);
+    assert.deepEqual(result.elsewhere, []);
+    assert.deepEqual(listingViolations(human(result), namedItems(result)), []);
+  });
+});
+
+test("a package.json that cannot be read stops nothing and says why it is not reported", async () => {
+  /** @type {[string, RegExp][]} */
+  const cases = [
+    ["{bad", /^package\.json could not be read \(/],
+    ["null", /^package\.json does not hold a JSON object,/],
+  ];
+  for (const [text, problem] of cases) {
+    await inProject(async () => {
+      await initProject();
+      await writeFile("package.json", text);
+      const result = await eject(["--yes"]);
+      assert.equal(result.status, "ejected");
+      assert.match(result.packageJson.problem ?? "", problem);
+      assert.match(human(result), /eject never changes package\.json/);
+      assert.equal(await readFile("package.json", "utf8"), text);
+    });
+  }
+});
+
+test("--help says what --yes means for eject", () => {
+  assert.match(
+    formatHelp(),
+    /--yes {16}Use defaults and skip prompts; with eject, remove only the\n {23}items that match Calavera's records exactly/,
+  );
+});
+
+test("scriptRunsCalavera does not count a folder of that name in a path", () => {
+  assert.equal(scriptRunsCalavera("node ./create-project-calavera/build.js"), false);
+  assert.equal(scriptRunsCalavera("git clone x/create-project-calavera"), true);
+});
+
+test("after an approved run, the summary lists each removed item without its text", async () => {
+  await inProject(async () => {
+    await initProject();
+    const { result } = await ejectInteractively([], true);
+    const output = human(result);
+    assert.match(output, /^ {2}\.mcp\.json \(unedited\)$/m);
+    assert.doesNotMatch(output, /Removes:|Afterward:/);
+  });
+});
+
+test("after --init and apply, an approved eject leaves no footprint and changes nothing else", async () => {
+  await inProject(
+    async (root) => {
+      for (const args of [
+        ["--init", "--yes", "--mcp-harness", "claude-code"],
+        ["init", "--yes"],
+        ["apply", "--yes", "--no-install"],
+      ]) {
+        const run = runWithoutTerminal(root, args);
+        assert.equal(run.status, 0, `${args.join(" ")}:\n${run.stdout}\n${run.stderr}`);
+      }
+      const scripts = JSON.parse(await readFile("package.json", "utf8")).scripts;
+      assert.ok(Object.keys(scripts).length > 0, "apply generated scripts");
+      // Every file outside the footprint, managed files and package.json included, which the
+      // generated scripts and vp check read.
+      const footprint =
+        /^\.\/(?:\.calavera|\.agents\/skills\/calavera|AGENTS\.md|\.coderabbit\.yaml|calavera\.config\.json|\.mcp\.json)/;
+      const outside = async () =>
+        Object.fromEntries(
+          Object.entries(await snapshotDirectory(".")).filter(
+            ([path]) => !footprint.test(`./${path}`),
+          ),
+        );
+      const before = await outside();
+      assert.ok(Object.keys(before).includes(".editorconfig"));
+
+      const { result } = await ejectInteractively([], true);
+      assert.equal(result.status, "ejected");
+      assert.deepEqual(await outside(), before);
+      for (const path of INIT_FOOTPRINT) assert.equal(await exists(path), false, `${path} is gone`);
+      assert.deepEqual(JSON.parse(await readFile(".mcp.json", "utf8")), {});
+      assert.equal((await eject(["--dry-run"])).status, "nothing-to-do");
+    },
+    { name: "plain", packageManager: "npm@11.0.0" },
   );
 });

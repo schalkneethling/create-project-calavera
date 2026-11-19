@@ -712,10 +712,11 @@ npm create project-calavera eject
 ```
 
 Without a terminal, or with `--json`, `eject` refuses unless you pass `--yes`.
-With `--yes`, it removes only the items that match Calavera's records exactly
-and lists what it left: always the recipe, because Calavera cannot tell whether
-you edited it, and any item you edited. Run `eject` in a terminal to approve
-those.
+With `--yes`, it removes only the items that match Calavera's records exactly.
+It leaves, and lists, everything else: what it cannot check, such as the recipe
+and the extracted artifact packages in `.calavera/packages/`, any item you
+edited, and the state or lock while an item it leaves still needs them. Run
+`eject` in a terminal to approve those.
 
 `eject` never changes `package.json`. It reports each script that runs
 Calavera, and the `create-project-calavera` development dependency with the
