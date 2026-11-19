@@ -193,11 +193,15 @@ export function createCodexMcpTomlBlock(launchCommand) {
 }
 
 /**
+ * The lines of the TOML table that starts with `header`: from the header to the line before the
+ * next header, or to the end of the text. `eject` reads the Codex table through it too, so both
+ * find the table the same way (ADR-0017, Decision 2).
+ *
  * @param {string} contents
  * @param {string} header
  * @returns {{ start: number, end: number } | undefined}
  */
-function findTomlTableRange(contents, header) {
+export function findTomlTableRange(contents, header) {
   const lines = contents.split("\n");
   const start = lines.findIndex((line) => line.trim() === header);
 
@@ -265,12 +269,18 @@ export async function writeCodexMcpConfig(path, launchCommand, dryRun, changes) 
 }
 
 /**
+ * The `$schema` Calavera writes into `opencode.json` when the file has none. `eject` removes a
+ * `$schema` with this value once nothing else remains in the file (ADR-0017, Decision 2).
+ */
+export const OPENCODE_CONFIG_SCHEMA = "https://opencode.ai/config.json";
+
+/**
  * @param {McpLaunchCommand} launchCommand
  * @returns {Record<string, unknown>}
  */
 export function createOpenCodeMcpJsonConfig(launchCommand) {
   return {
-    $schema: "https://opencode.ai/config.json",
+    $schema: OPENCODE_CONFIG_SCHEMA,
     mcp: {
       calavera: {
         type: "local",
@@ -303,9 +313,7 @@ export async function writeOpenCodeMcpConfig(path, launchCommand, dryRun, change
     {
       ...currentConfig,
       $schema:
-        typeof currentConfig.$schema === "string"
-          ? currentConfig.$schema
-          : "https://opencode.ai/config.json",
+        typeof currentConfig.$schema === "string" ? currentConfig.$schema : OPENCODE_CONFIG_SCHEMA,
       mcp: {
         ...(isPlainObject(mcp) ? mcp : {}),
         calavera: {

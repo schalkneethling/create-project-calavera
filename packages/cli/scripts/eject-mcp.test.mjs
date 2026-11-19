@@ -1,0 +1,686 @@
+// Issue #678, layer 3 of the five-layer stack the owner approved on 2026-11-18: the MCP entries
+// part of the `eject` footprint (ADR-0017, Decision 2). It covers the `calavera` entry in the four
+// harness files the bootstrap writes, `.mcp.json`, `.cursor/mcp.json`, `opencode.json`, and
+// `.codex/config.toml`. It also covers the owner's decision of 2026-11-19 on #678 that a
+// `.gitignore` that links out of the project keeps its `artifact-cache` block and is reported,
+// rather than stopping the plan. The command is registered in layer 5, so these tests call the
+// planner directly.
+import assert from "node:assert/strict";
+import {
+  lstat,
+  mkdir,
+  mkdtempDisposable,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import test from "node:test";
+
+import { executeEject, planEject, selectEjectItems } from "../src/eject.js";
+import { agentBootstrap, agentBootstrapTexts } from "../src/index.js";
+import { normalizePinnedVersion } from "../src/utils/earlier-guidance.js";
+import {
+  createCodexMcpTomlBlock,
+  createMcpServersJsonConfig,
+  createOpenCodeMcpJsonConfig,
+} from "../src/utils/mcp-config.js";
+import { snapshotDirectory } from "./project-snapshot.mjs";
+
+const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
+
+/** @type {import("../src/utils/project-formatter.js").ProjectFormatter} */
+const unformatted = { description: "no formatter", format: async (_path, text) => text };
+const loadFormatter = async () => unformatted;
+const guidance = await agentBootstrapTexts(loadFormatter);
+const launches = guidance.mcpLaunchCommands;
+const npmLaunch = /** @type {{ command: string, args: string[] }} */ (launches[0]);
+const SCHEMA = "https://opencode.ai/config.json";
+const CACHE_BLOCK =
+  "# calavera:artifact-cache:start\n.calavera/cache/\n# calavera:artifact-cache:end\n";
+
+/**
+ * Runs `callback` inside a new temporary project.
+ *
+ * @param {() => Promise<void>} callback
+ */
+async function inProject(callback) {
+  await using project = await mkdtempDisposable(join(tmpdir(), "calavera-eject-mcp-"));
+  const originalDirectory = process.cwd();
+  process.chdir(await realpath(project.path));
+  try {
+    await writeFile("package.json", "{}\n");
+    await callback();
+  } finally {
+    process.chdir(originalDirectory);
+  }
+}
+
+/** @param {string} path @param {string} text */
+async function write(path, text) {
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, text);
+}
+
+/** @param {unknown} value */
+const json = (value) => `${JSON.stringify(value, null, 2)}\n`;
+
+/** @param {{ dryRun?: boolean, format?: typeof loadFormatter }} [options] */
+const plan = ({ dryRun = false, format = loadFormatter } = {}) =>
+  planEject({ dryRun, guidance, loadFormatter: format });
+
+/** @param {Awaited<ReturnType<typeof planEject>>} found @param {string} path */
+function item(found, path) {
+  const match = found.items.find((candidate) => candidate.path === path);
+  assert.ok(match, `the plan names ${path}: ${found.items.map(({ path: p }) => p).join(", ")}`);
+  return match;
+}
+
+/** @param {Awaited<ReturnType<typeof planEject>>} found @param {string} path */
+const named = (found, path) => found.items.some((candidate) => candidate.path === path);
+
+/** @param {Awaited<ReturnType<typeof planEject>>} found @param {string} path */
+function report(found, path) {
+  const match = found.reported.find((candidate) => candidate.path === path);
+  assert.ok(match, `the plan reports ${path}: ${JSON.stringify(found.reported)}`);
+  return match;
+}
+
+/** Plans, approves every item, and removes them. */
+async function ejectApproved() {
+  const found = await plan();
+  const outcome = await executeEject(selectEjectItems(found, { assumeYes: false }).remove);
+  assert.deepEqual(outcome.failed, []);
+  return { found, outcome };
+}
+
+/**
+ * Asserts that the plan keeps the file at `path` and reports its entry, and that an approved run
+ * leaves the file byte-identical.
+ *
+ * @param {string} path @param {RegExp} reason
+ */
+async function assertKeptAndReported(path, reason) {
+  const before = await readFile(path, "utf8");
+  const found = await plan();
+  assert.equal(named(found, path), false);
+  assert.match(report(found, path).reason, reason);
+  await executeEject(selectEjectItems(found, { assumeYes: false }).remove);
+  assert.equal(await readFile(path, "utf8"), before);
+}
+
+/** @param {{ command: string, args: string[] }} launch @param {string} version */
+const repinned = (launch, version) => ({
+  command: launch.command,
+  args: launch.args.map((arg) =>
+    arg.replace(/^create-project-calavera@.+$/, `create-project-calavera@${version}`),
+  ),
+});
+
+// Each harness file, with the text the bootstrap writes into an empty project for a launch command.
+const HARNESSES = [
+  {
+    harness: /** @type {const} */ ("claude-code"),
+    path: ".mcp.json",
+    written: (/** @type {typeof npmLaunch} */ launch) => json(createMcpServersJsonConfig(launch)),
+  },
+  {
+    harness: /** @type {const} */ ("cursor"),
+    path: ".cursor/mcp.json",
+    written: (/** @type {typeof npmLaunch} */ launch) => json(createMcpServersJsonConfig(launch)),
+  },
+  {
+    harness: /** @type {const} */ ("opencode"),
+    path: "opencode.json",
+    written: (/** @type {typeof npmLaunch} */ launch) => json(createOpenCodeMcpJsonConfig(launch)),
+  },
+  {
+    harness: /** @type {const} */ ("codex"),
+    path: ".codex/config.toml",
+    written: (/** @type {typeof npmLaunch} */ launch) => createCodexMcpTomlBlock(launch),
+  },
+];
+
+test("agentBootstrapTexts gives the MCP launch command for each package manager, pinned to this release", () => {
+  assert.deepEqual(
+    launches.map(({ command }) => command),
+    ["npx", "pnpm", "yarn", "bunx"],
+  );
+  for (const launch of launches) {
+    assert.equal(normalizePinnedVersion(launch.args.join(" "))?.pin, packageJson.version);
+  }
+});
+
+for (const { harness, path, written } of HARNESSES) {
+  test(`${harness}: the entry a real bootstrap writes is unedited, and --yes removes it and keeps the file`, async () => {
+    await inProject(async () => {
+      await agentBootstrap({ json: true, assumeYes: true, mcpHarness: harness });
+      const dry = await plan({ dryRun: true });
+      const before = await snapshotDirectory();
+      const entry = item(dry, path);
+      assert.equal(entry.kind, "mcp-entry");
+      assert.equal(entry.action, "edit");
+      assert.equal(entry.edits, "unedited");
+      assert.equal(entry.matchesRecords, true);
+      assert.deepEqual(await snapshotDirectory(), before);
+
+      const found = await plan();
+      const { remove } = selectEjectItems(found, { assumeYes: true });
+      assert.ok(remove.some((candidate) => candidate.path === path));
+      const outcome = await executeEject(remove);
+      assert.deepEqual(outcome.failed, []);
+      // The file stays, emptied of everything Calavera added (ADR-0017, Decision 2).
+      assert.equal(await readFile(path, "utf8"), harness === "codex" ? "" : "{}\n");
+      if (path.includes("/")) assert.ok((await lstat(dirname(path))).isDirectory());
+    });
+  });
+
+  test(`${harness}: an entry for any package manager and any pinned version is unedited`, async () => {
+    for (const launch of launches) {
+      for (const version of ["5.0.0", "7.0.0-beta.1"]) {
+        await inProject(async () => {
+          await write(path, written(repinned(launch, version)));
+          const entry = item(await plan(), path);
+          assert.equal(entry.edits, "unedited", `${launch.command} ${version}`);
+        });
+      }
+    }
+  });
+
+  test(`${harness}: an entry without a pinned version is kept and reported as edited`, async () => {
+    await inProject(async () => {
+      await write(
+        path,
+        written({
+          command: "npx",
+          args: ["--package", "create-project-calavera", "create-project-calavera-mcp"],
+        }),
+      );
+      await assertKeptAndReported(path, /edited/);
+    });
+  });
+
+  test(`${harness}: an entry that holds the version placeholder is kept and reported`, async () => {
+    await inProject(async () => {
+      await write(path, written(repinned(npmLaunch, "{{version}}")));
+      await assertKeptAndReported(path, /edited/);
+    });
+  });
+
+  test(`${harness}: a folder at the harness path holds no entry`, async () => {
+    await inProject(async () => {
+      await mkdir(path, { recursive: true });
+      const found = await plan();
+      assert.equal(named(found, path), false);
+      assert.equal(
+        found.reported.some((candidate) => candidate.path === path),
+        false,
+      );
+    });
+  });
+
+  test(`${harness}: a harness file that links out of the project is reported, and the rest of eject goes on`, async () => {
+    await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+    const target = join(outside.path, "harness");
+    await writeFile(target, written(npmLaunch));
+    await inProject(async () => {
+      await mkdir(dirname(path), { recursive: true });
+      await symlink(target, path);
+      await write(".agents/calavera/mcp.md", guidance.mcp[0] ?? "");
+      const found = await plan();
+      assert.equal(named(found, path), false);
+      assert.match(report(found, path).reason, /outside the project/);
+      assert.equal(item(found, ".agents/calavera/mcp.md").edits, "unedited");
+      await ejectApproved();
+    });
+    assert.equal(await readFile(target, "utf8"), written(npmLaunch));
+  });
+
+  test(`${harness}: a harness file with no calavera entry is neither planned nor reported`, async () => {
+    await inProject(async () => {
+      await write(
+        path,
+        harness === "codex"
+          ? '[mcp_servers.other]\ncommand = "other"\n'
+          : json({ mcpServers: { other: { command: "other" } }, mcp: {} }),
+      );
+      const found = await plan();
+      assert.equal(named(found, path), false);
+      assert.deepEqual(found.reported, []);
+      assert.equal(found.nothingToDo, true);
+    });
+  });
+
+  test(`${harness}: a second run after eject has nothing to do`, async () => {
+    await inProject(async () => {
+      await write(path, written(npmLaunch));
+      await ejectApproved();
+      const again = await plan();
+      assert.equal(again.nothingToDo, true);
+      assert.deepEqual(again.reported, []);
+    });
+  });
+}
+
+// The JSON harness files.
+const JSON_HARNESSES = HARNESSES.filter(({ harness }) => harness !== "codex");
+
+for (const { harness, path, written } of JSON_HARNESSES) {
+  const key = harness === "opencode" ? "mcp" : "mcpServers";
+  const entryOf = (/** @type {typeof npmLaunch} */ launch) =>
+    /** @type {Record<string, Record<string, unknown>>} */ (JSON.parse(written(launch)))[key]
+      ?.calavera;
+
+  test(`${harness}: an entry with a key Calavera does not write is kept and reported as edited`, async () => {
+    await inProject(async () => {
+      const config = JSON.parse(written(npmLaunch));
+      config[key].calavera.env = { DEBUG: "1" };
+      await write(path, json(config));
+      await assertKeptAndReported(path, /differs from the launch command/);
+    });
+  });
+
+  test(`${harness}: an entry whose launch command differs is kept and reported as edited`, async () => {
+    await inProject(async () => {
+      await write(path, written({ ...npmLaunch, command: "my-npx" }));
+      await assertKeptAndReported(path, /differs from the launch command/);
+    });
+  });
+
+  test(`${harness}: other servers and keys stay, and only the calavera entry goes`, async () => {
+    await inProject(async () => {
+      const config = JSON.parse(written(npmLaunch));
+      config[key] = { other: { command: "other" }, ...config[key] };
+      config.theirs = true;
+      await write(path, json(config));
+      const { found } = await ejectApproved();
+      const after = JSON.parse(await readFile(path, "utf8"));
+      delete config[key].calavera;
+      assert.deepEqual(after, config);
+      assert.deepEqual(
+        item(found, path).removedLines,
+        `"calavera": ${JSON.stringify(entryOf(npmLaunch), null, 2)}`.split("\n"),
+      );
+    });
+  });
+
+  test(`${harness}: an emptied ${key} object is removed while other keys keep the file`, async () => {
+    await inProject(async () => {
+      const config = { theirs: 1, ...JSON.parse(written(npmLaunch)) };
+      await write(path, json(config));
+      await ejectApproved();
+      const expected = /** @type {Record<string, unknown>} */ ({ theirs: 1 });
+      if (harness === "opencode") expected.$schema = SCHEMA;
+      assert.deepEqual(JSON.parse(await readFile(path, "utf8")), expected);
+    });
+  });
+
+  test(`${harness}: a file that cannot be parsed stops eject before it writes anything`, async () => {
+    await inProject(async () => {
+      await write(path, `// my servers\n${written(npmLaunch)}`);
+      await write(".agents/calavera/mcp.md", guidance.mcp[0] ?? "");
+      const before = await snapshotDirectory();
+      await assert.rejects(
+        plan(),
+        new RegExp(
+          `eject stopped before removing anything: ${path.replaceAll(".", "\\.")} cannot be parsed as JSON`,
+        ),
+      );
+      assert.deepEqual(await snapshotDirectory(), before);
+    });
+  });
+
+  test(`${harness}: a rewrite that would lose a duplicated key keeps the entry and reports it`, async () => {
+    await inProject(async () => {
+      const text = written(npmLaunch).replace(/^\{\n/, '{\n  "theirs": 1,\n  "theirs": 2,\n');
+      await write(path, text);
+      await assertKeptAndReported(path, /holds the key "theirs" more than once/);
+    });
+  });
+
+  test(`${harness}: a rewrite that would change a number's spelling keeps the entry and reports it`, async () => {
+    await inProject(async () => {
+      await write(path, written(npmLaunch).replace(/^\{\n/, '{\n  "theirs": 1.50,\n'));
+      await assertKeptAndReported(path, /holds the number 1\.50/);
+    });
+  });
+
+  test(`${harness}: the dry run says when the formatter changes the layout of the rest of the file`, async () => {
+    await inProject(async () => {
+      await write(path, JSON.stringify(JSON.parse(written(npmLaunch)), null, 4));
+      const entry = item(await plan(), path);
+      assert.equal(entry.edits, "unedited");
+      assert.match(entry.reason ?? "", /formatter/);
+      assert.equal(entry.contents, "{}\n");
+    });
+    await inProject(async () => {
+      await write(path, written(npmLaunch));
+      assert.equal(item(await plan(), path).reason, undefined);
+    });
+  });
+
+  test(`${harness}: the result comes from the project's formatter`, async () => {
+    await inProject(async () => {
+      await write(path, json({ theirs: [1, 2], ...JSON.parse(written(npmLaunch)) }));
+      /** @type {import("../src/utils/project-formatter.js").ProjectFormatter} */
+      const compact = {
+        description: "compact",
+        format: async (_path, text) => `${JSON.stringify(JSON.parse(text))}\n`,
+      };
+      const entry = item(await plan({ format: async () => compact }), path);
+      const expected =
+        harness === "opencode" ? { theirs: [1, 2], $schema: SCHEMA } : { theirs: [1, 2] };
+      assert.equal(entry.contents, `${JSON.stringify(expected)}\n`);
+    });
+  });
+}
+
+test("opencode: a $schema Calavera writes goes only when nothing else remains in the file", async () => {
+  await inProject(async () => {
+    await write("opencode.json", json(createOpenCodeMcpJsonConfig(npmLaunch)));
+    const entry = item(await plan(), "opencode.json");
+    const { mcp } = /** @type {{ mcp: unknown }} */ (createOpenCodeMcpJsonConfig(npmLaunch));
+    assert.deepEqual(entry.removedLines, [
+      `"$schema": "${SCHEMA}"`,
+      ...`"mcp": ${JSON.stringify(mcp, null, 2)}`.split("\n"),
+    ]);
+  });
+  await inProject(async () => {
+    await write("opencode.json", json({ ...createOpenCodeMcpJsonConfig(npmLaunch), theme: "x" }));
+    await ejectApproved();
+    assert.deepEqual(JSON.parse(await readFile("opencode.json", "utf8")), {
+      $schema: SCHEMA,
+      theme: "x",
+    });
+  });
+});
+
+test("opencode: a $schema with another value stays, even when nothing else remains", async () => {
+  await inProject(async () => {
+    await write(
+      "opencode.json",
+      json({ ...createOpenCodeMcpJsonConfig(npmLaunch), $schema: "https://example.com/mine.json" }),
+    );
+    await ejectApproved();
+    assert.deepEqual(JSON.parse(await readFile("opencode.json", "utf8")), {
+      $schema: "https://example.com/mine.json",
+    });
+  });
+});
+
+test(".mcp.json: an mcp key and a calavera entry outside mcpServers are left alone", async () => {
+  await inProject(async () => {
+    await write(".mcp.json", json({ mcp: { calavera: npmLaunch }, calavera: npmLaunch }));
+    const found = await plan();
+    assert.equal(named(found, ".mcp.json"), false);
+    assert.deepEqual(found.reported, []);
+  });
+});
+
+test("a JSON harness file whose top level is not an object holds no entry", async () => {
+  await inProject(async () => {
+    await write(".mcp.json", "[]\n");
+    await write(".cursor/mcp.json", json({ mcpServers: [npmLaunch] }));
+    const found = await plan();
+    assert.equal(found.nothingToDo, true);
+    assert.deepEqual(found.reported, []);
+  });
+});
+
+// The Codex harness file, which eject edits as text, so the person's comments and layout stay.
+const CODEX = ".codex/config.toml";
+const codexBlock = createCodexMcpTomlBlock(npmLaunch);
+const MODEL = '# My settings\nmodel = "o3"\n';
+
+test("codex: the table is removed with the blank line Calavera added, and every other line stays", async () => {
+  await inProject(async () => {
+    await write(CODEX, `${MODEL.trimEnd()}\n\n${codexBlock}`);
+    const { found } = await ejectApproved();
+    assert.equal(await readFile(CODEX, "utf8"), MODEL);
+    assert.deepEqual(item(found, CODEX).removedLines, codexBlock.trimEnd().split("\n"));
+  });
+});
+
+test("codex: a table between two of the person's tables keeps both and their comments", async () => {
+  await inProject(async () => {
+    const after = '\n# The next server\n[mcp_servers.other]\ncommand = "other"\n';
+    await write(CODEX, `${MODEL}\n${codexBlock}${after}`);
+    await ejectApproved();
+    assert.equal(await readFile(CODEX, "utf8"), `${MODEL}${after}`);
+  });
+});
+
+test("codex: a table followed directly by the person's table removes no line of theirs", async () => {
+  await inProject(async () => {
+    const after = '[mcp_servers.other]\ncommand = "other"\n';
+    await write(CODEX, `${MODEL}\n${codexBlock}${after}`);
+    await ejectApproved();
+    assert.equal(await readFile(CODEX, "utf8"), `${MODEL}\n${after}`);
+  });
+});
+
+test("codex: a table with Windows line endings is unedited and the rest keeps its line endings", async () => {
+  await inProject(async () => {
+    await write(CODEX, `${MODEL}\n${codexBlock}`.replaceAll("\n", "\r\n"));
+    await ejectApproved();
+    assert.equal(await readFile(CODEX, "utf8"), MODEL.replaceAll("\n", "\r\n"));
+  });
+});
+
+test("codex: a table without a final line break is removed", async () => {
+  await inProject(async () => {
+    await write(CODEX, `${MODEL}\n${codexBlock.trimEnd()}`);
+    await ejectApproved();
+    assert.equal(await readFile(CODEX, "utf8"), MODEL);
+  });
+});
+
+for (const [label, table] of [
+  ["a comment inside the table", codexBlock.replace("\nargs", "\n# Pinned on purpose\nargs")],
+  ["a key Calavera does not write", `${codexBlock}env = { DEBUG = "1" }\n`],
+  ["a different layout", codexBlock.replace("command = ", "command=")],
+  ["a different command", codexBlock.replace('"npx"', '"my-npx"')],
+]) {
+  test(`codex: a table with ${label} is kept and reported as edited`, async () => {
+    await inProject(async () => {
+      await write(CODEX, `${MODEL}\n${table}`);
+      await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
+    });
+  });
+}
+
+test("codex: a subtable of the calavera table makes the entry edited", async () => {
+  await inProject(async () => {
+    await write(CODEX, `${codexBlock}\n[mcp_servers.calavera.env]\nDEBUG = "1"\n`);
+    await assertKeptAndReported(CODEX, /differs from the table Calavera writes/);
+  });
+});
+
+test("codex: a calavera table defined twice stops eject before it writes anything", async () => {
+  await inProject(async () => {
+    await write(CODEX, `${codexBlock}\n${codexBlock}`);
+    const before = await snapshotDirectory();
+    await assert.rejects(
+      plan(),
+      /eject stopped before removing anything: \.codex\/config\.toml defines \[mcp_servers\.calavera\] more than once/,
+    );
+    assert.deepEqual(await snapshotDirectory(), before);
+  });
+});
+
+// Every item `executeEject` changes is read again just before the change, and nothing is changed
+// when it differs from what the plan read, in every direction of change.
+
+/**
+ * Plans with the harness file at `path` holding `text`, applies `change`, and checks that the
+ * approved removal stops with nothing changed.
+ *
+ * @param {string} path @param {string} text @param {(path: string, text: string) => Promise<void>} change
+ */
+async function assertStopsAfter(path, text, change) {
+  await inProject(async () => {
+    await write("target/text", text);
+    await write(path, text);
+    const found = await plan();
+    assert.ok(named(found, path));
+    await change(path, text);
+    const before = await snapshotDirectory();
+    await assert.rejects(
+      executeEject(selectEjectItems(found, { assumeYes: false }).remove),
+      new RegExp(`${path.replaceAll(".", "\\.")} changed since eject listed`),
+    );
+    assert.deepEqual(await snapshotDirectory(), before);
+  });
+}
+
+for (const { harness, path, written } of HARNESSES) {
+  test(`${harness}: an edit after the plan stops the removal`, async () => {
+    await assertStopsAfter(path, written(npmLaunch), (target, current) =>
+      writeFile(target, harness === "codex" ? `${current}# Added\n` : `${current} `),
+    );
+  });
+
+  test(`${harness}: a link to identical text in its place after the plan stops the removal`, async () => {
+    await assertStopsAfter(path, written(npmLaunch), async (target) => {
+      await rm(target);
+      await symlink(join(process.cwd(), "target/text"), target);
+    });
+  });
+
+  test(`${harness}: a folder in its place after the plan stops the removal`, async () => {
+    await assertStopsAfter(path, written(npmLaunch), async (target) => {
+      await rm(target);
+      await mkdir(target);
+    });
+  });
+
+  test(`${harness}: a file deleted after the plan counts as removed`, async () => {
+    await inProject(async () => {
+      await write(path, written(npmLaunch));
+      const found = await plan();
+      await rm(path);
+      const outcome = await executeEject(selectEjectItems(found, { assumeYes: false }).remove);
+      assert.deepEqual(outcome.failed, []);
+      assert.ok(outcome.removed.some((removed) => removed.path === path));
+      await assert.rejects(lstat(path), { code: "ENOENT" });
+    });
+  });
+
+  test(`${harness}: a link in the middle of a chain retargeted after the plan stops the edit`, async () => {
+    await inProject(async () => {
+      await write("one/file", written(npmLaunch));
+      await write("two/file", written(npmLaunch));
+      await symlink("one/file", "hop");
+      await mkdir(dirname(path), { recursive: true });
+      await symlink(join(process.cwd(), "hop"), path);
+      const found = await plan();
+      assert.equal(item(found, path).edits, "unedited");
+      await rm("hop");
+      await symlink("two/file", "hop");
+      await assert.rejects(
+        executeEject(selectEjectItems(found, { assumeYes: true }).remove),
+        /changed since eject listed/,
+      );
+      assert.equal(await readFile("two/file", "utf8"), written(npmLaunch));
+    });
+  });
+}
+
+for (const { harness, path, written } of HARNESSES.filter(({ path: p }) => p.includes("/"))) {
+  test(`${harness}: a linked ${dirname(path)} retargeted to an identical copy after the plan stops the edit`, async () => {
+    await inProject(async () => {
+      const file = path.slice(path.indexOf("/") + 1);
+      await write(`shared/a/${file}`, written(npmLaunch));
+      await write(`shared/b/${file}`, written(npmLaunch));
+      await symlink("shared/a", dirname(path));
+      const found = await plan();
+      assert.equal(item(found, path).edits, "unedited");
+      await rm(dirname(path));
+      await symlink("shared/b", dirname(path));
+      await assert.rejects(
+        executeEject(selectEjectItems(found, { assumeYes: true }).remove),
+        /changed since eject listed/,
+      );
+      assert.equal(await readFile(`shared/b/${file}`, "utf8"), written(npmLaunch));
+    });
+  });
+}
+
+test("a harness file that is a link inside the project is edited through the link", async () => {
+  await inProject(async () => {
+    await write("shared/mcp.json", json(createMcpServersJsonConfig(npmLaunch)));
+    await symlink("shared/mcp.json", ".mcp.json");
+    await ejectApproved();
+    assert.ok((await lstat(".mcp.json")).isSymbolicLink());
+    assert.equal(await readFile("shared/mcp.json", "utf8"), "{}\n");
+  });
+});
+
+test("an unparseable harness file that links out of the project is reported, not a stop", async () => {
+  await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+  await writeFile(join(outside.path, "mcp.json"), "{ not json");
+  await inProject(async () => {
+    await symlink(join(outside.path, "mcp.json"), ".mcp.json");
+    const found = await plan();
+    assert.match(report(found, ".mcp.json").reason, /outside the project/);
+  });
+});
+
+test("an edited entry is reported on every run, and a second run has nothing to do", async () => {
+  await inProject(async () => {
+    await write(".mcp.json", json(createMcpServersJsonConfig({ ...npmLaunch, command: "mine" })));
+    await write(CODEX, codexBlock);
+    await ejectApproved();
+    const again = await plan();
+    assert.equal(again.nothingToDo, true);
+    assert.deepEqual(
+      again.reported.map(({ path }) => path),
+      [".mcp.json"],
+    );
+  });
+});
+
+// Owner decision of 2026-11-19 on #678: a `.gitignore` that holds the `artifact-cache` block and
+// links out of the project is kept and reported, as an `AGENTS.md` that links out of it is.
+test("a .gitignore that links out of the project keeps its block, is reported, and the rest of eject goes on", async () => {
+  await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+  const target = join(outside.path, "gitignore");
+  await writeFile(target, `node_modules/\n${CACHE_BLOCK}`);
+  await inProject(async () => {
+    await symlink(target, ".gitignore");
+    await write(".calavera/cache/npm/index", "cache\n");
+    const found = await plan();
+    assert.equal(named(found, ".gitignore"), false);
+    assert.match(report(found, ".gitignore").reason, /outside the project/);
+    assert.match(report(found, ".gitignore").reason, /artifact-cache/);
+    assert.ok(named(found, ".calavera/cache"));
+    await ejectApproved();
+    await assert.rejects(lstat(".calavera/cache"), { code: "ENOENT" });
+  });
+  assert.equal(await readFile(target, "utf8"), `node_modules/\n${CACHE_BLOCK}`);
+});
+
+test("a .gitignore that links out of the project with a broken block marker is reported, not a stop", async () => {
+  await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+  const target = join(outside.path, "gitignore");
+  await writeFile(target, "# calavera:artifact-cache:start\n.calavera/cache/\n");
+  await inProject(async () => {
+    await symlink(target, ".gitignore");
+    const found = await plan();
+    assert.match(report(found, ".gitignore").reason, /outside the project/);
+  });
+});
+
+test("a .gitignore that links out of the project without the block is neither planned nor reported", async () => {
+  await using outside = await mkdtempDisposable(join(tmpdir(), "calavera-eject-outside-"));
+  await writeFile(join(outside.path, "gitignore"), "node_modules/\n");
+  await inProject(async () => {
+    await symlink(join(outside.path, "gitignore"), ".gitignore");
+    const found = await plan();
+    assert.equal(found.nothingToDo, true);
+    assert.deepEqual(found.reported, []);
+  });
+});

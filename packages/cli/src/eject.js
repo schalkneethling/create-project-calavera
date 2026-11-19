@@ -7,9 +7,10 @@
 // skill, and the `artifact-cache` block in `.gitignore`. It also plans the bootstrap's guidance,
 // which has no record and is checked against the texts Calavera writes: `AGENTS.md` written as a
 // whole file, the marked section in an existing `AGENTS.md`, `AGENTS.calavera.md`, and
-// `.agents/calavera/mcp.md`. The MCP entries and `.coderabbit.yaml` follow in later layers of #678,
-// and the command is registered last, so nothing offers `eject` before it removes the whole
-// footprint.
+// `.agents/calavera/mcp.md`. It also plans the `calavera` MCP entry in the four harness files the
+// bootstrap writes, checked against the launch command for each package manager. `.coderabbit.yaml`
+// follows in a later layer of #678, and the command is registered last, so nothing offers `eject`
+// before it removes the whole footprint.
 //
 // The plan looks for each item directly, not only through the state file, because a project whose
 // state file is gone still holds the rest of the footprint (ADR-0017, Decision 2). Nothing here
@@ -31,6 +32,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
@@ -59,8 +61,18 @@ import {
 import { GITIGNORE_PATH, withoutGitignoreBlock } from "./ignore-lines.js";
 import { CONFIG_FILE } from "./project-local-commands.js";
 import { assertWorkspacePath } from "./utils/fs.js";
-import { findEarlierGuidance } from "./utils/earlier-guidance.js";
+import { findEarlierGuidance, normalizePinnedVersion } from "./utils/earlier-guidance.js";
+import { isPlainObject } from "./utils/guards.js";
+import { rewriteLossProblem, toJSONText, writeJSON } from "./utils/json-rewrite.js";
 import { findBlock, findMarkedBlock } from "./utils/marked-block.js";
+import {
+  OPENCODE_CONFIG_SCHEMA,
+  createCodexMcpTomlBlock,
+  createMcpServersJsonConfig,
+  createOpenCodeMcpJsonConfig,
+  findTomlTableRange,
+  projectMcpConfigPath,
+} from "./utils/mcp-config.js";
 
 const CALAVERA_ROOT = ".calavera";
 // Where `eject` moves a package folder before it deletes it, so a delete that stops part way
@@ -90,10 +102,10 @@ const CALAVERA_ENTRIES = new Set(
 const CANNOT_DETECT = "edits cannot be detected";
 
 /**
- * @typedef {"state" | "lock" | "recipe" | "cache" | "transient" | "base-skill" | "artifact-cache-block" | "package-folder" | "guidance-file" | "guidance-section" | "fallback-guidance" | "mcp-notes"} EjectItemKind
+ * @typedef {"state" | "lock" | "recipe" | "cache" | "transient" | "base-skill" | "artifact-cache-block" | "package-folder" | "guidance-file" | "guidance-section" | "fallback-guidance" | "mcp-notes" | "mcp-entry"} EjectItemKind
  *   `guidance-file` is `AGENTS.md` written as a whole file, `guidance-section` the marked section
- *   in an existing `AGENTS.md`, `fallback-guidance` is `AGENTS.calavera.md`, and `mcp-notes` is
- *   `.agents/calavera/mcp.md`.
+ *   in an existing `AGENTS.md`, `fallback-guidance` is `AGENTS.calavera.md`, `mcp-notes` is
+ *   `.agents/calavera/mcp.md`, and `mcp-entry` is the `calavera` entry in an MCP harness file.
  *
  * @typedef {object} EjectItem One footprint item `eject` removes.
  * @property {EjectItemKind} kind
@@ -103,15 +115,19 @@ const CANNOT_DETECT = "edits cannot be detected";
  *   found. `not-checked` is Calavera's own record, cache, or transient folder, which has no check.
  * @property {boolean} matchesRecords Whether the item matches Calavera's records exactly, so
  *   `--yes` may remove it without an interactive approval (ADR-0017, Decision 5).
- * @property {string} [reason] Why the item is edited, or why its edits cannot be detected.
+ * @property {string} [reason] Why the item is edited, or why its edits cannot be detected. For an
+ *   unedited MCP entry in a JSON harness file, what the rewrite changes besides the entry: the
+ *   formatter's layout of the rest of the file.
  * @property {{ path: string, edits: "unedited" | "edited" }} [payload] For a package folder that a
  *   lock entry names, the payload checked against the entry's `payloadHash`.
- * @property {string[]} [removedLines] For an edit, the lines it removes, markers excluded.
+ * @property {string[]} [removedLines] For an edit, the lines it removes, markers excluded. For a
+ *   JSON harness file, which eject rewrites whole, each removed member as JSON: the `calavera`
+ *   entry, or the `mcpServers` or `mcp` object it empties, and the `$schema` it removes.
  * @property {string} [contents] For an edit, the file's text afterward.
  * @property {string} [seen] What the item's check read when the plan was made. For every kind
  *   but the base skill, it holds the entry identity from `entryIdentity`: a file, a folder, or a
  *   symbolic link, its target, and the path its chain of links resolves to. The `artifact-cache`
- *   block and the guidance kinds record the identity and the file's text as a JSON array, through
+ *   block, the guidance kinds, and the MCP entries record the identity and the file's text as a JSON array, through
  *   `textSeen`, and a package folder that a lock entry names adds its payload hash. The base skill records its installed hash and the entries that hash does not cover.
  *   `executeEject` reads it again and removes nothing when any item changed since the plan.
  *
@@ -140,6 +156,8 @@ const CANNOT_DETECT = "edits cannot be detected";
  * @property {string} section The marked section appended to an existing `AGENTS.md`.
  * @property {string} fallback `AGENTS.calavera.md`.
  * @property {string[]} mcp `.agents/calavera/mcp.md`, one text for each package manager.
+ * @property {{ command: string, args: string[] }[]} mcpLaunchCommands The MCP launch command for
+ *   each package manager, which the `calavera` entry in each harness file is checked against.
  */
 
 /**
@@ -480,21 +498,36 @@ async function planBaseSkill(state, stateProblem) {
  * Plans the removal of the `artifact-cache` block from `.gitignore`. A block that differs from its
  * record, or has none, is listed as edited, not a hard stop as in apply (owner decision of
  * 2026-11-17). A broken or changed marker is a hard stop, because `eject` then cannot tell where
- * the block ends (ADR-0017, Decision 7).
+ * the block ends (ADR-0017, Decision 7). A `.gitignore` that leads to a file outside the project
+ * is one `eject` never changes, so its block is kept and reported, with no hard stop, as the
+ * guidance section in such an `AGENTS.md` is (owner decision of 2026-11-19 on #678).
  *
  * @param {import("./state.js").CalaveraState | undefined} state
  * @param {string | undefined} stateProblem
- * @returns {Promise<EjectItem[]>}
+ * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
  */
 async function planCacheBlock(state, stateProblem) {
-  if (!(await present(GITIGNORE_PATH))) return [];
+  if (!(await present(GITIGNORE_PATH))) return { items: [], reported: [] };
   const identity = await entryIdentity(GITIGNORE_PATH);
   const text = await readFile(GITIGNORE_PATH, "utf8");
   const found = findBlock(GITIGNORE_PATH, text, ARTIFACT_CACHE_BLOCK, "eject");
+  const outside = !(await insideProject(GITIGNORE_PATH));
+  const keptOutside = {
+    items: [],
+    reported: [
+      {
+        path: GITIGNORE_PATH,
+        reason: `${GITIGNORE_PATH} leads to a file outside the project, which eject never changes, so it leaves the ${ARTIFACT_CACHE_BLOCK} block there. Remove the block, both markers included, yourself if you no longer want it.`,
+      },
+    ],
+  };
   if ("reason" in found) {
+    // The block stays either way, so a broken marker in a file eject never changes is no stop.
+    if (outside) return keptOutside;
     throw new Error(`eject stopped before removing anything: ${found.reason}`);
   }
-  if (found.startIndex === -1) return [];
+  if (found.startIndex === -1) return { items: [], reported: [] };
+  if (outside) return keptOutside;
   const record = state?.gitignoreBlocks.find(
     ({ integration }) => integration === ARTIFACT_CACHE_BLOCK,
   );
@@ -517,7 +550,7 @@ async function planCacheBlock(state, stateProblem) {
           `${STATE_PATH} holds no record of the ${ARTIFACT_CACHE_BLOCK} block, so eject cannot tell whether you edited it.`)
         : "The artifact-cache block was edited since Calavera wrote it.";
   }
-  return [item];
+  return { items: [item], reported: [] };
 }
 
 /**
@@ -569,24 +602,37 @@ async function insideProject(path) {
 }
 
 /**
+ * The text once the lines from `startIndex` to `endIndex` are removed, with the blank line Calavera
+ * added before them; every other line stays. The bootstrap appends both the guidance section and
+ * the Codex table after one blank line.
+ *
+ * @param {string[]} lines The text split on `\n`, so a line may end with `\r`.
+ * @param {number} startIndex
+ * @param {number} endIndex
+ */
+function withoutLines(lines, startIndex, endIndex) {
+  const before = lines.slice(0, startIndex);
+  const after = lines.slice(endIndex + 1);
+  // The bootstrap appends the text after one blank line (`upsertAgentBootstrapGuidanceSection` in
+  // index.js, `writeCodexMcpConfig` in mcp-config.js). That line goes only when a blank line or the
+  // end of the file follows the text, so what the person wrote right after it stays separate.
+  const blank = (/** @type {string | undefined} */ line) => line?.replace(/\r$/, "") === "";
+  if (blank(before.at(-1)) && (after.length === 0 || blank(after[0]))) before.pop();
+  // When the removed text ends the file without a line break, the line before it still owns the
+  // line break that separated the two, so it keeps it. With no line before it, the pushed line
+  // joins to the same empty text.
+  if (after.length === 0) after.push("");
+  return [...before, ...after].join("\n");
+}
+
+/**
  * The text of `AGENTS.md` once the guidance section is removed: the markers, the lines between
  * them, and the blank line Calavera added before the start marker go, and every other line stays.
  *
  * @param {import("./utils/marked-block.js").FoundBlock} found
  */
 function withoutGuidanceSection(found) {
-  const before = found.lines.slice(0, found.startIndex);
-  const after = found.lines.slice(found.endIndex + 1);
-  // The bootstrap appends the section after one blank line (`upsertAgentBootstrapGuidanceSection`
-  // in index.js). That line goes only when a blank line or the end of the file follows the
-  // section, so text the person wrote right after the end marker stays a separate paragraph.
-  const blank = (/** @type {string | undefined} */ line) => line?.replace(/\r$/, "") === "";
-  if (blank(before.at(-1)) && (after.length === 0 || blank(after[0]))) before.pop();
-  // When the end marker is the file's last line and has no line break, the line before the
-  // section still owns the line break that separated the two, so it keeps it. With no line
-  // before the section, the pushed line joins to the same empty text.
-  if (after.length === 0) after.push("");
-  return [...before, ...after].join("\n");
+  return withoutLines(found.lines, found.startIndex, found.endIndex);
 }
 
 /**
@@ -748,6 +794,253 @@ async function planGuidance(guidance) {
   };
 }
 
+/** The MCP harness files the bootstrap writes (ADR-0017, Decision 2). */
+const MCP_HARNESSES = /** @type {const} */ (["claude-code", "cursor", "opencode", "codex"]);
+const CODEX_TABLE_HEADER = "[mcp_servers.calavera]";
+const NO_MCP_ENTRY = { items: [], reported: [] };
+
+/**
+ * The report for a harness file that leads outside the project: `eject` never changes such a
+ * file, so it keeps the entry, as it keeps the guidance section in such an `AGENTS.md`.
+ *
+ * @param {string} path
+ * @returns {{ items: EjectItem[], reported: EjectReport[] }}
+ */
+function mcpEntryOutside(path) {
+  return {
+    items: [],
+    reported: [
+      {
+        path,
+        reason: `${path} leads to a file outside the project, which eject never changes, so it leaves the calavera MCP entry there. Remove the entry yourself if you no longer want it.`,
+      },
+    ],
+  };
+}
+
+/**
+ * @param {string} path
+ * @param {string} reason
+ * @returns {{ items: EjectItem[], reported: EjectReport[] }}
+ */
+function mcpEntryKept(path, reason) {
+  return { items: [], reported: [{ path, reason }] };
+}
+
+/**
+ * The value with the version it pins in `create-project-calavera@<version>` replaced by the
+ * placeholder `findEarlierGuidance` uses, or undefined when it already holds the placeholder,
+ * which no release wrote.
+ *
+ * @param {unknown} value A value parsed from JSON.
+ */
+function withPinNormalized(value) {
+  const pinned = normalizePinnedVersion(JSON.stringify(value));
+  return pinned === undefined ? undefined : JSON.parse(pinned.normalized);
+}
+
+/**
+ * Plans the `calavera` entry in a JSON harness file: `.mcp.json` and `.cursor/mcp.json` under
+ * `mcpServers`, and `opencode.json` under `mcp`. The entry is unedited when it equals the entry
+ * Calavera writes for some package manager, with the pinned version normalized (owner decision of
+ * 2026-11-17). Any other entry is kept and reported as edited. Removing it empties the `mcpServers`
+ * or `mcp` object, which then goes too, and in `opencode.json` the `$schema` Calavera writes goes
+ * once nothing else remains. The file stays, even when it is left empty. JSON has no comments, and
+ * `eject` rewrites the whole file through the project's formatter, as the bootstrap writes it, so
+ * the reason says when that changes the layout of the rest of the file. A rewrite that would lose
+ * what the person wrote, as `rewriteLossProblem` finds it, keeps the entry and reports it. A file
+ * that cannot be parsed is a hard stop (ADR-0017, Decision 7).
+ *
+ * @param {string} path
+ * @param {"mcpServers" | "mcp"} key
+ * @param {unknown[]} expected The entry Calavera writes, for each package manager.
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
+ */
+async function planJsonMcpEntry(path, key, expected, loadFormatter) {
+  const entry = await readTextEntry(path);
+  if (entry?.text === undefined) return NO_MCP_ENTRY;
+  const { identity, text } = entry;
+  const inside = await insideProject(path);
+  /** @type {unknown} */
+  let config;
+  try {
+    config = JSON.parse(text);
+  } catch (error) {
+    // eject never changes a file outside the project, so it has no need to read it.
+    if (!inside) return mcpEntryOutside(path);
+    throw new Error(
+      `eject stopped before removing anything: ${path} cannot be parsed as JSON (${messageOf(error)}). Correct the file, or remove the calavera MCP entry from it yourself, then run eject again.`,
+      { cause: error },
+    );
+  }
+  if (!isPlainObject(config)) return NO_MCP_ENTRY;
+  const servers = config[key];
+  if (!isPlainObject(servers) || !Object.hasOwn(servers, "calavera")) return NO_MCP_ENTRY;
+  if (!inside) return mcpEntryOutside(path);
+  const calavera = servers.calavera;
+  const normalized = withPinNormalized(calavera);
+  if (
+    normalized === undefined ||
+    !expected.some((candidate) => isDeepStrictEqual(normalized, withPinNormalized(candidate)))
+  ) {
+    return mcpEntryKept(
+      path,
+      `The calavera entry under ${key} in ${path} differs from the launch command Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
+    );
+  }
+  const formatter = await loadFormatter();
+  const loss = await rewriteLossProblem(text, path, formatter);
+  if (loss !== undefined) {
+    return mcpEntryKept(
+      path,
+      `${path} ${loss}. eject rewrites the whole file to remove the calavera MCP entry, so it leaves the entry rather than change that. Remove the entry yourself if you no longer want it.`,
+    );
+  }
+
+  const others = Object.fromEntries(
+    Object.entries(servers).filter(([name]) => name !== "calavera"),
+  );
+  const emptied = Object.keys(others).length === 0;
+  /** @type {Record<string, unknown>} */
+  const next = emptied
+    ? Object.fromEntries(Object.entries(config).filter(([name]) => name !== key))
+    : { ...config, [key]: others };
+  /** @type {[string, unknown][]} */
+  const removed = [];
+  // Calavera keeps no record of adding `$schema`, so a `$schema` with the value it writes, in a
+  // file that holds nothing else, counts as Calavera's (ADR-0017, Decision 2).
+  if (key === "mcp" && Object.keys(next).length === 1 && next.$schema === OPENCODE_CONFIG_SCHEMA) {
+    delete next.$schema;
+    removed.push(["$schema", OPENCODE_CONFIG_SCHEMA]);
+  }
+  removed.push(emptied ? [key, servers] : ["calavera", calavera]);
+  const contents = await writeJSON(next, path, formatter);
+  /** @type {EjectItem} */
+  const item = {
+    kind: "mcp-entry",
+    path,
+    action: "edit",
+    edits: "unedited",
+    matchesRecords: true,
+    removedLines: removed.flatMap(([name, value]) =>
+      `${JSON.stringify(name)}: ${toJSONText(value)}`.split("\n"),
+    ),
+    contents,
+    seen: textSeen(identity, text),
+  };
+  if ((await writeJSON(config, path, formatter)) !== text) {
+    item.reason = `eject rewrites the whole of ${path} through the project's formatter (${formatter.description}), which also changes the layout of the rest of the file; the text afterward shows the result.`;
+  }
+  return { items: [item], reported: [] };
+}
+
+/**
+ * Plans the `[mcp_servers.calavera]` table in `.codex/config.toml`. The bootstrap appends the
+ * table as text, so `eject` removes it as text and every other line, comments included, stays. The
+ * table runs from its header to its last line that is neither blank nor a comment before the next
+ * header, so a comment that introduces the next table stays with it. The table is unedited when
+ * its text equals the table Calavera writes for some package manager, with the pinned version
+ * normalized (owner decision of 2026-11-17). Any other table is kept and reported as edited: a
+ * comment inside it, another key, another layout, or a subtable such as
+ * `[mcp_servers.calavera.env]`, which removing the table alone would leave behind. Calavera has no
+ * TOML parser, so the only parse error `eject` can see is the table defined twice, which TOML does
+ * not allow, and that is a hard stop (ADR-0017, Decision 7).
+ *
+ * @param {string} path
+ * @param {string[]} expected The table Calavera writes, for each package manager.
+ * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
+ */
+async function planCodexMcpEntry(path, expected) {
+  const entry = await readTextEntry(path);
+  if (entry?.text === undefined) return NO_MCP_ENTRY;
+  const { identity, text } = entry;
+  const lines = text.split("\n");
+  const bare = lines.map((line) => line.replace(/\r$/, "").trim());
+  const headers = bare.filter((line) => line === CODEX_TABLE_HEADER).length;
+  if (headers === 0) return NO_MCP_ENTRY;
+  if (!(await insideProject(path))) return mcpEntryOutside(path);
+  if (headers > 1) {
+    throw new Error(
+      `eject stopped before removing anything: ${path} defines ${CODEX_TABLE_HEADER} more than once, which TOML does not allow, so eject cannot tell which table is Calavera's. Keep one of them, then run eject again.`,
+    );
+  }
+  const { start, end: next } = /** @type {{ start: number, end: number }} */ (
+    findTomlTableRange(text, CODEX_TABLE_HEADER)
+  );
+  let end = next - 1;
+  while (end > start && (bare[end] === "" || bare[end]?.startsWith("#"))) end -= 1;
+  const table = lines.slice(start, end + 1).map((line) => line.replace(/\r$/, ""));
+  const normalized = normalizePinnedVersion(table.join("\n"))?.normalized;
+  const subtable = bare.some(
+    (line) =>
+      line.startsWith(`${CODEX_TABLE_HEADER.slice(0, -1)}.`) ||
+      line.startsWith(`[${CODEX_TABLE_HEADER.slice(0, -1)}`),
+  );
+  const written =
+    !subtable &&
+    normalized !== undefined &&
+    expected.some((block) => normalizePinnedVersion(block.trimEnd())?.normalized === normalized);
+  if (!written) {
+    return mcpEntryKept(
+      path,
+      `The ${CODEX_TABLE_HEADER} table in ${path} differs from the table Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
+    );
+  }
+  return {
+    items: [
+      {
+        kind: "mcp-entry",
+        path,
+        action: "edit",
+        edits: "unedited",
+        matchesRecords: true,
+        removedLines: table,
+        contents: withoutLines(lines, start, end),
+        seen: textSeen(identity, text),
+      },
+    ],
+    reported: [],
+  };
+}
+
+/**
+ * Plans the `calavera` entry in each MCP harness file (ADR-0017, Decision 2).
+ *
+ * @param {AgentGuidanceTexts} guidance
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
+ */
+async function planMcpEntries(guidance, loadFormatter) {
+  const launches = guidance.mcpLaunchCommands;
+  const parts = [];
+  for (const harness of MCP_HARNESSES) {
+    const path = /** @type {string} */ (projectMcpConfigPath(harness));
+    if (harness === "codex") {
+      parts.push(await planCodexMcpEntry(path, launches.map(createCodexMcpTomlBlock)));
+    } else if (harness === "opencode") {
+      const expected = launches.map(
+        (launch) =>
+          /** @type {{ mcp: Record<string, unknown> }} */ (createOpenCodeMcpJsonConfig(launch)).mcp
+            .calavera,
+      );
+      parts.push(await planJsonMcpEntry(path, "mcp", expected, loadFormatter));
+    } else {
+      const expected = launches.map(
+        (launch) =>
+          /** @type {{ mcpServers: Record<string, unknown> }} */ (
+            createMcpServersJsonConfig(launch)
+          ).mcpServers.calavera,
+      );
+      parts.push(await planJsonMcpEntry(path, "mcpServers", expected, loadFormatter));
+    }
+  }
+  return {
+    items: parts.flatMap(({ items }) => items),
+    reported: parts.flatMap(({ reported }) => reported),
+  };
+}
+
 /**
  * The entries of `.agents/calavera/` other than the MCP setup notes. `eject` keeps them, so it
  * keeps the folder too. Listed only when `eject` removes the notes, because otherwise it does not
@@ -859,12 +1152,14 @@ async function unnamedCalaveraEntries() {
  * recovered first, so the plan describes the project as the rollback left it. Nothing else is
  * written.
  *
- * @param {{ dryRun: boolean, config?: string, guidance: AgentGuidanceTexts }} options `config` is
- *   the recipe's path. `guidance` holds the texts the bootstrap writes now, from
- *   `agentBootstrapTexts`, which the guidance files are checked against.
+ * @param {{ dryRun: boolean, config?: string, guidance: AgentGuidanceTexts, loadFormatter: () => Promise<import("./utils/project-formatter.js").ProjectFormatter> }} options
+ *   `config` is the recipe's path. `guidance` holds the texts the bootstrap writes now, from
+ *   `agentBootstrapTexts`, which the guidance files and the MCP entries are checked against.
+ *   `loadFormatter` gives the project's formatter, which writes a JSON harness file's text once
+ *   its entry is removed; it is called only when there is such an entry.
  * @returns {Promise<EjectPlan>}
  */
-export async function planEject({ dryRun, config = CONFIG_FILE, guidance }) {
+export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFormatter }) {
   // eject never writes package.json (ADR-0017, Decision 4), so a recipe path that names it is
   // refused rather than listed for deletion.
   if (basename(config) === "package.json") {
@@ -939,11 +1234,14 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance }) {
     });
   }
   items.push(...(await planBaseSkill(state, stateProblem)));
-  items.push(...(await planCacheBlock(state, stateProblem)));
+  const cacheBlock = await planCacheBlock(state, stateProblem);
+  items.push(...cacheBlock.items);
   const packages = await planPackageFolders(lock?.artifacts, lockProblem);
   items.push(...packages.items);
   const guidanceItems = await planGuidance(guidance);
   items.push(...guidanceItems.items);
+  const mcpEntries = await planMcpEntries(guidance, loadFormatter);
+  items.push(...mcpEntries.items);
 
   // Every path is checked before anything is removed, so a link that leads out of the project
   // stops the plan, not a later delete.
@@ -956,7 +1254,12 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance }) {
     ...packages.kept,
     ...(await unnamedMcpNotesEntries(items)),
   ].sort();
-  return { items, reported: guidanceItems.reported, kept, nothingToDo: items.length === 0 };
+  return {
+    items,
+    reported: [...guidanceItems.reported, ...cacheBlock.reported, ...mcpEntries.reported],
+    kept,
+    nothingToDo: items.length === 0,
+  };
 }
 
 /**
@@ -1013,6 +1316,7 @@ const STEP_ORDER = {
   "guidance-section": 2,
   "fallback-guidance": 2,
   "mcp-notes": 2,
+  "mcp-entry": 2,
   "package-folder": 3,
   lock: 4,
   state: 5,
@@ -1079,7 +1383,8 @@ async function currentlySeen(item) {
     case "guidance-file":
     case "guidance-section":
     case "fallback-guidance":
-    case "mcp-notes": {
+    case "mcp-notes":
+    case "mcp-entry": {
       // The plan read the text through a link too, so the text is read whenever the path leads
       // to a file. A path that no longer leads to a file is reported as changed, not read.
       const entry = await readTextEntry(item.path);
