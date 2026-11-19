@@ -425,13 +425,16 @@ test("a .coderabbit.yaml that shares its file with .gitignore is kept and report
 
 test("a link at .coderabbit.yaml to a file eject edits is removed as a link, so it is not grouped", async () => {
   await inProject(async () => {
-    await write(".gitignore", `node_modules/\n${CACHE_BLOCK}`);
+    await write(".gitignore", `${CREATED}${CACHE_BLOCK}`);
     await symlink(".gitignore", PATH);
     const found = await plan();
-    // The first line is not Calavera's, and the text holds no packages filter.
-    assert.equal(named(found), false);
-    assert.deepEqual(reportsOf(found), []);
+    const item = codeRabbit(found);
+    assert.equal(item.edits, "edited");
     assert.ok(found.items.some(({ path }) => path === ".gitignore"));
+    assert.deepEqual(found.reported, []);
+    await ejectApproved();
+    assert.equal(await exists(PATH), false);
+    assert.equal(await readFile(".gitignore", "utf8"), CREATED);
   });
 });
 

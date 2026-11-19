@@ -90,9 +90,10 @@ test("Given a new project, then the text this checkout creates is the one curren
   );
 });
 
-test("Given a file an earlier release created, then the text this checkout updates it to is a current updated template", async () => {
+test("Given a file an earlier release created or updated, then the text this checkout updates it to is a current updated template", async () => {
   const written = new Set();
-  for (const { id } of epochs.filter(({ action }) => action === "created")) {
+  // Every text a release wrote, updated ones included: a later filter change updates those too.
+  for (const { id } of epochs) {
     const earlier = await fixtureText(id);
     const updated = await bootstrapCodeRabbit(earlier);
     if (updated !== earlier) written.add(updated);
