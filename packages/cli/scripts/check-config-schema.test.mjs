@@ -3830,6 +3830,16 @@ for (const { name, current, expected } of [
     expected: `# Team settings\nlanguage: en-US\nreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
   },
   {
+    name: "an empty file",
+    current: "",
+    expected: `reviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    name: "a file that holds only a comment",
+    current: "# Team settings\n",
+    expected: `# Team settings\n\nreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
     // A flow mapping that holds keys keeps the person's style, so the list is a flow list.
     name: "a reviews flow mapping with keys",
     current: "reviews: { profile: chill }\n",
