@@ -6554,9 +6554,7 @@ async function ejectFootprintElsewhere(packageJSON) {
   /** @type {string[]} */
   const locations = [];
   const repositoryRoot = findRepositoryRoot(directory);
-  if (repositoryRoot !== undefined && repositoryRoot !== directory) {
-    locations.push(repositoryRoot);
-  }
+  if (repositoryRoot !== undefined) locations.push(repositoryRoot);
   const patterns =
     (await workspacePackagePatterns(directory, packageJSON, "pnpm")) ??
     (await workspacePackagePatterns(directory, packageJSON, "npm"));

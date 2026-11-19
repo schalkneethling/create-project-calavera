@@ -614,8 +614,20 @@ test("the summary prints each group, label, and detail exactly", () => {
         contents: "no final line break",
         outcome: "left",
       },
-      { ...STATE_ITEM, path: ".calavera/x", outcome: "failed", error: "EACCES on .calavera/x" },
-      { ...STATE_ITEM, path: ".calavera/y", outcome: "skipped", error: "Kept for .calavera/x." },
+      {
+        ...STATE_ITEM,
+        path: ".calavera/x",
+        outcome: "failed",
+        error: "EACCES on .calavera/x",
+        removedLines: ["not shown"],
+      },
+      {
+        ...STATE_ITEM,
+        path: ".calavera/y",
+        outcome: "skipped",
+        error: "Kept for .calavera/x.",
+        contents: "not shown",
+      },
     ],
     reported: [
       { path: "AGENTS.calavera.md", reason: "First reason about AGENTS.calavera.md." },
@@ -710,6 +722,10 @@ test("the headline counts what a run removes and what --yes leaves", async () =>
       yes.message,
       `Removed ${count - 3} items; --yes left 2 items for an interactive approval, and kept 1 record that an item it leaves needs. Run eject in a terminal to review and approve what is left.`,
     );
+    assert.match(
+      human(yes),
+      /^Left for an interactive approval:\n(?:.*\n)*? {2}\.calavera\/state\.json \(Calavera's own record; --yes keeps it while an item it leaves needs it\)$/m,
+    );
     const state = yes.items.find(({ kind }) => kind === "state");
     assert.equal(state?.outcome, "left");
     assert.equal(state?.keptRecord, true);
@@ -762,6 +778,8 @@ test("a refused run names each reason it cannot ask, and a pending transaction i
     const pending = await ejectProject(parseArgs(["eject", "--json"]), { interactive: false });
     assert.equal(pending.status, "refused");
     assert.deepEqual(pending.items, []);
+    assert.deepEqual(pending.reported, []);
+    assert.deepEqual(pending.kept, []);
     assert.equal(
       pending.message,
       `${refused.message} .calavera/artifact-transaction.json also records a pending artifact transaction, which eject recovers before it lists anything; a run in a terminal or with --yes recovers it first.`,
@@ -984,4 +1002,33 @@ test("after --init and apply, an approved eject leaves no footprint and changes 
     },
     { name: "plain", packageManager: "npm@11.0.0" },
   );
+});
+
+test("--yes keeps the state and the lock together while it leaves the skill and a package folder", async () => {
+  await inProject(async () => {
+    await initProject();
+    await writeFile(".agents/skills/calavera/SKILL.md", "# Edited\n");
+    await write(".calavera/artifacts.lock.json", '{ "schemaVersion": 1, "artifacts": [] }\n');
+    await write(".calavera/packages/skill-project-goal/0.1.0/package.json", "{}\n");
+    const result = await eject(["--dry-run"]);
+    assert.match(
+      result.message,
+      /--yes would leave 3 items for an interactive approval, and would keep 2 records that the items it leaves need\.$/,
+    );
+  });
+});
+
+test("a run whose only footprint was a pending transaction says that it recovered it", async () => {
+  await inProject(async (root) => {
+    const transactionRoot = join(root, ".calavera/.transactions/t");
+    await write(
+      ".calavera/artifact-transaction.json",
+      `${JSON.stringify({ schemaVersion: 1, transactionRoot, operations: [] })}\n`,
+    );
+    const result = await eject(["--yes"]);
+    assert.equal(
+      result.message,
+      "eject recovered the pending artifact transaction first, as every artifacts command does. eject found no Calavera footprint to remove here.",
+    );
+  });
 });
