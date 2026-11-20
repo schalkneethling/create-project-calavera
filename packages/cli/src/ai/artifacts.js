@@ -74,7 +74,7 @@ async function planCodeRabbitSkillConfig() {
     return { contents: CODE_RABBIT_SKILL_CONFIG, type: "write" };
   }
 
-  const { isMap, isSeq, parseDocument } = await import("yaml");
+  const { isMap, isScalar, isSeq, parseDocument } = await import("yaml");
   const current = await readFile(CODE_RABBIT_CONFIG_PATH, "utf8");
   const document = parseDocument(current);
 
@@ -95,6 +95,12 @@ async function planCodeRabbitSkillConfig() {
   }
 
   if (reviews.get("path_filters", true) === undefined) {
+    // A local `path_filters` list would replace the list that `<<` merges in.
+    if (reviews.items.some(({ key }) => isScalar(key) && key.value === "<<")) {
+      throw new Error(
+        `Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews uses a \`<<\` merge key, so a new path_filters list would replace the merged one. Add path_filters to reviews yourself, then run apply again.`,
+      );
+    }
     // An empty `reviews: {}` is written in flow style; switch it to block style
     // so the filters are written as a list, not on one line.
     if (reviews.items.length === 0) reviews.flow = false;
@@ -108,9 +114,14 @@ async function planCodeRabbitSkillConfig() {
   }
 
   const existingFilters = new Set(pathFilters.toJSON().map(String));
-  for (const filter of CODE_RABBIT_SKILL_FILTERS) {
-    if (!existingFilters.has(filter)) pathFilters.add(filter);
+  const missingFilters = CODE_RABBIT_SKILL_FILTERS.filter((filter) => !existingFilters.has(filter));
+  // Every alias of an anchored mapping shares its nodes, so the aliases would gain the filters too.
+  if (missingFilters.length > 0 && reviews.anchor) {
+    throw new Error(
+      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews has the anchor &${reviews.anchor}, so its aliases would change too. Add these to reviews.path_filters yourself, then run apply again: ${missingFilters.join(", ")}`,
+    );
   }
+  for (const filter of missingFilters) pathFilters.add(filter);
 
   const contents = document.toString({ lineWidth: 0 });
   return contents === current ? undefined : { contents, type: "update" };

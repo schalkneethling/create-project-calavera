@@ -3840,6 +3840,19 @@ for (const { name, current, expected } of [
     expected: `# Team settings\n\nreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
   },
   {
+    // A local path_filters list already replaces the merged one, so adding to it changes no meaning.
+    name: "a reviews mapping with a merge key and its own path_filters",
+    current:
+      'defaults: &d\n  profile: chill\nreviews:\n  <<: *d\n  path_filters:\n    - "src/**"\n',
+    expected: `defaults: &d\n  profile: chill\nreviews:\n  <<: *d\n  path_filters:\n    - "src/**"\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    // A settled file needs no change, so its anchor is no reason to stop.
+    name: "an anchored reviews mapping that already holds every filter",
+    current: `reviews: &r\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\nother: *r\n`,
+    expected: `reviews: &r\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\nother: *r\n`,
+  },
+  {
     // A flow mapping that holds keys keeps the person's style, so the list is a flow list.
     name: "a reviews flow mapping with keys",
     current: "reviews: { profile: chill }\n",
@@ -3867,7 +3880,7 @@ for (const { name, current, expected } of [
       });
       assert.equal(
         result.changes.some(({ type, path }) => type === "update" && path === ".coderabbit.yaml"),
-        true,
+        expected !== current,
       );
       assert.equal(await readFile(".coderabbit.yaml", "utf8"), expected);
 
@@ -3903,6 +3916,23 @@ for (const { current, error } of [
   {
     current: 'reviews:\n  path_filters: "src/**"\n',
     error: /\.coderabbit\.yaml: reviews\.path_filters must be an array/,
+  },
+  // A new local path_filters list would replace the list `<<` merges in, dropping "!dist/**".
+  {
+    current: 'defaults: &d {path_filters: ["!dist/**"]}\nreviews: {<<: *d, profile: chill}\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews uses a `<<` merge key, so a new path_filters list would replace the merged one\. Add path_filters to reviews yourself, then run apply again\./,
+  },
+  // Every alias of an anchored reviews mapping would gain the filters too.
+  {
+    current: "reviews: &r {}\nother: *r\n",
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews has the anchor &r, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*, !pnpm-lock\.yaml/,
+  },
+  {
+    current: 'reviews: &r\n  path_filters:\n    - "!pnpm-lock.yaml"\nother: *r\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews has the anchor &r, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*$/,
   },
 ]) {
   test(`skill apply rejects CodeRabbit configuration ${JSON.stringify(current)} before writing skills`, async () => {
