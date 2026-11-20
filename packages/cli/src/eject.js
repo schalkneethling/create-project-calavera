@@ -1221,8 +1221,6 @@ const JSON_TOKEN = Object.freeze({
   comma: 5,
   colon: 6,
   string: 10,
-  lineComment: 12,
-  blockComment: 13,
   unknown: 16,
   end: 17,
 });
@@ -1239,8 +1237,8 @@ const JSON_PUNCTUATION = new Map([
 /**
  * A line of a JSON file with every value hidden: the scanner splits the line into tokens, a
  * string the next token's colon makes a key stays, punctuation stays, and every other string,
- * number, `true`, `false`, and `null` becomes `…`. Comments are dropped, and a line the scanner
- * cannot read, such as part of a string, is hidden whole.
+ * number, `true`, `false`, and `null` becomes `…`. A line the scanner cannot read is hidden whole.
+ * eject edits only a file that parsed as plain JSON, so a line holds no comments.
  *
  * @param {string} line
  */
@@ -1250,7 +1248,6 @@ function jsonValuesHidden(line) {
   const tokens = [];
   for (let kind = scanner.scan(); kind !== JSON_TOKEN.end; kind = scanner.scan()) {
     if (kind === JSON_TOKEN.unknown || scanner.getTokenError() !== 0) return "…";
-    if (kind === JSON_TOKEN.lineComment || kind === JSON_TOKEN.blockComment) continue;
     tokens.push({ kind, value: scanner.getTokenValue() });
   }
   const text = tokens
@@ -1261,9 +1258,8 @@ function jsonValuesHidden(line) {
       return isKey ? JSON.stringify(value) : "…";
     })
     .join("")
-    // An empty object or a closing brace after an opening one needs no double space.
+    // An empty object, where the closing brace follows the opening one, needs no double space.
     .replaceAll("{  }", "{}")
-    .replaceAll(/ {2,}/g, " ")
     .trim();
   return text === "" ? "…" : text;
 }

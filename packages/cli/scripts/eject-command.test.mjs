@@ -1354,6 +1354,10 @@ const NEIGHBOR_SHAPES = {
       before: (secret) => `    "b": { "args": [\n      ["${secret}"]] },`,
     },
     {
+      shape: "a string value that ends the line",
+      after: (secret) => `    "z": "${secret}"`,
+    },
+    {
       shape: "a number and a boolean on the same line as a brace",
       before: (secret) =>
         `    "b": {\n      "PIN": ${secret.replace(/\D/g, "") || "1"}, "on": true, "TOKEN": "${secret}" },`,
@@ -1488,12 +1492,12 @@ test("the JSON neighbor line keeps its keys and punctuation and hides every valu
     await writeHarnessAround(
       HARNESSES[0],
       undefined,
-      `    "github": { "command": "gh-mcp", "port": 4242, "on": true, "env": { "GITHUB_TOKEN": "x" } }`,
+      `    "github": { "command": "gh-mcp", "port": 4242, "on": true, "off": null, "args": ["a", 1], "x": {}, "env": { "GITHUB_TOKEN": "x" } }`,
     );
     const item = (await eject(["--dry-run"])).items.find(({ path }) => path === ".mcp.json");
     assert.equal(
       item?.around?.after,
-      '"github": { "command": …, "port": …, "on": …, "env": { "GITHUB_TOKEN": … } }',
+      '"github": { "command": …, "port": …, "on": …, "off": …, "args": […, …], "x": {}, "env": { "GITHUB_TOKEN": … } }',
     );
   });
 });
