@@ -96,7 +96,13 @@ async function planCodeRabbitSkillConfig() {
 
   if (reviews.get("path_filters", true) === undefined) {
     // A local `path_filters` list would replace the list that `<<` merges in.
-    if (reviews.items.some(({ key }) => isScalar(key) && key.value === "<<")) {
+    // `yaml` exports no merge-key check, so this mirrors the test in its merge
+    // tag (`yaml/dist/schema/yaml-1.1/merge.js`): a plain `<<` key holds the
+    // string "<<", while `!!merge <<`, `<<` under `%YAML 1.1`, and `? !!merge`
+    // hold Symbol(<<).
+    const isMergeKey = (/** @type {unknown} */ value) =>
+      value === "<<" || (typeof value === "symbol" && value.description === "<<");
+    if (reviews.items.some(({ key }) => isScalar(key) && isMergeKey(key.value))) {
       throw new Error(
         `Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews uses a \`<<\` merge key, so a new path_filters list would replace the merged one. Add path_filters to reviews yourself, then run apply again.`,
       );

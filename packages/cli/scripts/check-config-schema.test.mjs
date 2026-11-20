@@ -3858,6 +3858,12 @@ for (const { name, current, expected } of [
     expected: `reviews:\n  path_filters: &p\n${CODE_RABBIT_FILTER_LIST}\nother: *p\n`,
   },
   {
+    // A key whose value is null is not a merge key, and checking it must not throw.
+    name: "a reviews mapping with a null key",
+    current: "reviews:\n  null: empty key\n  profile: chill\n",
+    expected: `reviews:\n  null: empty key\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
     // A flow mapping that holds keys keeps the person's style, so the list is a flow list.
     name: "a reviews flow mapping with keys",
     current: "reviews: { profile: chill }\n",
@@ -3925,6 +3931,26 @@ for (const { current, error } of [
   // A new local path_filters list would replace the list `<<` merges in, dropping "!dist/**".
   {
     current: 'defaults: &d {path_filters: ["!dist/**"]}\nreviews: {<<: *d, profile: chill}\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews uses a `<<` merge key, so a new path_filters list would replace the merged one\. Add path_filters to reviews yourself, then run apply again\./,
+  },
+  // An explicit `!!merge` tag, a `%YAML 1.1` header, and a bare `? !!merge` key each make a
+  // merge key whose value is Symbol(<<), not the string "<<".
+  {
+    current:
+      'defaults: &d {path_filters: ["!dist/**"]}\nreviews:\n  !!merge <<: *d\n  profile: chill\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews uses a `<<` merge key, so a new path_filters list would replace the merged one\. Add path_filters to reviews yourself, then run apply again\./,
+  },
+  {
+    current:
+      '%YAML 1.1\n---\ndefaults: &d {path_filters: ["!dist/**"]}\nreviews:\n  <<: *d\n  profile: chill\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews uses a `<<` merge key, so a new path_filters list would replace the merged one\. Add path_filters to reviews yourself, then run apply again\./,
+  },
+  {
+    current:
+      'defaults: &d {path_filters: ["!dist/**"]}\nreviews:\n  ? !!merge\n  : *d\n  profile: chill\n',
     error:
       /Cannot update \.coderabbit\.yaml: reviews uses a `<<` merge key, so a new path_filters list would replace the merged one\. Add path_filters to reviews yourself, then run apply again\./,
   },
