@@ -125,7 +125,8 @@ export async function rewriteLossProblem(text, path, formatter, { withoutValues 
           : `holds the number ${number}, which is too large for Calavera to write`;
       }
       numbers.push(number);
-      lines.push(lineOf(match, number));
+      // Only eject's reports name the line, so apply skips the extra scan.
+      if (withoutValues) lines.push(lineOf(match, number));
     }
   }
   if (numbers.length === 0) return undefined;
