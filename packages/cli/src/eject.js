@@ -36,6 +36,7 @@ import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
 import {
+  createScanner,
   findNodeAtLocation,
   parse as parseJsonc,
   parseTree,
@@ -1169,7 +1170,7 @@ async function planCodexMcpEntry(path, expected) {
             matchesRecords: true,
             removedLines: table,
             contents,
-            around: aroundLines(bare, start, end, tomlValuesHidden),
+            around: aroundLines(bare, start, end, tomlNeighborHidden(bare)),
             seen: textSeen(identity, text),
           },
         ],
@@ -1189,7 +1190,7 @@ async function planCodexMcpEntry(path, expected) {
  * @param {string[]} lines The file's lines.
  * @param {number} start The index of the first line of Calavera's text.
  * @param {number} end The index of its last line.
- * @param {(line: string) => string} hide
+ * @param {(line: string, index: number) => string} hide Hides a line, given its index.
  * @returns {{ line: number, before?: string, after?: string }}
  */
 function aroundLines(lines, start, end, hide) {
@@ -1197,7 +1198,7 @@ function aroundLines(lines, start, end, hide) {
   const nearest = (from, step) => {
     for (let index = from; index >= 0 && index < lines.length; index += step) {
       const line = (lines[index] ?? "").replace(/\r$/, "").trim();
-      if (line !== "") return hide(line);
+      if (line !== "") return hide(line, index);
     }
     return undefined;
   };
@@ -1210,26 +1211,91 @@ function aroundLines(lines, start, end, hide) {
   };
 }
 
+// The token kinds of `jsonc-parser`'s scanner. Its `SyntaxKind` is a TypeScript `const enum`,
+// which does not exist at run time, so the values from its type declarations are written here.
+const JSON_TOKEN = Object.freeze({
+  openBrace: 1,
+  closeBrace: 2,
+  openBracket: 3,
+  closeBracket: 4,
+  comma: 5,
+  colon: 6,
+  string: 10,
+  lineComment: 12,
+  blockComment: 13,
+  unknown: 16,
+  end: 17,
+});
+/** @type {Map<number, string>} */
+const JSON_PUNCTUATION = new Map([
+  [JSON_TOKEN.openBrace, "{ "],
+  [JSON_TOKEN.closeBrace, " }"],
+  [JSON_TOKEN.openBracket, "["],
+  [JSON_TOKEN.closeBracket, "]"],
+  [JSON_TOKEN.comma, ", "],
+  [JSON_TOKEN.colon, ": "],
+]);
+
 /**
- * A line of a JSON file with every string value replaced by `"…"`. Keys stay, so the line still
- * says where it is; a string is a key when a colon follows it.
+ * A line of a JSON file with every value hidden: the scanner splits the line into tokens, a
+ * string the next token's colon makes a key stays, punctuation stays, and every other string,
+ * number, `true`, `false`, and `null` becomes `…`. Comments are dropped, and a line the scanner
+ * cannot read, such as part of a string, is hidden whole.
  *
  * @param {string} line
  */
 function jsonValuesHidden(line) {
-  return line.replace(/"(?:[^"\\]|\\.)*"(?!\s*:)/g, '"…"');
+  const scanner = createScanner(line, true);
+  /** @type {{ kind: number, value: string }[]} */
+  const tokens = [];
+  for (let kind = scanner.scan(); kind !== JSON_TOKEN.end; kind = scanner.scan()) {
+    if (kind === JSON_TOKEN.unknown || scanner.getTokenError() !== 0) return "…";
+    if (kind === JSON_TOKEN.lineComment || kind === JSON_TOKEN.blockComment) continue;
+    tokens.push({ kind, value: scanner.getTokenValue() });
+  }
+  const text = tokens
+    .map(({ kind, value }, index) => {
+      const punctuation = JSON_PUNCTUATION.get(kind);
+      if (punctuation !== undefined) return punctuation;
+      const isKey = kind === JSON_TOKEN.string && tokens[index + 1]?.kind === JSON_TOKEN.colon;
+      return isKey ? JSON.stringify(value) : "…";
+    })
+    .join("")
+    // An empty object or a closing brace after an opening one needs no double space.
+    .replaceAll("{  }", "{}")
+    .replaceAll(/ {2,}/g, " ")
+    .trim();
+  return text === "" ? "…" : text;
 }
 
+// A complete TOML table header, `[table]` or `[[array.of.tables]]`, whose keys are bare, basic, or
+// literal, followed by nothing or a comment. Group 1 is the header without the comment.
+const TOML_KEY = String.raw`(?:[A-Za-z0-9_-]+|"(?:[^"\\\n]|\\.)*"|'[^'\n]*')`;
+const TOML_HEADER = new RegExp(
+  String.raw`^(\[\s*${TOML_KEY}(?:\s*\.\s*${TOML_KEY})*\s*\]|\[\[\s*${TOML_KEY}(?:\s*\.\s*${TOML_KEY})*\s*\]\])\s*(?:#.*)?$`,
+);
+
 /**
- * A line of a TOML file with its value hidden: a table header stays, a key keeps only its name,
- * and any other line, such as one inside a multi-line string, is hidden whole.
+ * Hides a TOML line around Calavera's table, for the file whose lines are `lines`. Only a complete
+ * table header prints, without its comment; every other line is hidden whole. A line that only
+ * looks like a header, inside a multi-line string or array, is hidden too: the text before it
+ * then does not parse as TOML on its own.
  *
- * @param {string} line
+ * @param {string[]} lines
+ * @returns {(line: string, index: number) => string}
  */
-function tomlValuesHidden(line) {
-  if (line.startsWith("[")) return line;
-  const equals = line.indexOf("=");
-  return equals === -1 ? "…" : `${line.slice(0, equals).trimEnd()} = …`;
+function tomlNeighborHidden(lines) {
+  return (line, index) => {
+    const header = TOML_HEADER.exec(line)?.[1];
+    if (header === undefined) return "…";
+    try {
+      parseToml(header);
+      parseToml(lines.slice(0, index).join("\n"));
+    } catch {
+      return "…";
+    }
+    return header;
+  };
 }
 
 /**

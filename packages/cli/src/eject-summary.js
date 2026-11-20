@@ -36,11 +36,13 @@ export function ejectSummaryLines(result) {
   // section eject removes, goes under that item, so each path is printed once.
   const itemPaths = new Set(result.items.map(({ path }) => path));
   /** @param {EjectResultItem} item */
-  const itemLines = (item) =>
-    ownItemLines(
-      item,
-      result.reported.filter(({ path }) => path === item.path).map(({ reason }) => reason),
-    );
+  const reportsFor = (item) =>
+    result.reported.filter(({ path }) => path === item.path).map(({ reason }) => reason);
+  /** @param {EjectResultItem} item */
+  const itemLines = (item) => ownItemLines(item, reportsFor(item));
+  /** @param {EjectResultItem} item */
+  const samePathReports = (item) =>
+    reportsFor(item).map((reason) => info(`${DETAIL}${withoutOwnPath(reason, item.path)}`));
 
   pushGroup(lines, "Would remove", withOutcome("planned").flatMap(itemLines));
   pushGroup(lines, "Removed", withOutcome("removed").flatMap(itemLines));
@@ -50,15 +52,17 @@ export function ejectSummaryLines(result) {
     "Failed",
     withOutcome("failed").flatMap((item) => [
       info(`${ITEM}${item.path}: ${withoutOwnPath(item.error ?? "", item.path)}`),
+      ...samePathReports(item),
       info(`${DETAIL}Fix the cause, then run eject again.`),
     ]),
   );
   pushGroup(
     lines,
     "Skipped",
-    withOutcome("skipped").map((item) =>
+    withOutcome("skipped").flatMap((item) => [
       info(`${ITEM}${item.path}: ${withoutOwnPath(item.error ?? "", item.path)}`),
-    ),
+      ...samePathReports(item),
+    ]),
   );
   pushGroup(
     lines,

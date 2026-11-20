@@ -1313,7 +1313,7 @@ test("the reported Yarn command follows the project's Yarn version at a workspac
   );
 });
 
-test("a TOML key around a Codex entry keeps only its name", async () => {
+test("a TOML key around a Codex entry is hidden whole", async () => {
   await inProject(async () => {
     await agentBootstrap({ mcpHarness: "codex", packageManager: "npm" });
     await writeFile(
@@ -1321,7 +1321,244 @@ test("a TOML key around a Codex entry keeps only its name", async () => {
       `model = "secret-model"\n\n${await readFile(".codex/config.toml", "utf8")}`,
     );
     const output = human(await eject(["--dry-run"]));
-    assert.match(output, /^ {6}Before: "model = …"$/m);
+    assert.match(output, /^ {6}Before: "…"$/m);
     assert.doesNotMatch(output, /secret-model/);
   });
+});
+
+/**
+ * Neighbor shapes around Calavera's MCP entry, each holding a secret that must never reach the
+ * output (ADR-0017, Amendment 3). `before` goes right above Calavera's entry and `after` right
+ * below it. JSON has no multi-line strings or comments, so those shapes are TOML only, and a TOML
+ * table cannot hold a key after Calavera's table, so its after-shapes are headers.
+ *
+ * @type {Record<"json" | "toml", { shape: string, before?: (secret: string) => string, after?: (secret: string) => string }[]>}
+ */
+const NEIGHBOR_SHAPES = {
+  json: [
+    {
+      shape: "a server on one line",
+      after: (secret) =>
+        `    "github": { "command": "gh-mcp", "env": { "GITHUB_TOKEN": "${secret}" } }`,
+    },
+    {
+      shape: "an env value on the line before, with a brace",
+      before: (secret) => `    "b": { "env": {\n      "TOKEN": "${secret}" } },`,
+    },
+    {
+      shape: "an env value on the line after",
+      after: (secret) => `    "a": { "env": { "TOKEN": "${secret}",\n      "X": "y" } }`,
+    },
+    {
+      shape: "the end of a multi-line array",
+      before: (secret) => `    "b": { "args": [\n      ["${secret}"]] },`,
+    },
+    {
+      shape: "a number and a boolean on the same line as a brace",
+      before: (secret) =>
+        `    "b": {\n      "PIN": ${secret.replace(/\D/g, "") || "1"}, "on": true, "TOKEN": "${secret}" },`,
+    },
+  ],
+  toml: [
+    {
+      shape: "a server on one line, as an inline table",
+      before: (secret) =>
+        `[mcp_servers]\ngithub = { command = "gh-mcp", env = { GITHUB_TOKEN = "${secret}" } }\n`,
+    },
+    {
+      shape: "an env value on the line before",
+      before: (secret) => `[mcp_servers.b]\ncommand = "x"\nenv.TOKEN = "${secret}"\n`,
+    },
+    {
+      shape: "the end of a multi-line array",
+      before: (secret) => `[mcp_servers.b]\nargs = [\n  "x",\n  ["${secret}"]]\n`,
+    },
+    {
+      shape: "the end of a multi-line string",
+      before: (secret) => `[mcp_servers.b]\nnote = """\nfirst\n[${secret}]"""\n`,
+    },
+    {
+      shape: "a value on the same line as a brace",
+      before: (secret) => `[mcp_servers.b]\nmeta = { k = "${secret}", n = 1 }\n`,
+    },
+    {
+      shape: "a header comment after",
+      after: (secret) => `[mcp_servers.z] # ${secret}\ncommand = "z"\n`,
+    },
+    {
+      shape: "a multi-line string after",
+      after: (secret) => `[mcp_servers.z]\nnote = '''\n[${secret}]\n'''\n`,
+    },
+  ],
+};
+
+/** The four harness files, with the key their servers sit under. */
+const HARNESSES = /** @type {const} */ ([
+  { harness: "claude-code", path: ".mcp.json", key: "mcpServers", format: "json" },
+  { harness: "cursor", path: ".cursor/mcp.json", key: "mcpServers", format: "json" },
+  { harness: "opencode", path: "opencode.json", key: "mcp", format: "json" },
+  { harness: "codex", path: ".codex/config.toml", key: "mcp_servers", format: "toml" },
+]);
+
+/**
+ * Writes the harness file with Calavera's entry, as the bootstrap writes it, between the given
+ * neighbors.
+ *
+ * @param {(typeof HARNESSES)[number]} harness
+ * @param {string | undefined} before
+ * @param {string | undefined} after
+ */
+async function writeHarnessAround({ harness, path, key, format }, before, after) {
+  await agentBootstrap({ mcpHarness: harness, packageManager: "npm" });
+  const written = await readFile(path, "utf8");
+  if (format === "toml") {
+    await writeFile(path, `${before ?? ""}\n${written.trim()}\n\n${after ?? ""}`);
+    return;
+  }
+  const config = JSON.parse(written);
+  const schema =
+    config.$schema === undefined ? "" : `  "$schema": ${JSON.stringify(config.$schema)},\n`;
+  await writeFile(
+    path,
+    `{\n${schema}  "${key}": {\n${before === undefined ? "" : `${before}\n`}    "calavera": ${JSON.stringify(config[key].calavera)}${after === undefined ? "" : `,\n${after}`}\n  }\n}\n`,
+  );
+}
+
+for (const harness of HARNESSES) {
+  for (const { shape, before, after } of NEIGHBOR_SHAPES[harness.format]) {
+    test(`no secret leaks from ${harness.path} with ${shape}`, async () => {
+      const secret = `SECRET-${harness.harness}-${shape.replace(/\W+/g, "-")}-7531`;
+      await inProject(async () => {
+        await writeHarnessAround(harness, before?.(secret), after?.(secret));
+        const dryRun = await eject(["--dry-run"]);
+        const item = dryRun.items.find(({ path }) => path === harness.path);
+        assert.equal(
+          item?.kind,
+          "mcp-entry",
+          `${harness.path} is an item: ${JSON.stringify(dryRun.reported)}`,
+        );
+        assert.ok(item?.around?.before !== undefined || item?.around?.after !== undefined);
+        const refused = await ejectProject(parseArgs(["eject", "--json"]), { interactive: false });
+        assert.equal(refused.status, "refused");
+        const { shown, result: cancelled } = await ejectInteractively([], false);
+        const pin = secret.replace(/\D/g, "");
+        /** @type {[string, string][]} */
+        const outputs = [
+          ["the human dry run", human(dryRun)],
+          ["--json", JSON.stringify(dryRun)],
+          ["the refusal", `${human(refused)}\n${JSON.stringify(refused)}`],
+          ["the approval list", shown],
+          ["the cancelled result", JSON.stringify(cancelled)],
+        ];
+        for (const [label, text] of outputs) {
+          assert.equal(text.includes(secret), false, `${label} leaks the secret:\n${text}`);
+          assert.equal(text.includes(pin), false, `${label} leaks the number:\n${text}`);
+        }
+      });
+    });
+  }
+}
+
+test("a neighbor server on one line does not leak through the CLI's --json or its refusal", async () => {
+  const secret = "SECRET-CLI-8642";
+  await inProject(async (root) => {
+    await writeHarnessAround(
+      HARNESSES[0],
+      undefined,
+      `    "github": { "command": "gh-mcp", "env": { "GITHUB_TOKEN": "${secret}" } }`,
+    );
+    for (const args of [
+      ["eject", "--dry-run", "--json"],
+      ["eject", "--dry-run"],
+      ["eject"],
+      ["eject", "--json"],
+    ]) {
+      const run = runWithoutTerminal(root, args);
+      assert.equal(
+        `${run.stdout}${run.stderr}`.includes(secret),
+        false,
+        `${args.join(" ")}:\n${run.stdout}`,
+      );
+    }
+  });
+});
+
+test("the JSON neighbor line keeps its keys and punctuation and hides every value", async () => {
+  await inProject(async () => {
+    await writeHarnessAround(
+      HARNESSES[0],
+      undefined,
+      `    "github": { "command": "gh-mcp", "port": 4242, "on": true, "env": { "GITHUB_TOKEN": "x" } }`,
+    );
+    const item = (await eject(["--dry-run"])).items.find(({ path }) => path === ".mcp.json");
+    assert.equal(
+      item?.around?.after,
+      '"github": { "command": …, "port": …, "on": …, "env": { "GITHUB_TOKEN": … } }',
+    );
+  });
+});
+
+test("a TOML neighbor header prints without its comment, and a header-shaped line in a string is hidden", async () => {
+  await inProject(async () => {
+    await writeHarnessAround(
+      HARNESSES[3],
+      `[mcp_servers.b]\nnote = """\n[looks.like.header]"""\n`,
+      `[mcp_servers."z.q"] # comment\n`,
+    );
+    const item = (await eject(["--dry-run"])).items.find(
+      ({ path }) => path === ".codex/config.toml",
+    );
+    assert.deepEqual(item?.around, {
+      line: item?.around?.line,
+      before: "…",
+      after: '[mcp_servers."z.q"]',
+    });
+  });
+});
+
+test("a report about the same path prints under a failed or skipped item too", () => {
+  /** @type {import("../src/index.js").EjectResult} */
+  const result = {
+    command: "eject",
+    dryRun: false,
+    status: "failed",
+    message: "Headline.",
+    items: [
+      {
+        ...STATE_ITEM,
+        kind: "guidance-section",
+        path: "AGENTS.md",
+        action: "edit",
+        outcome: "failed",
+        error: "EACCES",
+      },
+      {
+        ...STATE_ITEM,
+        kind: "mcp-entry",
+        path: ".mcp.json",
+        action: "edit",
+        outcome: "skipped",
+        error: "Kept.",
+      },
+    ],
+    reported: [
+      { path: "AGENTS.md", reason: "AGENTS.md holds a hand merge." },
+      { path: ".mcp.json", reason: "Another note." },
+    ],
+    kept: [],
+    packageJson: { scripts: [] },
+    elsewhere: [],
+  };
+  assert.deepEqual(human(result).split("\n"), [
+    "Headline.",
+    "",
+    "Failed:",
+    "  AGENTS.md: EACCES",
+    "    This item holds a hand merge.",
+    "    Fix the cause, then run eject again.",
+    "",
+    "Skipped:",
+    "  .mcp.json: Kept.",
+    "    Another note.",
+  ]);
 });
