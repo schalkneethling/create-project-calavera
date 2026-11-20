@@ -1492,12 +1492,12 @@ test("the JSON neighbor line keeps its keys and punctuation and hides every valu
     await writeHarnessAround(
       HARNESSES[0],
       undefined,
-      `    "github": { "command": "gh-mcp", "port": 4242, "on": true, "off": null, "args": ["a", 1], "x": {}, "env": { "GITHUB_TOKEN": "x" } }`,
+      `    "github": { "command": "gh-mcp", "port": 4242, "on": true, "off": null, "args": ["a", 1], "x": {}, "env": { "GITHUB_TOKEN": "x" } },\n    "last": {}`,
     );
     const item = (await eject(["--dry-run"])).items.find(({ path }) => path === ".mcp.json");
     assert.equal(
       item?.around?.after,
-      '"github": { "command": …, "port": …, "on": …, "off": …, "args": […, …], "x": {}, "env": { "GITHUB_TOKEN": … } }',
+      '"github": { "command": …, "port": …, "on": …, "off": …, "args": […, …], "x": {}, "env": { "GITHUB_TOKEN": … } },',
     );
   });
 });
