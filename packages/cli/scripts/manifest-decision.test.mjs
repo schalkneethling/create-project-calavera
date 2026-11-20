@@ -83,11 +83,26 @@ test("each error says what stopped and that nothing was written", () => {
     ...manifestDecisionLines(decision),
   ]);
   assert.match(initApplyManifestChoiceError(decision).message, writesNothing);
-  const existing = join(root, "calavera.config.json");
-  assert.match(
-    ancestorAlreadyManagedError(decision, existing).message,
-    new RegExp(`in ${root}, but ${existing} already exists there`),
+  const recipePath = join(root, "calavera.config.json");
+  const recipeStop = ancestorAlreadyManagedError(decision, recipePath, "recipe").message;
+  assert.ok(
+    recipeStop.includes(
+      `in ${root}, but ${recipePath} already exists there, so the directory has a Calavera recipe of its own.`,
+    ),
+    recipeStop,
   );
+  assert.match(recipeStop, writesNothing);
+  // #1038: state alone does not show a recipe, so the message names the state file instead.
+  const statePath = join(root, ".calavera", "state.json");
+  const stateStop = ancestorAlreadyManagedError(decision, statePath, "state").message;
+  assert.ok(
+    stateStop.includes(
+      `in ${root}, but ${statePath} already exists there, so Calavera has already recorded state for that directory.`,
+    ),
+    stateStop,
+  );
+  assert.doesNotMatch(stateStop, /recipe of its own/);
+  assert.match(stateStop, writesNothing);
 });
 
 test("a path inside the directory moves to the ancestor's directory, and any other path stays", () => {

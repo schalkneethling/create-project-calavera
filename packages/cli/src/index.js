@@ -3302,14 +3302,16 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
     // Another project's recipe or state is a hard stop, not something to replace. The ancestor's
     // default recipe counts even when the recipe path given here is a custom one, because apply
     // would otherwise record state for this recipe next to it. Because the ancestor has no state,
-    // no managed file there can be reowned, so reownManagedFiles needs no translation.
-    for (const existing of new Set([
-      config,
-      join(ancestorDirectory, CONFIG_FILE),
-      join(ancestorDirectory, STATE_FILE),
+    // no managed file there can be reowned, so reownManagedFiles needs no translation. The recipe
+    // paths come first, so a directory with both a recipe and state names its recipe (#1038). A
+    // path listed twice is checked twice, which is harmless because the first hit stops.
+    for (const [existing, kind] of /** @type {const} */ ([
+      [config, "recipe"],
+      [join(ancestorDirectory, CONFIG_FILE), "recipe"],
+      [join(ancestorDirectory, STATE_FILE), "state"],
     ])) {
       if (await fileExists(existing)) {
-        throw ancestorAlreadyManagedError(chosen, existing);
+        throw ancestorAlreadyManagedError(chosen, existing, kind);
       }
     }
 
