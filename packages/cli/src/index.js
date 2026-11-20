@@ -231,7 +231,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {boolean} [init]
  * @property {string[]} [newArgs] Tokens after `--new`, forwarded verbatim to `vp create`.
  * @property {string} [newConfig] Recipe path given with `--config` before `--new`, copied into the scaffold.
- * @property {RecipeCopy} [recipeCopy] The recipe `apply --config` copies from outside the project into the project root (#603).
+ * @property {RecipeCopy} [recipeCopy] The recipe `apply --config` or `update --config` copies from outside the project into the project root (#603, #1025).
  *
  * @typedef {object} RecipeCopy
  * @property {string} source Absolute path of the recipe given with `--config`.
@@ -3159,8 +3159,11 @@ export async function inspectProject(recipe, options = {}) {
 export async function applyRecipe(options) {
   const configPath = resolve(options.config);
 
-  if (options.command === "apply" && !(await isInWorkingDirectory(configPath))) {
-    const recipeCopy = await planRecipeCopy(configPath);
+  if (
+    (options.command === "apply" || options.command === "update") &&
+    !(await isInWorkingDirectory(configPath))
+  ) {
+    const recipeCopy = await planRecipeCopy(configPath, options.command);
     return applyRecipeObject(
       recipeFromJSON(JSON.parse(recipeCopy.bytes.toString("utf8")), configPath),
       {
@@ -3201,21 +3204,24 @@ async function isInWorkingDirectory(path) {
 
 /**
  * #603 and the owner decision of 2026-11-14: `apply --config <path>` with a recipe outside the
- * project copies it, byte for byte, into the project root as calavera.config.json. The project
+ * project copies it, byte for byte, into the project root as calavera.config.json. `update`
+ * applies the recipe as apply does, so it copies by the same rule (#1025), and `command` names
+ * the command the person ran in each refusal. The project
  * root is the working directory, and it must contain a package.json; apply does not offer to
  * create one there, because a missing package.json more likely means the wrong directory. A
  * different calavera.config.json already in the project is a hard stop, because apply never
  * replaces a local recipe. Both checks run before anything is planned, in the dry run as well.
  *
  * @param {string} source Absolute recipe path.
+ * @param {"apply" | "update"} command
  * @returns {Promise<RecipeCopy>}
  */
-async function planRecipeCopy(source) {
+async function planRecipeCopy(source, command) {
   const directory = process.cwd();
 
   if (!(await fileExists(join(directory, "package.json")))) {
     throw new Error(
-      `apply refused: ${directory} has no package.json, so it is not a project root. apply --config copies a recipe from outside the project into the project root, which is the current directory and must contain a package.json. Change to the project folder that contains package.json, then run apply again. Calavera stopped before writing anything.`,
+      `${command} refused: ${directory} has no package.json, so it is not a project root. ${command} --config copies a recipe from outside the project into the project root, which is the current directory and must contain a package.json. Change to the project folder that contains package.json, then run ${command} again. Calavera stopped before writing anything.`,
     );
   }
 
@@ -3228,7 +3234,7 @@ async function planRecipeCopy(source) {
 
   if (targetStats !== undefined && !targetStats.isFile()) {
     throw new Error(
-      `apply refused: ${target} is ${targetStats.isSymbolicLink() ? "a symbolic link" : "a directory or other entry"}, not a regular file, so apply cannot copy ${source} there without writing somewhere else. Replace it with the recipe file itself, or remove it, then run apply again. Calavera stopped before writing anything.`,
+      `${command} refused: ${target} is ${targetStats.isSymbolicLink() ? "a symbolic link" : "a directory or other entry"}, not a regular file, so ${command} cannot copy ${source} there without writing somewhere else. Replace it with the recipe file itself, or remove it, then run ${command} again. Calavera stopped before writing anything.`,
     );
   }
 
@@ -3236,7 +3242,7 @@ async function planRecipeCopy(source) {
 
   if (existing !== undefined && !existing.equals(bytes)) {
     throw new Error(
-      `apply refused: ${target} already exists and differs from ${source}, given with --config, and apply never replaces a project's recipe. To apply ${source}, replace ${target} with it yourself, then run apply without --config. To keep the project's recipe, run apply without --config. Calavera stopped before writing anything.`,
+      `${command} refused: ${target} already exists and differs from ${source}, given with --config, and ${command} never replaces a project's recipe. To apply ${source}, replace ${target} with it yourself, then run ${command} without --config. To keep the project's recipe, run ${command} without --config. Calavera stopped before writing anything.`,
     );
   }
 
@@ -6817,7 +6823,7 @@ Options:
   --apply              Preview and optionally apply after composing a recipe
   --config <path>      Recipe path, defaults to calavera.config.json
                        Before --new: copy this recipe into the new project
-                       With apply: copy a recipe from outside the project into it
+                       With apply or update: copy a recipe from outside the project into it
   --package-manager    npm, pnpm, yarn, or bun
   --profile            default or minimal; --yes without it uses default
   --tool <id>          Add an integration by id or label; repeatable
