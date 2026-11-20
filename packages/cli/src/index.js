@@ -1978,26 +1978,24 @@ function stateShowsCalaveraWroteQuality(state, quality) {
 
 /**
  * The `quality` value the state records after apply (#230, #968): the value
- * the plan writes, or, when the recipe does not request quality and so leaves
- * the script alone, the project's value if the state already records that
- * Calavera wrote exactly it. Keeping that record lets a later apply that omits
- * a requested quality still remove the value. Otherwise null, because apply
- * wrote no quality.
+ * the plan writes, or else the project's value if the state already records
+ * that Calavera wrote exactly it. That happens only when the recipe does not
+ * request quality and so leaves the script alone, because when the plan omits
+ * a requested quality, apply has already removed a recorded value. Keeping
+ * the record lets a later apply that omits a requested quality still remove
+ * the value. Otherwise null, because apply wrote no quality.
  *
- * @param {Recipe} recipe
  * @param {Record<string, string>} scripts the scripts the plan writes
  * @param {CalaveraState} previousState
  * @param {unknown} quality the project's `quality` value after apply
  * @returns {string | null}
  */
-function qualityScriptRecord(recipe, scripts, previousState, quality) {
+function qualityScriptRecord(scripts, previousState, quality) {
   if (typeof scripts.quality === "string") {
     return scripts.quality;
   }
 
-  return !recipe.scripts?.quality && stateShowsCalaveraWroteQuality(previousState, quality)
-    ? quality
-    : null;
+  return stateShowsCalaveraWroteQuality(previousState, quality) ? quality : null;
 }
 
 function createHtmlValidateWrapper() {
@@ -3682,7 +3680,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
         aiResult.artifacts,
         wiringPlan.records,
         gitignorePlan.records,
-        qualityScriptRecord(recipe, scripts, previousState, packageJSON.scripts?.quality),
+        qualityScriptRecord(scripts, previousState, packageJSON.scripts?.quality),
       ),
       loadFormatter,
     );

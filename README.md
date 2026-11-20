@@ -928,9 +928,8 @@ the dry run names the match, so you can remove it. A recipe that sets
 `scripts.quality` to `false` leaves `quality` alone: apply neither writes nor
 removes it, and keeps a record that holds the project's value, so a later apply
 that omits a requested `quality` can still remove the value Calavera wrote.
-Calavera writes no script
-that repeats a `vp` command on its own, and does not add Playwright or other test
-suites to `quality`. The Stylelint scripts are `lint:styles` and
+Calavera writes no script that repeats a `vp` command on its own, and does not
+add Playwright or other test suites to `quality`. The Stylelint scripts are `lint:styles` and
 `lint:styles:fix`. In a project that has `.calavera/state.json` from an earlier
 apply, a later apply renames a `lint` or `lint:fix` script whose value is
 exactly one Calavera wrote with Stylelint; it keeps any other value as your own,

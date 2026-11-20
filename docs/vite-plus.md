@@ -291,10 +291,9 @@ a later apply of this release. A recipe that sets `scripts.quality` to `false`
 leaves `quality` alone: apply neither writes nor removes it, and keeps a record
 that holds the project's value, so a later apply that omits a requested
 `quality` can still remove the value Calavera wrote. A state file without the
-record, written by a
-release before this one, does not show who wrote `quality`: those releases
-wrote no `quality` when the recipe turned it off, and the state file does not
-record that choice. Apply then keeps the value, even one an earlier release
+record, written by a release before this one, does not show who wrote
+`quality`: those releases wrote no `quality` when the recipe turned it off, and
+the state file does not record that choice. Apply then keeps the value, even one an earlier release
 wrote, such as `npm run knip`, or `npm run lint` from before the Stylelint
 rename, and the dry run names the match:
 `... package.json keeps its quality script, "npm run knip", because Calavera cannot show that it wrote that value. It matches a value an earlier release wrote for this recipe, so remove it if you did not write it yourself.`
