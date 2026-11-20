@@ -1960,9 +1960,10 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
 
 /**
  * Whether the state shows that Calavera wrote the project's `quality` value
- * (#230): the state records that apply wrote exactly this value. Apply records
- * null when it writes no quality, such as when it keeps the project's own, so
- * a value it kept is never removed later. A state file without the record,
+ * (#230): the state records that apply wrote exactly this value. When apply
+ * writes no quality, it keeps a record that still equals the project's value
+ * and records null otherwise, such as when it keeps the project's own, so a
+ * value it kept is never removed later. A state file without the record,
  * from a release before #230 or rewritten by one, shows nothing: those
  * releases did not write quality when the recipe turned it off, and the state
  * does not record the recipe's script flags, so the value may be the

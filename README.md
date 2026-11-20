@@ -918,8 +918,9 @@ workspace root, the test step is `vp run -r test`, which runs each member's
 projects keep a `quality` script without `vp` when it runs two or more of
 Calavera's scripts. With only one, such as `npm run knip`, Calavera does not
 generate `quality`, because it would only repeat that script. Apply records
-the `quality` value it writes, or `null`, in `.calavera/state.json` as
-`qualityScript`. When it does not generate `quality`, it removes the existing
+the `quality` value it writes in `.calavera/state.json` as `qualityScript`.
+When it writes none, it keeps a record that still equals the project's
+value, and records `null` otherwise. When it does not generate `quality`, it removes the existing
 `quality` if that record holds exactly the same value, because then Calavera
 wrote it. It keeps any other value, including one an earlier release wrote
 before this record existed, and the dry run says so; when the state file has

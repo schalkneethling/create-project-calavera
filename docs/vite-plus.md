@@ -281,8 +281,9 @@ of Calavera's scripts. With only one, `quality` would only repeat that script,
 for example `npm run knip`, so Calavera does not generate it, and the dry run
 says so:
 `Would omit script quality: quality was requested, but it would only run "npm run knip", so Calavera does not generate quality as an alias of that script.`
-Apply records the value it writes to `quality`, or `null` when it writes none,
-as `qualityScript` in `.calavera/state.json`. When apply does not generate
+Apply records the value it writes to `quality` as `qualityScript` in
+`.calavera/state.json`. When it writes none, it keeps a record that still
+equals the project's value, and records `null` otherwise. When apply does not generate
 `quality`, it removes the existing `quality` if that record holds exactly the
 same value, whatever recipe Calavera wrote it for, because the record shows
 that Calavera wrote it. A value the record does not hold is kept, so a
