@@ -18,8 +18,8 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {string | null} installCommand
  * @property {boolean | null} selected False for a lock entry the recipe no longer selects, which the next `artifacts install`, or `artifacts update` while the recipe selects any artifact, removes (#992). Null when there is no recipe to compare the lock with.
  *
- * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null }} ArtifactStatusReport
- * @typedef {{ level: "info" | "success", message: string }} ReportLine
+ * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, ok: boolean }} ArtifactStatusReport
+ * @typedef {{ level: "info" | "success" | "error", message: string }} ReportLine
  * @typedef {{ id: string, version: string, tag: "latest" | "next" }} RemovedLockEntry
  */
 
@@ -214,6 +214,28 @@ export function formatArtifactStatus(result) {
     lines.push({ level: "success", message: "Every artifact is up to date on its channel." });
   }
   return lines;
+}
+
+/**
+ * The overall result ordinary output prints last for `artifacts doctor` (#994). It follows `ok`,
+ * which also sets the exit status, and names each artifact with a problem, so a person or an agent
+ * can tell a healthy project from a broken one without reading every line.
+ *
+ * @param {Pick<ArtifactStatusReport, "ok" | "artifacts">} result
+ * @returns {ReportLine}
+ */
+export function artifactDoctorVerdict(result) {
+  if (result.ok) {
+    return { level: "success", message: "Calavera artifacts doctor found no problems." };
+  }
+  const failing = result.artifacts
+    .filter((artifact) => healthNotes(artifact).length > 0)
+    .map(({ id }) => id);
+  const noun = failing.length === 1 ? "artifact" : "artifacts";
+  return {
+    level: "error",
+    message: `Calavera artifacts doctor found problems with ${failing.length} ${noun}: ${failing.join(", ")}.`,
+  };
 }
 
 /**

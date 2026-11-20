@@ -60,7 +60,11 @@ import {
   selectEjectItems,
 } from "./eject.js";
 import { ejectSummaryLines } from "./eject-summary.js";
-import { formatArtifactStatus, formatRemovedLockEntries } from "./artifact-status-report.js";
+import {
+  artifactDoctorVerdict,
+  formatArtifactStatus,
+  formatRemovedLockEntries,
+} from "./artifact-status-report.js";
 import {
   AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
   AGENT_BOOTSTRAP_GUIDANCE_FILE,
@@ -7072,6 +7076,14 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger[level](message);
     }
     printArtifactCacheBlock(result);
+    if (result.command === "artifacts doctor") {
+      const { level, message } = artifactDoctorVerdict(
+        /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
+          /** @type {unknown} */ (result)
+        ),
+      );
+      logger[level](message);
+    }
     return;
   }
 
@@ -7205,10 +7217,14 @@ async function main(options) {
   }
 
   if (options.command === "artifacts") {
-    printResult(
-      /** @type {ArtifactCommandResult} */ (await runArtifactCommand(options)),
-      options.json,
-    );
+    const result = /** @type {ArtifactCommandResult} */ (await runArtifactCommand(options));
+    printResult(result, options.json);
+    // #994: doctor fails the run when an artifact's files are missing, are not managed, or carry a
+    // local edit, as `doctor` does for an error (#1030). `artifacts status` reports the same
+    // problems and stays informational.
+    if (options.artifactAction === "doctor" && result.ok !== true) {
+      process.exitCode = 1;
+    }
     return;
   }
 
