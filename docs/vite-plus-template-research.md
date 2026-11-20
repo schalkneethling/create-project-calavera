@@ -265,7 +265,8 @@ adding more operations such as:
 - `dry_run_apply`
 - `doctor_project`
 
-The current WebMCP tools mirror the standard MCP recipe composition concepts:
+When this research was written, the WebMCP tools mirrored the standard MCP
+recipe composition concepts with these eight tools:
 
 - `list_profiles`
 - `list_integrations`
@@ -276,10 +277,17 @@ The current WebMCP tools mirror the standard MCP recipe composition concepts:
 - `explain_recipe`
 - `download_recipe`
 
-The intentional browser difference is that WebMCP downloads a composed recipe
-instead of previewing or applying project filesystem changes. Standard MCP owns
-`dry_run_apply` and `apply_recipe` because those operations need project-root
-filesystem and process access.
+At that time, the intentional browser difference was that WebMCP downloads a
+composed recipe instead of previewing or applying project filesystem changes.
+Standard MCP owns `dry_run_apply` and `apply_recipe` because those operations
+need project-root filesystem and process access.
+
+This list is historical, and this difference is no longer the only one. The
+Composer has since added four Baseline tools, and the
+[Web Composer section of the README](../README.md#web-composer) lists the tools
+the Composer registers today.
+[ADR-0018](adr/0018-cli-mcp-webmcp-responsibilities.md) records the current
+differences between WebMCP and the standard MCP server.
 
 ## Versioning Implications
 
