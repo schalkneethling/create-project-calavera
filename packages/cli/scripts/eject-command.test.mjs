@@ -30,6 +30,7 @@ import {
   formatHelp,
   parseArgs,
 } from "../src/index.js";
+import { formatErrorChain } from "../src/utils/error-chain.js";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 
 const cliPath = fileURLToPath(new URL("../bin/create-project-calavera.js", import.meta.url));
@@ -1566,3 +1567,87 @@ test("a report about the same path prints under a failed or skipped item too", (
     "    Another note.",
   ]);
 });
+
+/**
+ * Error and report paths that read the person's harness file, each with a secret that must reach
+ * neither the output nor stderr: a TOML parse error, a file neither JSON nor JSONC can parse, and
+ * a number a JSON rewrite would spell another way.
+ */
+const ERROR_AND_REPORT_LEAKS = [
+  {
+    name: "a TOML parse error",
+    secret: "zq9TOMLsecret",
+    stops: true,
+    write: async (/** @type {string} */ secret) => {
+      await agentBootstrap({ mcpHarness: "codex", packageManager: "npm" });
+      await writeFile(
+        ".codex/config.toml",
+        `${await readFile(".codex/config.toml", "utf8")}\n[mcp_servers.z]\ncommand = "x" ${secret}\n`,
+      );
+    },
+  },
+  {
+    name: "a file neither JSON nor JSONC can parse",
+    secret: "zq9JSONsecret",
+    stops: true,
+    write: async (/** @type {string} */ secret) => {
+      await agentBootstrap({ mcpHarness: "claude-code", packageManager: "npm" });
+      await writeFile(".mcp.json", `{"T":'${secret}'}\n`);
+    },
+  },
+  {
+    name: "a number a rewrite would spell another way",
+    secret: "123456789012345678901",
+    stops: false,
+    write: async (/** @type {string} */ secret) => {
+      await agentBootstrap({ mcpHarness: "claude-code", packageManager: "npm" });
+      const mcp = JSON.parse(await readFile(".mcp.json", "utf8"));
+      await writeFile(
+        ".mcp.json",
+        `${JSON.stringify(mcp, null, 2).replace('"mcpServers": {', `"pin": ${secret},\n  "mcpServers": {`)}\n`,
+      );
+    },
+  },
+];
+
+for (const { name, secret, stops, write: writeLeak } of ERROR_AND_REPORT_LEAKS) {
+  test(`no secret leaks from ${name}`, async () => {
+    // A parser quotes a truncated stretch of text, and a number may come back rounded, so even
+    // the first six characters must not appear.
+    const fragments = [secret, secret.slice(0, 6)];
+    /** @param {string} label @param {string} text */
+    const assertClean = (label, text) => {
+      for (const fragment of fragments) {
+        assert.equal(text.includes(fragment), false, `${label} leaks ${fragment}:\n${text}`);
+      }
+    };
+    await inProject(async (root) => {
+      await writeLeak(secret);
+      if (stops) {
+        await assert.rejects(eject(["--dry-run"]), (error) => {
+          assert.ok(error instanceof Error);
+          assertClean("the error", formatErrorChain(error));
+          assert.match(error.message, /line \d+, column \d+|at offset \d+/);
+          return true;
+        });
+      } else {
+        const dryRun = await eject(["--dry-run"]);
+        assert.ok(dryRun.reported.some(({ path }) => path === ".mcp.json"));
+        assertClean("the human dry run", human(dryRun));
+        assertClean("--json", JSON.stringify(dryRun));
+        const refused = await ejectProject(parseArgs(["eject", "--json"]), { interactive: false });
+        assertClean("the refusal", `${human(refused)}\n${JSON.stringify(refused)}`);
+        assertClean("the approval list", (await ejectInteractively([], false)).shown);
+      }
+      for (const args of [
+        ["eject", "--dry-run"],
+        ["eject", "--dry-run", "--json"],
+        ["eject"],
+        ["eject", "--json"],
+      ]) {
+        const run = runWithoutTerminal(root, args);
+        assertClean(`${args.join(" ")} through the CLI`, `${run.stdout}\n${run.stderr}`);
+      }
+    });
+  });
+}

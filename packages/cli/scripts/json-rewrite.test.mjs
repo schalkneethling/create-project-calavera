@@ -91,6 +91,24 @@ test("rewriteLossProblem reports a duplicate key and a number Calavera would spe
   );
 });
 
+test("rewriteLossProblem without values names the line of a number, never the number", async () => {
+  for (const [text, problem] of [
+    [
+      '{\n  "big": 12345678901234567890\n}',
+      /^holds a number on line 2 that Calavera would write in another spelling$/,
+    ],
+    [
+      '{\n  "a": 1,\n  "n": 1e400\n}',
+      /^holds a number on line 3 that is too large for Calavera to write$/,
+    ],
+  ]) {
+    const found =
+      (await rewriteLossProblem(text, "a.json", oxfmtFormatter, { withoutValues: true })) ?? "";
+    assert.match(found, problem, text);
+    assert.equal(/\d{3}/.test(found), false, found);
+  }
+});
+
 test("rewriteLossProblem asks the project's formatter how a number is spelled", async () => {
   // Oxfmt writes 1e21 where JSON.stringify writes 1e+21, so the same text loses nothing in a
   // Vite+ project and changes in any other.

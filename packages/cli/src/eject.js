@@ -42,7 +42,7 @@ import {
   parseTree,
   printParseErrorCode,
 } from "jsonc-parser";
-import { parse as parseToml } from "smol-toml";
+import { TomlError, parse as parseToml } from "smol-toml";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
@@ -970,7 +970,7 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   let config;
   try {
     config = JSON.parse(text);
-  } catch (error) {
+  } catch {
     /** @type {import("jsonc-parser").ParseError[]} */
     const errors = [];
     // An empty or whitespace-only file holds no entry, as it did before JSONC was read, so it is
@@ -982,7 +982,13 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
     if (problem !== undefined) {
       throw new Error(
         `eject stopped before removing anything: ${path} cannot be parsed as JSON, nor as JSON with comments (JSONC): ${printParseErrorCode(problem.error)} at offset ${problem.offset}. Correct the file, or remove the calavera MCP entry from it yourself, then run eject again.`,
-        { cause: error },
+        // Never JSON.parse's own error: its message quotes the text around the error, which can
+        // hold a token. This cause says only what went wrong and where.
+        {
+          cause: new Error(
+            `JSON with comments (JSONC) parse error ${printParseErrorCode(problem.error)} at ${positionOf(text, problem.offset)}`,
+          ),
+        },
       );
     }
     if (serversWithEntry(jsonc, key) === undefined) return NO_MCP_ENTRY;
@@ -1004,7 +1010,8 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
     );
   }
   const formatter = await loadFormatter();
-  const loss = await rewriteLossProblem(text, path, formatter);
+  // A harness file can hold tokens, so the problem names the line of a number, not the number.
+  const loss = await rewriteLossProblem(text, path, formatter, { withoutValues: true });
   if (loss !== undefined) {
     return mcpEntryKept(
       path,
@@ -1105,7 +1112,8 @@ function removesOnlyTheEntry(text, contents) {
 
 /**
  * Plans the `[mcp_servers.calavera]` table in `.codex/config.toml`. The file is parsed as TOML with
- * `smol-toml`, and a file that is not TOML is a hard stop, with the parser's error as the cause
+ * `smol-toml`, and a file that is not TOML is a hard stop, with the line and column where the
+ * parser stopped, and never its message, which quotes the file's lines, as the cause
  * (ADR-0017, Decision 7). The entry is unedited when the file holds the table Calavera writes
  * for some package manager, with the pinned version normalized (owner decision of 2026-11-17),
  * and removing that text removes the whole entry and nothing else, which parsing the result
@@ -1134,8 +1142,10 @@ async function planCodexMcpEntry(path, expected) {
     // eject never changes a file outside the project, so it has no need to read it.
     if (!inside) return mcpEntryOutside(path);
     throw new Error(
-      `eject stopped before removing anything: ${path} cannot be parsed as TOML: ${messageOf(error).split("\n", 1)[0]}. Correct the file, then run eject again.`,
-      { cause: error },
+      `eject stopped before removing anything: ${path} cannot be parsed as TOML${tomlPosition(error, " at ")}. Correct the file, then run eject again.`,
+      // Never smol-toml's own error: its message carries a code frame of the file's lines, which
+      // can hold a token. This cause says only where the parser stopped.
+      { cause: new Error(`TOML parse error${tomlPosition(error, " at ")}`) },
     );
   }
   if (serversWithEntry(config, "mcp_servers") === undefined) return NO_MCP_ENTRY;
@@ -1292,6 +1302,28 @@ function tomlNeighborHidden(lines) {
     }
     return header;
   };
+}
+
+/**
+ * Where `offset` falls in `text`, as "line L, column C", both counted from 1.
+ *
+ * @param {string} text
+ * @param {number} offset
+ */
+function positionOf(text, offset) {
+  const lines = text.slice(0, offset).split("\n");
+  return `line ${lines.length}, column ${(lines.at(-1)?.length ?? 0) + 1}`;
+}
+
+/**
+ * Where smol-toml stopped, as "<prefix>line L, column C", or nothing when the error is not
+ * smol-toml's and has no position. Never the parser's message, which quotes the file.
+ *
+ * @param {unknown} error
+ * @param {string} prefix
+ */
+function tomlPosition(error, prefix) {
+  return error instanceof TomlError ? `${prefix}line ${error.line}, column ${error.column}` : "";
 }
 
 /**

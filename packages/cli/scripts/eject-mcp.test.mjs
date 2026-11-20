@@ -334,8 +334,14 @@ for (const { harness, path, written } of JSON_HARNESSES) {
             `eject stopped before removing anything: ${path.replaceAll(".", "\\.")} cannot be parsed as JSON, nor as JSON with comments \\(JSONC\\): CloseBraceExpected at offset \\d+`,
           ),
         );
-        // The parser's own error stays as the cause, so the failure can be diagnosed.
-        assert.ok(error.cause instanceof SyntaxError);
+        // The cause says where the parsers failed and quotes none of the file, which can hold
+        // tokens; JSON.parse's own message quotes the text around the error.
+        assert.ok(error.cause instanceof Error);
+        assert.equal(error.cause instanceof SyntaxError, false);
+        assert.match(
+          error.cause.message,
+          /^JSON with comments \(JSONC\) parse error CloseBraceExpected at line \d+, column \d+$/,
+        );
         return true;
       });
       assert.deepEqual(await snapshotDirectory(), before);
@@ -353,7 +359,10 @@ for (const { harness, path, written } of JSON_HARNESSES) {
   test(`${harness}: a rewrite that would change a number's spelling keeps the entry and reports it`, async () => {
     await inProject(async () => {
       await write(path, written(npmLaunch).replace(/^\{\n/, '{\n  "theirs": 1.50,\n'));
-      await assertKeptAndReported(path, /holds the number 1\.50/);
+      await assertKeptAndReported(
+        path,
+        /holds a number on line 2 that Calavera would write in another spelling/,
+      );
     });
   });
 
@@ -562,7 +571,7 @@ test("codex: a subtable of the calavera table makes the entry edited", async () 
 
 /**
  * Asserts that planning stops before anything is written, because the Codex file is not TOML, and
- * that the parser's own error stays as the cause.
+ * that the error names where the parser failed without quoting the file, which can hold tokens.
  */
 async function assertTomlStop() {
   const before = await snapshotDirectory();
@@ -570,9 +579,11 @@ async function assertTomlStop() {
     assert.ok(error instanceof Error);
     assert.match(
       error.message,
-      /^eject stopped before removing anything: \.codex\/config\.toml cannot be parsed as TOML: Invalid TOML document: /,
+      /^eject stopped before removing anything: \.codex\/config\.toml cannot be parsed as TOML at line \d+, column \d+\. /,
     );
-    assert.ok(error.cause instanceof TomlError);
+    assert.ok(error.cause instanceof Error);
+    assert.equal(error.cause instanceof TomlError, false);
+    assert.match(error.cause.message, /^TOML parse error at line \d+, column \d+$/);
     return true;
   });
   assert.deepEqual(await snapshotDirectory(), before);
