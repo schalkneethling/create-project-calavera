@@ -830,8 +830,10 @@ export function explainRecipeResponse(recipeInput) {
     dependencies: dependencyListForRecipe(recipe),
     aiArtifacts: listAiArtifactOptions().filter((artifact) =>
       Array.isArray(recipe.ai)
-        ? recipe.ai.some((item) => item.type === artifact.type && item.src === artifact.src) ||
-          recipe.ai.some((item) => item.id === artifact.id)
+        ? // #1024: validation trims a legacy type and src, so the comparison trims them too.
+          recipe.ai.some(
+            (item) => item.type?.trim() === artifact.type && item.src.trim() === artifact.src,
+          ) || recipe.ai.some((item) => item.id === artifact.id)
         : false,
     ),
   };

@@ -10,7 +10,7 @@ import test from "node:test";
 
 import { normalizePackageSelections, runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { applyRecipeObject } from "../src/index.js";
-import { buildRecipe, validateRecipe } from "../src/recipe.js";
+import { buildRecipe, explainRecipeResponse, validateRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 
 const PADDED = { type: "skill", src: " skills/project-goal " };
@@ -43,6 +43,22 @@ async function inProject(callback) {
 test("validation and the package selections agree on a padded legacy src", () => {
   assert.doesNotThrow(() => validateRecipe(paddedRecipe()));
   assert.deepEqual(normalizePackageSelections([PADDED]), [{ id: "skill-project-goal" }]);
+});
+
+test("explain_recipe lists the artifact a padded legacy type and src name beside an ID", () => {
+  const recipe = {
+    ...buildRecipe("minimal", [], "npm"),
+    ai: [
+      { type: " skill ", src: " skills/project-goal " },
+      { id: "hook-block-dangerous-commands" },
+    ],
+  };
+  assert.deepEqual(
+    explainRecipeResponse(recipe)
+      .aiArtifacts.map(({ id }) => id)
+      .sort(),
+    ["hook-block-dangerous-commands", "skill-project-goal"],
+  );
 });
 
 test("apply --dry-run selects the artifact a padded legacy src names", async () => {
