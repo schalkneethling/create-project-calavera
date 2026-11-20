@@ -1251,11 +1251,13 @@ function flowEject(context) {
  * What `eject --yes` changed beyond its dry run's plan, one line per path. ADR-0017 Decision 3
  * says eject keeps everything outside the footprint, such as managed files, kept AI artifacts,
  * hook wiring, and integration blocks in `.gitignore`, so every path that changed must be a plan
- * item's `path` or lie under one. A removed folder counts as planned when every file it held
- * was, because eject removes a Calavera folder that its last item leaves empty. Each edit `--yes`
- * makes must leave exactly the `contents` the dry run showed, and an edit it leaves for an
- * interactive run must leave the file as it was. An MCP entry's `contents` stay out of the JSON
- * (ADR-0017, Amendment 3), so only the path rule covers it.
+ * item's `path` or lie under one. A removed folder counts as planned when it held at least one
+ * file and every file it held was planned, because eject removes a Calavera folder that its last
+ * item leaves empty. An empty removed folder counts only inside Calavera's own folders. Each edit
+ * `--yes` makes must leave exactly the `contents` the dry run showed. Every item `--yes` leaves
+ * for an interactive run (`keptRecord`, or not `matchesRecords`), such as the recipe, the lock,
+ * and the package folders, must stay as it was, down to each file below it. An MCP entry's
+ * `contents` stay out of the JSON (ADR-0017, Amendment 3), so only the path rule covers it.
  *
  * @param {string} project
  * @param {{ items?: Array<{ kind: string, path: string, action?: string, matchesRecords: boolean, keptRecord?: true, contents?: string }> }} report
@@ -1266,33 +1268,43 @@ async function unplannedEjectChanges(project, report, before, after) {
   const items = report.items ?? [];
   /** @param {string} key A snapshot key: an absolute path, with a trailing `/` for a folder. */
   const pathOf = (key) => relative(project, key);
+  /** @param {string} path @param {string} itemPath */
+  const atOrUnder = (path, itemPath) => path === itemPath || path.startsWith(`${itemPath}/`);
   /** @param {string} path */
-  const planned = (path) =>
-    items.some((item) => path === item.path || path.startsWith(`${item.path}/`));
+  const planned = (path) => items.some((item) => atOrUnder(path, item.path));
   /** @param {string} key */
-  const allowed = (key) =>
-    planned(pathOf(key)) ||
-    // A removed folder whose files were all planned. A removed file's own entry is among the
-    // entries this reads, so an unplanned file never passes here.
-    (!(key in after) &&
-      Object.keys(before)
-        .filter((entry) => entry.startsWith(key) && !entry.endsWith("/"))
-        .every((entry) => planned(pathOf(entry))));
-  const problems = Object.keys({ ...before, ...after })
-    .filter((key) => before[key] !== after[key] && !allowed(key))
-    .sort()
+  const removedFolderAllowed = (key) => {
+    const files = Object.keys(before).filter(
+      (entry) => entry.startsWith(key) && !entry.endsWith("/"),
+    );
+    if (files.length > 0) return files.every((entry) => planned(pathOf(entry)));
+    const path = pathOf(key);
+    return atOrUnder(path, ".calavera") || path === ".agents/calavera";
+  };
+  /** @param {string} key */
+  const describe = (key) => {
+    const change = !(key in after) ? "removed" : !(key in before) ? "added" : "changed";
+    return { path: `${pathOf(key)}${key.endsWith("/") ? "/" : ""}`, change };
+  };
+  const changed = Object.keys({ ...before, ...after })
+    .filter((key) => before[key] !== after[key])
+    .sort();
+  const problems = changed
+    .filter((key) => !planned(pathOf(key)) && !(!(key in after) && removedFolderAllowed(key)))
     .map((key) => {
-      const change = !(key in after) ? "removed" : !(key in before) ? "added" : "changed";
-      return `${pathOf(key)}${key.endsWith("/") ? "/" : ""} (${change})`;
+      const { path, change } = describe(key);
+      return `${path} (${change})`;
     });
   for (const item of items) {
-    if (item.action !== "edit" || item.kind === "mcp-entry") continue;
-    const key = join(project, item.path);
-    if (item.matchesRecords && !item.keptRecord) {
-      const text = await readFile(key, "utf8").catch(() => undefined);
+    if (item.keptRecord || !item.matchesRecords) {
+      for (const key of changed.filter((entry) => atOrUnder(pathOf(entry), item.path))) {
+        const { path, change } = describe(key);
+        const left = pathOf(key) === item.path ? "it" : item.path;
+        problems.push(`${path} (${change}, although --yes leaves ${left})`);
+      }
+    } else if (item.action === "edit" && item.kind !== "mcp-entry") {
+      const text = await readFile(join(project, item.path), "utf8").catch(() => undefined);
       if (text !== item.contents) problems.push(`${item.path} (not the text the dry run planned)`);
-    } else if (before[key] !== after[key]) {
-      problems.push(`${item.path} (changed, although --yes leaves it)`);
     }
   }
   return problems;

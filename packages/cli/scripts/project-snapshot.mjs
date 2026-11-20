@@ -1,11 +1,12 @@
 // Shared by the tests that assert a command left a project directory unchanged.
 import { createHash } from "node:crypto";
-import { readFile, readdir, readlink } from "node:fs/promises";
+import { readFile, readdir, readlink, stat } from "node:fs/promises";
 import { join } from "node:path";
 
 /**
  * Maps every directory below `directory` to "directory", every symbolic link to its target, without
- * following it, and every file to a hash of its contents. A link's target is hashed only when it is
+ * following it, and every file to a hash of its contents and its permission bits, so a file that
+ * loses its executable bit counts as changed. A link's target is hashed only when it is
  * inside `directory`, as its own entry, so a change to a file outside `directory` that a link
  * points to is not detected.
  *
@@ -23,9 +24,10 @@ export async function snapshotDirectory(directory = ".") {
     } else if (entry.isSymbolicLink()) {
       entries[path] = `link to ${await readlink(path)}`;
     } else {
-      entries[path] = createHash("sha256")
+      const hash = createHash("sha256")
         .update(await readFile(path))
         .digest("hex");
+      entries[path] = `${hash} mode ${((await stat(path)).mode & 0o777).toString(8)}`;
     }
   }
   return entries;

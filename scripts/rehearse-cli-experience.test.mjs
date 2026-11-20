@@ -1109,6 +1109,8 @@ const ejectYesOutput = [
  *   kept?: string[],
  *   yesDeletes?: string[],
  *   yesWrites?: Record<string, string>,
+ *   yesModes?: Record<string, number>,
+ *   omit?: string[],
  * }} [options]
  */
 async function ejectFixture(options = {}) {
@@ -1121,17 +1123,22 @@ async function ejectFixture(options = {}) {
     ".calavera/cache/npm/entry": "cached\n",
     ".calavera/artifacts.lock.json": "{}\n",
     ".calavera/packages/skill-x/1.0.0/package.json": "{}\n",
+    ".calavera/packages/skill-x/1.0.0/payload/SKILL.md": "# Skill\n",
     "calavera.config.json": "{}\n",
     ".agents/calavera/mcp.md": "# MCP\n",
     ".gitignore": GITIGNORE_BEFORE,
     // Outside the footprint: a managed file and a kept AI artifact (ADR-0017 Decision 3).
     "docs/repository-controls.md": "# Repository controls\n",
     ".agents/skills/release/SKILL.md": "# Release\n",
+    ".vite-hooks/pre-commit": "#!/bin/sh\nvp check\n",
   };
-  for (const path of [...Object.keys(files), ...(options.extraFiles ?? [])]) {
+  for (const path of [...Object.keys(files), ...(options.extraFiles ?? [])].filter(
+    (path) => !(options.omit ?? []).includes(path),
+  )) {
     await mkdir(join(source, path, ".."), { recursive: true });
     await writeFile(join(source, path), files[/** @type {keyof typeof files} */ (path)] ?? "x\n");
   }
+  await chmod(join(source, ".vite-hooks/pre-commit"), 0o755);
   for (const path of options.extraDirectories ?? [])
     await mkdir(join(source, path), { recursive: true });
   const plan = options.plan ?? EJECT_PLAN;
@@ -1201,6 +1208,9 @@ async function ejectFixture(options = {}) {
         }
         for (const [path, text] of Object.entries(options.yesWrites ?? {})) {
           await writeFile(join(cwd, path), text);
+        }
+        for (const [path, mode] of Object.entries(options.yesModes ?? {})) {
+          await chmod(join(cwd, path), mode);
         }
         return result(display, exitCode, options.yesOutput ?? ejectYesOutput);
       }
@@ -1573,4 +1583,62 @@ test("eject-yes-footprint fails when --yes deletes or edits anything its plan do
     /change only the items its dry run planned/,
     /^notes\.md \(added\)$/m,
   );
+});
+
+test("eject-yes-footprint fails when --yes changes anything it must leave (#1074)", async () => {
+  const cases = /** @type {Array<[Parameters<typeof ejectFixture>[0], string]>} */ ([
+    [
+      { yesDeletes: [".calavera/packages/skill-x/1.0.0/payload/SKILL.md"] },
+      ".calavera/packages/skill-x/1.0.0/payload/SKILL.md (removed, although --yes leaves .calavera/packages/skill-x/1.0.0)",
+    ],
+    [
+      { yesWrites: { ".calavera/artifacts.lock.json": '{"rewritten":true}\n' } },
+      ".calavera/artifacts.lock.json (changed, although --yes leaves it)",
+    ],
+    [
+      { yesWrites: { "calavera.config.json": '{"rewritten":true}\n' } },
+      "calavera.config.json (changed, although --yes leaves it)",
+    ],
+  ]);
+  for (const [options, line] of cases) {
+    const { context } = await ejectFixture(options);
+    await assert.rejects(ejectCheck("eject-yes-footprint").run(context), (error) => {
+      assert.ok(error instanceof CheckFailure);
+      assert.match(error.expected, /change only the items its dry run planned/);
+      assert.equal(error.actual, line);
+      return true;
+    });
+  }
+});
+
+test("eject-yes-footprint notices a file that loses its executable bit (#1074)", async () => {
+  const { context } = await ejectFixture({ yesModes: { ".vite-hooks/pre-commit": 0o644 } });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(context),
+    /change only the items its dry run planned/,
+    /^changed outside the plan:\n\.vite-hooks\/pre-commit \(changed\)$/,
+  );
+});
+
+test("eject-yes-footprint allows an empty removed folder only in Calavera's own folders (#1074)", async () => {
+  const outside = await ejectFixture({
+    extraDirectories: ["src/empty"],
+    yesDeletes: ["src/empty"],
+  });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(outside.context),
+    /change only the items its dry run planned/,
+    /^changed outside the plan:\nsrc\/empty\/ \(removed\)$/,
+  );
+  const inside = await ejectFixture({
+    extraDirectories: [".calavera/.staging"],
+    yesDeletes: [".calavera/.staging"],
+  });
+  await ejectCheck("eject-yes-footprint").run(inside.context);
+  // eject also removes an empty .agents/calavera folder.
+  const agents = await ejectFixture({
+    omit: [".agents/calavera/mcp.md"],
+    extraDirectories: [".agents/calavera"],
+  });
+  await ejectCheck("eject-yes-footprint").run(agents.context);
 });
