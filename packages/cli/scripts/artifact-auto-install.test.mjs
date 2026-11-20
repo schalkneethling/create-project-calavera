@@ -889,9 +889,12 @@ test("a dry run with locked and unlocked artifacts reports only the unlocked one
     assert.deepEqual(idsAndVersions(result.autoInstalledArtifacts), [
       { id: "skill-code-review", version: "0.3.0" },
     ]);
+    // #956: the locked artifact's files already match, so it is named once, as unchanged.
     assert.deepEqual(
-      result.changes.filter(({ category }) => category === "ai").map(({ path }) => path),
-      [".agents/skills/code-review"],
+      result.changes
+        .filter(({ category }) => category === "ai")
+        .map(({ path, type }) => `${type} ${path}`),
+      ["write .agents/skills/code-review", "unchanged .agents/skills/project-goal"],
     );
     assert.deepEqual(await snapshot(), before);
   });

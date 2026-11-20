@@ -4528,8 +4528,14 @@ export async function agentBootstrap(options = {}) {
     previousState,
     skillSources,
   );
+  // #956: an output that already matches is reported as skipped, as the bootstrap reports its
+  // other files that it leaves unchanged.
   /** @type {Change[]} */
-  const changes = [...aiResult.changes];
+  const changes = aiResult.changes.map((change) =>
+    change.type === "unchanged"
+      ? { ...change, type: "skip", reason: "Already up to date." }
+      : change,
+  );
   // #838: formatted in the dry run as well, and before agent-init writes any file, so a project
   // whose formatter cannot format the state is left unchanged.
   const stateText = await formatStateText(
@@ -7105,10 +7111,11 @@ function formatAgentBootstrapChange(change, dryRun) {
   switch (change.type) {
     case "write":
       return dryRun ? `Would write ${change.path}` : `Wrote ${change.path}`;
-    case "update":
-      return dryRun
-        ? `Would update ${change.path}: ${change.reason}`
-        : `Updated ${change.path}: ${change.reason}`;
+    case "update": {
+      // An update without a reason, such as the filters added to .coderabbit.yaml, has no colon.
+      const reason = change.reason === undefined ? "" : `: ${change.reason}`;
+      return `${dryRun ? "Would update" : "Updated"} ${change.path}${reason}`;
+    }
     case "skip":
       return dryRun
         ? `Would skip ${change.path}: ${change.reason}`

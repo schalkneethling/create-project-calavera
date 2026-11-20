@@ -433,6 +433,76 @@ test("--init in a project that has AGENTS.md prints every file it writes once, a
   });
 });
 
+test("--init re-run lists the skill and .coderabbit.yaml it leaves unchanged as skipped (#956)", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+    await writeFile(
+      "package.json",
+      JSON.stringify({ name: "demo", packageManager: "pnpm@10.0.0" }),
+    );
+    const first = await runCli(directory, ["--init", "--mcp-harness", "skip"]);
+    assert.equal(first.code, 0, first.stderr);
+
+    for (const dryRun of [true, false]) {
+      const result = await runCli(directory, [
+        "--init",
+        "--mcp-harness",
+        "skip",
+        ...(dryRun ? ["--dry-run"] : []),
+      ]);
+
+      assert.equal(result.code, 0, result.stderr);
+      // .calavera/state.json is left out when it is unchanged (#957); every other file the first
+      // run wrote is named once, as the #918 rehearsal's listing check requires.
+      assert.deepEqual(
+        listingViolations(result.stdout, [
+          ".agents/skills/calavera",
+          ".coderabbit.yaml",
+          "AGENTS.md",
+          ".agents/calavera/mcp.md",
+        ]),
+        [],
+      );
+      const skipped = dryRun ? "Would skip" : "Skipped";
+      assert.equal(
+        result.stdout,
+        [
+          dryRun
+            ? "Calavera agent bootstrap dry run complete. No files were changed."
+            : "Calavera agent bootstrap complete.",
+          "",
+          "Changes:",
+          `  ${skipped} .agents/skills/calavera: Already up to date.`,
+          `  ${skipped} .coderabbit.yaml: Already up to date.`,
+          `  ${skipped} AGENTS.md: Already up to date.`,
+          `  ${skipped} .agents/calavera/mcp.md: Already up to date.`,
+          "",
+          "Notes:",
+          "  Installed skills are available under .agents/skills/.",
+          "  Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
+          "",
+          ...initNextSteps(directory),
+          "",
+          ...(await nextPromptGroup()),
+          "",
+        ].join("\n"),
+      );
+    }
+  });
+});
+
+test("--init names a .coderabbit.yaml it would add filters to without an empty reason (#956)", async () => {
+  await withTempProject(async (projectDirectory) => {
+    const directory = await realpath(projectDirectory);
+    await writeFile(".coderabbit.yaml", "reviews:\n  profile: chill\n");
+
+    const result = await runCli(directory, ["--init", "--dry-run", "--mcp-harness", "skip"]);
+
+    assert.equal(result.code, 0, result.stderr);
+    assert.ok(result.stdout.includes("\n  Would update .coderabbit.yaml\n"), result.stdout);
+  });
+});
+
 test("--init names a skipped AGENTS.md once and says to merge the fallback guidance (#601)", async () => {
   await withTempProject(async (projectDirectory) => {
     const directory = await realpath(projectDirectory);
