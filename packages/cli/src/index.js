@@ -78,6 +78,7 @@ import {
   assertGitHookArtifactsAtRepositoryRoot,
   assertRootOnlyIntegrationsAtRepositoryRoot,
   findRepositoryRoot,
+  gitHookArtifactRefusal,
   rootOnlyIntegrationRefusal,
 } from "./repository-root.js";
 import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
@@ -5964,23 +5965,31 @@ async function doctor(options) {
     const rootOnlyIds = new Set(
       integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
     );
+    const gitHookIds = gitHookArtifactIds(recipe);
     const projectDirectory = process.cwd();
     const repositoryRoot =
-      rootOnlyIds.size > 0
+      rootOnlyIds.size > 0 || gitHookIds.length > 0
         ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
         : projectDirectory;
 
-    // #997: apply refuses a root-only integration outside the repository root, so doctor reports
-    // apply's own refusal, naming the package manager apply would name. package.json is read only
-    // here, so a recipe without a root-only integration is checked as before.
+    // #997 and #1031: apply refuses a root-only integration and an artifact that writes Git hooks
+    // outside the repository root, so doctor reports apply's own refusals, naming the package
+    // manager apply would name. apply stops at the first; doctor reports both, so one run names
+    // every change the recipe needs. package.json is read only here, so a recipe that selects
+    // neither is checked as before.
     if (repositoryRoot !== projectDirectory) {
-      const rootOnlyRefusal = rootOnlyIntegrationRefusal(
-        integrations,
-        projectDirectory,
-        resolveApplyPackageManager(recipe, options, await readPackageJSONIfPresent()),
+      const packageManager = resolveApplyPackageManager(
+        recipe,
+        options,
+        await readPackageJSONIfPresent(),
       );
-      if (rootOnlyRefusal !== undefined) {
-        issues.push({ level: "error", message: rootOnlyRefusal });
+      for (const refusal of [
+        rootOnlyIntegrationRefusal(integrations, projectDirectory, packageManager),
+        gitHookArtifactRefusal(gitHookIds, projectDirectory, packageManager),
+      ]) {
+        if (refusal !== undefined) {
+          issues.push({ level: "error", message: refusal });
+        }
       }
     }
 

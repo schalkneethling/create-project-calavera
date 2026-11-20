@@ -108,21 +108,34 @@ export function assertGitHookArtifactsAtRepositoryRoot(
   projectDirectory,
   packageManager,
 ) {
+  const message = gitHookArtifactRefusal(artifactIds, projectDirectory, packageManager);
+
+  if (message !== undefined) {
+    throw new Error(message);
+  }
+}
+
+/**
+ * The message apply's Git-hook hard stop raises, or undefined when apply would not stop. doctor
+ * reports the same message, so the rule and its remedy live in one place (#1031).
+ *
+ * @param {string[]} artifactIds The selected artifacts that write Git hooks.
+ * @param {string} projectDirectory
+ * @param {keyof typeof projectLocalCommandCatalog} packageManager
+ * @returns {string | undefined}
+ */
+export function gitHookArtifactRefusal(artifactIds, projectDirectory, packageManager) {
   const [id] = artifactIds;
   if (id === undefined) {
-    return;
+    return undefined;
   }
 
-  const message = repositoryRootRefusal(
+  return repositoryRootRefusal(
     id,
     " It writes Git hooks, and Git runs every hook from the repository root, so its hook lines would not find their scripts from here.",
     projectDirectory,
     packageManager,
   );
-
-  if (message !== undefined) {
-    throw new Error(message);
-  }
 }
 
 /**
