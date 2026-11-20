@@ -1,8 +1,9 @@
 // #1007: `--init` installs the base Calavera skill in `.agents/skills/calavera` and records it in
-// `.calavera/state.json`. `clean` removes only stale output, and the base skill is never stale:
-// it is Calavera's own artifact, whatever the recipe selects, as ADR-0017 (Decision 1, owner
-// answer 7 on #678) also counts it. Only `eject` removes it. An artifact a recipe selected and then
-// dropped is still stale, so `clean` keeps removing it when it is unedited (#829).
+// `.calavera/state.json`. `clean` removes only stale output, and the base skill is never stale,
+// whether `--init` or a recipe installed it: it is Calavera's own artifact, whatever the recipe
+// selects, as ADR-0017 (Decision 2, owner answer 7 on #678) also counts it. Only `eject` removes
+// it. Every other artifact a recipe selected and then dropped is still stale, so `clean` keeps
+// removing it when it is unedited (#829).
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { access, readFile, writeFile } from "node:fs/promises";
@@ -12,6 +13,7 @@ import { fileURLToPath } from "node:url";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
+import { snapshotDirectory as snapshot } from "./project-snapshot.mjs";
 import { createTemporaryFixture } from "./vite-plus-fixtures.mjs";
 
 const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
@@ -119,4 +121,30 @@ test("Given --init and a recipe that selected an artifact and then dropped it, c
     assert.ok(await exists(`${baseSkill}/SKILL.md`));
     assert.deepEqual(await recordedArtifactPaths(), [baseSkill]);
   });
+});
+
+test("Given no --init and a recipe that selected skill-calavera and then dropped it, clean keeps the base skill and its record", async () => {
+  await using fixture = await createTemporaryFixture("clean-base-skill-recipe", {
+    "package.json": `${JSON.stringify({ name: "fixture" }, null, 2)}\n`,
+  });
+  const originalDirectory = process.cwd();
+  process.chdir(fixture.root);
+  try {
+    const selecting = { ...buildRecipe("minimal", [], "npm"), ai: [{ id: "skill-calavera" }] };
+    const releases = new Map([["skill-calavera", "0.2.5"]]);
+    await callMcpTool(
+      "apply_recipe",
+      { recipe: selecting, noInstall: true },
+      stubRegistry(releases),
+    );
+    assert.deepEqual(await recordedArtifactPaths(), [baseSkill]);
+    await writeRecipe({ ...selecting, ai: [] });
+    const before = await snapshot();
+
+    assert.deepEqual(cleanDryRunPaths(), []);
+    runCli(["clean", "--yes"]);
+    assert.deepEqual(await snapshot(), before);
+  } finally {
+    process.chdir(originalDirectory);
+  }
 });

@@ -6097,8 +6097,9 @@ async function clean(options) {
     : { integrations: [] };
   const integrations = resolveRecipeIntegrations(recipe);
   const selectedAiArtifacts = resolveAiArtifacts(recipe);
-  // #1007: the base skill that `--init` installs is never stale, whatever the recipe selects,
-  // because it is Calavera's own artifact, as ADR-0017 also counts it. Only `eject` removes it.
+  // #1007: the base skill in `.agents/skills/calavera` is never stale, whether `--init` or a recipe
+  // installed it, because it is Calavera's own artifact whatever the recipe selects (ADR-0017,
+  // Decision 2). Only `eject` removes it.
   const expectedAiPaths = new Set(
     [...selectedAiArtifacts, ...resolveAiArtifacts(AGENT_BOOTSTRAP_SKILL_RECIPE)].flatMap(
       aiArtifactOutputPaths,
