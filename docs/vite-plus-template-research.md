@@ -282,10 +282,10 @@ composed recipe instead of previewing or applying project filesystem changes.
 Standard MCP owns `dry_run_apply` and `apply_recipe` because those operations
 need project-root filesystem and process access.
 
-This list and this difference are historical. The Composer has since added four
-Baseline tools, and the
+This list is historical, and this difference is no longer the only one. The
+Composer has since added four Baseline tools, and the
 [Web Composer section of the README](../README.md#web-composer) lists the tools
-it registers today.
+the Composer registers today.
 [ADR-0018](adr/0018-cli-mcp-webmcp-responsibilities.md) records the current
 differences between WebMCP and the standard MCP server.
 
