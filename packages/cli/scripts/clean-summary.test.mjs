@@ -272,7 +272,7 @@ test("a kept item's reason that starts with the item's path, and a settings file
       '    Removed the Stop group for guard, because the recipe no longer selects guard: {"hooks":[]}',
       "",
       "Artifacts:",
-      `  Skipped ${path}: this item is still mentioned.`,
+      `  Skipped ${path}: This item is still mentioned.`,
     ],
   );
 });

@@ -165,8 +165,9 @@ test("eject --dry-run lists every footprint item, marks what --yes leaves, and c
     assert.match(output, /\.calavera\/state\.json \(Calavera's own record\)/);
     assert.match(output, /AGENTS\.md \(unedited\)/);
     // An edit shows the exact text it removes and the text the file holds afterward.
-    assert.match(output, /\.mcp\.json[^\n]*\n(?: {4}.*\n)* {4}Removes:/);
-    assert.match(output, / {4}Afterward:/);
+    assert.match(output, /\.mcp\.json[^\n]*\n(?: {4}.*\n)* {4}Removes, from line \d+:/);
+    // An MCP entry shows the lines around it, not the file afterward (ADR-0017, Amendment 3).
+    assert.match(output, / {4}Around it, with values hidden:/);
     // #331, #918: every item printed once, under a heading.
     assert.deepEqual(listingViolations(output, namedItems(result)), []);
   });
@@ -596,7 +597,7 @@ test("the summary prints each group, label, and detail exactly", () => {
         matchesRecords: false,
         note: "The formatter also changes the layout of .mcp.json.",
         removedLines: ['"calavera": {}'],
-        contents: "{\n}\n",
+        around: { line: 2, before: '"mcpServers": {', after: '"other": {' },
         outcome: "planned",
       },
       {
@@ -633,6 +634,10 @@ test("the summary prints each group, label, and detail exactly", () => {
       },
     ],
     reported: [
+      {
+        path: "AGENTS.md",
+        reason: "AGENTS.md holds guidance marked by hand. Remove AGENTS.md's marker.",
+      },
       { path: "AGENTS.calavera.md", reason: "First reason about AGENTS.calavera.md." },
       { path: "AGENTS.calavera.md", reason: "Second reason." },
     ],
@@ -653,11 +658,11 @@ test("the summary prints each group, label, and detail exactly", () => {
     "  .mcp.json (unedited; --yes leaves it)",
     "    eject removes only Calavera's text from this file and keeps the file.",
     "    The formatter also changes the layout of this item.",
-    "    Removes:",
+    "    Removes, from line 2:",
     '      "\\"calavera\\": {}"',
-    "    Afterward:",
-    '      "{"',
-    '      "}"',
+    "    Around it, with values hidden:",
+    '      Before: "\\"mcpServers\\": {"',
+    '      After: "\\"other\\": {"',
     "",
     "Removed:",
     "  calavera.config.json (edits cannot be detected)",
@@ -665,6 +670,7 @@ test("the summary prints each group, label, and detail exactly", () => {
     "",
     "Left for an interactive run:",
     "  AGENTS.md (edited)",
+    "    This item holds guidance marked by hand. Remove this item's marker.",
     "    Afterward:",
     '      "no final line break"',
     "",
@@ -966,7 +972,7 @@ test("after an approved run, the summary lists each removed item without its tex
     const { result } = await ejectInteractively([], true);
     const output = human(result);
     assert.match(output, /^ {2}\.mcp\.json \(unedited\)$/m);
-    assert.doesNotMatch(output, /Removes:|Afterward:/);
+    assert.doesNotMatch(output, /Removes|Around it|Afterward:/);
   });
 });
 
@@ -1115,4 +1121,185 @@ test("one item left with one kept record is worded in the singular", async () =>
       /; --yes would leave 1 item for an interactive approval, and would keep 1 record that the item it leaves needs\.$/,
     );
   });
+});
+
+test("an MCP harness edit shows only the lines around Calavera's text, with values hidden, and --json leaves the file text out", async () => {
+  const token = "ghp_SECRET_TOKEN_123";
+  await inProject(async () => {
+    await agentBootstrap({ mcpHarness: "claude-code", packageManager: "npm" });
+    const mcp = JSON.parse(await readFile(".mcp.json", "utf8"));
+    // Another server right after Calavera's entry, so it is the line around the change.
+    mcp.mcpServers.other = { command: "node", env: { GITHUB_TOKEN: token } };
+    await writeFile(".mcp.json", `${JSON.stringify(mcp, null, 2)}\n`);
+    // And the same server on one line in Codex's file, right after Calavera's table.
+    await agentBootstrap({ mcpHarness: "codex", packageManager: "npm" });
+    await writeFile(
+      ".codex/config.toml",
+      `${await readFile(".codex/config.toml", "utf8")}[mcp_servers.other]\nenv = { GITHUB_TOKEN = "${token}" }\n`,
+    );
+    for (const result of [
+      await eject(["--dry-run"]),
+      (await ejectInteractively([], false)).result,
+    ]) {
+      const items = result.items.filter(({ kind }) => kind === "mcp-entry");
+      assert.deepEqual(
+        items.map(({ path }) => path),
+        [".mcp.json", ".codex/config.toml"],
+      );
+      for (const item of items) {
+        assert.equal("contents" in item, false, `${item.path} carries no file text`);
+        assert.ok(item.around, `${item.path} shows the lines around the change`);
+      }
+      const output = human(result);
+      assert.doesNotMatch(output, new RegExp(token));
+      assert.doesNotMatch(JSON.stringify(result), new RegExp(token));
+      assert.doesNotMatch(output, /Afterward:/);
+      assert.match(output, /Around it, with values hidden:/);
+    }
+    const shown = (await ejectInteractively([], false)).shown;
+    assert.doesNotMatch(shown, new RegExp(token));
+    const json = runWithoutTerminal(process.cwd(), ["eject", "--dry-run", "--json"]);
+    assert.doesNotMatch(json.stdout, new RegExp(token));
+    // The approved run still removes only Calavera's entries and keeps the other server.
+    await ejectInteractively([], true);
+    assert.deepEqual(JSON.parse(await readFile(".mcp.json", "utf8")).mcpServers.other.env, {
+      GITHUB_TOKEN: token,
+    });
+    assert.match(await readFile(".codex/config.toml", "utf8"), new RegExp(token));
+  });
+});
+
+test("an AGENTS.md with a section to remove and a bare marker prints once, with the report under it", async () => {
+  await inProject(async () => {
+    await writeFile("AGENTS.md", "# Mine\n");
+    await agentBootstrap({ mcpHarness: "skip", packageManager: "npm", agentsMd: "append" });
+    // A hand merge above the section, which the bootstrap would not append to.
+    const withSection = await readFile("AGENTS.md", "utf8");
+    await writeFile(
+      "AGENTS.md",
+      withSection.replace(
+        "# Mine\n",
+        "# Mine\n\n<!-- calavera-agent-bootstrap -->\nMerged by hand.\n",
+      ),
+    );
+    const result = await eject(["--dry-run"]);
+    assert.ok(
+      result.items.some(({ path, kind }) => path === "AGENTS.md" && kind === "guidance-section"),
+    );
+    assert.ok(result.reported.some(({ path }) => path === "AGENTS.md"));
+    const output = human(result);
+    assert.deepEqual(listingViolations(output, namedItems(result)), []);
+    assert.match(
+      output,
+      /^ {2}AGENTS\.md \(unedited\)\n(?: {4}.*\n)*? {4}This item holds guidance marked/m,
+    );
+    assert.doesNotMatch(output, /^Left for you:$/m);
+  });
+});
+
+test("a reason that starts with the item's own path starts with a capital", () => {
+  /** @type {import("../src/index.js").EjectResult} */
+  const result = {
+    command: "eject",
+    dryRun: true,
+    status: "dry-run",
+    message: "Headline.",
+    items: [],
+    reported: [
+      { path: "AGENTS.md", reason: "AGENTS.md is kept. Then AGENTS.md again. Edit AGENTS.md." },
+    ],
+    kept: [],
+    packageJson: { scripts: [] },
+    elsewhere: [],
+  };
+  assert.match(human(result), /^ {4}This item is kept\. Then this item again\. Edit this item\.$/m);
+});
+
+test("the skill keeps its apply fallback pinned to the MCP version and sends eject to latest", async () => {
+  for (const path of [
+    "../src/bootstrap/calavera/SKILL.md",
+    "../../artifacts/skill-calavera/payload/calavera/SKILL.md",
+  ]) {
+    const skill = await readFile(new URL(path, import.meta.url), "utf8");
+    assert.match(
+      skill,
+      /preview local changes with the package-manager-specific apply dry-run command, pinned to the same explicit package version used for MCP setup:/,
+    );
+    assert.match(skill, /`npm create project-calavera@latest eject -- --dry-run`/);
+  }
+});
+
+test("Yarn 1 needs -W to remove a dependency at a workspace root, and Vite+ passes it through after --", () => {
+  /** @type {import("../src/vite-plus-detection.js").VitePlusDetection} */
+  const notManaged = { status: "unmanaged", corroborating: [] };
+  /** @type {import("../src/vite-plus-detection.js").VitePlusDetection} */
+  const managed = {
+    status: "managed",
+    signal: "vite-plus-dependency",
+    manifestPath: "package.json",
+    corroborating: [],
+  };
+  const name = ["create-project-calavera"];
+  const root = { yarnClassicWorkspaceRoot: true };
+  assert.deepEqual(devDependencyRemoveCommand("yarn", notManaged, name, root), [
+    "yarn",
+    ["remove", "-W", ...name],
+  ]);
+  // vp remove refuses its own -w for Yarn, so Yarn 1's flag goes through as a native argument.
+  assert.deepEqual(devDependencyRemoveCommand("yarn", managed, name, root), [
+    "vp",
+    ["remove", ...name, "--", "-W"],
+  ]);
+  // Only Yarn has the check.
+  assert.deepEqual(devDependencyRemoveCommand("pnpm", notManaged, name, root), [
+    "pnpm",
+    ["remove", ...name],
+  ]);
+});
+
+test("the reported Yarn command follows the project's Yarn version at a workspace root", async () => {
+  /** @type {[object, string | undefined, string][]} */
+  const cases = [
+    [{ packageManager: "yarn@1.22.22" }, undefined, "yarn remove -W create-project-calavera"],
+    [{ packageManager: "yarn@4.5.3" }, undefined, "yarn remove create-project-calavera"],
+    [
+      { devEngines: { packageManager: { name: "yarn", version: "^4.0.0" } } },
+      undefined,
+      "yarn remove create-project-calavera",
+    ],
+    // No pin: a Yarn 2 or later project has .yarnrc.yml, and Yarn 1 is what Corepack runs otherwise.
+    [{}, "nodeLinker: node-modules\n", "yarn remove create-project-calavera"],
+    [{}, undefined, "yarn remove -W create-project-calavera"],
+  ];
+  for (const [manifest, yarnrc, expected] of cases) {
+    await inProject(
+      async () => {
+        await writeFile("yarn.lock", "");
+        if (yarnrc !== undefined) await writeFile(".yarnrc.yml", yarnrc);
+        const result = await eject(["--dry-run"]);
+        assert.equal(
+          result.packageJson.devDependency?.removeCommand,
+          expected,
+          JSON.stringify(manifest),
+        );
+      },
+      {
+        private: true,
+        workspaces: ["packages/*"],
+        ...manifest,
+        devDependencies: { "create-project-calavera": "^6.2.1" },
+      },
+    );
+  }
+  // Outside a workspace root, Yarn 1 needs no flag.
+  await inProject(
+    async () => {
+      const result = await eject(["--dry-run"]);
+      assert.equal(
+        result.packageJson.devDependency?.removeCommand,
+        "yarn remove create-project-calavera",
+      );
+    },
+    { packageManager: "yarn@1.22.22", devDependencies: { "create-project-calavera": "^6.2.1" } },
+  );
 });

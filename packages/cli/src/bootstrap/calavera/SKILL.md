@@ -71,7 +71,7 @@ If the MCP server cannot be registered, use the hosted Calavera Web UI to compos
 
 https://calavera.schalkneethling.com
 
-After a recipe exists, preview local changes with the package-manager-specific apply dry-run command, pinned to a release that has `eject`, such as `latest`, because the version pinned for MCP setup may predate it: `npm create project-calavera@<version> apply -- --dry-run` for npm, `pnpm dlx create-project-calavera@<version> apply --dry-run` for pnpm, `yarn dlx create-project-calavera@<version> apply --dry-run` for Yarn, or `bunx create-project-calavera@<version> apply --dry-run` for Bun. Ask the user to approve the preview before running the matching apply command.
+After a recipe exists, preview local changes with the package-manager-specific apply dry-run command, pinned to the same explicit package version used for MCP setup: `npm create project-calavera@<version> apply -- --dry-run` for npm, `pnpm dlx create-project-calavera@<version> apply --dry-run` for pnpm, `yarn dlx create-project-calavera@<version> apply --dry-run` for Yarn, or `bunx create-project-calavera@<version> apply --dry-run` for Bun. Ask the user to approve the preview before running the matching apply command.
 
 ## User Prompt
 

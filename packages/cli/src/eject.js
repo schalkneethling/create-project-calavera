@@ -35,7 +35,12 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { parse as parseJsonc, printParseErrorCode } from "jsonc-parser";
+import {
+  findNodeAtLocation,
+  parse as parseJsonc,
+  parseTree,
+  printParseErrorCode,
+} from "jsonc-parser";
 import { parse as parseToml } from "smol-toml";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
@@ -135,7 +140,12 @@ const CANNOT_DETECT = "edits cannot be detected";
  * @property {string[]} [removedLines] For an edit, the lines it removes, markers excluded. For a
  *   JSON harness file, which eject rewrites whole, each removed member as JSON: the `calavera`
  *   entry, or the `mcpServers` or `mcp` object it empties, and the `$schema` it removes.
- * @property {string} [contents] For an edit, the file's text afterward.
+ * @property {string} [contents] For an edit, the file's text afterward. For an MCP entry, it stays
+ *   internal: the command shows `around` instead (ADR-0017, Amendment 3).
+ * @property {{ line: number, before?: string, after?: string }} [around] For an MCP entry, where
+ *   Calavera's text starts in the file, and the nearest line that is not blank before it and after
+ *   it, with their values hidden, so the person's other servers and their `env` or `headers`
+ *   tokens never reach a terminal log or `--json` (ADR-0017, Amendment 3).
  * @property {string} [seen] What the item's check read when the plan was made. For every kind
  *   but the base skill, it holds the entry identity from `entryIdentity`: a file, a folder, or a
  *   symbolic link, its target, and the path its chain of links resolves to. The `artifact-cache`
@@ -1021,6 +1031,26 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   }
   removed.push(emptied ? [key, servers] : ["calavera", calavera]);
   const contents = await writeJSON(next, path, formatter);
+  const tree = parseTree(text);
+  // `JSON.parse` read the file, so the tree has every removed member.
+  const members = removed.map(
+    ([name]) =>
+      /** @type {import("jsonc-parser").Node} */ (
+        /** @type {import("jsonc-parser").Node} */ (
+          findNodeAtLocation(
+            /** @type {import("jsonc-parser").Node} */ (tree),
+            name === key || name === "$schema" ? [name] : [key, name],
+          )
+        ).parent
+      ),
+  );
+  const lineAt = (/** @type {number} */ offset) => text.slice(0, offset).split("\n").length - 1;
+  const around = aroundLines(
+    text.split("\n"),
+    lineAt(Math.min(...members.map(({ offset }) => offset))),
+    lineAt(Math.max(...members.map(({ offset, length }) => offset + length))),
+    jsonValuesHidden,
+  );
   /** @type {EjectItem} */
   const item = {
     kind: "mcp-entry",
@@ -1032,13 +1062,14 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
       `${JSON.stringify(name)}: ${toJSONText(value)}`.split("\n"),
     ),
     contents,
+    around,
     seen: textSeen(identity, text),
   };
   if ((await writeJSON(config, path, formatter)) !== text) {
     // The rewrite changes text Calavera did not write, which only an approval of the text
     // afterward covers, so `--yes` leaves it (ADR-0017, Decision 5).
     item.matchesRecords = false;
-    item.note = `eject rewrites the whole of ${path} through the project's formatter (${formatter.description}), which also changes the layout of the rest of the file; the text afterward shows the result.`;
+    item.note = `eject rewrites the whole of ${path} through the project's formatter (${formatter.description}), which also changes the layout of the rest of the file. eject does not print the rest of the file, because it can hold other servers' settings and tokens; review it with git diff after eject.`;
   }
   return { items: [item], reported: [] };
 }
@@ -1138,6 +1169,7 @@ async function planCodexMcpEntry(path, expected) {
             matchesRecords: true,
             removedLines: table,
             contents,
+            around: aroundLines(bare, start, end, tomlValuesHidden),
             seen: textSeen(identity, text),
           },
         ],
@@ -1146,6 +1178,58 @@ async function planCodexMcpEntry(path, expected) {
     }
   }
   return edited;
+}
+
+/**
+ * Where an MCP entry sits in its file, for the list a person approves: the first line of
+ * Calavera's text, and the nearest line that is not blank before it and after it, each with its
+ * values hidden by `hide`. The rest of the file is never shown, because it can hold the person's
+ * other servers and the tokens in their `env` or `headers` (ADR-0017, Amendment 3).
+ *
+ * @param {string[]} lines The file's lines.
+ * @param {number} start The index of the first line of Calavera's text.
+ * @param {number} end The index of its last line.
+ * @param {(line: string) => string} hide
+ * @returns {{ line: number, before?: string, after?: string }}
+ */
+function aroundLines(lines, start, end, hide) {
+  /** @param {number} from @param {number} step */
+  const nearest = (from, step) => {
+    for (let index = from; index >= 0 && index < lines.length; index += step) {
+      const line = (lines[index] ?? "").replace(/\r$/, "").trim();
+      if (line !== "") return hide(line);
+    }
+    return undefined;
+  };
+  const before = nearest(start - 1, -1);
+  const after = nearest(end + 1, 1);
+  return {
+    line: start + 1,
+    ...(before === undefined ? {} : { before }),
+    ...(after === undefined ? {} : { after }),
+  };
+}
+
+/**
+ * A line of a JSON file with every string value replaced by `"…"`. Keys stay, so the line still
+ * says where it is; a string is a key when a colon follows it.
+ *
+ * @param {string} line
+ */
+function jsonValuesHidden(line) {
+  return line.replace(/"(?:[^"\\]|\\.)*"(?!\s*:)/g, '"…"');
+}
+
+/**
+ * A line of a TOML file with its value hidden: a table header stays, a key keeps only its name,
+ * and any other line, such as one inside a multi-line string, is hidden whole.
+ *
+ * @param {string} line
+ */
+function tomlValuesHidden(line) {
+  if (line.startsWith("[")) return line;
+  const equals = line.indexOf("=");
+  return equals === -1 ? "…" : `${line.slice(0, equals).trimEnd()} = …`;
 }
 
 /**

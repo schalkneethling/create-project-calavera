@@ -248,7 +248,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {object} PackageJSON
  * @property {Record<string, unknown>} [scripts] Values come from the project's package.json, so any JSON value is possible.
  * @property {string} [packageManager]
- * @property {{ packageManager?: { name?: string } | Array<{ name?: string }> }} [devEngines]
+ * @property {{ packageManager?: { name?: string, version?: string } | Array<{ name?: string, version?: string }> }} [devEngines]
  * @property {unknown[] | { packages?: unknown }} [workspaces]
  * @property {unknown} [devDependencies] Read only to say which planned packages the project already lists (#617).
  *
@@ -1029,20 +1029,55 @@ export function devDependencyInstallCommand(
  * The command that removes development dependencies, which `eject` reports for the
  * `create-project-calavera` dependency and never runs (ADR-0017, Decision 4). It follows
  * `devDependencyInstallCommand`: `vp remove` when Vite+ manages the project, and the package
- * manager's own command otherwise. Unlike `add`, none of the four package managers asks for `-w`
- * to remove a dependency at the root of a workspace, so the command never adds it.
+ * manager's own command otherwise.
+ *
+ * At the root of a workspace, only Yarn 1 refuses to remove a dependency without `-W`
+ * (`--ignore-workspace-root-check`; `src/cli/commands/remove.js` in yarnpkg/yarn). npm, pnpm, Bun,
+ * and Yarn 2 or later need no flag there, and Yarn 2 or later rejects `-W`. `vp remove` refuses its
+ * own `-w` for every Yarn version and never adds `-W` itself (`remove.rs` in voidzero-dev/vite-plus),
+ * so under Vite+ the flag goes to Yarn 1 as a native argument after `--`, which Vite+ passes through
+ * unchanged.
  *
  * @param {PackageManager} packageManager
  * @param {VitePlusDetection} detection
  * @param {string[]} dependencies
+ * @param {{ yarnClassicWorkspaceRoot?: boolean }} [options] `yarnClassicWorkspaceRoot` for a Yarn 1
+ *   project's workspace root; it changes only a Yarn command.
  * @returns {[string, string[]]}
  */
-export function devDependencyRemoveCommand(packageManager, detection, dependencies) {
+export function devDependencyRemoveCommand(
+  packageManager,
+  detection,
+  dependencies,
+  { yarnClassicWorkspaceRoot = false } = {},
+) {
+  const workspaceRootCheck = packageManager === "yarn" && yarnClassicWorkspaceRoot;
+
   if (delegatesToVitePlus(detection)) {
-    return ["vp", ["remove", ...dependencies]];
+    return ["vp", ["remove", ...dependencies, ...(workspaceRootCheck ? ["--", "-W"] : [])]];
   }
 
-  return packageManagerCommands[packageManager].remove(dependencies);
+  return workspaceRootCheck
+    ? ["yarn", ["remove", "-W", ...dependencies]]
+    : packageManagerCommands[packageManager].remove(dependencies);
+}
+
+/**
+ * The major version of Yarn a project runs: the one its `packageManager` field or
+ * `devEngines.packageManager` pins, else 2 when it has a `.yarnrc.yml`, which only Yarn 2 and
+ * later read, else 1, the Yarn that Corepack and a global install run without a pin.
+ *
+ * @param {PackageJSON} packageJSON
+ */
+function projectYarnMajor(packageJSON) {
+  const devEngine = [packageJSON.devEngines?.packageManager]
+    .flat()
+    .find((packageManager) => packageManager?.name === "yarn");
+  const pinned =
+    packageJSON.packageManager?.match(/^yarn@(\d+)/)?.[1] ??
+    devEngine?.version?.match(/(\d+)/)?.[1];
+  if (pinned !== undefined) return Number(pinned);
+  return existsSync(".yarnrc.yml") ? 2 : 1;
 }
 
 /**
@@ -6366,7 +6401,10 @@ export async function ejectProject(options, runtime = {}) {
    * @returns {EjectResultItem}
    */
   const describe = (item, outcome, error) => {
+    // An MCP entry's text afterward can hold the person's other servers and their tokens, so it
+    // stays internal and the result shows `around` (ADR-0017, Amendment 3).
     const { seen: _seen, ...visible } = item;
+    if (item.kind === "mcp-entry") delete visible.contents;
     return {
       ...visible,
       outcome,
@@ -6534,10 +6572,17 @@ async function ejectPackageJsonReport({ manifest: packageJSON, problem }) {
   if (!Object.hasOwn(devDependencies, name)) {
     return { scripts };
   }
+  const packageManager = detectPackageManager(packageJSON) ?? "npm";
   const command = devDependencyRemoveCommand(
-    detectPackageManager(packageJSON) ?? "npm",
+    packageManager,
     await detectVitePlus(process.cwd()),
     [name],
+    {
+      yarnClassicWorkspaceRoot:
+        packageManager === "yarn" &&
+        projectYarnMajor(packageJSON) === 1 &&
+        (await workspacePackagePatterns(process.cwd(), packageJSON, "yarn")) !== undefined,
+    },
   );
   return { scripts, devDependency: { name, removeCommand: formatCommand(command) } };
 }

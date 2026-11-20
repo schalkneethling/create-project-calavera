@@ -32,6 +32,15 @@ export function ejectSummaryLines(result) {
   const lines = [info(result.message)];
   /** @param {EjectResultItem["outcome"]} outcome */
   const withOutcome = (outcome) => result.items.filter((item) => item.outcome === outcome);
+  // A report about a path that is also an item, such as a hand-merged marker in an AGENTS.md whose
+  // section eject removes, goes under that item, so each path is printed once.
+  const itemPaths = new Set(result.items.map(({ path }) => path));
+  /** @param {EjectResultItem} item */
+  const itemLines = (item) =>
+    ownItemLines(
+      item,
+      result.reported.filter(({ path }) => path === item.path).map(({ reason }) => reason),
+    );
 
   pushGroup(lines, "Would remove", withOutcome("planned").flatMap(itemLines));
   pushGroup(lines, "Removed", withOutcome("removed").flatMap(itemLines));
@@ -58,7 +67,11 @@ export function ejectSummaryLines(result) {
       info(`${ITEM}${path}: eject does not name it, so it keeps it and the folder that holds it.`),
     ),
   );
-  pushGroup(lines, "Left for you", reportedLines(result.reported));
+  pushGroup(
+    lines,
+    "Left for you",
+    reportedLines(result.reported.filter(({ path }) => !itemPaths.has(path))),
+  );
   pushGroup(lines, "Left in package.json", packageJsonLines(result.packageJson));
   pushGroup(
     lines,
@@ -97,9 +110,11 @@ function editsLabel({ kind, edits, matchesRecords, outcome, keptRecord }) {
 
 /**
  * @param {EjectResultItem} item
+ * @param {string[]} reports What `eject` reports about the same path, such as a hand-merged marker
+ *   in the `AGENTS.md` whose section it removes, printed with the item's own reason.
  * @returns {SummaryLine[]}
  */
-function itemLines(item) {
+function ownItemLines(item, reports) {
   /** @type {SummaryLine[]} */
   const lines = [info(`${ITEM}${item.path} (${editsLabel(item)})`)];
   if (item.action === "edit") {
@@ -109,6 +124,7 @@ function itemLines(item) {
   }
   if (item.reason) lines.push(info(`${DETAIL}${withoutOwnPath(item.reason, item.path)}`));
   if (item.note) lines.push(info(`${DETAIL}${withoutOwnPath(item.note, item.path)}`));
+  for (const report of reports) lines.push(info(`${DETAIL}${withoutOwnPath(report, item.path)}`));
   // The text an edit removes, and what the file holds afterward, belong to the list a person
   // approves or still has to approve; a removal that is done does not print them again. Failed
   // and skipped items have lines of their own.
@@ -116,7 +132,19 @@ function itemLines(item) {
     return lines;
   }
   if (item.removedLines) {
-    lines.push(info(`${DETAIL}Removes:`), ...item.removedLines.map(quoted));
+    lines.push(
+      info(`${DETAIL}Removes${item.around ? `, from line ${item.around.line}` : ""}:`),
+      ...item.removedLines.map(quoted),
+    );
+  }
+  if (item.around && (item.around.before !== undefined || item.around.after !== undefined)) {
+    lines.push(info(`${DETAIL}Around it, with values hidden:`));
+    if (item.around.before !== undefined) {
+      lines.push(info(`${TEXT}Before: ${quoteScriptValue(item.around.before)}`));
+    }
+    if (item.around.after !== undefined) {
+      lines.push(info(`${TEXT}After: ${quoteScriptValue(item.around.after)}`));
+    }
   }
   if (item.contents !== undefined) {
     const text = item.contents.endsWith("\n") ? item.contents.slice(0, -1) : item.contents;

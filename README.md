@@ -697,7 +697,9 @@ The decision record is
 
 Run the dry run first. It lists every deletion and every edit, with the exact
 text each edit removes and the text the file holds afterward, and changes
-nothing:
+nothing. For an MCP configuration file, such as `.mcp.json`, it shows only the
+lines around Calavera's entry, with their values hidden, so the tokens of your
+other servers never reach a terminal log or the `--json` output:
 
 ```bash
 npm create project-calavera eject -- --dry-run
