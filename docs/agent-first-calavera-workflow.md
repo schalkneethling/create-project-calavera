@@ -202,10 +202,12 @@ As of Vite+ 1.3.0, Vite+ does not ask for the project's package manager: it uses
 the package manager of the runner Calavera starts, unless `--package-manager` is
 forwarded after `--new`. When `--new` runs inside an existing project, Vite+
 uses the package manager it detects there unless `--package-manager` is
-forwarded. When that project declares no package manager and has no lockfile or
-package-manager configuration file, Vite+ detects none and uses the runner's
-package manager, as it does outside a project; checked against Vite+ 1.6.0 and
-1.7.0. Inside a monorepo, Vite+ uses the package manager it detects for the
+forwarded. When that project's `package.json` has no `packageManager` or
+`devEngines.packageManager` field and its folder has no lockfile or
+package-manager configuration file that Vite+ reads (an `.npmrc` does not
+count), Vite+ detects none and uses the runner's package manager, as it does
+outside a project. This was checked against Vite+ 1.6.0 and 1.7.0. Inside a
+monorepo, Vite+ uses the package manager it detects for the
 monorepo even when `--package-manager` is forwarded. A `VP_PACKAGE_MANAGER`
 environment variable overrides all of these. Vite+ also installs the project's
 dependencies; that step needs network access and cannot be skipped.
