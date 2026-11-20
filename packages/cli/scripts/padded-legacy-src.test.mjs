@@ -88,3 +88,21 @@ test("artifacts migrate rewrites a padded legacy src to its artifact ID", async 
     assert.deepEqual(migrated.ai, [{ id: "skill-project-goal" }]);
   });
 });
+
+test("artifacts migrate names an unknown padded legacy src without its white space", async () => {
+  await inProject(async () => {
+    const recipe = {
+      ...buildRecipe("minimal", [], "npm"),
+      ai: [{ type: "skill", src: " skills/not-in-catalog " }],
+    };
+    await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+    await assert.rejects(
+      runArtifactCommand({
+        config: "calavera.config.json",
+        dryRun: false,
+        artifactAction: "migrate",
+      }),
+      { message: "Unknown legacy artifact path: skills/not-in-catalog." },
+    );
+  });
+});
