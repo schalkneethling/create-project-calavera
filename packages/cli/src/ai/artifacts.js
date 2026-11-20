@@ -74,7 +74,7 @@ async function planCodeRabbitSkillConfig() {
     return { contents: CODE_RABBIT_SKILL_CONFIG, type: "write" };
   }
 
-  const { isMap, isSeq, parseDocument } = await import("yaml");
+  const { isMap, isScalar, isSeq, parseDocument } = await import("yaml");
   const current = await readFile(CODE_RABBIT_CONFIG_PATH, "utf8");
   const document = parseDocument(current);
 
@@ -84,18 +84,35 @@ async function planCodeRabbitSkillConfig() {
     );
   }
 
+  // `set` stores a plain JavaScript value as is, so new collections go through
+  // `createNode`; otherwise `isMap` and `isSeq` reject them (#1068).
+  if (document.get("reviews", true) === undefined) {
+    document.set("reviews", document.createNode({}));
+  }
   const reviews = document.get("reviews", true);
-  if (reviews === undefined) {
-    document.set("reviews", {});
-  } else if (!isMap(reviews)) {
+  if (!isMap(reviews)) {
     throw new Error(`Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews must be a mapping.`);
   }
 
-  let pathFilters = document.getIn(["reviews", "path_filters"], true);
-  if (pathFilters === undefined) {
-    document.setIn(["reviews", "path_filters"], []);
-    pathFilters = document.getIn(["reviews", "path_filters"], true);
+  if (reviews.get("path_filters", true) === undefined) {
+    // A local `path_filters` list would replace the list that `<<` merges in.
+    // `yaml` exports no merge-key check, so this mirrors the test in its merge
+    // tag (`yaml/dist/schema/yaml-1.1/merge.js`): a plain `<<` key holds the
+    // string "<<", while `!!merge <<`, `<<` under `%YAML 1.1`, and `? !!merge`
+    // hold Symbol(<<).
+    const isMergeKey = (/** @type {unknown} */ value) =>
+      value === "<<" || (typeof value === "symbol" && value.description === "<<");
+    if (reviews.items.some(({ key }) => isScalar(key) && isMergeKey(key.value))) {
+      throw new Error(
+        `Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews uses a \`<<\` merge key, so a new path_filters list would replace the merged one. Add path_filters to reviews yourself, then run apply again.`,
+      );
+    }
+    // An empty `reviews: {}` is written in flow style; switch it to block style
+    // so the filters are written as a list, not on one line.
+    if (reviews.items.length === 0) reviews.flow = false;
+    reviews.set("path_filters", document.createNode([]));
   }
+  const pathFilters = reviews.get("path_filters", true);
   if (!isSeq(pathFilters)) {
     throw new Error(
       `Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews.path_filters must be an array.`,
@@ -103,9 +120,19 @@ async function planCodeRabbitSkillConfig() {
   }
 
   const existingFilters = new Set(pathFilters.toJSON().map(String));
-  for (const filter of CODE_RABBIT_SKILL_FILTERS) {
-    if (!existingFilters.has(filter)) pathFilters.add(filter);
+  const missingFilters = CODE_RABBIT_SKILL_FILTERS.filter((filter) => !existingFilters.has(filter));
+  // An alias shares the anchored node, so every alias of an anchored `reviews`
+  // mapping or `path_filters` list would gain the filters too.
+  const anchored = [
+    { label: "reviews", anchor: reviews.anchor },
+    { label: "reviews.path_filters", anchor: pathFilters.anchor },
+  ].find(({ anchor }) => anchor);
+  if (missingFilters.length > 0 && anchored) {
+    throw new Error(
+      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: ${anchored.label} has the anchor &${anchored.anchor}, so its aliases would change too. Add these to reviews.path_filters yourself, then run apply again: ${missingFilters.join(", ")}`,
+    );
   }
+  for (const filter of missingFilters) pathFilters.add(filter);
 
   const contents = document.toString({ lineWidth: 0 });
   return contents === current ? undefined : { contents, type: "update" };
