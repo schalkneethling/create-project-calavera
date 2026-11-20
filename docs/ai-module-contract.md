@@ -104,7 +104,9 @@ existing destination when that destination is not recorded as Calavera-managed,
 or when the installed content no longer matches the recorded state hash. `clean`
 uses the same hashes and skips stale managed items that have local edits. Apply keeps
 the record of an artifact the recipe no longer selects, so `clean` can remove its
-unedited output later. Before `clean` deletes a skill, it removes the hook blocks
+unedited output later. The base Calavera skill in `.agents/skills/calavera` is the
+exception: it is never stale, whether `--init` or a recipe installed it, so
+`clean` keeps it and only `eject` removes it. Before `clean` deletes a skill, it removes the hook blocks
 and settings groups that skill's wiring added, but only text that matches the
 record; an edited block or group stops `clean` with a conflict.
 

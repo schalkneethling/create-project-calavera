@@ -6097,7 +6097,14 @@ async function clean(options) {
     : { integrations: [] };
   const integrations = resolveRecipeIntegrations(recipe);
   const selectedAiArtifacts = resolveAiArtifacts(recipe);
-  const expectedAiPaths = new Set(selectedAiArtifacts.flatMap(aiArtifactOutputPaths));
+  // #1007: the base skill in `.agents/skills/calavera` is never stale, whether `--init` or a recipe
+  // installed it, because it is Calavera's own artifact whatever the recipe selects (ADR-0017,
+  // Decision 2). Only `eject` removes it.
+  const expectedAiPaths = new Set(
+    [...selectedAiArtifacts, ...resolveAiArtifacts(AGENT_BOOTSTRAP_SKILL_RECIPE)].flatMap(
+      aiArtifactOutputPaths,
+    ),
+  );
   const selectedAiIds = new Set(selectedAiArtifacts.map(({ source }) => source));
   // #795: the files apply writes for this recipe, from apply's own planner, so a file that an
   // integration the recipe still selects writes is never stale. A separate list of file names
