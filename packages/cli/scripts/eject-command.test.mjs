@@ -615,6 +615,7 @@ test("the summary prints each group, label, and detail exactly", () => {
         action: "delete",
         edits: "edited",
         matchesRecords: false,
+        removedLines: ["removed"],
         contents: "no final line break",
         outcome: "left",
       },
@@ -671,6 +672,8 @@ test("the summary prints each group, label, and detail exactly", () => {
     "Left for an interactive run:",
     "  AGENTS.md (edited)",
     "    This item holds guidance marked by hand. Remove this item's marker.",
+    "    Removes:",
+    '      "removed"',
     "    Afterward:",
     '      "no final line break"',
     "",
@@ -1206,13 +1209,19 @@ test("a reason that starts with the item's own path starts with a capital", () =
     message: "Headline.",
     items: [],
     reported: [
-      { path: "AGENTS.md", reason: "AGENTS.md is kept. Then AGENTS.md again. Edit AGENTS.md." },
+      {
+        path: "AGENTS.md",
+        reason: "AGENTS.md is kept. Then AGENTS.md again. Edit AGENTS.md. Done? AGENTS.md stays.",
+      },
     ],
     kept: [],
     packageJson: { scripts: [] },
     elsewhere: [],
   };
-  assert.match(human(result), /^ {4}This item is kept\. Then this item again\. Edit this item\.$/m);
+  assert.match(
+    human(result),
+    /^ {4}This item is kept\. Then this item again\. Edit this item\. Done\? This item stays\.$/m,
+  );
 });
 
 test("the skill keeps its apply fallback pinned to the MCP version and sends eject to latest", async () => {
@@ -1302,4 +1311,17 @@ test("the reported Yarn command follows the project's Yarn version at a workspac
     },
     { packageManager: "yarn@1.22.22", devDependencies: { "create-project-calavera": "^6.2.1" } },
   );
+});
+
+test("a TOML key around a Codex entry keeps only its name", async () => {
+  await inProject(async () => {
+    await agentBootstrap({ mcpHarness: "codex", packageManager: "npm" });
+    await writeFile(
+      ".codex/config.toml",
+      `model = "secret-model"\n\n${await readFile(".codex/config.toml", "utf8")}`,
+    );
+    const output = human(await eject(["--dry-run"]));
+    assert.match(output, /^ {6}Before: "model = …"$/m);
+    assert.doesNotMatch(output, /secret-model/);
+  });
 });
