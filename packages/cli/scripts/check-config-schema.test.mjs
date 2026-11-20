@@ -3853,6 +3853,11 @@ for (const { name, current, expected } of [
     expected: `reviews: &r\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\nother: *r\n`,
   },
   {
+    name: "an anchored path_filters list that already holds every filter",
+    current: `reviews:\n  path_filters: &p\n${CODE_RABBIT_FILTER_LIST}\nother: *p\n`,
+    expected: `reviews:\n  path_filters: &p\n${CODE_RABBIT_FILTER_LIST}\nother: *p\n`,
+  },
+  {
     // A flow mapping that holds keys keeps the person's style, so the list is a flow list.
     name: "a reviews flow mapping with keys",
     current: "reviews: { profile: chill }\n",
@@ -3933,6 +3938,12 @@ for (const { current, error } of [
     current: 'reviews: &r\n  path_filters:\n    - "!pnpm-lock.yaml"\nother: *r\n',
     error:
       /Cannot update \.coderabbit\.yaml: reviews has the anchor &r, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*$/,
+  },
+  // Every alias of an anchored path_filters list would gain the filters too.
+  {
+    current: 'reviews:\n  path_filters: &p\n    - "!pnpm-lock.yaml"\nother: *p\n',
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews\.path_filters has the anchor &p, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*$/,
   },
 ]) {
   test(`skill apply rejects CodeRabbit configuration ${JSON.stringify(current)} before writing skills`, async () => {

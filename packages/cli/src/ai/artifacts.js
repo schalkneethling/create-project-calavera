@@ -115,10 +115,15 @@ async function planCodeRabbitSkillConfig() {
 
   const existingFilters = new Set(pathFilters.toJSON().map(String));
   const missingFilters = CODE_RABBIT_SKILL_FILTERS.filter((filter) => !existingFilters.has(filter));
-  // Every alias of an anchored mapping shares its nodes, so the aliases would gain the filters too.
-  if (missingFilters.length > 0 && reviews.anchor) {
+  // An alias shares the anchored node, so every alias of an anchored `reviews`
+  // mapping or `path_filters` list would gain the filters too.
+  const anchored = [
+    { label: "reviews", anchor: reviews.anchor },
+    { label: "reviews.path_filters", anchor: pathFilters.anchor },
+  ].find(({ anchor }) => anchor);
+  if (missingFilters.length > 0 && anchored) {
     throw new Error(
-      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: reviews has the anchor &${reviews.anchor}, so its aliases would change too. Add these to reviews.path_filters yourself, then run apply again: ${missingFilters.join(", ")}`,
+      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: ${anchored.label} has the anchor &${anchored.anchor}, so its aliases would change too. Add these to reviews.path_filters yourself, then run apply again: ${missingFilters.join(", ")}`,
     );
   }
   for (const filter of missingFilters) pathFilters.add(filter);
