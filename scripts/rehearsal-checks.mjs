@@ -1242,8 +1242,60 @@ function flowEject(context) {
     });
     const afterDryRun = await snapshotProject(project);
     const yes = await context.run(context.calavera.bin, ["eject", "--yes"], { cwd: project });
-    return { project, before, json, dryRun, afterDryRun, yes };
+    const afterYes = await snapshotProject(project);
+    return { project, before, json, dryRun, afterDryRun, yes, afterYes };
   });
+}
+
+/**
+ * What `eject --yes` changed beyond its dry run's plan, one line per path. ADR-0017 Decision 3
+ * says eject keeps everything outside the footprint, such as managed files, kept AI artifacts,
+ * hook wiring, and integration blocks in `.gitignore`, so every path that changed must be a plan
+ * item's `path` or lie under one. A removed folder counts as planned when every file it held
+ * was, because eject removes a Calavera folder that its last item leaves empty. Each edit `--yes`
+ * makes must leave exactly the `contents` the dry run showed, and an edit it leaves for an
+ * interactive run must leave the file as it was. An MCP entry's `contents` stay out of the JSON
+ * (ADR-0017, Amendment 3), so only the path rule covers it.
+ *
+ * @param {string} project
+ * @param {{ items?: Array<{ kind: string, path: string, action?: string, matchesRecords: boolean, keptRecord?: true, contents?: string }> }} report
+ * @param {Record<string, string>} before The snapshot after the dry run.
+ * @param {Record<string, string>} after The snapshot after `--yes`.
+ */
+async function unplannedEjectChanges(project, report, before, after) {
+  const items = report.items ?? [];
+  /** @param {string} key A snapshot key: an absolute path, with a trailing `/` for a folder. */
+  const pathOf = (key) => relative(project, key);
+  /** @param {string} path */
+  const planned = (path) =>
+    items.some((item) => path === item.path || path.startsWith(`${item.path}/`));
+  /** @param {string} key */
+  const allowed = (key) =>
+    planned(pathOf(key)) ||
+    // A removed folder whose files were all planned. A removed file's own entry is among the
+    // entries this reads, so an unplanned file never passes here.
+    (!(key in after) &&
+      Object.keys(before)
+        .filter((entry) => entry.startsWith(key) && !entry.endsWith("/"))
+        .every((entry) => planned(pathOf(entry))));
+  const problems = Object.keys({ ...before, ...after })
+    .filter((key) => before[key] !== after[key] && !allowed(key))
+    .sort()
+    .map((key) => {
+      const change = !(key in after) ? "removed" : !(key in before) ? "added" : "changed";
+      return `${pathOf(key)}${key.endsWith("/") ? "/" : ""} (${change})`;
+    });
+  for (const item of items) {
+    if (item.action !== "edit" || item.kind === "mcp-entry") continue;
+    const key = join(project, item.path);
+    if (item.matchesRecords && !item.keptRecord) {
+      const text = await readFile(key, "utf8").catch(() => undefined);
+      if (text !== item.contents) problems.push(`${item.path} (not the text the dry run planned)`);
+    } else if (before[key] !== after[key]) {
+      problems.push(`${item.path} (changed, although --yes leaves it)`);
+    }
+  }
+  return problems;
 }
 
 /** The dry run's report, which every eject check reads. @param {RehearsalContext} context */
@@ -1285,6 +1337,21 @@ const ejectChecks = [
         throw new CheckFailure({
           expected: `only the footprint ADR-0017 keeps after --yes: ${allowed.join(", ") || "nothing"}`,
           actual: `still in the project:\n${left.join("\n")}`,
+          command: yes.display,
+        });
+      }
+      const { afterDryRun, afterYes } = await flowEject(context);
+      const unplanned = await unplannedEjectChanges(project, report, afterDryRun, afterYes);
+      if (unplanned.length > 0) {
+        const outside = unplanned.filter((line) => /\((removed|added|changed)\)$/.test(line));
+        const edits = unplanned.filter((line) => !outside.includes(line));
+        throw new CheckFailure({
+          expected:
+            "eject --yes to change only the items its dry run planned, and each planned edit to leave the text the dry run showed (ADR-0017 Decisions 2 and 3)",
+          actual: [
+            ...(outside.length > 0 ? ["changed outside the plan:", ...outside] : []),
+            ...edits,
+          ].join("\n"),
           command: yes.display,
         });
       }

@@ -4,7 +4,17 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
-import { chmod, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  rm,
+  rmdir,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
@@ -1039,24 +1049,38 @@ test("apply-summary-cache reports a git check-ignore error as an error, with its
 // The eject checks (#1074): a stubbed CLI over a real project directory, so the footprint that
 // remains is read by the same `footprintIn` the release candidate ships.
 
+// The .gitignore holds an integration block eject keeps (ADR-0017 Decision 3) and the
+// artifact-cache block it removes.
+const GITIGNORE_KEPT =
+  "node_modules\n# calavera:stylelint:start\n.stylelintcache\n# calavera:stylelint:end\n";
+const GITIGNORE_BEFORE = `${GITIGNORE_KEPT}# calavera:artifact-cache:start\n.calavera/cache/\n# calavera:artifact-cache:end\n`;
+
 const EJECT_PLAN = [
   { kind: "state", path: ".calavera/state.json", matchesRecords: true },
+  { kind: "cache", path: ".calavera/cache", matchesRecords: true },
   { kind: "lock", path: ".calavera/artifacts.lock.json", matchesRecords: true, keptRecord: true },
   { kind: "recipe", path: "calavera.config.json", matchesRecords: false },
   { kind: "package-folder", path: ".calavera/packages/skill-x/1.0.0", matchesRecords: false },
   { kind: "mcp-notes", path: ".agents/calavera/mcp.md", matchesRecords: true },
+  {
+    kind: "artifact-cache-block",
+    path: ".gitignore",
+    action: "edit",
+    matchesRecords: true,
+    contents: GITIGNORE_KEPT,
+  },
 ];
 const EJECT_REMOVES = EJECT_PLAN.filter((item) => item.matchesRecords && !item.keptRecord);
 const EJECT_LEAVES = EJECT_PLAN.filter((item) => !EJECT_REMOVES.includes(item));
 
 const ejectDryRunOutput = [
-  "Dry run complete. Nothing was changed. eject would remove 5 items.",
+  "Dry run complete. Nothing was changed. eject would remove 7 items.",
   "",
   "Would remove:",
   ...EJECT_PLAN.map(({ path }) => `  ${path} (unedited)`),
 ].join("\n");
 const ejectYesOutput = [
-  "Removed 2 items; --yes left 2 items for an interactive approval.",
+  "Removed 4 items; --yes left 2 items for an interactive approval.",
   "",
   "Removed:",
   ...EJECT_REMOVES.map(({ path }) => `  ${path} (unedited)`),
@@ -1083,6 +1107,8 @@ const ejectYesOutput = [
  *   commitFails?: boolean,
  *   secondRun?: Record<string, unknown>,
  *   kept?: string[],
+ *   yesDeletes?: string[],
+ *   yesWrites?: Record<string, string>,
  * }} [options]
  */
 async function ejectFixture(options = {}) {
@@ -1092,10 +1118,15 @@ async function ejectFixture(options = {}) {
   const files = {
     "package.json": JSON.stringify({ scripts: { build: "vp pack", quality: "vp check" } }),
     ".calavera/state.json": "{}\n",
+    ".calavera/cache/npm/entry": "cached\n",
     ".calavera/artifacts.lock.json": "{}\n",
     ".calavera/packages/skill-x/1.0.0/package.json": "{}\n",
     "calavera.config.json": "{}\n",
     ".agents/calavera/mcp.md": "# MCP\n",
+    ".gitignore": GITIGNORE_BEFORE,
+    // Outside the footprint: a managed file and a kept AI artifact (ADR-0017 Decision 3).
+    "docs/repository-controls.md": "# Repository controls\n",
+    ".agents/skills/release/SKILL.md": "# Release\n",
   };
   for (const path of [...Object.keys(files), ...(options.extraFiles ?? [])]) {
     await mkdir(join(source, path, ".."), { recursive: true });
@@ -1156,8 +1187,20 @@ async function ejectFixture(options = {}) {
         return result(display, exitCode, options.dryRunOutput ?? ejectDryRunOutput);
       }
       if (args.join(" ") === "eject --yes") {
-        for (const { path } of EJECT_REMOVES) {
-          if (!(options.yesKeeps ?? []).includes(path)) await rm(join(cwd, path), { force: true });
+        for (const item of plan.filter(
+          ({ matchesRecords, keptRecord }) => matchesRecords && !keptRecord,
+        )) {
+          if ((options.yesKeeps ?? []).includes(item.path)) continue;
+          if (item.action === "edit") await writeFile(join(cwd, item.path), item.contents ?? "");
+          else await rm(join(cwd, item.path), { recursive: true, force: true });
+        }
+        // Like eject, remove a Calavera folder its last item leaves empty.
+        await rmdir(join(cwd, ".agents/calavera")).catch(() => {});
+        for (const path of options.yesDeletes ?? []) {
+          await rm(join(cwd, path), { recursive: true, force: true });
+        }
+        for (const [path, text] of Object.entries(options.yesWrites ?? {})) {
+          await writeFile(join(cwd, path), text);
         }
         return result(display, exitCode, options.yesOutput ?? ejectYesOutput);
       }
@@ -1320,7 +1363,7 @@ test("a second eject passes with nothing to do, and fails when it removes or lea
   const differs = await ejectFixture({
     secondRun: {
       status: "ejected",
-      items: [{ ...EJECT_PLAN[2], outcome: "left" }],
+      items: [{ ...EJECT_PLAN.find(({ kind }) => kind === "recipe"), outcome: "left" }],
       reported: [],
       kept: [],
     },
@@ -1355,11 +1398,11 @@ test("the eject checks name exactly what remains, and allow what eject keeps and
   });
   await ejectCheck("eject-yes-footprint").run(reported.context);
   // An empty folder in the footprint still counts.
-  const empty = await ejectFixture({ extraDirectories: [".calavera/cache"] });
+  const empty = await ejectFixture({ extraDirectories: [".calavera/.staging"] });
   await assertCheckFails(
     ejectCheck("eject-yes-footprint").run(empty.context),
     /only the footprint ADR-0017 keeps/,
-    /^\.calavera\/cache$/m,
+    /^\.calavera\/\.staging$/m,
   );
   // Only the recipe and package folders may stay unmatched: any other item --yes leaves means
   // eject took Calavera's own text for an edit in a project nobody edited.
@@ -1444,5 +1487,90 @@ test("the footprint check reads footprintIn from the release candidate's own eje
     ejectCheck("eject-yes-footprint").run(context),
     /only the footprint ADR-0017 keeps/,
     /^candidate-only\.json$/m,
+  );
+});
+
+test("eject-yes-footprint fails when --yes deletes or edits anything its plan does not name (#1074)", async () => {
+  const deletes = await ejectFixture({
+    yesDeletes: ["docs/repository-controls.md", ".agents/skills/release"],
+  });
+  await assert.rejects(ejectCheck("eject-yes-footprint").run(deletes.context), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.equal(
+      error.expected,
+      "eject --yes to change only the items its dry run planned, and each planned edit to leave the text the dry run showed (ADR-0017 Decisions 2 and 3)",
+    );
+    assert.equal(
+      error.actual,
+      [
+        "changed outside the plan:",
+        ".agents/skills/release/ (removed)",
+        ".agents/skills/release/SKILL.md (removed)",
+        "docs/repository-controls.md (removed)",
+      ].join("\n"),
+    );
+    assert.equal(error.command, "create-project-calavera eject --yes");
+    return true;
+  });
+  // A folder that held a planned file and one eject does not name is not Calavera's to remove.
+  const folder = await ejectFixture({
+    extraFiles: [".agents/calavera/notes.md"],
+    yesDeletes: [".agents/calavera"],
+  });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(folder.context),
+    /change only the items its dry run planned/,
+    /^changed outside the plan:\n\.agents\/calavera\/ \(removed\)\n\.agents\/calavera\/notes\.md \(removed\)$/,
+  );
+  // A planned edit that also removes the integration block eject keeps.
+  const overEdit = await ejectFixture({ yesWrites: { ".gitignore": "node_modules\n" } });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(overEdit.context),
+    /each planned edit to leave the text the dry run showed/,
+    /^\.gitignore \(not the text the dry run planned\)$/,
+  );
+  // An edit --yes leaves for an interactive run must leave the file as it was.
+  const leftEdit = await ejectFixture({
+    plan: EJECT_PLAN.map((item) =>
+      item.kind === "artifact-cache-block" ? { ...item, keptRecord: true } : item,
+    ),
+  });
+  await ejectCheck("eject-yes-footprint").run(leftEdit.context);
+  const leftEditWritten = await ejectFixture({
+    plan: EJECT_PLAN.map((item) =>
+      item.kind === "artifact-cache-block" ? { ...item, keptRecord: true } : item,
+    ),
+    yesWrites: { ".gitignore": GITIGNORE_KEPT },
+  });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(leftEditWritten.context),
+    /each planned edit/,
+    /^\.gitignore \(changed, although --yes leaves it\)$/,
+  );
+  // An MCP entry's text afterward stays out of the JSON (ADR-0017, Amendment 3), so only the
+  // path rule covers it.
+  const mcpEntry = await ejectFixture({
+    plan: [
+      ...EJECT_PLAN,
+      { kind: "mcp-entry", path: ".mcp.json", action: "edit", matchesRecords: true },
+    ],
+    extraFiles: [".mcp.json"],
+    yesOutput: `${ejectYesOutput}\n  .mcp.json (unedited)`,
+    dryRunOutput: `${ejectDryRunOutput}\n  .mcp.json (unedited)`,
+  });
+  await ejectCheck("eject-yes-footprint").run(mcpEntry.context);
+  // So does a file outside the plan that --yes rewrites.
+  const rewrites = await ejectFixture({ yesWrites: { "docs/repository-controls.md": "gone\n" } });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(rewrites.context),
+    /change only the items its dry run planned/,
+    /^docs\/repository-controls\.md \(changed\)$/m,
+  );
+  // A new file outside the plan counts too.
+  const adds = await ejectFixture({ yesWrites: { "notes.md": "new\n" } });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(adds.context),
+    /change only the items its dry run planned/,
+    /^notes\.md \(added\)$/m,
   );
 });
