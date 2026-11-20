@@ -174,6 +174,10 @@ test("the verdict names every artifact with a problem, and only those", () => {
 
   assert.deepEqual(verdict([]), { level: "success", message: HEALTHY });
   assert.deepEqual(verdict([entry("a", {})]), { level: "success", message: HEALTHY });
+  assert.deepEqual(verdict([entry("a", {}), entry("b", { locallyEdited: true })]), {
+    level: "error",
+    message: "Calavera artifacts doctor found problems with 1 artifact: b.",
+  });
   assert.deepEqual(
     verdict([
       entry("a", {}),
