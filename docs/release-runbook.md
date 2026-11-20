@@ -89,7 +89,7 @@ version, so a manifest or compatibility range that would break consumers fails b
 published. The cli-experience exit rehearsal (#918) packs the CLI, its workspace dependencies, and every
 artifact, serves them from a local registry, and runs every check of the release's exit condition in
 pinned mode against them: `--new` through each launcher, the human output of `--init`, `apply`, and
-`clean`, a commit through the Vite+ pre-commit hook, the version notice, and the drift tests. It
+`clean`, a commit through the Vite+ pre-commit hook, `eject` on that project, the version notice, and the drift tests. It
 takes several minutes. Every run uses new temporary directories and empty package-manager homes and
 caches, and deletes them afterwards. If any check fails, the gate stops and prints a table that names
 each failing check, what was expected, what happened, the command that ran, and the issue that

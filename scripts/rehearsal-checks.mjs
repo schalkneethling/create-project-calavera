@@ -7,8 +7,9 @@
 // notice from #675), a check asserts the property Section 0 states, not a guessed snapshot.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { join, relative } from "node:path";
+import { pathToFileURL } from "node:url";
 
 import { snapshotDirectory } from "../packages/cli/scripts/project-snapshot.mjs";
 import { CheckFailure, describeExit, tail } from "./rehearsal-failure.mjs";
@@ -20,7 +21,7 @@ import { CheckFailure, describeExit, tail } from "./rehearsal-failure.mjs";
  *   dirs: ReturnType<typeof import("./rehearse-cli-experience.mjs").runDirectories>,
  *   env: NodeJS.ProcessEnv,
  *   registry: { url: string, requests: string[] },
- *   calavera: { version: string, bin: string, mcpBin: string },
+ *   calavera: { version: string, bin: string, mcpBin: string, packageDirectory: string },
  *   repositoryRoot: string,
  *   run: (command: string, args: string[], options?: { cwd?: string, env?: NodeJS.ProcessEnv, timeout?: number }) => Promise<CommandResult>,
  *   runOrThrow: (command: string, args: string[], options?: { cwd?: string }) => Promise<CommandResult>,
@@ -665,9 +666,10 @@ async function snapshotProject(directory) {
  * @param {string} directory
  * @param {Record<string, string>} before
  * @param {string} command
+ * @param {Record<string, string>} [after] A snapshot taken earlier; a new one when left out.
  */
-async function assertUnchanged(context, directory, before, command) {
-  const after = await snapshotProject(directory);
+async function assertUnchanged(context, directory, before, command, after) {
+  after ??= await snapshotProject(directory);
   const changed = Object.keys({ ...before, ...after }).filter(
     (path) => before[path] !== after[path],
   );
@@ -717,6 +719,10 @@ function flowInit(context) {
   return shared(context, "flow-init", async () => {
     const project = await flowProject(context);
     const before = await snapshotProject(project);
+    // The scripts Vite+ scaffolded, so the eject checks can tell them from the ones Calavera adds.
+    const scaffoldScripts = Object.keys(
+      JSON.parse(await readFile(join(project, "package.json"), "utf8")).scripts ?? {},
+    );
     const result = await context.run(
       context.calavera.bin,
       ["--init", "--yes", "--mcp-harness", "skip"],
@@ -724,7 +730,7 @@ function flowInit(context) {
         cwd: project,
       },
     );
-    return { project, before, after: await snapshotProject(project), result };
+    return { project, before, after: await snapshotProject(project), result, scaffoldScripts };
   });
 }
 
@@ -1157,10 +1163,214 @@ const driftChecks = [
   }),
 ];
 
+// ---------------------------------------------------------------------------------------------
+// Section 0 item 6: eject on the --init project (#678, #1074, ADR-0017).
+
+/**
+ * The kinds of item that `--yes` leaves for an interactive approval in a project nobody edited:
+ * the recipe and the extracted package folders, which have no check (ADR-0017, Consequences).
+ */
+const KINDS_YES_LEAVES = new Set(["recipe", "package-folder"]);
+
+/**
+ * The paths that may remain after `eject --yes`, read from the dry run's JSON: what ADR-0017's
+ * Consequences keep, which is the recipe, the package folders, the records `--yes` keeps while one
+ * of those needs it (`keptRecord`), and the footprint text eject keeps and reports. Any other item
+ * `--yes` leaves would mean eject took Calavera's own text in a fresh project for an edit.
+ *
+ * @param {{ items?: Array<{ kind: string, path: string, matchesRecords: boolean, keptRecord?: true }>, reported?: Array<{ path: string }> }} report
+ */
+function pathsYesMayLeave(report) {
+  return [
+    ...(report.items ?? [])
+      .filter(
+        (item) => item.keptRecord || (!item.matchesRecords && KINDS_YES_LEAVES.has(item.kind)),
+      )
+      .map(({ path }) => path),
+    ...(report.reported ?? []).map(({ path }) => path),
+  ];
+}
+
+/**
+ * The candidate's own footprint list (ADR-0017 Decision 2), from the `eject.js` it ships, so the
+ * rehearsal and `eject` cannot disagree about what counts. Each path that is a folder becomes the
+ * files inside it, so a folder that may stay, such as `.calavera/packages`, cannot hide a package
+ * the plan never named.
+ *
+ * @param {RehearsalContext} context
+ * @param {string} project
+ */
+async function remainingFootprint(context, project) {
+  const ejectModule = join(context.calavera.packageDirectory, "src", "eject.js");
+  const { footprintIn } = await import(pathToFileURL(ejectModule).href);
+  /** @type {string[]} */
+  const remaining = [];
+  for (const path of /** @type {string[]} */ (await footprintIn(project))) {
+    const absolute = join(project, path);
+    if (!(await stat(absolute)).isDirectory()) {
+      remaining.push(path);
+      continue;
+    }
+    const files = Object.keys(await snapshotDirectory(absolute))
+      .filter((entry) => !entry.endsWith("/"))
+      .map((entry) => relative(project, entry));
+    remaining.push(...(files.length > 0 ? files : [path]));
+  }
+  return remaining;
+}
+
+/**
+ * `eject --dry-run` and `eject --yes` on a copy of the flow project after apply and the commit,
+ * so eject cannot change the project the other checks share.
+ *
+ * @param {RehearsalContext} context
+ */
+function flowEject(context) {
+  return shared(context, "flow-eject", async () => {
+    const source = await flowCommit(context).catch(async () => (await flowApply(context)).project);
+    const project = join(context.dirs.projects, "eject");
+    await rm(project, { recursive: true, force: true });
+    await cp(source, project, { recursive: true, verbatimSymlinks: true });
+    const before = await snapshotProject(project);
+    const json = await context.run(context.calavera.bin, ["eject", "--dry-run", "--json"], {
+      cwd: project,
+    });
+    const dryRun = await context.run(context.calavera.bin, ["eject", "--dry-run"], {
+      cwd: project,
+    });
+    const afterDryRun = await snapshotProject(project);
+    const yes = await context.run(context.calavera.bin, ["eject", "--yes"], { cwd: project });
+    return { project, before, json, dryRun, afterDryRun, yes };
+  });
+}
+
+/** The dry run's report, which every eject check reads. @param {RehearsalContext} context */
+async function ejectPlan(context) {
+  const { json } = await flowEject(context);
+  assertExitZero(json);
+  return parseJson(json);
+}
+
+const ejectChecks = [
+  {
+    id: "eject-dry-run-output",
+    name: "eject --dry-run changes nothing and prints every item once, under headings",
+    issues: ["#678", "#1074"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, before, dryRun, afterDryRun } = await flowEject(context);
+      const report = await ejectPlan(context);
+      assertExitZero(dryRun);
+      await assertUnchanged(context, project, before, dryRun.display, afterDryRun);
+      assertListing(dryRun, namedItems(report));
+    },
+  },
+  {
+    id: "eject-yes-footprint",
+    name: "eject --yes prints every item once, under headings, and leaves only the footprint ADR-0017 keeps and reports",
+    issues: ["#678", "#1074"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, yes } = await flowEject(context);
+      const report = await ejectPlan(context);
+      assertExitZero(yes);
+      assertListing(yes, namedItems(report));
+      const allowed = pathsYesMayLeave(report);
+      const left = (await remainingFootprint(context, project)).filter(
+        (path) => !allowed.some((keep) => path === keep || path.startsWith(`${keep}/`)),
+      );
+      if (left.length > 0) {
+        throw new CheckFailure({
+          expected: `only the footprint ADR-0017 keeps after --yes: ${allowed.join(", ") || "nothing"}`,
+          actual: `still in the project:\n${left.join("\n")}`,
+          command: yes.display,
+        });
+      }
+      // A file eject does not name in .calavera/ or .agents/calavera/ is one Calavera wrote but
+      // eject does not know, so the footprint list in ADR-0017 Decision 2 is behind.
+      if ((report.kept ?? []).length > 0) {
+        throw new CheckFailure({
+          expected: "eject to name every file in Calavera's folders that a fresh project holds",
+          actual: `eject keeps files it does not name: ${report.kept.join(", ")}`,
+          command: (await flowEject(context)).json.display,
+        });
+      }
+    },
+  },
+  {
+    id: "eject-keeps-toolchain",
+    name: "After eject --yes, vp check and every script Calavera added exit 0",
+    issues: ["#678", "#1074"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, yes } = await flowEject(context);
+      assertExitZero(yes);
+      const { scaffoldScripts } = await flowInit(context);
+      const scripts = Object.keys(
+        JSON.parse(await readFile(join(project, "package.json"), "utf8")).scripts ?? {},
+      ).filter((name) => !scaffoldScripts.includes(name));
+      assertExitZero(
+        await context.run("pnpm", ["exec", "vp", "check"], { cwd: project, timeout: 5 * 60_000 }),
+      );
+      for (const name of scripts) {
+        assertExitZero(
+          await context.run("pnpm", ["run", name], { cwd: project, timeout: 5 * 60_000 }),
+        );
+      }
+    },
+  },
+  {
+    // ADR-0017's Consequences: a second run reports nothing to do once only reported items
+    // remain. `--yes` leaves the recipe and the package folders for an interactive approval,
+    // which the rehearsal cannot give, so a second `--yes` may still list those, and only those.
+    id: "eject-second-run",
+    name: "A second eject --yes removes nothing and lists only what the first run left for an interactive approval",
+    issues: ["#678", "#1074"],
+    /** @param {RehearsalContext} context */
+    run: async (context) => {
+      const { project, yes } = await flowEject(context);
+      assertExitZero(yes);
+      const report = await ejectPlan(context);
+      const second = await context.run(context.calavera.bin, ["eject", "--yes", "--json"], {
+        cwd: project,
+      });
+      assertExitZero(second);
+      const result = parseJson(second);
+      const expected = new Set(
+        (report.items ?? [])
+          .filter(
+            (/** @type {{ matchesRecords: boolean, keptRecord?: true }} */ item) =>
+              item.keptRecord || !item.matchesRecords,
+          )
+          .map((/** @type {{ path: string }} */ { path }) => path),
+      );
+      if (result.status === "nothing-to-do") return;
+      /** @type {Array<{ path: string, outcome: string }>} */
+      const items = result.items ?? [];
+      const problems = [
+        ...items
+          .filter(({ path, outcome }) => outcome !== "left" || !expected.has(path))
+          .map(({ path, outcome }) => `${path} (${outcome})`),
+        ...[...expected]
+          .filter((path) => !items.some((item) => item.path === path))
+          .map((path) => `${path} (not listed)`),
+      ];
+      if (problems.length > 0) {
+        throw new CheckFailure({
+          expected: `a second eject to have nothing to remove, and to list only what the first left: ${[...expected].join(", ") || "nothing"}`,
+          actual: `status ${result.status}:\n${problems.join("\n")}`,
+          command: second.display,
+        });
+      }
+    },
+  },
+];
+
 export const cliExperienceChecks = [
   ...launchers.map(newProjectCheck),
   ...flowChecks,
   ...commitChecks,
   versionNoticeCheck,
   ...driftChecks,
+  ...ejectChecks,
 ];

@@ -1034,3 +1034,388 @@ test("apply-summary-cache reports a git check-ignore error as an error, with its
     return true;
   });
 });
+
+// ---------------------------------------------------------------------------------------------
+// The eject checks (#1074): a stubbed CLI over a real project directory, so the footprint that
+// remains is read by the same `footprintIn` the release candidate ships.
+
+const EJECT_PLAN = [
+  { kind: "state", path: ".calavera/state.json", matchesRecords: true },
+  { kind: "lock", path: ".calavera/artifacts.lock.json", matchesRecords: true, keptRecord: true },
+  { kind: "recipe", path: "calavera.config.json", matchesRecords: false },
+  { kind: "package-folder", path: ".calavera/packages/skill-x/1.0.0", matchesRecords: false },
+  { kind: "mcp-notes", path: ".agents/calavera/mcp.md", matchesRecords: true },
+];
+const EJECT_REMOVES = EJECT_PLAN.filter((item) => item.matchesRecords && !item.keptRecord);
+const EJECT_LEAVES = EJECT_PLAN.filter((item) => !EJECT_REMOVES.includes(item));
+
+const ejectDryRunOutput = [
+  "Dry run complete. Nothing was changed. eject would remove 5 items.",
+  "",
+  "Would remove:",
+  ...EJECT_PLAN.map(({ path }) => `  ${path} (unedited)`),
+].join("\n");
+const ejectYesOutput = [
+  "Removed 2 items; --yes left 2 items for an interactive approval.",
+  "",
+  "Removed:",
+  ...EJECT_REMOVES.map(({ path }) => `  ${path} (unedited)`),
+  "",
+  "Left for an interactive run:",
+  ...EJECT_LEAVES.map(({ path }) => `  ${path} (edits cannot be detected)`),
+].join("\n");
+
+/**
+ * A copy of the flow project with a Calavera footprint, and a context whose CLI answers like
+ * `eject` does. Each option breaks one thing the eject checks must notice.
+ *
+ * @param {{
+ *   yesKeeps?: string[],
+ *   extraFiles?: string[],
+ *   dryRunOutput?: string,
+ *   yesOutput?: string,
+ *   dryRunWrites?: string[],
+ *   failing?: string,
+ *   exitCodes?: Record<string, number>,
+ *   extraDirectories?: string[],
+ *   plan?: typeof EJECT_PLAN,
+ *   reported?: string[],
+ *   commitFails?: boolean,
+ *   secondRun?: Record<string, unknown>,
+ *   kept?: string[],
+ * }} [options]
+ */
+async function ejectFixture(options = {}) {
+  const root = await mkdtemp(join(scratch, "eject-"));
+  const source = join(root, "source");
+  for (const dir of ["projects", "tmp"]) await mkdir(join(root, dir));
+  const files = {
+    "package.json": JSON.stringify({ scripts: { build: "vp pack", quality: "vp check" } }),
+    ".calavera/state.json": "{}\n",
+    ".calavera/artifacts.lock.json": "{}\n",
+    ".calavera/packages/skill-x/1.0.0/package.json": "{}\n",
+    "calavera.config.json": "{}\n",
+    ".agents/calavera/mcp.md": "# MCP\n",
+  };
+  for (const path of [...Object.keys(files), ...(options.extraFiles ?? [])]) {
+    await mkdir(join(source, path, ".."), { recursive: true });
+    await writeFile(join(source, path), files[/** @type {keyof typeof files} */ (path)] ?? "x\n");
+  }
+  for (const path of options.extraDirectories ?? [])
+    await mkdir(join(source, path), { recursive: true });
+  const plan = options.plan ?? EJECT_PLAN;
+  /** @type {string[]} */
+  const calls = [];
+  /** @type {Array<{ cwd: string, timeout?: number }>} */
+  const pnpmOptions = [];
+  const result = (
+    /** @type {string} */ display,
+    /** @type {number} */ exitCode,
+    /** @type {string} */ stdout,
+  ) => ({ exitCode, signal: null, timedOut: false, stdout, stderr: "", output: stdout, display });
+  const context = {
+    dirs: { projects: join(root, "projects"), tmp: join(root, "tmp") },
+    shared: new Map([
+      [
+        "flow-commit",
+        options.commitFails ? Promise.reject(new Error("commit failed")) : Promise.resolve(source),
+      ],
+      ["flow-apply", Promise.resolve({ project: source })],
+      ["flow-init", Promise.resolve({ scaffoldScripts: ["build"] })],
+    ]),
+    calavera: {
+      bin: "create-project-calavera",
+      packageDirectory: fileURLToPath(new URL("../packages/cli", import.meta.url)),
+    },
+    run: async (
+      /** @type {string} */ command,
+      /** @type {string[]} */ args,
+      /** @type {{ cwd: string, timeout?: number }} */ { cwd, timeout },
+    ) => {
+      const display = `${command} ${args.join(" ")}`;
+      calls.push(display);
+      // Every command runs in the copy, never in the project the other checks share.
+      if (cwd !== join(root, "projects", "eject")) return result(display, 126, `ran in ${cwd}`);
+      const exitCode = options.exitCodes?.[args.join(" ")] ?? 0;
+      if (command === "pnpm") {
+        pnpmOptions.push({ cwd, timeout });
+        return result(display, display.endsWith(options.failing ?? "\0") ? 1 : 0, "ran");
+      }
+      if (args.join(" ") === "eject --dry-run --json") {
+        const report = {
+          status: "dry-run",
+          items: plan,
+          reported: (options.reported ?? []).map((path) => ({ path, reason: "edited" })),
+          kept: options.kept ?? [],
+        };
+        return result(display, exitCode, JSON.stringify(report));
+      }
+      if (args.join(" ") === "eject --dry-run") {
+        for (const path of options.dryRunWrites ?? [])
+          await writeFile(join(cwd, path), "changed\n");
+        return result(display, exitCode, options.dryRunOutput ?? ejectDryRunOutput);
+      }
+      if (args.join(" ") === "eject --yes") {
+        for (const { path } of EJECT_REMOVES) {
+          if (!(options.yesKeeps ?? []).includes(path)) await rm(join(cwd, path), { force: true });
+        }
+        return result(display, exitCode, options.yesOutput ?? ejectYesOutput);
+      }
+      if (args.join(" ") === "eject --yes --json") {
+        const report = options.secondRun ?? {
+          status: "ejected",
+          items: EJECT_LEAVES.map((item) => ({ ...item, outcome: "left" })),
+          reported: [],
+          kept: [],
+        };
+        return result(display, exitCode, JSON.stringify(report));
+      }
+      return result(display, 127, `unexpected command ${display}`);
+    },
+  };
+  return { context, calls, pnpmOptions, source };
+}
+
+/** @param {string} id */
+function ejectCheck(id) {
+  const check = cliExperienceChecks.find((candidate) => candidate.id === id);
+  assert.ok(check, `no check ${id}`);
+  return check;
+}
+
+/** @param {Promise<unknown>} promise @param {RegExp} expected @param {RegExp} actual */
+async function assertCheckFails(promise, expected, actual) {
+  await assert.rejects(promise, (error) => {
+    assert.ok(error instanceof CheckFailure, String(error));
+    assert.match(error.expected, expected);
+    assert.match(error.actual, actual);
+    return true;
+  });
+}
+
+const EJECT_CHECK_IDS = [
+  "eject-dry-run-output",
+  "eject-yes-footprint",
+  "eject-keeps-toolchain",
+  "eject-second-run",
+];
+
+test("the eject checks pass when eject leaves only what ADR-0017 keeps and the toolchain runs (#1074)", async () => {
+  const { context, calls, pnpmOptions, source } = await ejectFixture();
+  for (const id of EJECT_CHECK_IDS) await ejectCheck(id).run(context);
+  // vp check and the scripts run in the ejected copy, with the five-minute limit the pasted
+  // next-step commands get.
+  assert.deepEqual(pnpmOptions, [
+    { cwd: join(context.dirs.projects, "eject"), timeout: 5 * 60_000 },
+    { cwd: join(context.dirs.projects, "eject"), timeout: 5 * 60_000 },
+  ]);
+  assert.deepEqual(calls, [
+    "create-project-calavera eject --dry-run --json",
+    "create-project-calavera eject --dry-run",
+    "create-project-calavera eject --yes",
+    "pnpm exec vp check",
+    "pnpm run quality",
+    "create-project-calavera eject --yes --json",
+  ]);
+  // eject runs on a copy, so it cannot change the project the other checks share.
+  assert.ok(existsSync(join(source, ".calavera/state.json")));
+});
+
+test("the eject checks fail when a footprint item remains that --yes must remove (#1074)", async () => {
+  const kept = await ejectFixture({ yesKeeps: [".agents/calavera/mcp.md"] });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(kept.context),
+    /only the footprint ADR-0017 keeps/,
+    /^\.agents\/calavera\/mcp\.md$/m,
+  );
+  // A package folder the plan never named counts too, although its parent folder may stay.
+  const extra = await ejectFixture({ extraFiles: [".calavera/packages/other/2.0.0/package.json"] });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(extra.context),
+    /only the footprint ADR-0017 keeps/,
+    /^\.calavera\/packages\/other\/2\.0\.0\/package\.json$/m,
+  );
+  // A file in Calavera's folders that eject does not name is a footprint eject does not know.
+  const unknown = await ejectFixture({ kept: [".calavera/new-record.json"] });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(unknown.context),
+    /eject to name every file in Calavera's folders/,
+    /\.calavera\/new-record\.json/,
+  );
+});
+
+test("the eject checks fail when eject prints an item twice or the dry run changes the project (#1074)", async () => {
+  const twice = await ejectFixture({
+    dryRunOutput: `${ejectDryRunOutput}\n  calavera.config.json (again)`,
+  });
+  await assertCheckFails(
+    ejectCheck("eject-dry-run-output").run(twice.context),
+    /printed once, under a heading/,
+    /calavera\.config\.json is printed 2 times/,
+  );
+  const yesTwice = await ejectFixture({
+    yesOutput: `${ejectYesOutput}\n  .calavera/state.json (again)`,
+  });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(yesTwice.context),
+    /printed once, under a heading/,
+    /\.calavera\/state\.json is printed 2 times/,
+  );
+  const writes = await ejectFixture({ dryRunWrites: ["calavera.config.json", "package.json"] });
+  await assertCheckFails(
+    ejectCheck("eject-dry-run-output").run(writes.context),
+    /a dry run to leave the project unchanged/,
+    /^changed: (calavera\.config\.json, package\.json|package\.json, calavera\.config\.json)$/,
+  );
+});
+
+test("the eject checks fail when vp check or a generated script fails after eject (#1074)", async () => {
+  const check = await ejectFixture({ failing: "exec vp check" });
+  await assertCheckFails(
+    ejectCheck("eject-keeps-toolchain").run(check.context),
+    /exit code 0/,
+    /exit code 1/,
+  );
+  const script = await ejectFixture({ failing: "run quality" });
+  await assertCheckFails(
+    ejectCheck("eject-keeps-toolchain").run(script.context),
+    /exit code 0/,
+    /exit code 1/,
+  );
+  // Only the scripts Calavera added run: the scaffold's own `build` is not Calavera's to prove.
+  assert.ok(!script.calls.includes("pnpm run build"));
+});
+
+test("a second eject passes with nothing to do, and fails when it removes or leaves something new (#1074)", async () => {
+  const done = await ejectFixture({
+    secondRun: { status: "nothing-to-do", items: [], reported: [], kept: [] },
+  });
+  await ejectCheck("eject-second-run").run(done.context);
+  const removes = await ejectFixture({
+    secondRun: {
+      status: "ejected",
+      items: [
+        ...EJECT_LEAVES.map((item) => ({ ...item, outcome: "left" })),
+        { ...EJECT_REMOVES[0], outcome: "removed" },
+      ],
+      reported: [],
+      kept: [],
+    },
+  });
+  await assertCheckFails(
+    ejectCheck("eject-second-run").run(removes.context),
+    /a second eject to have nothing to remove/,
+    /\.calavera\/state\.json \(removed\)/,
+  );
+  const differs = await ejectFixture({
+    secondRun: {
+      status: "ejected",
+      items: [{ ...EJECT_PLAN[2], outcome: "left" }],
+      reported: [],
+      kept: [],
+    },
+  });
+  await assertCheckFails(
+    ejectCheck("eject-second-run").run(differs.context),
+    /a second eject to have nothing to remove/,
+    /\.calavera\/artifacts\.lock\.json \(not listed\)/,
+  );
+});
+
+test("the eject checks name exactly what remains, and allow what eject keeps and reports (#1074)", async () => {
+  const { context } = await ejectFixture({
+    yesKeeps: [".calavera/state.json", ".agents/calavera/mcp.md"],
+  });
+  await assert.rejects(ejectCheck("eject-yes-footprint").run(context), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.equal(
+      error.expected,
+      "only the footprint ADR-0017 keeps after --yes: .calavera/artifacts.lock.json, calavera.config.json, .calavera/packages/skill-x/1.0.0",
+    );
+    assert.equal(
+      error.actual,
+      "still in the project:\n.calavera/state.json\n.agents/calavera/mcp.md",
+    );
+    return true;
+  });
+  // Footprint text eject keeps and reports may stay.
+  const reported = await ejectFixture({
+    yesKeeps: [".agents/calavera/mcp.md"],
+    reported: [".agents/calavera/mcp.md"],
+  });
+  await ejectCheck("eject-yes-footprint").run(reported.context);
+  // An empty folder in the footprint still counts.
+  const empty = await ejectFixture({ extraDirectories: [".calavera/cache"] });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(empty.context),
+    /only the footprint ADR-0017 keeps/,
+    /^\.calavera\/cache$/m,
+  );
+  // Only the recipe and package folders may stay unmatched: any other item --yes leaves means
+  // eject took Calavera's own text for an edit in a project nobody edited.
+  const misread = await ejectFixture({
+    plan: EJECT_PLAN.map((item) =>
+      item.kind === "mcp-notes" ? { ...item, matchesRecords: false } : item,
+    ),
+    yesKeeps: [".agents/calavera/mcp.md"],
+  });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(misread.context),
+    /only the footprint ADR-0017 keeps/,
+    /^\.agents\/calavera\/mcp\.md$/m,
+  );
+  const unknown = await ejectFixture({ kept: [".calavera/a.json", ".calavera/b.json"] });
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(unknown.context),
+    /eject to name every file/,
+    /: \.calavera\/a\.json, \.calavera\/b\.json$/,
+  );
+});
+
+test("each eject check fails when the eject run it reads exits with an error (#1074)", async () => {
+  for (const [args, ids] of /** @type {Array<[string, string[]]>} */ ([
+    ["eject --dry-run --json", EJECT_CHECK_IDS.filter((id) => id !== "eject-keeps-toolchain")],
+    ["eject --dry-run", ["eject-dry-run-output"]],
+    ["eject --yes", ["eject-yes-footprint", "eject-keeps-toolchain", "eject-second-run"]],
+    ["eject --yes --json", ["eject-second-run"]],
+  ])) {
+    for (const id of ids) {
+      const { context } = await ejectFixture({ exitCodes: { [args]: 1 } });
+      await assertCheckFails(ejectCheck(id).run(context), /^exit code 0$/, /exit code 1/);
+    }
+  }
+});
+
+test("the eject checks use the applied project when the commit failed (#1074)", async () => {
+  const { context } = await ejectFixture({ commitFails: true });
+  for (const id of EJECT_CHECK_IDS) await ejectCheck(id).run(context);
+});
+
+test("a second eject fails when it removes or fails an item the first run left (#1074)", async () => {
+  const { context } = await ejectFixture({
+    secondRun: {
+      status: "failed",
+      items: EJECT_LEAVES.map((item, index) => ({
+        ...item,
+        outcome: index === 0 ? "failed" : "left",
+      })),
+    },
+  });
+  await assert.rejects(ejectCheck("eject-second-run").run(context), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.equal(
+      error.expected,
+      "a second eject to have nothing to remove, and to list only what the first left: .calavera/artifacts.lock.json, calavera.config.json, .calavera/packages/skill-x/1.0.0",
+    );
+    assert.equal(error.actual, "status failed:\n.calavera/artifacts.lock.json (failed)");
+    return true;
+  });
+  const two = await ejectFixture({
+    secondRun: { status: "ejected", items: [] },
+  });
+  await assertCheckFails(
+    ejectCheck("eject-second-run").run(two.context),
+    /nothing to remove/,
+    /\(not listed\)\n.*\(not listed\)\n.*\(not listed\)$/,
+  );
+});

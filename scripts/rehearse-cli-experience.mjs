@@ -798,6 +798,7 @@ async function prepareRun(dirs, { mode, pins, versions, isolation }) {
         version: calavera.version,
         bin: join(dirs.tools, "node_modules", ".bin", "create-project-calavera"),
         mcpBin: join(dirs.tools, "node_modules", ".bin", "create-project-calavera-mcp"),
+        packageDirectory: join(dirs.tools, "node_modules", "create-project-calavera"),
       },
       run,
       runOrThrow,

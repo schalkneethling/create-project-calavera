@@ -23,6 +23,7 @@ This section is the live plan. The briefs describe where the projects end up; th
 3. After apply and a commit through the Vite+ pre-commit hook, `git status` is clean: the cache folder does not appear, the apply summary says why, and the state file is committed as apply wrote it (#838, #841).
 4. A Calavera older than the published `latest` prints the version notice (#675).
 5. The drift tests pass for the MCP tool list and the agent prompt (#839, #840).
+6. On the item 2 project after the commit, `eject --dry-run` changes nothing, and `eject --dry-run` and `eject --yes` print every item once, under headings. Afterward, only the footprint that ADR-0017's Consequences keep and report remains, `vp check` and every script Calavera added exit 0, and a second `eject --yes` removes nothing (#678, #1074).
 
 The owner asked on 2026-11-14 for the rehearsal to be automated, deterministic, and idempotent, so it can run more often than once per release (#918).
 
