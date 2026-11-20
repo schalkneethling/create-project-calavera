@@ -5,6 +5,7 @@
 // tools to look for, are checked the same way. The generated `.agents/calavera/mcp.md` list is
 // not checked here yet: changing its text waits for #934.
 // #964: the workflow doc's WebMCP list is checked against the tools the Composer registers.
+// #996: the README's WebMCP list is checked the same way.
 import { execFile } from "node:child_process";
 import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
@@ -31,6 +32,7 @@ const README_ORDER_MARKER = "in this order:";
 const SKILL_MARKER = "Look for tools named";
 const WORKFLOW_DOC_MCP_MARKER = "project-local apply tools:";
 const WORKFLOW_DOC_WEBMCP_MARKER = "but not project inspection or apply:";
+const README_WEBMCP_MARKER = "for the MCP recipe composition workflow:";
 const TOOL_NAME_PATTERN = /\b[a-z]+(?:_[a-z]+)+\b/g;
 
 /**
@@ -178,6 +180,15 @@ test("the agent-first workflow doc's WebMCP list names every tool the Composer r
       WORKFLOW_DOC_WEBMCP_MARKER,
       "docs/agent-first-calavera-workflow.md",
     ),
+  );
+
+  assert.deepEqual(documented, (await composerRegisteredToolNames()).sort());
+});
+
+test("the README's WebMCP list names every tool the Composer registers, and no others", async () => {
+  const readme = await readFile(readmeUrl, "utf8");
+  const documented = toolNamesIn(
+    numberedListAfterMarker(readme, README_WEBMCP_MARKER, "README.md"),
   );
 
   assert.deepEqual(documented, (await composerRegisteredToolNames()).sort());
