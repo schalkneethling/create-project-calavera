@@ -44,8 +44,8 @@
   },
   "scripts": {
     "schema:check": "node --test scripts/check-config-schema.test.mjs scripts/check-artifact-contracts.test.mjs",
-    "test": "node --test scripts/*.test.mjs",
-    "smoke:node-floor": "node scripts/node-floor-smoke.mjs",
+    "test": "node --import ./scripts/no-version-check.mjs --test scripts/*.test.mjs",
+    "smoke:node-floor": "node --import ./scripts/no-version-check.mjs scripts/node-floor-smoke.mjs",
     "publish:check": "publint"
   },
   "dependencies": {
@@ -56,6 +56,7 @@
     "editorconfig": "^3.0.2",
     "execa": "^10.2.1",
     "jsonc-parser": "^3.3.1",
+    "semver": "7.8.6",
     "smol-toml": "^1.9.1",
     "yaml": "^2.9.1",
     "zod": "^4.6.7"

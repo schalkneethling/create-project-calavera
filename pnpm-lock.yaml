@@ -204,6 +204,9 @@ importers:
       jsonc-parser:
         specifier: ^3.3.1
         version: 3.3.1
+      semver:
+        specifier: 7.8.6
+        version: 7.8.6
       smol-toml:
         specifier: ^1.9.1
         version: 1.9.1

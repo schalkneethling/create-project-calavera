@@ -894,6 +894,38 @@ agent client starts. A client does not always pass the variables of your shell t
 With the switch on, a cause whose text repeats an earlier message is kept with an empty message, so
 that its stack is still shown.
 
+## The Version Notice
+
+A package manager can run an older copy of Calavera that it installed earlier: `npm create
+project-calavera` reuses a cached copy without saying so. To tell you when that happens, each run
+asks the npm registry which version the `latest` dist-tag names. When the running version is older,
+Calavera prints a notice on standard error after the command's own output, whether the command
+succeeded or failed. The notice names both versions and repeats your command pinned to the `latest`
+version, so you can run it as printed. When Calavera runs from your project's own dependencies, the
+notice adds that the dependency is unchanged and gives the command that updates it. The notice only
+informs: the command runs to the end with the installed version, and the exit code is unchanged.
+
+The check asks the registry and sends the credentials that your user and project `.npmrc` files and
+`npm_config_*` variables name, and it follows the `HTTPS_PROXY`, `HTTP_PROXY`, and `NO_PROXY`
+environment variables. It does not yet read the registry settings of Yarn 2 or later or of Bun, or
+proxy settings that exist only in `.npmrc`. The check waits at most 1.5 seconds and writes no file.
+A check that fails or runs out of time prints nothing; set `CALAVERA_DEBUG` to `1` or `true` to see
+why.
+
+These runs skip the check:
+
+- any command with `--json`
+- `--help`
+- `artifacts status` and `artifacts doctor` without `--check-updates`, which contact no registry
+- the MCP server
+
+To turn the check off, set the `CALAVERA_NO_VERSION_CHECK` environment variable to `1` or `true`.
+Calavera then makes no request and prints no notice.
+
+```bash
+CALAVERA_NO_VERSION_CHECK=1 npx create-project-calavera@<version> apply
+```
+
 ## Vite+ And Delta Workflows
 
 Calavera keeps generated package scripts as ordinary tool commands. It can add
