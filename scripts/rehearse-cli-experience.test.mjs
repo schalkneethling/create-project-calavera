@@ -1273,13 +1273,13 @@ test("the eject checks fail when vp check or a generated script fails after ejec
   const check = await ejectFixture({ failing: "exec vp check" });
   await assertCheckFails(
     ejectCheck("eject-keeps-toolchain").run(check.context),
-    /exit code 0/,
+    /^pnpm exec vp check to exit 0 after eject --yes$/,
     /exit code 1/,
   );
   const script = await ejectFixture({ failing: "run quality" });
   await assertCheckFails(
     ejectCheck("eject-keeps-toolchain").run(script.context),
-    /exit code 0/,
+    /^pnpm run quality to exit 0 after eject --yes$/,
     /exit code 1/,
   );
   // Only the scripts Calavera added run: the scaffold's own `build` is not Calavera's to prove.
@@ -1287,10 +1287,20 @@ test("the eject checks fail when vp check or a generated script fails after ejec
 });
 
 test("a second eject passes with nothing to do, and fails when it removes or leaves something new (#1074)", async () => {
+  const nothingToDo = { status: "nothing-to-do", items: [], reported: [], kept: [] };
+  // Nothing to do is right only when the first run left nothing.
   const done = await ejectFixture({
-    secondRun: { status: "nothing-to-do", items: [], reported: [], kept: [] },
+    plan: EJECT_PLAN.map((item) => ({ ...item, matchesRecords: true, keptRecord: undefined })),
+    secondRun: nothingToDo,
   });
   await ejectCheck("eject-second-run").run(done.context);
+  // Otherwise --yes removed the recipe, a package folder, or a record it had to leave.
+  const overRemoved = await ejectFixture({ secondRun: nothingToDo });
+  await assertCheckFails(
+    ejectCheck("eject-second-run").run(overRemoved.context),
+    /a second eject to have nothing to remove/,
+    /^status nothing-to-do:\n\.calavera\/artifacts\.lock\.json \(not listed\)\ncalavera\.config\.json \(not listed\)/,
+  );
   const removes = await ejectFixture({
     secondRun: {
       status: "ejected",
@@ -1417,5 +1427,22 @@ test("a second eject fails when it removes or fails an item the first run left (
     ejectCheck("eject-second-run").run(two.context),
     /nothing to remove/,
     /\(not listed\)\n.*\(not listed\)\n.*\(not listed\)$/,
+  );
+});
+
+test("the footprint check reads footprintIn from the release candidate's own eject.js (#1074)", async () => {
+  const { context } = await ejectFixture();
+  const candidate = await mkdtemp(join(scratch, "candidate-"));
+  await mkdir(join(candidate, "src"));
+  await writeFile(
+    join(candidate, "src", "eject.js"),
+    'export async function footprintIn() { return ["candidate-only.json"]; }\n',
+  );
+  await writeFile(join(context.dirs.projects, "..", "source", "candidate-only.json"), "{}\n");
+  context.calavera.packageDirectory = candidate;
+  await assertCheckFails(
+    ejectCheck("eject-yes-footprint").run(context),
+    /only the footprint ADR-0017 keeps/,
+    /^candidate-only\.json$/m,
   );
 });

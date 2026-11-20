@@ -7,7 +7,7 @@
 // notice from #675), a check asserts the property Section 0 states, not a guessed snapshot.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { cp, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
@@ -1175,8 +1175,9 @@ const KINDS_YES_LEAVES = new Set(["recipe", "package-folder"]);
 /**
  * The paths that may remain after `eject --yes`, read from the dry run's JSON: what ADR-0017's
  * Consequences keep, which is the recipe, the package folders, the records `--yes` keeps while one
- * of those needs it (`keptRecord`), and the footprint text eject keeps and reports. Any other item
- * `--yes` leaves would mean eject took Calavera's own text in a fresh project for an edit.
+ * of those needs it (`keptRecord`), and the footprint text eject keeps and reports. The rehearsal
+ * project has no MCP harness (`--mcp-harness skip`) and nobody edits it, so any other item `--yes`
+ * leaves, such as an MCP entry whose rewrite carries a note (Decision 5), fails the check.
  *
  * @param {{ items?: Array<{ kind: string, path: string, matchesRecords: boolean, keptRecord?: true }>, reported?: Array<{ path: string }> }} report
  */
@@ -1207,7 +1208,8 @@ async function remainingFootprint(context, project) {
   const remaining = [];
   for (const path of /** @type {string[]} */ (await footprintIn(project))) {
     const absolute = join(project, path);
-    if (!(await stat(absolute)).isDirectory()) {
+    // lstat, not stat: a symbolic link, even a dangling one, is a footprint path of its own.
+    if (!(await lstat(absolute)).isDirectory()) {
       remaining.push(path);
       continue;
     }
@@ -1309,13 +1311,15 @@ const ejectChecks = [
       const scripts = Object.keys(
         JSON.parse(await readFile(join(project, "package.json"), "utf8")).scripts ?? {},
       ).filter((name) => !scaffoldScripts.includes(name));
-      assertExitZero(
-        await context.run("pnpm", ["exec", "vp", "check"], { cwd: project, timeout: 5 * 60_000 }),
-      );
-      for (const name of scripts) {
-        assertExitZero(
-          await context.run("pnpm", ["run", name], { cwd: project, timeout: 5 * 60_000 }),
-        );
+      for (const args of [["exec", "vp", "check"], ...scripts.map((name) => ["run", name])]) {
+        const result = await context.run("pnpm", args, { cwd: project, timeout: 5 * 60_000 });
+        if (result.exitCode !== 0) {
+          throw new CheckFailure({
+            expected: `pnpm ${args.join(" ")} to exit 0 after eject --yes`,
+            actual: `${describeExit(result)}\n${tail(result.output)}`,
+            command: result.display,
+          });
+        }
       }
     },
   },
@@ -1344,7 +1348,8 @@ const ejectChecks = [
           )
           .map((/** @type {{ path: string }} */ { path }) => path),
       );
-      if (result.status === "nothing-to-do") return;
+      // nothing-to-do counts only when the first run left nothing: otherwise --yes removed items
+      // ADR-0017 Decision 5 says it must leave, and each one shows below as "not listed".
       /** @type {Array<{ path: string, outcome: string }>} */
       const items = result.items ?? [];
       const problems = [
