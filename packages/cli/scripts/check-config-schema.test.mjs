@@ -1393,22 +1393,15 @@ test("integrationOptions description names only Stylelint Baseline fields the va
   assert.ok(match, "the description names the Stylelint Baseline fields");
   const namedFields = match.slice(1);
 
-  // The validator rejects a field it does not know with this message before it checks any value,
-  // so an undefined value isolates the field-name check.
-  for (const field of namedFields) {
-    assert.doesNotThrow(() => {
-      try {
-        normalizeIntegrationOptions({ "stylelint-baseline": { [field]: undefined } }, [
-          "stylelint-baseline",
-        ]);
-      } catch (error) {
-        if (/Unknown integrationOptions\.stylelint-baseline fields/.test(error.message)) {
-          throw error;
-        }
-      }
-    }, `the validator accepts the named field ${field}`);
-  }
-  assert.deepEqual(namedFields, ["available", "severity"]);
+  // A named field without a valid value here stays undefined, and the validator rejects the
+  // unknown field name, so the call must succeed and return every named field.
+  const validValues = { available: "widely", severity: "error" };
+  const options = Object.fromEntries(namedFields.map((field) => [field, validValues[field]]));
+  const normalized = normalizeIntegrationOptions({ "stylelint-baseline": options }, [
+    "stylelint-baseline",
+  ]);
+  assert.deepEqual(normalized["stylelint-baseline"], options);
+  assert.deepEqual(namedFields.toSorted(), ["available", "severity"]);
 });
 
 test("standard MCP workflow exposes dry-run and apply tools", () => {
