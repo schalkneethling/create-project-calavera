@@ -145,9 +145,8 @@ export function initApplyManifestChoiceError(decision) {
 /**
  * The error apply-at-ancestor stops with when the ancestor's directory already has a Calavera
  * recipe or state, because applying this recipe there would replace another project's recipe or
- * state. The message names what was found: the bootstrap, `artifacts install`, and
- * `artifacts update` write the state file without a recipe, so state alone does not show that the
- * directory has a recipe (#1038).
+ * state. The message names what was found: the bootstrap that `--init` runs writes the state
+ * file without a recipe, so state alone does not show that the directory has a recipe (#1038).
  *
  * @param {ManifestDecision} decision
  * @param {string} existing The recipe or state file found in the ancestor's directory.
@@ -155,11 +154,14 @@ export function initApplyManifestChoiceError(decision) {
  */
 export function ancestorAlreadyManagedError(decision, existing, kind) {
   const ancestorDirectory = dirname(decision.ancestor.manifestPath);
-  const found =
+  const [found, remedy] =
     kind === "recipe"
-      ? "the directory has a Calavera recipe of its own"
-      : "Calavera has already recorded state for that directory";
+      ? ["the directory has a Calavera recipe of its own", "with its own recipe"]
+      : [
+          "Calavera has already recorded state for that directory",
+          "with a recipe for that directory",
+        ];
   return new Error(
-    `apply-at-ancestor would apply this recipe in ${ancestorDirectory}, but ${existing} already exists there, so ${found}. Run apply in ${ancestorDirectory} with its own recipe instead, or choose create-here. Calavera stopped before writing anything.`,
+    `apply-at-ancestor would apply this recipe in ${ancestorDirectory}, but ${existing} already exists there, so ${found}. Run apply in ${ancestorDirectory} ${remedy} instead, or choose create-here. Calavera stopped before writing anything.`,
   );
 }

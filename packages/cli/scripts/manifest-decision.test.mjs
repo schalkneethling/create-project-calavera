@@ -91,6 +91,7 @@ test("each error says what stopped and that nothing was written", () => {
     ),
     recipeStop,
   );
+  assert.match(recipeStop, /with its own recipe instead, or choose create-here\./);
   assert.match(recipeStop, writesNothing);
   // #1038: state alone does not show a recipe, so the message names the state file instead.
   const statePath = join(root, ".calavera", "state.json");
@@ -101,7 +102,8 @@ test("each error says what stopped and that nothing was written", () => {
     ),
     stateStop,
   );
-  assert.doesNotMatch(stateStop, /recipe of its own/);
+  assert.doesNotMatch(stateStop, /recipe of its own|its own recipe/);
+  assert.match(stateStop, /with a recipe for that directory instead, or choose create-here\./);
   assert.match(stateStop, writesNothing);
 });
 

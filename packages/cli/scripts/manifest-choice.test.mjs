@@ -611,8 +611,8 @@ test("apply-at-ancestor stops before writing anything when the ancestor already 
 });
 
 test("apply-at-ancestor stops on state without a recipe and names the state file, not a recipe", async () => {
-  // #1038: the bootstrap, `artifacts install`, and `artifacts update` write the state file without
-  // a recipe, so the stop must not claim the ancestor has a recipe of its own.
+  // #1038: the bootstrap that `--init` runs writes the state file without a recipe, so the stop
+  // must not claim the ancestor has a recipe of its own.
   await using fixture = await directoryUnderUnmanagedProject();
   await mkdir(join(fixture.root, ".calavera"));
   await writeFile(join(fixture.root, ".calavera", "state.json"), json(createEmptyState()));
@@ -638,6 +638,7 @@ test("apply-at-ancestor stops on state without a recipe and names the state file
       stopped,
     );
     assert.doesNotMatch(stopped, /recipe of its own/);
+    assert.match(stopped, /with a recipe for that directory instead, or choose create-here\./);
     assert.match(stopped, /Calavera stopped before writing anything\.$/);
   }
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
