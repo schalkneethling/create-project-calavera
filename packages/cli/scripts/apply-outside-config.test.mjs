@@ -584,6 +584,29 @@ for (const dryRun of [true, false]) {
   );
 }
 
+for (const dryRun of [true, false]) {
+  test(`update: a directory at calavera.config.json is refused before any write (dryRun: ${dryRun})`, async () => {
+    await using fixture = await downloadedRecipe();
+    const target = join(fixture.project, "calavera.config.json");
+    await mkdir(target);
+    const before = await snapshotDirectory(fixture.project);
+
+    await assert.rejects(
+      inDirectory(fixture.project, () =>
+        applyRecipe(applyOptions(fixture.source, { dryRun, command: "update" })),
+      ),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.ok(error.message.startsWith("update refused:"), error.message);
+        assert.ok(error.message.includes(target), error.message);
+        assert.match(error.message, /is a directory or other entry, not a regular file/);
+        return true;
+      },
+    );
+    assert.deepEqual(await snapshotDirectory(fixture.project), before);
+  });
+}
+
 test("update in a directory without package.json is refused before it reads the recipe", async () => {
   // In-process as well as through the CLI above, so a mutation test sees the check.
   await using fixture = await downloadedRecipe({ withPackageJSON: false });

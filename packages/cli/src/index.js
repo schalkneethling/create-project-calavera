@@ -3206,11 +3206,11 @@ async function isInWorkingDirectory(path) {
  * #603 and the owner decision of 2026-11-14: `apply --config <path>` with a recipe outside the
  * project copies it, byte for byte, into the project root as calavera.config.json. `update`
  * applies the recipe as apply does, so it copies by the same rule (#1025), and `command` names
- * the command the person ran in each refusal. The project
- * root is the working directory, and it must contain a package.json; apply does not offer to
- * create one there, because a missing package.json more likely means the wrong directory. A
- * different calavera.config.json already in the project is a hard stop, because apply never
- * replaces a local recipe. Both checks run before anything is planned, in the dry run as well.
+ * the command the person ran in each refusal. The project root is the working directory, and it
+ * must contain a package.json; neither command offers to create one there, because a missing
+ * package.json more likely means the wrong directory. A different calavera.config.json already in
+ * the project is a hard stop, because neither command replaces a local recipe. Both checks run
+ * before anything is planned, in the dry run as well.
  *
  * @param {string} source Absolute recipe path.
  * @param {"apply" | "update"} command
