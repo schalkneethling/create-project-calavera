@@ -6,6 +6,7 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
+import { fileURLToPath } from "node:url";
 
 import {
   checkForNewerVersion,
@@ -320,6 +321,7 @@ test("every test entry point that runs the CLI loads the setup module that turns
   for (const [name, script] of [
     ["test", cliPackage.scripts.test],
     ["smoke:node-floor", cliPackage.scripts["smoke:node-floor"]],
+    ["schema:check", cliPackage.scripts["schema:check"]],
     ["release:fixture", rootPackage.scripts["release:fixture"]],
   ]) {
     assert.ok(script.includes(`node --import ${setup} `), `${name}: ${script}`);
@@ -337,4 +339,45 @@ test("every test entry point that runs the CLI loads the setup module that turns
     if (before === undefined) delete process.env.CALAVERA_NO_VERSION_CHECK;
     else process.env.CALAVERA_NO_VERSION_CHECK = before;
   }
+});
+
+test("the adapter names the CLI's package folder and builds apply's install command for the update", async (t) => {
+  const { cliPackageRoot, projectDependencyUpdateCommand } = await import("../src/index.js");
+  // The folder that holds package.json, not src/, so the node_modules test sees the package.
+  assert.equal(cliPackageRoot, fileURLToPath(new URL("../", import.meta.url)));
+
+  const root = await mkdtemp(join(tmpdir(), "calavera-version-notice-update-"));
+  t.after(() => rm(root, { recursive: true, force: true }));
+  /** @param {string} name @param {Record<string, string>} files */
+  const project = async (name, files) => {
+    const directory = join(root, name);
+    await mkdir(directory, { recursive: true });
+    for (const [file, text] of Object.entries(files)) await writeFile(join(directory, file), text);
+    return directory;
+  };
+
+  // The lockfile is found in the captured directory, not the current one.
+  const yarn = await project("yarn", { "package.json": "{}", "yarn.lock": "" });
+  assert.notEqual(process.cwd(), yarn);
+  assert.equal(
+    await projectDependencyUpdateCommand(yarn, "7.0.0"),
+    "yarn add --dev create-project-calavera@7.0.0",
+  );
+
+  const pnpmWorkspace = await project("pnpm", {
+    "package.json": JSON.stringify({ packageManager: "pnpm@11.28.10" }),
+    "pnpm-workspace.yaml": "packages:\n  - packages/*\n",
+  });
+  assert.equal(
+    await projectDependencyUpdateCommand(pnpmWorkspace, "7.0.0"),
+    "pnpm add --save-dev -w create-project-calavera@7.0.0",
+  );
+
+  const vitePlus = await project("vite-plus", {
+    "package.json": JSON.stringify({ devDependencies: { "vite-plus": "1.6.0" } }),
+  });
+  assert.equal(
+    await projectDependencyUpdateCommand(vitePlus, "7.0.0"),
+    "vp add -D create-project-calavera@7.0.0",
+  );
 });

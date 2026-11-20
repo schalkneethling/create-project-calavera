@@ -7221,7 +7221,7 @@ export async function runCli() {
   }
 }
 
-const cliPackageRoot = fileURLToPath(new URL("..", import.meta.url));
+export const cliPackageRoot = fileURLToPath(new URL("..", import.meta.url));
 
 /**
  * Starts the check for a newer version in parallel with the command (ADR-0019 Decision 2), or
@@ -7296,7 +7296,7 @@ function startVersionCheck(options, runArgs) {
  * @param {string} cwd
  * @param {string} latest
  */
-async function projectDependencyUpdateCommand(cwd, latest) {
+export async function projectDependencyUpdateCommand(cwd, latest) {
   const packageJSON = /** @type {PackageJSON} */ (await readJSON(join(cwd, "package.json")));
   const command = devDependencyInstallCommand(
     detectPackageManager(packageJSON, cwd) ?? "npm",

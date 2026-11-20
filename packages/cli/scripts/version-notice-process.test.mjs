@@ -16,8 +16,9 @@ import { VERSION_CHECK_DEADLINE_MS } from "../src/version-notice.js";
 
 const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const NEWER = `${Number(packageJson.version.split(".")[0]) + 1}.0.0`;
-// What a run may take beyond the deadline: process start-up and shutdown on a busy machine.
-const MARGIN_MS = 2_500;
+// What a run may take beyond the deadline: process start-up, the failing command, and shutdown on a
+// busy machine.
+const MARGIN_MS = 3_500;
 
 /**
  * A registry on 127.0.0.1. With `latest`, it answers every package document request with that
@@ -118,9 +119,26 @@ test("a registry that never answers adds at most the deadline and changes no out
   assert.equal(hung.code, off.code);
   assert.equal(hung.stdout, off.stdout);
   assert.equal(hung.stderr, off.stderr);
+});
+
+test("a fast command against a registry that never answers ends at the deadline", async (t) => {
+  const project = await temporaryProject(t);
+  const registry = await startRegistry();
+  t.after(() => registry.close());
+
+  // A command that fails at once, so the deadline, not the command, decides when the run ends.
+  const hung = await runCli(project, ["apply", "--config", "missing.json"], registry.url);
+
+  assert.equal(hung.code, 1, hung.stderr);
+  assert.ok(registry.requests.length > 0, "the check did not reach the registry");
+  // The run waits for the check up to the deadline, and the abort then lets the process exit.
   assert.ok(
-    hung.elapsed < off.elapsed + VERSION_CHECK_DEADLINE_MS + MARGIN_MS,
-    `the run took ${Math.round(hung.elapsed)} ms; without the check, ${Math.round(off.elapsed)} ms`,
+    hung.elapsed >= VERSION_CHECK_DEADLINE_MS - 50,
+    `the run took ${Math.round(hung.elapsed)} ms`,
+  );
+  assert.ok(
+    hung.elapsed < VERSION_CHECK_DEADLINE_MS + MARGIN_MS,
+    `the run took ${Math.round(hung.elapsed)} ms, more than the deadline plus ${MARGIN_MS} ms`,
   );
 });
 
@@ -183,6 +201,7 @@ test("--json, --help, the switch, and an offline artifact command make no reques
     [["--help"], {}],
     [initArgs, { CALAVERA_NO_VERSION_CHECK: "true" }],
     [["artifacts", "status"], {}],
+    [["artifacts", "doctor"], {}],
   ])) {
     const result = await runCli(project, args, registry.url, env);
     assert.ok(!`${result.stdout}${result.stderr}`.includes(NEWER), args.join(" "));

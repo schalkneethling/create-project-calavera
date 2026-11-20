@@ -43,7 +43,7 @@
     "provenance": true
   },
   "scripts": {
-    "schema:check": "node --test scripts/check-config-schema.test.mjs scripts/check-artifact-contracts.test.mjs",
+    "schema:check": "node --import ./scripts/no-version-check.mjs --test scripts/check-config-schema.test.mjs scripts/check-artifact-contracts.test.mjs",
     "test": "node --import ./scripts/no-version-check.mjs --test scripts/*.test.mjs",
     "smoke:node-floor": "node --import ./scripts/no-version-check.mjs scripts/node-floor-smoke.mjs",
     "publish:check": "publint"
