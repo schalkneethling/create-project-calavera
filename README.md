@@ -918,15 +918,19 @@ workspace root, the test step is `vp run -r test`, which runs each member's
 projects keep a `quality` script without `vp` when it runs two or more of
 Calavera's scripts. With only one, such as `npm run knip`, Calavera does not
 generate `quality`, because it would only repeat that script. Apply records
-the `quality` value it writes, or `null`, in `.calavera/state.json` as
-`qualityScript`. When it does not generate `quality`, it removes the existing
+the `quality` value it writes in `.calavera/state.json` as `qualityScript`.
+When it writes none, it keeps a record that still equals the project's
+value, and records `null` otherwise. When it does not generate `quality`, it removes the existing
 `quality` if that record holds exactly the same value, because then Calavera
 wrote it. It keeps any other value, including one an earlier release wrote
 before this record existed, and the dry run says so; when the state file has
 no record and the value matches what an earlier release wrote for the recipe,
-the dry run names the match, so you can remove it. Calavera writes no script
-that repeats a `vp` command on its own, and does not add Playwright or other test
-suites to `quality`. The Stylelint scripts are `lint:styles` and
+the dry run names the match, so you can remove it. A recipe that sets
+`scripts.quality` to `false` leaves `quality` alone: apply neither writes nor
+removes it, and keeps a record that holds the project's value, so a later apply
+that omits a requested `quality` can still remove the value Calavera wrote.
+Calavera writes no script that repeats a `vp` command on its own, and does not
+add Playwright or other test suites to `quality`. The Stylelint scripts are `lint:styles` and
 `lint:styles:fix`. In a project that has `.calavera/state.json` from an earlier
 apply, a later apply renames a `lint` or `lint:fix` script whose value is
 exactly one Calavera wrote with Stylelint; it keeps any other value as your own,
