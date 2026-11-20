@@ -5051,7 +5051,7 @@ export function launchingPackageManager(userAgent) {
 
 /**
  * @param {string} runner
- * @param {PackageManager} runnerPackageManager The package manager Vite+ uses outside an existing project, unless one is forwarded or VP_PACKAGE_MANAGER is set.
+ * @param {PackageManager} runnerPackageManager The package manager Vite+ uses outside an existing project, and inside one where it detects none, unless one is forwarded or VP_PACKAGE_MANAGER is set.
  * @param {string} cwd
  * @param {VitePlusDetection} cwdDetection
  * @param {string} [recipeSource] Absolute path of the recipe `--config` copies.
@@ -5065,7 +5065,7 @@ function newProjectConfirmation(runner, runnerPackageManager, cwd, cwdDetection,
     "- The runner may download Vite+ before it starts.",
     "- Vite+ asks its own questions (template, target directory, and the rest) unless the forwarded flags answer them. Calavera does not answer them.",
     `- Outside an existing project, Vite+ uses ${runnerPackageManager} as the project's package manager unless --package-manager is forwarded after --new.`,
-    "- Inside an existing project, Vite+ uses the package manager it detects there unless --package-manager is forwarded. Inside a monorepo, Vite+ uses the package manager it detects for the monorepo even when --package-manager is forwarded. A VP_PACKAGE_MANAGER environment variable overrides all of these.",
+    `- Inside an existing project, Vite+ uses the package manager it detects there unless --package-manager is forwarded. When that project declares no package manager and has no lockfile or package-manager config file, Vite+ detects none and uses ${runnerPackageManager}. Inside a monorepo, Vite+ uses the package manager it detects for the monorepo even when --package-manager is forwarded. A VP_PACKAGE_MANAGER environment variable overrides all of these.`,
     "- Vite+ installs the project's dependencies. This needs network access, can take minutes, and cannot be skipped.",
     "- If the target directory Vite+ is given is not empty, Vite+ may offer to remove its contents. That choice is Vite+'s.",
     "- Calavera's dry run does not preview what Vite+ writes, and Calavera does not undo it if the scaffold fails.",

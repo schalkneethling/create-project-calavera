@@ -544,10 +544,13 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
   );
   // Vite+ 1.6.0 (dist/create/bin.js) picks VP_PACKAGE_MANAGER first, then, inside a monorepo,
   // the detected package manager before a forwarded one; elsewhere, a forwarded one before the
-  // detected one; then the launcher's (#958).
+  // detected one; then the launcher's (#958). Detection finds nothing in a project that declares
+  // no package manager and has no lockfile or package-manager config file, so the launcher's,
+  // the runner's, wins there: vite-plus 1.6.0 and 1.7.0 runs launched by npm and Bun under such
+  // a package.json scaffolded with npm and Bun, not pnpm (#1028).
   assert.match(
     result.stdout,
-    /- Inside an existing project, Vite\+ uses the package manager it detects there unless --package-manager is forwarded\. Inside a monorepo, Vite\+ uses the package manager it detects for the monorepo even when --package-manager is forwarded\. A VP_PACKAGE_MANAGER environment variable overrides all of these\.\n/,
+    /- Inside an existing project, Vite\+ uses the package manager it detects there unless --package-manager is forwarded\. When that project declares no package manager and has no lockfile or package-manager config file, Vite\+ detects none and uses pnpm\. Inside a monorepo, Vite\+ uses the package manager it detects for the monorepo even when --package-manager is forwarded\. A VP_PACKAGE_MANAGER environment variable overrides all of these\.\n/,
   );
   assert.doesNotMatch(result.stdout, /Inside an existing workspace/);
   assert.match(result.stdout, /cannot be skipped/);
@@ -808,6 +811,7 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
     result.stdout,
     /- Outside an existing project, Vite\+ uses npm as the project's package manager unless --package-manager is forwarded after --new\./,
   );
+  assert.match(result.stdout, /Vite\+ detects none and uses npm\./);
   assert.equal((await detectVitePlus(target)).status, "managed");
   assert.ok(await exists(join(target, ".agents/skills/calavera/SKILL.md")));
   assert.ok(await exists(join(target, ".calavera/state.json")));
