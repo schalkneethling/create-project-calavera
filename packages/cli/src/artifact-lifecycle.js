@@ -534,8 +534,10 @@ async function migrateRecipe(options, loadFormatter) {
   let migrated = 0;
   const ai = recipe.ai.map((/** @type {unknown} */ item) => {
     if (!item || typeof item !== "object" || Array.isArray(item) || !("src" in item)) return item;
-    const artifact = artifactForLegacyPath(String(item.src));
-    if (!artifact) throw new Error(`Unknown legacy artifact path: ${String(item.src)}.`);
+    // #1024: recipe validation trims a legacy src, so the migration trims it too.
+    const src = String(item.src).trim();
+    const artifact = artifactForLegacyPath(src);
+    if (!artifact) throw new Error(`Unknown legacy artifact path: ${src}.`);
     migrated += 1;
     const target = "target" in item ? item.target : undefined;
     return { id: artifact.id, ...(target ? { target } : {}) };
@@ -1001,7 +1003,8 @@ function normalizeSelections(ai) {
       "id" in item
         ? artifactForId(String(item.id))
         : "src" in item
-          ? artifactForLegacyPath(String(item.src))
+          ? // #1024: recipe validation trims a legacy src, so a selection trims it too.
+            artifactForLegacyPath(String(item.src).trim())
           : undefined;
     if (!artifact) throw new Error("Unknown artifact selection.");
     assertFirstSelection(firstIndexById, artifact.id, index);
