@@ -11,7 +11,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
-import { artifactDoctorVerdict } from "../src/artifact-status-report.js";
+import { artifactDoctorVerdict, isArtifactHealthy } from "../src/artifact-status-report.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { createTemporaryFixture, json } from "./vite-plus-fixtures.mjs";
@@ -105,6 +105,7 @@ for (const { label, args } of outputModes) {
     if (label === "--json") {
       const report = JSON.parse(stdout);
       assert.equal(report.ok, true);
+      assert.equal(stderr, "");
       assert.deepEqual(
         report.artifacts.map(({ id }) => id),
         [ARTIFACT],
@@ -153,6 +154,72 @@ for (const { label, args } of outputModes) {
   }
 }
 
+// One healthy artifact cannot hide a broken one: `ok` needs every artifact to be healthy.
+test("artifacts doctor exits 1 when one of two artifacts has a problem", async () => {
+  await using fixture = await createTemporaryFixture("artifacts-doctor-two", {
+    "calavera.config.json": json({
+      ...buildRecipe("minimal", [], "npm"),
+      ai: [{ id: ARTIFACT }, { id: "skill-code-review" }],
+    }),
+  });
+  const originalDirectory = process.cwd();
+  try {
+    process.chdir(fixture.root);
+    await runArtifactCommand(
+      { config: "calavera.config.json", dryRun: false, artifactAction: "install" },
+      stubRegistry(
+        new Map([
+          [ARTIFACT, "0.2.1"],
+          ["skill-code-review", "0.2.1"],
+        ]),
+      ),
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+  await writeFile(join(fixture.root, SKILL_FILE), "local edit\n");
+
+  const { code, stdout, stderr } = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
+  assert.equal(code, 1, `artifacts doctor exited ${code}\n${stdout}\n${stderr}`);
+  const report = JSON.parse(stdout);
+  assert.equal(report.ok, false);
+  assert.deepEqual(
+    report.artifacts.map(({ id, locallyEdited }) => [id, locallyEdited]).sort(),
+    [
+      [ARTIFACT, true],
+      ["skill-code-review", false],
+    ].sort(),
+  );
+
+  const text = await runCli(fixture.root, ["artifacts", "doctor"]);
+  assert.equal(text.code, 1, text.stdout + text.stderr);
+  assert.equal(text.stderr.trimEnd(), PROBLEM);
+});
+
+// apply installs a selection without a lock entry, so until then the project is not in the state
+// its recipe declares, and doctor reports the selection as a problem.
+test("artifacts doctor exits 1 on a selected artifact that is not installed yet", async () => {
+  await using fixture = await createTemporaryFixture("artifacts-doctor-unlocked", {
+    "calavera.config.json": json({
+      ...buildRecipe("minimal", [], "npm"),
+      ai: [{ id: ARTIFACT }],
+    }),
+  });
+
+  const text = await runCli(fixture.root, ["artifacts", "doctor"]);
+  assert.equal(
+    text.code,
+    1,
+    `artifacts doctor exited ${text.code}\n${text.stdout}\n${text.stderr}`,
+  );
+  assert.match(text.stdout, new RegExp(`${ARTIFACT} +not installed`));
+  assert.equal(text.stderr.trimEnd(), PROBLEM);
+
+  const asJson = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
+  assert.equal(asJson.code, 1, asJson.stdout + asJson.stderr);
+  assert.equal(JSON.parse(asJson.stdout).ok, false);
+});
+
 test("the verdict names every artifact with a problem, and only those", () => {
   /** @param {string} id @param {Partial<Record<"installed" | "managed" | "locallyEdited", boolean>>} health */
   const entry = (id, health) => ({
@@ -166,12 +233,16 @@ test("the verdict names every artifact with a problem, and only those", () => {
     artifactDoctorVerdict(
       /** @type {Parameters<typeof artifactDoctorVerdict>[0]} */ (
         /** @type {unknown} */ ({
-          ok: artifacts.every((a) => a.installed && a.managed && !a.locallyEdited),
+          ok: artifacts.every(isArtifactHealthy),
           artifacts,
         })
       ),
     );
 
+  assert.equal(isArtifactHealthy(entry("a", {})), true);
+  for (const problem of [{ installed: false }, { managed: false }, { locallyEdited: true }]) {
+    assert.equal(isArtifactHealthy(entry("a", problem)), false, JSON.stringify(problem));
+  }
   assert.deepEqual(verdict([]), { level: "success", message: HEALTHY });
   assert.deepEqual(verdict([entry("a", {})]), { level: "success", message: HEALTHY });
   assert.deepEqual(verdict([entry("a", {}), entry("b", { locallyEdited: true })]), {

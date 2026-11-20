@@ -122,7 +122,7 @@ export function artifactReleaseNotesUrl(repository, version) {
 /**
  * The words after an artifact's version that name a problem `artifacts doctor` checks for.
  *
- * @param {ArtifactStatusEntry} artifact
+ * @param {Pick<ArtifactStatusEntry, "installed" | "managed" | "locallyEdited">} artifact
  */
 function healthNotes(artifact) {
   return [
@@ -130,6 +130,17 @@ function healthNotes(artifact) {
     ...(artifact.managed ? [] : ["not managed by Calavera"]),
     ...(artifact.locallyEdited ? ["locally edited"] : []),
   ];
+}
+
+/**
+ * Whether `artifacts doctor` finds no problem with an artifact. The status result's `ok`, which
+ * sets doctor's exit status, and doctor's verdict line both use it, so the two cannot disagree
+ * (#994).
+ *
+ * @param {Pick<ArtifactStatusEntry, "installed" | "managed" | "locallyEdited">} artifact
+ */
+export function isArtifactHealthy(artifact) {
+  return healthNotes(artifact).length === 0;
 }
 
 /**
@@ -229,7 +240,7 @@ export function artifactDoctorVerdict(result) {
     return { level: "success", message: "Calavera artifacts doctor found no problems." };
   }
   const failing = result.artifacts
-    .filter((artifact) => healthNotes(artifact).length > 0)
+    .filter((artifact) => !isArtifactHealthy(artifact))
     .map(({ id }) => id);
   const noun = failing.length === 1 ? "artifact" : "artifacts";
   return {
