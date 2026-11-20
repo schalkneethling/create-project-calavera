@@ -30,7 +30,7 @@ const VITE_HOOK_NAMES = new Set(
  * @property {AiArtifactState[]} aiArtifacts
  * @property {WiringRecord[]} aiWiring The hook lines and settings groups apply wrote for each artifact (ADR-0015, Decision 5).
  * @property {IgnoreLines[]} gitignoreBlocks The lines apply wrote in each integration's .gitignore block, and in the block that keeps the artifact cache out of Git (ADR-0016).
- * @property {string | null} [qualityScript] The value apply last wrote to the package.json `quality` script, or null when it wrote none, so a later apply removes only a value it can show it wrote (#230). A state file from a release before #230 does not have it.
+ * @property {string | null} [qualityScript] The value apply last wrote to the package.json `quality` script, kept while the recipe does not request quality and the project still has that value (#968), or null otherwise, so a later apply removes only a value it can show it wrote (#230). A state file from a release before #230 does not have it.
  */
 
 /**

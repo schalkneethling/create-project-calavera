@@ -1970,10 +1970,34 @@ function buildScripts(recipe, integrations, packageManager, vitePlusQuality) {
  *
  * @param {CalaveraState} state
  * @param {unknown} quality the project's `quality` value
- * @returns {boolean}
+ * @returns {quality is string}
  */
 function stateShowsCalaveraWroteQuality(state, quality) {
   return typeof quality === "string" && state.qualityScript === quality;
+}
+
+/**
+ * The `quality` value the state records after apply (#230, #968): the value
+ * the plan writes, or, when the recipe does not request quality and so leaves
+ * the script alone, the project's value if the state already records that
+ * Calavera wrote exactly it. Keeping that record lets a later apply that omits
+ * a requested quality still remove the value. Otherwise null, because apply
+ * wrote no quality.
+ *
+ * @param {Recipe} recipe
+ * @param {Record<string, string>} scripts the scripts the plan writes
+ * @param {CalaveraState} previousState
+ * @param {unknown} quality the project's `quality` value after apply
+ * @returns {string | null}
+ */
+function qualityScriptRecord(recipe, scripts, previousState, quality) {
+  if (typeof scripts.quality === "string") {
+    return scripts.quality;
+  }
+
+  return !recipe.scripts?.quality && stateShowsCalaveraWroteQuality(previousState, quality)
+    ? quality
+    : null;
 }
 
 function createHtmlValidateWrapper() {
@@ -3658,7 +3682,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
         aiResult.artifacts,
         wiringPlan.records,
         gitignorePlan.records,
-        typeof scripts.quality === "string" ? scripts.quality : null,
+        qualityScriptRecord(recipe, scripts, previousState, packageJSON.scripts?.quality),
       ),
       loadFormatter,
     );
@@ -3908,7 +3932,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
  * @param {AiArtifactState[]} aiArtifacts The selected artifacts as apply installed them. The previous records of every other artifact are kept for clean.
  * @param {import("./ai/artifact-wiring.js").WiringRecord[]} aiWiring The wiring in the project after apply. It replaces the previous records, because apply removes the wiring of every artifact the recipe no longer selects, and a record of removed wiring would describe text the files no longer hold.
  * @param {import("./ignore-lines.js").IgnoreLines[]} gitignoreBlocks The integrations' .gitignore blocks, and the artifact cache block (#841), after apply. They replace the previous records for the same reason as `aiWiring`.
- * @param {string | null} qualityScript The value apply wrote to `quality`, or null when it wrote none, such as when it kept the project's own value (#230).
+ * @param {string | null} qualityScript The value apply wrote to `quality`, or that an earlier apply wrote and the project still has when the recipe does not request quality, or null otherwise, such as when apply kept the project's own value (#230, #968).
  * @returns {CalaveraState}
  */
 function mergeRecipeIntoState(

@@ -924,7 +924,11 @@ the `quality` value it writes, or `null`, in `.calavera/state.json` as
 wrote it. It keeps any other value, including one an earlier release wrote
 before this record existed, and the dry run says so; when the state file has
 no record and the value matches what an earlier release wrote for the recipe,
-the dry run names the match, so you can remove it. Calavera writes no script
+the dry run names the match, so you can remove it. A recipe that sets
+`scripts.quality` to `false` leaves `quality` alone: apply neither writes nor
+removes it, and keeps a record that holds the project's value, so a later apply
+that omits a requested `quality` can still remove the value Calavera wrote.
+Calavera writes no script
 that repeats a `vp` command on its own, and does not add Playwright or other test
 suites to `quality`. The Stylelint scripts are `lint:styles` and
 `lint:styles:fix`. In a project that has `.calavera/state.json` from an earlier

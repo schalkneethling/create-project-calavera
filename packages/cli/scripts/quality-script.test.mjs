@@ -471,6 +471,67 @@ test("apply records in the state file the quality value it wrote, or null when i
   });
 });
 
+test("scripts.quality: false keeps the quality and its record, so a later apply that omits quality removes it", async () => {
+  // #968: false means "leave the quality script alone", not "forget that Calavera wrote it".
+  await using fixture = await createTemporaryFixture("quality", {
+    "package.json": unmanagedManifest,
+  });
+  await writeVitePlusFormatter(fixture.root);
+  const recipe = buildRecipe("default", ["stylelint", "knip"], "npm");
+  const written = "npm run lint:styles && npm run knip";
+
+  await inDirectory(fixture.root, async () => {
+    const recordedQuality = async () =>
+      JSON.parse(await readFile(".calavera/state.json", "utf8")).qualityScript;
+
+    await applyRecipeObject(recipe, applyOptions);
+    const leftAlone = packageChange(
+      (
+        await applyRecipeObject(
+          { ...recipe, scripts: { ...recipe.scripts, quality: false } },
+          applyOptions,
+        )
+      ).changes,
+    );
+
+    assert.equal(leftAlone.removedQualityScript, undefined);
+    assert.equal(JSON.parse(await readFile("package.json", "utf8")).scripts.quality, written);
+    assert.equal(await recordedQuality(), written);
+
+    const removed = packageChange((await applyRecipeObject(knipOnlyRecipe, applyOptions)).changes);
+    assert.equal(removed.removedQualityScript, written);
+    assert.equal(await recordedQuality(), null);
+  });
+});
+
+test("scripts.quality: false records null for a quality the user changed after apply recorded its own", async () => {
+  await using fixture = await createTemporaryFixture("quality", {
+    "package.json": unmanagedManifest,
+  });
+  await writeVitePlusFormatter(fixture.root);
+  const recipe = buildRecipe("default", ["stylelint", "knip"], "npm");
+
+  await inDirectory(fixture.root, async () => {
+    await applyRecipeObject(recipe, applyOptions);
+    const packageJSON = JSON.parse(await readFile("package.json", "utf8"));
+    packageJSON.scripts.quality = "npm run knip";
+    await writeFile("package.json", `${JSON.stringify(packageJSON, null, 2)}\n`);
+
+    await applyRecipeObject(
+      { ...recipe, scripts: { ...recipe.scripts, quality: false } },
+      applyOptions,
+    );
+
+    assert.equal(JSON.parse(await readFile(".calavera/state.json", "utf8")).qualityScript, null);
+    const kept = packageChange((await applyRecipeObject(knipOnlyRecipe, applyOptions)).changes);
+    assert.equal(kept.removedQualityScript, undefined);
+    assert.equal(
+      JSON.parse(await readFile("package.json", "utf8")).scripts.quality,
+      "npm run knip",
+    );
+  });
+});
+
 test("clean keeps the quality record in the state file it rewrites", async () => {
   await using fixture = await createTemporaryFixture("quality", {
     "package.json": unmanagedManifest,
