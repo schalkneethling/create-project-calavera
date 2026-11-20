@@ -1578,6 +1578,7 @@ const ERROR_AND_REPORT_LEAKS = [
     name: "a TOML parse error",
     secret: "zq9TOMLsecret",
     stops: true,
+    cause: /^TOML parse error at line \d+, column 15$/,
     write: async (/** @type {string} */ secret) => {
       await agentBootstrap({ mcpHarness: "codex", packageManager: "npm" });
       await writeFile(
@@ -1590,6 +1591,7 @@ const ERROR_AND_REPORT_LEAKS = [
     name: "a file neither JSON nor JSONC can parse",
     secret: "zq9JSONsecret",
     stops: true,
+    cause: /^JSON with comments \(JSONC\) parse error InvalidSymbol at line 1, column 6$/,
     write: async (/** @type {string} */ secret) => {
       await agentBootstrap({ mcpHarness: "claude-code", packageManager: "npm" });
       await writeFile(".mcp.json", `{"T":'${secret}'}\n`);
@@ -1610,7 +1612,7 @@ const ERROR_AND_REPORT_LEAKS = [
   },
 ];
 
-for (const { name, secret, stops, write: writeLeak } of ERROR_AND_REPORT_LEAKS) {
+for (const { name, secret, stops, cause, write: writeLeak } of ERROR_AND_REPORT_LEAKS) {
   test(`no secret leaks from ${name}`, async () => {
     // A parser quotes a truncated stretch of text, and a number may come back rounded, so even
     // the first six characters must not appear.
@@ -1627,7 +1629,8 @@ for (const { name, secret, stops, write: writeLeak } of ERROR_AND_REPORT_LEAKS) 
         await assert.rejects(eject(["--dry-run"]), (error) => {
           assert.ok(error instanceof Error);
           assertClean("the error", formatErrorChain(error));
-          assert.match(error.message, /line \d+, column \d+|at offset \d+/);
+          assert.ok(error.cause instanceof Error);
+          assert.match(error.cause.message, /** @type {RegExp} */ (cause));
           return true;
         });
       } else {
