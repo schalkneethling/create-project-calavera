@@ -35,6 +35,7 @@ import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
 import {
   ARTIFACT_CACHE_BLOCK,
+  TRANSACTION_PATH as EJECT_TRANSACTION_PATH,
   artifactCacheIgnoreLines,
   artifactCachePointers,
   prepareArtifactSources,
@@ -49,6 +50,15 @@ import {
   VP_RUNNER_NOTE_PREFIX,
 } from "./apply-summary.js";
 import { cleanHeadline, cleanSummaryLines } from "./clean-summary.js";
+import {
+  assertEjectConfig,
+  executeEject,
+  footprintIn,
+  planEject,
+  scriptRunsCalavera,
+  selectEjectItems,
+} from "./eject.js";
+import { ejectSummaryLines } from "./eject-summary.js";
 import { formatArtifactStatus, formatRemovedLockEntries } from "./artifact-status-report.js";
 import {
   AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
@@ -230,12 +240,15 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {object} PackageManagerCommands
  * @property {[string, string[]]} init
  * @property {(dependencies: string[]) => [string, string[]]} installDev
+ * @property {(dependencies: string[]) => [string, string[]]} remove Removes the packages from every
+ *   dependency field of `package.json`, `devDependencies` included, as each package manager's
+ *   documentation says: npm uninstall, pnpm remove, yarn remove, and bun remove.
  * @property {(script: string) => string} run
  *
  * @typedef {object} PackageJSON
  * @property {Record<string, unknown>} [scripts] Values come from the project's package.json, so any JSON value is possible.
  * @property {string} [packageManager]
- * @property {{ packageManager?: { name?: string } | Array<{ name?: string }> }} [devEngines]
+ * @property {{ packageManager?: { name?: string, version?: string } | Array<{ name?: string, version?: string }> }} [devEngines]
  * @property {unknown[] | { packages?: unknown }} [workspaces]
  * @property {unknown} [devDependencies] Read only to say which planned packages the project already lists (#617).
  *
@@ -357,7 +370,35 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {import("./artifact-lifecycle.js").ArtifactLockEntry} ArtifactLockEntry
  * @typedef {import("./artifact-lifecycle.js").ArtifactRegistryReport} ArtifactRegistryReport
  * @typedef {import("./artifact-lifecycle.js").ArtifactServices} ArtifactServices
- * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | ArtifactCommandResult} CommandResult
+ * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | EjectResult | ArtifactCommandResult} CommandResult
+ *
+ * @typedef {Omit<import("./eject.js").EjectItem, "seen"> & { outcome: "planned" | "removed" | "left" | "failed" | "skipped", error?: string, keptRecord?: true }} EjectResultItem
+ *   One footprint item and what this run did with it: `planned` in a dry run, a refused run, or a
+ *   cancelled one; `left` for an item `--yes` leaves for an interactive approval. `error` holds
+ *   the cause of a failed removal, or why a skipped item was kept. `keptRecord` marks a record
+ *   that matches but that `--yes` keeps while an item it leaves needs it (Decision 5). The check
+ *   values the plan records stay internal.
+ *
+ * @typedef {object} EjectResult
+ * @property {"eject"} command
+ * @property {boolean} dryRun
+ * @property {"nothing-to-do" | "dry-run" | "refused" | "cancelled" | "ejected" | "failed"} status
+ *   `refused` is a run that cannot ask and has no `--yes`; `failed` is a run in which a removal
+ *   failed or was skipped, with every other item removed.
+ * @property {string} message
+ * @property {EjectResultItem[]} items
+ * @property {import("./eject.js").EjectReport[]} reported
+ * @property {string[]} kept
+ * @property {{ scripts: { name: string, value: string }[], devDependency?: { name: string, removeCommand: string }, problem?: string }} packageJson
+ *   What `eject` reports in `package.json` and never changes (ADR-0017, Decision 4).
+ * @property {{ directory: string, paths: string[] }[]} elsewhere A footprint in another directory
+ *   of the workspace, relative to this one, which `eject` names and does not remove (Decision 8).
+ *
+ * @typedef {object} EjectRuntime
+ * @property {boolean} [interactive] Whether eject can ask for approval; `canPrompt` by default.
+ * @property {(message: string) => Promise<boolean>} [confirm] Asks for approval.
+ * @property {(lines: SummaryLine[]) => void} [show] Prints the list the approval covers.
+ * @typedef {import("./summary-lines.js").SummaryLine} SummaryLine
  */
 
 const COMPOSER_URL = "https://calavera.schalkneethling.com/";
@@ -423,21 +464,25 @@ const packageManagerCommands = {
   npm: {
     init: ["npm", ["init", "-y"]],
     installDev: (dependencies) => ["npm", ["install", "--save-dev", ...dependencies]],
+    remove: (dependencies) => ["npm", ["uninstall", ...dependencies]],
     run: (script) => `npm run ${script}`,
   },
   pnpm: {
     init: ["pnpm", ["init"]],
     installDev: (dependencies) => ["pnpm", ["add", "--save-dev", ...dependencies]],
+    remove: (dependencies) => ["pnpm", ["remove", ...dependencies]],
     run: (script) => `pnpm ${script}`,
   },
   yarn: {
     init: ["yarn", ["init", "-y"]],
     installDev: (dependencies) => ["yarn", ["add", "--dev", ...dependencies]],
+    remove: (dependencies) => ["yarn", ["remove", ...dependencies]],
     run: (script) => `yarn ${script}`,
   },
   bun: {
     init: ["bun", ["init", "-y"]],
     installDev: (dependencies) => ["bun", ["add", "--dev", ...dependencies]],
+    remove: (dependencies) => ["bun", ["remove", ...dependencies]],
     run: (script) => `bun run ${script}`,
   },
 };
@@ -501,11 +546,7 @@ async function workspacePackagePatterns(directory, packageJSON, packageManager) 
  * Whether the workspace root or any member defines a `test` script, which is
  * what `vp run -r test` needs: it selects every package, including the root,
  * runs each one's `test` script, and fails with `Task "test" not found` when
- * none has one. Members are found as npm's `@npmcli/map-workspaces` and pnpm
- * find them: each pattern names directories holding a `package.json`; a
- * pattern starting with an odd number of `!` excludes directories, and a
- * leading `./` or `/` is ignored. `node_modules` is never searched. Unlike npm,
- * an exclusion applies whatever its position in the list.
+ * none has one. `workspaceMemberManifests` finds the members.
  *
  * @param {string} directory
  * @param {PackageJSON | undefined} packageJSON
@@ -516,6 +557,32 @@ async function workspaceDefinesTestScript(directory, packageJSON, patterns) {
     return true;
   }
 
+  for await (const manifestPath of workspaceMemberManifests(directory, patterns)) {
+    try {
+      const manifest = JSON.parse(await readFile(join(directory, manifestPath), "utf8"));
+      if (typeof manifest?.scripts?.test === "string") {
+        return true;
+      }
+    } catch {
+      // An unreadable member manifest defines no script vp run can run.
+    }
+  }
+
+  return false;
+}
+
+/**
+ * The `package.json` of each workspace member, relative to the workspace root `directory`.
+ * Members are found as npm's `@npmcli/map-workspaces` and pnpm find them: each pattern names
+ * directories holding a `package.json`; a pattern starting with an odd number of `!` excludes
+ * directories, and a leading `./` or `/` is ignored. `node_modules` is never searched. Unlike npm,
+ * an exclusion applies whatever its position in the list.
+ *
+ * @param {string} directory
+ * @param {string[]} patterns
+ * @returns {AsyncGenerator<string>}
+ */
+async function* workspaceMemberManifests(directory, patterns) {
   /** @type {string[]} */
   const included = [];
   /** @type {string[]} */
@@ -530,21 +597,10 @@ async function workspaceDefinesTestScript(directory, packageJSON, patterns) {
     (negation.length % 2 === 1 ? excluded : included).push(cleaned);
   }
 
-  for await (const manifestPath of glob(
+  yield* glob(
     included.map((pattern) => `${pattern}/package.json`),
     { cwd: directory, exclude: excluded },
-  )) {
-    try {
-      const manifest = JSON.parse(await readFile(join(directory, manifestPath), "utf8"));
-      if (typeof manifest?.scripts?.test === "string") {
-        return true;
-      }
-    } catch {
-      // An unreadable member manifest defines no script vp run can run.
-    }
-  }
-
-  return false;
+  );
 }
 
 /**
@@ -967,6 +1023,61 @@ export function devDependencyInstallCommand(
   return packageManager === "pnpm"
     ? packageManagerCommands.pnpm.installDev([...workspaceRoot, ...dependencies])
     : packageManagerCommands[packageManager].installDev(dependencies);
+}
+
+/**
+ * The command that removes development dependencies, which `eject` reports for the
+ * `create-project-calavera` dependency and never runs (ADR-0017, Decision 4). It follows
+ * `devDependencyInstallCommand`: `vp remove` when Vite+ manages the project, and the package
+ * manager's own command otherwise.
+ *
+ * At the root of a workspace, only Yarn 1 refuses to remove a dependency without `-W`
+ * (`--ignore-workspace-root-check`; `src/cli/commands/remove.js` in yarnpkg/yarn). npm, pnpm, Bun,
+ * and Yarn 2 or later need no flag there, and Yarn 2 or later rejects `-W`. `vp remove` refuses its
+ * own `-w` for every Yarn version and never adds `-W` itself (`remove.rs` in voidzero-dev/vite-plus),
+ * so under Vite+ the flag goes to Yarn 1 as a native argument after `--`, which Vite+ passes through
+ * unchanged.
+ *
+ * @param {PackageManager} packageManager
+ * @param {VitePlusDetection} detection
+ * @param {string[]} dependencies
+ * @param {{ yarnClassicWorkspaceRoot?: boolean }} [options] `yarnClassicWorkspaceRoot` for a Yarn 1
+ *   project's workspace root; it changes only a Yarn command.
+ * @returns {[string, string[]]}
+ */
+export function devDependencyRemoveCommand(
+  packageManager,
+  detection,
+  dependencies,
+  { yarnClassicWorkspaceRoot = false } = {},
+) {
+  const workspaceRootCheck = packageManager === "yarn" && yarnClassicWorkspaceRoot;
+
+  if (delegatesToVitePlus(detection)) {
+    return ["vp", ["remove", ...dependencies, ...(workspaceRootCheck ? ["--", "-W"] : [])]];
+  }
+
+  return workspaceRootCheck
+    ? ["yarn", ["remove", "-W", ...dependencies]]
+    : packageManagerCommands[packageManager].remove(dependencies);
+}
+
+/**
+ * The major version of Yarn a project runs: the one its `packageManager` field or
+ * `devEngines.packageManager` pins, else 2 when it has a `.yarnrc.yml`, which only Yarn 2 and
+ * later read, else 1, the Yarn that Corepack and a global install run without a pin.
+ *
+ * @param {PackageJSON} packageJSON
+ */
+function projectYarnMajor(packageJSON) {
+  const devEngine = [packageJSON.devEngines?.packageManager]
+    .flat()
+    .find((packageManager) => packageManager?.name === "yarn");
+  const pinned =
+    packageJSON.packageManager?.match(/^yarn@(\d+)/)?.[1] ??
+    devEngine?.version?.match(/(\d+)/)?.[1];
+  if (pinned !== undefined) return Number(pinned);
+  return existsSync(".yarnrc.yml") ? 2 : 1;
 }
 
 /**
@@ -6226,6 +6337,295 @@ async function clean(options) {
 }
 
 /**
+ * `eject` (#678, ADR-0017): removes Calavera's footprint from the current directory and keeps the
+ * tooling it installed. The planner and the removal are in `eject.js`; this function chooses how
+ * the person approves the list. A dry run lists and changes nothing. An interactive run shows the
+ * list, with each item marked edited, unedited, or "edits cannot be detected", and removes
+ * nothing until the person approves all of it. A run that cannot ask refuses unless `--yes` is
+ * given, and `--yes` removes only the items that match Calavera's records exactly (Decision 5).
+ * Every run also reports what it keeps for the person: footprint text it does not remove, the
+ * `package.json` scripts and development dependency that call Calavera, and a footprint elsewhere
+ * in the workspace.
+ *
+ * @param {CliOptions} options
+ * @param {EjectRuntime} [runtime]
+ * @returns {Promise<EjectResult>}
+ */
+export async function ejectProject(options, runtime = {}) {
+  const interactive = runtime.interactive ?? canPrompt(options);
+  const refuse = !options.dryRun && !options.assumeYes && !interactive;
+  assertEjectConfig(options.config);
+  const packageJSON = await readEjectPackageJSON();
+  const pendingTransaction = await fileExists(EJECT_TRANSACTION_PATH);
+  /** @param {EjectResult["status"]} status @param {string} message @param {EjectResultItem[]} items @param {Pick<EjectResult, "reported" | "kept">} [found] */
+  const result = async (status, message, items, found = { reported: [], kept: [] }) => ({
+    command: /** @type {const} */ ("eject"),
+    dryRun: options.dryRun,
+    status,
+    message,
+    items,
+    ...found,
+    packageJson: await ejectPackageJsonReport(packageJSON),
+    elsewhere: await ejectFootprintElsewhere(packageJSON.manifest),
+  });
+
+  // A refused run writes nothing, so it cannot recover a pending artifact transaction, and
+  // without that recovery it cannot list the footprint (Decision 7).
+  if (refuse && pendingTransaction) {
+    return result(
+      "refused",
+      `${ejectRefusal(options)} ${EJECT_TRANSACTION_PATH} also records a pending artifact transaction, which eject recovers before it lists anything; a run in a terminal or with --yes recovers it first.`,
+      [],
+    );
+  }
+
+  const loadFormatter = projectFormatterLoader(process.cwd());
+  const guidance = await agentBootstrapTexts(loadFormatter);
+  // A refused run plans as a dry run, so it writes nothing.
+  const plan = await planEject({
+    dryRun: options.dryRun || refuse,
+    config: options.config,
+    guidance,
+    loadFormatter,
+  });
+  const found = { reported: plan.reported, kept: plan.kept };
+  // What --yes would do, so the list the person sees says it: the items it leaves for an
+  // approval, and the records it keeps while one of those items needs them (Decision 5).
+  const yesLeaves = new Set(selectEjectItems(plan, { assumeYes: true }).leave);
+  /**
+   * The item as the result shows it, without the check values, which hold whole file texts.
+   *
+   * @param {import("./eject.js").EjectItem} item
+   * @param {EjectResultItem["outcome"]} outcome
+   * @param {string} [error]
+   * @returns {EjectResultItem}
+   */
+  const describe = (item, outcome, error) => {
+    // An MCP entry's text afterward can hold the person's other servers and their tokens, so it
+    // stays internal and the result shows `around` (ADR-0017, Amendment 3).
+    const { seen: _seen, ...visible } = item;
+    if (item.kind === "mcp-entry") delete visible.contents;
+    return {
+      ...visible,
+      outcome,
+      ...(error === undefined ? {} : { error }),
+      ...((outcome === "planned" || outcome === "left") &&
+      item.matchesRecords &&
+      yesLeaves.has(item)
+        ? { keptRecord: true }
+        : {}),
+    };
+  };
+  const planned = plan.items.map((item) => describe(item, "planned"));
+  const listed = `eject would remove ${pluralizeCount(plan.items.length, "item")}${yesSummary(
+    plan.items.filter((item) => yesLeaves.has(item)),
+    false,
+  )}.`;
+  const recovered = pendingTransaction && !options.dryRun;
+
+  if (plan.nothingToDo) {
+    return result(
+      "nothing-to-do",
+      `${recovered ? "eject recovered the pending artifact transaction first, as every artifacts command does. " : ""}eject found no Calavera footprint to remove here.`,
+      [],
+      found,
+    );
+  }
+
+  if (options.dryRun) {
+    return result("dry-run", `Dry run complete. Nothing was changed. ${listed}`, planned, found);
+  }
+
+  if (refuse) {
+    return result("refused", ejectRefusal(options), planned, found);
+  }
+
+  if (!options.assumeYes) {
+    const show =
+      runtime.show ??
+      ((lines) => {
+        for (const { text } of lines) logger.info(text);
+      });
+    // The same list the dry run prints, so the approval covers exactly what it names.
+    show(ejectSummaryLines(await result("dry-run", listed, planned, found)));
+    const ask =
+      runtime.confirm ??
+      (async (message) => {
+        const answer = await confirm({ message });
+        return answer === true && !isCancel(answer);
+      });
+    const approved = await ask(
+      `Remove the ${pluralizeCount(plan.items.length, "item")} listed above, including any marked edited?`,
+    );
+    if (!approved) {
+      return result(
+        "cancelled",
+        recovered
+          ? "eject cancelled. It recovered the pending artifact transaction first, as every artifacts command does, and changed nothing else."
+          : "eject cancelled. Nothing was changed.",
+        planned,
+        found,
+      );
+    }
+  }
+
+  const { remove, leave } = selectEjectItems(plan, { assumeYes: options.assumeYes });
+  const outcome = await executeEject(remove);
+  /** @type {Map<import("./eject.js").EjectItem, EjectResultItem>} */
+  const done = new Map();
+  for (const item of outcome.removed) done.set(item, describe(item, "removed"));
+  for (const { item, error } of outcome.failed)
+    done.set(item, describe(item, "failed", error.message));
+  for (const { item, reason } of outcome.skipped) done.set(item, describe(item, "skipped", reason));
+  for (const item of leave) done.set(item, describe(item, "left"));
+  const items = plan.items.flatMap((item) => done.get(item) ?? []);
+  const notRemoved = outcome.failed.length + outcome.skipped.length;
+  const removed = `${recovered ? "eject recovered the pending artifact transaction first, as every artifacts command does. " : ""}Removed ${pluralizeCount(outcome.removed.length, "item")}${yesSummary(leave, true)}.`;
+  const approveLeft =
+    leave.length > 0 ? " Run eject in a terminal to review and approve what is left." : "";
+  if (notRemoved > 0) {
+    return result(
+      "failed",
+      `${removed} ${pluralizeCount(notRemoved, "item")} could not be removed; each one says why below. Fix the cause, then run eject again.${approveLeft}`,
+      items,
+      found,
+    );
+  }
+  return result("ejected", `${removed}${approveLeft}`, items, found);
+}
+
+/**
+ * What `--yes` leaves, in words: the items that need an approval, and the records it keeps while
+ * one of them needs them. Empty when it leaves nothing. A kept record never comes without an item
+ * that needs an approval, because only such an item needs a record.
+ *
+ * @param {import("./eject.js").EjectItem[]} leave From `selectEjectItems` with `assumeYes`.
+ * @param {boolean} done Whether `--yes` has run, so the words are in the past tense.
+ */
+function yesSummary(leave, done) {
+  if (leave.length === 0) return "";
+  const approvals = leave.filter(({ matchesRecords }) => !matchesRecords).length;
+  const records = leave.length - approvals;
+  const [leaves, keeps, left] = done
+    ? ["left", "kept", "left"]
+    : ["would leave", "would keep", "leaves"];
+  const needing = approvals === 1 ? `the item it ${left} needs` : `the items it ${left} need`;
+  return `; --yes ${leaves} ${pluralizeCount(approvals, "item")} for an interactive approval${records > 0 ? `, and ${keeps} ${pluralizeCount(records, "record")} that ${needing}` : ""}`;
+}
+
+/**
+ * The project's `package.json`, which `eject` only reads for its reports. A file that cannot be
+ * read stops nothing, because `eject` never writes it; the report says why it is missing.
+ *
+ * @returns {Promise<{ manifest: PackageJSON, problem?: string }>}
+ */
+async function readEjectPackageJSON() {
+  try {
+    const manifest = await readPackageJSONIfPresent();
+    return isPlainObject(manifest)
+      ? { manifest }
+      : { manifest: {}, problem: "package.json does not hold a JSON object" };
+  } catch (error) {
+    return {
+      manifest: {},
+      problem: `package.json could not be read (${error instanceof Error ? error.message : String(error)})`,
+    };
+  }
+}
+
+/**
+ * Why `eject` refuses a run that cannot ask, and how to go on.
+ *
+ * @param {CliOptions} options
+ */
+function ejectRefusal(options) {
+  const reasons = [
+    ...(options.json ? ["--json is set"] : []),
+    ...(process.stdin.isTTY ? [] : ["stdin is not a terminal"]),
+  ];
+  return `eject cannot ask for confirmation because ${reasons.length > 0 ? reasons.join(" and ") : "it is not running interactively"}, so it changed nothing. Run eject in a terminal to review and approve the list, or pass --yes to remove only the items that match Calavera's records exactly.`;
+}
+
+/**
+ * The scripts in `package.json` that run Calavera, and the `create-project-calavera` development
+ * dependency with the command that removes it for the project's package manager, or `vp remove`
+ * when Vite+ manages the project. `eject` reports them and never writes `package.json` (ADR-0017,
+ * Decision 4).
+ *
+ * @param {{ manifest: PackageJSON, problem?: string }} read From `readEjectPackageJSON`.
+ * @returns {Promise<EjectResult["packageJson"]>}
+ */
+async function ejectPackageJsonReport({ manifest: packageJSON, problem }) {
+  if (problem !== undefined) {
+    return {
+      scripts: [],
+      problem: `${problem}, so eject cannot report the scripts or the development dependency that call Calavera, or name a footprint in the workspace packages it lists. eject never changes package.json; fix it and run eject again to see them.`,
+    };
+  }
+  const scripts = Object.entries(packageJSON.scripts ?? {}).flatMap(([name, value]) =>
+    typeof value === "string" && scriptRunsCalavera(value) ? [{ name, value }] : [],
+  );
+  const devDependencies = isPlainObject(packageJSON.devDependencies)
+    ? packageJSON.devDependencies
+    : {};
+  const name = packageJson.name;
+  if (!Object.hasOwn(devDependencies, name)) {
+    return { scripts };
+  }
+  const packageManager = detectPackageManager(packageJSON) ?? "npm";
+  const command = devDependencyRemoveCommand(
+    packageManager,
+    await detectVitePlus(process.cwd()),
+    [name],
+    {
+      yarnClassicWorkspaceRoot:
+        packageManager === "yarn" &&
+        projectYarnMajor(packageJSON) === 1 &&
+        (await workspacePackagePatterns(process.cwd(), packageJSON, "yarn")) !== undefined,
+    },
+  );
+  return { scripts, devDependency: { name, removeCommand: formatCommand(command) } };
+}
+
+/**
+ * The footprint in other directories of the workspace, which `eject` names so the person can run
+ * it there too (ADR-0017, Decision 8): at the repository root, when `eject` runs below it, and in
+ * each workspace package, when it runs at a workspace root.
+ *
+ * @param {PackageJSON} packageJSON
+ * @returns {Promise<EjectResult["elsewhere"]>}
+ */
+async function ejectFootprintElsewhere(packageJSON) {
+  const directory = process.cwd();
+  /** @type {string[]} */
+  const locations = [];
+  const repositoryRoot = findRepositoryRoot(directory);
+  if (repositoryRoot !== undefined) locations.push(repositoryRoot);
+  const patterns =
+    (await workspacePackagePatterns(directory, packageJSON, "pnpm")) ??
+    (await workspacePackagePatterns(directory, packageJSON, "npm"));
+  if (patterns) {
+    /** @type {string[]} */
+    const members = [];
+    for await (const manifestPath of workspaceMemberManifests(directory, patterns)) {
+      members.push(join(directory, dirname(manifestPath)));
+    }
+    locations.push(...members.sort());
+  }
+  /** @type {EjectResult["elsewhere"]} */
+  const elsewhere = [];
+  // A workspace that lists `.` among its packages, or a root met twice, is not elsewhere.
+  for (const location of new Set(locations)) {
+    if (location === directory) continue;
+    const paths = await footprintIn(location);
+    if (paths.length > 0) {
+      elsewhere.push({ directory: relative(directory, location).split(sep).join("/"), paths });
+    }
+  }
+  return elsewhere;
+}
+
+/**
  * The skip changes for the stale managed files and artifacts clean keeps, each with its reason.
  *
  * @param {Array<{ path: string, reason: string, skipReasons: CleanSkipReason[] }>} files
@@ -6348,7 +6748,7 @@ function keptBecauseOfWiring(artifactPath, { mentions, unresolved, unreadable })
   return { reason: sentences.join(" "), skipReasons };
 }
 
-function formatHelp() {
+export function formatHelp() {
   return `create-project-calavera ${packageJson.version}
 
 Usage:
@@ -6362,6 +6762,7 @@ Commands:
   doctor               Check whether Calavera-managed files are present
   update               Re-apply the recipe in calavera.config.json
   clean                Remove stale Calavera-managed files and wiring when safe
+  eject                Remove Calavera's own files and keep the tooling it installed
   artifacts install    Install exact package-backed artifact selections
   artifacts status     Inspect locked artifacts offline by default
   artifacts doctor     Check installed artifacts and local edits
@@ -6388,7 +6789,8 @@ Options:
   --agents-md <mode>   append or fallback when AGENTS.md already exists
   --mcp-harness <host> claude-code, codex, cursor, opencode, or skip
   --json               Print JSON output
-  --yes                Use defaults and skip prompts
+  --yes                Use defaults and skip prompts; with eject, remove only the
+                       items that match Calavera's records exactly
   --no-install         Write files without installing dependencies during apply
   --reown-managed-file <path>
                       Treat a tracked managed file's current contents as approved
@@ -6457,6 +6859,13 @@ function printResult(result, asJSON = false, commandDryRun = false) {
 
   if (result.command === "clean") {
     for (const { text } of cleanSummaryLines(result, result.dryRun ?? commandDryRun)) {
+      logger.info(text);
+    }
+    return;
+  }
+
+  if (result.command === "eject") {
+    for (const { text } of ejectSummaryLines(result)) {
       logger.info(text);
     }
     return;
@@ -6716,6 +7125,16 @@ async function main() {
 
   if (options.command === "clean") {
     printResult(await clean(options), options.json, options.dryRun);
+    return;
+  }
+
+  if (options.command === "eject") {
+    const result = await ejectProject(options);
+    printResult(result, options.json);
+    // A refused run changed nothing, and a failed one left items, so neither succeeded.
+    if (result.status === "refused" || result.status === "failed") {
+      process.exitCode = 1;
+    }
     return;
   }
 

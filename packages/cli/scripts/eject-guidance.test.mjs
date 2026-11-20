@@ -1,8 +1,7 @@
 // Issue #678, layer 2 of the five-layer stack the owner approved on 2026-11-18: the guidance part
 // of the `eject` footprint (ADR-0017, Decision 2). It covers `AGENTS.md` written as a whole file,
 // the marked section in an existing `AGENTS.md`, guidance with only the marker, `AGENTS.calavera.md`,
-// and `.agents/calavera/mcp.md`. The command is registered in layer 5, so these tests call the
-// planner directly.
+// and `.agents/calavera/mcp.md`. These tests call the planner directly; `eject-command.test.mjs` covers the command.
 import assert from "node:assert/strict";
 import {
   lstat,

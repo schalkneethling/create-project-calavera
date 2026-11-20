@@ -10,8 +10,8 @@
 // `.agents/calavera/mcp.md`. It also plans the `calavera` MCP entry in the four harness files the
 // bootstrap writes, checked against the launch command for each package manager, and a
 // `.coderabbit.yaml` that Calavera created whole, checked against the texts every release wrote.
-// The command is registered last (#678), so nothing offers `eject` before it removes the whole
-// footprint.
+// The CLI's `eject` command calls `ejectProject` in `index.js`, which decides how the person
+// approves the list (#678).
 //
 // The plan looks for each item directly, not only through the state file, because a project whose
 // state file is gone still holds the rest of the footprint (ADR-0017, Decision 2). Nothing here
@@ -35,8 +35,14 @@ import {
 import { basename, dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
-import { parse as parseJsonc, printParseErrorCode } from "jsonc-parser";
-import { parse as parseToml } from "smol-toml";
+import {
+  createScanner,
+  findNodeAtLocation,
+  parse as parseJsonc,
+  parseTree,
+  printParseErrorCode,
+} from "jsonc-parser";
+import { TomlError, parse as parseToml } from "smol-toml";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
@@ -135,7 +141,12 @@ const CANNOT_DETECT = "edits cannot be detected";
  * @property {string[]} [removedLines] For an edit, the lines it removes, markers excluded. For a
  *   JSON harness file, which eject rewrites whole, each removed member as JSON: the `calavera`
  *   entry, or the `mcpServers` or `mcp` object it empties, and the `$schema` it removes.
- * @property {string} [contents] For an edit, the file's text afterward.
+ * @property {string} [contents] For an edit, the file's text afterward. For an MCP entry, it stays
+ *   internal: the command shows `around` instead (ADR-0017, Amendment 3).
+ * @property {{ line: number, before?: string, after?: string }} [around] For an MCP entry, where
+ *   Calavera's text starts in the file, and the nearest line that is not blank before it and after
+ *   it, with their values hidden, so the person's other servers and their `env` or `headers`
+ *   tokens never reach a terminal log or `--json` (ADR-0017, Amendment 3).
  * @property {string} [seen] What the item's check read when the plan was made. For every kind
  *   but the base skill, it holds the entry identity from `entryIdentity`: a file, a folder, or a
  *   symbolic link, its target, and the path its chain of links resolves to. The `artifact-cache`
@@ -959,7 +970,7 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   let config;
   try {
     config = JSON.parse(text);
-  } catch (error) {
+  } catch {
     /** @type {import("jsonc-parser").ParseError[]} */
     const errors = [];
     // An empty or whitespace-only file holds no entry, as it did before JSONC was read, so it is
@@ -971,7 +982,13 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
     if (problem !== undefined) {
       throw new Error(
         `eject stopped before removing anything: ${path} cannot be parsed as JSON, nor as JSON with comments (JSONC): ${printParseErrorCode(problem.error)} at offset ${problem.offset}. Correct the file, or remove the calavera MCP entry from it yourself, then run eject again.`,
-        { cause: error },
+        // Never JSON.parse's own error: its message quotes the text around the error, which can
+        // hold a token. This cause says only what went wrong and where.
+        {
+          cause: new Error(
+            `JSON with comments (JSONC) parse error ${printParseErrorCode(problem.error)} at ${positionOf(text, problem.offset)}`,
+          ),
+        },
       );
     }
     if (serversWithEntry(jsonc, key) === undefined) return NO_MCP_ENTRY;
@@ -993,7 +1010,8 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
     );
   }
   const formatter = await loadFormatter();
-  const loss = await rewriteLossProblem(text, path, formatter);
+  // A harness file can hold tokens, so the problem names the line of a number, not the number.
+  const loss = await rewriteLossProblem(text, path, formatter, { withoutValues: true });
   if (loss !== undefined) {
     return mcpEntryKept(
       path,
@@ -1021,6 +1039,26 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   }
   removed.push(emptied ? [key, servers] : ["calavera", calavera]);
   const contents = await writeJSON(next, path, formatter);
+  const tree = parseTree(text);
+  // `JSON.parse` read the file, so the tree has every removed member.
+  const members = removed.map(
+    ([name]) =>
+      /** @type {import("jsonc-parser").Node} */ (
+        /** @type {import("jsonc-parser").Node} */ (
+          findNodeAtLocation(
+            /** @type {import("jsonc-parser").Node} */ (tree),
+            name === key || name === "$schema" ? [name] : [key, name],
+          )
+        ).parent
+      ),
+  );
+  const lineAt = (/** @type {number} */ offset) => text.slice(0, offset).split("\n").length - 1;
+  const around = aroundLines(
+    text.split("\n"),
+    lineAt(Math.min(...members.map(({ offset }) => offset))),
+    lineAt(Math.max(...members.map(({ offset, length }) => offset + length))),
+    jsonValuesHidden,
+  );
   /** @type {EjectItem} */
   const item = {
     kind: "mcp-entry",
@@ -1032,13 +1070,14 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
       `${JSON.stringify(name)}: ${toJSONText(value)}`.split("\n"),
     ),
     contents,
+    around,
     seen: textSeen(identity, text),
   };
   if ((await writeJSON(config, path, formatter)) !== text) {
     // The rewrite changes text Calavera did not write, which only an approval of the text
     // afterward covers, so `--yes` leaves it (ADR-0017, Decision 5).
     item.matchesRecords = false;
-    item.note = `eject rewrites the whole of ${path} through the project's formatter (${formatter.description}), which also changes the layout of the rest of the file; the text afterward shows the result.`;
+    item.note = `eject rewrites the whole of ${path} through the project's formatter (${formatter.description}), which also changes the layout of the rest of the file. eject does not print the rest of the file, because it can hold other servers' settings and tokens; review it with git diff after eject.`;
   }
   return { items: [item], reported: [] };
 }
@@ -1073,7 +1112,8 @@ function removesOnlyTheEntry(text, contents) {
 
 /**
  * Plans the `[mcp_servers.calavera]` table in `.codex/config.toml`. The file is parsed as TOML with
- * `smol-toml`, and a file that is not TOML is a hard stop, with the parser's error as the cause
+ * `smol-toml`, and a file that is not TOML is a hard stop, with the line and column where the
+ * parser stopped, and never its message, which quotes the file's lines, as the cause
  * (ADR-0017, Decision 7). The entry is unedited when the file holds the table Calavera writes
  * for some package manager, with the pinned version normalized (owner decision of 2026-11-17),
  * and removing that text removes the whole entry and nothing else, which parsing the result
@@ -1102,8 +1142,10 @@ async function planCodexMcpEntry(path, expected) {
     // eject never changes a file outside the project, so it has no need to read it.
     if (!inside) return mcpEntryOutside(path);
     throw new Error(
-      `eject stopped before removing anything: ${path} cannot be parsed as TOML: ${messageOf(error).split("\n", 1)[0]}. Correct the file, then run eject again.`,
-      { cause: error },
+      `eject stopped before removing anything: ${path} cannot be parsed as TOML${tomlPosition(error, " at ")}. Correct the file, then run eject again.`,
+      // Never smol-toml's own error: its message carries a code frame of the file's lines, which
+      // can hold a token. This cause says only where the parser stopped.
+      { cause: new Error(`TOML parse error${tomlPosition(error, " at ")}`) },
     );
   }
   if (serversWithEntry(config, "mcp_servers") === undefined) return NO_MCP_ENTRY;
@@ -1138,6 +1180,7 @@ async function planCodexMcpEntry(path, expected) {
             matchesRecords: true,
             removedLines: table,
             contents,
+            around: aroundLines(bare, start, end, tomlNeighborHidden(bare)),
             seen: textSeen(identity, text),
           },
         ],
@@ -1146,6 +1189,141 @@ async function planCodexMcpEntry(path, expected) {
     }
   }
   return edited;
+}
+
+/**
+ * Where an MCP entry sits in its file, for the list a person approves: the first line of
+ * Calavera's text, and the nearest line that is not blank before it and after it, each with its
+ * values hidden by `hide`. The rest of the file is never shown, because it can hold the person's
+ * other servers and the tokens in their `env` or `headers` (ADR-0017, Amendment 3).
+ *
+ * @param {string[]} lines The file's lines.
+ * @param {number} start The index of the first line of Calavera's text.
+ * @param {number} end The index of its last line.
+ * @param {(line: string, index: number) => string} hide Hides a line, given its index.
+ * @returns {{ line: number, before?: string, after?: string }}
+ */
+function aroundLines(lines, start, end, hide) {
+  /** @param {number} from @param {number} step */
+  const nearest = (from, step) => {
+    for (let index = from; index >= 0 && index < lines.length; index += step) {
+      const line = (lines[index] ?? "").replace(/\r$/, "").trim();
+      if (line !== "") return hide(line, index);
+    }
+    return undefined;
+  };
+  const before = nearest(start - 1, -1);
+  const after = nearest(end + 1, 1);
+  return {
+    line: start + 1,
+    ...(before === undefined ? {} : { before }),
+    ...(after === undefined ? {} : { after }),
+  };
+}
+
+// The token kinds of `jsonc-parser`'s scanner. Its `SyntaxKind` is a TypeScript `const enum`,
+// which does not exist at run time, so the values from its type declarations are written here.
+const JSON_TOKEN = Object.freeze({
+  openBrace: 1,
+  closeBrace: 2,
+  openBracket: 3,
+  closeBracket: 4,
+  comma: 5,
+  colon: 6,
+  string: 10,
+  unknown: 16,
+  end: 17,
+});
+/** @type {Map<number, string>} */
+const JSON_PUNCTUATION = new Map([
+  [JSON_TOKEN.openBrace, "{ "],
+  [JSON_TOKEN.closeBrace, " }"],
+  [JSON_TOKEN.openBracket, "["],
+  [JSON_TOKEN.closeBracket, "]"],
+  [JSON_TOKEN.comma, ", "],
+  [JSON_TOKEN.colon, ": "],
+]);
+
+/**
+ * A line of a JSON file with every value hidden: the scanner splits the line into tokens, a
+ * string the next token's colon makes a key stays, punctuation stays, and every other string,
+ * number, `true`, `false`, and `null` becomes `…`. A line the scanner cannot read is hidden whole.
+ * eject edits only a file that parsed as plain JSON, so a line holds no comments.
+ *
+ * @param {string} line
+ */
+function jsonValuesHidden(line) {
+  const scanner = createScanner(line, true);
+  /** @type {{ kind: number, value: string }[]} */
+  const tokens = [];
+  for (let kind = scanner.scan(); kind !== JSON_TOKEN.end; kind = scanner.scan()) {
+    if (kind === JSON_TOKEN.unknown || scanner.getTokenError() !== 0) return "…";
+    tokens.push({ kind, value: scanner.getTokenValue() });
+  }
+  const text = tokens
+    .map(({ kind, value }, index) => {
+      const punctuation = JSON_PUNCTUATION.get(kind);
+      if (punctuation !== undefined) return punctuation;
+      const isKey = kind === JSON_TOKEN.string && tokens[index + 1]?.kind === JSON_TOKEN.colon;
+      return isKey ? JSON.stringify(value) : "…";
+    })
+    .join("")
+    // An empty object, where the closing brace follows the opening one, needs no double space.
+    .replaceAll("{  }", "{}")
+    .trim();
+  return text === "" ? "…" : text;
+}
+
+// A complete TOML table header, `[table]` or `[[array.of.tables]]`, whose keys are bare, basic, or
+// literal, followed by nothing or a comment. Group 1 is the header without the comment.
+const TOML_KEY = String.raw`(?:[A-Za-z0-9_-]+|"(?:[^"\\\n]|\\.)*"|'[^'\n]*')`;
+const TOML_HEADER = new RegExp(
+  String.raw`^(\[\s*${TOML_KEY}(?:\s*\.\s*${TOML_KEY})*\s*\]|\[\[\s*${TOML_KEY}(?:\s*\.\s*${TOML_KEY})*\s*\]\])\s*(?:#.*)?$`,
+);
+
+/**
+ * Hides a TOML line around Calavera's table, for the file whose lines are `lines`. Only a complete
+ * table header prints, without its comment; every other line is hidden whole. A line that only
+ * looks like a header, inside a multi-line string or array, is hidden too: the text before it
+ * then does not parse as TOML on its own.
+ *
+ * @param {string[]} lines
+ * @returns {(line: string, index: number) => string}
+ */
+function tomlNeighborHidden(lines) {
+  return (line, index) => {
+    const header = TOML_HEADER.exec(line)?.[1];
+    if (header === undefined) return "…";
+    try {
+      parseToml(header);
+      parseToml(lines.slice(0, index).join("\n"));
+    } catch {
+      return "…";
+    }
+    return header;
+  };
+}
+
+/**
+ * Where `offset` falls in `text`, as "line L, column C", both counted from 1.
+ *
+ * @param {string} text
+ * @param {number} offset
+ */
+function positionOf(text, offset) {
+  const lines = text.slice(0, offset).split("\n");
+  return `line ${lines.length}, column ${(lines.at(-1)?.length ?? 0) + 1}`;
+}
+
+/**
+ * Where smol-toml stopped, as "<prefix>line L, column C", or nothing when the error is not
+ * smol-toml's and has no position. Never the parser's message, which quotes the file.
+ *
+ * @param {unknown} error
+ * @param {string} prefix
+ */
+function tomlPosition(error, prefix) {
+  return error instanceof TomlError ? `${prefix}line ${error.line}, column ${error.column}` : "";
 }
 
 /**
@@ -1332,6 +1510,21 @@ async function unnamedCalaveraEntries() {
 }
 
 /**
+ * Stops `eject` when the recipe path names a `package.json`: eject never writes `package.json`
+ * (ADR-0017, Decision 4), so it refuses rather than list one for deletion. It runs before anything
+ * else, the recovery of a pending transaction included.
+ *
+ * @param {string} config The recipe's path.
+ */
+export function assertEjectConfig(config) {
+  if (basename(config) === "package.json") {
+    throw new Error(
+      `eject stopped before removing anything, because the recipe path ${config} names a package.json, which eject never changes. Pass the path of the Calavera recipe, or leave --config out to use ${CONFIG_FILE}.`,
+    );
+  }
+}
+
+/**
  * Plans the removal of the footprint items Calavera records itself, of the bootstrap's guidance and
  * MCP entries, and of a `.coderabbit.yaml` that Calavera created (ADR-0017, Decision 2). Unless this is a dry run, a pending artifact transaction is
  * recovered first, so the plan describes the project as the rollback left it. Nothing else is
@@ -1345,13 +1538,7 @@ async function unnamedCalaveraEntries() {
  * @returns {Promise<EjectPlan>}
  */
 export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFormatter }) {
-  // eject never writes package.json (ADR-0017, Decision 4), so a recipe path that names it is
-  // refused rather than listed for deletion.
-  if (basename(config) === "package.json") {
-    throw new Error(
-      `eject stopped before removing anything, because the recipe path ${config} names a package.json, which eject never changes. Pass the path of the Calavera recipe, or leave --config out to use ${CONFIG_FILE}.`,
-    );
-  }
+  assertEjectConfig(config);
   await recoverPendingTransaction(dryRun);
 
   const hasState = await present(STATE_PATH);
@@ -1699,4 +1886,89 @@ export async function executeEject(items) {
     await removeIfEmpty(MCP_NOTES_ROOT);
   }
   return outcome;
+}
+
+/**
+ * Whether a `package.json` script runs Calavera: either of the package's two executables,
+ * `create-project-calavera` and `create-project-calavera-mcp`, directly or through a package
+ * runner such as `npx` or `pnpm dlx`, or the package through `npm create`, `npm init`, `yarn
+ * create`, `pnpm create`, or `bun create`, which run `create-project-calavera`. `eject` reports such
+ * a script and never changes it (ADR-0017, Decision 4). A scoped package of the same name, such as
+ * `@someone/create-project-calavera`, is another package, and a longer name, or a folder of that
+ * name in a path, is another file. A bare word such as `cd create-project-calavera` still counts,
+ * which only adds a report the person can ignore.
+ *
+ * @param {string} value The script's command.
+ */
+export function scriptRunsCalavera(value) {
+  return (
+    CALAVERA_EXECUTABLE.test(value) || CALAVERA_INSTALLED.test(value) || CALAVERA_CREATE.test(value)
+  );
+}
+
+// Not after a name character or a scope, and not followed by a longer name, a file extension, or a
+// path separator, so a folder of that name in a path does not count.
+const CALAVERA_EXECUTABLE =
+  /(?<![\w.@-])(?<!@[\w.-]+\/)create-project-calavera(?:-mcp)?(?![\w/-]|\.\w)/;
+// The installed package's folder, which a script runs a file from, such as
+// `node node_modules/create-project-calavera/bin/create-project-calavera.js`.
+const CALAVERA_INSTALLED = /(?<![\w.@-])node_modules\/create-project-calavera\//;
+const CALAVERA_CREATE = /(?<![\w.@/-])(?:create|init)\s+project-calavera(?![\w-]|\.\w)/;
+
+/** The executable every MCP registration Calavera writes launches, in each harness file. */
+const MCP_EXECUTABLE = "create-project-calavera-mcp";
+
+/**
+ * The footprint paths of ADR-0017 Decision 2 that exist in `directory`, relative to it, for a
+ * directory `eject` does not run in: the repository root seen from a workspace package, or a
+ * workspace package seen from the root (Decision 8). `eject` only names them, so the person can
+ * run `eject` there too; it removes nothing there, so this check needs no record. A path counts
+ * when it is one only Calavera writes, or when the file holds what Calavera writes into it: a
+ * guidance marker in `AGENTS.md`, the `artifact-cache` block marker in `.gitignore`, the MCP
+ * executable in a harness file, and Calavera's first line in `.coderabbit.yaml`.
+ *
+ * @param {string} directory
+ * @returns {Promise<string[]>}
+ */
+export async function footprintIn(directory) {
+  /** @param {string} path */
+  const at = (path) => join(directory, path);
+  /** @param {string} path */
+  const textOf = (path) => readFile(at(path), "utf8").catch(() => undefined);
+  /** @type {string[]} */
+  const found = [];
+  for (const path of [
+    STATE_PATH,
+    LOCK_PATH,
+    CACHE_ROOT,
+    PACKAGE_PATH,
+    STAGING_ROOT,
+    TRANSACTION_ROOT,
+    TRANSACTION_PATH,
+    CONFIG_FILE,
+    BASE_SKILL_PATH,
+    AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
+    AGENT_BOOTSTRAP_MCP_FILE,
+  ]) {
+    if (await present(at(path))) found.push(path);
+  }
+  const guidanceText = await textOf(AGENT_BOOTSTRAP_GUIDANCE_FILE);
+  if (
+    guidanceText?.includes(AGENT_BOOTSTRAP_MARKER) ||
+    guidanceText?.includes(AGENT_BOOTSTRAP_SECTION_START)
+  ) {
+    found.push(AGENT_BOOTSTRAP_GUIDANCE_FILE);
+  }
+  if ((await textOf(GITIGNORE_PATH))?.includes(`calavera:${ARTIFACT_CACHE_BLOCK}:`)) {
+    found.push(GITIGNORE_PATH);
+  }
+  for (const harness of MCP_HARNESSES) {
+    const path = /** @type {string} */ (projectMcpConfigPath(harness));
+    if ((await textOf(path))?.includes(MCP_EXECUTABLE)) found.push(path);
+  }
+  const codeRabbit = await textOf(CODE_RABBIT_CONFIG_PATH);
+  if (codeRabbit?.split("\n", 1)[0]?.replace(/\r$/, "") === CODE_RABBIT_CONFIG_FIRST_LINE) {
+    found.push(CODE_RABBIT_CONFIG_PATH);
+  }
+  return found;
 }

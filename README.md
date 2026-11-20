@@ -683,6 +683,54 @@ count as Unix ones, and the dry run reports it as an update. The version that
 version. A file with any other text counts as your edit, so Calavera keeps it
 and reports it, as before.
 
+### Stop Calavera managing a project
+
+`eject` removes the files and the text Calavera keeps in a project to manage it,
+and keeps every tool it installed. It removes the state, the recipe, the
+artifact lock and package copies, the artifact cache and its `.gitignore` block,
+the bootstrap guidance, the MCP setup notes and the `calavera` MCP entry, a
+`.coderabbit.yaml` that Calavera created, and the base Calavera skill. It keeps
+every managed file, every `package.json` script and dependency, and every other
+AI artifact and its wiring, so `vp check` and the generated scripts still run.
+The decision record is
+[ADR-0017](docs/adr/0017-eject-removes-calavera-management-footprint.md).
+
+Run the dry run first. It lists every deletion and every edit, with the exact
+text each edit removes and the text the file holds afterward, and changes
+nothing. For an MCP configuration file, such as `.mcp.json`, it shows only the
+lines around Calavera's entry, with their values hidden, so the tokens of your
+other servers never reach a terminal log or the `--json` output:
+
+```bash
+npm create project-calavera eject -- --dry-run
+```
+
+Then run `eject` in a terminal. It shows the same list, marks each item as
+edited, unedited, or "edits cannot be detected", and removes nothing until you
+approve the whole list:
+
+```bash
+npm create project-calavera eject
+```
+
+Without a terminal, or with `--json`, `eject` refuses unless you pass `--yes`.
+With `--yes`, it removes only the items that match Calavera's records exactly.
+It leaves, and lists, everything else: what it cannot check, such as the recipe
+and the extracted artifact packages in `.calavera/packages/`, any item you
+edited, and the records an item it leaves still needs: the state, the lock,
+or the cache block in `.gitignore`. Run
+`eject` in a terminal to approve those.
+
+`eject` never changes `package.json`. It reports each script that runs
+Calavera, and the `create-project-calavera` development dependency with the
+command that removes it for your package manager, or `vp remove` in a project
+that Vite+ manages. It also keeps and reports guidance and MCP entries it
+cannot tell apart from your own edits, such as an edited `AGENTS.md`. In a
+workspace, it removes only the footprint in the current directory and names the
+other directories that hold one, so you can run `eject` there too. `eject` is a
+CLI command only, not an MCP tool, because it removes the Calavera MCP
+registration. Once nothing is left, `eject` reports that it has nothing to do.
+
 ## MCP Server
 
 Calavera also ships a standard MCP server for agent-native recipe composition:
@@ -823,7 +871,8 @@ approves the proposed recipe and dry-run result.
 - `--dry-run`
 - `--no-install`
 - `--yes`; `init` without a terminal, or with `--json`, refuses any prompt it would
-  show and names `--yes` and the flag that answers that prompt
+  show and names `--yes` and the flag that answers that prompt; with `eject`,
+  `--yes` removes only the items that match Calavera's records exactly
 - `--json`
 
 ## Debugging Errors

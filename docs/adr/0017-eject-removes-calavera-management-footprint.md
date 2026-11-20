@@ -245,3 +245,21 @@ A symbolic link where Calavera keeps its own files leads to content no record co
 The owner decided on 2026-11-18 that when `eject --yes` leaves `.calavera/cache` because it is a symbolic link, it also keeps the cache's `artifact-cache` block in `.gitignore`, so the leftover cache never shows in `git status`, and it keeps the state only while that block is kept (https://github.com/schalkneethling/create-project-calavera/issues/678#issuecomment-6988833013). A linked cache in a project that has no `artifact-cache` block therefore keeps no record. The interactive run that removes the link removes the block and the state with it.
 
 This amendment extends the records `--yes` keeps in Decision 5: besides the state while it leaves the base skill or an `artifact-cache` block, and the lock while any package folder remains, `--yes` keeps the `artifact-cache` block while it leaves a linked cache.
+
+## Amendment 3: An MCP Harness Edit Shows Only the Lines Around Calavera's Text
+
+- **Date:** 2026-11-20
+- **Pull request:** https://github.com/schalkneethling/create-project-calavera/pull/1070 (#678, layer 5)
+
+Decision 5 asks the dry run to show, for every edit, the exact text it removes and the text the file holds afterward. For an MCP harness file (`.mcp.json`, `.cursor/mcp.json`, `opencode.json`, or `.codex/config.toml`), the text afterward is the person's own configuration: their other servers, and any tokens in those servers' `env` or `headers` values. Printing it puts those tokens into terminal logs and, through `--json`, into CI output.
+
+The owner decided on 2026-11-20 that, for an MCP harness file, `eject` shows only the lines around the change, not the whole text the file will hold afterward, and that `--json` leaves the full text out (https://github.com/schalkneethling/create-project-calavera/issues/678#issuecomment-7037543610). `eject` applies it as follows:
+
+- The list still shows the exact lines `eject` removes, which are Calavera's own entry, and the line of the file where they start.
+- Around them, it shows the nearest line that is not blank before and after Calavera's text, with values hidden. In a JSON file, a tokenizer (`jsonc-parser`'s scanner) reads the line, so keys and punctuation stay and every value, whether a string, a number, `true`, `false`, or `null`, becomes `…`; a line it cannot read is hidden whole. In a TOML file, only a complete table header prints, without its comment, and only when the text before it parses on its own, so a line inside a multi-line string or array never counts as a header; every other line is hidden whole.
+- It never prints the rest of the file, and the `--json` result carries no `contents` for an MCP entry. `eject` still writes exactly the text it planned, and it reads the file again before it writes and changes nothing when the file changed since the list, so it never writes text the person did not approve.
+- A JSON rewrite that also changes the layout of the rest of the file still needs an interactive approval, and its note says so. The person reviews the result with `git diff` after `eject`.
+
+The other edits (the guidance section in `AGENTS.md` and the `artifact-cache` block in `.gitignore`) keep Decision 5's full text, because those files hold no MCP configuration.
+
+This amendment narrows Decision 5 for MCP harness files only.

@@ -3,7 +3,7 @@
 // when it creates the file is Calavera's: it is unedited when its text is one a release wrote, and
 // otherwise listed as edited and removed after approval. In any other `.coderabbit.yaml`, which
 // existed before Calavera added its filters, the `!.calavera/packages/**` filter line is reported
-// and the file is left. The command is registered in layer 5, so these tests call the planner.
+// and the file is left. These tests call the planner directly; `eject-command.test.mjs` covers the command.
 import assert from "node:assert/strict";
 import {
   lstat,

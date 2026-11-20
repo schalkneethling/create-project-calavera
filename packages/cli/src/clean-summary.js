@@ -104,7 +104,8 @@ function itemLine({ type, path, reason = "" }, dryRun) {
 }
 
 /**
- * The reason with each mention of the kept item's own path replaced by "this item", because the
+ * The reason with each mention of the kept item's own path replaced by "this item", or "This item"
+ * at the start of a sentence, because the
  * item's line already names it. "It" would be unclear in reasons that already use "it" for
  * Calavera or a hook, such as "so it cannot tell whether it runs this item". A longer path that starts with it, such as a script inside a kept skill
  * directory, stays as it is.
@@ -112,7 +113,7 @@ function itemLine({ type, path, reason = "" }, dryRun) {
  * @param {string} reason
  * @param {string} path
  */
-function withoutOwnPath(reason, path) {
+export function withoutOwnPath(reason, path) {
   let text = "";
   let from = 0;
   for (let index = reason.indexOf(path); index >= 0; index = reason.indexOf(path, index + 1)) {
@@ -120,7 +121,9 @@ function withoutOwnPath(reason, path) {
     const after = reason.slice(index + path.length, index + path.length + 2);
     // A period that ends the sentence is not part of the path.
     if (PATH_CHARACTER.test(before) || /^(?:[\w/@-]|\.[\w/@-])/.test(after)) continue;
-    text += `${reason.slice(from, index)}this item`;
+    // At the start of a sentence, the words start with a capital, as the path they replace did.
+    const startsSentence = /(?:^|[.!?]\s+)$/.test(reason.slice(0, index));
+    text += `${reason.slice(from, index)}${startsSentence ? "This item" : "this item"}`;
     from = index + path.length;
   }
   return text + reason.slice(from);

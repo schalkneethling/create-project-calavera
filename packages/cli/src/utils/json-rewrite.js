@@ -81,14 +81,22 @@ export async function writeJSON(value, path, formatter) {
  * @param {string} text
  * @param {string} path The file path relative to the project root, which picks the formatter's language.
  * @param {ProjectFormatter} formatter
+ * @param {{ withoutValues?: boolean }} [options] `withoutValues` names the line of a number instead
+ *   of the number, for a file that can hold tokens, such as an MCP harness file `eject` reports
+ *   on. Apply's messages for Claude Code settings keep naming the number.
  * @returns {Promise<string | undefined>}
  */
-export async function rewriteLossProblem(text, path, formatter) {
+export async function rewriteLossProblem(text, path, formatter, { withoutValues = false } = {}) {
   const token = /\s*(?:([{}[\],:])|("(?:[^"\\]|\\.)*")|(-?\d[\d.eE+-]*)|(true|false|null))/y;
   /** @type {(Set<string> | null)[]} One entry per open object (its keys) or array (null). */
   const open = [];
   /** @type {string[]} */
   const numbers = [];
+  /** @type {number[]} The line of each number, counted from 1. */
+  const lines = [];
+  /** @param {RegExpExecArray} match @param {string} number */
+  const lineOf = (match, number) =>
+    text.slice(0, match.index + match[0].length - number.length).split("\n").length;
   let expectKey = false;
   for (let match = token.exec(text); match !== null; match = token.exec(text)) {
     const [, punctuation, string, number] = match;
@@ -112,9 +120,13 @@ export async function rewriteLossProblem(text, path, formatter) {
       keys.add(key);
     } else if (number !== undefined) {
       if (!Number.isFinite(Number(number))) {
-        return `holds the number ${number}, which is too large for Calavera to write`;
+        return withoutValues
+          ? `holds a number on line ${lineOf(match, number)} that is too large for Calavera to write`
+          : `holds the number ${number}, which is too large for Calavera to write`;
       }
       numbers.push(number);
+      // Only eject's reports name the line, so apply skips the extra scan.
+      if (withoutValues) lines.push(lineOf(match, number));
     }
   }
   if (numbers.length === 0) return undefined;
@@ -130,7 +142,9 @@ export async function rewriteLossProblem(text, path, formatter) {
   }
   for (const [index, number] of numbers.entries()) {
     if (written[index] !== number) {
-      return `holds the number ${number}, which Calavera would write as ${written[index]}`;
+      return withoutValues
+        ? `holds a number on line ${lines[index]} that Calavera would write in another spelling`
+        : `holds the number ${number}, which Calavera would write as ${written[index]}`;
     }
   }
   return undefined;
