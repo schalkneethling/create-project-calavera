@@ -195,6 +195,7 @@ import {
   assertWorkspacePath,
   fileExists,
   isPathInside,
+  JSONParseError,
   readBoundedTemplate,
   readJSON,
   writeJSON,
@@ -2984,7 +2985,7 @@ export async function inspectProject(recipe, options = {}) {
   let manifestFinding;
 
   // Inspection is read-only, so a broken manifest becomes a finding. Apply
-  // still stops on it. The cause stays in the message for diagnosis.
+  // still stops on it. What is wrong, and where, stays in the message for diagnosis.
   try {
     packageJSON = await readPackageJSONIfPresent();
 
@@ -2994,11 +2995,12 @@ export async function inspectProject(recipe, options = {}) {
       packageJSON = {};
     }
   } catch (error) {
-    if (!(error instanceof SyntaxError)) {
+    if (!(error instanceof JSONParseError)) {
       throw error;
     }
 
-    manifestFinding = invalidManifestFinding(`could not be parsed: ${error.message}`);
+    // #1157: the problem and its position, never JSON.parse's message, which quotes the file.
+    manifestFinding = invalidManifestFinding(`could not be parsed: ${error.problem}`);
   }
 
   const previousState = await readStateIfPresent();

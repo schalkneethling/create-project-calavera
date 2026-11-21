@@ -28,7 +28,7 @@ import {
 } from "./project-local-commands.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import { errorAfterCleanups, removeTemporaryFolder, runCleanups } from "./utils/cleanup.js";
-import { fileExists, isPathInside } from "./utils/fs.js";
+import { fileExists, isPathInside, readJSON } from "./utils/fs.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { rewriteLossProblem } from "./utils/json-rewrite.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
@@ -1220,7 +1220,7 @@ export async function readState() {
 
 /** @param {string} path @returns {Promise<Record<string, unknown>>} */
 async function readJson(path) {
-  return JSON.parse(await readFile(path, "utf8"));
+  return /** @type {Record<string, unknown>} */ (await readJSON(path));
 }
 
 /** @param {string} path @param {unknown} value */

@@ -3,6 +3,8 @@ import { lstatSync, readFileSync } from "node:fs";
 import { access, constants, realpath, readFile, writeFile } from "node:fs/promises";
 import nodePath, { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
+import { jsonSyntaxProblem } from "./parse-position.js";
+
 const TEMPLATE_LIMIT = 256 * 1024;
 
 /**
@@ -78,11 +80,39 @@ export async function fileExists(path) {
 }
 
 /**
+ * Reads and parses the JSON file at `path`. A file that is missing or cannot be read rejects with
+ * the error from `readFile`, which carries its code, such as `ENOENT` or `EISDIR`. A file that is
+ * not valid JSON rejects with a `JSONParseError`, a `SyntaxError` that names the file and the line and column of the
+ * error, and has no `cause`: `JSON.parse`'s own message quotes the text around the error, which
+ * can hold a secret, so it never reaches a message, a cause, or a log (#1157).
+ *
  * @param {string} path
  * @returns {Promise<unknown>}
  */
 export async function readJSON(path) {
-  return JSON.parse(await readFile(path, "utf8"));
+  const text = await readFile(path, "utf8");
+  try {
+    return JSON.parse(text);
+  } catch {
+    throw new JSONParseError(path, jsonSyntaxProblem(text));
+  }
+}
+
+/**
+ * The error `readJSON` throws for a file that is not valid JSON. `problem` says what is wrong and
+ * where, such as "InvalidSymbol at line 3, column 14", for a caller that names the file itself.
+ */
+export class JSONParseError extends SyntaxError {
+  /**
+   * @param {string} path
+   * @param {string} problem From `jsonSyntaxProblem`, so it holds no text from the file.
+   */
+  constructor(path, problem) {
+    super(
+      `${path} cannot be parsed as JSON: ${problem}. Correct the JSON there, then run the command again.`,
+    );
+    this.problem = problem;
+  }
 }
 
 /**
