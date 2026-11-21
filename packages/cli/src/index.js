@@ -3723,6 +3723,15 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   ).catch(async (error) => {
     throw await errorAfterCleanups(error, [artifactPlan.dispose]);
   });
+  // #1034: an old `.calavera/.staging/<id>` folder is removed only when it matches the package the
+  // lock records; every other entry there is reported. Planned before apply writes anything, and in
+  // the dry run too, so the dry run lists what apply removes. The plan never throws: a folder it
+  // cannot read is reported and kept.
+  const stagingPlan = await planStagingLeftovers({
+    dryRun: applyOptions.dryRun,
+    services: artifactServices,
+  });
+  let stagingLeftovers = stagingPlan.items;
   // #838: the state is formatted after the last planning step and before apply writes any project
   // file or artifact output. One write comes earlier: the auto-install transaction, which formats
   // and commits its own records atomically. The state is formatted in the dry run as well, so the
@@ -3756,14 +3765,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     throw await errorAfterCleanups(error, [artifactPlan.dispose]);
   }
   await artifactPlan.dispose();
-  // #1034: an old `.calavera/.staging/<id>` folder is removed only when it matches the package the
-  // lock records; every other entry there is reported. Planned in the dry run too, so the dry run
-  // lists what apply removes.
-  const stagingPlan = await planStagingLeftovers({
-    dryRun: applyOptions.dryRun,
-    services: artifactServices,
-  });
-  let stagingLeftovers = stagingPlan.items;
   // A dry run plans the auto-installed outputs in both results; apply writes them during the
   // install, so only the install reports them.
   const autoInstalledPaths = new Set(artifactPlan.changes.map(({ path }) => path));

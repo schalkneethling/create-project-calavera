@@ -48,6 +48,9 @@ const applyOptions = {
   config: "calavera.config.json",
 };
 
+// A root user reads and removes files whatever their permissions, so the permission tests skip.
+const isRoot = process.getuid?.() === 0;
+
 const recipe = { ...buildRecipe("minimal", [], "npm"), ai: [{ id: ID }] };
 
 /**
@@ -208,7 +211,7 @@ test("apply keeps and reports every entry of .calavera/.staging that is not a co
     assert.match(leftover(applied, `${STAGING_ROOT}/notes.txt`).reason, /^It is a file, /);
     assert.match(
       leftover(applied, `${STAGING_ROOT}/skill-not-locked`).reason,
-      /no package the lock records/i,
+      /^No package the lock records is named skill-not-locked, /,
     );
     assert.deepEqual(await snapshot(STAGING_ROOT), before, "apply changed .calavera/.staging");
   });
@@ -287,19 +290,23 @@ test("apply does not look inside a .calavera/.staging that is a symbolic link", 
   });
 });
 
-test("when removing an old staging folder fails, apply still completes and reports the folder as kept", async () => {
-  await inInstalledProject(async (registry) => {
-    await writeOldStagingFolder();
-    await chmod(STAGING_ROOT, 0o555);
+test(
+  "when removing an old staging folder fails, apply still completes and reports the folder as kept",
+  { skip: isRoot },
+  async () => {
+    await inInstalledProject(async (registry) => {
+      await writeOldStagingFolder();
+      await chmod(STAGING_ROOT, 0o555);
 
-    const applied = await applyRecipeObject(recipe, applyOptions, registry);
+      const applied = await applyRecipeObject(recipe, applyOptions, registry);
 
-    const item = leftover(applied, LEFTOVER);
-    assert.equal(item.action, "keep");
-    assert.match(item.reason, /could not remove/);
-    assert.match(item.reason, /EACCES|EPERM/);
-  });
-});
+      const item = leftover(applied, LEFTOVER);
+      assert.equal(item.action, "keep");
+      assert.match(item.reason, /could not remove/);
+      assert.match(item.reason, /EACCES|EPERM/);
+    });
+  },
+);
 
 test("a folder that changes after the plan is kept, not removed", async () => {
   await inInstalledProject(async (registry) => {
@@ -345,17 +352,21 @@ test("apply reports nothing when .calavera/.staging does not exist, and leaves a
   });
 });
 
-test("apply keeps and reports an entry that is neither a file, a folder, nor a symbolic link", async () => {
-  await inInstalledProject(async (registry) => {
-    await mkdir(STAGING_ROOT);
-    execFileSync("mkfifo", [`${STAGING_ROOT}/pipe`]);
+test(
+  "apply keeps and reports an entry that is neither a file, a folder, nor a symbolic link",
+  { skip: process.platform === "win32" },
+  async () => {
+    await inInstalledProject(async (registry) => {
+      await mkdir(STAGING_ROOT);
+      execFileSync("mkfifo", [`${STAGING_ROOT}/pipe`]);
 
-    const applied = await applyRecipeObject(recipe, applyOptions, registry);
+      const applied = await applyRecipeObject(recipe, applyOptions, registry);
 
-    assert.match(leftover(applied, `${STAGING_ROOT}/pipe`).reason, /^It is not a folder, /);
-    assert.equal(await exists(`${STAGING_ROOT}/pipe`), true);
-  });
-});
+      assert.match(leftover(applied, `${STAGING_ROOT}/pipe`).reason, /^It is not a folder, /);
+      assert.equal(await exists(`${STAGING_ROOT}/pipe`), true);
+    });
+  },
+);
 
 test("the dry run and apply remove the temporary folders they rebuild the locked package in", async (t) => {
   await inInstalledProject(async (registry) => {
@@ -399,3 +410,138 @@ test("a .calavera/.staging replaced by a symbolic link after the plan is not fol
     assert.equal((await stat(join(elsewhere.path, "staging", ID))).isDirectory(), true);
   });
 });
+
+test(
+  "an unreadable .calavera/.staging is reported, and neither the dry run nor apply stops",
+  { skip: isRoot },
+  async () => {
+    await inInstalledProject(async (registry) => {
+      await writeOldStagingFolder();
+      await chmod(STAGING_ROOT, 0o000);
+
+      for (const dryRun of [true, false]) {
+        const result = await applyRecipeObject(recipe, { ...applyOptions, dryRun }, registry);
+        assert.deepEqual(
+          result.stagingLeftovers.map(({ path, action }) => [path, action]),
+          [[STAGING_ROOT, "keep"]],
+        );
+        assert.match(leftover(result, STAGING_ROOT).reason, /could not read it \(EACCES\)/);
+      }
+    });
+  },
+);
+
+test(
+  "an unreadable file inside a folder named after the locked package is reported, and apply completes",
+  { skip: isRoot },
+  async () => {
+    await inInstalledProject(async (registry) => {
+      await writeOldStagingFolder();
+      const [first] = await readdir(LEFTOVER, { recursive: true, withFileTypes: true }).then(
+        (entries) => entries.filter((entry) => entry.isFile()),
+      );
+      const file = join(first.parentPath, first.name);
+      await chmod(file, 0o000);
+      try {
+        const applied = await applyRecipeObject(recipe, applyOptions, registry);
+        assert.equal(leftover(applied, LEFTOVER).action, "keep");
+        assert.match(leftover(applied, LEFTOVER).reason, /could not read it \(EACCES\)/);
+        // The raw error names the file; the reason never does.
+        assert.doesNotMatch(leftover(applied, LEFTOVER).reason, new RegExp(first.name));
+      } finally {
+        await chmod(file, 0o644);
+      }
+    });
+  },
+);
+
+test("the comparison never follows a symbolic link to a folder, so a link loop or a link out of the project is not walked", async () => {
+  await inInstalledProject(async (registry) => {
+    await writeOldStagingFolder();
+    await using elsewhere = await mkdtempDisposable(join(tmpdir(), "calavera-staging-outside-"));
+    await writeFile(join(elsewhere.path, "outside.txt"), "outside\n");
+    await chmod(join(elsewhere.path, "outside.txt"), 0o000).catch(() => {});
+    await symlink(elsewhere.path, `${LEFTOVER}/outside`);
+    await symlink("..", `${LEFTOVER}/loop`);
+
+    const plan = await planStagingLeftovers({ dryRun: true, services: registry });
+
+    assert.equal(plan.items[0].action, "keep");
+    assert.match(plan.items[0].reason, new RegExp(`differ .+ starting at ${LEFTOVER}/loop\\.`));
+    await chmod(join(elsewhere.path, "outside.txt"), 0o644).catch(() => {});
+  });
+});
+
+test(
+  "a folder that cannot be read again before its removal is kept and reported",
+  { skip: isRoot },
+  async () => {
+    await inInstalledProject(async (registry) => {
+      await writeOldStagingFolder();
+      const plan = await planStagingLeftovers({ dryRun: false, services: registry });
+      await chmod(LEFTOVER, 0o000);
+      try {
+        const items = await removeStagingLeftovers(plan);
+        assert.equal(items[0].action, "keep");
+        assert.match(items[0].reason, /could not read it again before removing it \(EACCES\)/);
+      } finally {
+        await chmod(LEFTOVER, 0o755);
+      }
+    });
+  },
+);
+
+test("apply does not look inside .calavera/.staging when .calavera is a symbolic link", async () => {
+  await inInstalledProject(async (registry) => {
+    await writeOldStagingFolder();
+    await using elsewhere = await mkdtempDisposable(join(tmpdir(), "calavera-root-link-"));
+    await cp(".calavera", join(elsewhere.path, "calavera"), { recursive: true });
+    await rm(".calavera", { recursive: true });
+    await symlink(join(elsewhere.path, "calavera"), ".calavera");
+
+    const plan = await planStagingLeftovers({ dryRun: true, services: registry });
+
+    assert.deepEqual(
+      plan.items.map(({ path, action }) => [path, action]),
+      [[STAGING_ROOT, "keep"]],
+    );
+    assert.match(plan.items[0].reason, /^\.calavera is a symbolic link/);
+  });
+});
+
+test("a .calavera replaced by a symbolic link after the plan is not followed", async () => {
+  await inInstalledProject(async (registry) => {
+    await writeOldStagingFolder();
+    const plan = await planStagingLeftovers({ dryRun: false, services: registry });
+    await using elsewhere = await mkdtempDisposable(join(tmpdir(), "calavera-root-swap-"));
+    await cp(".calavera", join(elsewhere.path, "calavera"), { recursive: true });
+    await rm(".calavera", { recursive: true });
+    await symlink(join(elsewhere.path, "calavera"), ".calavera");
+
+    const items = await removeStagingLeftovers(plan);
+
+    assert.equal(items[0].action, "keep");
+    assert.equal((await stat(join(elsewhere.path, "calavera/.staging", ID))).isDirectory(), true);
+  });
+});
+
+test(
+  "a .calavera/.staging whose type cannot be read is reported, not treated as missing",
+  { skip: isRoot },
+  async () => {
+    await inInstalledProject(async (registry) => {
+      await writeOldStagingFolder();
+      await chmod(".calavera", 0o000);
+      try {
+        const plan = await planStagingLeftovers({ dryRun: true, services: registry });
+        assert.deepEqual(
+          plan.items.map(({ path, action }) => [path, action]),
+          [[STAGING_ROOT, "keep"]],
+        );
+        assert.match(plan.items[0].reason, /could not read it \(EACCES\)/);
+      } finally {
+        await chmod(".calavera", 0o755);
+      }
+    });
+  },
+);
