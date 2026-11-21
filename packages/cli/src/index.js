@@ -4708,8 +4708,9 @@ export const NPM_STALE_CACHE_HINT =
  * package manager of a new project from it, and `npm create` and `bunx` pass
  * an inherited value on instead of setting their own. Without its removal,
  * Vite+ would follow the package manager that launched Calavera, not the
- * runner Calavera chose and its confirmation names, under the Yarn 1 fallback
- * to npm and with `--package-manager` before `--new`. npm reads a `-` for the
+ * runner Calavera chose and its confirmation names, whenever Calavera falls
+ * back to npm (under Yarn 1 or an unrecognized launcher) and with
+ * `--package-manager npm` or `bun` before `--new` under another launcher. npm reads a `-` for the
  * `_` inside a setting's name as well (`loadEnv` in `@npmcli/config`), so the
  * match accepts both. Every other variable passes through unchanged.
  *
