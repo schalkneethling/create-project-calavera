@@ -41,7 +41,8 @@ function wordsAfterPaste({ shell, options }, line) {
   return output.split("\0").slice(0, -1);
 }
 
-// Each token holds a character that zsh or bash expands when it is not quoted.
+// Each token holds characters that zsh or bash expands when they are not quoted, with the
+// shell's default options or with the options named next to the token.
 const expandingTokens = [
   // Tilde expansion: both shells replace a leading `~` with a home directory.
   "~",
@@ -57,8 +58,8 @@ const expandingTokens = [
   "--config=~/calavera.config.json",
   "PATH=/usr/bin:~/bin",
   "--with==ls",
-  // With EXTENDED_GLOB, zsh treats `~` and `^` as pattern characters anywhere in a word.
-  "create-project-calavera@~6.2.0",
+  "PATH=/usr/bin:=ls",
+  // With EXTENDED_GLOB, zsh treats `^` as a pattern character anywhere in a word.
   "create-project-calavera@^6.2.0",
   "a^b",
 ];
@@ -96,7 +97,7 @@ for (const shell of shells) {
   });
 }
 
-test("quoteShellToken quotes a token with a leading ~ or =, or a ~ or ^ anywhere", () => {
+test("quoteShellToken quotes a token with a leading ~ or =, a ~ or ^ anywhere, or == or :=", () => {
   for (const token of expandingTokens) {
     assert.match(quoteShellToken(token), /^'.*'$/, token);
   }
