@@ -151,7 +151,7 @@ function validateAiSource(src, index, type) {
  * @param {string} name The ID or source the entry names.
  */
 export function assertSupportedTarget(artifact, target, index, name) {
-  if (artifact.targets && (!target || !artifact.targets.includes(target))) {
+  if (artifact.targets && !artifact.targets.includes(/** @type {string} */ (target))) {
     throw new Error(`AI item at index ${index} target is not supported by ${name}.`);
   }
 }

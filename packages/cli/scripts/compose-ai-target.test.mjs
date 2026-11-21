@@ -1,6 +1,8 @@
 // #1077: composing a recipe accepted any single directory name as an AI target, while validation
 // accepts only the targets the artifact supports, so `init --ai-artifact id@target` and the MCP
-// compose_recipe tool could build a recipe that validation rejects, and init wrote it to disk.
+// compose_recipe tool could build a recipe that validation rejects. Init already wrote nothing,
+// because it explains the recipe, which validates it, before the write; the init tests below pin
+// that order rather than the compose check, which the composeRecipe and MCP tests prove.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
 import { readdir } from "node:fs/promises";
@@ -114,8 +116,8 @@ test("init --ai-artifact id@target with an unsupported target fails and writes n
 });
 
 /**
- * Runs init in-process, so Stryker sees which tests reach the compose and write steps; it cannot
- * see into the child process the test above starts.
+ * Runs init in-process, so Stryker sees which tests reach the write; it cannot see into the child
+ * process the test above starts.
  */
 test("initRecipe rejects an unsupported target before it writes the recipe", async () => {
   await using fixture = await createTemporaryFixture("init-unsupported-ai-target-in-process", {
