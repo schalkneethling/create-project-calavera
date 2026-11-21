@@ -213,6 +213,7 @@ import {
 } from "./utils/mcp-config.js";
 import { artifactTargetPromptOptions, groupedPromptOptions } from "./utils/prompt-options.js";
 import { pluralizeCount, quoteScriptValue, titleCase } from "./utils/text.js";
+import { VARLOCK_POINTER } from "./varlock.js";
 
 /**
  * @typedef {"npm" | "pnpm" | "yarn" | "bun"} PackageManager
@@ -484,8 +485,6 @@ const VARLOCK_GITIGNORE_COMMENTS = [
   "# Review broader existing ignore rules before opting into that convention.",
 ];
 const VARLOCK_GITIGNORE_LINES = ["!.env.schema", ".env.local", ".env.*.local"];
-const VARLOCK_POINTER =
-  "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
 
 /** @type {Record<PackageManager, PackageManagerCommands>} */
 const packageManagerCommands = {

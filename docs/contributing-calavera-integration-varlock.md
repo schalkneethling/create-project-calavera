@@ -552,14 +552,20 @@ The `apply --json` shape remains simple:
 }
 ```
 
-The human output should print the same sentence after the change list:
+The human summary prints the same follow-up under Notes, but names each file
+only once (#1023). When the Files group lists `.env.schema` or `.gitignore`, the
+note points to Files for that file instead of naming it again. A file that Files
+does not list, such as an `.env.schema` the project already has, is still named
+in the note. On a first apply, Files lists both files, so the note reads:
 
 ```text
-Review .env.schema and add required project environment variables before enabling env:load in CI.
+Notes:
+  Review the Varlock schema and the ignore file listed under Files, including its existing rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.
 ```
 
 Start from the current pointer behavior in
-[`packages/cli/src/index.js`](../packages/cli/src/index.js) and the documented contract in
+[`packages/cli/src/varlock.js`](../packages/cli/src/varlock.js), the summary form in
+[`packages/cli/src/apply-summary.js`](../packages/cli/src/apply-summary.js), and the documented contract in
 [`docs/ai-module-contract.md`](ai-module-contract.md#post-install-pointers).
 
 ## Contributor Starting Points
