@@ -47,20 +47,41 @@ const FINDINGS_IN_PROJECT_GROUP = new Set([
 ]);
 
 /**
+ * @typedef {object} ApplySummaryOptions
+ * @property {boolean} [noInstall] The command ran with --no-install. A dry run still plans the
+ * install command, so `--json` and MCP callers keep it, but the summary says apply will not run
+ * it (#1022).
+ */
+
+/**
  * The lines `apply --dry-run` and `apply` print for `result`, in order. The caller prints a line
  * with the logger method its level names.
  *
  * @param {ApplyResult} result
+ * @param {ApplySummaryOptions} [options]
  * @returns {SummaryLine[]}
  */
-export function applySummaryLines(result) {
-  const { dryRun } = result;
-  /** @type {SummaryLine[]} */
-  const lines = [
-    dryRun
+export function applySummaryLines(result, options = {}) {
+  return [
+    result.dryRun
       ? info("Calavera apply dry run complete. No files were changed.")
       : { level: "success", text: "Calavera apply complete." },
+    ...applySummaryBody(result, options),
   ];
+}
+
+/**
+ * The lines after the headline, so a command that runs the apply dry run as one of its steps, such
+ * as `init --apply` (#1022), can say in its own headline what it has already written.
+ *
+ * @param {ApplyResult} result
+ * @param {ApplySummaryOptions} [options]
+ * @returns {SummaryLine[]}
+ */
+export function applySummaryBody(result, { noInstall = false } = {}) {
+  const { dryRun } = result;
+  /** @type {SummaryLine[]} */
+  const lines = [];
 
   if (
     dryRun &&
@@ -75,7 +96,7 @@ export function applySummaryLines(result) {
   if (dryRun) {
     pushGroup(lines, "Project", projectLines(result));
   }
-  pushGroup(lines, "Integrations", integrationLines(result));
+  pushGroup(lines, "Integrations", integrationLines(result, noInstall));
   pushGroup(lines, "Files", fileLines(result));
   pushGroup(lines, "Scripts", scriptLines(result));
   pushGroup(lines, "Artifacts", artifactLines(result));
@@ -114,9 +135,10 @@ function projectLines(result) {
  * integrations install is named under the first.
  *
  * @param {ApplyResult} result
+ * @param {boolean} noInstall
  * @returns {SummaryLine[]}
  */
-function integrationLines(result) {
+function integrationLines(result, noInstall) {
   /** @type {Set<string>} */
   const named = new Set();
   /** @type {SummaryLine[]} */
@@ -143,6 +165,16 @@ function integrationLines(result) {
   if (result.dependencies.length > 0) {
     if (result.installCommand === null) {
       lines.push(info(`${ITEM}Not installed, because apply ran with --no-install.`));
+      if (result.laterInstallCommand !== undefined) {
+        lines.push(info(`${ITEM}Install them later with: ${result.laterInstallCommand}`));
+      }
+    } else if (noInstall) {
+      // Only a dry run plans the command under --no-install. The install notes say how apply
+      // runs it, which it will not do, so they are left out, as apply itself leaves them out.
+      lines.push(
+        info(`${ITEM}Not installed, because apply runs with --no-install.`),
+        info(`${ITEM}Install them later with: ${result.installCommand}`),
+      );
     } else if (result.dryRun) {
       lines.push(info(`${ITEM}Install command: ${result.installCommand}`));
       lines.push(
@@ -503,16 +535,6 @@ function wiringLines(
         ]
       : []),
   ];
-}
-
-/** @param {import("./ai/artifact-inputs.js").ResolvedInput} input */
-export function formatArtifactInput({ artifact, name, ...input }) {
-  return `${artifact} ${name} = ${formatInputValue(input)}`;
-}
-
-/** @param {import("./integration-inputs.js").ResolvedIntegrationInput} input */
-export function formatIntegrationInput({ integration, name, ...input }) {
-  return `${integration} ${name} = ${formatInputValue(input)}`;
 }
 
 /**

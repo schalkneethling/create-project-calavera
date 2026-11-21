@@ -44,9 +44,7 @@ import {
 import { removedToolchainIntegrations } from "./catalog.js";
 import {
   applySummaryLines,
-  formatArtifactInput,
   formatArtifactRegistry,
-  formatIntegrationInput,
   VP_RUNNER_NOTE_PREFIX,
 } from "./apply-summary.js";
 import { cleanHeadline, cleanSummaryLines } from "./clean-summary.js";
@@ -59,6 +57,12 @@ import {
   selectEjectItems,
 } from "./eject.js";
 import { ejectSummaryLines } from "./eject-summary.js";
+import {
+  initApplyDryRunLines,
+  initDefaultInputLines,
+  initRecipeSummary,
+  initSummaryLines,
+} from "./init-summary.js";
 import {
   artifactDoctorVerdict,
   formatArtifactStatus,
@@ -109,7 +113,6 @@ import {
   cleanupFailures,
   errorAfterCleanups,
   errorWithLeftovers,
-  temporaryFolderLeftoverLine,
   temporaryFolderLeftovers,
 } from "./utils/cleanup.js";
 import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
@@ -209,7 +212,7 @@ import {
   writeOpenCodeMcpConfig,
 } from "./utils/mcp-config.js";
 import { artifactTargetPromptOptions, groupedPromptOptions } from "./utils/prompt-options.js";
-import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text.js";
+import { pluralizeCount, quoteScriptValue, titleCase } from "./utils/text.js";
 
 /**
  * @typedef {"npm" | "pnpm" | "yarn" | "bun"} PackageManager
@@ -317,6 +320,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {string[]} dependencies
  * @property {string | null} installCommand The command that installs `dependencies`, `vp add -D` in a Vite+-managed project (ADR-0012); null when the recipe has none, or when apply skips the install.
  * @property {string[]} installNotes How apply runs the install command, and what stops it, for the approval boundary.
+ * @property {string} [laterInstallCommand] The command that installs `dependencies`, to run later, present only when an apply that is not a dry run skipped the install under --no-install, where `installCommand` is null (#1022).
  * @property {string[]} integrations
  * @property {ProjectInspection} projectInspection
  * @property {VitePlusReport} vitePlus
@@ -3585,8 +3589,9 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
     detectedPackageJSON,
     packageManager,
   );
+  // Planned under --no-install too, so the summary can give the command to run later (#1022).
   const installPlan =
-    dependencyList.length > 0 && !(applyOptions.noInstall && !applyOptions.dryRun)
+    dependencyList.length > 0
       ? await planDevDependencyInstall(
           packageManager,
           vitePlusDetection,
@@ -3596,8 +3601,12 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
         )
       : undefined;
 
-  if (installPlan?.problem && !applyOptions.dryRun) {
-    throw installPlan.problem;
+  // A real apply skips the install under --no-install, so it neither runs nor reports the plan.
+  const skipsInstall = applyOptions.noInstall && !applyOptions.dryRun;
+  const runPlan = skipsInstall ? undefined : installPlan;
+
+  if (runPlan?.problem && !applyOptions.dryRun) {
+    throw runPlan.problem;
   }
 
   // #669 and ADR-0015, Decision 5: the text of every file Calavera generates comes from the
@@ -3961,8 +3970,8 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
     stagingLeftovers = await removeStagingLeftovers(stagingPlan);
   }
 
-  if (installPlan?.spawn && !applyOptions.dryRun) {
-    const [command, commandArgs] = installPlan.spawn;
+  if (runPlan?.spawn && !applyOptions.dryRun) {
+    const [command, commandArgs] = runPlan.spawn;
     const spin = applyOptions.json ? null : spinner();
     spin?.start("Installing development dependencies...");
 
@@ -3981,7 +3990,7 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
         [
           "Calavera applied the recipe's files, package.json scripts, configuration, and state, but could not install the recipe's development dependencies, so the tools those scripts run are not installed yet.",
           `Already written: ${written.join(", ")}.`,
-          `Install command: ${formatCommand(installPlan.spawn)}`,
+          `Install command: ${formatCommand(runPlan.spawn)}`,
           describeCommandFailure(error),
           `To finish the install, run the install command in ${process.cwd()}.`,
         ].join("\n"),
@@ -3992,15 +4001,21 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
     spin?.stop("Dependencies installed");
   }
 
-  return {
+  /** @type {ApplyResult} */
+  const result = {
     command: "apply",
     dryRun: applyOptions.dryRun,
     packageManager,
     dependencies: dependencyList,
-    installCommand: installPlan ? formatCommand(installPlan.command) : null,
-    installNotes: installPlan
-      ? [...installPlan.notes, ...declaredDevDependencyNotes(dependencyList, detectedPackageJSON)]
+    installCommand: runPlan ? formatCommand(runPlan.command) : null,
+    installNotes: runPlan
+      ? [...runPlan.notes, ...declaredDevDependencyNotes(dependencyList, detectedPackageJSON)]
       : [],
+    // installCommand stays null when apply skips the install, so the command to run later has
+    // its own field (#1022).
+    ...(skipsInstall && installPlan
+      ? { laterInstallCommand: formatCommand(installPlan.command) }
+      : {}),
     integrations: integrations.map((integration) => integration.id),
     projectInspection,
     vitePlus: vitePlusReport(projectInspection.vitePlus),
@@ -4027,6 +4042,7 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
     recipe,
     ...(manifestOutcome.decision ? { manifestDecision: manifestOutcome.decision } : {}),
   };
+  return result;
 }
 
 /**
@@ -5509,119 +5525,6 @@ function exitIfCancel(value) {
 }
 
 /**
- * @param {Recipe} recipe
- * @param {{ integrations: unknown[], dependencies: string[], aiArtifacts: unknown[] }} explanation
- * @returns {string}
- */
-function formatRecipeSummary(recipe, explanation) {
-  return [
-    `${style("bold", "Profile")}: ${recipe.profile}`,
-    `${style("bold", "Package manager")}: ${recipe.packageManager}`,
-    `${style("bold", "Integrations")}: ${pluralizeCount((recipe.integrations ?? []).length, "item")}`,
-    `${style("bold", "Dependencies")}: ${
-      explanation.dependencies.length > 0 ? explanation.dependencies.join(", ") : "none"
-    }`,
-    `${style("bold", "AI artifacts")}: ${explanation.aiArtifacts.length}`,
-  ].join("\n");
-}
-
-/**
- * @param {ApplyResult} result
- * @returns {string}
- */
-function formatApplySummary(result) {
-  const changedPaths = result.changes
-    .filter(({ type }) => type !== "unchanged")
-    .map((change) => change.path);
-
-  return [
-    `${style("bold", "Package manager")}: ${result.packageManager}`,
-    `${style("bold", "Integrations")}: ${result.integrations.join(", ") || "none"}`,
-    `${style("bold", "Dev dependencies")}: ${result.dependencies.join(", ") || "none"}`,
-    `${style("bold", "Artifacts to lock")}: ${
-      result.autoInstalledArtifacts
-        .map(({ id, package: packageName, version }) => `${id} (${packageName}@${version})`)
-        .join(", ") || "none"
-    }`,
-    ...result.artifactRegistries.map(
-      (registry) => `${style("bold", "Artifact registry")}: ${formatArtifactRegistry(registry)}`,
-    ),
-    ...result.artifactWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
-    ...result.artifactInputs.map(
-      (input) => `${style("bold", "Input")}: ${formatArtifactInput(input)}`,
-    ),
-    ...result.integrationInputs.map(
-      (input) => `${style("bold", "Input")}: ${formatIntegrationInput(input)}`,
-    ),
-    ...result.inputWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
-    ...result.wiringChanges
-      .flatMap(formatWiringChange)
-      .map((line) => `${style("bold", "Wiring")}: ${line}`),
-    ...result.wiringWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
-    ...result.ignoreChanges
-      .map(formatIgnoreChange)
-      .map((line) => `${style("bold", "Ignore")}: ${line}`),
-    `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
-    ...result.stagingLeftovers.map(
-      ({ path, action, reason }) =>
-        `${style("bold", action === "remove" ? "Would remove" : "Would keep")}: ${path}: ${reason}`,
-    ),
-    ...result.temporaryFolderLeftovers.map(
-      (leftover) => `${style("bold", "Warning")}: ${temporaryFolderLeftoverLine(leftover)}`,
-    ),
-  ].join("\n");
-}
-
-/**
- * The lines a dry run shows for one artifact's wiring, so the approval covers the exact text.
- *
- * @param {WiringChange} change
- * @returns {string[]}
- */
-function formatWiringChange({
-  artifact,
-  path,
-  kind,
-  type,
-  block,
-  removedBlock,
-  groupChanges,
-  reformatted,
-  deselected,
-}) {
-  const because = deselected
-    ? `because the recipe no longer selects ${artifact}`
-    : `because ${artifact} no longer wires that hook`;
-  if (removedBlock !== undefined) {
-    return [
-      `Would remove the ${artifact} block from ${path}, ${because}: ${quoteScriptValue(removedBlock)}`,
-    ];
-  }
-  if (kind === "vite-hook") {
-    return [
-      type === "unchanged"
-        ? `${path} already holds the ${artifact} block: ${quoteScriptValue(block)}`
-        : `Would ${type} the ${artifact} block in ${path}: ${quoteScriptValue(block)}`,
-    ];
-  }
-  if (type === "unchanged") return [`${path} already holds the ${artifact} hook groups`];
-  return [
-    ...(groupChanges ?? []).map(({ event, action, group, previous }) =>
-      action === "add"
-        ? `Would add a ${event} group for ${artifact} to ${path}: ${quoteScriptValue(group)}`
-        : action === "replace"
-          ? `Would replace the ${event} group for ${artifact} in ${path}: ${quoteScriptValue(previous)} with ${quoteScriptValue(group)}`
-          : `Would remove the ${event} group for ${artifact} from ${path}${deselected ? `, because the recipe no longer selects ${artifact}` : ""}: ${quoteScriptValue(previous)}`,
-    ),
-    ...(reformatted
-      ? [
-          `Would also change the layout of the rest of ${path}, because Calavera writes the whole file in the project's format; no value outside the groups changes`,
-        ]
-      : []),
-  ];
-}
-
-/**
  * The line a dry run shows for one integration's part of an ignore file, so the approval covers
  * the exact lines.
  *
@@ -5998,23 +5901,10 @@ export async function initRecipe(options) {
   }
 
   if (!options.json) {
-    note(formatRecipeSummary(recipe, explanation), "Recipe summary");
-    // Nobody was asked for a value taken from the default, so say which one it was and where it
-    // is recorded.
-    for (const { artifact, name, value, index } of artifactInputs.filter(
-      ({ source }) => source === "default",
-    )) {
-      logger.info(
-        `Input: ${artifact} ${name} = ${value}, the default, recorded as ai[${index}].inputs.${name} in ${options.config}. Change it there if it is wrong.`,
-      );
-    }
-    for (const { integration, name, value, path } of integrationInputs.filter(
-      ({ source }) => source === "default",
-    )) {
-      logger.info(
-        `Input: ${integration} ${name} = ${value}, the default, recorded as ${path} in ${options.config}. Change it there if it is wrong.`,
-      );
-    }
+    note(initRecipeSummary(recipe, explanation, options.apply), "Recipe summary");
+    printSummaryLines(
+      initDefaultInputLines(artifactInputs, integrationInputs, options.config, options.apply),
+    );
   }
 
   /** @type {ApplyResult | undefined} */
@@ -6031,7 +5921,7 @@ export async function initRecipe(options) {
     });
 
     if (!options.json) {
-      note(formatApplySummary(applyDryRun), "Apply dry run");
+      printSummaryLines(initApplyDryRunLines(applyDryRun, options));
     }
 
     const shouldApply =
@@ -7053,11 +6943,23 @@ function printHelp() {
 }
 
 /**
+ * Logs each summary line with the logger method its level names.
+ *
+ * @param {import("./summary-lines.js").SummaryLine[]} lines
+ */
+function printSummaryLines(lines) {
+  for (const { level, text } of lines) {
+    logger[level](text);
+  }
+}
+
+/**
  * @param {CommandResult} result
  * @param {boolean} [asJSON]
- * @param {boolean} [commandDryRun]
+ * @param {{ dryRun?: boolean, noInstall?: boolean }} [command] The options the command ran with,
+ * where its result does not record them.
  */
-function printResult(result, asJSON = false, commandDryRun = false) {
+function printResult(result, asJSON = false, { dryRun: commandDryRun = false, noInstall } = {}) {
   if (asJSON) {
     console.info(JSON.stringify(result, null, 2));
     return;
@@ -7159,35 +7061,7 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   }
 
   if (result.command === "init") {
-    if (result.dryRun) {
-      logger.info(`Calavera recipe dry run complete. Would write ${result.config}.`);
-    } else {
-      logger.success(`Wrote ${result.config}.`);
-    }
-
-    logger.info(`Profile: ${result.recipe.profile}`);
-    logger.info(`Package manager: ${result.recipe.packageManager}`);
-    logger.info(`Integrations: ${(result.recipe.integrations ?? []).join(", ")}`);
-
-    if (Array.isArray(result.recipe.ai) && result.recipe.ai.length > 0) {
-      logger.info(`AI artifacts: ${result.recipe.ai.length}`);
-    }
-
-    if (result.applyDryRun && !result.applyResult) {
-      logger.info("Apply was previewed but not run.");
-    }
-
-    if (result.applyResult) {
-      logger.success("Calavera apply complete.");
-      for (const pointer of result.applyResult.pointers) {
-        logger.info(pointer);
-      }
-      // #1033: apply finished, but a temporary folder it could not remove is still named.
-      for (const leftover of result.applyResult.temporaryFolderLeftovers) {
-        logger.warn(temporaryFolderLeftoverLine(leftover));
-      }
-    }
-
+    printSummaryLines(initSummaryLines(result));
     return;
   }
 
@@ -7215,9 +7089,7 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   }
 
   if (result.command === "apply") {
-    for (const { level, text } of applySummaryLines(result)) {
-      logger[level](text);
-    }
+    printSummaryLines(applySummaryLines(result, { noInstall }));
     return;
   }
 
@@ -7336,7 +7208,7 @@ async function main(options) {
   }
 
   if (options.command === "apply") {
-    printResult(await applyRecipe(options), options.json);
+    printResult(await applyRecipe(options), options.json, { noInstall: options.noInstall });
     return;
   }
 
@@ -7352,12 +7224,12 @@ async function main(options) {
   }
 
   if (options.command === "update") {
-    printResult(await applyRecipe(options), options.json);
+    printResult(await applyRecipe(options), options.json, { noInstall: options.noInstall });
     return;
   }
 
   if (options.command === "clean") {
-    printResult(await clean(options), options.json, options.dryRun);
+    printResult(await clean(options), options.json, { dryRun: options.dryRun });
     return;
   }
 
