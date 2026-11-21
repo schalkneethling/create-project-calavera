@@ -53,13 +53,25 @@ const FINDINGS_IN_PROJECT_GROUP = new Set([
  * @returns {SummaryLine[]}
  */
 export function applySummaryLines(result) {
-  const { dryRun } = result;
-  /** @type {SummaryLine[]} */
-  const lines = [
-    dryRun
+  return [
+    result.dryRun
       ? info("Calavera apply dry run complete. No files were changed.")
       : { level: "success", text: "Calavera apply complete." },
+    ...applySummaryBody(result),
   ];
+}
+
+/**
+ * The lines after the headline, so a command that runs the apply dry run as one of its steps, such
+ * as `init --apply` (#1022), can say in its own headline what it has already written.
+ *
+ * @param {ApplyResult} result
+ * @returns {SummaryLine[]}
+ */
+export function applySummaryBody(result) {
+  const { dryRun } = result;
+  /** @type {SummaryLine[]} */
+  const lines = [];
 
   if (
     dryRun &&

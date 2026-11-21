@@ -342,8 +342,8 @@ test("init --apply lists the artifacts it would lock in its approval summary", a
     { cwd: projectDirectory, env: { ...process.env, NO_COLOR: "1" } },
   );
 
-  // The summary is drawn in a box that wraps long lines; compare its text without the frame. A
-  // FORCE_COLOR in the caller's environment overrides NO_COLOR, so strip escape sequences too.
+  // Compare the text without the Clack frame around the recipe summary. A FORCE_COLOR in the
+  // caller's environment overrides NO_COLOR, so strip escape sequences too.
   const summary = stripVTControlCharacters(stdout)
     .replace(/[│├╮╯─◇]/g, " ")
     .replace(/\s+/g, " ");

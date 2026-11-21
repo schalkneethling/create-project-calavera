@@ -10,7 +10,12 @@ import { fileURLToPath } from "node:url";
 import { stripVTControlCharacters } from "node:util";
 
 import { listingViolations, namedItems } from "../../../scripts/rehearsal-checks.mjs";
-import { initRecipeSummary, initSummaryLines } from "../src/init-summary.js";
+import {
+  initApplyDryRunLines,
+  initDefaultInputLines,
+  initRecipeSummary,
+  initSummaryLines,
+} from "../src/init-summary.js";
 import { copyReleaseFixture, writeVitePlusStub } from "./vite-plus-fixtures.mjs";
 
 const cliPath = fileURLToPath(new URL("../bin/create-project-calavera.js", import.meta.url));
@@ -145,6 +150,11 @@ test("init --apply prints a pointer the dry run already printed once, not again 
       "editorconfig,varlock",
     ]);
 
+    // init wrote the recipe before the dry run, so the headline does not say nothing changed.
+    assert.match(
+      output,
+      /\nCalavera apply dry run complete\. Apply has not changed any files yet; init wrote only calavera\.config\.json\.\n/,
+    );
     const pointer = "Varlock recommends committing non-local .env.* files";
     assert.equal(output.split(pointer).length - 1, 1, output);
     assert.match(output, /\nNotes:\n {2}Review \.env\.schema/);
@@ -231,7 +241,7 @@ test("init without --apply closes with the recipe it wrote (#1022)", () => {
       "info: Calavera recipe dry run complete. Would write calavera.config.json.",
       "info: Profile: minimal",
       "info: Package manager: pnpm",
-      "info: Integrations: ",
+      "info: Integrations: none",
       "info: AI artifacts: 1",
     ],
   );
@@ -260,4 +270,88 @@ test("init --apply closes without repeating what the apply dry run named (#1022)
       "info: only after apply",
     ],
   );
+});
+
+test("init --apply names a default input by its place in the recipe, under a heading, because the dry run names its artifact (#1022)", () => {
+  const artifactInputs = /** @type {import("../src/ai/artifact-inputs.js").ResolvedInput[]} */ ([
+    {
+      artifact: "skill-guard",
+      index: 0,
+      name: "protectedBranch",
+      value: "main",
+      source: "default",
+    },
+    { artifact: "skill-guard", index: 0, name: "remote", value: "origin", source: "recorded" },
+  ]);
+  const integrationInputs =
+    /** @type {import("../src/integration-inputs.js").ResolvedIntegrationInput[]} */ ([
+      {
+        integration: "github-repository-controls",
+        name: "defaultBranch",
+        path: "integrationOptions.github-repository-controls.defaultBranch",
+        value: "main",
+        source: "default",
+      },
+      {
+        integration: "github-repository-controls",
+        name: "repository",
+        path: "integrationOptions.github-repository-controls.repository",
+        value: "example/summary",
+        source: "prompt",
+      },
+    ]);
+
+  assert.deepEqual(
+    levels(initDefaultInputLines(artifactInputs, integrationInputs, "calavera.config.json", true)),
+    [
+      "info: ",
+      "info: Defaults recorded in the recipe:",
+      "info:   ai[0].inputs.protectedBranch = main in calavera.config.json. Change it there if it is wrong.",
+      "info:   integrationOptions.github-repository-controls.defaultBranch = main in calavera.config.json. Change it there if it is wrong.",
+    ],
+  );
+  assert.deepEqual(
+    levels(initDefaultInputLines(artifactInputs, integrationInputs, "calavera.config.json", false)),
+    [
+      "info: Input: skill-guard protectedBranch = main, the default, recorded as ai[0].inputs.protectedBranch in calavera.config.json. Change it there if it is wrong.",
+      "info: Input: github-repository-controls defaultBranch = main, the default, recorded as integrationOptions.github-repository-controls.defaultBranch in calavera.config.json. Change it there if it is wrong.",
+    ],
+  );
+  // Without a default, init --apply prints no heading.
+  assert.deepEqual(initDefaultInputLines([], [], "calavera.config.json", true), []);
+});
+
+test("init --apply says in the dry run headline whether it has written the recipe (#1022)", () => {
+  const applyDryRun = /** @type {import("../src/index.js").ApplyResult} */ ({
+    dryRun: true,
+    recipe: { version: 1, integrations: [] },
+    packageManager: "pnpm",
+    vitePlus: { lines: [] },
+    projectInspection: { findings: [], packageManager: "pnpm" },
+    changes: [],
+    dependencies: [],
+    integrationInputs: [],
+    ignoreChanges: [],
+    wiringChanges: [],
+    scriptChanges: [],
+    stagingLeftovers: [],
+    autoInstalledArtifacts: [],
+    artifactInputs: [],
+    artifactRegistries: [],
+    artifactWarnings: [],
+    wiringWarnings: [],
+    pointers: [],
+    inputWarnings: [],
+  });
+  const headline = (/** @type {boolean} */ dryRun) =>
+    initApplyDryRunLines(applyDryRun, { config: "calavera.config.json", dryRun })[0];
+
+  assert.deepEqual(headline(true), {
+    level: "info",
+    text: "Calavera apply dry run complete. No files were changed.",
+  });
+  assert.deepEqual(headline(false), {
+    level: "info",
+    text: "Calavera apply dry run complete. Apply has not changed any files yet; init wrote only calavera.config.json.",
+  });
 });

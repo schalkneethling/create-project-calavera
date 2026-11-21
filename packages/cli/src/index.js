@@ -57,7 +57,12 @@ import {
   selectEjectItems,
 } from "./eject.js";
 import { ejectSummaryLines } from "./eject-summary.js";
-import { initRecipeSummary, initSummaryLines } from "./init-summary.js";
+import {
+  initApplyDryRunLines,
+  initDefaultInputLines,
+  initRecipeSummary,
+  initSummaryLines,
+} from "./init-summary.js";
 import {
   artifactDoctorVerdict,
   formatArtifactStatus,
@@ -201,7 +206,7 @@ import {
   writeOpenCodeMcpConfig,
 } from "./utils/mcp-config.js";
 import { artifactTargetPromptOptions, groupedPromptOptions } from "./utils/prompt-options.js";
-import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text.js";
+import { pluralizeCount, quoteScriptValue, titleCase } from "./utils/text.js";
 
 /**
  * @typedef {"npm" | "pnpm" | "yarn" | "bun"} PackageManager
@@ -5859,22 +5864,9 @@ export async function initRecipe(options) {
 
   if (!options.json) {
     note(initRecipeSummary(recipe, explanation, options.apply), "Recipe summary");
-    // Nobody was asked for a value taken from the default, so say which one it was and where it
-    // is recorded.
-    for (const { artifact, name, value, index } of artifactInputs.filter(
-      ({ source }) => source === "default",
-    )) {
-      logger.info(
-        `Input: ${artifact} ${name} = ${value}, the default, recorded as ai[${index}].inputs.${name} in ${options.config}. Change it there if it is wrong.`,
-      );
-    }
-    for (const { integration, name, value, path } of integrationInputs.filter(
-      ({ source }) => source === "default",
-    )) {
-      logger.info(
-        `Input: ${integration} ${name} = ${value}, the default, recorded as ${path} in ${options.config}. Change it there if it is wrong.`,
-      );
-    }
+    printSummaryLines(
+      initDefaultInputLines(artifactInputs, integrationInputs, options.config, options.apply),
+    );
   }
 
   /** @type {ApplyResult | undefined} */
@@ -5891,7 +5883,7 @@ export async function initRecipe(options) {
     });
 
     if (!options.json) {
-      printSummaryLines(applySummaryLines(applyDryRun));
+      printSummaryLines(initApplyDryRunLines(applyDryRun, options));
     }
 
     const shouldApply =
