@@ -3758,8 +3758,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       ownership: /** @type {const} */ ("project"),
     })),
   ];
-  // Decided here, before apply writes anything else, so a selection it cannot place stops apply
-  // instead of failing after the writes.
+  // Decided from the planned AI changes, before the state, package.json, and managed files are
+  // written. In a real apply the auto-install and the AI outputs are already written by now, so a
+  // locked artifact this cannot match to a selection fails loudly rather than being misreported.
   const autoInstalledArtifacts = withMatchingFiles(artifactPlan.installed, recipe, aiChanges);
   const wiringWarnings = await artifactWiringWarnings({
     recipe,
