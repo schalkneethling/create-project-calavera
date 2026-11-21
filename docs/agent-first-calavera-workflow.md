@@ -215,7 +215,9 @@ package manager detected, and no runner that Vite+ recognizes
 `npm`, `pnpm`, `yarn`, or `bun`). The prompt preselects pnpm. When Vite+ does
 not ask, because `--no-interactive` is forwarded or, unless `--interactive` is
 forwarded, `CI` is set or stdin is not a terminal, it uses pnpm without asking. This order was checked against Vite+
-1.6.0 and 1.7.0. Vite+ also installs the project's dependencies; that step needs
+1.6.0 and 1.7.0. Under `--new`, Vite+ always recognizes the runner, because
+Calavera removes the inherited `npm_config_user_agent` and each of its runners
+then sets its own value, which names the runner's package manager. Vite+ also installs the project's dependencies; that step needs
 network access and cannot be skipped.
 
 `--new` ends Calavera's own flags. Every token after it goes to `vp create`
