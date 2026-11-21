@@ -106,7 +106,9 @@ import {
   planHtmlValidateIgnoreChanges,
 } from "./ignore-lines.js";
 import {
+  cleanupFailures,
   errorAfterCleanups,
+  errorWithLeftovers,
   temporaryFolderLeftoverLine,
   temporaryFolderLeftovers,
 } from "./utils/cleanup.js";
@@ -3440,6 +3442,26 @@ async function manifestDecisionResult(recipe, applyOptions, decision) {
  * @returns {Promise<ApplyResult>}
  */
 export async function applyRecipeObject(recipeInput, options = {}, artifactServices = {}) {
+  // #1033: the temporary folders apply could not remove once it no longer needed them. Apply goes
+  // on after such a failure, so a later step that fails names them with its own error.
+  /** @type {unknown[]} */
+  const leftoverFailures = [];
+  try {
+    return await planAndApplyRecipe(recipeInput, options, artifactServices, leftoverFailures);
+  } catch (error) {
+    throw errorWithLeftovers(error, leftoverFailures);
+  }
+}
+
+/**
+ * @param {Recipe} recipeInput
+ * @param {Partial<CliOptions>} options
+ * @param {ArtifactServices} artifactServices
+ * @param {unknown[]} leftoverFailures Receives each failure to remove a temporary folder after the
+ *   last planning step.
+ * @returns {Promise<ApplyResult>}
+ */
+async function planAndApplyRecipe(recipeInput, options, artifactServices, leftoverFailures) {
   // Read before validation, which drops a recorded default runner from the recipe (#890).
   const recordedStrykerOptions = recipeInput?.integrationOptions?.[STRYKER_ID];
   const recordsTestRunner =
@@ -3779,7 +3801,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   // #1033 (owner decision of 2026-11-18): the AI outputs may already be written here, so a temporary
   // folder apply cannot remove is reported, not an error, and apply goes on to write the config,
   // the scripts, and the state.
-  const leftoverFolders = await temporaryFolderLeftovers([artifactPlan.dispose]);
+  leftoverFailures.push(...(await cleanupFailures([artifactPlan.dispose])));
+  const leftoverFolders = temporaryFolderLeftovers(leftoverFailures);
   // A dry run plans the auto-installed outputs in both results; apply writes them during the
   // install, so only the install reports them.
   const autoInstalledPaths = new Set(artifactPlan.changes.map(({ path }) => path));
@@ -3966,7 +3989,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
         [
           "Calavera applied the recipe's files, package.json scripts, configuration, and state, but could not install the recipe's development dependencies, so the tools those scripts run are not installed yet.",
           `Already written: ${written.join(", ")}.`,
-          ...leftoverFolders.map(temporaryFolderLeftoverLine),
           `Install command: ${formatCommand(installPlan.spawn)}`,
           describeCommandFailure(error),
           `To finish the install, run the install command in ${process.cwd()}.`,

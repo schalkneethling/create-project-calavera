@@ -191,3 +191,30 @@ test("an install that fails after a cleanup failure names the folder with what a
     assert.notEqual(await readFile(process.env.STUB_LOG, "utf8"), "", "apply ran no install");
   });
 });
+
+test("a write that fails after a cleanup failure names the folder with its own error", async (t) => {
+  await inAppliedProject(async (registry) => {
+    await rm(".calavera/packages", { recursive: true });
+    const folders = failRebuildFolderRemoval(t);
+    const write = fsPromises.writeFile;
+    const denied = Object.assign(new Error("EACCES: permission denied"), { code: "EACCES" });
+    t.mock.method(fsPromises, "writeFile", (/** @type {string} */ path, ...rest) =>
+      path === STATE ? Promise.reject(denied) : write(path, ...rest),
+    );
+    syncBuiltinESMExports();
+
+    await assert.rejects(
+      applyRecipeObject(structuredClone(recipe), applyOptions, registry),
+      (/** @type {AggregateError} */ error) => {
+        assert.ok(error instanceof AggregateError);
+        assert.equal(error.errors[0], denied);
+        assert.equal(error.cause, denied);
+        assert.equal(
+          error.message,
+          `EACCES: permission denied\nNot removed ${folders[0]}: ${leftover(folders[0]).reason}`,
+        );
+        return true;
+      },
+    );
+  });
+});

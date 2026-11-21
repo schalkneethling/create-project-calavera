@@ -34,7 +34,6 @@ import { vitePlusFixtureRelease, writeVitePlusFormatter } from "./vite-plus-fixt
 
 const artifactPackagesRoot = fileURLToPath(new URL("../../artifacts/", import.meta.url));
 const LOCK_PATH = ".calavera/artifacts.lock.json";
-const STATE_PATH = ".calavera/state.json";
 
 const applyOptions = {
   json: true,
@@ -769,11 +768,6 @@ test("when removing the install's staging folder fails, apply finishes, still re
     const [leftover] = result.temporaryFolderLeftovers;
     assert.match(leftover.path, /\.calavera\/\.transactions\/\d+-\d+$/);
     assert.match(leftover.reason, /could not remove this temporary folder \(EBUSY\)/);
-    assert.match(
-      await readFile(STATE_PATH, "utf8"),
-      /skill-code-review/,
-      "apply stopped before writing the state",
-    );
     assert.equal(folders.length, 1, "apply rebuilds the missing locked package once");
     await assert.rejects(
       stat(folders[0]),

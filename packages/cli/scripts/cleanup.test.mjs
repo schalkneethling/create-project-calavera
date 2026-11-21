@@ -11,7 +11,9 @@ import { join } from "node:path";
 import {
   CleanupError,
   TemporaryFolderError,
+  cleanupFailures,
   errorAfterCleanups,
+  errorWithLeftovers,
   removeTemporaryFolder,
   runCleanups,
   temporaryFolderLeftoverLine,
@@ -148,20 +150,21 @@ test("a TemporaryFolderError without a string code leaves the code out", () => {
   }
 });
 
-test("temporaryFolderLeftovers lists every folder left, runs every cleanup, and never throws", async () => {
+test("temporaryFolderLeftovers names each folder left with its code, never a message", async () => {
   let laterRan = false;
 
-  const leftovers = await temporaryFolderLeftovers([
+  const failures = await cleanupFailures([
     () => Promise.reject(new TemporaryFolderError("/one", { code: "EBUSY" })),
     // A nested cleanup's failures join the list.
     () => runCleanups([() => Promise.reject(new TemporaryFolderError("/two", {}))]),
-    () => Promise.reject(new Error("secret text")),
+    () => Promise.reject(Object.assign(new Error("secret text"), { code: "EPERM" })),
     async () => {
       laterRan = true;
     },
   ]);
 
-  assert.deepEqual(leftovers, [
+  assert.equal(laterRan, true);
+  assert.deepEqual(temporaryFolderLeftovers(failures), [
     {
       path: "/one",
       reason:
@@ -175,11 +178,54 @@ test("temporaryFolderLeftovers lists every folder left, runs every cleanup, and 
     {
       path: "",
       reason:
-        "Calavera could not remove one of its temporary folders. Nothing in the project uses it, so remove it yourself.",
+        "Calavera could not remove one of its temporary folders (EPERM). Look for a calavera- folder in the system's temporary folder or in .calavera/.transactions/, and remove it.",
     },
   ]);
-  assert.equal(laterRan, true);
-  assert.deepEqual(await temporaryFolderLeftovers([async () => {}]), []);
+  assert.deepEqual(temporaryFolderLeftovers([]), []);
+  // A cleanup can reject with no error at all.
+  assert.deepEqual(temporaryFolderLeftovers([undefined]), [
+    {
+      path: "",
+      reason:
+        "Calavera could not remove one of its temporary folders. Look for a calavera- folder in the system's temporary folder or in .calavera/.transactions/, and remove it.",
+    },
+  ]);
+});
+
+test("temporaryFolderLeftovers says when a folder left is inside the project, which Git does not ignore", () => {
+  const inside = join(process.cwd(), ".calavera", ".transactions", "1-2");
+
+  assert.deepEqual(
+    temporaryFolderLeftovers([new TemporaryFolderError(inside, { code: "EBUSY" })]),
+    [
+      {
+        path: inside,
+        reason:
+          "Calavera could not remove this temporary folder (EBUSY). Nothing in the project uses it, so remove it yourself. It is inside the project and Git does not ignore it, so remove it before you commit.",
+      },
+    ],
+  );
+});
+
+test("errorWithLeftovers returns the error itself when no folder was left", () => {
+  const stopped = new Error("write failed");
+
+  assert.equal(errorWithLeftovers(stopped, []), stopped);
+});
+
+test("errorWithLeftovers keeps the error first and as the cause, and names each folder left", () => {
+  const stopped = new Error("write failed");
+  const left = new TemporaryFolderError("/one", { code: "EBUSY" });
+
+  const result = errorWithLeftovers(stopped, [left]);
+
+  assert.ok(result instanceof AggregateError);
+  assert.deepEqual(result.errors, [stopped, left]);
+  assert.equal(result.cause, stopped);
+  assert.equal(
+    result.message,
+    "write failed\nNot removed /one: Calavera could not remove this temporary folder (EBUSY). Nothing in the project uses it, so remove it yourself.",
+  );
 });
 
 test("temporaryFolderLeftoverLine names the folder when there is one", () => {
