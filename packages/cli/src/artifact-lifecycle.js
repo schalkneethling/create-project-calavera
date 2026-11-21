@@ -30,6 +30,7 @@ import { createEmptyState, normalizeState } from "./state.js";
 import { errorAfterCleanups, removeTemporaryFolder, runCleanups } from "./utils/cleanup.js";
 import { fileExists, isPathInside } from "./utils/fs.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
+import { rewriteLossProblem } from "./utils/json-rewrite.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
 
 export const LOCK_PATH = ".calavera/artifacts.lock.json";
@@ -549,7 +550,8 @@ export async function rebuildLockedPackage(entry, temporaryRoot, dryRun, registr
  * @param {() => Promise<ProjectFormatter>} loadFormatter Formats the recipe the migration writes.
  */
 async function migrateRecipe(options, loadFormatter) {
-  const recipe = await readJson(options.config);
+  const text = await readFile(options.config, "utf8");
+  const recipe = JSON.parse(text);
   if (!Array.isArray(recipe.ai)) return { command: "artifacts migrate", migrated: 0 };
   let migrated = 0;
   const ai = recipe.ai.map((/** @type {unknown} */ item) => {
@@ -563,13 +565,21 @@ async function migrateRecipe(options, loadFormatter) {
     return { id: artifact.id, ...(target ? { target } : {}) };
   });
   if (migrated > 0) {
+    const path = relative(process.cwd(), resolve(options.config));
+    // #1078: the recipe is written back from its parsed value, so a hand-edited recipe can lose a
+    // repeated key or a number's spelling. The migration stops before writing, in a dry run too.
+    // The problem names a line rather than a value, because the recipe records input values.
+    const loss = await rewriteLossProblem(text, path, await loadFormatter(), {
+      withoutValues: true,
+    });
+    if (loss !== undefined) {
+      throw new Error(
+        `${path} ${loss}. artifacts migrate rewrites the whole recipe to replace each legacy entry, so it stops instead of changing that silently. Edit that line, then run artifacts migrate again.`,
+      );
+    }
     // #987: formatted as apply formats the recipe (#669), so the Vite+ pre-commit hook leaves it
     // as written. A dry run formats it too, so it stops where the migration would.
-    const recipeText = await formatRecordText(
-      relative(process.cwd(), resolve(options.config)),
-      { ...recipe, ai },
-      loadFormatter,
-    );
+    const recipeText = await formatRecordText(path, { ...recipe, ai }, loadFormatter);
     if (!options.dryRun) await writeAtomicText(options.config, recipeText);
   }
   return {
