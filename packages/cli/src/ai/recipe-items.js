@@ -161,6 +161,41 @@ export function assertFirstSelection(firstIndexById, id, index) {
 }
 
 /**
+ * #1125, owner decision of 2026-11-21: apply refuses a legacy entry, such as
+ * `{ "type": "skill", "src": "skills/protected-branch-guard" }`, that selects an artifact that
+ * declares wiring or inputs, because a legacy entry cannot record the inputs and Calavera does not
+ * guess them. `artifacts migrate` rewrites each legacy entry as an ID entry. Apply and its dry run
+ * call this before they plan or write anything. Clean and doctor still read a legacy entry.
+ *
+ * @param {unknown} aiConfig
+ */
+export function assertNoLegacyEntryNeedsWiring(aiConfig) {
+  const refused = normalizeAiItems(aiConfig).flatMap((item, index) => {
+    if (item.id !== undefined) return [];
+    const artifact = /** @type {(typeof aiArtifactCatalog)[number]} */ (
+      aiArtifactCatalog.find(({ id }) => id === item.catalogId)
+    );
+    const needs = [artifact.wiring ? "wiring" : undefined, artifact.inputs ? "inputs" : undefined]
+      .filter(Boolean)
+      .join(" and ");
+    if (needs === "") return [];
+    // Only the validated type and src are named, not the person's raw entry.
+    const entry = JSON.stringify({ type: item.type, src: item.src });
+    return [
+      `- ai[${index}] ${entry} selects ${artifact.id} by its legacy type and src, and ${artifact.id} needs ${needs}, which a legacy entry cannot record.`,
+    ];
+  });
+  if (refused.length === 0) return;
+  throw new Error(
+    [
+      "Calavera stopped before writing anything, because these legacy AI entries select artifacts that need wiring or inputs:",
+      ...refused,
+      "Run create-project-calavera artifacts migrate, which rewrites each legacy entry as an ID entry, then run apply again.",
+    ].join("\n"),
+  );
+}
+
+/**
  * @param {unknown} aiConfig
  * @returns {NormalizedAiItem[]}
  */

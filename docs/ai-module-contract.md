@@ -83,6 +83,8 @@ Legacy AI item `src` values resolve through the shared artifact catalog and must
 - `hook`: `hooks/<name>`
 - `agent`: `agents/<name>.md`
 
+A legacy item cannot record inputs. `apply`, its dry run, and `dry_run_apply` refuse, before writing anything, a legacy item that selects an artifact that declares wiring or inputs, and name `artifacts migrate`, which rewrites each legacy item as an ID item.
+
 ## Managed State And Write Safety
 
 Calavera's managed state lives in `.calavera/state.json`. Generated files are
