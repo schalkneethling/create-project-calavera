@@ -29,7 +29,7 @@ import {
   spinner,
   text,
 } from "@clack/prompts";
-import { artifactForId } from "@schalkneethling/calavera-artifact-core";
+import { artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
 import { resolvePackageDistTag } from "@schalkneethling/calavera-artifact-core/registry";
 import { ExecaError, execa } from "execa";
 import { parse as parseYAML } from "yaml";
@@ -133,7 +133,6 @@ import {
 
 import {
   aiArtifactOutputPaths,
-  assertAiSourceExists,
   buildAiApplyResult,
   hashAiInstall,
   resolveAiArtifacts,
@@ -6043,13 +6042,17 @@ async function doctor(options) {
       });
     }
 
-    for (const artifact of aiArtifacts) {
-      // A packaged artifact's payload comes from the lock and .calavera/packages, not from its
-      // legacy source path, which no project holds; `artifacts status` checks the lock.
-      if (!artifactForId(artifact.source)) {
-        await assertAiSourceExists(artifact.type, artifact.sourcePath, artifact.index);
-      }
+    // #1101: every artifact the recipe selects is a packaged catalog artifact, whether an entry
+    // names it by ID or by its legacy type and src: resolveAiArtifacts throws for a source that
+    // no catalog artifact provides. Its payload comes from the lock and .calavera/packages, not
+    // from the legacy source path, which no project holds, so doctor does not look for that path;
+    // `artifacts status` checks the lock. A legacy entry is named by its catalog ID below, as apply
+    // names it in the lock and in its wiring records.
+    const selectedAiIds = new Set(
+      aiArtifacts.map(({ source }) => artifactForLegacyPath(source)?.id ?? source),
+    );
 
+    for (const artifact of aiArtifacts) {
       for (const path of aiArtifactOutputPaths(artifact)) {
         if (!(await fileExists(path))) {
           issues.push({
@@ -6065,7 +6068,7 @@ async function doctor(options) {
     issues.push(
       ...(await artifactWiringFindings({
         records: state.aiWiring,
-        selected: new Set(aiArtifacts.map(({ source }) => source)),
+        selected: selectedAiIds,
         skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
       })),
     );
