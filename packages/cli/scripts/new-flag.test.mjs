@@ -68,7 +68,9 @@ const argv = process.argv.slice(2);
 // package.json it found; this stub writes the nearest one instead, so it never
 // walks past the test's own manifest. Corepack pins before it runs the package
 // manager, so the Yarn reads below and the pnpm and yarn runners call this
-// first. npm and bunx do not, because Corepack does not run them.
+// first. npm and bunx do not, because Corepack runs npm only after
+// "corepack enable npm" and never runs Bun; vp create receives "0" under
+// every runner in any case (#1080).
 function autoPin(packageManager = "yarn@4.18.1") {
   const value = process.env.COREPACK_ENABLE_AUTO_PIN;
   const pins = process.env.STUB_COREPACK_VERSION === "0.32.0" ? value !== "0" : value === "1";
