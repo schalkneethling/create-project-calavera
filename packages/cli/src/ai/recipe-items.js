@@ -142,6 +142,21 @@ function validateAiSource(src, index, type) {
 }
 
 /**
+ * Throws when the artifact declares the targets it supports and `target` is not one of them.
+ * Composing and validating a recipe both call this, so a composed recipe always validates (#1077).
+ *
+ * @param {(typeof aiArtifactCatalog)[number]} artifact
+ * @param {string | undefined} target
+ * @param {number} index
+ * @param {string} name The ID or source the entry names.
+ */
+export function assertSupportedTarget(artifact, target, index, name) {
+  if (artifact.targets && (!target || !artifact.targets.includes(target))) {
+    throw new Error(`AI item at index ${index} target is not supported by ${name}.`);
+  }
+}
+
+/**
  * Records the first index at which an artifact ID is selected and throws on a second selection.
  * The lock, the outputs, and the transaction are all keyed by artifact ID, so a second selection
  * cannot be installed whatever its target is.
@@ -243,15 +258,7 @@ export function normalizeAiItems(aiConfig) {
 
     assertFirstSelection(firstIndexById, artifact.id, index);
 
-    if (
-      item.target !== undefined &&
-      artifact.targets &&
-      (!target || !artifact.targets.includes(target))
-    ) {
-      throw new Error(
-        `AI item at index ${index} target is not supported by ${item.id ?? item.src}.`,
-      );
-    }
+    assertSupportedTarget(artifact, target, index, item.id ?? item.src);
 
     return {
       id: item.id,

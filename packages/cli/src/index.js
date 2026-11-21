@@ -5886,6 +5886,8 @@ export async function initRecipe(options) {
     { ask: interactive ? askForTestRunner : undefined },
   );
   const validation = validateRecipeResponse(recipe);
+  // explainRecipeResponse validates and throws, so a recipe that fails validation stops here,
+  // before the write below (#1077).
   const explanation = explainRecipeResponse(recipe);
 
   // #669: formatted as apply formats it, so a Vite+ project's vp check accepts the recipe file.
