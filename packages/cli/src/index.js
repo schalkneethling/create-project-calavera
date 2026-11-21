@@ -191,6 +191,7 @@ import {
 import {
   assertWorkspacePath,
   fileExists,
+  isPathInside,
   readBoundedTemplate,
   readJSON,
   writeJSON,
@@ -1104,28 +1105,25 @@ function projectYarnMajor(packageJSON) {
 }
 
 /**
- * A command as it can be pasted into a shell. Arguments that are not plain
- * words are quoted: in single quotes on POSIX shells, where a backslash is
- * not a plain word character, and in cmd-style double quotes on Windows,
- * where it is a path separator, so a Node.js path under `Program Files` stays
- * one argument (ADR-0012, Open questions).
+ * A command as it can be pasted into a shell. On POSIX shells each argument
+ * goes through `quoteShellToken`, which single-quotes anything zsh or bash
+ * would split or expand, including a backslash and a leading `=` (#1037,
+ * #1026). On Windows an argument that is not a plain word is quoted in
+ * cmd-style double quotes, and a backslash counts as a plain word character
+ * because it is a path separator, so a Node.js path under `Program Files`
+ * stays one argument (ADR-0012, Open questions).
  *
  * @param {[string, string[]]} command
  * @param {NodeJS.Platform} [platform]
  */
 export function formatCommand([command, commandArgs], platform = process.platform) {
-  const plainWord = platform === "win32" ? /^[\w@%+=:,./\\-]+$/ : /^[\w@%+=:,./-]+$/;
+  const parts = [command, ...commandArgs];
+  if (platform !== "win32") {
+    return parts.map(quoteShellToken).join(" ");
+  }
 
-  return [command, ...commandArgs]
-    .map((part) => {
-      if (plainWord.test(part)) {
-        return part;
-      }
-
-      return platform === "win32"
-        ? `"${part.replaceAll('"', '\\"')}"`
-        : `'${part.replaceAll("'", "'\\''")}'`;
-    })
+  return parts
+    .map((part) => (/^[\w@%+=:,./\\-]+$/.test(part) ? part : `"${part.replaceAll('"', '\\"')}"`))
     .join(" ");
 }
 
@@ -3219,13 +3217,7 @@ async function isInWorkingDirectory(path) {
   } catch {
     // A directory that does not exist is compared as given; reading the recipe reports it.
   }
-  const fromWorkingDirectory = relative(
-    await realpath(process.cwd()),
-    join(directory, basename(path)),
-  );
-  // A file is never the parent directory itself, so a path outside starts with `..` and a
-  // separator, or stays absolute when it is on another Windows drive.
-  return !fromWorkingDirectory.startsWith(`..${sep}`) && !isAbsolute(fromWorkingDirectory);
+  return isPathInside(await realpath(process.cwd()), join(directory, basename(path)));
 }
 
 /**
@@ -3660,7 +3652,7 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
   const answered =
     testRunnerAnswered ||
     [...artifactInputs, ...integrationInputs].some(({ source }) => source === "prompt");
-  const configPath = resolve(applyOptions.config ?? "calavera.config.json");
+  const configPath = resolve(applyOptions.config ?? CONFIG_FILE);
   const configText =
     applyOptions.writeConfig || (answered && applyOptions.writeConfig !== false)
       ? await formatGeneratedText(

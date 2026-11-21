@@ -422,6 +422,25 @@ test("--config naming a recipe in a subfolder of the project copies nothing, as 
   assert.deepEqual(await snapshotDirectory(fixture.project), before);
 });
 
+// Issue #1026: apply's check for a recipe in the working directory uses `isPathInside`, whose rule
+// the owner chose on #1026: only `..`, `..` and a separator, or an absolute path is outside. A
+// recipe in the project whose name starts with `..` is therefore read in place, as before.
+test("--config naming a recipe in the project whose name starts with `..` copies nothing", async () => {
+  await using fixture = await downloadedRecipe();
+  await writeFile(join(fixture.project, "..recipe.json"), recipeText);
+  const before = await snapshotDirectory(fixture.project);
+
+  const result = await inDirectory(fixture.project, () =>
+    applyRecipe(applyOptions("..recipe.json", { dryRun: true })),
+  );
+
+  assert.deepEqual(
+    result.changes.filter(({ path }) => path === "calavera.config.json"),
+    [],
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.project), before);
+});
+
 test("an outside --config from a folder without package.json is refused, even with --manifest-choice", async () => {
   // The owner decision of 2026-11-14 keeps this rule apart from the #430 manifest choice: a recipe
   // outside the working directory needs a package.json here, whatever choice is given.

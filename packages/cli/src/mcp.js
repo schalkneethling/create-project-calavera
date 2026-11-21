@@ -15,6 +15,7 @@ import {
 
 import { applyRecipeObject, inspectProject, reportVitePlus } from "./index.js";
 import {
+  CONFIG_FILE,
   composeRecipeResponse,
   describeIntegrationResponse,
   explainRecipeResponse,
@@ -277,10 +278,7 @@ const toolConfigs = {
         .enum(packageManagerIds)
         .optional()
         .describe(recipeToolInputDescriptions.packageManagerOverride),
-      config: z
-        .string()
-        .default("calavera.config.json")
-        .describe(recipeToolInputDescriptions.config),
+      config: z.string().default(CONFIG_FILE).describe(recipeToolInputDescriptions.config),
       writeConfig: z.boolean().default(true).describe(recipeToolInputDescriptions.writeConfig),
       reownManagedFiles: reownManagedFilesSchema,
       manifestChoice: manifestChoiceSchema,
@@ -317,10 +315,7 @@ const toolConfigs = {
         .enum(packageManagerIds)
         .optional()
         .describe(recipeToolInputDescriptions.packageManagerOverride),
-      config: z
-        .string()
-        .default("calavera.config.json")
-        .describe(recipeToolInputDescriptions.config),
+      config: z.string().default(CONFIG_FILE).describe(recipeToolInputDescriptions.config),
       writeConfig: z.boolean().default(true).describe(recipeToolInputDescriptions.writeConfig),
       noInstall: z.boolean().default(false).describe(recipeToolInputDescriptions.noInstall),
       reownManagedFiles: reownManagedFilesSchema,
@@ -380,7 +375,7 @@ function optionalManifestChoice(value) {
  */
 async function projectConfigPath(requestedPath) {
   return assertWorkspacePath(
-    typeof requestedPath === "string" ? requestedPath : "calavera.config.json",
+    typeof requestedPath === "string" ? requestedPath : CONFIG_FILE,
     process.cwd(),
     "apply_recipe config path",
   );
