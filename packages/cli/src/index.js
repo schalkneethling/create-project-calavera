@@ -196,6 +196,7 @@ import {
   fileExists,
   isPathInside,
   JSONParseError,
+  parseJSON,
   readBoundedTemplate,
   readJSON,
   writeJSON,
@@ -3209,7 +3210,7 @@ export async function applyRecipe(options) {
   ) {
     const recipeCopy = await planRecipeCopy(configPath, options.command);
     return applyRecipeObject(
-      recipeFromJSON(JSON.parse(recipeCopy.bytes.toString("utf8")), configPath),
+      recipeFromJSON(parseJSON(recipeCopy.bytes.toString("utf8"), configPath), configPath),
       {
         ...options,
         config: CONFIG_FILE,
@@ -5221,8 +5222,21 @@ async function readNewProjectRecipe(source) {
     );
   }
 
+  let recipe;
+
   try {
-    validateRecipe(JSON.parse(bytes.toString("utf8")));
+    recipe = parseJSON(bytes.toString("utf8"), source);
+  } catch (error) {
+    // #1157: what is wrong, and where, with no cause, because JSON.parse's message quotes the file.
+    throw new Error(
+      `--new refused: ${source}, given with --config, cannot be parsed as JSON: ${
+        /** @type {JSONParseError} */ (error).problem
+      }. Nothing was run and no files were changed.`,
+    );
+  }
+
+  try {
+    validateRecipe(recipe);
   } catch (error) {
     throw new Error(
       `--new refused: ${source}, given with --config, is not a valid recipe: ${(error instanceof

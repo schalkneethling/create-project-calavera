@@ -105,6 +105,30 @@ for (const { command, file, files } of cases) {
   }
 }
 
+// A recipe outside the project is read once, and the bytes validated are the bytes copied, so
+// these two paths parse the recipe themselves instead of through readJSON.
+// `--new` starts a project, so it runs in a directory that holds none yet.
+for (const [args, files] of [
+  [["apply", "--config", "../outside/calavera.config.json"], { "project/package.json": "{}\n" }],
+  [
+    ["apply", "--json", "--config", "../outside/calavera.config.json"],
+    { "project/package.json": "{}\n" },
+  ],
+  [
+    ["--dry-run", "--config", "../outside/calavera.config.json", "--new", "vite"],
+    { "project/.keep": "" },
+  ],
+]) {
+  test(`${args.join(" ")} names the recipe's parse error position without quoting it`, async () => {
+    await using fixture = await project({ ...files, [`outside/${RECIPE}`]: BROKEN });
+    const { code, output } = await runCli(join(fixture.path, "project"), args);
+
+    assert.equal(code, 1, output);
+    assertNamesPositionWithoutText(output, RECIPE);
+    assert.match(output, /cannot be parsed as JSON/);
+  });
+}
+
 test("inspect_project over MCP names a broken state's position without quoting the file", async () => {
   await using fixture = await project({ "package.json": "{}\n", [STATE]: BROKEN });
   const originalDirectory = process.cwd();

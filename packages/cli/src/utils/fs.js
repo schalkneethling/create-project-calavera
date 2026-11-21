@@ -82,15 +82,27 @@ export async function fileExists(path) {
 /**
  * Reads and parses the JSON file at `path`. A file that is missing or cannot be read rejects with
  * the error from `readFile`, which carries its code, such as `ENOENT` or `EISDIR`. A file that is
- * not valid JSON rejects with a `JSONParseError`, a `SyntaxError` that names the file and the line and column of the
- * error, and has no `cause`: `JSON.parse`'s own message quotes the text around the error, which
+ * not valid JSON rejects with a `JSONParseError`, a `SyntaxError` that names the file and the
+ * line and column of the error, and has no `cause`: `JSON.parse`'s own message quotes the text around the error, which
  * can hold a secret, so it never reaches a message, a cause, or a log (#1157).
  *
  * @param {string} path
  * @returns {Promise<unknown>}
  */
 export async function readJSON(path) {
-  const text = await readFile(path, "utf8");
+  return parseJSON(await readFile(path, "utf8"), path);
+}
+
+/**
+ * Parses `text`, read from the file at `path`, as `readJSON` does: text that is not valid JSON
+ * throws a `JSONParseError`, never `JSON.parse`'s own error. For a caller that has already read
+ * the file, such as one that keeps the exact bytes it validated.
+ *
+ * @param {string} text
+ * @param {string} path Names the file in the error.
+ * @returns {unknown}
+ */
+export function parseJSON(text, path) {
   try {
     return JSON.parse(text);
   } catch {
@@ -99,7 +111,7 @@ export async function readJSON(path) {
 }
 
 /**
- * The error `readJSON` throws for a file that is not valid JSON. `problem` says what is wrong and
+ * The error `readJSON` and `parseJSON` throw for a file that is not valid JSON. `problem` says what is wrong and
  * where, such as "InvalidSymbol at line 3, column 14", for a caller that names the file itself.
  */
 export class JSONParseError extends SyntaxError {
