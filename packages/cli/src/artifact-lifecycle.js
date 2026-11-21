@@ -27,7 +27,7 @@ import {
   artifactUpdateCommand,
 } from "./project-local-commands.js";
 import { createEmptyState, normalizeState } from "./state.js";
-import { errorAfterCleanups, runCleanups } from "./utils/cleanup.js";
+import { errorAfterCleanups, removeTemporaryFolder, runCleanups } from "./utils/cleanup.js";
 import { fileExists } from "./utils/fs.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
@@ -451,7 +451,7 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
   /** @type {string[]} */
   const temporaryRoots = [];
   const dispose = () =>
-    runCleanups(temporaryRoots.map((root) => () => rm(root, { recursive: true, force: true })));
+    runCleanups(temporaryRoots.map((root) => () => removeTemporaryFolder(root)));
   const restore = async () => {
     for (const { stage, finalRoot } of restores) {
       await rm(finalRoot, { recursive: true, force: true });
@@ -1028,7 +1028,7 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
   const stagingRoot = dryRun
     ? await mkdtemp(join(tmpdir(), "calavera-artifact-stage-"))
     : resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
-  const dispose = () => rm(stagingRoot, { recursive: true, force: true });
+  const dispose = () => removeTemporaryFolder(stagingRoot);
   /** @type {Map<string, string>} */
   const sourcePaths = new Map();
   /** @type {ArtifactLockEntry[]} */

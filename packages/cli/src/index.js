@@ -105,7 +105,13 @@ import {
   planGitignoreBlocks,
   planHtmlValidateIgnoreChanges,
 } from "./ignore-lines.js";
-import { errorAfterCleanups } from "./utils/cleanup.js";
+import {
+  cleanupFailures,
+  errorAfterCleanups,
+  errorWithLeftovers,
+  temporaryFolderLeftoverLine,
+  temporaryFolderLeftovers,
+} from "./utils/cleanup.js";
 import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
 import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
@@ -326,6 +332,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {string[]} wiringWarnings Why written wiring would not act yet, such as Git hooks that no dispatcher runs, with the remedy. They never stop apply.
  * @property {IgnoreChange[]} ignoreChanges The lines each integration adds to or removes from .gitignore and .htmlvalidateignore (ADR-0016), and the block that keeps the artifact cache out of Git (#841), so the approval boundary shows the exact lines.
  * @property {StagingLeftover[]} stagingLeftovers Each entry of `.calavera/.staging/` (#1034): an old copy of a locked package that apply removes, or anything else, which apply keeps and reports.
+ * @property {TemporaryFolderLeftover[]} temporaryFolderLeftovers Each temporary folder the command could not remove once it no longer needed it (#1033), with the error's code and the remedy. The command still finishes.
  * @property {Recipe} recipe The recipe apply used, with every artifact input filled in. After a dry run, pass this recipe to apply, so the values cannot change between approval and apply.
  * @property {ManifestDecision} [manifestDecision] Present when the directory has no package.json of its own but a manifest above it was found (#430): the choices, and `choice` once the person made one. Without a choice, or with abandon, nothing is planned and `changes` is empty.
  *
@@ -334,6 +341,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {import("./ai/artifact-wiring.js").WiringChange} WiringChange
  * @typedef {import("./ignore-lines.js").IgnoreChange} IgnoreChange
  * @typedef {import("./staging-leftovers.js").StagingLeftover} StagingLeftover
+ * @typedef {import("./utils/cleanup.js").TemporaryFolderLeftover} TemporaryFolderLeftover
  *
  * @typedef {"local-edits" | "legacy-state" | "still-mentioned" | "unfollowable-link" | "unreadable"} CleanSkipReason Why clean kept a stale item, so a JSON reader can tell the reasons apart; `reason` says the same in words, with what to do.
  *
@@ -3421,6 +3429,7 @@ async function manifestDecisionResult(recipe, applyOptions, decision) {
     wiringWarnings: [],
     ignoreChanges: [],
     stagingLeftovers: [],
+    temporaryFolderLeftovers: [],
     recipe,
     manifestDecision: decision,
   };
@@ -3433,6 +3442,26 @@ async function manifestDecisionResult(recipe, applyOptions, decision) {
  * @returns {Promise<ApplyResult>}
  */
 export async function applyRecipeObject(recipeInput, options = {}, artifactServices = {}) {
+  // #1033: the temporary folders apply could not remove once it no longer needed them. Apply goes
+  // on after such a failure, so a later step that fails names them with its own error.
+  /** @type {unknown[]} */
+  const leftoverFailures = [];
+  try {
+    return await planAndApplyRecipe(recipeInput, options, artifactServices, leftoverFailures);
+  } catch (error) {
+    throw errorWithLeftovers(error, leftoverFailures);
+  }
+}
+
+/**
+ * @param {Recipe} recipeInput
+ * @param {Partial<CliOptions>} options
+ * @param {ArtifactServices} artifactServices
+ * @param {unknown[]} leftoverFailures Receives each failure to remove a temporary folder after the
+ *   last planning step.
+ * @returns {Promise<ApplyResult>}
+ */
+async function planAndApplyRecipe(recipeInput, options, artifactServices, leftoverFailures) {
   // Read before validation, which drops a recorded default runner from the recipe (#890).
   const recordedStrykerOptions = recipeInput?.integrationOptions?.[STRYKER_ID];
   const recordsTestRunner =
@@ -3769,7 +3798,11 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     // #988: a failed cleanup is reported with the failure that stopped apply, not in its place.
     throw await errorAfterCleanups(error, [artifactPlan.dispose]);
   }
-  await artifactPlan.dispose();
+  // #1033 (owner decision of 2026-11-18): the AI outputs may already be written here, so a temporary
+  // folder apply cannot remove is reported, not an error, and apply goes on to write the config,
+  // the scripts, and the state.
+  leftoverFailures.push(...(await cleanupFailures([artifactPlan.dispose])));
+  const leftoverFolders = temporaryFolderLeftovers(leftoverFailures);
   // A dry run plans the auto-installed outputs in both results; apply writes them during the
   // install, so only the install reports them.
   const autoInstalledPaths = new Set(artifactPlan.changes.map(({ path }) => path));
@@ -3998,6 +4031,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     wiringWarnings,
     ignoreChanges,
     stagingLeftovers,
+    temporaryFolderLeftovers: leftoverFolders,
     recipe,
     ...(manifestOutcome.decision ? { manifestDecision: manifestOutcome.decision } : {}),
   };
@@ -5539,6 +5573,9 @@ function formatApplySummary(result) {
     ...result.stagingLeftovers.map(
       ({ path, action, reason }) =>
         `${style("bold", action === "remove" ? "Would remove" : "Would keep")}: ${path}: ${reason}`,
+    ),
+    ...result.temporaryFolderLeftovers.map(
+      (leftover) => `${style("bold", "Warning")}: ${temporaryFolderLeftoverLine(leftover)}`,
     ),
   ].join("\n");
 }
@@ -7152,6 +7189,10 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.success("Calavera apply complete.");
       for (const pointer of result.applyResult.pointers) {
         logger.info(pointer);
+      }
+      // #1033: apply finished, but a temporary folder it could not remove is still named.
+      for (const leftover of result.applyResult.temporaryFolderLeftovers) {
+        logger.warn(temporaryFolderLeftoverLine(leftover));
       }
     }
 
