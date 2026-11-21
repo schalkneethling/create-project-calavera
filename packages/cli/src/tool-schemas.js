@@ -91,10 +91,7 @@ function trimmedEnum(values, check) {
       z.enum(values, coreMessage(check)),
       z
         .string(coreMessage(check))
-        .regex(
-          new RegExp(`^\\s*(?:${values.map(escapeRegExp).join("|")})\\s*$`),
-          coreMessage(check),
-        ),
+        .regex(new RegExp(`^\\s*(?:${values.map(escapeRegExp).join("|")})\\s*$`)),
     ],
     coreMessage(check),
   );
@@ -106,7 +103,7 @@ function trimmedEnum(values, check) {
  * @param {(value: unknown) => unknown} check
  */
 function nonBlankString(check) {
-  return z.string(coreMessage(check)).regex(/\S/, coreMessage(check));
+  return z.string(coreMessage(check)).regex(/\S/);
 }
 
 // A removed profile id fails the enum like any other value; the error map hands back the same
@@ -137,8 +134,8 @@ const stylelintBaselineOptionsSchema = z.strictObject({
   available: z.union(
     [
       z.enum(["widely", "newly"], coreMessage(normalizeBaselineTarget)),
-      z.number(coreMessage(normalizeBaselineTarget)).int(coreMessage(normalizeBaselineTarget)),
-      z.string().regex(/^\d{4}$/, coreMessage(normalizeBaselineTarget)),
+      z.number(coreMessage(normalizeBaselineTarget)).int(),
+      z.string(coreMessage(normalizeBaselineTarget)).regex(/^\d{4}$/),
     ],
     coreMessage(normalizeBaselineTarget),
   ),
@@ -165,12 +162,7 @@ const strykerOptionsSchema = z.strictObject({
     )
     .optional(),
   testFiles: z
-    .array(
-      z.string(coreMessage((glob) => testFilesCheck([glob]))).min(
-        1,
-        coreMessage((glob) => testFilesCheck([glob])),
-      ),
-    )
+    .array(z.string(coreMessage((glob) => testFilesCheck([glob]))).min(1))
     .min(1, coreMessage(testFilesCheck))
     .optional(),
 });
@@ -228,9 +220,9 @@ const releaseEnvironmentSchema = z.union(
         ),
       waitTimer: z
         .number(waitTimerMessage)
-        .int(waitTimerMessage)
-        .min(0, waitTimerMessage)
-        .max(RELEASE_ENVIRONMENT_MAX_WAIT_TIMER, waitTimerMessage)
+        .int()
+        .min(0)
+        .max(RELEASE_ENVIRONMENT_MAX_WAIT_TIMER)
         .nullable()
         .optional(),
       preventSelfReview: z.boolean().optional(),
@@ -261,10 +253,7 @@ const releaseEnvironmentSchema = z.union(
 const githubRepositoryControlsOptionsSchema = z.strictObject({
   repository: z
     .string(coreMessage(repositoryControlsCheck("repository")))
-    .regex(
-      new RegExp(`^\\s*${REPOSITORY_NAME_PATTERN}\\s*$`),
-      coreMessage(repositoryControlsCheck("repository")),
-    ),
+    .regex(new RegExp(`^\\s*${REPOSITORY_NAME_PATTERN}\\s*$`)),
   defaultBranch: nonBlankString(repositoryControlsCheck("defaultBranch")).optional(),
   requiredChecks: z
     .array(nonBlankString(repositoryControlsCheck("requiredChecks", asList)))

@@ -207,6 +207,7 @@ test("both declared schemas accept the other shared tools' valid inputs", () => 
     ["list_ai_artifacts", {}],
     ["list_baseline_targets", {}],
     ["describe_baseline_target", { target: "widely" }],
+    ["describe_baseline_target", { target: "newly" }],
     ["describe_baseline_target", { target: 2024 }],
     ["search_baseline_features", { query: "grid" }],
     ["search_baseline_features", { query: "grid", limit: 5 }],
@@ -404,6 +405,116 @@ test("the MCP server answers a refused option with the core's message", async ()
   } finally {
     await client.close();
     await server.close();
+  }
+});
+
+test("each refused option field reports the core's message for that field", () => {
+  const cases = [
+    [{ "stylelint-baseline": { available: "someday" } }, /^Baseline target must be widely/],
+    [{ "stylelint-baseline": { available: 2024.5 } }, /^Baseline target must be widely/],
+    [
+      { "github-repository-controls": { ...githubControls, codeqlLanguages: ["cobol"] } },
+      /Invalid github-repository-controls\.codeqlLanguages: cobol\./,
+    ],
+    [
+      { "stylelint-baseline": { available: "widely", severity: "info" } },
+      /severity must be warning or error/,
+    ],
+    [{ stryker: { testRunner: "jest" } }, /stryker\.testRunner is "jest"/],
+    [{ stryker: { testFiles: [] } }, /testFiles must list at least one glob/],
+    [{ stryker: { testFiles: [""] } }, /testFiles must list at least one glob/],
+    [
+      { "github-repository-controls": { repository: "nope" } },
+      /repository must use owner\/name format/,
+    ],
+    [
+      { "github-repository-controls": { ...githubControls, defaultBranch: " " } },
+      /defaultBranch must be a non-empty string/,
+    ],
+    [
+      { "github-repository-controls": { ...githubControls, requiredChecks: [" "] } },
+      /requiredChecks must be an array of non-empty strings/,
+    ],
+    [
+      { "github-repository-controls": { ...githubControls, mergeMethods: ["fast"] } },
+      /Invalid github-repository-controls\.mergeMethods: fast\./,
+    ],
+    [
+      { "github-repository-controls": { ...githubControls, mergeMethods: [] } },
+      /mergeMethods must contain at least one method/,
+    ],
+    [
+      { "github-repository-controls": { ...githubControls, codeqlQuerySuite: "x" } },
+      /codeqlQuerySuite must be default or extended/,
+    ],
+    [
+      { "github-repository-controls": { ...githubControls, releaseEnvironment: {} } },
+      /reviewers must contain at least one GitHub login/,
+    ],
+    [
+      {
+        "github-repository-controls": { ...githubControls, releaseEnvironment: { reviewers: [] } },
+      },
+      /reviewers must contain at least one GitHub login/,
+    ],
+    [
+      {
+        "github-repository-controls": {
+          ...githubControls,
+          releaseEnvironment: { reviewers: [" "] },
+        },
+      },
+      /reviewers must be an array of non-empty strings/,
+    ],
+    [
+      {
+        "github-repository-controls": {
+          ...githubControls,
+          releaseEnvironment: { name: " ", reviewers: ["octocat"] },
+        },
+      },
+      /releaseEnvironment\.name must be a non-empty string/,
+    ],
+    [
+      {
+        "github-repository-controls": {
+          ...githubControls,
+          releaseEnvironment: { reviewers: ["octocat"], branches: [] },
+        },
+      },
+      /branches must contain at least one branch/,
+    ],
+    [
+      {
+        "github-repository-controls": {
+          ...githubControls,
+          releaseEnvironment: { reviewers: ["octocat"], branches: [" "] },
+        },
+      },
+      /branches must be an array of non-empty strings/,
+    ],
+    [
+      {
+        "github-repository-controls": {
+          ...githubControls,
+          releaseEnvironment: { reviewers: ["octocat"], waitTimer: -1 },
+        },
+      },
+      /waitTimer must be an integer from 0 to 43200/,
+    ],
+  ];
+
+  for (const [integrationOptions, message] of cases) {
+    const result = sharedToolSchemas.compose_recipe.input.safeParse({
+      profile: "default",
+      integrationOptions,
+    });
+    assert.equal(result.success, false, JSON.stringify(integrationOptions));
+    assert.match(
+      result.error.issues.map((issue) => issue.message).join("\n"),
+      message,
+      JSON.stringify(integrationOptions),
+    );
   }
 });
 
