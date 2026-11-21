@@ -590,12 +590,6 @@ test("errors and warnings name the Yarn or Bun setting as the person wrote it", 
   assert.match(warnings[0], /Ignored httpProxy in the user \.yarnrc\.yml/);
   assert.match(warnings[1], /Ignored httpsProxy in the user \.yarnrc\.yml/);
 
-  const bunVariable = await fixture({ userAgent: BUN, env: { BUN_CONFIG_REGISTRY: "not-a-url" } });
-  await assert.rejects(
-    loadNpmRegistryOptions(bunVariable),
-    /The Bun setting BUN_CONFIG_REGISTRY must be/,
-  );
-
   const bunScope = await fixture({
     userAgent: BUN,
     files: { "home/.bunfig.toml": '[install.scopes]\nschalkneethling = "not-a-url"\n' },
@@ -768,4 +762,130 @@ test("under Bun, a registry string without credentials and a scope table without
   const { options, diagnostics } = await loadNpmRegistryOptions(context);
   assert.equal(options.registry, "https://registry.example.com/");
   assert.deepEqual(diagnostics, []);
+});
+
+test("under Bun, BUN_CONFIG_REGISTRY that does not start with http:// or https:// is skipped, as Bun skips it", async () => {
+  const context = await fixture({
+    userAgent: BUN,
+    files: { "home/.bunfig.toml": '[install]\nregistry = "https://file.example.com/"\n' },
+    env: { BUN_CONFIG_REGISTRY: "mirror.example.com" },
+  });
+  assert.equal(
+    (await loadNpmRegistryOptions(context)).options.registry,
+    "https://file.example.com/",
+  );
+});
+
+test("under Bun, a $VAR registry is read from the variable in the user bunfig.toml only", async () => {
+  const user = await fixture({
+    userAgent: BUN,
+    files: { "home/.bunfig.toml": '[install]\nregistry = "$MY_REGISTRY"\n' },
+    env: { MY_REGISTRY: "https://variable.example.com/" },
+  });
+  assert.deepEqual((await loadNpmRegistryOptions(user)).registry, {
+    origin: "https://variable.example.com",
+    source: "user bunfig.toml",
+  });
+
+  const unset = await fixture({
+    userAgent: BUN,
+    files: { "home/.bunfig.toml": '[install]\nregistry = "$CALAVERA_UNSET_REGISTRY"\n' },
+  });
+  const unsetResult = await loadNpmRegistryOptions(unset);
+  assert.equal(unsetResult.registry.source, "default");
+  assert.deepEqual(unsetResult.unsetVariables, ["CALAVERA_UNSET_REGISTRY"]);
+
+  const project = await fixture({
+    userAgent: BUN,
+    files: { "workspace/project/bunfig.toml": '[install]\nregistry = "$MY_REGISTRY"\n' },
+    env: { MY_REGISTRY: "https://variable.example.com/" },
+  });
+  const projectResult = await loadNpmRegistryOptions(project);
+  assert.equal(projectResult.registry.source, "default");
+  assert.match(
+    projectResult.warnings[0],
+    /^Ignored install\.registry in the project bunfig\.toml: Calavera expands variables only/,
+  );
+});
+
+test("under Bun, NPM_CONFIG_REGISTRY wins over bunfig.toml although bun run sets npm_lifecycle_event", async () => {
+  const context = await fixture({
+    userAgent: BUN,
+    files: {
+      "workspace/project/.npmrc": "registry=https://a.example.com/\n",
+      "home/.bunfig.toml": '[install]\nregistry = "https://b.example.com/"\n',
+    },
+    env: {
+      NPM_CONFIG_REGISTRY: "https://a.example.com/",
+      npm_command: "run-script",
+      npm_lifecycle_event: "start",
+    },
+  });
+  assert.deepEqual((await loadNpmRegistryOptions(context)).registry, {
+    origin: "https://a.example.com",
+    source: "environment",
+  });
+});
+
+test("a .yarnrc.yml with excessive aliases is skipped with a warning instead of stopping the lookup", async () => {
+  const lines = ['a: &a ["x","x","x","x","x","x","x","x","x"]'];
+  const names = "abcdefghi";
+  for (let index = 1; index < names.length; index += 1) {
+    lines.push(
+      `${names[index]}: &${names[index]} [${Array(9)
+        .fill(`*${names[index - 1]}`)
+        .join(",")}]`,
+    );
+  }
+  const context = await fixture({
+    userAgent: YARN,
+    files: { "workspace/project/.yarnrc.yml": `${lines.join("\n")}\n` },
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.registry, "https://registry.yarnpkg.com");
+  assert.match(
+    warnings[0],
+    /^Could not parse the Yarn configuration file .*\.yarnrc\.yml, so Calavera skipped it\.$/,
+  );
+});
+
+test("under Yarn, an escaped \\${NAME} is not expanded, so the setting is ignored", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: { "home/.yarnrc.yml": "npmRegistryServer: https://\\${REGISTRY_HOST}\n" },
+    env: { REGISTRY_HOST: "expanded.example.com" },
+  });
+  const { options } = await loadNpmRegistryOptions(context);
+  assert.equal(options.registry, "https://registry.yarnpkg.com");
+});
+
+test("under Yarn, a proxy from a project .yarnrc.yml is ignored", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: { "workspace/project/.yarnrc.yml": "httpsProxy: http://proxy.example.com\n" },
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.proxy, undefined);
+  assert.match(warnings[0], /^Ignored httpsProxy in the project \.yarnrc\.yml/);
+});
+
+test("BUN_CONFIG_REGISTRY must start with the protocol, and its errors name the variable", async () => {
+  const embedded = await fixture({
+    userAgent: BUN,
+    env: { BUN_CONFIG_REGISTRY: "mirror.example.com/https://registry.example.com/" },
+  });
+  assert.equal((await loadNpmRegistryOptions(embedded)).registry.source, "default");
+
+  const credentials = await fixture({
+    userAgent: BUN,
+    env: { BUN_CONFIG_REGISTRY: `https://user:${SECRET}@registry.example.com/` },
+  });
+  await assert.rejects(loadNpmRegistryOptions(credentials), (error) => {
+    assert.match(
+      String(error),
+      /^Error: The Bun setting BUN_CONFIG_REGISTRY must not include a username/,
+    );
+    assert.doesNotMatch(String(error), new RegExp(SECRET));
+    return true;
+  });
 });

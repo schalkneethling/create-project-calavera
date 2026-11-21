@@ -146,7 +146,7 @@ async function userConfigPath(env, home, launcher) {
  *
  * `${VAR}` is expanded in keys and values of user files and the environment only. A project file
  * is repository content and must not read the caller's environment, so an entry of it that
- * contains `${` is ignored. A proxy from a project file is not used for an http registry.
+ * contains `${` is ignored, and so is a proxy it sets.
  * `warnings` are for the user. `diagnostics` hold every ignored entry and unset variable, for
  * failure messages. `unsetVariables` lists variable names. None of them ever contains a value.
  * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string }} [context]
@@ -207,7 +207,9 @@ export async function loadNpmRegistryOptions({
             bunEnvironmentLayer(env),
           ]
         : [...npmFiles, npmEnvironment];
-  const npmStarted = startedByNpm(env);
+  // Bun and Yarn also set npm_lifecycle_event and similar variables, but only npm and pnpm
+  // export their resolved .npmrc settings, so the comparison below applies to them alone.
+  const npmStarted = launcher === "npm" && startedByNpm(env);
 
   /** @type {Record<string, string>} */
   const options = {};
@@ -215,13 +217,17 @@ export async function loadNpmRegistryOptions({
   const sources = {};
   for (const layer of layers) {
     const { name, entries, trusted } = layer;
-    for (const [rawKey, rawValue] of Object.entries(entries)) {
+    for (const [rawKey, entry] of Object.entries(entries)) {
+      // npm accepts noproxy as a list (noproxy[]=host) and joins it with commas.
+      const rawValue = rawKey === "noproxy" && Array.isArray(entry) ? entry.join(",") : entry;
       if (typeof rawValue !== "string") continue;
       const setting = printable(layer.settingNames?.[rawKey] ?? rawKey);
       if (!trusted) {
         if (layer.accepts && !layer.accepts(rawKey)) continue;
-        if (rawKey.includes("${") || rawValue.includes("${")) {
-          const message = `Ignored ${setting} in the ${name}: Calavera expands \${...} only in user configuration files and environment variables, never in a project file.`;
+        // Bun expands a value that starts with $ (`Scope.fromAPI` in Bun's src/install/npm.zig).
+        const bunVariable = layer.tool === "Bun" && rawValue.startsWith("$");
+        if (rawKey.includes("${") || rawValue.includes("${") || bunVariable) {
+          const message = `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`;
           warnings.push(message);
           notes.push(message);
           continue;
@@ -312,8 +318,12 @@ export async function loadNpmRegistryOptions({
     const name = proxyNames.get(key);
     // An empty value leaves the proxy unset, as an empty npm setting does.
     if (!name || !value || !layer) continue;
-    if (name !== "noProxy" && registryUrl.protocol === "http:" && !layer.trusted) {
-      const message = `Ignored ${printable(layer.settingNames?.[key] ?? key)} in the ${layer.name}: a proxy from a project file is not used for the http registry ${registryUrl.origin}, because it would see the requests and their credentials in plain text. To use it, set it in your user configuration.`;
+    // A project file could name a proxy it controls together with a registry whose package
+    // documents point at http tarball URLs. npm-registry-fetch sends the credentials of a host
+    // whatever the protocol, so the proxy would receive them in plain text. A noproxy entry only
+    // removes the proxy, so a project file may still set it.
+    if (name !== "noProxy" && !layer.trusted) {
+      const message = `Ignored ${printable(layer.settingNames?.[key] ?? key)} in the ${layer.name}: Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials. To use it, set it in your user configuration.`;
       warnings.push(message);
       notes.push(message);
       continue;

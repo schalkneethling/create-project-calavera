@@ -52,7 +52,9 @@ export function detectLauncher(env) {
 // Yarn's interpolation: ${NAME}, ${NAME:-fallback} (unset or empty), and ${NAME-fallback} (unset).
 // Only a literal fallback is supported. Anything else that starts with ${ is left unexpanded and
 // reported, so the setting is ignored instead of being sent with a placeholder.
-const YARN_VARIABLE = /\$\{([A-Za-z_][A-Za-z0-9_]*)(?:(:?-)([^${}]*))?\}/g;
+// Names start with a letter, as in Yarn's `replaceEnvVariables`. An escaped \${ is not expanded,
+// so the check below reports it and the setting is ignored.
+const YARN_VARIABLE = /(?<!\\)\$\{([A-Za-z]\w*)(?:(:?-)([^${}]*))?\}/g;
 
 /**
  * @param {string} value
@@ -124,8 +126,14 @@ async function readYarnrc(path, warnings) {
     );
     return {};
   }
-  // A file that is empty or holds a single value has no settings.
-  return document.toJS() ?? {};
+  try {
+    // A file that is empty or holds a single value has no settings.
+    return document.toJS() ?? {};
+  } catch {
+    // toJS throws on a file with excessive aliases. Its message is not passed on.
+    warnings.push(unparseableWarning(path, "Yarn configuration file", undefined, undefined));
+    return {};
+  }
 }
 
 /**
@@ -261,13 +269,27 @@ async function readBunfig(path, layer, scope, warnings, notes) {
 }
 
 /**
+ * Bun replaces a registry URL that starts with $ with the value of the variable it names
+ * (`Scope.fromAPI` in Bun's src/install/npm.zig). The loader applies this to the user file only.
+ * @param {string} text
+ * @param {NodeJS.ProcessEnv} env
+ * @returns {Expansion}
+ */
+function expandBun(text, env) {
+  if (!text.startsWith("$")) return { text, unset: [] };
+  const name = text.slice(1);
+  const value = env[name];
+  return value === undefined ? { text, unset: [name] } : { text: value, unset: [] };
+}
+
+/**
  * The bunfig.toml layers, lowest precedence first: the global file, then the project file in `cwd`
  * ("keys set in the local file override the same keys in the global file",
  * https://bun.com/docs/runtime/bunfig). The global file is `$XDG_CONFIG_HOME/.bunfig.toml` when
  * that variable is an absolute path, and `$HOME/.bunfig.toml` otherwise. Bun loads them after the
  * .npmrc files and before `BUN_CONFIG_REGISTRY` and `NPM_CONFIG_REGISTRY`
- * (https://bun.com/docs/install/npmrc). Values are used as written: Calavera does not expand
- * variables in bunfig.toml.
+ * (https://bun.com/docs/install/npmrc). A registry URL that starts with $ is read from the
+ * variable it names, in the user file only.
  * @param {{ cwd: string, env: NodeJS.ProcessEnv, home: string, scope?: string, warnings: string[], notes: string[] }} context
  * @returns {Promise<LauncherLayer[]>}
  */
@@ -285,7 +307,7 @@ export async function bunfigLayers({ cwd, env, home, scope, warnings, notes }) {
       trusted,
       tool: /** @type {const} */ ("Bun"),
       ...(await readBunfig(path, name, scope, warnings, notes)),
-      expand: (/** @type {string} */ text) => ({ text, unset: [] }),
+      expand: expandBun,
     })),
   );
 }
@@ -297,10 +319,12 @@ export async function bunfigLayers({ cwd, env, home, scope, warnings, notes }) {
  * @returns {LauncherLayer}
  */
 export function bunEnvironmentLayer(env) {
+  // Bun skips a registry variable that does not start with https:// or http://
+  // (PackageManagerOptions.zig), so Calavera does too.
   const value = env.BUN_CONFIG_REGISTRY;
   return {
     name: "environment",
-    entries: value ? { registry: value } : {},
+    entries: value && /^https?:\/\//.test(value) ? { registry: value } : {},
     settingNames: { registry: "BUN_CONFIG_REGISTRY" },
     trusted: true,
     tool: "Bun",

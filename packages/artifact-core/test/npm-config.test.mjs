@@ -446,14 +446,29 @@ test("proxy, https-proxy, and noproxy from the user .npmrc reach the options npm
   assert.doesNotMatch(inspect(diagnostics), new RegExp(PROXY_SECRET));
 });
 
-test("a proxy set only in the project .npmrc is used, as npm uses it", async () => {
+test("a proxy in the project .npmrc is ignored with a warning, and its noproxy still applies", async () => {
   const context = await fixture({
-    project: "https-proxy=http://proxy.example.com:8080/\nnoproxy=registry.internal.example.com\n",
+    project:
+      "https-proxy=http://proxy.example.com:8080/\nproxy=http://proxy.example.com:8080/\nnoproxy=registry.internal.example.com\n",
   });
   const { options, warnings } = await loadNpmRegistryOptions(context);
-  assert.equal(options.httpsProxy, "http://proxy.example.com:8080/");
+  assert.equal(options.httpsProxy, undefined);
+  assert.equal(options.proxy, undefined);
   assert.equal(options.noProxy, "registry.internal.example.com");
-  assert.deepEqual(warnings, []);
+  assert.equal(warnings.length, 2);
+  assert.match(
+    warnings[0],
+    /^Ignored proxy in the project \.npmrc: Calavera reads proxies only from user/,
+  );
+  assert.match(warnings[1], /^Ignored https-proxy in the project \.npmrc/);
+});
+
+test("a noproxy list in the .npmrc is joined with commas, as npm joins it", async () => {
+  const context = await fixture({ user: "noproxy[]=a.example.com\nnoproxy[]=b.example.com\n" });
+  assert.equal(
+    (await loadNpmRegistryOptions(context)).options.noProxy,
+    "a.example.com,b.example.com",
+  );
 });
 
 test("npm_config_https_proxy and npm_config_noproxy override the .npmrc files", async () => {
@@ -507,7 +522,7 @@ test("a project .npmrc proxy is ignored for an http registry, so it cannot read 
   const { options, warnings } = await loadNpmRegistryOptions(context);
   assert.equal(options.proxy, undefined);
   assert.equal(options.httpsProxy, undefined);
-  assert.ok(warnings.some((warning) => /project \.npmrc.*http/.test(warning)));
+  assert.ok(warnings.some((warning) => warning.startsWith("Ignored proxy in the project .npmrc")));
 });
 
 test("a user .npmrc proxy is still used for an http registry", async () => {
