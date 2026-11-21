@@ -347,11 +347,7 @@ test("init --apply lists the artifacts it would lock in its approval summary", a
   const summary = stripVTControlCharacters(stdout)
     .replace(/[│├╮╯─◇]/g, " ")
     .replace(/\s+/g, " ");
-  assert.match(
-    summary,
-    new RegExp(
-      `Artifacts to lock: ${id} \\(${escapeRegExp(`${packed.packageName}@${packed.version}`)}\\)`,
-    ),
-  );
+  // #1022: the grouped summary names the version apply locks and the destination it writes.
+  assert.match(summary, new RegExp(`Would lock ${id} ${escapeRegExp(packed.version)} and write`));
   assert.deepEqual(await snapshotDirectory(projectDirectory), before, "init --dry-run wrote files");
 });

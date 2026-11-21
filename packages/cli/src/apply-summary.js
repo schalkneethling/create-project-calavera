@@ -500,16 +500,6 @@ function wiringLines(
   ];
 }
 
-/** @param {import("./ai/artifact-inputs.js").ResolvedInput} input */
-export function formatArtifactInput({ artifact, name, ...input }) {
-  return `${artifact} ${name} = ${formatInputValue(input)}`;
-}
-
-/** @param {import("./integration-inputs.js").ResolvedIntegrationInput} input */
-export function formatIntegrationInput({ integration, name, ...input }) {
-  return `${integration} ${name} = ${formatInputValue(input)}`;
-}
-
 /**
  * The value and where it came from. A default names what Git showed, so the person can tell
  * whether it is the branch they mean before they approve it (#846).

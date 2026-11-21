@@ -44,9 +44,7 @@ import {
 import { removedToolchainIntegrations } from "./catalog.js";
 import {
   applySummaryLines,
-  formatArtifactInput,
   formatArtifactRegistry,
-  formatIntegrationInput,
   VP_RUNNER_NOTE_PREFIX,
 } from "./apply-summary.js";
 import { cleanHeadline, cleanSummaryLines } from "./clean-summary.js";
@@ -59,6 +57,7 @@ import {
   selectEjectItems,
 } from "./eject.js";
 import { ejectSummaryLines } from "./eject-summary.js";
+import { initRecipeSummary, initSummaryLines } from "./init-summary.js";
 import {
   artifactDoctorVerdict,
   formatArtifactStatus,
@@ -5483,116 +5482,6 @@ function exitIfCancel(value) {
 }
 
 /**
- * @param {Recipe} recipe
- * @param {{ integrations: unknown[], dependencies: string[], aiArtifacts: unknown[] }} explanation
- * @returns {string}
- */
-function formatRecipeSummary(recipe, explanation) {
-  return [
-    `${style("bold", "Profile")}: ${recipe.profile}`,
-    `${style("bold", "Package manager")}: ${recipe.packageManager}`,
-    `${style("bold", "Integrations")}: ${pluralizeCount((recipe.integrations ?? []).length, "item")}`,
-    `${style("bold", "Dependencies")}: ${
-      explanation.dependencies.length > 0 ? explanation.dependencies.join(", ") : "none"
-    }`,
-    `${style("bold", "AI artifacts")}: ${explanation.aiArtifacts.length}`,
-  ].join("\n");
-}
-
-/**
- * @param {ApplyResult} result
- * @returns {string}
- */
-function formatApplySummary(result) {
-  const changedPaths = result.changes
-    .filter(({ type }) => type !== "unchanged")
-    .map((change) => change.path);
-
-  return [
-    `${style("bold", "Package manager")}: ${result.packageManager}`,
-    `${style("bold", "Integrations")}: ${result.integrations.join(", ") || "none"}`,
-    `${style("bold", "Dev dependencies")}: ${result.dependencies.join(", ") || "none"}`,
-    `${style("bold", "Artifacts to lock")}: ${
-      result.autoInstalledArtifacts
-        .map(({ id, package: packageName, version }) => `${id} (${packageName}@${version})`)
-        .join(", ") || "none"
-    }`,
-    ...result.artifactRegistries.map(
-      (registry) => `${style("bold", "Artifact registry")}: ${formatArtifactRegistry(registry)}`,
-    ),
-    ...result.artifactWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
-    ...result.artifactInputs.map(
-      (input) => `${style("bold", "Input")}: ${formatArtifactInput(input)}`,
-    ),
-    ...result.integrationInputs.map(
-      (input) => `${style("bold", "Input")}: ${formatIntegrationInput(input)}`,
-    ),
-    ...result.inputWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
-    ...result.wiringChanges
-      .flatMap(formatWiringChange)
-      .map((line) => `${style("bold", "Wiring")}: ${line}`),
-    ...result.wiringWarnings.map((warning) => `${style("bold", "Warning")}: ${warning}`),
-    ...result.ignoreChanges
-      .map(formatIgnoreChange)
-      .map((line) => `${style("bold", "Ignore")}: ${line}`),
-    `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
-    ...result.stagingLeftovers.map(
-      ({ path, action, reason }) =>
-        `${style("bold", action === "remove" ? "Would remove" : "Would keep")}: ${path}: ${reason}`,
-    ),
-  ].join("\n");
-}
-
-/**
- * The lines a dry run shows for one artifact's wiring, so the approval covers the exact text.
- *
- * @param {WiringChange} change
- * @returns {string[]}
- */
-function formatWiringChange({
-  artifact,
-  path,
-  kind,
-  type,
-  block,
-  removedBlock,
-  groupChanges,
-  reformatted,
-  deselected,
-}) {
-  const because = deselected
-    ? `because the recipe no longer selects ${artifact}`
-    : `because ${artifact} no longer wires that hook`;
-  if (removedBlock !== undefined) {
-    return [
-      `Would remove the ${artifact} block from ${path}, ${because}: ${quoteScriptValue(removedBlock)}`,
-    ];
-  }
-  if (kind === "vite-hook") {
-    return [
-      type === "unchanged"
-        ? `${path} already holds the ${artifact} block: ${quoteScriptValue(block)}`
-        : `Would ${type} the ${artifact} block in ${path}: ${quoteScriptValue(block)}`,
-    ];
-  }
-  if (type === "unchanged") return [`${path} already holds the ${artifact} hook groups`];
-  return [
-    ...(groupChanges ?? []).map(({ event, action, group, previous }) =>
-      action === "add"
-        ? `Would add a ${event} group for ${artifact} to ${path}: ${quoteScriptValue(group)}`
-        : action === "replace"
-          ? `Would replace the ${event} group for ${artifact} in ${path}: ${quoteScriptValue(previous)} with ${quoteScriptValue(group)}`
-          : `Would remove the ${event} group for ${artifact} from ${path}${deselected ? `, because the recipe no longer selects ${artifact}` : ""}: ${quoteScriptValue(previous)}`,
-    ),
-    ...(reformatted
-      ? [
-          `Would also change the layout of the rest of ${path}, because Calavera writes the whole file in the project's format; no value outside the groups changes`,
-        ]
-      : []),
-  ];
-}
-
-/**
  * The line a dry run shows for one integration's part of an ignore file, so the approval covers
  * the exact lines.
  *
@@ -5969,7 +5858,7 @@ export async function initRecipe(options) {
   }
 
   if (!options.json) {
-    note(formatRecipeSummary(recipe, explanation), "Recipe summary");
+    note(initRecipeSummary(recipe, explanation, options.apply), "Recipe summary");
     // Nobody was asked for a value taken from the default, so say which one it was and where it
     // is recorded.
     for (const { artifact, name, value, index } of artifactInputs.filter(
@@ -6002,7 +5891,7 @@ export async function initRecipe(options) {
     });
 
     if (!options.json) {
-      note(formatApplySummary(applyDryRun), "Apply dry run");
+      printSummaryLines(applySummaryLines(applyDryRun));
     }
 
     const shouldApply =
@@ -7024,6 +6913,17 @@ function printHelp() {
 }
 
 /**
+ * Logs each summary line with the logger method its level names.
+ *
+ * @param {import("./summary-lines.js").SummaryLine[]} lines
+ */
+function printSummaryLines(lines) {
+  for (const { level, text } of lines) {
+    logger[level](text);
+  }
+}
+
+/**
  * @param {CommandResult} result
  * @param {boolean} [asJSON]
  * @param {boolean} [commandDryRun]
@@ -7130,31 +7030,7 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   }
 
   if (result.command === "init") {
-    if (result.dryRun) {
-      logger.info(`Calavera recipe dry run complete. Would write ${result.config}.`);
-    } else {
-      logger.success(`Wrote ${result.config}.`);
-    }
-
-    logger.info(`Profile: ${result.recipe.profile}`);
-    logger.info(`Package manager: ${result.recipe.packageManager}`);
-    logger.info(`Integrations: ${(result.recipe.integrations ?? []).join(", ")}`);
-
-    if (Array.isArray(result.recipe.ai) && result.recipe.ai.length > 0) {
-      logger.info(`AI artifacts: ${result.recipe.ai.length}`);
-    }
-
-    if (result.applyDryRun && !result.applyResult) {
-      logger.info("Apply was previewed but not run.");
-    }
-
-    if (result.applyResult) {
-      logger.success("Calavera apply complete.");
-      for (const pointer of result.applyResult.pointers) {
-        logger.info(pointer);
-      }
-    }
-
+    printSummaryLines(initSummaryLines(result));
     return;
   }
 
@@ -7182,9 +7058,7 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   }
 
   if (result.command === "apply") {
-    for (const { level, text } of applySummaryLines(result)) {
-      logger[level](text);
-    }
+    printSummaryLines(applySummaryLines(result));
     return;
   }
 
