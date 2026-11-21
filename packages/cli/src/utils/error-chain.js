@@ -23,7 +23,7 @@ export function truncateFailureLine(line) {
  */
 
 /**
- * @typedef {{ entry: ErrorChainEntry, textLeftOut: boolean }} ChainEntry
+ * @typedef {{ entry: ErrorChainEntry, textLeftOut: boolean }} VisitedEntry
  */
 
 /**
@@ -208,16 +208,17 @@ export function errorChain(error, env = process.env) {
 }
 
 /**
- * The entries of `errorChain`, each with whether the rule against repeated
- * text left its message out. `formatErrorChain` needs that to tell such an
- * entry from one whose own message is empty.
+ * The entries of `errorChain`, each with whether a cause with a message kept
+ * none of its lines, because an earlier message already shows them or because
+ * they hold only a period. `formatErrorChain` needs that to tell such an entry
+ * from one whose own message is empty.
  *
  * @param {unknown} error
  * @param {Record<string, string | undefined>} env
- * @returns {[ChainEntry, ...ChainEntry[]]}
+ * @returns {[VisitedEntry, ...VisitedEntry[]]}
  */
 function chainEntries(error, env) {
-  /** @type {ChainEntry[]} */
+  /** @type {VisitedEntry[]} */
   const entries = [];
   /** @type {string[]} */
   const shownTexts = [];
@@ -257,6 +258,7 @@ function chainEntries(error, env) {
 
     const name = readProperty(value, "name");
     const hasName = typeof name === "string" && name !== "";
+    const shownName = hasName ? redact(name) : undefined;
     const code = readProperty(value, "code");
     const hasCode = typeof code === "string" && code !== "";
     const frames = debug ? stackFrames(value, redact) : undefined;
@@ -266,12 +268,12 @@ function chainEntries(error, env) {
       lines.length > 0 ||
       // A cause with an empty message of its own is still shown, by its name.
       (whole === "" && hasName) ||
-      (textLeftOut && (hasCode || (hasName && name !== "Error"))) ||
+      (textLeftOut && (hasCode || (shownName !== undefined && shownName !== "Error"))) ||
       frames !== undefined
     ) {
       entries.push({
         entry: {
-          ...(hasName ? { name: redact(name) } : {}),
+          ...(shownName !== undefined ? { name: shownName } : {}),
           message: (isError ? lines : lines.map(truncateFailureLine)).join("\n"),
           ...(hasCode ? { code: redact(code) } : {}),
           ...(frames ? { stack: frames.join("\n") } : {}),
@@ -287,7 +289,7 @@ function chainEntries(error, env) {
 
   visit(error);
   // The first visit always adds the error itself.
-  return /** @type {[ChainEntry, ...ChainEntry[]]} */ (entries);
+  return /** @type {[VisitedEntry, ...VisitedEntry[]]} */ (entries);
 }
 
 /**

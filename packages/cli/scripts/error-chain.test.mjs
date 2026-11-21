@@ -132,12 +132,9 @@ test("a cause is shown once: an embedded cause is not repeated, a deferred cause
 
 test("a cause whose message a wrapper repeats keeps its code and name, but not its message", () => {
   const message = "the lock file could not be replaced";
-  /**
-   * @param {string} code
-   * @param {string} [name]
-   */
-  const wrapped = (code, name) => {
-    const cause = Object.assign(new Error(message), { code }, name ? { name } : {});
+  /** @param {string} code */
+  const wrapped = (code) => {
+    const cause = Object.assign(new Error(message), { code });
     return new Error(`Could not save: ${message}.`, { cause });
   };
   const busy = wrapped("EBUSY");
@@ -181,8 +178,13 @@ test("a cause whose message a wrapper repeats keeps its code and name, but not i
   );
 
   // A repeated cause with nothing to tell it apart, a plain Error without a code,
-  // is still left out. An empty code tells nothing apart either.
-  for (const cause of [new Error(message), Object.assign(new Error(message), { code: "" })]) {
+  // is still left out. An empty code, or a name that is plain Error once terminal
+  // control sequences are removed, tells nothing apart either.
+  for (const cause of [
+    new Error(message),
+    Object.assign(new Error(message), { code: "" }),
+    Object.assign(new Error(message), { name: "\u001b[31mError\u001b[39m" }),
+  ]) {
     assert.equal(errorChain(new Error(`Could not save: ${message}.`, { cause }), {}).length, 1);
   }
 });
