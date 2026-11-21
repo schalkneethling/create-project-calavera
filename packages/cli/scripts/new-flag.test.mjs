@@ -545,10 +545,13 @@ test("--new --dry-run prints the confirmation and the command and spawns nothing
   );
   // Vite+ 1.6.0 (dist/create/bin.js) picks VP_PACKAGE_MANAGER first, then, inside a monorepo,
   // the detected package manager before a forwarded one; elsewhere, a forwarded one before the
-  // detected one; then the launcher's (#958).
+  // detected one; then the launcher's (#958). Detection finds nothing in a project with neither
+  // field and none of the lockfiles or configuration files Vite+ reads, so the launcher's wins:
+  // vite-plus 1.6.0 and 1.7.0, started through `npm exec` and `bunx` under such a package.json,
+  // scaffolded with npm and Bun, not pnpm (#1028).
   assert.match(
     result.stdout,
-    /- Inside an existing project, Vite\+ uses the package manager it detects there unless --package-manager is forwarded\. Inside a monorepo, Vite\+ uses the package manager it detects for the monorepo even when --package-manager is forwarded\. A VP_PACKAGE_MANAGER environment variable overrides all of these\.\n/,
+    /- Inside an existing project, Vite\+ uses the package manager it detects there unless --package-manager is forwarded\. When that project's package\.json has no packageManager or devEngines\.packageManager field and its folder has no lockfile or package-manager configuration file that Vite\+ reads \(an \.npmrc does not count\), Vite\+ detects none and uses pnpm\. Inside a monorepo, Vite\+ uses the package manager it detects for the monorepo even when --package-manager is forwarded\. A VP_PACKAGE_MANAGER environment variable overrides all of these\.\n/,
   );
   assert.doesNotMatch(result.stdout, /Inside an existing workspace/);
   assert.match(result.stdout, /cannot be skipped/);
@@ -809,6 +812,7 @@ test("--new --yes scaffolds through the runner, verifies managed, and runs the b
     result.stdout,
     /- Outside an existing project, Vite\+ uses npm as the project's package manager unless --package-manager is forwarded after --new\./,
   );
+  assert.match(result.stdout, /Vite\+ detects none and uses npm\./);
   assert.equal((await detectVitePlus(target)).status, "managed");
   assert.ok(await exists(join(target, ".agents/skills/calavera/SKILL.md")));
   assert.ok(await exists(join(target, ".calavera/state.json")));
