@@ -392,6 +392,35 @@ test("the output of the recipe the #918 rehearsal applies passes its listing che
   });
 });
 
+test("a Varlock recipe names .env.schema and .gitignore once, under Files, in the dry run and after apply (#1023)", async () => {
+  await inManagedProject(async () => {
+    const recipe = buildRecipe("minimal", ["editorconfig", "varlock"], "pnpm");
+    const text = (/** @type {import("../src/index.js").ApplyResult} */ result) =>
+      printed(applySummaryLines(result).map((line) => line.text));
+    // The note keeps what the person has to do, and points at the files Files lists.
+    const note =
+      "  Review the Varlock schema and the ignore file listed under Files, including its existing rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
+
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true });
+    const planned = namedItems(JSON.parse(JSON.stringify(dryRun)));
+    assert.ok(planned.includes(".env.schema") && planned.includes(".gitignore"), planned.join());
+    const dryRunText = text(dryRun);
+    assert.deepEqual(
+      listingViolations(dryRunText, planned, dryRun.vitePlus.lines),
+      [],
+      dryRunText,
+    );
+    assert.ok(dryRunText.includes(`\nNotes:\n${note}\n`), dryRunText);
+    // --json and MCP callers keep the note as it was, file names included.
+    assert.ok(dryRun.pointers.some((pointer) => pointer.startsWith("Review .env.schema and")));
+
+    const applied = await applyRecipeObject(dryRun.recipe, { ...applyOptions, noInstall: true });
+    const appliedText = text(applied);
+    assert.deepEqual(listingViolations(appliedText, planned), [], appliedText);
+    assert.ok(appliedText.includes(`\nNotes:\n${note}\n`), appliedText);
+  });
+});
+
 test("every line the dry run prints for the rich recipe fits in 100 columns, except fixed text and quoted values", async () => {
   await inManagedProject(async (root) => {
     const dryRun = await applyRecipeObject(

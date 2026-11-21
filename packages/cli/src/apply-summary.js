@@ -20,6 +20,7 @@ import { integrationDependencies } from "./stryker-options.js";
 import { DETAIL, ITEM, info, pushGroup, tense, warn } from "./summary-lines.js";
 import { temporaryFolderLeftoverLine } from "./utils/cleanup.js";
 import { quoteScriptValue } from "./utils/text.js";
+import { VARLOCK_POINTER, VARLOCK_SUMMARY_POINTER } from "./varlock.js";
 
 /**
  * @typedef {import("./index.js").ApplyResult} ApplyResult
@@ -431,15 +432,16 @@ function artifactLines(result) {
 }
 
 /**
- * The cache pointer without the ignore file, which the summary names once, under Files, with the
- * block in it.
+ * A pointer without the files the summary names once, under Files: the cache pointer without the
+ * ignore file that holds the block, and the Varlock note without the schema and the ignore file
+ * (#1023).
  *
  * @param {string} pointer
  */
 function summaryPointer(pointer) {
-  return pointer === ARTIFACT_CACHE_POINTER
-    ? `${ARTIFACT_CACHE_IGNORED}, ${ARTIFACT_CACHE_REASON}`
-    : pointer;
+  if (pointer === ARTIFACT_CACHE_POINTER) return `${ARTIFACT_CACHE_IGNORED}, ${ARTIFACT_CACHE_REASON}`;
+  if (pointer === VARLOCK_POINTER) return VARLOCK_SUMMARY_POINTER;
+  return pointer;
 }
 
 /**
