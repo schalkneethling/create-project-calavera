@@ -96,6 +96,9 @@ When apply asks for a value that the recipe does not record, it writes the
 recipe with that value to `calavera.config.json` instead of an exact copy, and
 leaves the downloaded file unchanged. A `--config` path inside the project, such
 as `recipes/team.json`, is used where it is and is not copied.
+`update --config <path>` treats a recipe saved outside the project the same
+way: it copies the recipe into the project root, with the same checks, before it
+applies it.
 
 `npm create` needs the `--` separator before Calavera flags such as `--init`
 and `--dry-run`. Do not use `npm create project-calavera --init`; npm treats
