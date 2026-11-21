@@ -709,8 +709,9 @@ test("formatCommand quotes every argument a POSIX shell would not read as one pl
 });
 
 // Issue #1026: on POSIX shells formatCommand quotes through quoteShellToken, so it follows the
-// #1037 rules: a leading `=` (zsh's EQUALS option), `==` and `:=` (zsh's MAGIC_EQUAL_SUBST), and a
-// `~` (tilde expansion) are quoted, although each holds only plain-word characters otherwise.
+// #1037 rules: a leading `=` (zsh's EQUALS option), and `==` or `:=` (zsh's MAGIC_EQUAL_SUBST) are
+// quoted, although they hold only plain-word characters. A `~` was quoted before #1026 as well; its
+// case guards that behavior.
 test("formatCommand quotes the tokens zsh and bash would expand, as quoteShellToken does", () => {
   for (const platform of ["linux", "darwin"]) {
     assert.equal(
