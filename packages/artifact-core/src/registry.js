@@ -60,6 +60,29 @@ export async function resolveArtifactPackage(request) {
 }
 
 /**
+ * The version a dist-tag of a package names, asked of the registry the npm configuration selects,
+ * with its credentials (ADR-0019 Decision 3). It reads the abbreviated package document, which
+ * lists the dist-tags, and passes no `cache`, so it writes nothing. `fetchRetries: 0` and `signal`
+ * let the caller hold the request to a deadline: pacote passes both through to npm-registry-fetch.
+ * @param {{ packageName: string, tag: string, cwd?: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal }} request
+ * @returns {Promise<string>}
+ */
+export async function resolvePackageDistTag({ packageName, tag, cwd, env, signal }) {
+  const npm = await loadNpmRegistryOptions({
+    cwd,
+    env,
+    scope: packageScope({ packageName }),
+  });
+  const manifest = await withNpmDiagnostics(npm, () =>
+    pacote.manifest(`${packageName}@${tag}`, { ...npm.options, fetchRetries: 0, signal }),
+  );
+  if (manifest.name !== packageName || !semver.valid(manifest.version)) {
+    throw new Error(`The registry named no valid version for ${packageName}@${tag}.`);
+  }
+  return manifest.version;
+}
+
+/**
  * @param {{ artifact: { id: string, type: string, packageName: string }, packageName: string, version: string, resolved: string, integrity?: string, tag: string, cache: string, offline: boolean }} resolution
  * @param {string} destination
  * @param {string} cliVersion

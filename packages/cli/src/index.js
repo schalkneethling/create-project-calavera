@@ -15,7 +15,7 @@ import {
 import { createRequire } from "node:module";
 import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
-import { parseArgs as parseNodeArgs, stripVTControlCharacters } from "node:util";
+import { parseArgs as parseNodeArgs, stripVTControlCharacters, styleText } from "node:util";
 
 import {
   cancel,
@@ -30,6 +30,7 @@ import {
   text,
 } from "@clack/prompts";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
+import { resolvePackageDistTag } from "@schalkneethling/calavera-artifact-core/registry";
 import { ExecaError, execa } from "execa";
 import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
@@ -106,6 +107,12 @@ import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
+import {
+  VERSION_CHECK_DEADLINE_MS,
+  checkForNewerVersion,
+  versionCheckApplies,
+  versionNoticeText,
+} from "./version-notice.js";
 import {
   ancestorAlreadyManagedError,
   initApplyManifestChoiceError,
@@ -1616,9 +1623,13 @@ async function formatStateText(state, loadFormatter) {
 
 /**
  * @param {PackageJSON} [packageJSON]
+ * @param {string} [directory] Where to look for lockfiles; the current directory by default.
  * @returns {PackageManager | undefined}
  */
-function detectPackageManager(packageJSON = {}) {
+function detectPackageManager(packageJSON = {}, directory = ".") {
+  /** @param {string} path */
+  const lockfileExists = (path) => existsSync(resolve(directory, path));
+
   if (packageJSON.packageManager?.startsWith("npm")) {
     return "npm";
   }
@@ -1648,19 +1659,19 @@ function detectPackageManager(packageJSON = {}) {
     return /** @type {PackageManager} */ (devPackageManager);
   }
 
-  if (packageManagerLockfiles.pnpm.some((path) => existsSync(path))) {
+  if (packageManagerLockfiles.pnpm.some(lockfileExists)) {
     return "pnpm";
   }
 
-  if (packageManagerLockfiles.yarn.some((path) => existsSync(path))) {
+  if (packageManagerLockfiles.yarn.some(lockfileExists)) {
     return "yarn";
   }
 
-  if (packageManagerLockfiles.bun.some((path) => existsSync(path))) {
+  if (packageManagerLockfiles.bun.some(lockfileExists)) {
     return "bun";
   }
 
-  if (packageManagerLockfiles.npm.some((path) => existsSync(path))) {
+  if (packageManagerLockfiles.npm.some(lockfileExists)) {
     return "npm";
   }
 
@@ -7118,9 +7129,10 @@ function formatAgentBootstrapChange(change, dryRun) {
   }
 }
 
-async function main() {
-  const options = parseArgs(args);
-
+/**
+ * @param {CliOptions} options
+ */
+async function main(options) {
   if (options.command === "help") {
     printHelp();
     return;
@@ -7194,8 +7206,12 @@ async function main() {
  * calls it once the Node.js version check passes.
  */
 export async function runCli() {
+  /** @type {Promise<string | undefined> | undefined} */
+  let versionNotice;
   try {
-    await main();
+    const options = parseArgs(args);
+    versionNotice = startVersionCheck(options, args);
+    await main(options);
   } catch (error) {
     let text;
     try {
@@ -7206,6 +7222,115 @@ export async function runCli() {
     }
     logger.error(text);
     process.exitCode = 1;
+  }
+
+  // After the command's own output, and after an error too (ADR-0019 Decision 4).
+  if (versionNotice) {
+    await printVersionNotice(versionNotice);
+  }
+}
+
+export const cliPackageRoot = fileURLToPath(new URL("..", import.meta.url));
+
+/**
+ * Starts the check for a newer version in parallel with the command (ADR-0019 Decision 2), or
+ * returns `undefined` for a run that skips it. The request is aborted at the deadline, counted from
+ * its start, and the returned promise settles by then even if the abort does not end the request,
+ * so the check never keeps the process waiting longer. It never rejects.
+ *
+ * @param {CliOptions} options
+ * @param {string[]} runArgs The arguments of this run, as the person gave them.
+ * @returns {Promise<string | undefined> | undefined} The text to print on standard error, if any.
+ */
+function startVersionCheck(options, runArgs) {
+  // Captured now, because `--new` changes the working directory while the request is open.
+  const env = { ...process.env };
+  const cwd = process.cwd();
+
+  if (!versionCheckApplies(options, env)) {
+    return undefined;
+  }
+
+  const controller = new AbortController();
+  /** @type {Promise<import("./version-notice.js").VersionCheckResult>} */
+  const deadline = new Promise((resolvePromise) => {
+    controller.signal.addEventListener(
+      "abort",
+      () => resolvePromise({ status: "failed", error: controller.signal.reason }),
+      { once: true },
+    );
+  });
+  const timer = setTimeout(() => {
+    controller.abort(
+      new Error(`The registry did not answer within ${VERSION_CHECK_DEADLINE_MS} ms.`),
+    );
+  }, VERSION_CHECK_DEADLINE_MS);
+  const launcher = launchingPackageManager(env.npm_config_user_agent) ?? "npm";
+
+  const check = checkForNewerVersion({
+    version: packageJson.version,
+    options,
+    cwd,
+    env,
+    packageRoot: cliPackageRoot,
+    packageName: packageJson.name,
+    resolveLatest: (context) =>
+      resolvePackageDistTag({
+        packageName: packageJson.name,
+        tag: "latest",
+        ...context,
+        signal: controller.signal,
+      }),
+    runCommand: (latest) => {
+      const runner = createPackageRunnerCommand(
+        launcher,
+        `${packageJson.name}@${latest}`,
+        "create-project-calavera",
+      );
+      return formatShellCommand({ command: runner.command, args: [...runner.args, ...runArgs] });
+    },
+    updateCommand: (latest) => projectDependencyUpdateCommand(cwd, latest),
+  });
+
+  return Promise.race([check, deadline])
+    .then((result) => versionNoticeText(result, env))
+    .catch(() => undefined)
+    .finally(() => clearTimeout(timer));
+}
+
+/**
+ * The command that updates the project's own create-project-calavera dependency to `latest`: the
+ * command apply installs with (ADR-0012), so `vp add -D` when Vite+ manages the project.
+ *
+ * @param {string} cwd
+ * @param {string} latest
+ */
+export async function projectDependencyUpdateCommand(cwd, latest) {
+  const packageJSON = /** @type {PackageJSON} */ (await readJSON(join(cwd, "package.json")));
+  const command = devDependencyInstallCommand(
+    detectPackageManager(packageJSON, cwd) ?? "npm",
+    await detectVitePlus(cwd),
+    [`${packageJson.name}@${latest}`],
+    { pnpmWorkspaceRoot: await isPnpmWorkspaceRoot(cwd) },
+  );
+  return formatCommand(command);
+}
+
+/**
+ * Prints the version notice on standard error. It informs, so it uses the informational color,
+ * styled for standard error, so a redirected notice carries no escape codes. Printing it never
+ * changes the run's exit code.
+ *
+ * @param {Promise<string | undefined>} versionNotice
+ */
+async function printVersionNotice(versionNotice) {
+  try {
+    const text = await versionNotice;
+    if (text !== undefined) {
+      process.stderr.write(`${styleText("cyan", text, { stream: process.stderr })}\n`);
+    }
+  } catch {
+    // The notice is never worth a failure of its own.
   }
 }
 
