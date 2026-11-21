@@ -29,7 +29,6 @@ import {
   spinner,
   text,
 } from "@clack/prompts";
-import { artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
 import { resolvePackageDistTag } from "@schalkneethling/calavera-artifact-core/registry";
 import { ExecaError, execa } from "execa";
 import { parse as parseYAML } from "yaml";
@@ -6125,9 +6124,7 @@ async function doctor(options) {
     // from the legacy source path, which no project holds, so doctor does not look for that path;
     // `artifacts status` checks the lock. A legacy entry is named by its catalog ID below, as apply
     // names it in the lock and in its wiring records.
-    const selectedAiIds = new Set(
-      aiArtifacts.map(({ source }) => artifactForLegacyPath(source)?.id ?? source),
-    );
+    const selectedAiIds = new Set(aiArtifacts.map(({ id }) => id));
 
     for (const artifact of aiArtifacts) {
       for (const path of aiArtifactOutputPaths(artifact)) {
@@ -6242,7 +6239,9 @@ async function clean(options) {
       aiArtifactOutputPaths,
     ),
   );
-  const selectedAiIds = new Set(selectedAiArtifacts.map(({ source }) => source));
+  // #1119: by catalog ID, as apply records wiring, so a legacy entry that still selects a wired
+  // artifact keeps that artifact's wiring and its state record, as doctor reads them (#1101).
+  const selectedAiIds = new Set(selectedAiArtifacts.map(({ id }) => id));
   // #795: the files apply writes for this recipe, from apply's own planner, so a file that an
   // integration the recipe still selects writes is never stale. A separate list of file names
   // missed the github-repository-controls files, so clean would have deleted them.
