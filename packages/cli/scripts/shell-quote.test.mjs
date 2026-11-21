@@ -13,8 +13,8 @@ import test from "node:test";
 import { quoteShellToken } from "../src/utils/shell.js";
 
 /**
- * Whether a shell is installed, so a machine without it skips that shell's cases instead of
- * failing on a missing program.
+ * Whether a shell is installed, so a local machine without it skips that shell's cases instead of
+ * failing on a missing program. CI fails instead of skipping.
  *
  * @param {string} shell
  */
@@ -83,6 +83,9 @@ const shells = [
 for (const shell of shells) {
   test(`${shell.shell} ${shell.options.join(" ")} receives every quoted token unchanged`, (t) => {
     if (!hasShell(shell.shell)) {
+      // In CI a missing shell is a setup error: skipping would let CI pass without the cases
+      // this file exists for.
+      assert.ok(!process.env.CI, `${shell.shell} is not installed, and CI must run these cases`);
       t.skip(`${shell.shell} is not installed`);
       return;
     }

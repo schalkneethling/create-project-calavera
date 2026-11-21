@@ -32,6 +32,10 @@ jobs:
         run: pnpm install --frozen-lockfile --ignore-scripts
       - name: Install Playwright browsers
         run: pnpm browsers:install --with-deps
+      # The ubuntu-latest image has no zsh, and shell-quote.test.mjs pastes printed commands into
+      # zsh and bash (#1037). Hosted Linux runners allow passwordless sudo.
+      - name: Install zsh
+        run: sudo apt-get update && sudo apt-get install --yes --no-install-recommends zsh
       - name: Check
         run: pnpm check
       - name: Validate package
