@@ -20,14 +20,15 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {boolean | null} selected False for a lock entry the recipe no longer selects, which the next `artifacts install`, or `artifacts update` while the recipe selects any artifact, removes (#992). Null when there is no recipe to compare the lock with.
  *
  * @typedef {object} UpdateCheckFailure
- * @property {string | null} code The registry error's code, such as ETARGET for a missing dist-tag.
+ * @property {string} code The registry error's code, such as ETARGET for a missing dist-tag.
+ * @property {string | null} type The kind of a FETCH_ERROR, such as request-timeout or invalid-json, as minipass-fetch names it.
  * @property {number | null} statusCode The registry's HTTP status, when it answered.
  * @property {string} reason
  * @property {string | null} remedy
  * @property {string[]} npmDiagnostics The npm configuration entries Calavera ignored, which may explain the failure. They never contain a value.
  * @property {string[]} unsetVariables The environment variables those entries name that are not set.
  *
- * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, ok: boolean }} ArtifactStatusReport
+ * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, updateAllBlockedBy: string[], ok: boolean }} ArtifactStatusReport
  * @typedef {{ level: "info" | "success" | "warn" | "error", message: string }} ReportLine
  * @typedef {{ id: string, version: string, tag: "latest" | "next" }} RemovedLockEntry
  */
@@ -241,10 +242,16 @@ export function formatArtifactStatus(result) {
   }
 
   const updates = result.artifacts.filter(({ updateAvailable }) => updateAvailable);
+  const updatable = result.artifacts.filter(({ updateCommand }) => updateCommand !== null);
   if (result.updateAllCommand) {
     info(`Update every artifact: ${result.updateAllCommand}`);
-  } else if (result.artifacts.filter(({ updateCommand }) => updateCommand !== null).length > 1) {
-    // Status withholds `--all` from several updatable artifacts only when their channels differ.
+  } else if (result.updateAllBlockedBy.length > 0) {
+    info(
+      `No command updates every artifact, because the update check failed for ${result.updateAllBlockedBy.join(", ")}, so run each Update command above instead.`,
+    );
+  } else if (updatable.length > 1) {
+    // With every check done, status withholds `--all` from several updatable artifacts only when
+    // their channels differ.
     info(
       "These artifacts follow different channels, and --all would move every one to a single channel, so run each Update command above instead.",
     );

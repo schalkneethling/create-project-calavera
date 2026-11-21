@@ -456,6 +456,33 @@ test("a dist-tag the package does not have fails with ETARGET and the tags it do
   }
 });
 
+test("a missing dist-tag behind npm configuration notes keeps the tags on its cause", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-missing-tag-notes-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry(packed);
+  try {
+    const fixture = await npmConfigFixture(
+      "",
+      `@schalkneethling:registry=http://${registry.host}/\n//${registry.host}/:_authToken=\${CALAVERA_UNSET_TOKEN}\n`,
+    );
+    const failure = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      tag: "next",
+      cache: fixture.cache,
+      cwd: fixture.cwd,
+      env: fixture.env,
+    }).then(
+      () => assert.fail("Expected the missing tag to reject."),
+      (error) => error,
+    );
+    assert.equal(failure.code, "ETARGET");
+    assert.deepEqual(failure.unsetVariables, ["CALAVERA_UNSET_TOKEN"]);
+    assert.deepEqual(failure.cause.distTags, { latest: packed.version });
+  } finally {
+    await registry.close();
+  }
+});
+
 test("a project .npmrc token that references a variable is not sent, and the warning says so", async () => {
   const directory = await mkdtemp(join(tmpdir(), "calavera-registry-project-variable-"));
   const packed = await packFixture(directory);
