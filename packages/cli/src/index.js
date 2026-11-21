@@ -6918,9 +6918,10 @@ function printSummaryLines(lines) {
 /**
  * @param {CommandResult} result
  * @param {boolean} [asJSON]
- * @param {boolean} [commandDryRun]
+ * @param {{ dryRun?: boolean, noInstall?: boolean }} [command] The options the command ran with,
+ * where its result does not record them.
  */
-function printResult(result, asJSON = false, commandDryRun = false) {
+function printResult(result, asJSON = false, { dryRun: commandDryRun = false, noInstall } = {}) {
   if (asJSON) {
     console.info(JSON.stringify(result, null, 2));
     return;
@@ -7050,7 +7051,7 @@ function printResult(result, asJSON = false, commandDryRun = false) {
   }
 
   if (result.command === "apply") {
-    printSummaryLines(applySummaryLines(result));
+    printSummaryLines(applySummaryLines(result, { noInstall }));
     return;
   }
 
@@ -7169,7 +7170,7 @@ async function main(options) {
   }
 
   if (options.command === "apply") {
-    printResult(await applyRecipe(options), options.json);
+    printResult(await applyRecipe(options), options.json, { noInstall: options.noInstall });
     return;
   }
 
@@ -7185,12 +7186,12 @@ async function main(options) {
   }
 
   if (options.command === "update") {
-    printResult(await applyRecipe(options), options.json);
+    printResult(await applyRecipe(options), options.json, { noInstall: options.noInstall });
     return;
   }
 
   if (options.command === "clean") {
-    printResult(await clean(options), options.json, options.dryRun);
+    printResult(await clean(options), options.json, { dryRun: options.dryRun });
     return;
   }
 

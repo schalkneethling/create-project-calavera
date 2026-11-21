@@ -67,7 +67,7 @@ async function inManagedProject(callback) {
   await callback(fixture.root);
 }
 
-test("init --apply prints the grouped apply summary, each item once under a heading (#1022)", async () => {
+test("init --apply prints the grouped apply summary, and the lines around it repeat nothing it names (#1022)", async () => {
   await inManagedProject(async (root) => {
     const output = runCli(root, initArguments);
 
@@ -308,6 +308,8 @@ test("init --apply names a default input by its place in the recipe, under a hea
       "info: Defaults recorded in the recipe:",
       "info:   ai[0].inputs.protectedBranch = main in calavera.config.json. Change it there if it is wrong.",
       "info:   integrationOptions.github-repository-controls.defaultBranch = main in calavera.config.json. Change it there if it is wrong.",
+      // A blank line keeps the apply dry run headline that follows out of this group.
+      "info: ",
     ],
   );
   assert.deepEqual(
@@ -344,7 +346,11 @@ test("init --apply says in the dry run headline whether it has written the recip
     inputWarnings: [],
   });
   const headline = (/** @type {boolean} */ dryRun) =>
-    initApplyDryRunLines(applyDryRun, { config: "calavera.config.json", dryRun })[0];
+    initApplyDryRunLines(applyDryRun, {
+      config: "calavera.config.json",
+      dryRun,
+      noInstall: false,
+    })[0];
 
   assert.deepEqual(headline(true), {
     level: "info",
@@ -353,5 +359,41 @@ test("init --apply says in the dry run headline whether it has written the recip
   assert.deepEqual(headline(false), {
     level: "info",
     text: "Calavera apply dry run complete. Apply has not changed any files yet; init wrote only calavera.config.json.",
+  });
+});
+
+test("with --no-install, the apply dry run and init --apply say the packages will not be installed (#1022)", async () => {
+  await inManagedProject(async (root) => {
+    const notInstalled = [
+      "  Not installed, because apply runs with --no-install.",
+      "  Install them later with: vp add -D stylelint stylelint-config-standard",
+      "",
+    ].join("\n");
+
+    const init = runCli(root, [
+      "init",
+      "--apply",
+      "--yes",
+      "--no-install",
+      "--profile",
+      "minimal",
+      "--package-manager",
+      "pnpm",
+      "--integrations",
+      "editorconfig,stylelint,stylelint-standard",
+    ]);
+    assert.ok(
+      init.includes(`  stylelint-standard (stylelint-config-standard)\n${notInstalled}`),
+      init,
+    );
+    assert.doesNotMatch(init, /Install command:/);
+
+    // init wrote the recipe above, so apply plans nothing new but still names the packages.
+    const apply = runCli(root, ["apply", "--dry-run", "--no-install"]);
+    assert.ok(
+      apply.includes(`  stylelint-standard (stylelint-config-standard)\n${notInstalled}`),
+      apply,
+    );
+    assert.doesNotMatch(apply, /Install command:/);
   });
 });

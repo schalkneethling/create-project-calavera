@@ -81,6 +81,8 @@ export function initDefaultInputLines(artifactInputs, integrationInputs, config,
       info(`${ITEM}${path} = ${value} in ${config}. Change it there if it is wrong.`),
     ),
   );
+  // The apply dry run headline follows, so a blank line keeps it out of this group.
+  if (lines.length > 0) lines.push(info(""));
   return lines;
 }
 
@@ -89,17 +91,17 @@ export function initDefaultInputLines(artifactInputs, integrationInputs, config,
  * written the recipe file, unless init itself is a dry run.
  *
  * @param {import("./index.js").ApplyResult} applyDryRun
- * @param {{ config: string, dryRun: boolean }} init
+ * @param {{ config: string, dryRun: boolean, noInstall: boolean }} init
  * @returns {SummaryLine[]}
  */
-export function initApplyDryRunLines(applyDryRun, { config, dryRun }) {
+export function initApplyDryRunLines(applyDryRun, { config, dryRun, noInstall }) {
   return [
     info(
       dryRun
         ? "Calavera apply dry run complete. No files were changed."
         : `Calavera apply dry run complete. Apply has not changed any files yet; init wrote only ${config}.`,
     ),
-    ...applySummaryBody(applyDryRun),
+    ...applySummaryBody(applyDryRun, { noInstall }),
   ];
 }
 

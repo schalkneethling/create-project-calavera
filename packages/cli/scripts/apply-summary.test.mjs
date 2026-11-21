@@ -730,6 +730,17 @@ test("integrations name their packages once and say how the install ran", () => 
     integrations({ ...base, dryRun: false, installCommand: "npm install --save-dev knip" }),
     [...named, "  Installed with: npm install --save-dev knip"],
   );
+  // #1022: a dry run with --no-install says what the apply will print, and gives the command to
+  // run later. The notes about how apply runs the install do not apply, so they are left out.
+  const noInstall = applySummaryLines(
+    { ...base, installCommand: "npm install --save-dev knip", installNotes: ["A note."] },
+    { noInstall: true },
+  ).map(({ text }) => text);
+  assert.deepEqual(noInstall.slice(noInstall.indexOf("Integrations:")), [
+    ...named,
+    "  Not installed, because apply runs with --no-install.",
+    "  Install them later with: npm install --save-dev knip",
+  ]);
   // Without packages, no install line.
   assert.deepEqual(
     applySummaryLines(emptyResult({ recipe: { version: 1, integrations: ["editorconfig"] } })).map(
