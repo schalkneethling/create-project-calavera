@@ -738,6 +738,64 @@ async function canonical(path) {
 }
 
 /**
+ * The selected artifacts that wire .vite-hooks, in recipe order, with each one's index in the
+ * recipe's ai list, where its input values are recorded.
+ *
+ * @param {Record<string, unknown>} recipe
+ * @param {(id: string) => ArtifactWiring | undefined} wiringFor
+ */
+function hookArtifactSelections(recipe, wiringFor) {
+  const hookIds = new Set(gitHookArtifactIds(recipe, wiringFor));
+  return (Array.isArray(recipe.ai) ? recipe.ai : []).flatMap((item, index) =>
+    item && typeof item === "object" && typeof item.id === "string" && hookIds.has(item.id)
+      ? [{ id: /** @type {string} */ (item.id), index }]
+      : [],
+  );
+}
+
+/** @param {string} wiredBy The artifacts that wire .vite-hooks, joined for the message. */
+function hooksConsequence(wiredBy) {
+  return `and the hooks ${wiredBy} wires there will not run`;
+}
+
+/** @param {string} id @param {string} name The input that names the protected branch. */
+function protectedBranchClause(id, name) {
+  return `the branch ${id} protects (${name})`;
+}
+
+/**
+ * A wiring warning as the apply summary prints it. The summary lists each artifact that wires
+ * .vite-hooks, with its blocks and inputs, above the warnings, so the warning names them by that
+ * listing rather than by the artifact's ID again (#1128). `--json` and MCP callers keep the
+ * warning as `artifactWiringWarnings` returns it, IDs included.
+ *
+ * @param {string} warning One of the warnings `artifactWiringWarnings` returns for `recipe`.
+ * @param {Record<string, unknown>} recipe
+ * @param {(id: string) => ArtifactWiring | undefined} [wiringFor]
+ * @param {(id: string) => Record<string, ArtifactInput> | undefined} [declarationsFor]
+ */
+export function summaryWiringWarning(
+  warning,
+  recipe,
+  wiringFor = catalogWiring,
+  declarationsFor = catalogInputs,
+) {
+  const hookArtifacts = hookArtifactSelections(recipe, wiringFor);
+  let text = warning.replace(
+    hooksConsequence(hookArtifacts.map(({ id }) => id).join(", ")),
+    "and the .vite-hooks blocks listed above will not run",
+  );
+  for (const { id } of hookArtifacts) {
+    for (const [name, declaration] of Object.entries(declarationsFor(id) ?? {})) {
+      if (declaration.check === "branch-name") {
+        text = text.replace(protectedBranchClause(id, name), `the ${name} listed above`);
+      }
+    }
+  }
+  return text;
+}
+
+/**
  * Explains, with the remedy, why Git would not run the scripts in .vite-hooks in this clone, or
  * returns undefined when the Vite+ hook dispatcher runs them. Paths are compared resolved, as Vite+
  * compares them, because core.hooksPath can be relative to the repository root or absolute.
@@ -747,7 +805,7 @@ async function canonical(path) {
  * @param {string} wiredBy The artifacts that wire .vite-hooks, for the message.
  */
 async function viteHooksProblem(cwd, vitePlusStatus, wiredBy) {
-  const consequence = `and the hooks ${wiredBy} wires there will not run`;
+  const consequence = hooksConsequence(wiredBy);
   if (vitePlusStatus !== "managed") {
     return `This project does not use Vite+, and only the Vite+ hook dispatcher runs the scripts in .vite-hooks, ${consequence}.`;
   }
@@ -799,13 +857,7 @@ export async function artifactWiringWarnings({
   wiringFor = catalogWiring,
   declarationsFor = catalogInputs,
 }) {
-  const selections = (Array.isArray(recipe.ai) ? recipe.ai : []).flatMap((item, index) =>
-    item && typeof item === "object" && typeof item.id === "string"
-      ? [{ id: /** @type {string} */ (item.id), index }]
-      : [],
-  );
-  const hookIds = new Set(gitHookArtifactIds(recipe, wiringFor));
-  const hookArtifacts = selections.filter(({ id }) => hookIds.has(id));
+  const hookArtifacts = hookArtifactSelections(recipe, wiringFor);
   if (hookArtifacts.length === 0) return [];
 
   /** @type {string[]} */
@@ -824,7 +876,7 @@ export async function artifactWiringWarnings({
     for (const [name, declaration] of Object.entries(declarationsFor(id) ?? {})) {
       if (declaration.check === "branch-name" && inputs[name] === currentBranch) {
         warnings.push(
-          `You are on ${currentBranch}, the branch ${id} protects (${name}), so the guard will refuse to commit the applied files here. Create a feature branch first, for example with git switch -c <name>, and commit there.`,
+          `You are on ${currentBranch}, ${protectedBranchClause(id, name)}, so the guard will refuse to commit the applied files here. Create a feature branch first, for example with git switch -c <name>, and commit there.`,
         );
       }
     }

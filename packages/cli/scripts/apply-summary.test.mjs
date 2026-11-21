@@ -13,7 +13,14 @@ import test from "node:test";
 import { listingViolations, namedItems } from "../../../scripts/rehearsal-checks.mjs";
 import { applySummaryLines } from "../src/apply-summary.js";
 import { applyRecipeObject } from "../src/index.js";
+import {
+  initApplyDryRunLines,
+  initDefaultInputLines,
+  initRecipeSummary,
+  initSummaryLines,
+} from "../src/init-summary.js";
 import { buildRecipe } from "../src/recipe.js";
+import { info } from "../src/summary-lines.js";
 import { VARLOCK_POINTER } from "../src/varlock.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { copyReleaseFixture, writeVitePlusStub } from "./vite-plus-fixtures.mjs";
@@ -106,6 +113,9 @@ const guardGroup = (/** @type {string} */ argument, /** @type {string} */ matche
 
 const dispatcherWarning =
   "The Vite+ hook dispatcher is not installed in this clone, so Git runs none of the scripts in .vite-hooks, and the hooks skill-protected-branch-guard wires there will not run. Run vp config to install it.";
+// The summary names the hooks by the blocks it lists above, not by the artifact ID again (#1128).
+const dispatcherSummary =
+  "The Vite+ hook dispatcher is not installed in this clone, so Git runs none of the scripts in .vite-hooks, and the .vite-hooks blocks listed above will not run. Run vp config to install it.";
 
 const notes = [
   "Notes:",
@@ -166,12 +176,13 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
         `    Would write its block in .vite-hooks/pre-commit: ${guardBlock("commit")}`,
         `    Would write its block in .vite-hooks/prepare-commit-msg: ${guardBlock("commit")}`,
         `    Would write its block in .vite-hooks/pre-push: ${guardBlock("pre-push")}`,
-        `    Would add a SessionStart group to .claude/settings.json: ${guardGroup("session-start")}`,
-        `    Would add a PreToolUse group to .claude/settings.json: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
+        "    Would write .claude/settings.json:",
+        `      Would add a SessionStart group: ${guardGroup("session-start")}`,
+        `      Would add a PreToolUse group: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
         "  Would lock hook-block-dangerous-commands 0.4.0 and write:",
         "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
         "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
-        `  ${dispatcherWarning}`,
+        `  ${dispatcherSummary}`,
         "",
         ...notes,
       ]);
@@ -224,12 +235,13 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
         `    Wrote its block in .vite-hooks/pre-commit: ${guardBlock("commit")}`,
         `    Wrote its block in .vite-hooks/prepare-commit-msg: ${guardBlock("commit")}`,
         `    Wrote its block in .vite-hooks/pre-push: ${guardBlock("pre-push")}`,
-        `    Added a SessionStart group to .claude/settings.json: ${guardGroup("session-start")}`,
-        `    Added a PreToolUse group to .claude/settings.json: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
+        "    Wrote .claude/settings.json:",
+        `      Added a SessionStart group: ${guardGroup("session-start")}`,
+        `      Added a PreToolUse group: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
         "  Locked hook-block-dangerous-commands 0.4.0 and wrote:",
         "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
         "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
-        `  ${dispatcherWarning}`,
+        `  ${dispatcherSummary}`,
         "",
         ...notes,
       ]);
@@ -295,7 +307,7 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
           "  Unchanged hook-block-dangerous-commands:",
           "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
           "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
-          `  ${dispatcherWarning}`,
+          `  ${dispatcherSummary}`,
           "",
         ]);
       },
@@ -447,6 +459,76 @@ test("the Varlock note names a file the project already has, which Files does no
   });
 });
 
+test("apply --dry-run, apply, and init --apply name each file, package, and artifact once for a recipe with Knip and the guard (#1128)", async () => {
+  await inManagedProject(async () => {
+    // Knip adds a script also named knip, and the guard adds two hook groups to
+    // .claude/settings.json. On the branch the guard protects, apply also warns about the branch.
+    execFileSync("git", ["symbolic-ref", "HEAD", "refs/heads/main"]);
+    const recipe = {
+      ...buildRecipe(
+        "default",
+        ["editorconfig", "stylelint", "stylelint-standard", "stylelint-baseline", "knip"],
+        "pnpm",
+      ),
+      ai: [{ id: "skill-protected-branch-guard", inputs: { protectedBranch: "main" } }],
+    };
+    const registry = stubRegistry(richReleases);
+    const text = (/** @type {import("../src/summary-lines.js").SummaryLine[]} */ lines) =>
+      printed(lines.map((line) => line.text));
+    const config = "calavera.config.json";
+
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+    const planned = namedItems(JSON.parse(JSON.stringify(dryRun)));
+    for (const item of [".claude/settings.json", "knip", "skill-protected-branch-guard"]) {
+      assert.ok(planned.includes(item), `${item} in ${planned.join()}`);
+    }
+    // --json and MCP callers keep the warnings as they were, the artifact ID included.
+    assert.deepEqual(dryRun.wiringWarnings, [
+      dispatcherWarning,
+      "You are on main, the branch skill-protected-branch-guard protects (protectedBranch), so the guard will refuse to commit the applied files here. Create a feature branch first, for example with git switch -c <name>, and commit there.",
+    ]);
+    const dryRunText = text(applySummaryLines(dryRun));
+    assert.deepEqual(listingViolations(dryRunText, planned, dryRun.vitePlus.lines), [], dryRunText);
+    assert.ok(
+      dryRunText.includes(
+        [
+          "    Would write .claude/settings.json:",
+          `      Would add a SessionStart group: ${guardGroup("session-start")}`,
+          `      Would add a PreToolUse group: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
+          `  ${dispatcherSummary}`,
+          "  You are on main, the protectedBranch listed above, so the guard will refuse to commit the applied files here. Create a feature branch first, for example with git switch -c <name>, and commit there.",
+        ].join("\n"),
+      ),
+      dryRunText,
+    );
+
+    const applied = await applyRecipeObject(
+      dryRun.recipe,
+      { ...applyOptions, approvedArtifacts: dryRun.autoInstalledArtifacts },
+      registry,
+    );
+    const appliedText = text(applySummaryLines(applied));
+    assert.deepEqual(listingViolations(appliedText, planned), [], appliedText);
+
+    // init --apply prints the recipe summary, the defaults it recorded, the apply dry run under
+    // its own headline, and the closing lines (src/index.js, runInit), around the same body.
+    const initText = text([
+      info(initRecipeSummary(dryRun.recipe, { dependencies: [], aiArtifacts: [] }, true)),
+      ...initDefaultInputLines(dryRun.artifactInputs, dryRun.integrationInputs, config, true),
+      ...initApplyDryRunLines(dryRun, { config, dryRun: false, noInstall: false }),
+      ...initSummaryLines({
+        command: "init",
+        config,
+        dryRun: false,
+        recipe: dryRun.recipe,
+        applyDryRun: dryRun,
+        applyResult: applied,
+      }),
+    ]);
+    assert.deepEqual(listingViolations(initText, planned, dryRun.vitePlus.lines), [], initText);
+  });
+});
+
 test("every line the dry run prints for the rich recipe fits in 100 columns, except fixed text and quoted values", async () => {
   await inManagedProject(async (root) => {
     const dryRun = await applyRecipeObject(
@@ -460,7 +542,7 @@ test("every line the dry run prints for the rich recipe fits in 100 columns, exc
       ...dryRun.vitePlus.lines,
       // The summary prints the cache pointer without the ignore file it names under Files.
       ...dryRun.pointers.map((pointer) => pointer.replace(" in .gitignore,", ",")),
-      ...dryRun.wiringWarnings,
+      dispatcherSummary,
     ]);
     const long = summary(dryRun, root).filter(
       (line) =>
@@ -986,13 +1068,15 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
     'info     Would update its block in .vite-hooks/pre-push: "run b"',
     'info     Would remove its block from .vite-hooks/pre-push, because it no longer wires that hook: "run c"',
     "info     .claude/settings.json already holds its hook groups",
-    'info     Would replace the SessionStart group in .claude/settings.json: {"a":0} with {"a":1}',
-    'info     Would remove the PreToolUse group from .claude/settings.json: {"b":0}',
-    "info     Would also change the layout of the rest of .claude/settings.json, because Calavera writes the whole file in the project's format; no value outside the groups changes",
+    "info     Would update .claude/settings.json:",
+    'info       Would replace the SessionStart group: {"a":0} with {"a":1}',
+    'info       Would remove the PreToolUse group: {"b":0}',
+    "info       Would also change the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes",
     "info   Would lock skill-css-tokens 0.3.0; its files in the project already match",
     "info   skill-dropped, which the recipe no longer selects",
     'info     Would remove its block from .vite-hooks/pre-commit, because the recipe no longer selects it: "run d"',
-    'info     Would remove the Stop group from .claude/settings.json, because the recipe no longer selects it: {"c":0}',
+    "info     Would update .claude/settings.json:",
+    'info       Would remove the Stop group, because the recipe no longer selects it: {"c":0}',
     "warn   An npm setting was ignored.",
     "warn   A wiring warning.",
   ]);
@@ -1194,10 +1278,11 @@ test("the artifact group reads in the past tense after apply, and names the defa
     "  Locked skill-css-tokens 0.3.0; its files in the project already matched",
     '    Updated its block in .vite-hooks/pre-push: "run b"',
     '    Removed its block from .vite-hooks/pre-push, because it no longer wires that hook: "run c"',
-    '    Added a SessionStart group to .claude/settings.json: {"a":1}',
-    '    Replaced the Stop group in .claude/settings.json: {"a":0} with {"a":1}',
-    '    Removed the PreToolUse group from .claude/settings.json: {"b":0}',
-    "    Also changed the layout of the rest of .claude/settings.json, because Calavera writes the whole file in the project's format; no value outside the groups changes",
+    "    Updated .claude/settings.json:",
+    '      Added a SessionStart group: {"a":1}',
+    '      Replaced the Stop group: {"a":0} with {"a":1}',
+    '      Removed the PreToolUse group: {"b":0}',
+    "      Also changed the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes",
   ]);
 });
 

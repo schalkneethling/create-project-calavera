@@ -7,6 +7,7 @@
 // the scripts sit under Scripts; each artifact is one line with its version and destination, with
 // its inputs and wiring under it. The `--json` and MCP results keep their shape and text; where a
 // note there repeats what the summary already names, the summary prints a shorter form of it.
+import { summaryWiringWarning } from "./ai/artifact-wiring.js";
 import { aiArtifactOutputPaths, resolveAiArtifacts } from "./ai/artifacts.js";
 import {
   ARTIFACT_CACHE_BLOCK,
@@ -17,7 +18,7 @@ import {
 import { GITIGNORE_PATH } from "./ignore-lines.js";
 import { resolveRecipeIntegrations } from "./recipe.js";
 import { integrationDependencies } from "./stryker-options.js";
-import { DETAIL, ITEM, info, pushGroup, tense, warn } from "./summary-lines.js";
+import { DETAIL, ITEM, NESTED_DETAIL, info, pushGroup, tense, warn } from "./summary-lines.js";
 import { temporaryFolderLeftoverLine } from "./utils/cleanup.js";
 import { quoteScriptValue } from "./utils/text.js";
 import { VARLOCK_POINTER, varlockSummaryPointer } from "./varlock.js";
@@ -406,7 +407,7 @@ function artifactLines(result) {
     for (const { name, ...input } of inputs) {
       lines.push(info(`${DETAIL}${name} = ${formatInputValue(input)}`));
     }
-    lines.push(...wiring.flatMap((change) => wiringLines(change, dryRun)).map(detail));
+    lines.push(...wiring.flatMap((change) => wiringLines(change, dryRun)));
   }
 
   const deselected = [
@@ -417,8 +418,7 @@ function artifactLines(result) {
     lines.push(
       ...result.wiringChanges
         .filter(({ artifact }) => artifact === id)
-        .flatMap((change) => wiringLines(change, dryRun))
-        .map(detail),
+        .flatMap((change) => wiringLines(change, dryRun)),
     );
   }
 
@@ -432,7 +432,9 @@ function artifactLines(result) {
         ]
       : []),
     ...result.artifactWarnings.map((warning) => warn(`${ITEM}${warning}`)),
-    ...result.wiringWarnings.map((warning) => warn(`${ITEM}${warning}`)),
+    ...result.wiringWarnings.map((warning) =>
+      warn(`${ITEM}${summaryWiringWarning(warning, result.recipe)}`),
+    ),
   ];
 }
 
@@ -467,11 +469,6 @@ function summaryInstallNote(note, result) {
   return `Vite+ runs this with the package manager the project pins; apply runs it with: ${runner}`;
 }
 
-/** @param {string} text @returns {SummaryLine} */
-function detail(text) {
-  return info(`${DETAIL}${text}`);
-}
-
 /**
  * @param {string} id
  * @param {import("./index.js").AutoInstalledArtifact | undefined} locked The entry apply locks, for an artifact without a lock entry; its `filesAlreadyMatch` decides the headline, so the summary and the JSON result agree (#1021).
@@ -502,11 +499,13 @@ function artifactHeadline(id, locked, written, unchanged, dryRun) {
 
 /**
  * The lines for one artifact's part of a wiring file, under the artifact's own line, so the
- * artifact is not named again; the approval covers the exact text.
+ * artifact is not named again; the approval covers the exact text. The groups an artifact adds to,
+ * replaces in, or removes from .claude/settings.json sit under one line for the file, so the file
+ * is named once (#1128).
  *
  * @param {WiringChange} change
  * @param {boolean} dryRun
- * @returns {string[]}
+ * @returns {SummaryLine[]}
  */
 function wiringLines(
   { path, kind, type, block, removedBlock, groupChanges, reformatted, deselected },
@@ -515,34 +514,44 @@ function wiringLines(
   const because = deselected
     ? "because the recipe no longer selects it"
     : "because it no longer wires that hook";
+  const detail = (/** @type {string} */ text) => info(`${DETAIL}${text}`);
   if (removedBlock !== undefined) {
     return [
-      `${tense(dryRun, "Would remove", "Removed")} its block from ${path}, ${because}: ${quoteScriptValue(removedBlock)}`,
+      detail(
+        `${tense(dryRun, "Would remove", "Removed")} its block from ${path}, ${because}: ${quoteScriptValue(removedBlock)}`,
+      ),
     ];
   }
   if (kind === "vite-hook") {
     if (type === "unchanged")
-      return [`${path} already holds its block: ${quoteScriptValue(block)}`];
+      return [detail(`${path} already holds its block: ${quoteScriptValue(block)}`)];
     const action =
       type === "write"
         ? tense(dryRun, "Would write", "Wrote")
         : tense(dryRun, "Would update", "Updated");
-    return [`${action} its block in ${path}: ${quoteScriptValue(block)}`];
+    return [detail(`${action} its block in ${path}: ${quoteScriptValue(block)}`)];
   }
-  if (type === "unchanged") return [`${path} already holds its hook groups`];
+  if (type === "unchanged") return [detail(`${path} already holds its hook groups`)];
+  const file =
+    type === "write"
+      ? tense(dryRun, "Would write", "Wrote")
+      : tense(dryRun, "Would update", "Updated");
   return [
-    ...(groupChanges ?? []).map(({ event, action, group, previous }) =>
-      action === "add"
-        ? `${tense(dryRun, "Would add", "Added")} a ${event} group to ${path}: ${quoteScriptValue(group)}`
-        : action === "replace"
-          ? `${tense(dryRun, "Would replace", "Replaced")} the ${event} group in ${path}: ${quoteScriptValue(previous)} with ${quoteScriptValue(group)}`
-          : `${tense(dryRun, "Would remove", "Removed")} the ${event} group from ${path}${deselected ? `, ${because}` : ""}: ${quoteScriptValue(previous)}`,
-    ),
-    ...(reformatted
-      ? [
-          `${tense(dryRun, "Would also change", "Also changed")} the layout of the rest of ${path}, because Calavera writes the whole file in the project's format; no value outside the groups changes`,
-        ]
-      : []),
+    detail(`${file} ${path}:`),
+    ...[
+      ...(groupChanges ?? []).map(({ event, action, group, previous }) =>
+        action === "add"
+          ? `${tense(dryRun, "Would add", "Added")} a ${event} group: ${quoteScriptValue(group)}`
+          : action === "replace"
+            ? `${tense(dryRun, "Would replace", "Replaced")} the ${event} group: ${quoteScriptValue(previous)} with ${quoteScriptValue(group)}`
+            : `${tense(dryRun, "Would remove", "Removed")} the ${event} group${deselected ? `, ${because}` : ""}: ${quoteScriptValue(previous)}`,
+      ),
+      ...(reformatted
+        ? [
+            `${tense(dryRun, "Would also change", "Also changed")} the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes`,
+          ]
+        : []),
+    ].map((text) => info(`${NESTED_DETAIL}${text}`)),
   ];
 }
 

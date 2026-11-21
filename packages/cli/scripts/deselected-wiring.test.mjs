@@ -179,11 +179,13 @@ test("Given the guard deselected, apply --dry-run in a terminal says why each bl
         ),
       );
     }
+    // #1128: the settings file is named once, with each group it would lose under it.
+    assert.match(output, /^ {4}Would update \.claude\/settings\.json:$/m);
     for (const event of ["SessionStart", "PreToolUse"]) {
       assert.match(
         output,
         new RegExp(
-          `^ {4}Would remove the ${event} group from \\.claude/settings\\.json, because the recipe no longer selects it: `,
+          `^ {6}Would remove the ${event} group, because the recipe no longer selects it: `,
           "m",
         ),
       );
