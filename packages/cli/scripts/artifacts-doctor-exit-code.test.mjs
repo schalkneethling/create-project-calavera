@@ -196,24 +196,61 @@ test("artifacts doctor exits 1 when one of two artifacts has a problem", async (
   assert.equal(text.stderr.trimEnd(), PROBLEM);
 });
 
-// apply installs a selection without a lock entry, so until then the project is not in the state
-// its recipe declares, and doctor reports the selection as a problem.
-test("artifacts doctor exits 1 on a selected artifact that is not installed yet", async () => {
-  await using fixture = await createTemporaryFixture("artifacts-doctor-unlocked", {
-    "calavera.config.json": json({
-      ...buildRecipe("minimal", [], "npm"),
-      ai: [{ id: ARTIFACT }],
-    }),
+// Owner decision on #994 (2026-11-21): a selection without a lock entry is the normal state
+// between init and apply, so doctor names it in a note, as doctor's "Missing managed AI skill"
+// warning does, and exits 0 when nothing else is wrong. `ok` follows the exit status.
+const NOT_INSTALLED_NOTE = `Selected artifact not installed yet: ${ARTIFACT}. Run npm create project-calavera artifacts install, or apply, to install it.`;
+
+/** @param {string} label @param {object[]} ai */
+function recipeFixture(label, ai) {
+  return createTemporaryFixture(label, {
+    "calavera.config.json": json({ ...buildRecipe("minimal", [], "npm"), ai }),
   });
+}
+
+test("artifacts doctor exits 0 with a note on a selected artifact that is not installed yet", async () => {
+  await using fixture = await recipeFixture("artifacts-doctor-unlocked", [{ id: ARTIFACT }]);
 
   const text = await runCli(fixture.root, ["artifacts", "doctor"]);
   assert.equal(
     text.code,
-    1,
+    0,
     `artifacts doctor exited ${text.code}\n${text.stdout}\n${text.stderr}`,
   );
   assert.match(text.stdout, new RegExp(`${ARTIFACT} +not installed`));
-  assert.equal(text.stderr.trimEnd(), PROBLEM);
+  // The note is a warning, so it goes to stderr; the healthy verdict closes stdout.
+  assert.equal(text.stderr.trimEnd(), NOT_INSTALLED_NOTE);
+  assert.equal(text.stdout.trimEnd().split("\n").at(-1), HEALTHY);
+
+  const asJson = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
+  assert.equal(asJson.code, 0, asJson.stdout + asJson.stderr);
+  const report = JSON.parse(asJson.stdout);
+  assert.equal(report.ok, true);
+  assert.equal(report.artifacts[0].version, null);
+
+  // Status output gets no note and no verdict.
+  const status = await runCli(fixture.root, ["artifacts", "status"]);
+  assert.equal(status.code, 0, status.stdout + status.stderr);
+  assert.ok(!`${status.stdout}${status.stderr}`.includes("not installed yet"), status.stdout);
+});
+
+test("a selection that is not installed yet does not hide a broken installed artifact", async () => {
+  await using fixture = await installedProject("artifacts-doctor-unlocked-and-broken");
+  await writeFile(
+    join(fixture.root, "calavera.config.json"),
+    json({
+      ...buildRecipe("minimal", [], "npm"),
+      ai: [{ id: ARTIFACT }, { id: "skill-code-review" }],
+    }),
+  );
+  await writeFile(join(fixture.root, SKILL_FILE), "local edit\n");
+
+  const text = await runCli(fixture.root, ["artifacts", "doctor"]);
+  assert.equal(text.code, 1, text.stdout + text.stderr);
+  assert.deepEqual(text.stderr.trimEnd().split("\n"), [
+    "Selected artifact not installed yet: skill-code-review. Run npm create project-calavera artifacts install, or apply, to install it.",
+    PROBLEM,
+  ]);
 
   const asJson = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
   assert.equal(asJson.code, 1, asJson.stdout + asJson.stderr);
@@ -221,9 +258,11 @@ test("artifacts doctor exits 1 on a selected artifact that is not installed yet"
 });
 
 test("the verdict names every artifact with a problem, and only those", () => {
-  /** @param {string} id @param {Partial<Record<"installed" | "managed" | "locallyEdited", boolean>>} health */
+  /** @param {string} id @param {Partial<{ installed: boolean, managed: boolean, locallyEdited: boolean }>} health */
   const entry = (id, health) => ({
     id,
+    version: /** @type {string | null} */ ("0.2.1"),
+    installCommand: /** @type {string | null} */ (null),
     installed: true,
     managed: true,
     locallyEdited: false,
@@ -239,16 +278,30 @@ test("the verdict names every artifact with a problem, and only those", () => {
       ),
     );
 
+  /** @param {string} id */
+  const notInstalled = (id) => ({
+    ...entry(id, { installed: false, managed: false }),
+    version: null,
+    installCommand: "pnpm dlx create-project-calavera artifacts install",
+  });
   assert.equal(isArtifactHealthy(entry("a", {})), true);
+  assert.equal(isArtifactHealthy(notInstalled("a")), true);
   for (const problem of [{ installed: false }, { managed: false }, { locallyEdited: true }]) {
     assert.equal(isArtifactHealthy(entry("a", problem)), false, JSON.stringify(problem));
   }
-  assert.deepEqual(verdict([]), { level: "success", message: HEALTHY });
-  assert.deepEqual(verdict([entry("a", {})]), { level: "success", message: HEALTHY });
-  assert.deepEqual(verdict([entry("a", {}), entry("b", { locallyEdited: true })]), {
-    level: "error",
-    message: "Calavera artifacts doctor found problems with 1 artifact: b.",
-  });
+  assert.deepEqual(verdict([]), [{ level: "success", message: HEALTHY }]);
+  assert.deepEqual(verdict([entry("a", {})]), [{ level: "success", message: HEALTHY }]);
+  assert.deepEqual(verdict([entry("a", {}), notInstalled("b"), notInstalled("c")]), [
+    {
+      level: "warn",
+      message:
+        "Selected artifacts not installed yet: b, c. Run pnpm dlx create-project-calavera artifacts install, or apply, to install them.",
+    },
+    { level: "success", message: HEALTHY },
+  ]);
+  assert.deepEqual(verdict([entry("a", {}), entry("b", { locallyEdited: true })]), [
+    { level: "error", message: "Calavera artifacts doctor found problems with 1 artifact: b." },
+  ]);
   assert.deepEqual(
     verdict([
       entry("a", {}),
@@ -256,9 +309,11 @@ test("the verdict names every artifact with a problem, and only those", () => {
       entry("c", { managed: false }),
       entry("d", { locallyEdited: true }),
     ]),
-    {
-      level: "error",
-      message: "Calavera artifacts doctor found problems with 3 artifacts: b, c, d.",
-    },
+    [
+      {
+        level: "error",
+        message: "Calavera artifacts doctor found problems with 3 artifacts: b, c, d.",
+      },
+    ],
   );
 });

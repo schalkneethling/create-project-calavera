@@ -7077,12 +7077,13 @@ function printResult(result, asJSON = false, commandDryRun = false) {
     }
     printArtifactCacheBlock(result);
     if (result.command === "artifacts doctor") {
-      const { level, message } = artifactDoctorVerdict(
+      for (const { level, message } of artifactDoctorVerdict(
         /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
           /** @type {unknown} */ (result)
         ),
-      );
-      logger[level](message);
+      )) {
+        logger[level](message);
+      }
     }
     return;
   }
@@ -7219,9 +7220,10 @@ async function main(options) {
   if (options.command === "artifacts") {
     const result = /** @type {ArtifactCommandResult} */ (await runArtifactCommand(options));
     printResult(result, options.json);
-    // #994: doctor fails the run when an artifact's files are missing, are not managed, or carry a
-    // local edit, as `doctor` does for an error (#1030). `artifacts status` reports the same
-    // problems and stays informational.
+    // #994: doctor fails the run when an installed artifact's files are missing, are not managed,
+    // or carry a local edit, as `doctor` does for an error (#1030). A selection that is not
+    // installed yet does not fail it. `artifacts status` reports the same problems and stays
+    // informational.
     if (options.artifactAction === "doctor" && result.ok !== true) {
       process.exitCode = 1;
     }

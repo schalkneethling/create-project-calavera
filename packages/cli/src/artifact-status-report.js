@@ -19,7 +19,7 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {boolean | null} selected False for a lock entry the recipe no longer selects, which the next `artifacts install`, or `artifacts update` while the recipe selects any artifact, removes (#992). Null when there is no recipe to compare the lock with.
  *
  * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, ok: boolean }} ArtifactStatusReport
- * @typedef {{ level: "info" | "success" | "error", message: string }} ReportLine
+ * @typedef {{ level: "info" | "success" | "warn" | "error", message: string }} ReportLine
  * @typedef {{ id: string, version: string, tag: "latest" | "next" }} RemovedLockEntry
  */
 
@@ -135,12 +135,13 @@ function healthNotes(artifact) {
 /**
  * Whether `artifacts doctor` finds no problem with an artifact. The status result's `ok`, which
  * sets doctor's exit status, and doctor's verdict line both use it, so the two cannot disagree
- * (#994).
+ * (#994). A selection without a lock entry (`version` is null) is the normal state between init
+ * and apply, so it is not a problem; doctor names it in a note instead (owner decision on #994).
  *
- * @param {Pick<ArtifactStatusEntry, "installed" | "managed" | "locallyEdited">} artifact
+ * @param {Pick<ArtifactStatusEntry, "version" | "installed" | "managed" | "locallyEdited">} artifact
  */
 export function isArtifactHealthy(artifact) {
-  return healthNotes(artifact).length === 0;
+  return artifact.version === null || healthNotes(artifact).length === 0;
 }
 
 /**
@@ -228,25 +229,41 @@ export function formatArtifactStatus(result) {
 }
 
 /**
- * The overall result ordinary output prints last for `artifacts doctor` (#994). It follows `ok`,
- * which also sets the exit status, and names each artifact with a problem, so a person or an agent
- * can tell a healthy project from a broken one without reading every line.
+ * The lines ordinary output prints last for `artifacts doctor` (#994): a note that names the
+ * selections that are not installed yet, as `doctor` warns about a missing managed AI artifact,
+ * and then the overall verdict. The verdict follows `ok`, which also sets the exit status, and
+ * names each artifact with a problem, so a person or an agent can tell a healthy project from a
+ * broken one without reading every line.
  *
  * @param {Pick<ArtifactStatusReport, "ok" | "artifacts">} result
- * @returns {ReportLine}
+ * @returns {ReportLine[]}
  */
 export function artifactDoctorVerdict(result) {
+  /** @type {ReportLine[]} */
+  const lines = [];
+  const notInstalled = result.artifacts.filter(({ version }) => version === null);
+  if (notInstalled.length > 0) {
+    const [one] = notInstalled;
+    const ids = notInstalled.map(({ id }) => id).join(", ");
+    const several = notInstalled.length > 1;
+    lines.push({
+      level: "warn",
+      message: `Selected ${several ? "artifacts" : "artifact"} not installed yet: ${ids}. Run ${one.installCommand}, or apply, to install ${several ? "them" : "it"}.`,
+    });
+  }
   if (result.ok) {
-    return { level: "success", message: "Calavera artifacts doctor found no problems." };
+    lines.push({ level: "success", message: "Calavera artifacts doctor found no problems." });
+    return lines;
   }
   const failing = result.artifacts
     .filter((artifact) => !isArtifactHealthy(artifact))
     .map(({ id }) => id);
   const noun = failing.length === 1 ? "artifact" : "artifacts";
-  return {
+  lines.push({
     level: "error",
     message: `Calavera artifacts doctor found problems with ${failing.length} ${noun}: ${failing.join(", ")}.`,
-  };
+  });
+  return lines;
 }
 
 /**
