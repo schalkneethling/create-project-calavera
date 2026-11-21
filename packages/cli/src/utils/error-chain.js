@@ -190,7 +190,8 @@ function containsWhole(text, part) {
  * The error itself is always kept in full.
  *
  * A cause whose text the rule above leaves out is still kept, with an empty
- * message, when it carries a `code` or a name other than plain `Error`, so
+ * message, when it carries a `code`, or a name other than plain `Error`, that
+ * is not empty once redacted and stripped of control sequences, so
  * that two failures a wrapper describes with the same words stay
  * distinguishable: a wrapped `EBUSY` and a wrapped `ENOENT`, for example.
  *
@@ -260,7 +261,7 @@ function chainEntries(error, env) {
     const hasName = typeof name === "string" && name !== "";
     const shownName = hasName ? redact(name) : undefined;
     const code = readProperty(value, "code");
-    const hasCode = typeof code === "string" && code !== "";
+    const shownCode = typeof code === "string" && code !== "" ? redact(code) : undefined;
     const frames = debug ? stackFrames(value, redact) : undefined;
     const textLeftOut = !isError && whole !== "" && lines.length === 0;
     if (
@@ -268,14 +269,14 @@ function chainEntries(error, env) {
       lines.length > 0 ||
       // A cause with an empty message of its own is still shown, by its name.
       (whole === "" && hasName) ||
-      (textLeftOut && (hasCode || (shownName !== undefined && shownName !== "Error"))) ||
+      (textLeftOut && (Boolean(shownCode) || (Boolean(shownName) && shownName !== "Error"))) ||
       frames !== undefined
     ) {
       entries.push({
         entry: {
           ...(shownName !== undefined ? { name: shownName } : {}),
           message: (isError ? lines : lines.map(truncateFailureLine)).join("\n"),
-          ...(hasCode ? { code: redact(code) } : {}),
+          ...(shownCode !== undefined ? { code: shownCode } : {}),
           ...(frames ? { stack: frames.join("\n") } : {}),
         },
         textLeftOut,

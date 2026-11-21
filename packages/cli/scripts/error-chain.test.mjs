@@ -178,11 +178,13 @@ test("a cause whose message a wrapper repeats keeps its code and name, but not i
   );
 
   // A repeated cause with nothing to tell it apart, a plain Error without a code,
-  // is still left out. An empty code, or a name that is plain Error once terminal
-  // control sequences are removed, tells nothing apart either.
+  // is still left out. A code or name that is empty, or a name that is plain Error,
+  // once terminal control sequences are removed, tells nothing apart either.
   for (const cause of [
     new Error(message),
     Object.assign(new Error(message), { code: "" }),
+    Object.assign(new Error(message), { code: "\u001b[0m" }),
+    Object.assign(new Error(message), { name: "\u001b[0m" }),
     Object.assign(new Error(message), { name: "\u001b[31mError\u001b[39m" }),
   ]) {
     assert.equal(errorChain(new Error(`Could not save: ${message}.`, { cause }), {}).length, 1);
