@@ -210,12 +210,13 @@ monorepo, Vite+ uses the package manager it detects for the monorepo even when
 `--package-manager` is forwarded. A `VP_PACKAGE_MANAGER` environment variable
 overrides all of these. Vite+ asks for the package manager only when none of
 these decides it: no `VP_PACKAGE_MANAGER`, no forwarded `--package-manager`, no
-package manager detected, and no runner that Vite+ recognizes, because the name
-before the first `/` in `npm_config_user_agent` is not `npm`, `pnpm`, `yarn`, or
-`bun`. The prompt preselects pnpm, and `--no-interactive` uses pnpm without
-asking. This order was checked against the published `vite-plus` 1.6.0 package.
-Vite+ also installs the project's dependencies; that step needs network access
-and cannot be skipped.
+package manager detected, and no runner that Vite+ recognizes
+(`npm_config_user_agent` is unset, or the name before its first `/` is not
+`npm`, `pnpm`, `yarn`, or `bun`). The prompt preselects pnpm. When Vite+ cannot
+ask, because `--no-interactive` is forwarded, `CI` is set, or stdin is not a
+terminal, it uses pnpm without asking. This order was checked against Vite+
+1.6.0 and 1.7.0. Vite+ also installs the project's dependencies; that step needs
+network access and cannot be skipped.
 
 `--new` ends Calavera's own flags. Every token after it goes to `vp create`
 unchanged, including a `--` that introduces template options, so Calavera flags
