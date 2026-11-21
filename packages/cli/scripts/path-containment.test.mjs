@@ -5,8 +5,8 @@
  * it", shared by the artifact transaction's write guard, `apply`'s check for a recipe in the
  * working directory, and the Vite+ detection's manifest path formatting. Before #1026 each had its
  * own copy, and the copies disagreed on a name that starts with `..`, such as `..recipe.json`. The
- * merged helper keeps the strictest of them: any relative path that starts with `..` counts as
- * outside.
+ * owner chose the precise rule on #1026: a path is outside only when its relative path is `..`,
+ * starts with `..` and a separator, or is absolute, so `..recipe.json` in the folder is inside.
  */
 
 import assert from "node:assert/strict";
@@ -28,8 +28,10 @@ const posixCases = [
   ["/work/project", "/work/project-two/a.json", false, "a sibling whose name extends the folder's"],
   ["/work/project", "/work/project/../other.json", false, "a `..` that leaves"],
   ["/work/project", "/etc/passwd", false, "an unrelated absolute path"],
-  // Strictest of the three former helpers: a name that starts with `..` counts as outside.
-  ["/work/project", "/work/project/..recipe.json", false, "a name that starts with `..`"],
+  // A name that starts with `..` is a file in the folder, not a step out of it.
+  ["/work/project", "/work/project/..recipe.json", true, "a name that starts with `..`"],
+  ["/work/project", "/work/project/...", true, "a name made of three dots"],
+  ["/work/project/a", "/work/project", false, "the parent folder, whose relative path is `..`"],
   // The comparison is lexical and case-sensitive on POSIX, as each former helper was.
   ["/work/project", "/work/Project/a.json", false, "a different case on POSIX"],
 ];
@@ -48,7 +50,9 @@ const windowsCases = [
   ["C:\\work\\project", "C:/work/project/a.json", true, "forward slashes"],
   ["C:\\work\\project", "C:\\work\\other\\a.json", false, "a sibling folder"],
   ["C:\\work\\project", "D:\\work\\project\\a.json", false, "another drive"],
-  ["C:\\work\\project", "C:\\work\\project\\..recipe.json", false, "a name that starts with `..`"],
+  ["C:\\work\\project", "C:\\work\\project\\..recipe.json", true, "a name that starts with `..`"],
+  ["C:\\work\\project", "C:\\work\\other.json", false, "a file in the parent folder"],
+  ["C:\\work\\project\\a", "C:\\work\\project", false, "the parent folder"],
 ];
 
 for (const [parent, child, inside, why] of windowsCases) {

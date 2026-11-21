@@ -3205,8 +3205,7 @@ export async function applyRecipe(options) {
 /**
  * Whether the file at `path` is in the working directory or below it. Directory links are
  * resolved, so a path that reaches the project through a link counts as inside. A link to the file
- * itself is not followed, so a link inside the project counts as inside wherever it points. The
- * comparison is `isPathInside`'s, so a file whose name starts with `..` counts as outside (#1026).
+ * itself is not followed, so a link inside the project counts as inside wherever it points.
  *
  * @param {string} path Absolute path.
  * @returns {Promise<boolean>}

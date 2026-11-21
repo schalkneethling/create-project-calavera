@@ -422,14 +422,12 @@ test("--config naming a recipe in a subfolder of the project copies nothing, as 
   assert.deepEqual(await snapshotDirectory(fixture.project), before);
 });
 
-// Issue #1026: apply's check for a recipe in the working directory shares `isPathInside` with the
-// artifact transaction's write guard, which keeps the strictest rule of the helpers it replaced: a
-// relative path that starts with `..` is outside. A recipe whose name starts with `..` is therefore
-// handled as an outside recipe, with the copy, its dry-run listing, and its hard stops.
-test("--config naming a recipe whose name starts with `..` is handled as an outside recipe", async () => {
+// Issue #1026: apply's check for a recipe in the working directory uses `isPathInside`, whose rule
+// the owner chose on #1026: only `..`, `..` and a separator, or an absolute path is outside. A
+// recipe in the project whose name starts with `..` is therefore read in place, as before.
+test("--config naming a recipe in the project whose name starts with `..` copies nothing", async () => {
   await using fixture = await downloadedRecipe();
-  const source = join(fixture.project, "..recipe.json");
-  await writeFile(source, recipeText);
+  await writeFile(join(fixture.project, "..recipe.json"), recipeText);
   const before = await snapshotDirectory(fixture.project);
 
   const result = await inDirectory(fixture.project, () =>
@@ -438,15 +436,7 @@ test("--config naming a recipe whose name starts with `..` is handled as an outs
 
   assert.deepEqual(
     result.changes.filter(({ path }) => path === "calavera.config.json"),
-    [
-      {
-        type: "write",
-        path: "calavera.config.json",
-        action: "write",
-        ownership: "project",
-        from: source,
-      },
-    ],
+    [],
   );
   assert.deepEqual(await snapshotDirectory(fixture.project), before);
 });

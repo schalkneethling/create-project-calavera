@@ -86,12 +86,11 @@ test("an artifact transaction refuses each invalid operation with its own messag
   });
 });
 
-// Issue #1026: the transaction's checks share `isPathInside`, which keeps the strictest rule of the
-// helpers it replaced. A target in a sibling folder whose name starts with the project's name, or
-// one whose name starts with `..`, is refused before anything moves.
-test("an artifact transaction refuses a target in a look-alike sibling folder or named with a leading `..`", async () => {
+// Issue #1026: the transaction's checks share `isPathInside`. A target in a sibling folder whose
+// name starts with the project's name is refused before anything moves.
+test("an artifact transaction refuses a target in a look-alike sibling folder", async () => {
   await inTransactionProject(async ({ project, root, staged }) => {
-    for (const target of [`${project}-two/a.txt`, join(project, "..a.txt")]) {
+    for (const target of [`${project}-two/a.txt`]) {
       await assert.rejects(commitArtifactTransaction(root, [{ staged, target }]), {
         message: `Artifact transaction operation 0 targets ${target}, which is outside the project ${project}.`,
       });
@@ -121,12 +120,9 @@ test("recovery refuses a journal whose root or paths leave their workspace and c
       },
       ...[
         { staged: join(project, "package.json") },
-        { staged: join(root, "..staged.txt") },
         { backup: join(project, "backup.txt") },
-        { backup: join(root, "..backup.txt") },
         { target: outside },
         { target: lookAlike },
-        { target: join(project, "..a.txt") },
       ].map((change) => ({
         root,
         operation: { ...valid, ...change },
@@ -150,27 +146,38 @@ test("recovery refuses a journal whose root or paths leave their workspace and c
   });
 });
 
-test("recovery with a journal whose paths stay inside rolls back and removes the journal", async () => {
+// A name that starts with `..`, such as `..a.txt`, is a file in its folder (#1026), so a journal
+// that uses such names for its staged, backup, and target paths is rolled back like any other.
+for (const names of [
+  { staged: "staged.txt", backup: "backup.txt", target: "a.txt" },
+  { staged: "..staged.txt", backup: "..backup.txt", target: "..a.txt" },
+]) {
+  test(`recovery with a journal whose paths stay inside rolls back and removes the journal (${names.target})`, async () => {
+    await inTransactionProject(async ({ project, root }) => {
+      const staged = join(root, names.staged);
+      await writeFile(staged, "staged\n");
+      const target = join(project, names.target);
+      await writeFile(target, "half-moved\n");
+      await writeFile(
+        TRANSACTION_PATH,
+        JSON.stringify({
+          schemaVersion: 1,
+          transactionRoot: root,
+          operations: [{ staged, target, backup: join(root, names.backup), hadTarget: false }],
+        }),
+      );
+
+      await recoverArtifactTransaction();
+
+      assert.deepEqual(await readdir(join(project, ".calavera")), [".transactions"]);
+      assert.deepEqual(await readdir(project), [".calavera"]);
+    });
+  });
+}
+
+test("an artifact transaction moves a staged file to a target whose name starts with `..`", async () => {
   await inTransactionProject(async ({ project, root, staged }) => {
-    await writeFile(
-      TRANSACTION_PATH,
-      JSON.stringify({
-        schemaVersion: 1,
-        transactionRoot: root,
-        operations: [
-          {
-            staged,
-            target: join(project, "a.txt"),
-            backup: join(root, "backup.txt"),
-            hadTarget: false,
-          },
-        ],
-      }),
-    );
-
-    await recoverArtifactTransaction();
-
-    assert.deepEqual(await readdir(join(project, ".calavera")), [".transactions"]);
-    assert.deepEqual(await readdir(project), [".calavera"]);
+    await commitArtifactTransaction(root, [{ staged, target: join(project, "..a.txt") }]);
+    assert.equal(await readFile(join(project, "..a.txt"), "utf8"), "staged\n");
   });
 });
