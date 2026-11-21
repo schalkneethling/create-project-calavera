@@ -215,9 +215,10 @@ package manager detected, and no runner that Vite+ recognizes
 `npm`, `pnpm`, `yarn`, or `bun`). The prompt preselects pnpm. When Vite+ does
 not ask, because `--no-interactive` is forwarded or, unless `--interactive` is
 forwarded, `CI` is set or stdin is not a terminal, it uses pnpm without asking.
-This order was checked against Vite+ 1.6.0 and 1.7.0. Under `--new`, Vite+ recognizes the runner, because Calavera
-removes the inherited `npm_config_user_agent` and each of its runners then sets
-its own value, which names the runner's package manager. The exception is a
+This order was checked against Vite+ 1.6.0 and 1.7.0. Under `--new`, Vite+
+recognizes the runner, because Calavera removes the inherited
+`npm_config_user_agent` and each of its runners then sets its own value, which
+names the runner's package manager. The exception is a
 `user-agent` setting in an `.npmrc` file, which the npm runner uses instead.
 Vite+ also installs the project's dependencies; that step needs network access
 and cannot be skipped.
@@ -279,8 +280,8 @@ project's package manager, and `npm create` and `bunx` pass an inherited value
 on. The runner then sets its own value, so Vite+ follows the runner Calavera
 chose, also when Calavera falls back to npm, for example under Yarn 1, and when
 `--package-manager npm` or `bun` before `--new` names another package manager
-than the one that started Calavera. Every
-other variable passes through unchanged.
+than the one that started Calavera. Every other variable passes through
+unchanged.
 
 Calavera continues into the bootstrap only when `vp create` exits with code 0
 and Vite+ detection reports `managed` for the scaffolded directory. That
