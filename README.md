@@ -478,7 +478,8 @@ runner, and writes this `stryker.config.json`:
   file (`{{testFile}}`). These are the runner's defaults in 10.1.1; the config states them so that
   the dry run shows what runs.
 - `tap.forceBail` is `false`, so each test file runs to its end instead of being stopped at its
-  first failure. With the runner's default, `true`, Stryker stops the test process, and Stryker's
+  first failure. With the runner's default, `true`, Stryker stops the test process (on systems
+  other than Windows, and unless `disableBail` is set), and Stryker's
   coverage hook then writes its result file into the folder the process is in at that moment. When
   a test has changed into another folder, such as a temporary project, Stryker cannot find the file
   and reports the mutant as a runtime error instead of killed. The cost is time: a test file that

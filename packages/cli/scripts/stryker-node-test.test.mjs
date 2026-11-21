@@ -347,13 +347,14 @@ test("vp create library with node:test tests: the managed config is valid under 
 test("vp create library with node:test tests: a mutant killed by a test that changes directory is reported as killed, not as a runtime error", async () => {
   await using fixture = await copyReleaseFixture("library");
   await mkdir(join(fixture.root, "tests"));
-  // The third test changes into a folder inside the fixture and changes back when it ends, as a
-  // test of a tool that works on a temporary project does. When a mutant makes the first test
-  // fail, forceBail kills the process, but only once the runner reads the next test's result,
-  // because the TAP parser closes a failure when the next line arrives. The kill then lands while
-  // the third test is in that folder: the process writes Stryker's result file into tests/, and
-  // the runner, which reads it from the fixture root, reports a runtime error instead of a killed
-  // mutant.
+  // The third test changes into a folder and changes back when it ends, as a test of a tool that
+  // works on a temporary project does. When a mutant makes the first test fail, forceBail kills
+  // the process, but only once the runner reads the next test's result, because the TAP parser
+  // closes a failure when the next test point arrives. The kill then lands while the third test is
+  // in tests/: the process writes Stryker's result file there, and the runner, which reads it from
+  // the root of Stryker's sandbox copy of the project, reports a runtime error instead of a killed
+  // mutant. Without forceBail nothing kills the process, so this test cannot fail falsely; on a
+  // slow machine the kill could miss the 500 ms window, so a revert might go unnoticed there.
   await writeFile(
     join(fixture.root, "tests/index.test.ts"),
     `import assert from "node:assert/strict";
