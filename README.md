@@ -885,7 +885,13 @@ redacted. To also see the stack frames of each error in the chain, set the `CALA
 environment variable to `1` or `true`. The CLI, and the MCP server when it fails to start, then
 print the frames after each error, and the MCP server adds a `stack` field to each error in a tool's
 error result. The frames are redacted with the same rules as the messages. An error that carries no
-frames, such as many file system errors from Node.js, prints no stack.
+frames prints no stack. Whether a file system error from Node.js carries frames depends on the
+Node.js version and the function that raised it. These results come from an `ENOENT` error on
+Node.js 24.22.3 and 26.13.1: `readFile`, `writeFile`, and `appendFile` from `node:fs/promises` carry frames on
+Node.js 24 but none on Node.js 26. Other `node:fs/promises` functions, such as `stat`, `open`, and
+`readdir`, carry frames on both, except `rm` and `opendir`, which carry none on either. An error from a
+synchronous `node:fs` call carries frames on both, and an error passed to a `node:fs` callback
+carries none on either.
 
 ```bash
 CALAVERA_DEBUG=1 npx create-project-calavera@<version> apply
