@@ -68,9 +68,10 @@ test("init in CI without --yes refuses the first prompt with the #998 message", 
     "package.json": json(plainViteManifest),
   });
 
+  // Not a dry run, so the check below fails if init writes the recipe instead of refusing.
   await inTerminal(fixture.root, "true", () =>
     assert.rejects(
-      initRecipe(initOptions),
+      initRecipe({ ...initOptions, dryRun: false }),
       new RegExp(
         String.raw`^Error: init refused: Calavera cannot ask "Choose a tooling profile" because CI is set\. Pass --yes to use the defaults, or answer it with --profile\.$`,
       ),
@@ -142,7 +143,7 @@ test("init with every recipe prompt answered asks nothing more in CI and keeps t
   assert.equal(jsonRecipe.integrationOptions?.stryker, undefined);
 });
 
-test("init with a terminal and CI unset still reaches its prompt check without refusing", async () => {
+test("init with CI unset or empty does not give CI as a reason", async () => {
   await using fixture = await createTemporaryFixture("init-asks-outside-ci", {
     "package.json": json(plainViteManifest),
   });
