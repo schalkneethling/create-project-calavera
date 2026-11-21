@@ -452,7 +452,8 @@ runner, and writes this `stryker.config.json`:
       "**/{*.test,*-test,*_test,test-*,test}.{cjs,mjs,js,cts,mts,ts}",
       "**/test/**/*.{cjs,mjs,js,cts,mts,ts}"
     ],
-    "nodeArgs": ["--test-reporter=tap", "-r", "{{hookFile}}", "{{testFile}}"]
+    "nodeArgs": ["--test-reporter=tap", "-r", "{{hookFile}}", "{{testFile}}"],
+    "forceBail": false
   },
   "tsconfigFile": "stryker-skips-tsconfig-preprocessing.json",
   "reporters": ["clear-text", "html"]
@@ -476,6 +477,13 @@ runner, and writes this `stryker.config.json`:
   results as TAP output. Stryker then loads its coverage hook (`-r {{hookFile}}`) and runs the test
   file (`{{testFile}}`). These are the runner's defaults in 10.1.1; the config states them so that
   the dry run shows what runs.
+- `tap.forceBail` is `false`, so each test file runs to its end instead of being stopped at its
+  first failure. With the runner's default, `true`, Stryker stops the test process (on systems
+  other than Windows, and unless `disableBail` is set), and Stryker's
+  coverage hook then writes its result file into the folder the process is in at that moment. When
+  a test has changed into another folder, such as a temporary project, Stryker cannot find the file
+  and reports the mutant as a runtime error instead of killed. The cost is time: a test file that
+  kills a mutant runs its remaining tests. Stryker still stops at the first test file that fails.
 - `testRunner`, `plugins`, and `tsconfigFile` are set for the same reasons as with Vitest.
 
 When no file matches `tap.testFiles`, the dry run warns that Stryker has no tests to run, and

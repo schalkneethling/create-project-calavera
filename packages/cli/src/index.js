@@ -471,6 +471,14 @@ const STRYKER_SKIPPED_TSCONFIG = "stryker-skips-tsconfig-preprocessing.json";
 // defaults in 10.1.1 (dist/schema/tap-runner-options.json); the config states them so that the
 // dry run shows them and a change of default cannot change what runs.
 const STRYKER_TAP_NODE_ARGS = ["--test-reporter=tap", "-r", "{{hookFile}}", "{{testFile}}"];
+// With the runner's default, forceBail: true, the tap runner kills a test process once it reads the
+// process's first failure. The coverage hook then writes Stryker's result file into the process's
+// current directory, so when the kill lands while a test is inside another folder, a temporary
+// project for example, the runner cannot find the file and reports the mutant as a runtime error
+// instead of killed (#1088, as in this repository's own config, #985). Turning it off lets each test
+// file run to its end, which costs time on a file that kills a mutant; Stryker still stops at the
+// first failing file.
+const STRYKER_TAP_FORCE_BAIL = false;
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
 
@@ -2390,7 +2398,8 @@ function createKnipConfig() {
  * tests (#736). The config names the runner the recipe selects, because Stryker's default command
  * runner reports a timeout for every mutant of a slow suite and counts those as detected
  * (ADR-0014), and lists it in `plugins`, because pnpm's strict `node_modules` layout hides it from
- * Stryker's default plugin lookup. The tap runner also gets the test files and node arguments.
+ * Stryker's default plugin lookup. The tap runner also gets the test files, the node arguments,
+ * and forceBail turned off.
  *
  * @param {import("./stryker-options.js").SelectedTestRunner} runner
  */
@@ -2400,7 +2409,13 @@ function createStrykerConfig(runner) {
     testRunner: runner.strykerTestRunner,
     plugins: runner.dependencies,
     ...(runner.strykerTestRunner === "tap"
-      ? { tap: { testFiles: runner.testFiles, nodeArgs: STRYKER_TAP_NODE_ARGS } }
+      ? {
+          tap: {
+            testFiles: runner.testFiles,
+            nodeArgs: STRYKER_TAP_NODE_ARGS,
+            forceBail: STRYKER_TAP_FORCE_BAIL,
+          },
+        }
       : {}),
     // WORKAROUND(@stryker-mutator/core): tsconfig preprocessing calls the TypeScript JS API, which TypeScript 7 removed, and vp create projects use TypeScript 7; a missing file skips it | upstream: https://github.com/stryker-mutator/stryker-js/issues/6111
     tsconfigFile: STRYKER_SKIPPED_TSCONFIG,
@@ -5886,6 +5901,8 @@ export async function initRecipe(options) {
     { ask: interactive ? askForTestRunner : undefined },
   );
   const validation = validateRecipeResponse(recipe);
+  // explainRecipeResponse validates and throws, so a recipe that fails validation stops here,
+  // before the write below (#1077).
   const explanation = explainRecipeResponse(recipe);
 
   // #669: formatted as apply formats it, so a Vite+ project's vp check accepts the recipe file.
