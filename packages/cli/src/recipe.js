@@ -1,5 +1,5 @@
 import { AI_TARGET_LABELS, aiArtifactCatalog, DEFAULT_AI_TARGET } from "./ai/catalog.js";
-import { normalizeAiItems } from "./ai/recipe-items.js";
+import { assertSupportedTarget, normalizeAiItems } from "./ai/recipe-items.js";
 import { integrationCatalog, integrationStatusLabels } from "./catalog.js";
 import { normalizeBaselineTarget } from "@schalkneethling/calavera-baseline-core";
 import {
@@ -419,6 +419,11 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
 
     if (artifact.type === "skill" && item.target !== undefined) {
       throw new Error(`Invalid aiArtifacts[${index}].target: skill artifacts do not use target.`);
+    }
+
+    // An empty target falls back to the default target below, so only a named one is checked.
+    if (target) {
+      assertSupportedTarget(artifact, target, index, id);
     }
 
     return {
