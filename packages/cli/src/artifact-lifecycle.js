@@ -29,7 +29,7 @@ import {
 import { createEmptyState, normalizeState } from "./state.js";
 import { errorAfterCleanups, removeTemporaryFolder, runCleanups } from "./utils/cleanup.js";
 import { fileExists, isPathInside } from "./utils/fs.js";
-import { formatGeneratedText } from "./utils/generated-text.js";
+import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { rewriteLossProblem } from "./utils/json-rewrite.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
 
@@ -568,10 +568,16 @@ async function migrateRecipe(options, loadFormatter) {
     const path = relative(process.cwd(), resolve(options.config));
     // #1078: the recipe is written back from its parsed value, so a hand-edited recipe can lose a
     // repeated key or a number's spelling. The migration stops before writing, in a dry run too.
-    // The problem names a line rather than a value, because the recipe records input values.
-    const loss = await rewriteLossProblem(text, path, await loadFormatter(), {
-      withoutValues: true,
-    });
+    // The problem names a line rather than a value, because the recipe records input values. The
+    // check asks the formatter the write below uses, so it judges the spelling that is written.
+    const loss = await rewriteLossProblem(
+      text,
+      path,
+      await generatedJSONFormatter(path, loadFormatter),
+      {
+        withoutValues: true,
+      },
+    );
     if (loss !== undefined) {
       throw new Error(
         `${path} ${loss}. artifacts migrate rewrites the whole recipe to replace each legacy entry, so it stops instead of changing that silently. Edit that line, then run artifacts migrate again.`,

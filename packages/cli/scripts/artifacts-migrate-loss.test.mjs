@@ -105,3 +105,34 @@ test("Given a recipe whose rewrite loses nothing, when artifacts migrate runs, t
     { id: "skill-protected-branch-guard", inputs: { weight: 1.5 } },
   ]);
 });
+
+test("Given a recipe named without .json that holds numbers, when artifacts migrate runs, then the check judges the spelling the migration writes, which is not formatted", async () => {
+  // The migration formats only a recipe whose name ends in .json (formatGeneratedText), so the
+  // check must not ask vp fmt about any other name. JSON.stringify writes 1e+21, so that spelling
+  // loses nothing here, and 1e21 would be written in another spelling.
+  await using project = await copyReleaseFixture("library");
+  const previous = process.cwd();
+  process.chdir(project.root);
+  try {
+    for (const [number, stops] of [
+      ["1e+21", false],
+      ["1e21", true],
+    ]) {
+      await writeFile(
+        "recipe",
+        `{\n  "preset": "default",\n  "n": ${number},\n  "ai": [${JSON.stringify(legacy)}]\n}\n`,
+      );
+      const run = runArtifactCommand({ config: "recipe", dryRun: true, artifactAction: "migrate" });
+      if (stops) {
+        await assert.rejects(
+          run,
+          /^Error: recipe holds a number on line 3 that Calavera would write in another spelling\./,
+        );
+      } else {
+        assert.equal((await run).migrated, 1);
+      }
+    }
+  } finally {
+    process.chdir(previous);
+  }
+});
