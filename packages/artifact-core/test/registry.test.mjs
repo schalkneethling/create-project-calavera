@@ -416,6 +416,41 @@ test("a registry failure names the ignored token entry and the unset variable", 
     assert.equal(failure.code, "E401");
     assert.equal(failure.statusCode, 401);
     assert.equal(failure.cause.code, "E401");
+    // #993: the notes are also structured, so a caller that withholds the registry's message can
+    // still name what Calavera ignored. They never contain a value.
+    assert.deepEqual(failure.unsetVariables, ["CALAVERA_UNSET_TOKEN"]);
+    assert.ok(
+      failure.npmDiagnostics.some((/** @type {string} */ note) =>
+        note.includes(`//${registry.host}/:_authToken`),
+      ),
+      failure.npmDiagnostics.join("\n"),
+    );
+  } finally {
+    await registry.close();
+  }
+});
+
+test("a dist-tag the package does not have fails with ETARGET and the tags it does have", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-missing-tag-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry(packed);
+  try {
+    const fixture = await npmConfigFixture(
+      "",
+      `@schalkneethling:registry=http://${registry.host}/\n`,
+    );
+    const failure = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      tag: "next",
+      cache: fixture.cache,
+      cwd: fixture.cwd,
+      env: fixture.env,
+    }).then(
+      () => assert.fail("Expected the missing tag to reject."),
+      (error) => error,
+    );
+    assert.equal(failure.code, "ETARGET");
+    assert.deepEqual(failure.distTags, { latest: packed.version });
   } finally {
     await registry.close();
   }

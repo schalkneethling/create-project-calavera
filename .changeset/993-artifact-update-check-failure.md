@@ -1,5 +1,6 @@
 ---
 "create-project-calavera": patch
+"@schalkneethling/calavera-artifact-core": patch
 ---
 
-`artifacts status --check-updates` and `artifacts doctor --check-updates` no longer fail for every artifact when one artifact's registry lookup fails, such as an artifact locked on `next` when npm has no `next` tag for its package. Status reports that artifact as "update check failed", with the cause and what to do, and reports the others as usual. `--json` adds `updateCheckFailure` to each artifact.
+`artifacts status --check-updates` and `artifacts doctor --check-updates` no longer fail for every artifact when one artifact's registry lookup fails, such as an artifact locked on `next` when npm has no `next` tag for its package. Status reports that artifact as "update check failed" with the cause, the npm configuration Calavera ignored that may explain it, and a remedy where one applies, and reports the others as usual. `--json` adds `updateCheckFailure` to each artifact. Because a failed check is not a problem with the installed files, `artifacts doctor --check-updates` now exits 0 when a registry lookup fails and the installed files are healthy, where it exited 1 before; its closing lines name the artifacts whose check failed. Errors that Calavera raises itself, such as an invalid `.npmrc` registry or a package identity mismatch, still stop the command. Artifact-core's registry errors now carry the npm configuration notes as `npmDiagnostics` and `unsetVariables`.

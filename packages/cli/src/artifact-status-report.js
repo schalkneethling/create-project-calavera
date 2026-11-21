@@ -24,6 +24,8 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {number | null} statusCode The registry's HTTP status, when it answered.
  * @property {string} reason
  * @property {string | null} remedy
+ * @property {string[]} npmDiagnostics The npm configuration entries Calavera ignored, which may explain the failure. They never contain a value.
+ * @property {string[]} unsetVariables The environment variables those entries name that are not set.
  *
  * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, ok: boolean }} ArtifactStatusReport
  * @typedef {{ level: "info" | "success" | "warn" | "error", message: string }} ReportLine
@@ -175,6 +177,16 @@ export function formatArtifactStatus(result) {
   /** @param {UpdateCheckFailure} failure */
   const failureLines = (failure) => {
     info(`  Cause: ${failure.reason}.`);
+    if (failure.npmDiagnostics.length > 0) {
+      info(
+        `  Calavera ignored npm configuration that may explain this: ${failure.npmDiagnostics.join(" ")}`,
+      );
+    }
+    if (failure.unsetVariables.length > 0) {
+      info(
+        `  Unset variables: ${failure.unsetVariables.join(", ")}. MCP clients often pass a minimal environment, so a variable set in your shell may be missing here.`,
+      );
+    }
     if (failure.remedy) info(`  ${failure.remedy}`);
   };
   for (const artifact of result.artifacts) {
@@ -282,6 +294,18 @@ export function artifactDoctorVerdict(result) {
     lines.push({
       level: "warn",
       message: `Selected ${several ? "artifacts" : "artifact"} not installed yet: ${ids}. Run ${one.installCommand}, or apply, to install ${several ? "them" : "it"}.`,
+    });
+  }
+  // #993: a failed update check is not a problem with the installed files, so it leaves `ok` and
+  // the exit status alone, but the verdict must not read as if every check ran.
+  const unchecked = result.artifacts
+    .filter(({ updateCheckFailure }) => updateCheckFailure)
+    .map(({ id }) => id);
+  if (unchecked.length > 0) {
+    const several = unchecked.length > 1;
+    lines.push({
+      level: "warn",
+      message: `The update check failed for ${unchecked.length} ${several ? "artifacts" : "artifact"}: ${unchecked.join(", ")}. The lines above name each cause. The installed files were still checked.`,
     });
   }
   if (result.ok) {

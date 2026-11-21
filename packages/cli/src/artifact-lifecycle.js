@@ -729,9 +729,14 @@ async function artifactStatus(options, registry, loadFormatter) {
 
 /**
  * Asks the registry for the release on an artifact's channel when update checks are on. A failed
- * lookup is reported for that artifact alone, so the others still get a status (#993). The report
- * keeps the error's `code` and `statusCode`, but never its message, because a registry error can
- * carry the request URL, and a registry URL can carry credentials.
+ * registry lookup is reported for that artifact alone, so the others still get a status (#993).
+ * Only an error that carries a `code`, as npm's registry and network errors do, is reported this
+ * way. Calavera's own errors carry none: an invalid npm configuration, a package whose identity or
+ * integrity does not match, or a lock entry with an unknown id or tag. They stop the report as
+ * before, because their message is Calavera's own and says what to fix. The report keeps a registry
+ * error's `code`, `statusCode`, and the npm configuration notes Calavera adds, but never the
+ * registry's message, because that is raw registry text, which can hold the request URL and
+ * response details.
  *
  * @template {{ version: string }} T
  * @param {boolean | undefined} checkUpdates
@@ -744,37 +749,81 @@ async function checkForUpdate(checkUpdates, lookup, context) {
   try {
     return { latest: await lookup(), updateCheckFailure: null };
   } catch (error) {
-    return { latest: null, updateCheckFailure: updateCheckFailure(error, context) };
+    const failure = updateCheckFailure(error, context);
+    if (!failure) throw error;
+    return { latest: null, updateCheckFailure: failure };
   }
 }
 
 /**
+ * Artifact-core's registry errors carry these notes as string arrays; any other error has none.
+ *
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+function notesList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * The report of a failed registry lookup, or undefined for an error that is not one.
+ *
  * @param {unknown} error
  * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string }} context
- * @returns {import("./artifact-status-report.js").UpdateCheckFailure}
+ * @returns {import("./artifact-status-report.js").UpdateCheckFailure | undefined}
  */
 function updateCheckFailure(error, { packageName, tag, followLatestCommand, retryCommand }) {
-  const fields = /** @type {{ code?: unknown, statusCode?: unknown }} */ (
-    error instanceof Error ? error : {}
-  );
-  const code = typeof fields.code === "string" ? fields.code : null;
+  const fields =
+    /** @type {{ code?: unknown, statusCode?: unknown, npmDiagnostics?: unknown, unsetVariables?: unknown, distTags?: unknown, cause?: { distTags?: unknown } }} */ (
+      error ?? {}
+    );
+  if (typeof fields.code !== "string") return undefined;
+  const code = fields.code;
   const statusCode = typeof fields.statusCode === "number" ? fields.statusCode : null;
-  // npm-pick-manifest throws ETARGET when the package has no version for the requested spec, and
-  // status always asks for a dist-tag.
+  const notes = {
+    npmDiagnostics: notesList(fields.npmDiagnostics),
+    unsetVariables: notesList(fields.unsetVariables),
+  };
+  // npm-pick-manifest throws ETARGET when no version matches the spec, and status always asks for
+  // a dist-tag. It also throws ETARGET when the tag names a version the package document does not
+  // list yet, so the package's tags tell the two apart. The npm configuration notes wrap the error
+  // and keep the tags on its cause.
   if (code === "ETARGET") {
-    return {
-      code,
-      statusCode,
-      reason: `npm has no ${tag} tag for ${packageName}, so Calavera could not check for an update on that channel`,
-      remedy: followLatestCommand ? `To follow latest instead, run: ${followLatestCommand}` : null,
-    };
+    const distTags = fields.distTags ?? fields.cause?.distTags;
+    const hasTag = Object.hasOwn(Object(distTags), tag);
+    return hasTag
+      ? {
+          code,
+          statusCode,
+          reason: `npm's ${tag} tag for ${packageName} names a version the registry does not list yet`,
+          remedy: `Wait a few minutes for the registry to list it, then run: ${retryCommand}`,
+          ...notes,
+        }
+      : {
+          code,
+          statusCode,
+          reason: `npm has no ${tag} tag for ${packageName}, so Calavera could not check for an update on that channel`,
+          remedy: followLatestCommand
+            ? `To follow latest instead, run: ${followLatestCommand}`
+            : null,
+          ...notes,
+        };
   }
-  const details = [code, statusCode === null ? null : `HTTP ${statusCode}`].filter(Boolean);
+  const details = statusCode === null ? code : `${code}, HTTP ${statusCode}`;
+  // npm-registry-fetch sets `statusCode` on every HTTP error, while its `code` is EOTP or EAUTHIP
+  // for some 401 answers, so the status picks the remedy.
+  let check = "the network connection and the npm registry settings";
+  if (statusCode === 401 || statusCode === 403) {
+    check = "the npm credentials for this registry";
+  } else if (statusCode === 404) {
+    check = `that the npm registry settings point at a registry that publishes ${packageName}`;
+  }
   return {
     code,
     statusCode,
-    reason: `the registry lookup for ${packageName} failed ${details.length > 0 ? `(${details.join(", ")})` : "with no error code"}`,
-    remedy: `Check the network connection and the npm registry settings, then run: ${retryCommand}`,
+    reason: `the registry lookup for ${packageName} failed (${details})`,
+    remedy: `Check ${check}, then run: ${retryCommand}`,
+    ...notes,
   };
 }
 

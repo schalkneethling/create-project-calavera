@@ -125,7 +125,9 @@ function packageScope({ packageName }) {
 
 /**
  * Adds what the loader ignored to a registry failure, so a missing token or variable is visible.
- * The original error stays as `cause`, and its `code` and `statusCode` are kept.
+ * The original error stays as `cause`, and its `code` and `statusCode` are kept. The notes are also
+ * kept as `npmDiagnostics` and `unsetVariables`, so a caller that withholds the registry's own
+ * message can still name them (#993); like the loader's notes, they never contain a value.
  * @template T
  * @param {{ diagnostics: string[], unsetVariables: string[] }} npm
  * @param {() => Promise<T>} run
@@ -148,6 +150,8 @@ async function withNpmDiagnostics(npm, run) {
       {
         code: /** @type {NodeJS.ErrnoException} */ (error).code,
         statusCode: /** @type {{ statusCode?: number }} */ (error).statusCode,
+        npmDiagnostics: npm.diagnostics,
+        unsetVariables: npm.unsetVariables,
       },
     );
   }
