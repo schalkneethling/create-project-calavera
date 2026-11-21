@@ -625,7 +625,18 @@ for (const { name, options, setup } of commands) {
         },
       };
 
-      await assert.rejects(runArtifactCommand(options, failing), /registry unreachable/);
+      if (options.checkUpdates) {
+        // #993: status and doctor report a failed lookup for that artifact and finish the report.
+        const result = await runArtifactCommand(options, failing);
+        assert.ok(
+          result.artifacts.every(
+            (/** @type {{ updateCheckFailure: unknown }} */ { updateCheckFailure }) =>
+              updateCheckFailure !== null,
+          ),
+        );
+      } else {
+        await assert.rejects(runArtifactCommand(options, failing), /registry unreachable/);
+      }
 
       assert.equal(
         await readFile(".gitignore", "utf8"),

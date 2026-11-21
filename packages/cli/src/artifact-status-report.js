@@ -16,7 +16,14 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {string | null} releaseNotesUrl
  * @property {string | null} updateCommand
  * @property {string | null} installCommand
+ * @property {UpdateCheckFailure | null} updateCheckFailure Why `--check-updates` could not look up this artifact's channel, or null when the lookup succeeded or did not run (#993).
  * @property {boolean | null} selected False for a lock entry the recipe no longer selects, which the next `artifacts install`, or `artifacts update` while the recipe selects any artifact, removes (#992). Null when there is no recipe to compare the lock with.
+ *
+ * @typedef {object} UpdateCheckFailure
+ * @property {string | null} code The registry error's code, such as ETARGET for a missing dist-tag.
+ * @property {number | null} statusCode The registry's HTTP status, when it answered.
+ * @property {string} reason
+ * @property {string | null} remedy
  *
  * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, ok: boolean }} ArtifactStatusReport
  * @typedef {{ level: "info" | "success" | "warn" | "error", message: string }} ReportLine
@@ -165,17 +172,38 @@ export function formatArtifactStatus(result) {
   const notSelected = result.artifacts.some(({ selected }) => selected)
     ? NOT_SELECTED
     : NOTHING_SELECTED;
+  /** @param {UpdateCheckFailure} failure */
+  const failureLines = (failure) => {
+    info(`  Cause: ${failure.reason}.`);
+    if (failure.remedy) info(`  ${failure.remedy}`);
+  };
   for (const artifact of result.artifacts) {
+    const failure = artifact.updateCheckFailure;
     if (artifact.version === null) {
-      const latest = result.offline ? "" : `, latest ${artifact.latestVersion}`;
-      info(`${artifact.id}  not installed${latest} (${artifact.tag})`);
+      if (failure) {
+        lines.push({
+          level: "warn",
+          message: `${artifact.id}  not installed, update check failed (${artifact.tag})`,
+        });
+        failureLines(failure);
+      } else {
+        const latest = result.offline ? "" : `, latest ${artifact.latestVersion}`;
+        info(`${artifact.id}  not installed${latest} (${artifact.tag})`);
+      }
       info(`  Install: ${artifact.installCommand}`);
       continue;
     }
 
     const notes = healthNotes(artifact);
     const health = notes.length > 0 ? `, ${notes.join(", ")}` : "";
-    if (artifact.updateAvailable) {
+    if (failure) {
+      lines.push({
+        level: "warn",
+        message: `${artifact.id}  ${artifact.version}, update check failed (${artifact.tag})${health}`,
+      });
+      if (artifact.selected === false) info(notSelected);
+      failureLines(failure);
+    } else if (artifact.updateAvailable) {
       info(
         `${artifact.id}  ${artifact.version} → ${artifact.latestVersion} (${artifact.tag})${health}`,
       );
@@ -222,7 +250,12 @@ export function formatArtifactStatus(result) {
       `A targeted update, artifacts update <id>, advances only the artifact it names and leaves the artifacts that are not installed yet as they are. To install them, run their Install command${all}.`,
     );
   }
-  if (updates.length === 0 && result.artifacts.every(({ version }) => version !== null)) {
+  if (
+    updates.length === 0 &&
+    result.artifacts.every(
+      ({ version, updateCheckFailure }) => version !== null && updateCheckFailure === null,
+    )
+  ) {
     lines.push({ level: "success", message: "Every artifact is up to date on its channel." });
   }
   return lines;

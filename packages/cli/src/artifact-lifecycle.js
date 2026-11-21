@@ -599,6 +599,8 @@ async function artifactStatus(options, registry, loadFormatter) {
       ? await mkdtemp(join(tmpdir(), "calavera-artifact-status-"))
       : undefined;
   const cache = temporaryCache ?? resolve(CACHE_PATH);
+  // A failed update check names this command, so a person can retry the same report (#993).
+  const retryCommand = command([options.artifactAction ?? "status"], ["--check-updates"]);
   try {
     const artifacts = [];
     for (const entry of lock.artifacts) {
@@ -617,9 +619,20 @@ async function artifactStatus(options, registry, loadFormatter) {
           };
         }),
       );
-      const latest = options.checkUpdates
-        ? await registry.resolve({ id: entry.id, tag: entry.tag, cache })
-        : null;
+      const { latest, updateCheckFailure } = await checkForUpdate(
+        options.checkUpdates,
+        () => registry.resolve({ id: entry.id, tag: entry.tag, cache }),
+        {
+          packageName: entry.package,
+          tag: entry.tag,
+          // `artifacts update` refuses an artifact the recipe does not select.
+          followLatestCommand:
+            entry.tag === "next" && selectedIds.has(entry.id)
+              ? artifactUpdateCommand(recipe, options.config, entry.id, "latest")
+              : null,
+          retryCommand,
+        },
+      );
       const updateAvailable = Boolean(latest && latest.version !== entry.version);
       artifacts.push({
         ...entry,
@@ -643,6 +656,7 @@ async function artifactStatus(options, registry, loadFormatter) {
         installCommand: null,
         // #992: without a recipe, status cannot say which lock entries an install would drop.
         selected: recipeFound ? selectedIds.has(entry.id) : null,
+        updateCheckFailure,
       });
     }
     for (const selection of unlockedSelections) {
@@ -650,9 +664,16 @@ async function artifactStatus(options, registry, loadFormatter) {
       if (!artifact) throw new Error(`Unknown Calavera artifact: ${selection.id}.`);
       const resolvedArtifact = resolveAiArtifacts({ ai: [selection] })[0];
       if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
-      const latest = options.checkUpdates
-        ? await registry.resolve({ id: selection.id, tag: "latest", cache })
-        : null;
+      const { latest, updateCheckFailure } = await checkForUpdate(
+        options.checkUpdates,
+        () => registry.resolve({ id: selection.id, tag: "latest", cache }),
+        {
+          packageName: artifact.packageName,
+          tag: "latest",
+          followLatestCommand: null,
+          retryCommand,
+        },
+      );
       artifacts.push({
         id: selection.id,
         type: artifact.type,
@@ -674,6 +695,7 @@ async function artifactStatus(options, registry, loadFormatter) {
         updateCommand: null,
         installCommand: command(["install"]),
         selected: true,
+        updateCheckFailure,
       });
     }
     // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only
@@ -703,6 +725,57 @@ async function artifactStatus(options, registry, loadFormatter) {
   } finally {
     if (temporaryCache) await rm(temporaryCache, { recursive: true, force: true });
   }
+}
+
+/**
+ * Asks the registry for the release on an artifact's channel when update checks are on. A failed
+ * lookup is reported for that artifact alone, so the others still get a status (#993). The report
+ * keeps the error's `code` and `statusCode`, but never its message, because a registry error can
+ * carry the request URL, and a registry URL can carry credentials.
+ *
+ * @template {{ version: string }} T
+ * @param {boolean | undefined} checkUpdates
+ * @param {() => Promise<T>} lookup
+ * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string }} context
+ * @returns {Promise<{ latest: T | null, updateCheckFailure: import("./artifact-status-report.js").UpdateCheckFailure | null }>}
+ */
+async function checkForUpdate(checkUpdates, lookup, context) {
+  if (!checkUpdates) return { latest: null, updateCheckFailure: null };
+  try {
+    return { latest: await lookup(), updateCheckFailure: null };
+  } catch (error) {
+    return { latest: null, updateCheckFailure: updateCheckFailure(error, context) };
+  }
+}
+
+/**
+ * @param {unknown} error
+ * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string }} context
+ * @returns {import("./artifact-status-report.js").UpdateCheckFailure}
+ */
+function updateCheckFailure(error, { packageName, tag, followLatestCommand, retryCommand }) {
+  const fields = /** @type {{ code?: unknown, statusCode?: unknown }} */ (
+    error instanceof Error ? error : {}
+  );
+  const code = typeof fields.code === "string" ? fields.code : null;
+  const statusCode = typeof fields.statusCode === "number" ? fields.statusCode : null;
+  // npm-pick-manifest throws ETARGET when the package has no version for the requested spec, and
+  // status always asks for a dist-tag.
+  if (code === "ETARGET") {
+    return {
+      code,
+      statusCode,
+      reason: `npm has no ${tag} tag for ${packageName}, so Calavera could not check for an update on that channel`,
+      remedy: followLatestCommand ? `To follow latest instead, run: ${followLatestCommand}` : null,
+    };
+  }
+  const details = [code, statusCode === null ? null : `HTTP ${statusCode}`].filter(Boolean);
+  return {
+    code,
+    statusCode,
+    reason: `the registry lookup for ${packageName} failed ${details.length > 0 ? `(${details.join(", ")})` : "with no error code"}`,
+    remedy: `Check the network connection and the npm registry settings, then run: ${retryCommand}`,
+  };
 }
 
 /**
