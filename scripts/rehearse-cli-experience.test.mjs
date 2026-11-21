@@ -849,8 +849,49 @@ test("a quoted value and a fixed statement do not count as listings (#617)", () 
   ]);
   assert.deepEqual(listingViolations(withReport, ["package.json"], [report]), []);
   // A name outside the quotes still counts.
+  assert.deepEqual(listingViolations(`${output}\n  Dev dependencies: stylelint`, ["stylelint"]), [
+    "stylelint is printed 2 times",
+  ]);
+});
+
+test("a package.json script name is not a listing of the package it shares a name with (#1128)", () => {
+  // Knip adds a script named knip; the script line names the script, the Integrations line the
+  // package.
+  const output = [
+    "Integrations:",
+    "  knip",
+    "Files:",
+    "  Would update package.json",
+    "Scripts:",
+    '  Would add script knip: "knip"',
+    '  Would add script lint:styles: "stylelint"',
+    '  Would rename script knip to knip:check: "knip"',
+    '  Would change script knip from "knip" to "knip --strict"',
+    '  Would remove script knip: "knip"',
+    "  Would omit script knip: no file to check",
+    "  Scripts already set: knip, lint:styles",
+  ].join("\n");
+  assert.deepEqual(listingViolations(output, ["knip", "package.json"]), []);
+  // A package named twice outside its script lines is still a repeat, and one named only as a
+  // script is not listed at all.
+  assert.deepEqual(listingViolations(`${output}\n  Dev dependencies: knip`, ["knip"]), [
+    "knip is printed 2 times",
+  ]);
+  assert.deepEqual(listingViolations(output.replace("Integrations:\n  knip\n", ""), ["knip"]), [
+    "knip is printed 0 times",
+  ]);
+  // The reason after a script's name is not part of the name, so a package it names still counts.
   assert.deepEqual(
-    listingViolations(`${output}\n  Scripts already set: stylelint`, ["stylelint"]),
+    listingViolations("Scripts:\n  Would omit script lint: stylelint is not selected\n", [
+      "stylelint",
+    ]),
+    [],
+  );
+  assert.deepEqual(
+    listingViolations(
+      "Integrations:\n  stylelint\nScripts:\n  Would omit script lint: stylelint is not selected\n",
+      ["stylelint"],
+    ),
     ["stylelint is printed 2 times"],
   );
 });
