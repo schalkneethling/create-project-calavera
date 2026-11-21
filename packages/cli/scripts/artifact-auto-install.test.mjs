@@ -464,12 +464,13 @@ test("dry_run_apply and apply --dry-run --json say which artifacts they would lo
       await server.close();
     }
 
-    // The field describes the dry run; the lock apply writes keeps its own shape.
-    await applyRecipeObject(
+    // Apply reports the same, and the lock it writes keeps its own shape.
+    const applied = await applyRecipeObject(
       cliResult.recipe,
       { ...applyOptions, approvedArtifacts: cliResult.autoInstalledArtifacts },
       registry,
     );
+    assert.deepEqual(matching(applied.autoInstalledArtifacts), expected);
     for (const entry of (await readLock()).artifacts) {
       assert.equal(Object.hasOwn(entry, "filesAlreadyMatch"), false, entry.id);
     }

@@ -598,7 +598,13 @@ test("nothing to change is said only when every change is unchanged and nothing 
   assert.equal(
     texts({
       changes: [{ type: "unchanged", path: "a" }],
-      autoInstalledArtifacts: [/** @type {any} */ ({ id: "skill-project-goal", version: "0.1.0" })],
+      autoInstalledArtifacts: [
+        /** @type {any} */ ({
+          id: "skill-project-goal",
+          version: "0.1.0",
+          filesAlreadyMatch: false,
+        }),
+      ],
       recipe: { version: 1, integrations: [], ai: [{ id: "skill-project-goal" }] },
     }).includes(nothing),
     false,
@@ -830,7 +836,9 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
   const result = emptyResult({
     recipe,
     changes: /** @type {any} */ (changes),
-    autoInstalledArtifacts: /** @type {any} */ ([{ id: "skill-css-tokens", version: "0.3.0" }]),
+    autoInstalledArtifacts: /** @type {any} */ ([
+      { id: "skill-css-tokens", version: "0.3.0", filesAlreadyMatch: true },
+    ]),
     artifactRegistries: [{ origin: "https://registry.example", source: "project .npmrc" }],
     artifactWarnings: ["An npm setting was ignored."],
     artifactInputs: /** @type {any} */ ([
@@ -924,7 +932,9 @@ test("an artifact whose outputs already match is named once, with each output (#
       output("unchanged", hookSettings),
       output("unchanged", ".agents/skills/code-review"),
     ]),
-    autoInstalledArtifacts: /** @type {any} */ ([{ id: "skill-code-review", version: "1.2.0" }]),
+    autoInstalledArtifacts: /** @type {any} */ ([
+      { id: "skill-code-review", version: "1.2.0", filesAlreadyMatch: true },
+    ]),
   });
   const artifacts = (/** @type {import("../src/index.js").ApplyResult} */ value) => {
     const lines = applySummaryLines(value).map(({ text }) => text);
@@ -1019,7 +1029,9 @@ test("the artifact group reads in the past tense after apply, and names the defa
       ai: [{ id: "skill-code-review" }, { id: "skill-css-tokens" }],
     },
     artifactRegistries: [{ origin: "https://registry.npmjs.org", source: "default" }],
-    autoInstalledArtifacts: /** @type {any} */ ([{ id: "skill-css-tokens", version: "0.3.0" }]),
+    autoInstalledArtifacts: /** @type {any} */ ([
+      { id: "skill-css-tokens", version: "0.3.0", filesAlreadyMatch: true },
+    ]),
     // An artifact with only an input still gets a line, with the input under it.
     artifactInputs: /** @type {any} */ ([
       {

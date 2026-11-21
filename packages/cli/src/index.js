@@ -3344,8 +3344,10 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
 
 /**
  * Each artifact apply locks, with `filesAlreadyMatch`: true when apply writes none of its outputs,
- * because the files in the project already match the payload it locks (#749, #1021). The entries
- * are copies, so the lock apply writes keeps its own shape.
+ * because the files in the project already match the payload it locks (#749, #1021). The apply
+ * summary reads the field for its headline, so the two agree. The lock is not affected, because
+ * the install builds each lock entry field by field and takes only the version and tag of an
+ * approved entry.
  *
  * @param {ArtifactLockEntry[]} installed
  * @param {Recipe} recipe
@@ -3756,6 +3758,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       ownership: /** @type {const} */ ("project"),
     })),
   ];
+  // Decided here, before apply writes anything else, so a selection it cannot place stops apply
+  // instead of failing after the writes.
+  const autoInstalledArtifacts = withMatchingFiles(artifactPlan.installed, recipe, aiChanges);
   const wiringWarnings = await artifactWiringWarnings({
     recipe,
     vitePlusStatus: vitePlusDetection.status,
@@ -3955,10 +3960,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       // adds the block, and not again on every apply after that.
       ...artifactCachePointers(gitignorePlan.changes),
     ],
-    autoInstalledArtifacts: withMatchingFiles(artifactPlan.installed, recipe, [
-      ...changes,
-      ...aiChanges,
-    ]),
+    autoInstalledArtifacts,
     artifactRegistries: artifactPlan.registries,
     artifactWarnings: artifactPlan.warnings,
     artifactInputs,

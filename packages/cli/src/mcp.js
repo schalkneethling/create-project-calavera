@@ -298,7 +298,7 @@ const toolConfigs = {
               filesAlreadyMatch: z
                 .boolean()
                 .describe(
-                  'True when the files in the project already match the payload apply locks, so apply writes none of the artifact\'s outputs and only records the lock entry. The `changes` entries with `type: "unchanged"` name those files.',
+                  'True when the files in the project already match the payload apply locks, so apply writes none of the artifact\'s outputs. Apply still locks the version, stores the package under .calavera/packages, and records the artifact in .calavera/state.json. The `changes` entries with `type: "unchanged"` name those files.',
                 ),
             }),
           )
