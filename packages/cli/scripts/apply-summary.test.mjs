@@ -1160,6 +1160,8 @@ test("a legacy artifact entry is named by its catalog ID, with the version apply
       ),
       printed(texts(dryRun)),
     );
+    // #1021: the JSON result says the same as the summary line.
+    assert.equal(dryRun.autoInstalledArtifacts[0].filesAlreadyMatch, false);
 
     await applyRecipeObject(
       dryRun.recipe,
@@ -1175,6 +1177,7 @@ test("a legacy artifact entry is named by its catalog ID, with the version apply
       ),
       printed(texts(relock)),
     );
+    assert.equal(relock.autoInstalledArtifacts[0].filesAlreadyMatch, true);
   });
 });
 

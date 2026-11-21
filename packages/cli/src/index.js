@@ -39,6 +39,7 @@ import {
   TRANSACTION_PATH as EJECT_TRANSACTION_PATH,
   artifactCacheIgnoreLines,
   artifactCachePointers,
+  normalizePackageSelections,
   prepareArtifactSources,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
@@ -312,7 +313,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {Change[]} changes
  * @property {ScriptChange[]} scriptChanges Each package.json script apply adds or changes, with the value it writes, so the approval boundary shows the command; a script that already has that value is not listed. Kept out of the package.json change, which a dry run reports the same before and after apply.
  * @property {string[]} pointers
- * @property {ArtifactLockEntry[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock.
+ * @property {AutoInstalledArtifact[]} autoInstalledArtifacts Selected artifacts that had no lock entry, which apply installs and locks first; a dry run reports the versions it would lock, and whether the files in the project already match each one.
  * @property {ArtifactRegistryReport[]} artifactRegistries The registry (protocol, host, and port, such as https://registry.npmjs.org) the auto-installed artifacts resolve from, and the npm configuration it comes from, such as the project .npmrc; empty when nothing resolves.
  * @property {string[]} artifactWarnings Notes on npm configuration Calavera ignored while resolving the auto-installed artifacts. They never contain a value.
  * @property {ResolvedInput[]} artifactInputs Each input a selected artifact declares, with the value apply uses and where it came from.
@@ -376,6 +377,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  *
  * @typedef {{ command: `artifacts ${string}`, [key: string]: unknown }} ArtifactCommandResult
  * @typedef {import("./artifact-lifecycle.js").ArtifactLockEntry} ArtifactLockEntry
+ * @typedef {ArtifactLockEntry & { filesAlreadyMatch: boolean }} AutoInstalledArtifact An artifact apply locks; `filesAlreadyMatch` is true when the files in the project already match its payload, so apply writes none of its outputs (#1021).
  * @typedef {import("./artifact-lifecycle.js").ArtifactRegistryReport} ArtifactRegistryReport
  * @typedef {import("./artifact-lifecycle.js").ArtifactServices} ArtifactServices
  * @typedef {ApplyResult | CleanResult | DoctorResult | InitResult | AgentInitResult | NewResult | EjectResult | ArtifactCommandResult} CommandResult
@@ -3341,6 +3343,38 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
 }
 
 /**
+ * Each artifact apply locks, with `filesAlreadyMatch`: true when apply writes none of its outputs,
+ * because the files in the project already match the payload it locks (#749, #1021). The entries
+ * are copies, so the lock apply writes keeps its own shape.
+ *
+ * @param {ArtifactLockEntry[]} installed
+ * @param {Recipe} recipe
+ * @param {Change[]} changes
+ * @returns {AutoInstalledArtifact[]}
+ */
+function withMatchingFiles(installed, recipe, changes) {
+  const writtenPaths = new Set(
+    changes
+      .filter(({ category, type }) => category === "ai" && type === "write")
+      .map(({ path }) => path),
+  );
+  const catalogIds = normalizePackageSelections(recipe.ai).map(({ id }) => id);
+  const outputsById = new Map(
+    resolveAiArtifacts(recipe).map((artifact) => [
+      catalogIds[artifact.index],
+      aiArtifactOutputPaths(artifact),
+    ]),
+  );
+  return installed.map((entry) => {
+    const outputs = outputsById.get(entry.id);
+    if (outputs === undefined) {
+      throw new Error(`No recipe selection for the artifact apply locks: ${entry.id}.`);
+    }
+    return { ...entry, filesAlreadyMatch: !outputs.some((path) => writtenPaths.has(path)) };
+  });
+}
+
+/**
  * The apply result for a manifest decision that plans nothing: no choice yet, or abandon. The
  * inspection is read-only, so the findings still say why there is a decision.
  *
@@ -3921,7 +3955,10 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       // adds the block, and not again on every apply after that.
       ...artifactCachePointers(gitignorePlan.changes),
     ],
-    autoInstalledArtifacts: artifactPlan.installed,
+    autoInstalledArtifacts: withMatchingFiles(artifactPlan.installed, recipe, [
+      ...changes,
+      ...aiChanges,
+    ]),
     artifactRegistries: artifactPlan.registries,
     artifactWarnings: artifactPlan.warnings,
     artifactInputs,
