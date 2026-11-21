@@ -19,7 +19,9 @@ const AI_SOURCE_DIRECTORIES = Object.freeze({
  * @property {Record<string, unknown>} [inputs]
  *
  * @typedef {object} NormalizedAiItem
- * @property {string} [id]
+ * @property {string} [id] The ID the entry names, absent for a legacy entry.
+ * @property {string} catalogId The ID of the catalog artifact the entry selects, whether it names an
+ *   ID or a legacy type and src (#1119).
  * @property {AiArtifactType} type
  * @property {string} src
  * @property {string} [target]
@@ -217,6 +219,7 @@ export function normalizeAiItems(aiConfig) {
 
     return {
       id: item.id,
+      catalogId: artifact.id,
       type,
       src: item.src,
       target,

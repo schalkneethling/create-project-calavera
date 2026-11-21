@@ -2,8 +2,6 @@
 import { copyFile, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import { basename, dirname, join, relative, resolve } from "node:path";
 
-import { artifactForId, artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
-
 import { fileExists } from "../utils/fs.js";
 import { isNotEmptyString } from "../utils/guards.js";
 import { collectFiles, hashDirectory, hashFile, textHash } from "../utils/hash.js";
@@ -15,6 +13,8 @@ import { normalizeAiItems } from "./recipe-items.js";
  * @typedef {"skill" | "hook" | "agent"} AiArtifactType
  *
  * @typedef {object} ResolvedAiArtifact
+ * @property {string} id The catalog ID, also for a legacy entry, which `source` names by its legacy
+ *   path. Wiring records and the lock name an artifact by this ID (#1119).
  * @property {number} index
  * @property {string} sourcePath
  * @property {string} source
@@ -233,12 +233,11 @@ export function createCodexAgentToml(markdown) {
 }
 
 /**
- * @param {{ id?: string, src: string }} item
+ * @param {{ catalogId: string, src: string }} item
  * @param {Map<string, string>} sourcePaths
  */
 function resolveAiSourcePath(item, sourcePaths) {
-  const artifact = item.id ? artifactForId(item.id) : artifactForLegacyPath(item.src);
-  return (artifact && sourcePaths.get(artifact.id)) ?? sourcePaths.get(item.src) ?? item.src;
+  return sourcePaths.get(item.catalogId) ?? sourcePaths.get(item.src) ?? item.src;
 }
 
 /**
@@ -414,6 +413,7 @@ export function resolveAiArtifacts(recipe, sourcePaths = new Map()) {
 
     if (!deduped.has(key)) {
       deduped.set(key, {
+        id: item.catalogId,
         index,
         sourcePath,
         source: item.id ?? item.src,
