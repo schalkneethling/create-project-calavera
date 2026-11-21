@@ -5,10 +5,16 @@
 // `webMcpToolSchemas` generates from it. A part only Node.js can serve is wrapped in `nodeOnly`,
 // and the JSON Schema form refuses it.
 //
-// Each schema declares only what the core accepts at runtime, and no less: a declared schema that
-// refuses an input the core accepts is a breaking change under ADR-0018 Decision 6. That is why a
-// field the core reads with `??`, such as severity, also accepts null, which selects the default.
+// Each schema refuses no input the core accepts: a declared schema that refuses such an input is a
+// breaking change under ADR-0018 Decision 6. That is why a field the core reads with `??`, such as
+// severity, also accepts null, which selects the default. A few schemas accept less than the core,
+// as they did before they moved here; tightening one to what the core enforces is not breaking.
+//
+// Where a Zod message would only say "Invalid input", the schema's error map runs the core's own
+// check on the value and returns its message, so an MCP client reads the same explanation, with
+// its remedy, that the core gives.
 import * as z from "zod";
+import { normalizeBaselineTarget } from "@schalkneethling/calavera-baseline-core";
 
 import {
   CODEQL_LANGUAGES,
@@ -18,15 +24,17 @@ import {
   MERGE_METHODS,
   RELEASE_ENVIRONMENT_MAX_WAIT_TIMER,
   REPOSITORY_NAME_PATTERN,
+  normalizeGithubRepositoryControlsOptions,
 } from "./github-repository-controls-options.js";
 import {
   STYLELINT_BASELINE_SEVERITIES,
   assertKnownProfile,
+  normalizeIntegrationOptions,
   packageManagerIdsForRecipe,
   profileIdsForRecipe,
   recipeToolInputDescriptions,
 } from "./recipe.js";
-import { STRYKER_ID, strykerTestRunners } from "./stryker-options.js";
+import { STRYKER_ID, normalizeStrykerOptions, strykerTestRunners } from "./stryker-options.js";
 
 const nodeOnlyRegistry = z.registry();
 
@@ -44,6 +52,26 @@ function nodeOnly(schema) {
   return schema;
 }
 
+/**
+ * An error map that runs `check`, a core check, on the refused value and returns the message it
+ * throws. When the check passes, the schema's own message stays.
+ *
+ * @param {(value: unknown) => unknown} check
+ * @returns {{ error: (issue: { input?: unknown }) => string | undefined }}
+ */
+function coreMessage(check) {
+  return {
+    error: (issue) => {
+      try {
+        check(issue.input);
+      } catch (error) {
+        return error instanceof Error ? error.message : undefined;
+      }
+      return undefined;
+    },
+  };
+}
+
 /** @param {string} value */
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -55,31 +83,40 @@ function escapeRegExp(value) {
  * reads the choices from it.
  *
  * @param {readonly string[]} values
+ * @param {(value: unknown) => unknown} check
  */
-function trimmedEnum(values) {
-  return z.union([
-    z.enum(values),
-    z.string().regex(new RegExp(`^\\s*(?:${values.map(escapeRegExp).join("|")})\\s*$`)),
-  ]);
+function trimmedEnum(values, check) {
+  return z.union(
+    [
+      z.enum(values, coreMessage(check)),
+      z
+        .string(coreMessage(check))
+        .regex(
+          new RegExp(`^\\s*(?:${values.map(escapeRegExp).join("|")})\\s*$`),
+          coreMessage(check),
+        ),
+    ],
+    coreMessage(check),
+  );
 }
 
-// The core checks these strings after trimming them, and refuses one that is empty.
-const nonBlankString = z.string().regex(/\S/);
+/**
+ * A string that is not empty once trimmed, as the core requires of these strings.
+ *
+ * @param {(value: unknown) => unknown} check
+ */
+function nonBlankString(check) {
+  return z.string(coreMessage(check)).regex(/\S/, coreMessage(check));
+}
 
-const profileIds = profileIdsForRecipe();
 // A removed profile id fails the enum like any other value; the error map hands back the same
 // message validateRecipe gives, naming the replacement, so an MCP client sees it too (ADR-0011).
-const profileSchema = z.enum(profileIds, {
-  error: (issue) => {
-    if (typeof issue.input !== "string") return undefined;
-    try {
-      assertKnownProfile(issue.input);
-    } catch (error) {
-      return error instanceof Error ? error.message : undefined;
-    }
-    return undefined;
-  },
-});
+const profileSchema = z.enum(
+  profileIdsForRecipe(),
+  coreMessage((value) => {
+    if (typeof value === "string") assertKnownProfile(value);
+  }),
+);
 
 export const packageManagerSchema = z.enum(packageManagerIdsForRecipe());
 
@@ -89,53 +126,165 @@ export const recipeSchema = z
 
 const baselineTargetSchema = z.union([z.enum(["widely", "newly"]), z.number().int()]);
 
+/** @param {string} field */
+const stylelintBaselineCheck = (field) => (/** @type {unknown} */ value) =>
+  normalizeIntegrationOptions({ "stylelint-baseline": { available: "widely", [field]: value } }, [
+    "stylelint-baseline",
+  ]);
+
 const stylelintBaselineOptionsSchema = z.strictObject({
   // normalizeBaselineTarget also reads a four-digit year written as a string.
-  available: z.union([baselineTargetSchema, z.string().regex(/^\d{4}$/)]),
-  severity: z.enum(STYLELINT_BASELINE_SEVERITIES).nullable().optional(),
+  available: z.union(
+    [
+      z.enum(["widely", "newly"], coreMessage(normalizeBaselineTarget)),
+      z.number(coreMessage(normalizeBaselineTarget)).int(coreMessage(normalizeBaselineTarget)),
+      z.string().regex(/^\d{4}$/, coreMessage(normalizeBaselineTarget)),
+    ],
+    coreMessage(normalizeBaselineTarget),
+  ),
+  severity: z
+    .enum(STYLELINT_BASELINE_SEVERITIES, coreMessage(stylelintBaselineCheck("severity")))
+    .nullable()
+    .optional(),
 });
 
 const htmlValidateOptionsSchema = z.strictObject({
   quality: z.boolean().nullable().optional(),
 });
 
+/** @param {(value: unknown) => Record<string, unknown>} options */
+const strykerCheck = (options) => (/** @type {unknown} */ value) =>
+  normalizeStrykerOptions(options(value));
+const testFilesCheck = strykerCheck((testFiles) => ({ testRunner: "node:test", testFiles }));
+
 const strykerOptionsSchema = z.strictObject({
-  testRunner: z.enum(strykerTestRunners().map(({ id }) => id)).optional(),
-  testFiles: z.array(z.string().min(1)).min(1).optional(),
+  testRunner: z
+    .enum(
+      strykerTestRunners().map(({ id }) => id),
+      coreMessage(strykerCheck((testRunner) => ({ testRunner }))),
+    )
+    .optional(),
+  testFiles: z
+    .array(
+      z.string(coreMessage((glob) => testFilesCheck([glob]))).min(
+        1,
+        coreMessage((glob) => testFilesCheck([glob])),
+      ),
+    )
+    .min(1, coreMessage(testFilesCheck))
+    .optional(),
 });
 
-const releaseEnvironmentSchema = z.union([
-  z.literal(false),
-  z.null(),
-  z.strictObject({
-    name: nonBlankString.optional(),
-    reviewers: z.array(nonBlankString).min(1),
-    waitTimer: z
-      .number()
-      .int()
-      .min(0)
-      .max(RELEASE_ENVIRONMENT_MAX_WAIT_TIMER)
-      .nullable()
-      .optional(),
-    preventSelfReview: z.boolean().optional(),
-    branches: z.array(nonBlankString).min(1).optional(),
-  }),
-]);
+/**
+ * Runs the core's repository-controls check with a valid repository and `field` set to `value`.
+ *
+ * @param {string} field
+ * @param {(value: unknown) => unknown} [wrap] Turns a refused list item into the list.
+ */
+const repositoryControlsCheck =
+  (field, wrap = (value) => value) =>
+  (/** @type {unknown} */ value) =>
+    normalizeGithubRepositoryControlsOptions({ repository: "owner/name", [field]: wrap(value) });
+/** @param {unknown} value */
+const asList = (value) => [value];
+
+/**
+ * @param {string} field
+ * @param {readonly string[]} values
+ */
+const repositoryControlsEnumList = (field, values) =>
+  z
+    .array(trimmedEnum(values, repositoryControlsCheck(field, asList)))
+    .min(1, coreMessage(repositoryControlsCheck(field)));
+
+const waitTimerMessage = coreMessage(
+  repositoryControlsCheck("releaseEnvironment", (waitTimer) => ({
+    reviewers: ["octocat"],
+    waitTimer,
+  })),
+);
+
+const releaseEnvironmentSchema = z.union(
+  [
+    z.literal(false),
+    z.null(),
+    z.strictObject({
+      name: nonBlankString(
+        repositoryControlsCheck("releaseEnvironment", (name) => ({ name, reviewers: ["octocat"] })),
+      ).optional(),
+      reviewers: z
+        .array(
+          nonBlankString(
+            repositoryControlsCheck("releaseEnvironment", (reviewer) => ({
+              reviewers: [reviewer],
+            })),
+          ),
+        )
+        .min(
+          1,
+          coreMessage(
+            repositoryControlsCheck("releaseEnvironment", (reviewers) => ({ reviewers })),
+          ),
+        ),
+      waitTimer: z
+        .number(waitTimerMessage)
+        .int(waitTimerMessage)
+        .min(0, waitTimerMessage)
+        .max(RELEASE_ENVIRONMENT_MAX_WAIT_TIMER, waitTimerMessage)
+        .nullable()
+        .optional(),
+      preventSelfReview: z.boolean().optional(),
+      branches: z
+        .array(
+          nonBlankString(
+            repositoryControlsCheck("releaseEnvironment", (branch) => ({
+              reviewers: ["octocat"],
+              branches: [branch],
+            })),
+          ),
+        )
+        .min(
+          1,
+          coreMessage(
+            repositoryControlsCheck("releaseEnvironment", (branches) => ({
+              reviewers: ["octocat"],
+              branches,
+            })),
+          ),
+        )
+        .optional(),
+    }),
+  ],
+  coreMessage(repositoryControlsCheck("releaseEnvironment")),
+);
 
 const githubRepositoryControlsOptionsSchema = z.strictObject({
-  repository: z.string().regex(new RegExp(`^\\s*${REPOSITORY_NAME_PATTERN}\\s*$`)),
-  defaultBranch: nonBlankString.optional(),
-  requiredChecks: z.array(nonBlankString).optional(),
+  repository: z
+    .string(coreMessage(repositoryControlsCheck("repository")))
+    .regex(
+      new RegExp(`^\\s*${REPOSITORY_NAME_PATTERN}\\s*$`),
+      coreMessage(repositoryControlsCheck("repository")),
+    ),
+  defaultBranch: nonBlankString(repositoryControlsCheck("defaultBranch")).optional(),
+  requiredChecks: z
+    .array(nonBlankString(repositoryControlsCheck("requiredChecks", asList)))
+    .optional(),
   requireCodeqlResults: z.boolean().optional(),
-  mergeMethods: z.array(trimmedEnum(MERGE_METHODS)).min(1).optional(),
+  mergeMethods: repositoryControlsEnumList("mergeMethods", MERGE_METHODS).optional(),
   wiki: z.boolean().optional(),
   projects: z.boolean().optional(),
   autoMerge: z.boolean().optional(),
   deleteBranchOnMerge: z.boolean().optional(),
   updateBranch: z.boolean().optional(),
-  dependabotEcosystems: z.array(trimmedEnum(DEPENDABOT_ECOSYSTEMS)).min(1).optional(),
-  codeqlLanguages: z.array(trimmedEnum(CODEQL_LANGUAGES)).min(1).optional(),
-  codeqlQuerySuite: z.enum(CODEQL_QUERY_SUITES).nullable().optional(),
+  dependabotEcosystems: repositoryControlsEnumList(
+    "dependabotEcosystems",
+    DEPENDABOT_ECOSYSTEMS,
+  ).optional(),
+  codeqlLanguages: repositoryControlsEnumList("codeqlLanguages", CODEQL_LANGUAGES).optional(),
+  codeqlQuerySuite: z
+    .enum(CODEQL_QUERY_SUITES, coreMessage(repositoryControlsCheck("codeqlQuerySuite")))
+    .nullable()
+    .optional(),
   releaseEnvironment: releaseEnvironmentSchema.optional(),
 });
 

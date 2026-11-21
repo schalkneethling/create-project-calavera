@@ -8,11 +8,22 @@ import test from "node:test";
 
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
+import {
+  describeBaselineTarget,
+  recommendBaselineTarget,
+} from "@schalkneethling/calavera-baseline-core";
 import Ajv from "ajv";
+import * as z from "zod";
 
 import { CODEQL_LANGUAGES } from "../src/github-repository-controls-options.js";
 import { createMcpServer } from "../src/mcp.js";
-import { composeRecipeResponse, recipeCompositionToolNames } from "../src/recipe.js";
+import {
+  composeRecipeResponse,
+  describeIntegrationResponse,
+  explainRecipeResponse,
+  recipeCompositionToolNames,
+  validateRecipeResponse,
+} from "../src/recipe.js";
 import { sharedToolSchemas, toolJsonSchema, webMcpToolSchemas } from "../src/tool-schemas.js";
 
 async function listMcpTools() {
@@ -43,6 +54,18 @@ function mcpAccepts(tool, input) {
 function webMcpAccepts(tool, input) {
   return ajv.validate(webMcpSchemas[tool].inputSchema, input);
 }
+
+// The core call behind each tool, for checking that the core refuses an input too.
+const coreCalls = {
+  compose_recipe: (input) => composeRecipeResponse(input),
+  describe_baseline_target: ({ target }) => describeBaselineTarget(target),
+  recommend_baseline_target: ({ features }) => recommendBaselineTarget(features),
+  describe_integration: ({ id }) => describeIntegrationResponse(id),
+  explain_recipe: ({ recipe }) => explainRecipeResponse(recipe),
+  validate_recipe: ({ recipe }) => {
+    if (!validateRecipeResponse(recipe).ok) throw new Error("validate_recipe refused the recipe");
+  },
+};
 
 const githubControls = { repository: "octo/repo" };
 
@@ -220,16 +243,25 @@ test("both declared schemas refuse the same inputs the core refuses", () => {
     ],
     [
       "compose_recipe",
-      { profile: "default", integrationOptions: { "html-validate": { quality: "no" } } },
-    ],
-    [
-      "compose_recipe",
-      { profile: "default", integrationOptions: { stryker: { testRunner: "jest" } } },
+      {
+        profile: "default",
+        tools: ["html-validate"],
+        integrationOptions: { "html-validate": { quality: "no" } },
+      },
     ],
     [
       "compose_recipe",
       {
         profile: "default",
+        tools: ["stryker"],
+        integrationOptions: { stryker: { testRunner: "jest" } },
+      },
+    ],
+    [
+      "compose_recipe",
+      {
+        profile: "default",
+        tools: ["github-repository-controls"],
         integrationOptions: {
           "github-repository-controls": { ...githubControls, codeqlLanguages: ["cobol"] },
         },
@@ -239,6 +271,7 @@ test("both declared schemas refuse the same inputs the core refuses", () => {
       "compose_recipe",
       {
         profile: "default",
+        tools: ["github-repository-controls"],
         integrationOptions: { "github-repository-controls": { repository: "no-slash" } },
       },
     ],
@@ -246,6 +279,7 @@ test("both declared schemas refuse the same inputs the core refuses", () => {
       "compose_recipe",
       {
         profile: "default",
+        tools: ["github-repository-controls"],
         integrationOptions: {
           "github-repository-controls": { ...githubControls, releaseEnvironment: {} },
         },
@@ -255,12 +289,11 @@ test("both declared schemas refuse the same inputs the core refuses", () => {
       "compose_recipe",
       {
         profile: "default",
+        tools: ["github-repository-controls"],
         integrationOptions: { "github-repository-controls": { ...githubControls, wiki: "yes" } },
       },
     ],
     ["describe_baseline_target", { target: "someday" }],
-    ["search_baseline_features", { query: "grid", limit: 0 }],
-    ["search_baseline_features", { query: "grid", limit: 101 }],
     ...["x2024", "20245"].map((available) => [
       "compose_recipe",
       { profile: "default", integrationOptions: { "stylelint-baseline": { available } } },
@@ -269,6 +302,7 @@ test("both declared schemas refuse the same inputs the core refuses", () => {
       "compose_recipe",
       {
         profile: "default",
+        tools: ["github-repository-controls"],
         integrationOptions: {
           "github-repository-controls": {
             ...githubControls,
@@ -282,6 +316,7 @@ test("both declared schemas refuse the same inputs the core refuses", () => {
       "compose_recipe",
       {
         profile: "default",
+        tools: ["github-repository-controls"],
         integrationOptions: {
           "github-repository-controls": {
             ...githubControls,
@@ -291,14 +326,84 @@ test("both declared schemas refuse the same inputs the core refuses", () => {
       },
     ],
     ["recommend_baseline_target", { features: [] }],
-    ["list_integrations", { profile: "not-a-profile" }],
     ["describe_integration", {}],
     ["validate_recipe", { recipe: [] }],
   ];
 
   for (const [tool, input] of refused) {
+    assert.throws(
+      () => coreCalls[tool](structuredClone(input)),
+      `core ${tool}: ${JSON.stringify(input)}`,
+    );
     assert.equal(mcpAccepts(tool, input), false, `MCP ${tool}: ${JSON.stringify(input)}`);
     assert.equal(webMcpAccepts(tool, input), false, `WebMCP ${tool}: ${JSON.stringify(input)}`);
+  }
+});
+
+test("both declared schemas refuse a few inputs the core tolerates, as both surfaces did before", () => {
+  // The core falls back to its default limit and lists no integrations for an unknown profile,
+  // but the schemas the two surfaces declared before #1051 already refused these.
+  const tolerated = [
+    ["search_baseline_features", { query: "grid", limit: 0 }],
+    ["search_baseline_features", { query: "grid", limit: 101 }],
+    ["list_integrations", { profile: "not-a-profile" }],
+  ];
+
+  for (const [tool, input] of tolerated) {
+    assert.equal(mcpAccepts(tool, input), false, `MCP ${tool}: ${JSON.stringify(input)}`);
+    assert.equal(webMcpAccepts(tool, input), false, `WebMCP ${tool}: ${JSON.stringify(input)}`);
+  }
+});
+
+test("no shared schema holds a check that its JSON Schema form cannot carry", () => {
+  // The MCP server validates with the Zod schema and the Composer declares its JSON Schema form,
+  // and toJSONSchema leaves out a refinement or a transform, so one would make MCP refuse an
+  // input that WebMCP declares acceptable without failing the comparisons above.
+  const seen = new Set();
+  /** @param {unknown} value @param {string} path */
+  function visit(value, path) {
+    if (value === null || typeof value !== "object" || seen.has(value)) return;
+    seen.add(value);
+    if (value instanceof z.ZodType) {
+      const { def } = value._zod;
+      assert.ok(!["pipe", "transform", "custom"].includes(def.type), `${path} is a ${def.type}`);
+      for (const check of def.checks ?? []) {
+        assert.notEqual(check._zod.def.check, "custom", `${path} has a refinement`);
+      }
+      for (const [key, child] of Object.entries(def)) visit(child, `${path}.${key}`);
+      return;
+    }
+    for (const [key, child] of Object.entries(value)) visit(child, `${path}.${key}`);
+  }
+  for (const [name, schemas] of Object.entries(sharedToolSchemas)) visit(schemas, name);
+  assert.ok(seen.size > 100, "the walk reached the nested schemas");
+});
+
+test("the MCP server answers a refused option with the core's message", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createMcpServer();
+  const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const result = await client.callTool({
+      name: "compose_recipe",
+      arguments: {
+        profile: "default",
+        tools: ["github-repository-controls"],
+        integrationOptions: {
+          "github-repository-controls": { ...githubControls, codeqlLanguages: ["cobol"] },
+        },
+      },
+    });
+    assert.equal(result.isError, true);
+    assert.match(
+      result.content[0].text,
+      /Invalid github-repository-controls\.codeqlLanguages: cobol\. at integrationOptions\.github-repository-controls\.codeqlLanguages\[0\]/,
+    );
+  } finally {
+    await client.close();
+    await server.close();
   }
 });
 

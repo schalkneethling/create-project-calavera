@@ -162,8 +162,8 @@ const toolConfigs = {
       reownManagedFiles: reownManagedFilesSchema,
       manifestChoice: manifestChoiceSchema,
     }),
-    // Loose, as the integration output schema in tool-schemas.js is: the result carries more than this declares, and a
-    // strict object is advertised with additionalProperties: false.
+    // Loose, as the integration output schema in tool-schemas.js is: the result carries more than
+    // this declares, and a strict object is advertised with additionalProperties: false.
     outputSchema: z.object({
       approvalBoundary: z.string(),
       result: z.looseObject({
