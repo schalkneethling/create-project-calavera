@@ -130,6 +130,67 @@ test("a cause is shown once: an embedded cause is not repeated, a deferred cause
   assert.doesNotMatch(formatErrorChain(trimmed, {}), /Caused by/);
 });
 
+test("a cause whose message a wrapper repeats keeps its code and name, but not its message", () => {
+  const message = "the lock file could not be replaced";
+  /** @param {string} code */
+  const wrapped = (code) => {
+    const cause = Object.assign(new Error(message), { code });
+    return new Error(`Could not save: ${message}.`, { cause });
+  };
+  const busy = wrapped("EBUSY");
+  const missing = wrapped("ENOENT");
+
+  // The printed text is unchanged: the wrapper already shows the message.
+  assert.equal(formatErrorChain(busy, {}), `Could not save: ${message}.`);
+  assert.equal(formatErrorChain(busy, {}), formatErrorChain(missing, {}));
+
+  // The structured chain keeps each cause's code, so the two failures differ.
+  assert.deepEqual(errorChain(busy, {}), [
+    { name: "Error", message: `Could not save: ${message}.` },
+    { name: "Error", message: "", code: "EBUSY" },
+  ]);
+  assert.notDeepEqual(errorChain(busy, {}), errorChain(missing, {}));
+  assert.notEqual(
+    JSON.stringify(toolErrorResult(busy, {})),
+    JSON.stringify(toolErrorResult(missing, {})),
+  );
+
+  // A specific name survives without a code, and is redacted like a message.
+  assert.deepEqual(
+    errorChain(
+      new Error(`Could not save: ${message}.`, {
+        cause: Object.assign(new Error(message), { name: `LockError ${envSecret}` }),
+      }),
+      { NPM_TOKEN: envSecret },
+    )[1],
+    { name: "LockError [redacted]", message: "" },
+  );
+
+  // A cause whose every line an earlier message already shows keeps its code too.
+  assert.deepEqual(
+    errorChain(
+      new Error(`Could not save.\n${message}`, {
+        cause: Object.assign(new Error(message), { code: "EBUSY" }),
+      }),
+      {},
+    )[1],
+    { name: "Error", message: "", code: "EBUSY" },
+  );
+
+  // A repeated cause with nothing to tell it apart, a plain Error without a code,
+  // is still left out. A code or name that is empty, or a name that is plain Error,
+  // once terminal control sequences are removed, tells nothing apart either.
+  for (const cause of [
+    new Error(message),
+    Object.assign(new Error(message), { code: "" }),
+    Object.assign(new Error(message), { code: "\u001b[0m" }),
+    Object.assign(new Error(message), { name: "\u001b[0m" }),
+    Object.assign(new Error(message), { name: "\u001b[31mError\u001b[39m" }),
+  ]) {
+    assert.equal(errorChain(new Error(`Could not save: ${message}.`, { cause }), {}).length, 1);
+  }
+});
+
 test("a cause is left out whole only when its whole message occurs in an earlier one", () => {
   // "line 3" occurs in "line 31" only as part of a longer word.
   assert.equal(

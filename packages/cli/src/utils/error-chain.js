@@ -23,6 +23,10 @@ export function truncateFailureLine(line) {
  */
 
 /**
+ * @typedef {{ entry: ErrorChainEntry, textLeftOut: boolean }} VisitedEntry
+ */
+
+/**
  * Whether the opt-in debug switch is on: `CALAVERA_DEBUG` set to `1` or
  * `true`, in any case. An environment variable, not a flag, so that it also
  * reaches an MCP server that an agent client starts.
@@ -185,6 +189,12 @@ function containsWhole(text, part) {
  *
  * The error itself is always kept in full.
  *
+ * A cause whose text the rule above leaves out is still kept, with an empty
+ * message, when it carries a `code`, or a name other than plain `Error`, that
+ * is not empty once redacted and stripped of control sequences, so
+ * that two failures a wrapper describes with the same words stay
+ * distinguishable: a wrapped `EBUSY` and a wrapped `ENOENT`, for example.
+ *
  * When `isDebugEnabled(env)`, each entry also carries `stack`: the call-site
  * lines of its stack, redacted the same way. A cause whose text the rule above
  * leaves out is then kept with an empty message, so that its stack is shown.
@@ -194,7 +204,22 @@ function containsWhole(text, part) {
  * @returns {[ErrorChainEntry, ...ErrorChainEntry[]]}
  */
 export function errorChain(error, env = process.env) {
-  /** @type {ErrorChainEntry[]} */
+  const [first, ...causes] = chainEntries(error, env);
+  return [first.entry, ...causes.map(({ entry }) => entry)];
+}
+
+/**
+ * The entries of `errorChain`, each with whether a cause with a message kept
+ * none of its lines, because an earlier message already shows them or because
+ * they hold only a period. `formatErrorChain` needs that to tell such an entry
+ * from one whose own message is empty.
+ *
+ * @param {unknown} error
+ * @param {Record<string, string | undefined>} env
+ * @returns {[VisitedEntry, ...VisitedEntry[]]}
+ */
+function chainEntries(error, env) {
+  /** @type {VisitedEntry[]} */
   const entries = [];
   /** @type {string[]} */
   const shownTexts = [];
@@ -233,20 +258,28 @@ export function errorChain(error, env = process.env) {
     }
 
     const name = readProperty(value, "name");
+    const hasName = typeof name === "string" && name !== "";
+    const shownName = hasName ? redact(name) : undefined;
     const code = readProperty(value, "code");
+    const shownCode = typeof code === "string" && code !== "" ? redact(code) : undefined;
     const frames = debug ? stackFrames(value, redact) : undefined;
-    // A cause with an empty message of its own is still shown, by its name.
+    const textLeftOut = !isError && whole !== "" && lines.length === 0;
     if (
       isError ||
       lines.length > 0 ||
-      (whole === "" && typeof name === "string" && name) ||
+      // A cause with an empty message of its own is still shown, by its name.
+      (whole === "" && hasName) ||
+      (textLeftOut && (Boolean(shownCode) || (Boolean(shownName) && shownName !== "Error"))) ||
       frames !== undefined
     ) {
       entries.push({
-        ...(typeof name === "string" && name ? { name: redact(name) } : {}),
-        message: (isError ? lines : lines.map(truncateFailureLine)).join("\n"),
-        ...(typeof code === "string" && code ? { code: redact(code) } : {}),
-        ...(frames ? { stack: frames.join("\n") } : {}),
+        entry: {
+          ...(shownName !== undefined ? { name: shownName } : {}),
+          message: (isError ? lines : lines.map(truncateFailureLine)).join("\n"),
+          ...(shownCode !== undefined ? { code: shownCode } : {}),
+          ...(frames ? { stack: frames.join("\n") } : {}),
+        },
+        textLeftOut,
       });
     }
 
@@ -257,7 +290,7 @@ export function errorChain(error, env = process.env) {
 
   visit(error);
   // The first visit always adds the error itself.
-  return /** @type {[ErrorChainEntry, ...ErrorChainEntry[]]} */ (entries);
+  return /** @type {[VisitedEntry, ...VisitedEntry[]]} */ (entries);
 }
 
 /**
@@ -285,13 +318,18 @@ function withStack(text, { stack }) {
  * The error chain as text for a terminal: the error, then each cause on a
  * line that starts with `Caused by:`, with further lines of that cause
  * indented. With the debug switch on, each entry's stack frames follow it.
+ * A cause whose message the error chain left out, and that has no stack to
+ * show, adds no line: its code and name are for the structured diagnostics.
  *
  * @param {unknown} error
  * @param {Record<string, string | undefined>} [env] The environment whose secret values are redacted.
  * @returns {string}
  */
 export function formatErrorChain(error, env = process.env) {
-  const [first, ...causes] = errorChain(error, env);
+  const [{ entry: first }, ...rest] = chainEntries(error, env);
+  const causes = rest
+    .filter(({ entry, textLeftOut }) => !textLeftOut || entry.stack !== undefined)
+    .map(({ entry }) => entry);
 
   return [
     withStack(entryText(first) || "Calavera stopped with an error that has no message.", first),
