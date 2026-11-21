@@ -14,7 +14,8 @@ import { normalizeAiItems } from "./recipe-items.js";
  *
  * @typedef {object} ResolvedAiArtifact
  * @property {string} id The catalog ID, also for a legacy entry, which `source` names by its legacy
- *   path. Wiring records and the lock name an artifact by this ID (#1119).
+ *   path. The lock, and the wiring records apply writes for an entry that names an ID, name an
+ *   artifact by this ID (#1119).
  * @property {number} index
  * @property {string} sourcePath
  * @property {string} source
