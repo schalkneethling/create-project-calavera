@@ -17,12 +17,15 @@ import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { Client } from "@modelcontextprotocol/sdk/client/index.js";
+import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
+import Ajv from "ajv";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
 
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { applyRecipeObject } from "../src/index.js";
-import { callMcpTool } from "../src/mcp.js";
+import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory as snapshot } from "./project-snapshot.mjs";
@@ -409,6 +412,91 @@ test("dry_run_apply and apply_recipe auto-install unlocked artifacts the same wa
       { id: "skill-project-goal", version: "0.1.0" },
     ]);
     assert.equal((await stat(".agents/skills/project-goal/SKILL.md")).isFile(), true);
+  });
+});
+
+test("dry_run_apply and apply --dry-run --json say which artifacts they would lock already have matching files (#1021)", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(
+      new Map([
+        ["skill-project-goal", "0.1.0"],
+        ["skill-code-review", "0.3.0"],
+      ]),
+    );
+    await applyRecipeObject(recipeWith(["skill-project-goal"]), applyOptions, registry);
+    // As after a bootstrap that installed the files before the project had a lock (#749).
+    await rm(LOCK_PATH);
+    const recipe = recipeWith(["skill-project-goal", "skill-code-review"]);
+    const matching = (/** @type {{ id: string, filesAlreadyMatch?: boolean }[]} */ entries) =>
+      entries.map(({ id, filesAlreadyMatch }) => ({ id, filesAlreadyMatch }));
+    const expected = [
+      { id: "skill-project-goal", filesAlreadyMatch: true },
+      { id: "skill-code-review", filesAlreadyMatch: false },
+    ];
+
+    // `apply --dry-run --json` prints this result as it is.
+    const cliResult = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+    assert.deepEqual(matching(cliResult.autoInstalledArtifacts), expected);
+
+    const preview = await callMcpTool("dry_run_apply", { recipe }, registry);
+    assert.deepEqual(matching(preview.result.autoInstalledArtifacts), expected);
+
+    // The output schema dry_run_apply advertises declares the field and accepts the result.
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createMcpServer();
+    const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      const { tools } = await client.listTools();
+      const outputSchema = tools.find(({ name }) => name === "dry_run_apply")?.outputSchema;
+      const entrySchema =
+        outputSchema?.properties?.result?.properties?.autoInstalledArtifacts?.items;
+      assert.equal(entrySchema?.properties?.filesAlreadyMatch?.type, "boolean");
+      assert.ok(entrySchema?.required?.includes("filesAlreadyMatch"));
+      const validate = new Ajv({ allErrors: true, strict: false }).compile(outputSchema);
+      assert.ok(validate(preview), JSON.stringify(validate.errors));
+      const withoutField = structuredClone(preview);
+      delete withoutField.result.autoInstalledArtifacts[0].filesAlreadyMatch;
+      assert.equal(validate(withoutField), false, "an entry without the field is rejected");
+    } finally {
+      await client.close();
+      await server.close();
+    }
+
+    // Apply reports the same, and the lock it writes keeps its own shape.
+    const applied = await applyRecipeObject(
+      cliResult.recipe,
+      { ...applyOptions, approvedArtifacts: cliResult.autoInstalledArtifacts },
+      registry,
+    );
+    assert.deepEqual(matching(applied.autoInstalledArtifacts), expected);
+    for (const entry of (await readLock()).artifacts) {
+      assert.equal(Object.hasOwn(entry, "filesAlreadyMatch"), false, entry.id);
+    }
+  });
+});
+
+test("an artifact apply locks with only some of its files matching does not report them as matching (#1021)", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["hook-block-dangerous-commands", "0.4.0"]]));
+    const recipe = recipeWith(["hook-block-dangerous-commands"]);
+    await applyRecipeObject(recipe, applyOptions, registry);
+    await rm(LOCK_PATH);
+    await rm(".agents/hooks/claude-code/block-dangerous-commands.mjs");
+
+    const preview = await callMcpTool("dry_run_apply", { recipe }, registry);
+
+    assert.deepEqual(
+      preview.result.changes
+        .filter(({ category }) => category === "ai")
+        .map(({ path, type }) => `${type} ${path}`),
+      [
+        "write .agents/hooks/claude-code/block-dangerous-commands.mjs",
+        "unchanged .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
+      ],
+    );
+    assert.equal(preview.result.autoInstalledArtifacts[0].filesAlreadyMatch, false);
   });
 });
 

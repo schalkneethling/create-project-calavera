@@ -179,6 +179,15 @@ and package metadata before retrying the apply.
 Files listed by `dry_run_apply` are Calavera-managed outputs. Agents should not
 hand-write or edit them; `apply_recipe` or `create-project-calavera apply`
 creates them after approval.
+Each entry of `result.autoInstalledArtifacts` names an artifact that apply
+locks before it applies the recipe. Its `filesAlreadyMatch` field is `true`
+when the files in the project already match the version apply locks, for
+example after a bootstrap installed the skill before the project had a lock.
+Apply then writes none of that artifact's files, and `changes` lists each of
+them with `type: "unchanged"`. Apply still locks the version, stores the
+package under `.calavera/packages/`, and records the artifact in
+`.calavera/state.json`. The
+`apply --dry-run --json` output carries the same field.
 
 If inspection finds likely conflicts, the agent should pause before applying
 changes and list each conflict as either a hard stop or a migration decision the

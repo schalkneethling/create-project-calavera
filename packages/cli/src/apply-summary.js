@@ -342,7 +342,7 @@ function artifactLines(result) {
     const locked = result.autoInstalledArtifacts.find((entry) => entry.id === id);
     const inputs = result.artifactInputs.filter(({ artifact: owner }) => owner === id);
     const wiring = result.wiringChanges.filter(({ artifact: owner }) => owner === id);
-    const headline = artifactHeadline(id, locked?.version, written, unchanged, dryRun);
+    const headline = artifactHeadline(id, locked, written, unchanged, dryRun);
     if (headline === undefined && inputs.length === 0 && wiring.length === 0) continue;
 
     lines.push(info(`${ITEM}${headline ?? id}`));
@@ -423,17 +423,17 @@ function detail(text) {
 
 /**
  * @param {string} id
- * @param {string | undefined} version The version apply locks, for an artifact without a lock entry.
+ * @param {import("./index.js").AutoInstalledArtifact | undefined} locked The entry apply locks, for an artifact without a lock entry; its `filesAlreadyMatch` decides the headline, so the summary and the JSON result agree (#1021).
  * @param {string[]} written The outputs apply writes.
  * @param {string[]} unchanged The outputs that already match (#956).
  * @param {boolean} dryRun
  * @returns {string | undefined}
  */
-function artifactHeadline(id, version, written, unchanged, dryRun) {
+function artifactHeadline(id, locked, written, unchanged, dryRun) {
   const destination = written.length === 1 ? ` ${written[0]}` : ":";
-  if (version !== undefined) {
-    const lock = `${tense(dryRun, "Would lock", "Locked")} ${id} ${version}`;
-    if (written.length === 0) {
+  if (locked !== undefined) {
+    const lock = `${tense(dryRun, "Would lock", "Locked")} ${id} ${locked.version}`;
+    if (locked.filesAlreadyMatch) {
       const matching =
         unchanged.length === 0 ? "" : unchanged.length === 1 ? `: ${unchanged[0]}` : ":";
       return `${lock}; ${tense(dryRun, "its files in the project already match", "its files in the project already matched")}${matching}`;

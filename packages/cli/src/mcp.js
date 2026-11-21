@@ -285,6 +285,28 @@ const toolConfigs = {
       reownManagedFiles: reownManagedFilesSchema,
       manifestChoice: manifestChoiceSchema,
     },
+    // Loose, as integrationOutputSchema is: the result carries more than this declares, and a
+    // strict object is advertised with additionalProperties: false.
+    outputSchema: {
+      approvalBoundary: z.string(),
+      result: z.looseObject({
+        autoInstalledArtifacts: z
+          .array(
+            z.looseObject({
+              id: z.string().describe("The catalog ID of the artifact."),
+              version: z.string().describe("The version apply locks."),
+              filesAlreadyMatch: z
+                .boolean()
+                .describe(
+                  'True when the files in the project already match the payload apply locks, so apply writes none of the artifact\'s outputs. Apply still locks the version, stores the package under .calavera/packages, and records the artifact in .calavera/state.json. The `changes` entries with `type: "unchanged"` name those files.',
+                ),
+            }),
+          )
+          .describe(
+            "Selected artifacts without a lock entry, which apply installs and locks before it applies the recipe.",
+          ),
+      }),
+    },
     annotations: toolAnnotations.read,
   },
   apply_recipe: {
