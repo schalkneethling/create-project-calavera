@@ -636,3 +636,101 @@ test("--init lists .calavera/state.json once when it updates it, and not when it
     assert.equal(await readFile(".calavera/state.json", "utf8"), written);
   });
 });
+
+// #1039: Ctrl+C at a prompt ends the run through exitIfCancel's process.exit(0), so nothing after
+// the prompt runs. The stand-in prompts below end the run the same way, by throwing, so a file the
+// bootstrap wrote before the prompt is still there when the test looks.
+
+const CANCELLED = new Error("the person cancelled at the prompt");
+
+/**
+ * Runs the bootstrap in a terminal, answering each prompt from `answers`; a prompt whose answer is
+ * CANCELLED ends the run there. It returns the prompts asked, in order, and the error that ended
+ * the run, if any.
+ *
+ * @param {{ guidanceMode?: "append" | "fallback" | Error, mcpHarness?: string | Error }} answers
+ */
+async function bootstrapInTerminal(answers) {
+  /** @type {string[]} */
+  const asked = [];
+  const answer = (prompt) => async () => {
+    asked.push(prompt);
+    if (answers[prompt] instanceof Error) throw answers[prompt];
+    return answers[prompt];
+  };
+  const original = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+  try {
+    const result = await agentBootstrap({
+      askForAgentBootstrap: {
+        guidanceMode: answer("guidanceMode"),
+        mcpHarness: answer("mcpHarness"),
+      },
+    });
+    return { asked, result };
+  } catch (error) {
+    return { asked, error };
+  } finally {
+    if (original) Object.defineProperty(process.stdin, "isTTY", original);
+    else delete process.stdin.isTTY;
+  }
+}
+
+test("cancelling interactive agent-init at the AGENTS.md prompt leaves the project unchanged (#1039)", async () => {
+  await withTempProject(async (directory) => {
+    await writeFile("AGENTS.md", "# Existing project guidance\n");
+    const before = await snapshotDirectory(directory);
+
+    const { asked, error } = await bootstrapInTerminal({ guidanceMode: CANCELLED });
+
+    assert.equal(error, CANCELLED);
+    assert.deepEqual(asked, ["guidanceMode"]);
+    assert.deepEqual(await snapshotDirectory(directory), before);
+  });
+});
+
+test("cancelling interactive agent-init at the MCP harness prompt leaves the project unchanged (#1039)", async () => {
+  for (const agentsMd of [undefined, "# Existing project guidance\n"]) {
+    await withTempProject(async (directory) => {
+      if (agentsMd) await writeFile("AGENTS.md", agentsMd);
+      const before = await snapshotDirectory(directory);
+
+      const { asked, error } = await bootstrapInTerminal({
+        guidanceMode: "append",
+        mcpHarness: CANCELLED,
+      });
+
+      assert.equal(error, CANCELLED);
+      assert.deepEqual(asked, agentsMd ? ["guidanceMode", "mcpHarness"] : ["mcpHarness"]);
+      assert.deepEqual(await snapshotDirectory(directory), before, `AGENTS.md: ${agentsMd}`);
+    });
+  }
+});
+
+test("interactive agent-init uses the answers it asks for before writing (#1039)", async () => {
+  await withTempProject(async () => {
+    await writeFile("AGENTS.md", "# Existing project guidance\n");
+
+    const { asked, result } = await bootstrapInTerminal({
+      guidanceMode: "append",
+      mcpHarness: "claude-code",
+    });
+
+    assert.deepEqual(asked, ["guidanceMode", "mcpHarness"]);
+    assert.equal(result.mcp.action, "write");
+    assert.match(await readFile("AGENTS.md", "utf8"), /^# Existing project guidance\n[^]*calavera/);
+    assert.ok(JSON.parse(await readFile(".mcp.json", "utf8")).mcpServers);
+    assert.ok(JSON.parse(await readFile(".calavera/state.json", "utf8")));
+  });
+});
+
+test("interactive agent-init does not ask about an AGENTS.md that already holds Calavera guidance (#1039)", async () => {
+  await withTempProject(async () => {
+    await agentBootstrap({ mcpHarness: "skip" });
+
+    const { asked, error } = await bootstrapInTerminal({ mcpHarness: "skip" });
+
+    assert.equal(error, undefined);
+    assert.deepEqual(asked, ["mcpHarness"]);
+  });
+});

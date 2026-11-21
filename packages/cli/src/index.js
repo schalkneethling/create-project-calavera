@@ -231,6 +231,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {PackageManager} [packageManager]
  * @property {"append" | "fallback"} [agentsMd]
  * @property {McpHarness} [mcpHarness]
+ * @property {AskForAgentBootstrap} [askForAgentBootstrap] Replaces the terminal prompts of `agent-init`, so tests can answer or cancel them (#1039). It is used only where `agent-init` could prompt.
  * @property {string} [profile]
  * @property {string[]} integrations
  * @property {{ id: string, target?: string }[]} aiArtifacts
@@ -4181,6 +4182,21 @@ async function assertBootstrapDirectoryAvailable(path) {
 }
 
 /**
+ * Whether an existing AGENTS.md holds no Calavera guidance, so the bootstrap must choose between
+ * appending a marked section and writing the fallback file.
+ *
+ * @param {string} contents
+ */
+function agentGuidanceNeedsMode(contents) {
+  return (
+    !contents.includes(AGENT_BOOTSTRAP_SECTION_START) && !contents.includes(AGENT_BOOTSTRAP_MARKER)
+  );
+}
+
+/**
+ * Resolved before the bootstrap writes anything, because a cancel at the prompt ends the run
+ * (#1039). The person is asked only when AGENTS.md exists and holds no Calavera guidance.
+ *
  * @param {CliOptions} options
  * @returns {Promise<"append" | "fallback">}
  */
@@ -4189,29 +4205,17 @@ async function resolveAgentBootstrapGuidanceMode(options) {
     return options.agentsMd;
   }
 
-  if (options.json || options.assumeYes || !process.stdin.isTTY) {
+  if (
+    options.json ||
+    options.assumeYes ||
+    !process.stdin.isTTY ||
+    !(await fileExists(AGENT_BOOTSTRAP_GUIDANCE_FILE)) ||
+    !agentGuidanceNeedsMode(await readFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, "utf8"))
+  ) {
     return "fallback";
   }
 
-  const selected = await select({
-    message: `${AGENT_BOOTSTRAP_GUIDANCE_FILE} already exists. How should Calavera add guidance?`,
-    options: [
-      {
-        value: "append",
-        label: "Append guidance",
-        hint: "Add marked Calavera guidance directly to AGENTS.md",
-      },
-      {
-        value: "fallback",
-        label: "Fallback only",
-        hint: `Leave AGENTS.md unchanged and write ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE}`,
-      },
-    ],
-  });
-
-  exitIfCancel(selected);
-
-  return selected === "append" ? "append" : "fallback";
+  return (options.askForAgentBootstrap ?? askForAgentBootstrap).guidanceMode();
 }
 
 /**
@@ -4227,41 +4231,82 @@ async function resolveAgentBootstrapMcpHarness(options) {
     return "skip";
   }
 
-  const selected = await select({
-    message: "Configure the Calavera MCP server for which agent harness?",
-    options: [
-      {
-        value: "claude-code",
-        label: "Claude Code",
-        hint: "Write project .mcp.json",
-      },
-      {
-        value: "codex",
-        label: "Codex",
-        hint: "Write project .codex/config.toml",
-      },
-      {
-        value: "cursor",
-        label: "Cursor",
-        hint: "Write project .cursor/mcp.json",
-      },
-      {
-        value: "opencode",
-        label: "OpenCode",
-        hint: "Write project opencode.json",
-      },
-      {
-        value: "skip",
-        label: "Skip auto-config",
-        hint: `Use ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup`,
-      },
-    ],
-  });
-
-  exitIfCancel(selected);
-
-  return assertSupportedMcpHarness(typeof selected === "string" ? selected : "skip");
+  return assertSupportedMcpHarness(
+    await (options.askForAgentBootstrap ?? askForAgentBootstrap).mcpHarness(),
+  );
 }
+
+/**
+ * @typedef {object} AskForAgentBootstrap
+ * @property {() => Promise<"append" | "fallback">} guidanceMode How to add guidance to an AGENTS.md that holds none from Calavera.
+ * @property {() => Promise<McpHarness>} mcpHarness The agent harness whose project MCP config `agent-init` writes, or `skip`.
+ */
+
+/**
+ * The terminal prompts of `agent-init`. A cancel ends the run through `exitIfCancel`, so
+ * `agentBootstrap` asks both before it writes anything (#1039).
+ *
+ * @type {AskForAgentBootstrap}
+ */
+const askForAgentBootstrap = {
+  async guidanceMode() {
+    const selected = await select({
+      message: `${AGENT_BOOTSTRAP_GUIDANCE_FILE} already exists. How should Calavera add guidance?`,
+      options: [
+        {
+          value: "append",
+          label: "Append guidance",
+          hint: "Add marked Calavera guidance directly to AGENTS.md",
+        },
+        {
+          value: "fallback",
+          label: "Fallback only",
+          hint: `Leave AGENTS.md unchanged and write ${AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE}`,
+        },
+      ],
+    });
+
+    exitIfCancel(selected);
+
+    return selected === "append" ? "append" : "fallback";
+  },
+  async mcpHarness() {
+    const selected = await select({
+      message: "Configure the Calavera MCP server for which agent harness?",
+      options: [
+        {
+          value: "claude-code",
+          label: "Claude Code",
+          hint: "Write project .mcp.json",
+        },
+        {
+          value: "codex",
+          label: "Codex",
+          hint: "Write project .codex/config.toml",
+        },
+        {
+          value: "cursor",
+          label: "Cursor",
+          hint: "Write project .cursor/mcp.json",
+        },
+        {
+          value: "opencode",
+          label: "OpenCode",
+          hint: "Write project opencode.json",
+        },
+        {
+          value: "skip",
+          label: "Skip auto-config",
+          hint: `Use ${AGENT_BOOTSTRAP_MCP_FILE} for manual setup`,
+        },
+      ],
+    });
+
+    exitIfCancel(selected);
+
+    return assertSupportedMcpHarness(typeof selected === "string" ? selected : "skip");
+  },
+};
 
 /**
  * @param {McpHarness} harness
@@ -4425,7 +4470,7 @@ export async function agentBootstrapTexts(loadFormatter) {
  * @param {string} currentGuidance
  * @param {boolean} dryRun
  * @param {Change[]} changes
- * @param {CliOptions} options
+ * @param {"append" | "fallback"} mode How to add guidance when AGENTS.md holds none from Calavera.
  * @param {AgentBootstrapGuidanceText} guidanceText
  * @returns {Promise<boolean>} Whether AGENTS.calavera.md holds the current guidance, which then
  *   waits for a manual merge into AGENTS.md.
@@ -4434,7 +4479,7 @@ async function handleExistingAgentBootstrapGuidance(
   currentGuidance,
   dryRun,
   changes,
-  options,
+  mode,
   guidanceText,
 ) {
   const guidanceSection = guidanceText.section;
@@ -4482,8 +4527,6 @@ async function handleExistingAgentBootstrapGuidance(
     return false;
   }
 
-  const mode = await resolveAgentBootstrapGuidanceMode(options);
-
   if (mode === "append") {
     const nextGuidance = upsertAgentBootstrapGuidanceSection(currentGuidance, guidanceSection);
 
@@ -4519,12 +4562,13 @@ async function handleExistingAgentBootstrapGuidance(
 
 /**
  * @param {CliOptions} options
+ * @param {"append" | "fallback"} mode How to add guidance when AGENTS.md holds none from Calavera.
  * @param {Change[]} changes
  * @param {AgentBootstrapGuidanceText} guidanceText
  * @returns {Promise<boolean>} Whether AGENTS.calavera.md holds the current guidance, which then
  *   waits for a manual merge into AGENTS.md.
  */
-async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
+async function writeAgentBootstrapGuidance(options, mode, changes, guidanceText) {
   const guidance = guidanceText.file;
 
   if (!(await fileExists(AGENT_BOOTSTRAP_GUIDANCE_FILE))) {
@@ -4553,7 +4597,7 @@ async function writeAgentBootstrapGuidance(options, changes, guidanceText) {
     currentGuidance,
     options.dryRun,
     changes,
-    options,
+    mode,
     guidanceText,
   );
 }
@@ -4624,6 +4668,11 @@ export async function agentBootstrap(options = {}) {
     mergeAiArtifactsIntoState(previousState, aiResult.artifacts),
     loadFormatter,
   );
+  // #1039: both prompts come before the first write, because a cancel at either one ends the run
+  // through exitIfCancel's process.exit(0), and a file written before it would stay unrecorded.
+  const guidanceMode = await resolveAgentBootstrapGuidanceMode(bootstrapOptions);
+  const mcpHarness = await resolveAgentBootstrapMcpHarness(bootstrapOptions);
+
   if (!bootstrapOptions.dryRun) {
     await buildAiApplyResult(
       AGENT_BOOTSTRAP_SKILL_RECIPE,
@@ -4635,10 +4684,10 @@ export async function agentBootstrap(options = {}) {
 
   const fallbackGuidanceAwaitsMerge = await writeAgentBootstrapGuidance(
     bootstrapOptions,
+    guidanceMode,
     changes,
     guidanceText,
   );
-  const mcpHarness = await resolveAgentBootstrapMcpHarness(bootstrapOptions);
   const mcp = await writeAgentBootstrapMcpConfig(
     mcpHarness,
     launchCommand,
