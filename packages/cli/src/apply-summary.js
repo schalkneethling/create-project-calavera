@@ -439,7 +439,8 @@ function artifactLines(result) {
  * @param {string} pointer
  */
 function summaryPointer(pointer) {
-  if (pointer === ARTIFACT_CACHE_POINTER) return `${ARTIFACT_CACHE_IGNORED}, ${ARTIFACT_CACHE_REASON}`;
+  if (pointer === ARTIFACT_CACHE_POINTER)
+    return `${ARTIFACT_CACHE_IGNORED}, ${ARTIFACT_CACHE_REASON}`;
   if (pointer === VARLOCK_POINTER) return VARLOCK_SUMMARY_POINTER;
   return pointer;
 }

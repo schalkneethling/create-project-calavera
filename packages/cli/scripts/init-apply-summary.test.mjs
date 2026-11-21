@@ -159,7 +159,10 @@ test("init --apply prints a pointer the dry run already printed once, not again 
     const pointer = "Varlock recommends committing non-local .env.* files";
     assert.equal(output.split(pointer).length - 1, 1, output);
     // #1023: the note points at the files listed under Files instead of naming them again.
-    assert.match(output, /\nNotes:\n {2}Review the Varlock schema and the ignore file listed under Files/);
+    assert.match(
+      output,
+      /\nNotes:\n {2}Review the Varlock schema and the ignore file listed under Files/,
+    );
     assert.match(output, /\nWrote calavera\.config\.json\.\nCalavera apply complete\.\n$/);
   });
 });

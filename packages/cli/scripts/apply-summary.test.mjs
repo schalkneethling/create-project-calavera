@@ -405,11 +405,7 @@ test("a Varlock recipe names .env.schema and .gitignore once, under Files, in th
     const planned = namedItems(JSON.parse(JSON.stringify(dryRun)));
     assert.ok(planned.includes(".env.schema") && planned.includes(".gitignore"), planned.join());
     const dryRunText = text(dryRun);
-    assert.deepEqual(
-      listingViolations(dryRunText, planned, dryRun.vitePlus.lines),
-      [],
-      dryRunText,
-    );
+    assert.deepEqual(listingViolations(dryRunText, planned, dryRun.vitePlus.lines), [], dryRunText);
     assert.ok(dryRunText.includes(`\nNotes:\n${note}\n`), dryRunText);
     // --json and MCP callers keep the note as it was, file names included.
     assert.ok(dryRun.pointers.some((pointer) => pointer.startsWith("Review .env.schema and")));
