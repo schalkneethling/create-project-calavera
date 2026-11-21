@@ -263,3 +263,21 @@ The owner decided on 2026-11-20 that, for an MCP harness file, `eject` shows onl
 The other edits (the guidance section in `AGENTS.md` and the `artifact-cache` block in `.gitignore`) keep Decision 5's full text, because those files hold no MCP configuration.
 
 This amendment narrows Decision 5 for MCP harness files only.
+
+## Amendment 4: `.calavera/.staging/` Today, and the Old Copies That `apply` Removes
+
+- **Date:** 2026-11-21
+- **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/1034
+
+The Context section ("Written by `init`, `apply`, and the artifact commands") says that `.calavera/.staging/` exists only while an artifact operation runs, and cites `artifact-lifecycle.js:36-37`. That stopped being true later on the day this ADR merged, when #988 (PR #1015) moved apply's restore of a missing locked package out of the project. No artifact operation writes `.calavera/.staging/` any more: an install stages under `.calavera/.transactions/`, and a restore and every dry run rebuild in the operating system's temporary folder. `eject` is now the only command that writes the folder. It moves each package folder it removes to `.calavera/.staging/eject-<random>/package` and deletes it there (Decision 7).
+
+Releases before #988 wrote `.calavera/.staging/<id>/` whenever apply restored a locked package that was missing from `.calavera/packages/`, and left the folder behind, where Git did not ignore it. The owner decided on 2026-11-18 that apply removes such a folder only when its contents match a package the lock records, and reports anything else in `.calavera/.staging/` without removing it (https://github.com/schalkneethling/create-project-calavera/issues/1034#issuecomment-6976020597). `apply` applies it as follows:
+
+- An entry of `.calavera/.staging/` matches when it is a folder, not a symbolic link, named after an artifact the lock records, and holds exactly the files and folders of that locked package. Apply rebuilds the package offline from the artifact cache, which checks it against the lock's `integrity` and `payloadHash`, and compares every path and every file's bytes. File modes are not compared.
+- Every other entry is kept and reported with the reason: a file, a symbolic link, a folder no lock entry names (such as an interrupted `eject`'s `eject-<random>` folder), a folder whose contents differ, and a folder apply cannot compare because the locked package is not in the cache. A `.calavera/.staging` that is itself a symbolic link is reported, and apply does not look inside it.
+- `apply --dry-run`, the MCP `dry_run_apply` tool, and `apply` list each entry in `stagingLeftovers`, so the dry run names every folder apply removes.
+- Just before it removes a folder, apply reads it again, and keeps it when it is no longer a folder or its contents changed after the plan. A removal that fails is reported and does not stop apply. Apply removes `.calavera/.staging/` itself only when nothing is left in it.
+
+`eject` does not change. It still lists `.calavera/.staging/` as one transient item, checks before deleting it that the entry is the one the plan saw, and removes it whole, with any entry that apply keeps, as Decision 2 and Decision 7 describe. Both commands name the folder through one constant, `STAGING_ROOT` in `packages/cli/src/staging-leftovers.js`.
+
+This amendment corrects the Context section's description of `.calavera/.staging/`. It changes no decision of this ADR.

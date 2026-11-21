@@ -753,6 +753,7 @@ test("a result that plans nothing has an empty plan in every field, and still re
       "wiringChanges",
       "wiringWarnings",
       "ignoreChanges",
+      "stagingLeftovers",
     ]) {
       assert.deepEqual(result[field], [], `${field} is not empty`);
     }
