@@ -1,4 +1,5 @@
 // @ts-check
+import { rm } from "node:fs/promises";
 
 /**
  * The failures of one or more cleanups. A cleanup that runs further cleanups throws this, so the
@@ -59,4 +60,77 @@ export async function errorAfterCleanups(error, cleanups) {
     `${reasonOf(error)} Removing Calavera's temporary folders also failed: ${failures.map(reasonOf).join(" ")}`,
     { cause: error },
   );
+}
+
+/**
+ * A temporary folder Calavera could not remove, and why, with what the person can do.
+ *
+ * @typedef {{ path: string, reason: string }} TemporaryFolderLeftover
+ */
+
+/**
+ * The error a temporary folder removal rejects with: it names the folder, not the entry inside it
+ * that failed, and keeps only the error's code in its message, because the message of the original
+ * error, which stays as the cause, can carry text from the person's configuration.
+ */
+export class TemporaryFolderError extends Error {
+  /**
+   * @param {string} folder
+   * @param {unknown} cause
+   */
+  constructor(folder, cause) {
+    const code = /** @type {{ code?: unknown }} */ (cause)?.code;
+    super(`Could not remove ${folder}${typeof code === "string" ? ` (${code})` : ""}.`, { cause });
+    this.path = folder;
+    this.code = typeof code === "string" ? code : undefined;
+  }
+}
+
+/**
+ * Removes `folder` and everything in it, if it is there.
+ *
+ * @param {string} folder
+ * @returns {Promise<void>}
+ */
+export async function removeTemporaryFolder(folder) {
+  try {
+    await rm(folder, { recursive: true, force: true });
+  } catch (error) {
+    throw new TemporaryFolderError(folder, error);
+  }
+}
+
+const LEFTOVER_REMEDY = "Nothing in the project uses it, so remove it yourself.";
+
+/**
+ * Runs every cleanup at the same time after a command has done its work, and returns each folder
+ * left behind instead of throwing, because a temporary folder that stays changes nothing in the
+ * project (#1033, owner decision of 2026-11-18). A failure that names no folder is still listed,
+ * with an empty path, so it is never dropped.
+ *
+ * @param {Array<() => Promise<unknown>>} cleanups
+ * @returns {Promise<TemporaryFolderLeftover[]>}
+ */
+export async function temporaryFolderLeftovers(cleanups) {
+  return (await cleanupFailures(cleanups)).map((failure) =>
+    failure instanceof TemporaryFolderError
+      ? {
+          path: failure.path,
+          reason: `Calavera could not remove this temporary folder${failure.code ? ` (${failure.code})` : ""}. ${LEFTOVER_REMEDY}`,
+        }
+      : {
+          path: "",
+          reason: `Calavera could not remove one of its temporary folders. ${LEFTOVER_REMEDY}`,
+        },
+  );
+}
+
+/**
+ * One line for each leftover, as the apply summary and a message that reports a later failure
+ * print it.
+ *
+ * @param {TemporaryFolderLeftover} leftover
+ */
+export function temporaryFolderLeftoverLine({ path, reason }) {
+  return path === "" ? `Not removed: ${reason}` : `Not removed ${path}: ${reason}`;
 }

@@ -105,7 +105,11 @@ import {
   planGitignoreBlocks,
   planHtmlValidateIgnoreChanges,
 } from "./ignore-lines.js";
-import { errorAfterCleanups } from "./utils/cleanup.js";
+import {
+  errorAfterCleanups,
+  temporaryFolderLeftoverLine,
+  temporaryFolderLeftovers,
+} from "./utils/cleanup.js";
 import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
 import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
@@ -326,6 +330,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {string[]} wiringWarnings Why written wiring would not act yet, such as Git hooks that no dispatcher runs, with the remedy. They never stop apply.
  * @property {IgnoreChange[]} ignoreChanges The lines each integration adds to or removes from .gitignore and .htmlvalidateignore (ADR-0016), and the block that keeps the artifact cache out of Git (#841), so the approval boundary shows the exact lines.
  * @property {StagingLeftover[]} stagingLeftovers Each entry of `.calavera/.staging/` (#1034): an old copy of a locked package that apply removes, or anything else, which apply keeps and reports.
+ * @property {TemporaryFolderLeftover[]} temporaryFolderLeftovers Each temporary folder the command could not remove once it no longer needed it (#1033), with the error's code and the remedy. The command still finishes.
  * @property {Recipe} recipe The recipe apply used, with every artifact input filled in. After a dry run, pass this recipe to apply, so the values cannot change between approval and apply.
  * @property {ManifestDecision} [manifestDecision] Present when the directory has no package.json of its own but a manifest above it was found (#430): the choices, and `choice` once the person made one. Without a choice, or with abandon, nothing is planned and `changes` is empty.
  *
@@ -334,6 +339,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {import("./ai/artifact-wiring.js").WiringChange} WiringChange
  * @typedef {import("./ignore-lines.js").IgnoreChange} IgnoreChange
  * @typedef {import("./staging-leftovers.js").StagingLeftover} StagingLeftover
+ * @typedef {import("./utils/cleanup.js").TemporaryFolderLeftover} TemporaryFolderLeftover
  *
  * @typedef {"local-edits" | "legacy-state" | "still-mentioned" | "unfollowable-link" | "unreadable"} CleanSkipReason Why clean kept a stale item, so a JSON reader can tell the reasons apart; `reason` says the same in words, with what to do.
  *
@@ -3421,6 +3427,7 @@ async function manifestDecisionResult(recipe, applyOptions, decision) {
     wiringWarnings: [],
     ignoreChanges: [],
     stagingLeftovers: [],
+    temporaryFolderLeftovers: [],
     recipe,
     manifestDecision: decision,
   };
@@ -3769,7 +3776,10 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     // #988: a failed cleanup is reported with the failure that stopped apply, not in its place.
     throw await errorAfterCleanups(error, [artifactPlan.dispose]);
   }
-  await artifactPlan.dispose();
+  // #1033 (owner decision of 2026-11-18): the AI outputs may already be written here, so a temporary
+  // folder apply cannot remove is reported, not an error, and apply goes on to write the config,
+  // the scripts, and the state.
+  const leftoverFolders = await temporaryFolderLeftovers([artifactPlan.dispose]);
   // A dry run plans the auto-installed outputs in both results; apply writes them during the
   // install, so only the install reports them.
   const autoInstalledPaths = new Set(artifactPlan.changes.map(({ path }) => path));
@@ -3956,6 +3966,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
         [
           "Calavera applied the recipe's files, package.json scripts, configuration, and state, but could not install the recipe's development dependencies, so the tools those scripts run are not installed yet.",
           `Already written: ${written.join(", ")}.`,
+          ...leftoverFolders.map(temporaryFolderLeftoverLine),
           `Install command: ${formatCommand(installPlan.spawn)}`,
           describeCommandFailure(error),
           `To finish the install, run the install command in ${process.cwd()}.`,
@@ -3998,6 +4009,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     wiringWarnings,
     ignoreChanges,
     stagingLeftovers,
+    temporaryFolderLeftovers: leftoverFolders,
     recipe,
     ...(manifestOutcome.decision ? { manifestDecision: manifestOutcome.decision } : {}),
   };
@@ -5539,6 +5551,9 @@ function formatApplySummary(result) {
     ...result.stagingLeftovers.map(
       ({ path, action, reason }) =>
         `${style("bold", action === "remove" ? "Would remove" : "Would keep")}: ${path}: ${reason}`,
+    ),
+    ...result.temporaryFolderLeftovers.map(
+      (leftover) => `${style("bold", "Warning")}: ${temporaryFolderLeftoverLine(leftover)}`,
     ),
   ].join("\n");
 }
@@ -7152,6 +7167,10 @@ function printResult(result, asJSON = false, commandDryRun = false) {
       logger.success("Calavera apply complete.");
       for (const pointer of result.applyResult.pointers) {
         logger.info(pointer);
+      }
+      // #1033: apply finished, but a temporary folder it could not remove is still named.
+      for (const leftover of result.applyResult.temporaryFolderLeftovers) {
+        logger.warn(temporaryFolderLeftoverLine(leftover));
       }
     }
 
