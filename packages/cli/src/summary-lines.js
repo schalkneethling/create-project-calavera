@@ -7,6 +7,8 @@
 
 export const ITEM = "  ";
 export const DETAIL = "    ";
+// A detail of a detail, such as a hook group under the settings file an artifact changes (#1128).
+export const NESTED_DETAIL = "      ";
 
 /**
  * Adds a blank line, the heading, and the items, or nothing when there are no items.

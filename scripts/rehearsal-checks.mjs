@@ -364,12 +364,16 @@ export function listingViolations(output, items, statements = []) {
   // them, so its line does not count as a mention. #617 keeps one line per integration with the
   // package in parentheses only when the names differ, so an integration line that names its
   // package does count. A quoted value is the exact text a command writes, such as a script's
-  // command or the lines of an ignore block, so a name inside it does not count either.
+  // command or the lines of an ignore block, so a name inside it does not count either. A
+  // package.json script's name is a key in the manifest, not the package it may share a name with,
+  // such as the knip script that runs the knip package (#1128), so it does not count either.
   const fixed = new Set(statements);
   const lines = output
     .split("\n")
     .filter((line) => !isCommandLine(line) && !fixed.has(line.trim()))
-    .map((line) => line.replace(QUOTED_VALUE, '""'));
+    .map((line) =>
+      line.replace(QUOTED_VALUE, '""').replace(SCRIPT_NAMES, "").replace(SCRIPT_NAME, ""),
+    );
   output = lines.join("\n");
   const firstHeading = lines.findIndex(isHeading);
   const names = new Map(items.map((item) => [item, printedName(output, item)]));
@@ -391,6 +395,13 @@ export function listingViolations(output, items, statements = []) {
 
 // A JSON string literal, as Calavera quotes a script value or an ignore line.
 const QUOTED_VALUE = /"(?:[^"\\]|\\.)*"/g;
+
+// A script the summaries name after the word "script", up to the colon or the word that follows
+// the name: "script knip:", "script knip from", or "script knip to knip:check:", which renames it.
+// A name can hold colons, as lint:styles does, so only a colon before a space ends it.
+const SCRIPT_NAME = /\bscript \S+?(?: to \S+?)?(?::\s| from )/g;
+// The list of scripts a summary leaves as they are.
+const SCRIPT_NAMES = /Scripts already set:.*/;
 
 /**
  * Whether a line is a command, with an optional label such as "Dev dependency install command:".
