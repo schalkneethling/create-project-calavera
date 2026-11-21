@@ -993,7 +993,9 @@ test("artifact status reports selected package artifacts that are not locked", a
       checkUpdates: false,
     });
 
-    assert.equal(result.ok, false);
+    // Owner decision on #994: a selection that is not installed yet is the normal state between
+    // init and apply, so it is not a problem and `ok` stays true.
+    assert.equal(result.ok, true);
     assert.equal(result.artifacts.length, 1);
     assert.deepEqual(
       {

@@ -20,7 +20,7 @@ import {
 } from "./ai/artifacts.js";
 import { assertFirstSelection } from "./ai/recipe-items.js";
 import { GITIGNORE_PATH, planGitignoreBlocks } from "./ignore-lines.js";
-import { artifactReleaseNotesUrl } from "./artifact-status-report.js";
+import { artifactReleaseNotesUrl, isArtifactHealthy } from "./artifact-status-report.js";
 import {
   artifactCommand,
   artifactTagFlags,
@@ -695,9 +695,7 @@ async function artifactStatus(options, registry, loadFormatter) {
         ? command(["update"], ["--all", ...artifactTagFlags(channel)])
         : null,
       checkUpdatesCommand: options.checkUpdates ? null : command(["status"], ["--check-updates"]),
-      ok: artifacts.every(
-        ({ installed, managed, locallyEdited }) => installed && managed && !locallyEdited,
-      ),
+      ok: artifacts.every(isArtifactHealthy),
       artifacts,
       ignoreChanges: cacheBlock?.changes ?? [],
       pointers: artifactCachePointers(cacheBlock?.changes ?? []),
