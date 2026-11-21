@@ -67,7 +67,10 @@ reviews:
 `;
 
 /**
- * @returns {Promise<{ contents: string, type: "write" | "update" } | undefined>}
+ * The change the skill filters need in `.coderabbit.yaml`: unchanged when the file already holds
+ * every one of them.
+ *
+ * @returns {Promise<{ contents: string, type: "write" | "update" } | { type: "unchanged" }>}
  */
 async function planCodeRabbitSkillConfig() {
   if (!(await fileExists(CODE_RABBIT_CONFIG_PATH))) {
@@ -135,7 +138,7 @@ async function planCodeRabbitSkillConfig() {
   for (const filter of missingFilters) pathFilters.add(filter);
 
   const contents = document.toString({ lineWidth: 0 });
-  return contents === current ? undefined : { contents, type: "update" };
+  return contents === current ? { type: "unchanged" } : { contents, type: "update" };
 }
 
 /**
@@ -572,12 +575,13 @@ export async function buildAiApplyResult(recipe, options, previousState, sourceP
       const upToDate =
         (await fileExists(path)) &&
         (await hashAiInstall(artifact.type, path, artifact.target)) === sourceHash;
-      if (upToDate) continue;
-
-      await assertSafeAiWrite(artifact, path, sourceHash, previousState);
-      needsWrite = true;
+      if (!upToDate) {
+        await assertSafeAiWrite(artifact, path, sourceHash, previousState);
+        needsWrite = true;
+      }
+      // #956: an output that already matches its source is recorded too, so a re-run names it.
       changes.push({
-        type: "write",
+        type: upToDate ? "unchanged" : "write",
         path,
         category: "ai",
         aiType: artifact.type,
@@ -608,7 +612,10 @@ export async function buildAiApplyResult(recipe, options, previousState, sourceP
     }
   }
 
-  if (codeRabbitPlan) {
+  if (codeRabbitPlan?.type === "unchanged") {
+    // #956: the file already holds every filter, so a re-run names it unchanged.
+    changes.push({ type: "unchanged", path: CODE_RABBIT_CONFIG_PATH, ownership: "project" });
+  } else if (codeRabbitPlan) {
     changes.push({
       type: codeRabbitPlan.type,
       path: CODE_RABBIT_CONFIG_PATH,

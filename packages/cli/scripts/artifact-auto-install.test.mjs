@@ -98,7 +98,10 @@ test("apply --dry-run without a lock reports the artifacts it would lock and wri
       result.autoInstalledArtifacts[0].package,
       "@schalkneethling/calavera-skill-project-goal",
     );
-    const aiWrites = result.changes.filter(({ category }) => category === "ai");
+    // #956: an output that already matches is reported as unchanged, so only writes count here.
+    const aiWrites = result.changes.filter(
+      ({ category, type }) => category === "ai" && type === "write",
+    );
     assert.deepEqual(aiWrites.map(({ path }) => path).sort(), [
       ".agents/hooks/claude-code/block-dangerous-commands.mjs",
       ".agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
@@ -193,7 +196,8 @@ test("apply without a lock installs, locks, and applies the selected artifacts",
     );
     assert.ok(
       result.changes.some(
-        ({ path, category }) => path === ".agents/skills/project-goal" && category === "ai",
+        ({ path, category, type }) =>
+          path === ".agents/skills/project-goal" && category === "ai" && type === "write",
       ),
       "the apply result names the artifact output it wrote",
     );
@@ -889,9 +893,12 @@ test("a dry run with locked and unlocked artifacts reports only the unlocked one
     assert.deepEqual(idsAndVersions(result.autoInstalledArtifacts), [
       { id: "skill-code-review", version: "0.3.0" },
     ]);
+    // #956: the locked artifact's files already match, so it is named once, as unchanged.
     assert.deepEqual(
-      result.changes.filter(({ category }) => category === "ai").map(({ path }) => path),
-      [".agents/skills/code-review"],
+      result.changes
+        .filter(({ category }) => category === "ai")
+        .map(({ path, type }) => `${type} ${path}`),
+      ["write .agents/skills/code-review", "unchanged .agents/skills/project-goal"],
     );
     assert.deepEqual(await snapshot(), before);
   });

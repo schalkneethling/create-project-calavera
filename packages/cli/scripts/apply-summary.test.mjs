@@ -274,6 +274,7 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
           "  Unchanged docs/repository-controls.md",
           "  Unchanged .gitignore",
           '    Already holds the artifact-cache block: ".calavera/cache/"',
+          "  Unchanged .coderabbit.yaml",
           "",
         ]);
         assert.deepEqual(lines.slice(lines.indexOf("Scripts:"), lines.indexOf("Scripts:") + 3), [
@@ -281,15 +282,18 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
           "  Scripts already set: lint:styles, lint:styles:fix, knip, repo:controls:check, repo:controls:apply, quality",
           "",
         ]);
-        // A locked artifact whose files match gets no line of its own; its wiring still does.
+        // #956: an artifact whose files already match is named once, with its destination.
         assert.deepEqual(lines.slice(lines.indexOf("Artifacts:"), lines.indexOf("Notes:")), [
           "Artifacts:",
-          "  skill-protected-branch-guard",
+          "  Unchanged skill-protected-branch-guard at .agents/skills/protected-branch-guard",
           "    protectedBranch = main (recorded in the recipe)",
           `    .vite-hooks/pre-commit already holds its block: ${guardBlock("commit")}`,
           `    .vite-hooks/prepare-commit-msg already holds its block: ${guardBlock("commit")}`,
           `    .vite-hooks/pre-push already holds its block: ${guardBlock("pre-push")}`,
           "    .claude/settings.json already holds its hook groups",
+          "  Unchanged hook-block-dangerous-commands:",
+          "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
+          "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
           `  ${dispatcherWarning}`,
           "",
         ]);
@@ -309,16 +313,18 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
         const lines = summary(relock, root);
         assert.ok(
           lines.includes(
-            "  Would lock skill-protected-branch-guard 1.0.0; its files in the project already match",
+            "  Would lock skill-protected-branch-guard 1.0.0; its files in the project already match: .agents/skills/protected-branch-guard",
           ),
           printed(lines),
         );
-        assert.ok(
-          lines.includes(
-            "  Would lock hook-block-dangerous-commands 0.4.0; its files in the project already match",
-          ),
-          printed(lines),
+        const hook = lines.indexOf(
+          "  Would lock hook-block-dangerous-commands 0.4.0; its files in the project already match:",
         );
+        assert.notEqual(hook, -1, printed(lines));
+        assert.deepEqual(lines.slice(hook + 1, hook + 3), [
+          "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
+          "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
+        ]);
         assert.ok(!lines.includes("Nothing to change: the project already matches this recipe."));
       },
     );
@@ -893,6 +899,61 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
   );
 });
 
+test("an artifact whose outputs already match is named once, with each output (#956)", () => {
+  const recipe = {
+    version: 1,
+    integrations: [],
+    ai: [
+      { id: "skill-project-goal" },
+      { id: "hook-block-dangerous-commands" },
+      { id: "skill-code-review" },
+    ],
+  };
+  const hookScript = ".agents/hooks/claude-code/block-dangerous-commands.mjs";
+  const hookSettings = ".agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json";
+  const output = (/** @type {string} */ type, /** @type {string} */ path) => ({
+    type,
+    path,
+    category: "ai",
+  });
+  const result = emptyResult({
+    recipe,
+    changes: /** @type {any} */ ([
+      output("unchanged", ".agents/skills/project-goal"),
+      output("unchanged", hookScript),
+      output("unchanged", hookSettings),
+      output("unchanged", ".agents/skills/code-review"),
+    ]),
+    autoInstalledArtifacts: /** @type {any} */ ([{ id: "skill-code-review", version: "1.2.0" }]),
+  });
+  const artifacts = (/** @type {import("../src/index.js").ApplyResult} */ value) => {
+    const lines = applySummaryLines(value).map(({ text }) => text);
+    return lines.slice(lines.indexOf("Artifacts:") + 1);
+  };
+
+  assert.deepEqual(artifacts(result), [
+    "  Unchanged skill-project-goal at .agents/skills/project-goal",
+    "  Unchanged hook-block-dangerous-commands:",
+    `    ${hookScript}`,
+    `    ${hookSettings}`,
+    "  Would lock skill-code-review 1.2.0; its files in the project already match: .agents/skills/code-review",
+  ]);
+  assert.equal(
+    artifacts({ ...result, dryRun: false }).at(-1),
+    "  Locked skill-code-review 1.2.0; its files in the project already matched: .agents/skills/code-review",
+  );
+
+  // An output that matches beside one apply writes is named under the written one.
+  const mixed = emptyResult({
+    recipe: { version: 1, integrations: [], ai: [{ id: "hook-block-dangerous-commands" }] },
+    changes: /** @type {any} */ ([output("write", hookScript), output("unchanged", hookSettings)]),
+  });
+  assert.deepEqual(artifacts(mixed), [
+    `  Would write hook-block-dangerous-commands to ${hookScript}`,
+    `    Unchanged ${hookSettings}`,
+  ]);
+});
+
 test("a package manager given to apply that differs from the detected one stays visible", () => {
   const finding = {
     severity: "info",
@@ -1110,7 +1171,7 @@ test("a legacy artifact entry is named by its catalog ID, with the version apply
     const relock = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
     assert.ok(
       texts(relock).includes(
-        "  Would lock skill-project-goal 0.1.0; its files in the project already match",
+        "  Would lock skill-project-goal 0.1.0; its files in the project already match: .agents/skills/project-goal",
       ),
       printed(texts(relock)),
     );

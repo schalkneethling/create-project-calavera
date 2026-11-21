@@ -305,20 +305,23 @@ function scriptLines(result) {
 
 /**
  * One line per artifact with anything to report: the version apply locks and the destination it
- * writes, or that the files already in the project match the locked payload (#749). Its inputs
- * and wiring sit under it. An artifact the recipe no longer selects is named for the wiring apply
- * removes.
+ * writes, or that the files already in the project match, with or without a lock (#749, #956).
+ * Its inputs and wiring sit under it. An artifact the recipe no longer selects is named for the
+ * wiring apply removes.
  *
  * @param {ApplyResult} result
  * @returns {SummaryLine[]}
  */
 function artifactLines(result) {
   const { dryRun } = result;
-  const writtenPaths = new Set(
-    result.changes
-      .filter(({ category, type }) => category === "ai" && type === "write")
-      .map(({ path }) => path),
-  );
+  const aiPaths = (/** @type {string} */ changeType) =>
+    new Set(
+      result.changes
+        .filter(({ category, type }) => category === "ai" && type === changeType)
+        .map(({ path }) => path),
+    );
+  const writtenPaths = aiPaths("write");
+  const unchangedPaths = aiPaths("unchanged");
   /** @type {SummaryLine[]} */
   const lines = [];
   /** @type {Set<string>} */
@@ -333,16 +336,24 @@ function artifactLines(result) {
       throw new Error(`No catalog selection for the AI item at index ${artifact.index}.`);
     }
     named.add(id);
-    const written = aiArtifactOutputPaths(artifact).filter((path) => writtenPaths.has(path));
+    const outputs = aiArtifactOutputPaths(artifact);
+    const written = outputs.filter((path) => writtenPaths.has(path));
+    const unchanged = outputs.filter((path) => unchangedPaths.has(path));
     const locked = result.autoInstalledArtifacts.find((entry) => entry.id === id);
     const inputs = result.artifactInputs.filter(({ artifact: owner }) => owner === id);
     const wiring = result.wiringChanges.filter(({ artifact: owner }) => owner === id);
-    const headline = artifactHeadline(id, locked?.version, written, dryRun);
+    const headline = artifactHeadline(id, locked?.version, written, unchanged, dryRun);
     if (headline === undefined && inputs.length === 0 && wiring.length === 0) continue;
 
     lines.push(info(`${ITEM}${headline ?? id}`));
-    if (written.length > 1) {
-      lines.push(...written.map((path) => info(`${DETAIL}${path}`)));
+    // The headline names a single output; several sit under it, and an output that already
+    // matches beside one apply writes is named as unchanged.
+    const listed = written.length > 0 ? written : unchanged;
+    if (listed.length > 1) {
+      lines.push(...listed.map((path) => info(`${DETAIL}${path}`)));
+    }
+    if (written.length > 0) {
+      lines.push(...unchanged.map((path) => info(`${DETAIL}Unchanged ${path}`)));
     }
     for (const { name, ...input } of inputs) {
       lines.push(info(`${DETAIL}${name} = ${formatInputValue(input)}`));
@@ -414,19 +425,25 @@ function detail(text) {
  * @param {string} id
  * @param {string | undefined} version The version apply locks, for an artifact without a lock entry.
  * @param {string[]} written The outputs apply writes.
+ * @param {string[]} unchanged The outputs that already match (#956).
  * @param {boolean} dryRun
  * @returns {string | undefined}
  */
-function artifactHeadline(id, version, written, dryRun) {
+function artifactHeadline(id, version, written, unchanged, dryRun) {
   const destination = written.length === 1 ? ` ${written[0]}` : ":";
   if (version !== undefined) {
     const lock = `${tense(dryRun, "Would lock", "Locked")} ${id} ${version}`;
     if (written.length === 0) {
-      return `${lock}; ${tense(dryRun, "its files in the project already match", "its files in the project already matched")}`;
+      const matching =
+        unchanged.length === 0 ? "" : unchanged.length === 1 ? `: ${unchanged[0]}` : ":";
+      return `${lock}; ${tense(dryRun, "its files in the project already match", "its files in the project already matched")}${matching}`;
     }
     return `${lock} and ${tense(dryRun, "write", "wrote")}${destination}`;
   }
-  if (written.length === 0) return undefined;
+  if (written.length === 0) {
+    if (unchanged.length === 0) return undefined;
+    return unchanged.length === 1 ? `Unchanged ${id} at ${unchanged[0]}` : `Unchanged ${id}:`;
+  }
   return written.length === 1
     ? `${tense(dryRun, "Would write", "Wrote")} ${id} to ${written[0]}`
     : `${tense(dryRun, "Would write", "Wrote")} ${id}:`;

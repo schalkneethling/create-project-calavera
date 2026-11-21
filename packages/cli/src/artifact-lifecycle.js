@@ -936,7 +936,9 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
           target: resolve(PACKAGE_PATH, selection.id, entry.version),
         };
       });
-      const changedPaths = new Set(applied.changes.map(({ path }) => path));
+      const changedPaths = new Set(
+        applied.changes.filter(({ type }) => type !== "unchanged").map(({ path }) => path),
+      );
       for (const artifact of resolveAiArtifacts(recipe, sourcePaths)) {
         const outputPaths = aiArtifactOutputPaths(artifact);
         if (!outputPaths.some((path) => changedPaths.has(path))) continue;

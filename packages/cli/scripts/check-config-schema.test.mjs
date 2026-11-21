@@ -3752,9 +3752,12 @@ test("skill apply adds CodeRabbit exclusions across dry-run, MCP, and apply", as
       noInstall: true,
       assumeYes: true,
     });
-    assert.equal(
-      repeatedApply.changes.some(({ path }) => path === ".coderabbit.yaml"),
-      false,
+    // #956: a file that already matches is named once, as unchanged.
+    assert.deepEqual(
+      repeatedApply.changes
+        .filter(({ path }) => path === ".coderabbit.yaml")
+        .map(({ type }) => type),
+      ["unchanged"],
     );
   } finally {
     process.chdir(originalDirectory);
@@ -3901,9 +3904,12 @@ for (const { name, current, expected } of [
         noInstall: true,
         assumeYes: true,
       });
-      assert.equal(
-        repeatedDryRun.changes.some(({ path }) => path === ".coderabbit.yaml"),
-        false,
+      // #956: a file that already matches is named once, as unchanged.
+      assert.deepEqual(
+        repeatedDryRun.changes
+          .filter(({ path }) => path === ".coderabbit.yaml")
+          .map(({ type }) => type),
+        ["unchanged"],
       );
     } finally {
       process.chdir(originalDirectory);
@@ -4038,9 +4044,10 @@ test("an unedited hook from an earlier payload updates instead of stopping as a 
       noInstall: true,
       assumeYes: true,
     });
-    assert.equal(
-      settled.changes.some(({ path }) => path === installedHook),
-      false,
+    // #956: a file that already matches is named once, as unchanged.
+    assert.deepEqual(
+      settled.changes.filter(({ path }) => path === installedHook).map(({ type }) => type),
+      ["unchanged"],
     );
   } finally {
     process.chdir(originalDirectory);

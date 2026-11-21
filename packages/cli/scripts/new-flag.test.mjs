@@ -17,6 +17,7 @@ import {
   newProject,
   parseArgs,
 } from "../src/index.js";
+import { listingViolations } from "../../../scripts/rehearsal-checks.mjs";
 import { detectVitePlus } from "../src/vite-plus-detection.js";
 import {
   NEXT_PROMPT_HEADING,
@@ -2017,6 +2018,48 @@ test("--new prints the bootstrap summary in labeled groups, with the prompt as i
       NEXT_PROMPT_HEADING,
       "",
       await readmeAgentPrompt(),
+      "",
+      "",
+    ].join("\n"),
+  );
+});
+
+test("--init in a project --new made lists every file it leaves unchanged once, under Changes (#956)", async () => {
+  await using workspace = await createTemporaryWorkspace("summary-rerun");
+  const created = await runCli(workspace, ["--yes", "--new", "vite:library", "--no-interactive"], {
+    STUB_MODE: "scaffold",
+    STUB_TARGET: "my-lib",
+  });
+  assert.equal(created.code, 0, created.stderr);
+
+  const target = join(workspace.work, "my-lib");
+  const result = await runCli({ ...workspace, work: target }, ["--init", "--yes"]);
+  const summary = result.stdout.slice(0, result.stdout.indexOf("Next steps:"));
+
+  assert.equal(result.code, 0, result.stderr);
+  // .calavera/state.json is left out when it is unchanged (#957); every other file --new wrote
+  // is named once, as the #918 rehearsal's listing check requires.
+  const unchanged = [
+    ".agents/skills/calavera",
+    ".coderabbit.yaml",
+    "AGENTS.md",
+    ".agents/calavera/mcp.md",
+  ];
+  assert.deepEqual(listingViolations(result.stdout, unchanged), []);
+  assert.equal(
+    summary,
+    [
+      "Calavera agent bootstrap complete.",
+      "",
+      "Changes:",
+      "  Skipped .agents/skills/calavera: Already up to date.",
+      "  Skipped .coderabbit.yaml: Already up to date.",
+      "  Skipped AGENTS.md: Already up to date.",
+      "  Skipped .agents/calavera/mcp.md: Already up to date.",
+      "",
+      "Notes:",
+      "  Installed skills are available under .agents/skills/.",
+      "  Skipped project MCP auto-config. Follow the MCP setup notes listed under Changes for manual setup.",
       "",
       "",
     ].join("\n"),
