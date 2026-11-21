@@ -13,7 +13,6 @@ import {
   ARTIFACT_CACHE_IGNORED,
   ARTIFACT_CACHE_POINTER,
   ARTIFACT_CACHE_REASON,
-  normalizePackageSelections,
 } from "./artifact-lifecycle.js";
 import { GITIGNORE_PATH } from "./ignore-lines.js";
 import { resolveRecipeIntegrations } from "./recipe.js";
@@ -337,14 +336,10 @@ function artifactLines(result) {
   /** @type {Set<string>} */
   const named = new Set();
 
-  // The catalog ID of each recipe item, as the lock entries, inputs, and wiring name it, also for
-  // an item the recipe selects by its legacy type and src.
-  const catalogIds = normalizePackageSelections(result.recipe.ai).map(({ id }) => id);
+  // An artifact's catalog ID names it in the lock entries, inputs, and wiring, also for an item the
+  // recipe selects by its legacy type and src (#1119).
   for (const artifact of resolveAiArtifacts(result.recipe)) {
-    const id = catalogIds[artifact.index];
-    if (id === undefined) {
-      throw new Error(`No catalog selection for the AI item at index ${artifact.index}.`);
-    }
+    const { id } = artifact;
     named.add(id);
     const outputs = aiArtifactOutputPaths(artifact);
     const written = outputs.filter((path) => writtenPaths.has(path));

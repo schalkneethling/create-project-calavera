@@ -38,7 +38,6 @@ import {
   TRANSACTION_PATH as EJECT_TRANSACTION_PATH,
   artifactCacheIgnoreLines,
   artifactCachePointers,
-  normalizePackageSelections,
   prepareArtifactSources,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
@@ -87,6 +86,7 @@ import {
   rootOnlyIntegrationRefusal,
 } from "./repository-root.js";
 import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
+import { assertNoLegacyEntryNeedsWiring } from "./ai/recipe-items.js";
 import { defaultBranchWarnings, resolveIntegrationInputs } from "./integration-inputs.js";
 import {
   artifactWiringFindings,
@@ -3373,12 +3373,8 @@ function withMatchingFiles(installed, recipe, changes) {
       .filter(({ category, type }) => category === "ai" && type === "write")
       .map(({ path }) => path),
   );
-  const catalogIds = normalizePackageSelections(recipe.ai).map(({ id }) => id);
   const outputsById = new Map(
-    resolveAiArtifacts(recipe).map((artifact) => [
-      catalogIds[artifact.index],
-      aiArtifactOutputPaths(artifact),
-    ]),
+    resolveAiArtifacts(recipe).map((artifact) => [artifact.id, aiArtifactOutputPaths(artifact)]),
   );
   return installed.map((entry) => {
     const outputs = outputsById.get(entry.id);
@@ -3442,6 +3438,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   const recordsTestRunner =
     isPlainObject(recordedStrykerOptions) && Object.hasOwn(recordedStrykerOptions, "testRunner");
   validateRecipe(recipeInput);
+  // #1125: before the manifest choice and every other step, so nothing is written or asked first.
+  assertNoLegacyEntryNeedsWiring(recipeInput.ai);
 
   const applyOptions = {
     dryRun: false,
@@ -3689,8 +3687,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
       recipe,
       artifacts: resolveAiArtifacts(recipe, sources)
         .filter(({ type }) => type === "skill")
-        .map(({ source, index, path, sourcePath }) => ({
-          id: source,
+        .map(({ id, index, path, sourcePath }) => ({
+          id,
           index,
           skillDirectory: path,
           payloadDirectory: sourcePath,
