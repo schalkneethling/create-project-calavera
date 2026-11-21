@@ -213,6 +213,7 @@ import {
 } from "./utils/mcp-config.js";
 import { artifactTargetPromptOptions, groupedPromptOptions } from "./utils/prompt-options.js";
 import { pluralizeCount, quoteScriptValue, titleCase } from "./utils/text.js";
+import { VARLOCK_POINTER, VARLOCK_SCHEMA_PATH } from "./varlock.js";
 
 /**
  * @typedef {"npm" | "pnpm" | "yarn" | "bun"} PackageManager
@@ -483,9 +484,7 @@ const VARLOCK_GITIGNORE_COMMENTS = [
   "# Varlock recommends committing non-local .env.* files.",
   "# Review broader existing ignore rules before opting into that convention.",
 ];
-const VARLOCK_GITIGNORE_LINES = ["!.env.schema", ".env.local", ".env.*.local"];
-const VARLOCK_POINTER =
-  "Review .env.schema and existing .gitignore rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
+const VARLOCK_GITIGNORE_LINES = [`!${VARLOCK_SCHEMA_PATH}`, ".env.local", ".env.*.local"];
 
 /** @type {Record<PackageManager, PackageManagerCommands>} */
 const packageManagerCommands = {
@@ -2438,10 +2437,10 @@ function mergeVarlockGitignore(existing) {
 async function planVarlockProjectFiles(existingGitignore) {
   const plans = [];
 
-  if (!(await fileExists(".env.schema"))) {
+  if (!(await fileExists(VARLOCK_SCHEMA_PATH))) {
     plans.push({
       type: /** @type {const} */ ("write"),
-      path: ".env.schema",
+      path: VARLOCK_SCHEMA_PATH,
       action: /** @type {const} */ ("scaffold"),
       contents: VARLOCK_SCHEMA,
     });
@@ -6074,12 +6073,11 @@ async function doctor(options) {
 
     if (
       integrations.some((integration) => integration.id === "varlock") &&
-      !(await fileExists(".env.schema"))
+      !(await fileExists(VARLOCK_SCHEMA_PATH))
     ) {
       issues.push({
         level: "warning",
-        message:
-          "Missing Varlock schema: .env.schema. Run create-project-calavera apply to scaffold it.",
+        message: `Missing Varlock schema: ${VARLOCK_SCHEMA_PATH}. Run create-project-calavera apply to scaffold it.`,
       });
     }
 
