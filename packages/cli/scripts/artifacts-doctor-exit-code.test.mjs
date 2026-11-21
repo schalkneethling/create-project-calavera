@@ -291,6 +291,14 @@ test("the verdict names every artifact with a problem, and only those", () => {
   }
   assert.deepEqual(verdict([]), [{ level: "success", message: HEALTHY }]);
   assert.deepEqual(verdict([entry("a", {})]), [{ level: "success", message: HEALTHY }]);
+  assert.deepEqual(verdict([notInstalled("b")]), [
+    {
+      level: "warn",
+      message:
+        "Selected artifact not installed yet: b. Run pnpm dlx create-project-calavera artifacts install, or apply, to install it.",
+    },
+    { level: "success", message: HEALTHY },
+  ]);
   assert.deepEqual(verdict([entry("a", {}), notInstalled("b"), notInstalled("c")]), [
     {
       level: "warn",
