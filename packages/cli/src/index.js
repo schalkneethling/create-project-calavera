@@ -4693,8 +4693,8 @@ export const NPM_STALE_CACHE_HINT =
   'This applies only if the npm output above shows "npm error code ERESOLVE" and names a vite-plus version: an older create-vite-plus or vite-plus in the npx cache can cause that. To fix it, run "npm cache npx ls", find the rows that show create-vite-plus or vite-plus, run "npm cache npx rm <key>" with the key from each row, then run this command again. If the npm output shows a different error, this does not apply; read the npm or Vite+ output above.';
 
 /**
- * The environment `vp create` receives (#689): Calavera's own, without the
- * npm exec settings that describe how Calavera was launched. `npx --package`
+ * The environment `vp create` receives (#689, #1109): Calavera's own, without
+ * the settings that describe how Calavera was launched. `npx --package`
  * sets `npm_config_package` and `npx -c` sets `npm_config_call` for the
  * process they start, and an npm command Calavera's child starts would read
  * them too. With `npm_config_package`, `npm create vite-plus@latest` and the
@@ -4702,15 +4702,23 @@ export const NPM_STALE_CACHE_HINT =
  * create-project-calavera and exited 127 (#670). With `npm_config_call`,
  * `npm create vite-plus@latest` ran Calavera's own command line again instead
  * of create-vite-plus (libnpmexec runs `call` before its arguments). npm reads the
- * `npm_config_` prefix in any case, so the match ignores case. Every other
- * variable passes through unchanged.
+ * `npm_config_` prefix in any case, so the match ignores case.
+ *
+ * `npm_config_user_agent` names the launcher too (#1109). Vite+ picks the
+ * package manager of a new project from it, and `npm create` and `bunx` pass
+ * an inherited value on instead of setting their own. Without its removal,
+ * Vite+ would follow the package manager that launched Calavera, not the
+ * runner Calavera chose and its confirmation names, under the Yarn 1 fallback
+ * to npm and with `--package-manager` before `--new`. npm reads a `-` for the
+ * `_` inside a setting's name as well (`loadEnv` in `@npmcli/config`), so the
+ * match accepts both. Every other variable passes through unchanged.
  *
  * @param {Record<string, string | undefined>} env
  * @returns {Record<string, string | undefined>}
  */
 export function vpCreateEnvironment(env) {
   return Object.fromEntries(
-    Object.entries(env).filter(([key]) => !/^npm_config_(package|call)$/i.test(key)),
+    Object.entries(env).filter(([key]) => !/^npm_config_(package|call|user[-_]agent)$/i.test(key)),
   );
 }
 

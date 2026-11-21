@@ -269,8 +269,13 @@ with `npx --package`, `npm exec --package`, or `npx -c`. Passed on,
 `npm_config_package` makes npm look inside create-project-calavera for the
 command it should start, either `create-vite-plus` or the `create-vite` that
 Vite+ starts for the template, and `npm_config_call` makes
-`npm create vite-plus@latest` run Calavera's own command line again. Every other
-variable passes through unchanged.
+`npm create vite-plus@latest` run Calavera's own command line again. Calavera
+also removes `npm_config_user_agent`, because Vite+ reads it to choose the
+project's package manager, and `npm create` and `bunx` pass an inherited value
+on. The runner then sets its own value, so Vite+ follows the runner Calavera
+chose, also under the Yarn 1 fallback to npm and when `--package-manager` before
+`--new` names another package manager than the one that started Calavera. Every
+other variable passes through unchanged.
 
 Calavera continues into the bootstrap only when `vp create` exits with code 0
 and Vite+ detection reports `managed` for the scaffolded directory. That
