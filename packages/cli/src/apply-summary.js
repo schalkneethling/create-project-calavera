@@ -20,7 +20,7 @@ import { integrationDependencies } from "./stryker-options.js";
 import { DETAIL, ITEM, info, pushGroup, tense, warn } from "./summary-lines.js";
 import { temporaryFolderLeftoverLine } from "./utils/cleanup.js";
 import { quoteScriptValue } from "./utils/text.js";
-import { VARLOCK_POINTER, VARLOCK_SUMMARY_POINTER } from "./varlock.js";
+import { VARLOCK_POINTER, varlockSummaryPointer } from "./varlock.js";
 
 /**
  * @typedef {import("./index.js").ApplyResult} ApplyResult
@@ -98,11 +98,12 @@ export function applySummaryBody(result, { noInstall = false } = {}) {
     pushGroup(lines, "Project", projectLines(result));
   }
   pushGroup(lines, "Integrations", integrationLines(result, noInstall));
-  pushGroup(lines, "Files", fileLines(result));
+  const files = fileLines(result);
+  pushGroup(lines, "Files", files.lines);
   pushGroup(lines, "Scripts", scriptLines(result));
   pushGroup(lines, "Artifacts", artifactLines(result));
   pushGroup(lines, "Notes", [
-    ...result.pointers.map((pointer) => info(`${ITEM}${summaryPointer(pointer)}`)),
+    ...result.pointers.map((pointer) => info(`${ITEM}${summaryPointer(pointer, files.listed)}`)),
     ...result.inputWarnings.map((warning) => warn(`${ITEM}${warning}`)),
     // #1033: a temporary folder the command could not remove; it finished all the same.
     ...result.temporaryFolderLeftovers.map((leftover) =>
@@ -192,13 +193,15 @@ function integrationLines(result, noInstall) {
 /**
  * Each file apply writes, merges, or leaves unchanged, with the ignore lines it writes into it.
  * The package.json scripts sit under Scripts, and the artifacts' outputs and wiring files under
- * Artifacts, so neither is listed here.
+ * Artifacts, so neither is listed here. `listed` holds the path of each file named, so a note can
+ * point to Files instead of naming the file again (#1023).
  *
  * @param {ApplyResult} result
- * @returns {SummaryLine[]}
  */
 function fileLines(result) {
   const { dryRun } = result;
+  /** @type {Set<string>} */
+  const listed = new Set();
   const wiringPaths = new Set(result.wiringChanges.map(({ path }) => path));
   /** @type {Map<string, IgnoreChange[]>} */
   const ignoreChangesByPath = new Map();
@@ -213,6 +216,7 @@ function fileLines(result) {
     const line = fileChangeLine(change, dryRun);
     if (line === undefined) continue;
     lines.push(info(`${ITEM}${line}`));
+    listed.add(change.path);
     for (const ignoreChange of ignoreChangesByPath.get(change.path) ?? []) {
       lines.push(info(`${DETAIL}${ignoreChangeLine(ignoreChange, dryRun)}`));
     }
@@ -233,12 +237,13 @@ function fileLines(result) {
   // .gitignore that Varlock owns, is still named once, with its lines under it.
   for (const [path, changes] of ignoreChangesByPath) {
     lines.push(info(`${ITEM}${path}`));
+    listed.add(path);
     for (const ignoreChange of changes) {
       lines.push(info(`${DETAIL}${ignoreChangeLine(ignoreChange, dryRun)}`));
     }
   }
 
-  return lines;
+  return { lines, listed };
 }
 
 /**
@@ -434,14 +439,15 @@ function artifactLines(result) {
 /**
  * A pointer without the files the summary names once, under Files: the cache pointer without the
  * ignore file that holds the block, and the Varlock note without the schema and the ignore file
- * (#1023).
+ * where Files lists them (#1023).
  *
  * @param {string} pointer
+ * @param {ReadonlySet<string>} listed The paths the summary names under Files.
  */
-function summaryPointer(pointer) {
+function summaryPointer(pointer, listed) {
   if (pointer === ARTIFACT_CACHE_POINTER)
     return `${ARTIFACT_CACHE_IGNORED}, ${ARTIFACT_CACHE_REASON}`;
-  if (pointer === VARLOCK_POINTER) return VARLOCK_SUMMARY_POINTER;
+  if (pointer === VARLOCK_POINTER) return varlockSummaryPointer(listed);
   return pointer;
 }
 

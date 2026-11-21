@@ -552,9 +552,11 @@ The `apply --json` shape remains simple:
 }
 ```
 
-The human summary names every file once, under Files, so it prints the same
-follow-up under Notes without naming `.env.schema` and `.gitignore` a second time
-(#1023):
+The human summary prints the same follow-up under Notes, but names each file
+only once (#1023). When the Files group lists `.env.schema` or `.gitignore`, the
+note points to Files for that file instead of naming it again. A file that Files
+does not list, such as an `.env.schema` the project already has, is still named
+in the note. On a first apply, Files lists both files, so the note reads:
 
 ```text
 Notes:

@@ -14,6 +14,7 @@ import { listingViolations, namedItems } from "../../../scripts/rehearsal-checks
 import { applySummaryLines } from "../src/apply-summary.js";
 import { applyRecipeObject } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
+import { VARLOCK_POINTER } from "../src/varlock.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { copyReleaseFixture, writeVitePlusStub } from "./vite-plus-fixtures.mjs";
 
@@ -414,6 +415,35 @@ test("a Varlock recipe names .env.schema and .gitignore once, under Files, in th
     const appliedText = text(applied);
     assert.deepEqual(listingViolations(appliedText, planned), [], appliedText);
     assert.ok(appliedText.includes(`\nNotes:\n${note}\n`), appliedText);
+
+    // A second dry run lists neither file under Files, so the note names each of them once.
+    const second = await applyRecipeObject(dryRun.recipe, { ...applyOptions, dryRun: true });
+    const secondText = text(second);
+    assert.doesNotMatch(secondText, /listed under Files/);
+    assert.deepEqual(
+      listingViolations(secondText, [".env.schema", ".gitignore"], second.vitePlus.lines),
+      [],
+      secondText,
+    );
+  });
+});
+
+test("the Varlock note names a file the project already has, which Files does not list (#1023)", async () => {
+  await inManagedProject(async () => {
+    await writeFile(".env.schema", "# @defaultRequired=false\n");
+    const recipe = buildRecipe("minimal", ["editorconfig", "varlock"], "pnpm");
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true });
+    const output = printed(applySummaryLines(dryRun).map((line) => line.text));
+
+    assert.match(
+      output,
+      /\nNotes:\n {2}Review \.env\.schema and the ignore file listed under Files, including its existing rules\./,
+    );
+    assert.deepEqual(
+      listingViolations(output, [".env.schema", ".gitignore"], dryRun.vitePlus.lines),
+      [],
+      output,
+    );
   });
 });
 
@@ -489,6 +519,43 @@ function emptyResult(overrides) {
 function levels(lines) {
   return lines.map(({ level, text }) => `${level} ${text}`);
 }
+
+test("the Varlock note points to Files only for the files Files lists (#1023)", () => {
+  const recommendation =
+    "Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.";
+  const note = (/** @type {import("../src/index.js").Change[]} */ changes, ignoreChanges = []) =>
+    applySummaryLines(emptyResult({ changes, ignoreChanges, pointers: [VARLOCK_POINTER] }))
+      .map(({ text }) => text)
+      .at(-1);
+  const schema = { type: "write", path: ".env.schema", action: "scaffold", ownership: "project" };
+  const ignore = { type: "update", path: ".gitignore" };
+
+  assert.equal(
+    note([schema, ignore]),
+    `  Review the Varlock schema and the ignore file listed under Files, including its existing rules. ${recommendation}`,
+  );
+  assert.equal(
+    note([schema]),
+    `  Review the Varlock schema listed under Files and existing .gitignore rules. ${recommendation}`,
+  );
+  assert.equal(
+    note([ignore]),
+    `  Review .env.schema and the ignore file listed under Files, including its existing rules. ${recommendation}`,
+  );
+  // An ignore file named only for the lines apply plans in it still counts as listed.
+  assert.equal(
+    note(
+      [],
+      /** @type {import("../src/ignore-lines.js").IgnoreChange[]} */ ([
+        { path: ".gitignore", integration: "varlock", type: "unchanged", lines: [] },
+      ]),
+    ),
+    `  Review .env.schema and the ignore file listed under Files, including its existing rules. ${recommendation}`,
+  );
+  assert.equal(note([]), `  ${VARLOCK_POINTER}`);
+  // A change the Files group prints no line for does not count as listed.
+  assert.equal(note([{ ...schema, type: "skip" }]), `  ${VARLOCK_POINTER}`);
+});
 
 test("each kind of file, script, and finding has one line, in both tenses", () => {
   const changes = [
