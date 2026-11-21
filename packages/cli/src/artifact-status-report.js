@@ -242,8 +242,8 @@ export function artifactDoctorVerdict(result) {
   /** @type {ReportLine[]} */
   const lines = [];
   const notInstalled = result.artifacts.filter(({ version }) => version === null);
-  if (notInstalled.length > 0) {
-    const [one] = notInstalled;
+  const [one] = notInstalled;
+  if (one) {
     const ids = notInstalled.map(({ id }) => id).join(", ");
     const several = notInstalled.length > 1;
     lines.push({
