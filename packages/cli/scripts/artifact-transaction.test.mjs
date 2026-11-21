@@ -1,12 +1,16 @@
 // Issue #619: each way an artifact transaction is refused has its own message,
 // so distinct failures stay distinguishable.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
-import { commitArtifactTransaction } from "../src/artifact-lifecycle.js";
+import {
+  TRANSACTION_PATH,
+  commitArtifactTransaction,
+  recoverArtifactTransaction,
+} from "../src/artifact-lifecycle.js";
 
 /**
  * Runs `callback` in a new temporary project that has one staged file,
@@ -79,5 +83,94 @@ test("an artifact transaction refuses each invalid operation with its own messag
     assert.equal(new Set(messages).size, cases.length);
     assert.deepEqual((await readdir(project)).sort(), [".calavera"]);
     assert.deepEqual(await readdir(join(project, ".calavera")), [".transactions"]);
+  });
+});
+
+// Issue #1026: the transaction's checks share `isPathInside`, which keeps the strictest rule of the
+// helpers it replaced. A target in a sibling folder whose name starts with the project's name, or
+// one whose name starts with `..`, is refused before anything moves.
+test("an artifact transaction refuses a target in a look-alike sibling folder or named with a leading `..`", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    for (const target of [`${project}-two/a.txt`, join(project, "..a.txt")]) {
+      await assert.rejects(commitArtifactTransaction(root, [{ staged, target }]), {
+        message: `Artifact transaction operation 0 targets ${target}, which is outside the project ${project}.`,
+      });
+    }
+    assert.deepEqual((await readdir(project)).sort(), [".calavera"]);
+  });
+});
+
+// Issue #1026: the rollback of an interrupted transaction checks each journal path with
+// `isPathInside` before it moves anything, so a journal that names a path outside the transaction
+// root or the project is refused, and the journal and the project stay as they were.
+test("recovery refuses a journal whose root or paths leave their workspace and changes nothing", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    const outside = join(project, "..", "outside.txt");
+    const lookAlike = `${project}-two/a.txt`;
+    const valid = { staged, target: join(project, "a.txt"), backup: join(root, "backup.txt") };
+    const cases = [
+      {
+        root: join(project, ".calavera/elsewhere"),
+        operation: valid,
+        message: "Invalid artifact transaction root.",
+      },
+      {
+        root: join(project, ".calavera/..transactions"),
+        operation: valid,
+        message: "Invalid artifact transaction root.",
+      },
+      ...[
+        { staged: join(project, "package.json") },
+        { staged: join(root, "..staged.txt") },
+        { backup: join(project, "backup.txt") },
+        { backup: join(root, "..backup.txt") },
+        { target: outside },
+        { target: lookAlike },
+        { target: join(project, "..a.txt") },
+      ].map((change) => ({
+        root,
+        operation: { ...valid, ...change },
+        message: "Artifact transaction journal path escapes its workspace.",
+      })),
+    ];
+
+    for (const { root: transactionRoot, operation, message } of cases) {
+      const journal = `${JSON.stringify({
+        schemaVersion: 1,
+        transactionRoot,
+        operations: [{ ...operation, hadTarget: false }],
+      })}\n`;
+      await writeFile(TRANSACTION_PATH, journal);
+      await assert.rejects(recoverArtifactTransaction(), { message }, JSON.stringify(operation));
+      assert.equal(await readFile(TRANSACTION_PATH, "utf8"), journal);
+    }
+
+    assert.deepEqual((await readdir(project)).sort(), [".calavera"]);
+    assert.deepEqual(await readFile(staged, "utf8"), "staged\n");
+  });
+});
+
+test("recovery with a journal whose paths stay inside rolls back and removes the journal", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    await writeFile(
+      TRANSACTION_PATH,
+      JSON.stringify({
+        schemaVersion: 1,
+        transactionRoot: root,
+        operations: [
+          {
+            staged,
+            target: join(project, "a.txt"),
+            backup: join(root, "backup.txt"),
+            hadTarget: false,
+          },
+        ],
+      }),
+    );
+
+    await recoverArtifactTransaction();
+
+    assert.deepEqual(await readdir(join(project, ".calavera")), [".transactions"]);
+    assert.deepEqual(await readdir(project), [".calavera"]);
   });
 });

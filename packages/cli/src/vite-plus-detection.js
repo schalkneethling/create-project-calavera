@@ -1,8 +1,10 @@
 // @ts-check
 import { readFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative } from "node:path";
+import { dirname, join, relative } from "node:path";
 
 import { parse as parseYAML } from "yaml";
+
+import { isPathInside } from "./utils/fs.js";
 
 /**
  * @typedef {{
@@ -315,7 +317,7 @@ async function collectCorroborating(projectDirectory, { ownManifest, pin } = {})
 function formatManifestPath(projectDirectory, manifestPath) {
   const relativePath = relative(projectDirectory, manifestPath);
 
-  if (!relativePath || relativePath.startsWith("..") || isAbsolute(relativePath)) {
+  if (!relativePath || !isPathInside(projectDirectory, manifestPath)) {
     return manifestPath;
   }
 

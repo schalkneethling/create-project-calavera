@@ -1,9 +1,26 @@
 // @ts-check
 import { lstatSync, readFileSync } from "node:fs";
 import { access, constants, realpath, readFile, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import nodePath, { dirname, isAbsolute, relative, resolve, sep } from "node:path";
 
 const TEMPLATE_LIMIT = 256 * 1024;
+
+/**
+ * Whether `child` is `parent` itself or lies below it, compared by name: links are not resolved,
+ * so a caller that must see through links resolves them first. It keeps the strictest rule of the
+ * helpers it replaced (#1026): a relative path that starts with `..`, including a name such as
+ * `..recipe.json`, counts as outside, and so does a path on another Windows drive.
+ *
+ * @param {string} parent
+ * @param {string} child
+ * @param {Pick<typeof nodePath, "relative" | "isAbsolute">} [pathRules] The
+ *   platform's path rules; tests pass `posix` or `win32`.
+ */
+export function isPathInside(parent, child, pathRules = nodePath) {
+  const fromParent = pathRules.relative(parent, child);
+  // The folder itself gives "", which neither starts with `..` nor is absolute.
+  return !fromParent.startsWith("..") && !pathRules.isAbsolute(fromParent);
+}
 
 /** @param {string} path @param {string} [label] */
 export function assertSafeRelativePath(path, label = "Path") {

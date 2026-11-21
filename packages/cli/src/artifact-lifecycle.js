@@ -1,6 +1,6 @@
 // @ts-check
 import { cp, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
 import { tmpdir } from "node:os";
 
 import { artifactForId, artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
@@ -28,7 +28,7 @@ import {
 } from "./project-local-commands.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import { errorAfterCleanups, removeTemporaryFolder, runCleanups } from "./utils/cleanup.js";
-import { fileExists } from "./utils/fs.js";
+import { fileExists, isPathInside } from "./utils/fs.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
 
@@ -1236,12 +1236,6 @@ async function formatRecordText(path, value, loadFormatter) {
   return formatGeneratedText(path, `${JSON.stringify(value, null, 2)}\n`, loadFormatter);
 }
 
-/** @param {string} parent @param {string} child */
-function isInside(parent, child) {
-  const path = relative(parent, child);
-  return path === "" || (!path.startsWith("..") && !isAbsolute(path));
-}
-
 /**
  * Moves each staged path to its target through a journal that
  * `recoverArtifactTransaction` rolls back. Refuses, before anything moves, a
@@ -1256,7 +1250,7 @@ function isInside(parent, child) {
 export async function commitArtifactTransaction(transactionRoot, operations) {
   const projectRoot = resolve(".");
   const normalizedRoot = resolve(transactionRoot);
-  if (!isInside(resolve(TRANSACTION_ROOT), normalizedRoot)) {
+  if (!isPathInside(resolve(TRANSACTION_ROOT), normalizedRoot)) {
     throw new Error(
       `The artifact transaction root ${normalizedRoot} is outside ${resolve(TRANSACTION_ROOT)}.`,
     );
@@ -1267,12 +1261,12 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
   for (const [index, operation] of operations.entries()) {
     const staged = resolve(operation.staged);
     const target = resolve(operation.target);
-    if (!isInside(normalizedRoot, staged)) {
+    if (!isPathInside(normalizedRoot, staged)) {
       throw new Error(
         `Artifact transaction operation ${index} stages ${staged}, which is outside the transaction root ${normalizedRoot}.`,
       );
     }
-    if (!isInside(projectRoot, target)) {
+    if (!isPathInside(projectRoot, target)) {
       throw new Error(
         `Artifact transaction operation ${index} targets ${target}, which is outside the project ${projectRoot}.`,
       );
@@ -1334,7 +1328,7 @@ export async function recoverArtifactTransaction(options = {}) {
   }
   const projectRoot = resolve(".");
   const transactionRoot = resolve(journal.transactionRoot);
-  if (!isInside(resolve(TRANSACTION_ROOT), transactionRoot)) {
+  if (!isPathInside(resolve(TRANSACTION_ROOT), transactionRoot)) {
     throw new Error("Invalid artifact transaction root.");
   }
   const operations = journal.operations.map((operation) => {
@@ -1352,9 +1346,9 @@ export async function recoverArtifactTransaction(options = {}) {
     const target = resolve(operation.target);
     const backup = resolve(operation.backup);
     if (
-      !isInside(transactionRoot, staged) ||
-      !isInside(transactionRoot, backup) ||
-      !isInside(projectRoot, target)
+      !isPathInside(transactionRoot, staged) ||
+      !isPathInside(transactionRoot, backup) ||
+      !isPathInside(projectRoot, target)
     ) {
       throw new Error("Artifact transaction journal path escapes its workspace.");
     }

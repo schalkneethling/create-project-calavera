@@ -708,6 +708,25 @@ test("formatCommand quotes every argument a POSIX shell would not read as one pl
   );
 });
 
+// Issue #1026: on POSIX shells formatCommand quotes through quoteShellToken, so it follows the
+// #1037 rules: a leading `=` (zsh's EQUALS option), `==` and `:=` (zsh's MAGIC_EQUAL_SUBST), and a
+// `~` (tilde expansion) are quoted, although each holds only plain-word characters otherwise.
+test("formatCommand quotes the tokens zsh and bash would expand, as quoteShellToken does", () => {
+  for (const platform of ["linux", "darwin"]) {
+    assert.equal(
+      formatCommand(["npm", ["install", "=ls", "--with==x", "PATH=a:=b", "~/vp"]], platform),
+      "npm install '=ls' '--with==x' 'PATH=a:=b' '~/vp'",
+    );
+  }
+});
+
+test("formatCommand on Windows keeps its own quoting, which leaves a leading `=` as is", () => {
+  assert.equal(
+    formatCommand(["npm", ["install", "=ls", "a b", 'say "hi"']], "win32"),
+    'npm install =ls "a b" "say \\"hi\\""',
+  );
+});
+
 test("formatCommand keeps a Windows path's backslashes and quotes it in double quotes when it has a space", () => {
   assert.equal(
     formatCommand(["C:\\Program Files\\nodejs\\node.exe", ["C:\\work\\vp", "add"]], "win32"),
