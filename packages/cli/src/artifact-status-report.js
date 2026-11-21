@@ -16,9 +16,19 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {string | null} releaseNotesUrl
  * @property {string | null} updateCommand
  * @property {string | null} installCommand
+ * @property {UpdateCheckFailure | null} updateCheckFailure Why `--check-updates` could not look up this artifact's channel, or null when the lookup succeeded or did not run (#993).
  * @property {boolean | null} selected False for a lock entry the recipe no longer selects, which the next `artifacts install`, or `artifacts update` while the recipe selects any artifact, removes (#992). Null when there is no recipe to compare the lock with.
  *
- * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, ok: boolean }} ArtifactStatusReport
+ * @typedef {object} UpdateCheckFailure
+ * @property {string} code The registry error's code, such as ETARGET for a missing dist-tag.
+ * @property {string | null} type The kind of a FETCH_ERROR, such as request-timeout or invalid-json, as minipass-fetch names it.
+ * @property {number | null} statusCode The registry's HTTP status, when it answered.
+ * @property {string} reason
+ * @property {string | null} remedy
+ * @property {string[]} npmDiagnostics The npm configuration entries Calavera ignored, which may explain the failure. They never contain a value.
+ * @property {string[]} unsetVariables The environment variables those entries name that are not set.
+ *
+ * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, updateAllBlockedBy: string[], ok: boolean }} ArtifactStatusReport
  * @typedef {{ level: "info" | "success" | "warn" | "error", message: string }} ReportLine
  * @typedef {{ id: string, version: string, tag: "latest" | "next" }} RemovedLockEntry
  */
@@ -165,17 +175,48 @@ export function formatArtifactStatus(result) {
   const notSelected = result.artifacts.some(({ selected }) => selected)
     ? NOT_SELECTED
     : NOTHING_SELECTED;
+  /** @param {UpdateCheckFailure} failure */
+  const failureLines = (failure) => {
+    info(`  Cause: ${failure.reason}.`);
+    if (failure.npmDiagnostics.length > 0) {
+      info(
+        `  Calavera ignored npm configuration that may explain this: ${failure.npmDiagnostics.join(" ")}`,
+      );
+    }
+    if (failure.unsetVariables.length > 0) {
+      info(
+        `  Unset variables: ${failure.unsetVariables.join(", ")}. MCP clients often pass a minimal environment, so a variable set in your shell may be missing here.`,
+      );
+    }
+    if (failure.remedy) info(`  ${failure.remedy}`);
+  };
   for (const artifact of result.artifacts) {
+    const failure = artifact.updateCheckFailure;
     if (artifact.version === null) {
-      const latest = result.offline ? "" : `, latest ${artifact.latestVersion}`;
-      info(`${artifact.id}  not installed${latest} (${artifact.tag})`);
+      if (failure) {
+        lines.push({
+          level: "warn",
+          message: `${artifact.id}  not installed, update check failed (${artifact.tag})`,
+        });
+        failureLines(failure);
+      } else {
+        const latest = result.offline ? "" : `, latest ${artifact.latestVersion}`;
+        info(`${artifact.id}  not installed${latest} (${artifact.tag})`);
+      }
       info(`  Install: ${artifact.installCommand}`);
       continue;
     }
 
     const notes = healthNotes(artifact);
     const health = notes.length > 0 ? `, ${notes.join(", ")}` : "";
-    if (artifact.updateAvailable) {
+    if (failure) {
+      lines.push({
+        level: "warn",
+        message: `${artifact.id}  ${artifact.version}, update check failed (${artifact.tag})${health}`,
+      });
+      if (artifact.selected === false) info(notSelected);
+      failureLines(failure);
+    } else if (artifact.updateAvailable) {
       info(
         `${artifact.id}  ${artifact.version} → ${artifact.latestVersion} (${artifact.tag})${health}`,
       );
@@ -201,10 +242,16 @@ export function formatArtifactStatus(result) {
   }
 
   const updates = result.artifacts.filter(({ updateAvailable }) => updateAvailable);
+  const updatable = result.artifacts.filter(({ updateCommand }) => updateCommand !== null);
   if (result.updateAllCommand) {
     info(`Update every artifact: ${result.updateAllCommand}`);
-  } else if (result.artifacts.filter(({ updateCommand }) => updateCommand !== null).length > 1) {
-    // Status withholds `--all` from several updatable artifacts only when their channels differ.
+  } else if (result.updateAllBlockedBy.length > 0) {
+    info(
+      `No command updates every artifact, because the update check failed for ${result.updateAllBlockedBy.join(", ")}, so run each Update command above instead.`,
+    );
+  } else if (updatable.length > 1) {
+    // With every check done, status withholds `--all` from several updatable artifacts only when
+    // their channels differ.
     info(
       "These artifacts follow different channels, and --all would move every one to a single channel, so run each Update command above instead.",
     );
@@ -222,7 +269,12 @@ export function formatArtifactStatus(result) {
       `A targeted update, artifacts update <id>, advances only the artifact it names and leaves the artifacts that are not installed yet as they are. To install them, run their Install command${all}.`,
     );
   }
-  if (updates.length === 0 && result.artifacts.every(({ version }) => version !== null)) {
+  if (
+    updates.length === 0 &&
+    result.artifacts.every(
+      ({ version, updateCheckFailure }) => version !== null && updateCheckFailure === null,
+    )
+  ) {
     lines.push({ level: "success", message: "Every artifact is up to date on its channel." });
   }
   return lines;
@@ -249,6 +301,18 @@ export function artifactDoctorVerdict(result) {
     lines.push({
       level: "warn",
       message: `Selected ${several ? "artifacts" : "artifact"} not installed yet: ${ids}. Run ${one.installCommand}, or apply, to install ${several ? "them" : "it"}.`,
+    });
+  }
+  // #993: a failed update check is not a problem with the installed files, so it leaves `ok` and
+  // the exit status alone, but the verdict must not read as if every check ran.
+  const unchecked = result.artifacts
+    .filter(({ updateCheckFailure }) => updateCheckFailure)
+    .map(({ id }) => id);
+  if (unchecked.length > 0) {
+    const several = unchecked.length > 1;
+    lines.push({
+      level: "warn",
+      message: `The update check failed for ${unchecked.length} ${several ? "artifacts" : "artifact"}: ${unchecked.join(", ")}. The lines above name each cause. The installed files were still checked.`,
     });
   }
   if (result.ok) {

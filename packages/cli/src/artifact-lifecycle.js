@@ -619,6 +619,8 @@ async function artifactStatus(options, registry, loadFormatter) {
       ? await mkdtemp(join(tmpdir(), "calavera-artifact-status-"))
       : undefined;
   const cache = temporaryCache ?? resolve(CACHE_PATH);
+  // A failed update check names this command, so a person can retry the same report (#993).
+  const retryCommand = command([options.artifactAction ?? "status"], ["--check-updates"]);
   try {
     const artifacts = [];
     for (const entry of lock.artifacts) {
@@ -637,9 +639,20 @@ async function artifactStatus(options, registry, loadFormatter) {
           };
         }),
       );
-      const latest = options.checkUpdates
-        ? await registry.resolve({ id: entry.id, tag: entry.tag, cache })
-        : null;
+      const { latest, updateCheckFailure } = await checkForUpdate(
+        options.checkUpdates,
+        () => registry.resolve({ id: entry.id, tag: entry.tag, cache }),
+        {
+          packageName: entry.package,
+          tag: entry.tag,
+          // `artifacts update` refuses an artifact the recipe does not select.
+          followLatestCommand:
+            entry.tag === "next" && selectedIds.has(entry.id)
+              ? artifactUpdateCommand(recipe, options.config, entry.id, "latest")
+              : null,
+          retryCommand,
+        },
+      );
       const updateAvailable = Boolean(latest && latest.version !== entry.version);
       artifacts.push({
         ...entry,
@@ -663,6 +676,7 @@ async function artifactStatus(options, registry, loadFormatter) {
         installCommand: null,
         // #992: without a recipe, status cannot say which lock entries an install would drop.
         selected: recipeFound ? selectedIds.has(entry.id) : null,
+        updateCheckFailure,
       });
     }
     for (const selection of unlockedSelections) {
@@ -670,9 +684,16 @@ async function artifactStatus(options, registry, loadFormatter) {
       if (!artifact) throw new Error(`Unknown Calavera artifact: ${selection.id}.`);
       const resolvedArtifact = resolveAiArtifacts({ ai: [selection] })[0];
       if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
-      const latest = options.checkUpdates
-        ? await registry.resolve({ id: selection.id, tag: "latest", cache })
-        : null;
+      const { latest, updateCheckFailure } = await checkForUpdate(
+        options.checkUpdates,
+        () => registry.resolve({ id: selection.id, tag: "latest", cache }),
+        {
+          packageName: artifact.packageName,
+          tag: "latest",
+          followLatestCommand: null,
+          retryCommand,
+        },
+      );
       artifacts.push({
         id: selection.id,
         type: artifact.type,
@@ -694,6 +715,7 @@ async function artifactStatus(options, registry, loadFormatter) {
         updateCommand: null,
         installCommand: command(["install"]),
         selected: true,
+        updateCheckFailure,
       });
     }
     // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only
@@ -703,10 +725,18 @@ async function artifactStatus(options, registry, loadFormatter) {
     );
     // Only a selected artifact has an update command, so an offered `--all` has one channel.
     const [channel] = selectedChannels;
-    const updateAll =
+    const offersUpdateAll =
       selections.length > 1 &&
       selectedChannels.size === 1 &&
       artifacts.some(({ updateCommand }) => updateCommand !== null);
+    // #993: `--all` resolves every selected artifact on the channel and stops at the first lookup
+    // that fails, so it is withheld while a selected artifact's check failed, and status names them.
+    const updateAllBlockedBy = offersUpdateAll
+      ? artifacts
+          .filter(({ id, updateCheckFailure }) => updateCheckFailure && selectedIds.has(id))
+          .map(({ id }) => id)
+      : [];
+    const updateAll = offersUpdateAll && updateAllBlockedBy.length === 0;
     return {
       command: `artifacts ${options.artifactAction}`,
       dryRun: options.dryRun,
@@ -715,6 +745,7 @@ async function artifactStatus(options, registry, loadFormatter) {
         ? command(["update"], ["--all", ...artifactTagFlags(channel)])
         : null,
       checkUpdatesCommand: options.checkUpdates ? null : command(["status"], ["--check-updates"]),
+      updateAllBlockedBy,
       ok: artifacts.every(isArtifactHealthy),
       artifacts,
       ignoreChanges: cacheBlock?.changes ?? [],
@@ -723,6 +754,130 @@ async function artifactStatus(options, registry, loadFormatter) {
   } finally {
     if (temporaryCache) await rm(temporaryCache, { recursive: true, force: true });
   }
+}
+
+/**
+ * Asks the registry for the release on an artifact's channel when update checks are on. A failed
+ * registry lookup is reported for that artifact alone, so the others still get a status (#993).
+ * Only an error whose `code` names a registry, network, timeout, or TLS failure is reported this
+ * way (see REGISTRY_LOOKUP_CODE). Every other error stops the report as before: Calavera's own,
+ * which carry no code and say what to fix (an invalid npm configuration, a package whose identity
+ * or integrity does not match, a lock entry with an unknown id or tag), and local file system or
+ * Node errors, such as a cache folder Calavera cannot write. The report keeps a registry
+ * error's `code`, `statusCode`, and the npm configuration notes Calavera adds, but never the
+ * registry's message, because that is raw registry text, which can hold the request URL and
+ * response details.
+ *
+ * @template {{ version: string }} T
+ * @param {boolean | undefined} checkUpdates
+ * @param {() => Promise<T>} lookup
+ * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string }} context
+ * @returns {Promise<{ latest: T | null, updateCheckFailure: import("./artifact-status-report.js").UpdateCheckFailure | null }>}
+ */
+async function checkForUpdate(checkUpdates, lookup, context) {
+  if (!checkUpdates) return { latest: null, updateCheckFailure: null };
+  try {
+    return { latest: await lookup(), updateCheckFailure: null };
+  } catch (error) {
+    const failure = updateCheckFailure(error, context);
+    if (!failure) throw error;
+    return { latest: null, updateCheckFailure: failure };
+  }
+}
+
+// The codes of a failed registry lookup: an HTTP answer (npm-registry-fetch sets `E<status>`, or
+// EOTP and EAUTHIP for some 401s), a missing version (ETARGET), a package document artifact-core
+// could not read (EBADPACKUMENT), a fetch failure or abort
+// (minipass-fetch), a proxy or timeout failure (@npmcli/agent), and DNS, socket, and TLS failures
+// from Node. A local file system code, such as EACCES or ENOSPC from the cache, is not one.
+const REGISTRY_LOOKUP_CODE = new RegExp(
+  [
+    "^E\\d{3}$",
+    "^(EOTP|EAUTHIP|ETARGET|EBADPACKUMENT|FETCH_ERROR|FETCH_ABORTED|EINVALIDPROXY)$",
+    "^E(CONNECTION|IDLE|RESPONSE|TRANSFER)TIMEOUT$",
+    "^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)$",
+    "^(CERT_|UNABLE_TO_|SELF_SIGNED_|DEPTH_ZERO_SELF_SIGNED_|ERR_TLS_|ERR_SSL_)",
+  ].join("|"),
+);
+
+// minipass-fetch keeps FETCH_ERROR as the code and names the kind of failure, such as
+// request-timeout or invalid-json, in `type`. Only a short identifier is kept.
+const FETCH_ERROR_TYPE = /^[a-z-]{1,32}$/;
+
+/**
+ * Artifact-core's registry errors carry these notes as string arrays; any other error has none.
+ *
+ * @param {unknown} value
+ * @returns {string[]}
+ */
+function notesList(value) {
+  return Array.isArray(value) ? value : [];
+}
+
+/**
+ * The report of a failed registry lookup, or undefined for an error that is not one.
+ *
+ * @param {unknown} error
+ * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string }} context
+ * @returns {import("./artifact-status-report.js").UpdateCheckFailure | undefined}
+ */
+function updateCheckFailure(error, { packageName, tag, followLatestCommand, retryCommand }) {
+  const fields =
+    /** @type {{ code?: unknown, statusCode?: unknown, npmDiagnostics?: unknown, unsetVariables?: unknown, distTags?: unknown, type?: unknown, cause?: { distTags?: unknown } }} */ (
+      error ?? {}
+    );
+  if (typeof fields.code !== "string" || !REGISTRY_LOOKUP_CODE.test(fields.code)) return undefined;
+  const code = fields.code;
+  const statusCode = typeof fields.statusCode === "number" ? fields.statusCode : null;
+  const type =
+    typeof fields.type === "string" && FETCH_ERROR_TYPE.test(fields.type) ? fields.type : null;
+  const notes = {
+    type,
+    npmDiagnostics: notesList(fields.npmDiagnostics),
+    unsetVariables: notesList(fields.unsetVariables),
+  };
+  // npm-pick-manifest throws ETARGET when no version matches the spec, and status always asks for
+  // a dist-tag. It also throws ETARGET when the tag names a version the package document does not
+  // list yet, so the package's tags tell the two apart. The npm configuration notes wrap the error
+  // and keep the tags on its cause.
+  if (code === "ETARGET") {
+    const distTags = fields.distTags ?? fields.cause?.distTags;
+    const hasTag = Object.hasOwn(Object(distTags), tag);
+    return hasTag
+      ? {
+          code,
+          statusCode,
+          reason: `npm's ${tag} tag for ${packageName} names a version the registry does not list yet`,
+          remedy: `Wait a few minutes for the registry to list it, then run: ${retryCommand}`,
+          ...notes,
+        }
+      : {
+          code,
+          statusCode,
+          reason: `npm has no ${tag} tag for ${packageName}, so Calavera could not check for an update on that channel`,
+          remedy: followLatestCommand
+            ? `To follow latest instead, run: ${followLatestCommand}`
+            : null,
+          ...notes,
+        };
+  }
+  const kind = type === null ? code : `${code} ${type}`;
+  const details = statusCode === null ? kind : `${kind}, HTTP ${statusCode}`;
+  // npm-registry-fetch sets `statusCode` on every HTTP error, while its `code` is EOTP or EAUTHIP
+  // for some 401 answers, so the status picks the remedy.
+  let check = "the network connection and the npm registry settings";
+  if (statusCode === 401 || statusCode === 403) {
+    check = "the npm credentials for this registry";
+  } else if (statusCode === 404) {
+    check = `that the npm registry settings point at a registry that publishes ${packageName}`;
+  }
+  return {
+    code,
+    statusCode,
+    reason: `the registry lookup for ${packageName} failed (${details})`,
+    remedy: `Check ${check}, then run: ${retryCommand}`,
+    ...notes,
+  };
 }
 
 /**

@@ -28,12 +28,14 @@ export async function resolveArtifactPackage(request) {
 
   const npm = await loadNpmRegistryOptions({ ...request, scope: packageScope(artifact) });
   const manifest = await withNpmDiagnostics(npm, () =>
-    pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
-      ...npm.options,
-      cache: request.cache,
-      offline: request.offline,
-      fullMetadata: true,
-    }),
+    withRegistryCode(artifact.packageName, () =>
+      pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
+        ...npm.options,
+        cache: request.cache,
+        offline: request.offline,
+        fullMetadata: true,
+      }),
+    ),
   );
   if (manifest.name !== artifact.packageName || !semver.valid(manifest.version)) {
     throw new Error(`Resolved package identity mismatch for ${artifact.packageName}.`);
@@ -124,8 +126,36 @@ function packageScope({ packageName }) {
 }
 
 /**
+ * Gives a code to a lookup failure that has none. npm's registry, network, and cache errors carry a
+ * code, but npm-pick-manifest throws an uncoded TypeError when the registry answers with a package
+ * document it cannot read, such as `null`. Without a code, a caller cannot tell that failure from
+ * Calavera's own errors, so it becomes EBADPACKUMENT, with the original error as `cause` (#993).
+ * @template T
+ * @param {string} packageName
+ * @param {() => Promise<T>} run
+ * @returns {Promise<T>}
+ */
+async function withRegistryCode(packageName, run) {
+  try {
+    return await run();
+  } catch (error) {
+    if (typeof (/** @type {{ code?: unknown }} */ (error)?.code) === "string") throw error;
+    throw Object.assign(
+      new Error(
+        `The registry returned a package document for ${packageName} that Calavera could not read.`,
+        { cause: error },
+      ),
+      { code: "EBADPACKUMENT" },
+    );
+  }
+}
+
+/**
  * Adds what the loader ignored to a registry failure, so a missing token or variable is visible.
- * The original error stays as `cause`, and its `code` and `statusCode` are kept.
+ * The original error stays as `cause`, and its `code`, `statusCode`, and minipass-fetch's `type`
+ * (the kind of a FETCH_ERROR, such as invalid-json) are kept. The notes are also
+ * kept as `npmDiagnostics` and `unsetVariables`, so a caller that withholds the registry's own
+ * message can still name them (#993); like the loader's notes, they never contain a value.
  * @template T
  * @param {{ diagnostics: string[], unsetVariables: string[] }} npm
  * @param {() => Promise<T>} run
@@ -148,6 +178,9 @@ async function withNpmDiagnostics(npm, run) {
       {
         code: /** @type {NodeJS.ErrnoException} */ (error).code,
         statusCode: /** @type {{ statusCode?: number }} */ (error).statusCode,
+        type: /** @type {{ type?: unknown }} */ (error).type,
+        npmDiagnostics: npm.diagnostics,
+        unsetVariables: npm.unsetVariables,
       },
     );
   }

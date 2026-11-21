@@ -12,6 +12,7 @@ import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import {
+  artifactDoctorVerdict,
   artifactReleaseNotesUrl,
   formatArtifactStatus,
   formatRemovedLockEntries,
@@ -47,14 +48,17 @@ function changelogUrl(id, anchor) {
  *
  * @param {Record<string, Partial<Record<"latest" | "next", string>>>} releases
  * @param {Record<string, unknown>} [repositories] The `repository` metadata per artifact; an absent entry means the package has none.
+ * @param {Record<string, Error>} [failures] The error each artifact's lookup throws, as pacote would.
  */
-function statusRegistry(releases, repositories = {}) {
+function statusRegistry(releases, repositories = {}, failures = {}) {
   /** @type {{ id: string, tag?: string }[]} */
   const requests = [];
   return {
     requests,
     resolve: async (/** @type {{ id: string, tag?: string, cache: string }} */ request) => {
       requests.push({ id: request.id, tag: request.tag });
+      const failure = failures[request.id];
+      if (failure) throw failure;
       const artifact = artifactForId(request.id);
       assert.ok(artifact);
       const tag = request.tag ?? "latest";
@@ -329,6 +333,670 @@ test("artifacts on different channels get no all-artifacts command", async () =>
         ),
         printed.join("\n"),
       );
+    },
+  );
+});
+
+/**
+ * An error shaped like the one a registry lookup throws: `message`, plus `code` and `statusCode`
+ * when npm sets them.
+ *
+ * @param {string} message
+ * @param {{ code?: string, statusCode?: number, npmDiagnostics?: string[], unsetVariables?: string[], distTags?: Record<string, string> | null, cause?: unknown, type?: string }} [fields]
+ */
+function registryError(message, fields = {}) {
+  return Object.assign(new Error(message), fields);
+}
+
+/** @param {string} id */
+function packageName(id) {
+  const artifact = artifactForId(id);
+  assert.ok(artifact);
+  return artifact.packageName;
+}
+
+// Issue #993: one artifact's failed lookup must not fail the whole report.
+test("an artifact locked on a next tag npm does not have is reported alone, beside the others", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-release-with-confidence"],
+      locked: [
+        { id: "skill-project-goal", version: "0.2.1" },
+        { id: "skill-release-with-confidence", version: "0.3.0-next.0", tag: "next" },
+      ],
+    },
+    async () => {
+      const missing = packageName("skill-release-with-confidence");
+      const registry = statusRegistry(
+        { "skill-project-goal": { latest: "0.3.0" } },
+        { "skill-project-goal": packageRepository("skill-project-goal") },
+        {
+          // What npm-pick-manifest throws when the packument has no such dist-tag.
+          "skill-release-with-confidence": registryError(
+            `No matching version found for ${missing}@next.`,
+            { code: "ETARGET" },
+          ),
+        },
+      );
+      const result = await runArtifactCommand(statusOptions(), registry);
+
+      assert.deepEqual(registry.requests, [
+        { id: "skill-project-goal", tag: "latest" },
+        { id: "skill-release-with-confidence", tag: "next" },
+      ]);
+      const [goal, release] = result.artifacts;
+      assert.equal(goal.updateAvailable, true);
+      assert.equal(goal.latestVersion, "0.3.0");
+      assert.equal(goal.updateCheckFailure, null);
+      assert.equal(release.version, "0.3.0-next.0");
+      assert.equal(release.latestVersion, null);
+      assert.equal(release.updateAvailable, false);
+      assert.equal(release.updateCommand, null);
+      assert.deepEqual(release.updateCheckFailure, {
+        code: "ETARGET",
+        statusCode: null,
+        reason: `npm has no next tag for ${missing}, so Calavera could not check for an update on that channel`,
+        remedy:
+          "To follow latest instead, run: npm create project-calavera artifacts update skill-release-with-confidence",
+        type: null,
+        npmDiagnostics: [],
+        unsetVariables: [],
+      });
+      // A failed update check is not a problem with the installed files.
+      assert.equal(result.ok, true);
+
+      const lines = formatArtifactStatus(result);
+      assert.deepEqual(messages(lines), [
+        "skill-project-goal  0.2.1 → 0.3.0 (latest)",
+        `  Release notes: ${goal.releaseNotesUrl}`,
+        `  Update: ${goal.updateCommand}`,
+        "skill-release-with-confidence  0.3.0-next.0, update check failed (next)",
+        `  Cause: ${release.updateCheckFailure?.reason}.`,
+        `  ${release.updateCheckFailure?.remedy}`,
+      ]);
+      assert.equal(lines[3]?.level, "warn");
+    },
+  );
+});
+
+test("a failed update check never claims every artifact is up to date", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-release-with-confidence"],
+      locked: [
+        { id: "skill-project-goal", version: "0.3.0" },
+        { id: "skill-release-with-confidence", version: "0.3.0-next.0", tag: "next" },
+      ],
+    },
+    async () => {
+      const registry = statusRegistry(
+        { "skill-project-goal": { latest: "0.3.0" } },
+        {},
+        {
+          "skill-release-with-confidence": registryError("No matching version found.", {
+            code: "ETARGET",
+          }),
+        },
+      );
+      const printed = messages(
+        formatArtifactStatus(await runArtifactCommand(statusOptions(), registry)),
+      );
+      assert.ok(printed.includes("skill-project-goal  0.3.0, up to date (latest)"));
+      assert.ok(
+        !printed.includes("Every artifact is up to date on its channel."),
+        printed.join("\n"),
+      );
+    },
+  );
+});
+
+test("a missing tag on an artifact the recipe no longer selects offers no update command", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal"],
+      locked: [
+        { id: "skill-project-goal", version: "0.3.0" },
+        { id: "skill-release-with-confidence", version: "0.3.0-next.0", tag: "next" },
+      ],
+    },
+    async () => {
+      const registry = statusRegistry(
+        { "skill-project-goal": { latest: "0.3.0" } },
+        {},
+        {
+          "skill-release-with-confidence": registryError("No matching version found.", {
+            code: "ETARGET",
+          }),
+        },
+      );
+      const result = await runArtifactCommand(statusOptions(), registry);
+      const release = result.artifacts.find(({ id }) => id === "skill-release-with-confidence");
+      assert.equal(release?.selected, false);
+      assert.equal(release?.updateCheckFailure?.remedy, null);
+      assert.deepEqual(messages(formatArtifactStatus(result)), [
+        "skill-project-goal  0.3.0, up to date (latest)",
+        "skill-release-with-confidence  0.3.0-next.0, update check failed (next)",
+        "  Not selected: the recipe no longer selects this artifact, so the next artifacts install or artifacts update removes its lock entry and leaves its installed files in place.",
+        `  Cause: ${release?.updateCheckFailure?.reason}.`,
+      ]);
+    },
+  );
+});
+
+test("a missing latest tag does not offer to follow latest", async () => {
+  await inProject(
+    { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.3.0" }] },
+    async () => {
+      const registry = statusRegistry(
+        {},
+        {},
+        { "skill-project-goal": registryError("No matching version found.", { code: "ETARGET" }) },
+      );
+      const [artifact] = (await runArtifactCommand(statusOptions(), registry)).artifacts;
+      assert.equal(
+        artifact.updateCheckFailure?.reason,
+        `npm has no latest tag for ${packageName("skill-project-goal")}, so Calavera could not check for an update on that channel`,
+      );
+      assert.equal(artifact.updateCheckFailure?.remedy, null);
+    },
+  );
+});
+
+test("doctor's retry command runs doctor again", async () => {
+  await inProject(
+    { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.3.0" }] },
+    async () => {
+      const registry = statusRegistry(
+        {},
+        {},
+        { "skill-project-goal": registryError("offline", { code: "ENOTFOUND" }) },
+      );
+      const result = await runArtifactCommand(
+        statusOptions({ artifactAction: "doctor" }),
+        registry,
+      );
+      assert.equal(
+        result.artifacts[0]?.updateCheckFailure?.remedy,
+        "Check the network connection and the npm registry settings, then run: npm create project-calavera artifacts doctor -- --check-updates",
+      );
+      assert.equal(result.ok, true);
+    },
+  );
+});
+
+test("a failed lookup names its code, keeps the registry message out, and fits the remedy to it", async () => {
+  // A registry's error message is raw registry text, which can hold the request URL and response
+  // details, so the report keeps only the code and status.
+  const secret = "s3cret-token";
+  const failures = {
+    "skill-project-goal": registryError(
+      `401 Unauthorized - GET https://registry.example/${secret}`,
+      {
+        code: "E401",
+        statusCode: 401,
+      },
+    ),
+    "skill-code-review": registryError(`getaddrinfo ENOTFOUND registry.example ${secret}`, {
+      code: "ENOTFOUND",
+    }),
+    "skill-css-tokens": registryError(`404 Not Found - GET https://registry.example/${secret}`, {
+      code: "E404",
+      statusCode: 404,
+    }),
+    "skill-release-with-confidence": registryError(`403 Forbidden ${secret}`, {
+      code: "E403",
+      statusCode: 403,
+    }),
+  };
+  const ids = Object.keys(failures);
+  await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+    const result = await runArtifactCommand(statusOptions(), statusRegistry({}, {}, failures));
+    const rerun = "npm create project-calavera artifacts status -- --check-updates";
+    const byId = Object.fromEntries(
+      result.artifacts.map(({ id, updateCheckFailure }) => [id, updateCheckFailure]),
+    );
+    assert.deepEqual(byId["skill-project-goal"], {
+      code: "E401",
+      statusCode: 401,
+      reason: `the registry lookup for ${packageName("skill-project-goal")} failed (E401, HTTP 401)`,
+      remedy: `Check the npm credentials for this registry, then run: ${rerun}`,
+      type: null,
+      npmDiagnostics: [],
+      unsetVariables: [],
+    });
+    assert.deepEqual(byId["skill-code-review"], {
+      code: "ENOTFOUND",
+      statusCode: null,
+      reason: `the registry lookup for ${packageName("skill-code-review")} failed (ENOTFOUND)`,
+      remedy: `Check the network connection and the npm registry settings, then run: ${rerun}`,
+      type: null,
+      npmDiagnostics: [],
+      unsetVariables: [],
+    });
+    assert.equal(
+      byId["skill-css-tokens"]?.remedy,
+      `Check that the npm registry settings point at a registry that publishes ${packageName("skill-css-tokens")}, then run: ${rerun}`,
+    );
+    assert.equal(
+      byId["skill-release-with-confidence"]?.remedy,
+      `Check the npm credentials for this registry, then run: ${rerun}`,
+    );
+    const report = JSON.stringify(result) + messages(formatArtifactStatus(result)).join("\n");
+    assert.ok(!report.includes(secret), report);
+  });
+});
+
+test("the HTTP status picks the remedy, whatever the code", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-code-review"],
+      locked: [
+        { id: "skill-project-goal", version: "0.2.1" },
+        { id: "skill-code-review", version: "0.2.1" },
+      ],
+    },
+    async () => {
+      const result = await runArtifactCommand(
+        statusOptions(),
+        statusRegistry(
+          {},
+          {},
+          {
+            // npm-registry-fetch answers some 401s with EOTP or EAUTHIP.
+            "skill-project-goal": registryError("OTP required", { code: "EOTP", statusCode: 401 }),
+            "skill-code-review": registryError("Server error", { code: "E500", statusCode: 500 }),
+          },
+        ),
+      );
+      const [goal, review] = result.artifacts;
+      assert.equal(
+        goal.updateCheckFailure?.reason,
+        `the registry lookup for ${packageName("skill-project-goal")} failed (EOTP, HTTP 401)`,
+      );
+      assert.match(goal.updateCheckFailure?.remedy ?? "", /^Check the npm credentials/);
+      assert.match(review.updateCheckFailure?.remedy ?? "", /^Check the network connection/);
+    },
+  );
+});
+
+test("a local file system or Node error still stops the report, though it has a code", async () => {
+  // A cache write that fails reaches pacote as an error with the system code, and a bug inside the
+  // resolver raises a Node ERR_ code. Neither is a registry lookup, so neither is reported as one.
+  for (const failure of [
+    registryError("EACCES: permission denied, open '.calavera/cache/x'", { code: "EACCES" }),
+    registryError("ENOSPC: no space left on device", { code: "ENOSPC" }),
+    registryError('The "path" argument must be of type string.', { code: "ERR_INVALID_ARG_TYPE" }),
+  ]) {
+    await inProject(
+      { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },
+      async () => {
+        await assert.rejects(
+          runArtifactCommand(
+            statusOptions(),
+            statusRegistry({}, {}, { "skill-project-goal": failure }),
+          ),
+          (error) => error === failure,
+        );
+      },
+    );
+  }
+});
+
+test("registry, network, timeout, and TLS codes are each reported per artifact", async () => {
+  const codes = [
+    "E500",
+    "EOTP",
+    "EAUTHIP",
+    "ETARGET",
+    "FETCH_ERROR",
+    "FETCH_ABORTED",
+    "ENOTFOUND",
+    "ECONNREFUSED",
+    "ECONNRESET",
+    "ETIMEDOUT",
+    "EAI_AGAIN",
+    "EHOSTUNREACH",
+    "ENETUNREACH",
+    "ECONNECTIONTIMEOUT",
+    "EIDLETIMEOUT",
+    "ERESPONSETIMEOUT",
+    "ETRANSFERTIMEOUT",
+    "EINVALIDPROXY",
+    "CERT_HAS_EXPIRED",
+    "UNABLE_TO_VERIFY_LEAF_SIGNATURE",
+    "SELF_SIGNED_CERT_IN_CHAIN",
+    "DEPTH_ZERO_SELF_SIGNED_CERT",
+    "ERR_TLS_CERT_ALTNAME_INVALID",
+    // Artifact-core's code for a package document it cannot read, such as a null body.
+    "EBADPACKUMENT",
+  ];
+  await inProject(
+    { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },
+    async () => {
+      for (const code of codes) {
+        const [artifact] = (
+          await runArtifactCommand(
+            statusOptions(),
+            statusRegistry({}, {}, { "skill-project-goal": registryError("failed", { code }) }),
+          )
+        ).artifacts;
+        assert.equal(artifact.updateCheckFailure?.code, code);
+      }
+    },
+  );
+});
+
+test("fetch failures of different kinds stay distinguishable", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-code-review"],
+      locked: [
+        { id: "skill-project-goal", version: "0.2.1" },
+        { id: "skill-code-review", version: "0.2.1" },
+      ],
+    },
+    async () => {
+      const result = await runArtifactCommand(
+        statusOptions(),
+        statusRegistry(
+          {},
+          {},
+          {
+            // minipass-fetch keeps FETCH_ERROR as the code and names the kind in `type`.
+            "skill-project-goal": registryError("timeout", {
+              code: "FETCH_ERROR",
+              type: "request-timeout",
+            }),
+            "skill-code-review": registryError("<html>", {
+              code: "FETCH_ERROR",
+              type: "invalid-json",
+            }),
+          },
+        ),
+      );
+      const [goal, review] = result.artifacts;
+      assert.equal(goal.updateCheckFailure?.type, "request-timeout");
+      assert.equal(
+        goal.updateCheckFailure?.reason,
+        `the registry lookup for ${packageName("skill-project-goal")} failed (FETCH_ERROR request-timeout)`,
+      );
+      assert.equal(review.updateCheckFailure?.type, "invalid-json");
+      assert.notEqual(goal.updateCheckFailure?.reason, review.updateCheckFailure?.reason);
+    },
+  );
+});
+
+test("a type that is not a short identifier is not reported", async () => {
+  await inProject(
+    { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },
+    async () => {
+      const [artifact] = (
+        await runArtifactCommand(
+          statusOptions(),
+          statusRegistry(
+            {},
+            {},
+            {
+              "skill-project-goal": registryError("failed", {
+                code: "FETCH_ERROR",
+                type: "Bearer abc123 secret",
+              }),
+            },
+          ),
+        )
+      ).artifacts;
+      assert.equal(artifact.updateCheckFailure?.type, null);
+      assert.ok(!JSON.stringify(artifact).includes("abc123"));
+    },
+  );
+});
+
+test("status withholds update --all while a selected artifact on that channel failed its check", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-release-with-confidence"],
+      locked: [
+        { id: "skill-project-goal", version: "0.2.0-next.0", tag: "next" },
+        { id: "skill-release-with-confidence", version: "0.3.0-next.0", tag: "next" },
+      ],
+    },
+    async () => {
+      const registry = statusRegistry(
+        { "skill-project-goal": { next: "0.2.0-next.1" } },
+        {},
+        {
+          "skill-release-with-confidence": registryError("No matching version found.", {
+            code: "ETARGET",
+          }),
+        },
+      );
+      const result = await runArtifactCommand(statusOptions(), registry);
+      assert.equal(result.artifacts[0]?.updateAvailable, true);
+      // update --all --tag next would resolve the missing tag and stop.
+      assert.equal(result.updateAllCommand, null);
+      const printed = messages(formatArtifactStatus(result));
+      assert.ok(
+        printed.includes(
+          "No command updates every artifact, because the update check failed for skill-release-with-confidence, so run each Update command above instead.",
+        ),
+        printed.join("\n"),
+      );
+      assert.ok(
+        !printed.some((line) => line.startsWith("These artifacts follow different channels")),
+      );
+      assert.ok(
+        messages(
+          formatArtifactStatus({ ...result, updateAllBlockedBy: ["skill-a", "skill-b"] }),
+        ).includes(
+          "No command updates every artifact, because the update check failed for skill-a, skill-b, so run each Update command above instead.",
+        ),
+      );
+    },
+  );
+});
+
+test("Calavera's own errors still stop the report with their message", async () => {
+  // An identity mismatch, an invalid .npmrc, or a hand-edited lock entry carries no code and says
+  // what to fix, so it is not reported as a failed lookup.
+  await inProject(
+    { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },
+    async () => {
+      const failure = registryError("Resolved package identity mismatch for the package.");
+      await assert.rejects(
+        runArtifactCommand(
+          statusOptions(),
+          statusRegistry({}, {}, { "skill-project-goal": failure }),
+        ),
+        (error) => error === failure,
+      );
+    },
+  );
+});
+
+test("a failed lookup names the npm configuration Calavera ignored", async () => {
+  await inProject(
+    { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },
+    async () => {
+      // As withNpmDiagnostics wraps a registry failure.
+      const failure = registryError("401 Unauthorized", {
+        code: "E401",
+        statusCode: 401,
+        npmDiagnostics: [
+          "Ignored //registry.example/:_authToken in the user .npmrc.",
+          "Ignored //registry.example/:_password in the user .npmrc.",
+        ],
+        unsetVariables: ["NPM_TOKEN", "NPM_PASSWORD"],
+      });
+      const result = await runArtifactCommand(
+        statusOptions(),
+        statusRegistry({}, {}, { "skill-project-goal": failure }),
+      );
+      const [artifact] = result.artifacts;
+      assert.deepEqual(artifact.updateCheckFailure?.npmDiagnostics, [
+        "Ignored //registry.example/:_authToken in the user .npmrc.",
+        "Ignored //registry.example/:_password in the user .npmrc.",
+      ]);
+      assert.deepEqual(artifact.updateCheckFailure?.unsetVariables, ["NPM_TOKEN", "NPM_PASSWORD"]);
+      assert.deepEqual(messages(formatArtifactStatus(result)), [
+        "skill-project-goal  0.2.1, update check failed (latest)",
+        `  Cause: ${artifact.updateCheckFailure?.reason}.`,
+        "  Calavera ignored npm configuration that may explain this: Ignored //registry.example/:_authToken in the user .npmrc. Ignored //registry.example/:_password in the user .npmrc.",
+        "  Unset variables: NPM_TOKEN, NPM_PASSWORD. MCP clients often pass a minimal environment, so a variable set in your shell may be missing here.",
+        `  ${artifact.updateCheckFailure?.remedy}`,
+      ]);
+    },
+  );
+});
+
+test("a tag that names a version the registry does not list yet is not called missing", async () => {
+  await inProject(
+    {
+      ids: ["skill-release-with-confidence"],
+      locked: [{ id: "skill-release-with-confidence", version: "0.3.0-next.0", tag: "next" }],
+    },
+    async () => {
+      const name = packageName("skill-release-with-confidence");
+      for (const failure of [
+        registryError("No matching version found.", {
+          code: "ETARGET",
+          distTags: { latest: "0.2.3", next: "0.3.0-next.1" },
+        }),
+        // withNpmDiagnostics keeps the tags on its cause.
+        registryError("No matching version found.", {
+          code: "ETARGET",
+          cause: { distTags: { next: "0.3.0-next.1" } },
+        }),
+      ]) {
+        const [artifact] = (
+          await runArtifactCommand(
+            statusOptions(),
+            statusRegistry({}, {}, { "skill-release-with-confidence": failure }),
+          )
+        ).artifacts;
+        assert.equal(
+          artifact.updateCheckFailure?.reason,
+          `npm's next tag for ${name} names a version the registry does not list yet`,
+        );
+        assert.equal(
+          artifact.updateCheckFailure?.remedy,
+          "Wait a few minutes for the registry to list it, then run: npm create project-calavera artifacts status -- --check-updates",
+        );
+      }
+      for (const distTags of [{ latest: "0.2.3" }, null, undefined]) {
+        const [missing] = (
+          await runArtifactCommand(
+            statusOptions(),
+            statusRegistry(
+              {},
+              {},
+              {
+                "skill-release-with-confidence": registryError("No matching version found.", {
+                  code: "ETARGET",
+                  distTags,
+                }),
+              },
+            ),
+          )
+        ).artifacts;
+        assert.match(missing.updateCheckFailure?.reason ?? "", /^npm has no next tag/);
+      }
+    },
+  );
+});
+
+test("doctor's verdict names the artifacts whose update check failed", async () => {
+  await inProject(
+    {
+      ids: ["skill-project-goal", "skill-release-with-confidence"],
+      locked: [
+        { id: "skill-project-goal", version: "0.3.0" },
+        { id: "skill-release-with-confidence", version: "0.3.0-next.0", tag: "next" },
+      ],
+    },
+    async () => {
+      const registry = statusRegistry(
+        { "skill-project-goal": { latest: "0.3.0" } },
+        {},
+        {
+          "skill-release-with-confidence": registryError("No matching version found.", {
+            code: "ETARGET",
+          }),
+        },
+      );
+      const result = await runArtifactCommand(
+        statusOptions({ artifactAction: "doctor" }),
+        registry,
+      );
+      const verdict = artifactDoctorVerdict(result);
+      assert.deepEqual(verdict, [
+        {
+          level: "warn",
+          message:
+            "The update check failed for 1 artifact: skill-release-with-confidence. The lines above name each cause. The installed files were still checked.",
+        },
+        { level: "success", message: "Calavera artifacts doctor found no problems." },
+      ]);
+      assert.equal(
+        artifactDoctorVerdict({ ...result, artifacts: [result.artifacts[0]] }).length,
+        1,
+      );
+      // Several failed checks beside a problem with the installed files.
+      const failed = result.artifacts[1];
+      assert.ok(failed);
+      assert.deepEqual(
+        artifactDoctorVerdict({
+          ok: false,
+          artifacts: [
+            { ...failed, id: "skill-a" },
+            { ...failed, id: "skill-b", installed: false },
+          ],
+        }),
+        [
+          {
+            level: "warn",
+            message:
+              "The update check failed for 2 artifacts: skill-a, skill-b. The lines above name each cause. The installed files were still checked.",
+          },
+          {
+            level: "error",
+            message: "Calavera artifacts doctor found problems with 1 artifact: skill-b.",
+          },
+        ],
+      );
+    },
+  );
+});
+
+test("an unlocked selection whose lookup fails keeps its install command", async () => {
+  await inProject({ ids: ["skill-project-goal"], locked: [] }, async () => {
+    const registry = statusRegistry(
+      {},
+      {},
+      { "skill-project-goal": registryError("offline", { code: "ENOTFOUND" }) },
+    );
+    const result = await runArtifactCommand(statusOptions(), registry);
+    const [artifact] = result.artifacts;
+    assert.equal(artifact.latestVersion, null);
+    assert.equal(artifact.updateCheckFailure?.code, "ENOTFOUND");
+    const lines = formatArtifactStatus(result);
+    assert.deepEqual(messages(lines), [
+      "skill-project-goal  not installed, update check failed (latest)",
+      `  Cause: ${artifact.updateCheckFailure?.reason}.`,
+      "  Check the network connection and the npm registry settings, then run: npm create project-calavera artifacts status -- --check-updates",
+      `  Install: ${artifact.installCommand}`,
+    ]);
+    assert.equal(lines[0]?.level, "warn");
+  });
+});
+
+test("status without --check-updates records no update check failure", async () => {
+  await inProject(
+    { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },
+    async () => {
+      const registry = statusRegistry({});
+      const result = await runArtifactCommand(statusOptions({ checkUpdates: false }), registry);
+      assert.deepEqual(registry.requests, []);
+      assert.equal(result.artifacts[0]?.updateCheckFailure, null);
     },
   );
 });
@@ -720,6 +1388,7 @@ test("status output names missing, unmanaged, and edited outputs, and an empty s
     offline: true,
     updateAllCommand: null,
     checkUpdatesCommand: "check",
+    updateAllBlockedBy: [],
   };
   assert.deepEqual(messages(formatArtifactStatus({ ...report, artifacts: [] })), [
     "The recipe selects no artifacts, and the artifact lock holds none.",
@@ -751,6 +1420,7 @@ test("status output explains an update for an artifact the recipe does not selec
       offline: false,
       updateAllCommand: null,
       checkUpdatesCommand: null,
+      updateAllBlockedBy: [],
       artifacts: [
         entry({ latestVersion: "0.3.0", updateAvailable: true, updateCommand: "update one" }),
         entry({ id: "skill-code-review", latestVersion: "0.3.0", updateAvailable: true }),
@@ -832,6 +1502,7 @@ test("status output prints no success line while a selection is not installed", 
     offline: false,
     updateAllCommand: null,
     checkUpdatesCommand: null,
+    updateAllBlockedBy: [],
     artifacts: [
       entry({ latestVersion: "0.2.1" }),
       entry({
@@ -1211,6 +1882,7 @@ test("status output names an unselected artifact even when it has an update", ()
       offline: false,
       updateAllCommand: null,
       checkUpdatesCommand: null,
+      updateAllBlockedBy: [],
       artifacts: [
         entry({ id: "skill-code-review", latestVersion: "0.2.1" }),
         entry({ latestVersion: "0.3.0", updateAvailable: true, selected: false }),
