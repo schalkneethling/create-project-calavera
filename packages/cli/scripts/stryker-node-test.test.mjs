@@ -11,6 +11,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import Ajv from "ajv";
 import Ajv2020 from "ajv/dist/2020.js";
 
 import { integrationCatalog } from "../src/catalog.js";
@@ -40,7 +41,7 @@ const tapConfig = (testFiles) => ({
   $schema: "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
   testRunner: "tap",
   plugins: ["@stryker-mutator/tap-runner"],
-  tap: { testFiles, nodeArgs },
+  tap: { testFiles, nodeArgs, forceBail: false },
   tsconfigFile: "stryker-skips-tsconfig-preprocessing.json",
   reporters: ["clear-text", "html"],
 });
@@ -300,6 +301,97 @@ test("vp create library with node:test tests: Stryker's dry run passes with the 
   assert.match(dryRun.stdout, /The dry-run has been completed successfully/);
 
   await stryker("--reporters", "json");
+  const report = JSON.parse(
+    await readFile(join(fixture.root, "reports/mutation/mutation.json"), "utf8"),
+  );
+  const statuses = Object.values(report.files).flatMap(({ mutants }) =>
+    mutants.map(({ status }) => status),
+  );
+  assert.deepEqual(statuses, ["Killed", "Killed"]);
+});
+
+test("vp create library with node:test tests: the managed config is valid under the installed Stryker schema and turns off tap.forceBail", async () => {
+  await using fixture = await copyReleaseFixture("library");
+  await mkdir(join(fixture.root, "tests"));
+  await writeFile(join(fixture.root, "tests/index.test.ts"), nodeTestIndex);
+
+  const config = await inDirectory(fixture.root, async () => {
+    await callMcpTool("apply_recipe", {
+      recipe: await composeRecipe(["stryker"]),
+      noInstall: true,
+    });
+    return JSON.parse(await readFile("stryker.config.json", "utf8"));
+  });
+  const schema = JSON.parse(
+    await readFile(
+      new URL(
+        "schema/stryker-schema.json",
+        import.meta.resolve("@stryker-mutator/core/package.json"),
+      ),
+      "utf8",
+    ),
+  );
+  const ajv = new Ajv({ allErrors: true, allowUnionTypes: true });
+  // Stryker's schema annotates enums with this keyword for its own type generation.
+  ajv.addKeyword("tsEnumNames");
+  const validate = ajv.compile(schema);
+
+  // The schema rejects unknown keys under `tap`, so a misspelled forceBail fails here.
+  assert.equal(validate(config), true, JSON.stringify(validate.errors, null, 2));
+  // #1088: with the default, true, the tap runner kills a test process at its first failure, and
+  // the process writes Stryker's result file into its current directory. The next test shows why
+  // that matters.
+  assert.equal(config.tap.forceBail, false);
+});
+
+test("vp create library with node:test tests: a mutant killed by a test that changes directory is reported as killed, not as a runtime error", async () => {
+  await using fixture = await copyReleaseFixture("library");
+  await mkdir(join(fixture.root, "tests"));
+  // The third test changes into a folder inside the fixture and changes back when it ends, as a
+  // test of a tool that works on a temporary project does. When a mutant makes the first test
+  // fail, forceBail kills the process, but only once the runner reads the next test's result,
+  // because the TAP parser closes a failure when the next line arrives. The kill then lands while
+  // the third test is in that folder: the process writes Stryker's result file into tests/, and
+  // the runner, which reads it from the fixture root, reports a runtime error instead of a killed
+  // mutant.
+  await writeFile(
+    join(fixture.root, "tests/index.test.ts"),
+    `import assert from "node:assert/strict";
+import test from "node:test";
+
+import { fn } from "../src/index.ts";
+
+test("fn greets", () => {
+  assert.equal(fn(), "Hello, tsdown!");
+});
+
+test("a second test passes", () => {});
+
+test("a later test works in another folder", async () => {
+  process.chdir("tests");
+  try {
+    await new Promise((resolve) => setTimeout(resolve, 500));
+  } finally {
+    process.chdir("..");
+  }
+});
+`,
+  );
+
+  await inDirectory(fixture.root, async () => {
+    await callMcpTool("apply_recipe", {
+      recipe: await composeRecipe(["stryker"]),
+      noInstall: true,
+    });
+  });
+  const env = { ...process.env };
+  delete env.NODE_TEST_CONTEXT;
+  delete env.NODE_TEST_WORKER_ID;
+
+  await execFileAsync(process.execPath, [strykerCli, "run", "--reporters", "json"], {
+    cwd: fixture.root,
+    env,
+  });
   const report = JSON.parse(
     await readFile(join(fixture.root, "reports/mutation/mutation.json"), "utf8"),
   );
