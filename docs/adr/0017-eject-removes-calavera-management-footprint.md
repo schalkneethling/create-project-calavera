@@ -267,7 +267,7 @@ This amendment narrows Decision 5 for MCP harness files only.
 ## Amendment 4: `.calavera/.staging/` Today, and the Old Copies That `apply` Removes
 
 - **Date:** 2026-11-21
-- **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/1034
+- **Pull request:** https://github.com/schalkneethling/create-project-calavera/pull/1118 (#1034)
 
 The Context section ("Written by `init`, `apply`, and the artifact commands") says that `.calavera/.staging/` exists only while an artifact operation runs, and cites `artifact-lifecycle.js:36-37`. That stopped being true less than an hour after this ADR merged, when #988 (PR #1015) moved apply's restore of a missing locked package out of the project. No artifact operation writes `.calavera/.staging/` any more: an install stages under `.calavera/.transactions/`, and a restore and every dry run rebuild in the operating system's temporary folder. `eject` is now the only command that writes the folder. It moves each package folder it removes to `.calavera/.staging/eject-<random>/package` and deletes it there (Decision 7).
 
