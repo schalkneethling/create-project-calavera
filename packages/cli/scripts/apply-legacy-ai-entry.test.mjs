@@ -110,6 +110,8 @@ async function snapshot() {
 for (const args of [
   ["apply", "--yes", "--json", "--no-install"],
   ["apply", "--dry-run", "--json"],
+  // update applies the recipe as apply does (#1025), so it refuses the same entry.
+  ["update", "--yes", "--json", "--no-install"],
 ]) {
   test(`Given the recipe switched to the guard's legacy entry, ${args.slice(0, 2).join(" ")} refuses it before writing and names artifacts migrate`, async () => {
     await inWiredProjectWithLegacyEntry(async () => {
@@ -119,7 +121,7 @@ for (const args of [
       assert.notEqual(
         result.status,
         0,
-        `apply exited 0, so it did not refuse the legacy entry\n${result.stdout}`,
+        `the command exited 0, so it did not refuse the legacy entry\n${result.stdout}`,
       );
       assert.match(result.stderr, REFUSAL);
       assert.match(result.stderr, /stopped before writing anything/);
@@ -185,8 +187,8 @@ test("Given the guard's legacy entry, artifacts migrate and then apply wire the 
     const migrated = JSON.parse(await readFile("calavera.config.json", "utf8"));
     assert.deepEqual(migrated.ai, [{ id: GUARD_ID }]);
 
-    // The migrated entry can record the guard's input, which apply needs, as no default is known
-    // in a repository without commits.
+    // migrate records no input, and apply writes only a value the recipe records or the person
+    // types, so the input is recorded here, as apply's own error tells a non-interactive run to.
     migrated.ai[0].inputs = { protectedBranch: "main" };
     await callMcpTool("apply_recipe", { recipe: migrated, noInstall: true }, registry());
 
@@ -212,7 +214,7 @@ test("The refusal names each legacy entry that needs wiring or inputs, by index,
       message: [
         "Calavera stopped before writing anything, because these legacy AI entries select artifacts that need wiring or inputs:",
         '- ai[1] {"type":"skill","src":"skills/protected-branch-guard"} selects skill-protected-branch-guard by its legacy type and src, and skill-protected-branch-guard needs wiring and inputs, which a legacy entry cannot record.',
-        "Run create-project-calavera artifacts migrate, which rewrites each legacy entry as an ID entry, then run apply again.",
+        "Run create-project-calavera artifacts migrate, which rewrites each legacy entry as an ID entry, then apply the recipe again. Apply in a terminal asks for each input value the recipe does not record; any other run names where the recipe must record it.",
       ].join("\n"),
     },
   );

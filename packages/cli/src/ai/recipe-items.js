@@ -164,8 +164,9 @@ export function assertFirstSelection(firstIndexById, id, index) {
  * #1125, owner decision of 2026-11-21: apply refuses a legacy entry, such as
  * `{ "type": "skill", "src": "skills/protected-branch-guard" }`, that selects an artifact that
  * declares wiring or inputs, because a legacy entry cannot record the inputs and Calavera does not
- * guess them. `artifacts migrate` rewrites each legacy entry as an ID entry. Apply and its dry run
- * call this before they plan or write anything. Clean and doctor still read a legacy entry.
+ * guess them. `artifacts migrate` rewrites each legacy entry as an ID entry. Apply, update, their
+ * dry runs, and the MCP apply tools call this before they plan or write anything. Clean and doctor
+ * still read a legacy entry.
  *
  * @param {unknown} aiConfig
  */
@@ -190,7 +191,7 @@ export function assertNoLegacyEntryNeedsWiring(aiConfig) {
     [
       "Calavera stopped before writing anything, because these legacy AI entries select artifacts that need wiring or inputs:",
       ...refused,
-      "Run create-project-calavera artifacts migrate, which rewrites each legacy entry as an ID entry, then run apply again.",
+      "Run create-project-calavera artifacts migrate, which rewrites each legacy entry as an ID entry, then apply the recipe again. Apply in a terminal asks for each input value the recipe does not record; any other run names where the recipe must record it.",
     ].join("\n"),
   );
 }

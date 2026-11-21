@@ -1205,7 +1205,7 @@ New recipes select package-backed skills, hooks, and agents by stable ID:
 }
 ```
 
-Legacy `{ "type", "src", "target" }` entries remain readable during the compatibility window. A legacy entry cannot record inputs, so `apply`, `apply --dry-run`, and `dry_run_apply` refuse, before writing anything, a legacy entry that selects an artifact that needs wiring or inputs, such as `{ "type": "skill", "src": "skills/protected-branch-guard" }`. The error names the entry; run `artifacts migrate`, which rewrites each legacy entry as an ID entry, then run `apply` again. Migrate and manage exact versions with:
+Legacy `{ "type", "src", "target" }` entries remain readable during the compatibility window. A legacy entry cannot record inputs, so `apply`, `update`, their dry runs, and the MCP `dry_run_apply` and `apply_recipe` tools refuse, before writing anything, a legacy entry that selects an artifact that needs wiring or inputs, such as `{ "type": "skill", "src": "skills/protected-branch-guard" }`. The error names the entry; run `artifacts migrate`, which rewrites each legacy entry as an ID entry, then apply the recipe again, recording the inputs the artifact needs. Migrate and manage exact versions with:
 
 ```bash
 create-project-calavera artifacts migrate
