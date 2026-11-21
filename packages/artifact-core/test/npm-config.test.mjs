@@ -428,3 +428,120 @@ test("a registry URL with credentials in the environment is rejected", async () 
     },
   );
 });
+
+const PROXY_SECRET = "PROXYPASS0123456789";
+
+test("proxy, https-proxy, and noproxy from the user .npmrc reach the options npm-registry-fetch reads", async () => {
+  const context = await fixture({
+    user: `proxy=http://proxy.example.com:8080/\nhttps-proxy=http://user:${PROXY_SECRET}@secure-proxy.example.com:8443/\nnoproxy=internal.example.com,.corp.example.com\n`,
+  });
+  const { options, warnings, diagnostics } = await loadNpmRegistryOptions(context);
+  assert.equal(options.proxy, "http://proxy.example.com:8080/");
+  assert.equal(options.httpsProxy, `http://user:${PROXY_SECRET}@secure-proxy.example.com:8443/`);
+  assert.equal(options.noProxy, "internal.example.com,.corp.example.com");
+  // npm-registry-fetch reads camelCase names only, so the .npmrc spellings must not leak through.
+  assert.equal(options["https-proxy"], undefined);
+  assert.equal(options.noproxy, undefined);
+  assert.deepEqual(warnings, []);
+  assert.doesNotMatch(inspect(diagnostics), new RegExp(PROXY_SECRET));
+});
+
+test("a proxy set only in the project .npmrc is used, as npm uses it", async () => {
+  const context = await fixture({
+    project: "https-proxy=http://proxy.example.com:8080/\nnoproxy=registry.internal.example.com\n",
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, "http://proxy.example.com:8080/");
+  assert.equal(options.noProxy, "registry.internal.example.com");
+  assert.deepEqual(warnings, []);
+});
+
+test("npm_config_https_proxy and npm_config_noproxy override the .npmrc files", async () => {
+  const context = await fixture({
+    user: "https-proxy=http://user-proxy.example.com/\nnoproxy=a.example.com\n",
+    env: {
+      npm_config_https_proxy: "http://env-proxy.example.com/",
+      npm_config_noproxy: "b.example.com",
+    },
+  });
+  const { options } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, "http://env-proxy.example.com/");
+  assert.equal(options.noProxy, "b.example.com");
+});
+
+test("a proxy URL that is not http, https, or socks is ignored with a warning that does not echo it", async () => {
+  const context = await fixture({
+    user: `proxy=ftp://user:${PROXY_SECRET}@proxy.example.com/\nhttps-proxy=not a url ${PROXY_SECRET}\n`,
+  });
+  const { options, warnings, diagnostics } = await loadNpmRegistryOptions(context);
+  assert.equal(options.proxy, undefined);
+  assert.equal(options.httpsProxy, undefined);
+  assert.equal(warnings.length, 2);
+  assert.match(warnings[0], /\bproxy\b.*user \.npmrc/);
+  assert.match(warnings[1], /https-proxy.*user \.npmrc/);
+  assert.doesNotMatch(inspect([warnings, diagnostics]), new RegExp(PROXY_SECRET));
+});
+
+test("a socks proxy is accepted, because @npmcli/agent supports it", async () => {
+  const context = await fixture({ user: "https-proxy=socks5://proxy.example.com:1080\n" });
+  const { options } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, "socks5://proxy.example.com:1080");
+});
+
+test("a project .npmrc proxy with a variable reference is ignored like other project entries", async () => {
+  const context = await fixture({
+    project: "https-proxy=http://${PROXY_USER}@proxy.example.com/\n",
+    env: { PROXY_USER: PROXY_SECRET },
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, undefined);
+  assert.match(warnings[0], /https-proxy.*project \.npmrc/);
+  assert.doesNotMatch(inspect(warnings), new RegExp(PROXY_SECRET));
+});
+
+test("a project .npmrc proxy is ignored for an http registry, so it cannot read credentials in plain text", async () => {
+  const context = await fixture({
+    user: "registry=http://registry.example.com/\n//registry.example.com/:_authToken=user-token\n",
+    project: "proxy=http://proxy.example.com/\nhttps-proxy=http://proxy.example.com/\n",
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.proxy, undefined);
+  assert.equal(options.httpsProxy, undefined);
+  assert.ok(warnings.some((warning) => /project \.npmrc.*http/.test(warning)));
+});
+
+test("a user .npmrc proxy is still used for an http registry", async () => {
+  const context = await fixture({
+    user: "registry=http://registry.example.com/\nproxy=http://proxy.example.com/\n",
+  });
+  const { options } = await loadNpmRegistryOptions(context);
+  assert.equal(options.proxy, "http://proxy.example.com/");
+});
+
+test("a long project key is shortened in a warning", async () => {
+  const key = `//${"a".repeat(200)}.example.com/:_authToken`;
+  const context = await fixture({ project: `${key}=\${NPM_TOKEN}\n` });
+  const { warnings } = await loadNpmRegistryOptions(context);
+  assert.match(warnings[0], new RegExp(`Ignored //${"a".repeat(118)}\\.\\.\\. in the project`));
+});
+
+test("an empty proxy in a later file unsets the proxy, as an empty npm setting does", async () => {
+  const context = await fixture({
+    user: "https-proxy=http://user-proxy.example.com/\nproxy=http://user-proxy.example.com/\n",
+    project: "https-proxy=\nproxy=\n",
+  });
+  const { options } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, undefined);
+  assert.equal(options.proxy, undefined);
+  assert.deepEqual(Object.keys(options), []);
+});
+
+test("a project noproxy still applies for an http registry, because it only removes the proxy", async () => {
+  const context = await fixture({
+    user: "registry=http://registry.example.com/\nproxy=http://proxy.example.com/\n",
+    project: "noproxy=registry.example.com\n",
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.noProxy, "registry.example.com");
+  assert.deepEqual(warnings, []);
+});

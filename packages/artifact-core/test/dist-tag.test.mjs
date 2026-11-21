@@ -179,3 +179,64 @@ test("a dist-tag that names no valid version is refused", async (t) => {
     },
   );
 });
+
+/**
+ * A project folder whose user .npmrc holds `npmrc`, with no registry variable.
+ * @param {string} npmrc
+ */
+async function userNpmrcContext(npmrc) {
+  const cwd = await mkdtemp(join(tmpdir(), "calavera-dist-tag-proxy-"));
+  await writeFile(join(cwd, "user.npmrc"), npmrc);
+  return { cwd, env: { npm_config_userconfig: join(cwd, "user.npmrc") } };
+}
+
+test("a proxy set only in the user .npmrc carries the request (#1064)", async (t) => {
+  const proxy = await startRegistry((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(packument({ latest: "7.1.0" }));
+  });
+  // The registry host does not resolve, so the answer can only come through the proxy.
+  const context = await userNpmrcContext(
+    `registry=http://registry.calavera.invalid/\nproxy=${proxy.url}\n`,
+  );
+  t.after(async () => {
+    await proxy.close();
+    await rm(context.cwd, { recursive: true, force: true });
+  });
+
+  assert.equal(
+    await resolvePackageDistTag({ packageName: NAME, tag: "latest", ...context }),
+    "7.1.0",
+  );
+  // An http proxy receives the absolute URL of the request.
+  assert.deepEqual(
+    proxy.requests.map(({ url }) => url),
+    [`http://registry.calavera.invalid/${NAME}`],
+  );
+});
+
+test("a host in the .npmrc noproxy skips the .npmrc proxy (#1064)", async (t) => {
+  const proxy = await startRegistry((_request, response) => {
+    response.writeHead(502);
+    response.end();
+  });
+  const registry = await startRegistry((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(packument({ latest: "7.2.0" }));
+  });
+  const context = await userNpmrcContext(
+    `registry=${registry.url}\nproxy=${proxy.url}\nnoproxy=127.0.0.1\n`,
+  );
+  t.after(async () => {
+    await proxy.close();
+    await registry.close();
+    await rm(context.cwd, { recursive: true, force: true });
+  });
+
+  assert.equal(
+    await resolvePackageDistTag({ packageName: NAME, tag: "latest", ...context }),
+    "7.2.0",
+  );
+  assert.equal(proxy.requests.length, 0);
+  assert.equal(registry.requests.length, 1);
+});

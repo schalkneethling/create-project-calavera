@@ -930,10 +930,13 @@ notice adds that the dependency is unchanged and gives the command that updates 
 informs: the command runs to the end with the installed version, and the exit code is unchanged.
 
 The check asks the registry and sends the credentials that your user and project `.npmrc` files and
-`npm_config_*` variables name. It follows the proxy environment variables in either letter case:
-`HTTPS_PROXY` for an `https:` registry, `HTTPS_PROXY`, `HTTP_PROXY`, or `PROXY` for an `http:`
-registry, and `NO_PROXY` for hosts that skip the proxy. It does not yet read the registry settings of Yarn 2 or later or of Bun, or
-proxy settings that exist only in `.npmrc`. The check waits at most 1.5 seconds and writes no file.
+`npm_config_*` variables name, through the `proxy` or `https-proxy` that they set, and skips the
+proxy for the hosts in `noproxy`. Under Yarn 2 or later, it asks the registry and proxy that your
+`.yarnrc.yml` files and `YARN_*` variables name, and under Bun, the registry that `bunfig.toml`,
+`BUN_CONFIG_REGISTRY`, or `NPM_CONFIG_REGISTRY` names. When no proxy is configured, it follows the
+proxy environment variables in either letter case: `HTTPS_PROXY` for an `https:` registry,
+`HTTPS_PROXY`, `HTTP_PROXY`, or `PROXY` for an `http:` registry, and `NO_PROXY` for hosts that skip
+the proxy. The check waits at most 1.5 seconds and writes no file.
 A check that fails or runs out of time prints nothing; set `CALAVERA_DEBUG` to `1` or `true` to see
 why.
 
