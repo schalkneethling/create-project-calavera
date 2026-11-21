@@ -427,7 +427,8 @@ You can choose the runner without editing the recipe by hand:
   default. After you choose `node:test`, Calavera asks for the paths that the project's test script
   passes to `node --test`; an empty answer keeps the files that `node --test` runs by default and
   records no `testFiles`. Both commands record your answers in `calavera.config.json`. A run with
-  `--yes` or `--json`, or without a terminal, never asks and keeps Vitest.
+  `--yes` or `--json`, or without a terminal, never asks and keeps Vitest, and neither does an
+  `init` run with the `CI` environment variable set.
 - The Calavera skill tells an agent to confirm the runner with you before the dry run.
 
 ```json
@@ -872,11 +873,11 @@ approves the proposed recipe and dry-run result.
 - `--mcp-harness claude-code|codex|cursor|opencode|skip` with `--init` to
   script project-local MCP auto-config
 - `--apply` with `init` to preview and then confirm applying the composed recipe;
-  without a terminal, or with `--json`, add `--yes` to apply without the confirmation
+  without a terminal, with `CI` set, or with `--json`, add `--yes` to apply without the confirmation
 - `--dry-run`
 - `--no-install`
-- `--yes`; `init` without a terminal, or with `--json`, refuses any prompt it would
-  show and names `--yes` and the flag that answers that prompt; with `eject`,
+- `--yes`; `init` without a terminal, with `CI` set, or with `--json`, refuses any prompt
+  it would show, as `--new` refuses its confirmation, and names `--yes` and the flag that answers that prompt; with `eject`,
   `--yes` removes only the items that match Calavera's records exactly
 - `--json`
 

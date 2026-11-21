@@ -151,8 +151,11 @@ test("init --json without --yes names the flag that answers each prompt it canno
     await assert.rejects(composeWithoutYes(fixture.root, given), message, JSON.stringify(given));
   }
 
-  // The message names each reason Calavera cannot ask, and only those.
+  // The message names each reason Calavera cannot ask, and only those. CI is unset, so a CI
+  // runner does not add "CI is set" (#1079); cannot-prompt-in-ci.test.mjs covers that reason.
   const originalIsTTY = process.stdin.isTTY;
+  const originalCI = process.env.CI;
+  delete process.env.CI;
   try {
     process.stdin.isTTY = false;
     await assert.rejects(
@@ -170,6 +173,8 @@ test("init --json without --yes names the flag that answers each prompt it canno
     );
   } finally {
     process.stdin.isTTY = originalIsTTY;
+    if (originalCI === undefined) delete process.env.CI;
+    else process.env.CI = originalCI;
   }
 
   // Every prompt answered by a flag: nothing to refuse.

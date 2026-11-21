@@ -5268,13 +5268,26 @@ function newProjectConfirmation(runner, runnerPackageManager, cwd, cwdDetection,
 }
 
 /**
+ * #1079: the one rule `init` and `--new` share for when Calavera cannot show a prompt. A set `CI`
+ * counts, as it does for Vite+, because a CI job with a pseudo-terminal would otherwise wait on the
+ * prompt forever.
+ *
+ * @returns {string[]} Each reason, empty when Calavera can ask.
+ */
+function cannotPromptReasons() {
+  return [
+    ...(process.stdin.isTTY ? [] : ["stdin is not a terminal"]),
+    ...(process.env.CI ? ["CI is set"] : []),
+  ];
+}
+
+/**
  * @param {CliOptions} options
  * @returns {string[]}
  */
 function nonInteractiveReasons(options) {
   return [
-    ...(process.stdin.isTTY ? [] : ["stdin is not a terminal"]),
-    ...(process.env.CI ? ["CI is set"] : []),
+    ...cannotPromptReasons(),
     ...((options.newArgs ?? []).includes("--no-interactive")
       ? ["--no-interactive was forwarded to vp create"]
       : []),
@@ -5656,7 +5669,7 @@ async function promptForInputValue({ prompt, defaultValue, error }, label) {
 function assertInitCanAsk(options, question, remedy) {
   const reasons = [
     ...(options.json ? ["--json was given, so the prompt would corrupt the JSON output"] : []),
-    ...(process.stdin.isTTY ? [] : ["stdin is not a terminal"]),
+    ...cannotPromptReasons(),
   ];
   if (reasons.length > 0) {
     throw new Error(
@@ -5865,7 +5878,8 @@ export async function initRecipe(options) {
     );
   }
   // The recipe written below records every input, so apply neither asks again nor refuses it.
-  const interactive = canPrompt(options);
+  // canPrompt alone ignores CI, which apply, eject, and --init still do; the wizard follows #1079.
+  const interactive = canPrompt(options) && cannotPromptReasons().length === 0;
   const { recipe: recipeWithArtifactInputs, inputs: artifactInputs } = await resolveArtifactInputs(
     composeRecipe({
       profile,
