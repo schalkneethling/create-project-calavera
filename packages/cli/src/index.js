@@ -4842,6 +4842,19 @@ export const NPM_STALE_CACHE_HINT =
   'This applies only if the npm output above shows "npm error code ERESOLVE" and names a vite-plus version: an older create-vite-plus or vite-plus in the npx cache can cause that. To fix it, run "npm cache npx ls", find the rows that show create-vite-plus or vite-plus, run "npm cache npx rm <key>" with the key from each row, then run this command again. If the npm output shows a different error, this does not apply; read the npm or Vite+ output above.';
 
 /**
+ * Corepack's auto-pin: when no `package.json` from the working directory up
+ * sets `packageManager`, Corepack writes that field into the outermost
+ * `package.json` it found, before it runs the package manager. Corepack 0.32.0
+ * and earlier pin unless COREPACK_ENABLE_AUTO_PIN is "0"; Corepack 0.33.0 and
+ * later pin only when it is "1". So "0" is the one value that turns auto-pin
+ * off in every version, and from Node.js 25 on, users install whichever
+ * Corepack they choose from npm. Neither `vp create` (#1080) nor the Yarn reads
+ * behind a failure hint (#999) is approval to change a `package.json` outside
+ * the new project, so each sets the variable to "0".
+ */
+const NO_COREPACK_AUTO_PIN = { COREPACK_ENABLE_AUTO_PIN: "0" };
+
+/**
  * The environment `vp create` receives (#689, #1109): Calavera's own, without
  * the settings that describe how Calavera was launched. `npx --package`
  * sets `npm_config_package` and `npx -c` sets `npm_config_call` for the
@@ -4861,15 +4874,28 @@ export const NPM_STALE_CACHE_HINT =
  * back to npm (under Yarn 1 or an unrecognized launcher) and with
  * `--package-manager npm` or `bun` before `--new` under another launcher. npm reads a `-` for the
  * `_` inside a setting's name as well (`loadEnv` in `@npmcli/config`), so the
- * match accepts both. Every other variable passes through unchanged.
+ * match accepts both.
+ *
+ * COREPACK_ENABLE_AUTO_PIN is "0" (#1080), as NO_COREPACK_AUTO_PIN explains,
+ * even when the user set "1": Corepack runs `pnpm dlx` and `yarn dlx`, and
+ * would otherwise pin a `package.json` above the new project, whether the run
+ * succeeds or fails. A user's own value is removed in any case, as Windows
+ * reads it, so only the "0" remains. Every other variable passes through
+ * unchanged.
  *
  * @param {Record<string, string | undefined>} env
  * @returns {Record<string, string | undefined>}
  */
 export function vpCreateEnvironment(env) {
-  return Object.fromEntries(
-    Object.entries(env).filter(([key]) => !/^npm_config_(package|call|user[-_]agent)$/i.test(key)),
-  );
+  return {
+    ...Object.fromEntries(
+      Object.entries(env).filter(
+        ([key]) =>
+          !/^(npm_config_(package|call|user[-_]agent)|COREPACK_ENABLE_AUTO_PIN)$/i.test(key),
+      ),
+    ),
+    ...NO_COREPACK_AUTO_PIN,
+  };
 }
 
 /**
@@ -4886,18 +4912,6 @@ const YARN_DLX_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or
 
 // The runner has already failed, so the version read must not delay its error.
 export const YARN_VERSION_TIMEOUT_MS = 5000;
-
-/**
- * Corepack's auto-pin: when no `package.json` from the working directory up
- * sets `packageManager`, Corepack writes that field into the outermost
- * `package.json` it found. Corepack 0.32.0 and earlier pin unless
- * COREPACK_ENABLE_AUTO_PIN is "0"; Corepack 0.33.0 and later pin only when it
- * is "1". So "0" is the one value that turns auto-pin off in every version,
- * and from Node.js 25 on, users install whichever Corepack they choose from
- * npm. The Yarn reads below run while Calavera only reports an error, which is
- * no approval to change a project, so they set the variable to "0" (#999).
- */
-const NO_COREPACK_AUTO_PIN = { COREPACK_ENABLE_AUTO_PIN: "0" };
 
 /**
  * Reads the version of the `yarn` that runs in `cwd`, where Corepack resolves
