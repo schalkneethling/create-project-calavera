@@ -44,7 +44,7 @@ The owner asked on 2026-11-14 for the rehearsal to be automated, deterministic, 
 
 **Owner decisions of 2026-11-14,** each recorded on its issue:
 
-- #689: remove `npm_config_package` and `npm_config_call` from the `vp create` child's environment only, and pass every other variable through unchanged. This does not reopen ADR-0010. Amended on 2026-11-21 by #1109: `npm_config_user_agent` is removed as well, so Vite+ follows the runner Calavera chose rather than the package manager that launched Calavera.
+- #689: remove `npm_config_package` and `npm_config_call` from the `vp create` child's environment only, and pass every other variable through unchanged. This does not reopen ADR-0010. Amended on 2026-11-21 by #1109: `npm_config_user_agent` is removed as well, so Vite+ follows the runner Calavera chose rather than the package manager that launched Calavera. Amended on 2026-11-21 by #1080: `COREPACK_ENABLE_AUTO_PIN` is set to `0` for every runner, so neither `pnpm dlx` nor `yarn dlx` writes `packageManager` into a `package.json` above the new project.
 - #603: for `apply --config <outside path>`, the project root is the current directory with a `package.json`; otherwise refuse and name the directory, with no offer to create `package.json` and no workspace-ancestor check. #430 covers a different entry point, the `dry_run_apply` choices when the inspected directory has no manifest, so the two rules must not be merged.
 - #617: one line per integration, with its package in parentheses only when the names differ; the full dependency list stays in `--json`.
 - #663: an environment variable turns on stack traces.
