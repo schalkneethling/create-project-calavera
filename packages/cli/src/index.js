@@ -150,6 +150,7 @@ import {
   optionalStringArray,
   stateShowsEarlierApply,
 } from "./state.js";
+import { planStagingLeftovers, removeStagingLeftovers } from "./staging-leftovers.js";
 import {
   declaredManagedFiles,
   HTML_VALIDATE_WRAPPER_PATH,
@@ -325,6 +326,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {WiringChange[]} wiringChanges Each hook block and settings group apply writes into the project for a selected artifact, so the approval boundary shows the exact text.
  * @property {string[]} wiringWarnings Why written wiring would not act yet, such as Git hooks that no dispatcher runs, with the remedy. They never stop apply.
  * @property {IgnoreChange[]} ignoreChanges The lines each integration adds to or removes from .gitignore and .htmlvalidateignore (ADR-0016), and the block that keeps the artifact cache out of Git (#841), so the approval boundary shows the exact lines.
+ * @property {StagingLeftover[]} stagingLeftovers Each entry of `.calavera/.staging/` (#1034): an old copy of a locked package that apply removes, or anything else, which apply keeps and reports.
  * @property {Recipe} recipe The recipe apply used, with every artifact input filled in. After a dry run, pass this recipe to apply, so the values cannot change between approval and apply.
  * @property {ManifestDecision} [manifestDecision] Present when the directory has no package.json of its own but a manifest above it was found (#430): the choices, and `choice` once the person made one. Without a choice, or with abandon, nothing is planned and `changes` is empty.
  *
@@ -332,6 +334,7 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @typedef {import("./integration-inputs.js").ResolvedIntegrationInput} ResolvedIntegrationInput
  * @typedef {import("./ai/artifact-wiring.js").WiringChange} WiringChange
  * @typedef {import("./ignore-lines.js").IgnoreChange} IgnoreChange
+ * @typedef {import("./staging-leftovers.js").StagingLeftover} StagingLeftover
  *
  * @typedef {"local-edits" | "legacy-state" | "still-mentioned" | "unfollowable-link" | "unreadable"} CleanSkipReason Why clean kept a stale item, so a JSON reader can tell the reasons apart; `reason` says the same in words, with what to do.
  *
@@ -3422,6 +3425,7 @@ async function manifestDecisionResult(recipe, applyOptions, decision) {
     wiringChanges: [],
     wiringWarnings: [],
     ignoreChanges: [],
+    stagingLeftovers: [],
     recipe,
     manifestDecision: decision,
   };
@@ -3723,6 +3727,19 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
   ).catch(async (error) => {
     throw await errorAfterCleanups(error, [artifactPlan.dispose]);
   });
+  // #1034: an old `.calavera/.staging/<id>` folder is removed only when it matches the package the
+  // lock records; every other entry there is reported. Planned in the dry run too, so the dry run
+  // lists what apply removes. In a real run, prepareArtifactSources above has already committed
+  // the auto-install and written its entries to the lock, which the dry run has not, so the plan
+  // leaves out the ids the run installs: both decide against the lock as it was before the run.
+  // Planned before apply writes any project file or artifact output, and it never throws: a
+  // folder it cannot read is reported and kept.
+  const stagingPlan = await planStagingLeftovers({
+    dryRun: applyOptions.dryRun,
+    services: artifactServices,
+    installedIds: new Set(artifactPlan.installed.map(({ id }) => id)),
+  });
+  let stagingLeftovers = stagingPlan.items;
   // #838: the state is formatted after the last planning step and before apply writes any project
   // file or artifact output. One write comes earlier: the auto-install transaction, which formats
   // and commits its own records atomically. The state is formatted in the dry run as well, so the
@@ -3918,6 +3935,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     await writeArtifactWiring(wiringPlan.files);
     await mkdir(".calavera", { recursive: true });
     await writeFile(STATE_FILE, stateText);
+    // Independent of every other write: a folder apply cannot remove is reported, not an error.
+    stagingLeftovers = await removeStagingLeftovers(stagingPlan);
   }
 
   if (installPlan?.spawn && !applyOptions.dryRun) {
@@ -3981,6 +4000,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     wiringChanges: wiringPlan.changes,
     wiringWarnings,
     ignoreChanges,
+    stagingLeftovers,
     recipe,
     ...(manifestOutcome.decision ? { manifestDecision: manifestOutcome.decision } : {}),
   };
@@ -5471,6 +5491,10 @@ function formatApplySummary(result) {
       .map(formatIgnoreChange)
       .map((line) => `${style("bold", "Ignore")}: ${line}`),
     `${style("bold", "Planned changes")}: ${changedPaths.join(", ") || "none"}`,
+    ...result.stagingLeftovers.map(
+      ({ path, action, reason }) =>
+        `${style("bold", action === "remove" ? "Would remove" : "Would keep")}: ${path}: ${reason}`,
+    ),
   ].join("\n");
 }
 

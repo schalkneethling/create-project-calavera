@@ -167,7 +167,7 @@ function artifactFormatterLoader(services) {
 }
 
 /** @param {ArtifactServices} services @returns {ArtifactRegistry} */
-function artifactRegistry(services) {
+export function artifactRegistry(services) {
   return {
     resolve: services.resolve ?? resolveArtifactPackage,
     extract: services.extract ?? extractArtifactPackage,
@@ -443,7 +443,7 @@ async function installUnlockedArtifacts(
  */
 export async function lockedArtifactSources(recipe, dryRun = false, services = {}) {
   await recoverArtifactTransaction({ readOnly: dryRun });
-  const { resolve: resolvePackage, extract: extractPackage } = artifactRegistry(services);
+  const registry = artifactRegistry(services);
   /** @type {Map<string, string>} */
   const sources = new Map();
   /** @type {{ stage: string, finalRoot: string }[]} */
@@ -495,24 +495,12 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
 
       const temporaryRoot = await mkdtemp(join(tmpdir(), "calavera-locked-artifact-"));
       temporaryRoots.push(temporaryRoot);
-      const stage = join(temporaryRoot, "package");
-      // A dry run resolves through a copy of the cache, so it leaves the project's cache unchanged.
-      const cache = dryRun ? join(temporaryRoot, "cache") : resolve(CACHE_PATH);
-      if (dryRun && (await fileExists(CACHE_PATH))) {
-        await cp(resolve(CACHE_PATH), cache, { recursive: true });
-      }
-      await mkdir(stage, { recursive: true });
-      const resolution = await resolvePackage({
-        id: selection.id,
-        tag: entry.tag,
-        version: entry.version,
-        cache,
-        offline: true,
-      });
-      const extracted = await extractPackage(resolution, stage, packageJson.version);
-      if (extracted.payloadHash !== entry.payloadHash) {
-        throw new Error(`Locked payload hash mismatch for ${selection.id}.`);
-      }
+      const { stage, extracted } = await rebuildLockedPackage(
+        entry,
+        temporaryRoot,
+        dryRun,
+        registry,
+      );
       sources.set(selection.id, extracted.payloadPath);
       if (!dryRun) {
         restores.push({ stage, finalRoot: resolve(PACKAGE_PATH, selection.id, entry.version) });
@@ -522,6 +510,38 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
     throw await errorAfterCleanups(error, [dispose]);
   }
   return { sources, restore, dispose };
+}
+
+/**
+ * Rebuilds the package `entry` locks, offline from the project's artifact cache, into
+ * `temporaryRoot/package`, and checks its payload against the entry's `payloadHash`. A dry run
+ * resolves through a copy of the cache in `temporaryRoot`, so it leaves the project's cache
+ * unchanged. The caller owns `temporaryRoot` and removes it.
+ *
+ * @param {ArtifactLockEntry} entry
+ * @param {string} temporaryRoot An empty folder outside the project.
+ * @param {boolean} dryRun
+ * @param {ArtifactRegistry} registry
+ */
+export async function rebuildLockedPackage(entry, temporaryRoot, dryRun, registry) {
+  const stage = join(temporaryRoot, "package");
+  const cache = dryRun ? join(temporaryRoot, "cache") : resolve(CACHE_PATH);
+  if (dryRun && (await fileExists(CACHE_PATH))) {
+    await cp(resolve(CACHE_PATH), cache, { recursive: true });
+  }
+  await mkdir(stage, { recursive: true });
+  const resolution = await registry.resolve({
+    id: entry.id,
+    tag: entry.tag,
+    version: entry.version,
+    cache,
+    offline: true,
+  });
+  const extracted = await registry.extract(resolution, stage, packageJson.version);
+  if (extracted.payloadHash !== entry.payloadHash) {
+    throw new Error(`Locked payload hash mismatch for ${entry.id}.`);
+  }
+  return { stage, extracted };
 }
 
 /**

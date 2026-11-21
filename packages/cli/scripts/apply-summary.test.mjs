@@ -453,6 +453,7 @@ function emptyResult(overrides) {
     wiringChanges: [],
     wiringWarnings: [],
     ignoreChanges: [],
+    stagingLeftovers: [],
     recipe: { version: 1, integrations: [] },
     ...overrides,
   };
@@ -1216,4 +1217,32 @@ test("a legacy entry's wiring sits under it, not under an artifact the recipe no
     "  hook-block-dangerous-commands",
     "    .claude/settings.json already holds its hook groups",
   ]);
+});
+
+test("each entry of .calavera/.staging is one line under Files: a removal, or a warning that it is kept (#1034)", () => {
+  const stagingLeftovers = [
+    {
+      path: ".calavera/.staging/skill-project-goal",
+      action: /** @type {const} */ ("remove"),
+      package: "@schalkneethling/calavera-skill-project-goal@0.1.0",
+      reason: "R1.",
+    },
+    { path: ".calavera/.staging/notes.txt", action: /** @type {const} */ ("keep"), reason: "R2." },
+  ];
+
+  assert.deepEqual(levels(applySummaryLines(emptyResult({ stagingLeftovers }))).slice(-4), [
+    "info ",
+    "info Files:",
+    "info   Would remove .calavera/.staging/skill-project-goal: R1.",
+    "warn   Would keep .calavera/.staging/notes.txt: R2.",
+  ]);
+  assert.deepEqual(
+    levels(applySummaryLines(emptyResult({ dryRun: false, stagingLeftovers }))).slice(-4),
+    [
+      "info ",
+      "info Files:",
+      "info   Removed .calavera/.staging/skill-project-goal: R1.",
+      "warn   Kept .calavera/.staging/notes.txt: R2.",
+    ],
+  );
 });

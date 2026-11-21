@@ -182,6 +182,16 @@ function fileLines(result) {
     ignoreChangesByPath.delete(change.path);
   }
 
+  // #1034: each entry of .calavera/.staging/, which apply removes when it is an old copy of a
+  // locked package and keeps otherwise.
+  for (const { path, action, reason } of result.stagingLeftovers) {
+    lines.push(
+      action === "remove"
+        ? info(`${ITEM}${tense(dryRun, "Would remove", "Removed")} ${path}: ${reason}`)
+        : warn(`${ITEM}${tense(dryRun, "Would keep", "Kept")} ${path}: ${reason}`),
+    );
+  }
+
   // An ignore file apply plans lines for without a change of its own, such as an unchanged
   // .gitignore that Varlock owns, is still named once, with its lines under it.
   for (const [path, changes] of ignoreChangesByPath) {

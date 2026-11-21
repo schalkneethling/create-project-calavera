@@ -88,12 +88,14 @@ import {
   createOpenCodeMcpJsonConfig,
   projectMcpConfigPath,
 } from "./utils/mcp-config.js";
+// `STAGING_ROOT` is where `eject` moves a package folder before it deletes it, so a delete that
+// stops part way leaves the folder either whole in `.calavera/packages/` or here, never half
+// removed. An earlier run's leftovers here are transient, so the next run removes them (ADR-0017,
+// Decision 7). Apply removes only the old copies of locked packages that releases before #988 left
+// here (ADR-0017, Amendment 4).
+import { STAGING_ROOT } from "./staging-leftovers.js";
 
 const CALAVERA_ROOT = ".calavera";
-// Where `eject` moves a package folder before it deletes it, so a delete that stops part way
-// leaves the folder either whole in `.calavera/packages/` or here, never half removed. An earlier
-// run's leftovers here are transient, so the next run removes them (ADR-0017, Decision 7).
-const STAGING_ROOT = ".calavera/.staging";
 // The path the bootstrap installs the base Calavera skill to, and that `skill-calavera` installs to
 // when a recipe selects it.
 const BASE_SKILL_PATH = ".agents/skills/calavera";
