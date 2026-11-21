@@ -1390,7 +1390,7 @@ test("CLI rich composer dry-run apply keeps the review boundary non-destructive"
 
 test("integrationOptions description names only Stylelint Baseline fields the validator accepts", () => {
   const match = recipeToolInputDescriptions.integrationOptions.match(
-    /Stylelint Baseline accepts (\w+) and (\w+);/,
+    /Stylelint Baseline requires (\w+), [^;]*?and accepts (\w+),/,
   );
   assert.ok(match, "the description names the Stylelint Baseline fields");
   const namedFields = match.slice(1);

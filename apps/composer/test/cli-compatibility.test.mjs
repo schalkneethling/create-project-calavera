@@ -4,7 +4,12 @@ import test from "node:test";
 import Ajv from "ajv";
 import { integrationCatalog } from "../../../packages/cli/src/catalog.js";
 import { aiArtifactCatalog } from "../../../packages/cli/src/ai/catalog.js";
-import { profileCatalog } from "../../../packages/cli/src/recipe.js";
+import {
+  describeIntegrationResponse,
+  listIntegrationsResponse,
+  profileCatalog,
+} from "../../../packages/cli/src/recipe.js";
+import { webMcpToolSchemas } from "../../../packages/cli/src/tool-schemas.js";
 import {
   artifactResponseForCli,
   assertRecipeArtifactsSupported,
@@ -22,16 +27,40 @@ import {
   versionMeetsMinimum,
 } from "../cli-compatibility.js";
 import viteConfig from "../vite.config.js";
-import { releaseEnvironmentInputSchema } from "../repository-controls-input-schema.js";
+
+const webMcpSchemas = webMcpToolSchemas();
 
 test("WebMCP release-environment schema accepts every disabled representation", () => {
-  const validate = new Ajv({ strict: true }).compile(releaseEnvironmentInputSchema);
+  const validate = new Ajv({ strict: true }).compile(
+    webMcpSchemas.compose_recipe.inputSchema.properties.integrationOptions.properties[
+      "github-repository-controls"
+    ].properties.releaseEnvironment,
+  );
 
   assert.equal(validate(false), true);
   assert.equal(validate(null), true);
   assert.equal(validate({ reviewers: ["octocat"] }), true);
   assert.equal(validate({}), false);
   assert.equal(validate({ reviewers: ["octocat"], waitTimer: 43_201 }), false);
+});
+
+test("the Composer's integration responses match the WebMCP output schemas", () => {
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  for (const version of [SAFE_CLI_FALLBACK_VERSION, "6.2.1"]) {
+    const list = integrationResponseForCli(listIntegrationsResponse(), version);
+    assert.equal(ajv.validate(webMcpSchemas.list_integrations.outputSchema, list), true, version);
+
+    for (const integration of filterIntegrationsForCli(list.integrations, version)) {
+      assert.equal(
+        ajv.validate(
+          webMcpSchemas.describe_integration.outputSchema,
+          describeIntegrationResponse(integration.id),
+        ),
+        true,
+        integration.id,
+      );
+    }
+  }
 });
 
 test("version comparison keeps unreleased integrations behind their CLI release", () => {
