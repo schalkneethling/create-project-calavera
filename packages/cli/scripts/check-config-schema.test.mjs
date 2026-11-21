@@ -115,12 +115,14 @@ import {
   listProfilesResponse,
   normalizeAiArtifactInputs,
   normalizeIntegrationInputs,
+  normalizeIntegrationOptions,
   projectLocalCommandCatalog,
   projectLocalCommandSteps,
   profileDefaults,
   recipeWorkflow,
   mcpComposeRecipeDescription,
   recipeToolDescriptions,
+  recipeToolInputDescriptions,
   resolveRecipeIntegrations,
   standardMcpToolNames,
   validateRecipe,
@@ -1382,6 +1384,24 @@ test("CLI rich composer dry-run apply keeps the review boundary non-destructive"
   } finally {
     process.chdir(originalDirectory);
   }
+});
+
+test("integrationOptions description names only Stylelint Baseline fields the validator accepts", () => {
+  const match = recipeToolInputDescriptions.integrationOptions.match(
+    /Stylelint Baseline accepts (\w+) and (\w+);/,
+  );
+  assert.ok(match, "the description names the Stylelint Baseline fields");
+  const namedFields = match.slice(1);
+
+  // A named field without a valid value here stays undefined, and the validator rejects the
+  // unknown field name, so the call must succeed and return every named field.
+  const validValues = { available: "widely", severity: "error" };
+  const options = Object.fromEntries(namedFields.map((field) => [field, validValues[field]]));
+  const normalized = normalizeIntegrationOptions({ "stylelint-baseline": options }, [
+    "stylelint-baseline",
+  ]);
+  assert.deepEqual(normalized["stylelint-baseline"], options);
+  assert.deepEqual(namedFields.toSorted(), ["available", "severity"]);
 });
 
 test("standard MCP workflow exposes dry-run and apply tools", () => {
