@@ -667,6 +667,8 @@ test("registry, network, timeout, and TLS codes are each reported per artifact",
     "SELF_SIGNED_CERT_IN_CHAIN",
     "DEPTH_ZERO_SELF_SIGNED_CERT",
     "ERR_TLS_CERT_ALTNAME_INVALID",
+    // Artifact-core's code for a package document it cannot read, such as a null body.
+    "EBADPACKUMENT",
   ];
   await inProject(
     { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },

@@ -190,13 +190,20 @@ const TOKEN = "npm_0123456789abcdefSECRETTOKEN";
  * @param {{ version: string, tarball: Buffer, integrity: string }} packed
  * @param {{ status?: number }} [options]
  */
-async function startRegistry(packed, { status = 200, repository } = {}) {
+/**
+ * @param {{ tarball: Buffer, version: string, integrity: string }} packed
+ * @param {{ status?: number, repository?: unknown, packument?: string }} [options] `packument` replaces the package document with this raw text.
+ */
+async function startRegistry(packed, { status = 200, repository, packument } = {}) {
   const requests = [];
   const server = createServer((req, res) => {
     requests.push({ url: req.url, authorization: req.headers.authorization });
     if (status !== 200) {
       res.writeHead(status, { "content-type": "application/json" });
       res.end(JSON.stringify({ error: "denied" }));
+    } else if (packument !== undefined && !req.url?.endsWith(".tgz")) {
+      res.writeHead(200, { "content-type": "application/json" });
+      res.end(packument);
     } else if (req.url?.endsWith(".tgz")) {
       res.writeHead(200, { "content-type": "application/octet-stream" });
       res.end(packed.tarball);
@@ -451,6 +458,66 @@ test("a dist-tag the package does not have fails with ETARGET and the tags it do
     );
     assert.equal(failure.code, "ETARGET");
     assert.deepEqual(failure.distTags, { latest: packed.version });
+  } finally {
+    await registry.close();
+  }
+});
+
+test("a fetch failure behind npm configuration notes keeps its kind", async () => {
+  // #993: the plain-text credentials warning for an http registry with a token is an npm note, so
+  // withNpmDiagnostics wraps the failure; minipass-fetch's `type` must survive the wrapping.
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-invalid-json-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry(packed, { packument: "{ not json" });
+  try {
+    const fixture = await npmConfigFixture(
+      "",
+      `@schalkneethling:registry=http://${registry.host}/\n//${registry.host}/:_authToken=token-value\n`,
+    );
+    const failure = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      cache: fixture.cache,
+      cwd: fixture.cwd,
+      env: fixture.env,
+    }).then(
+      () => assert.fail("Expected the malformed package document to reject."),
+      (error) => error,
+    );
+    assert.ok(failure.npmDiagnostics.length > 0, "the fixture must produce an npm note");
+    assert.ok(failure.cause, "the failure must be wrapped by withNpmDiagnostics");
+    assert.equal(failure.code, "FETCH_ERROR");
+    assert.equal(failure.type, "invalid-json");
+  } finally {
+    await registry.close();
+  }
+});
+
+test("a null package document fails with a registry code and keeps the original as cause", async () => {
+  // npm-pick-manifest reads `dist-tags` on the parsed body and throws a TypeError with no code.
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-null-packument-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry(packed, { packument: "null" });
+  try {
+    const fixture = await npmConfigFixture(
+      "",
+      `@schalkneethling:registry=http://${registry.host}/\n`,
+    );
+    const failure = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      cache: fixture.cache,
+      cwd: fixture.cwd,
+      env: fixture.env,
+    }).then(
+      () => assert.fail("Expected the null package document to reject."),
+      (error) => error,
+    );
+    assert.equal(failure.code, "EBADPACKUMENT");
+    assert.equal(
+      failure.message,
+      `The registry returned a package document for ${artifact.packageName} that Calavera could not read.`,
+    );
+    assert.ok(failure.cause instanceof TypeError);
+    assert.equal(failure.cause.code, undefined);
   } finally {
     await registry.close();
   }

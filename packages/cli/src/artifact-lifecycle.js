@@ -766,13 +766,14 @@ async function checkForUpdate(checkUpdates, lookup, context) {
 }
 
 // The codes of a failed registry lookup: an HTTP answer (npm-registry-fetch sets `E<status>`, or
-// EOTP and EAUTHIP for some 401s), a missing version (ETARGET), a fetch failure or abort
+// EOTP and EAUTHIP for some 401s), a missing version (ETARGET), a package document artifact-core
+// could not read (EBADPACKUMENT), a fetch failure or abort
 // (minipass-fetch), a proxy or timeout failure (@npmcli/agent), and DNS, socket, and TLS failures
 // from Node. A local file system code, such as EACCES or ENOSPC from the cache, is not one.
 const REGISTRY_LOOKUP_CODE = new RegExp(
   [
     "^E\\d{3}$",
-    "^(EOTP|EAUTHIP|ETARGET|FETCH_ERROR|FETCH_ABORTED|EINVALIDPROXY)$",
+    "^(EOTP|EAUTHIP|ETARGET|EBADPACKUMENT|FETCH_ERROR|FETCH_ABORTED|EINVALIDPROXY)$",
     "^E(CONNECTION|IDLE|RESPONSE|TRANSFER)TIMEOUT$",
     "^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)$",
     "^(CERT_|UNABLE_TO_|SELF_SIGNED_|DEPTH_ZERO_SELF_SIGNED_|ERR_TLS_|ERR_SSL_)",
