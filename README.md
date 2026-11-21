@@ -845,7 +845,8 @@ report, project inspection findings,
 omitted script explanations,
 file ownership/action notes, the lines each integration adds to or removes from
 `.gitignore` and `.htmlvalidateignore` (`ignoreChanges`), each entry of
-`.calavera/.staging/` with whether apply removes it (`stagingLeftovers`), each artifact and
+`.calavera/.staging/` with whether apply removes it (`stagingLeftovers`), each temporary
+folder Calavera could not remove once it no longer needed it (`temporaryFolderLeftovers`), each artifact and
 integration input value with where it came from (`artifactInputs` and
 `integrationInputs`, such as the guard's `protectedBranch` and
 `github-repository-controls.defaultBranch`), warnings when those values disagree

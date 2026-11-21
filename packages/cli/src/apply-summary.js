@@ -18,6 +18,7 @@ import { GITIGNORE_PATH } from "./ignore-lines.js";
 import { resolveRecipeIntegrations } from "./recipe.js";
 import { integrationDependencies } from "./stryker-options.js";
 import { DETAIL, ITEM, info, pushGroup, tense, warn } from "./summary-lines.js";
+import { temporaryFolderLeftoverLine } from "./utils/cleanup.js";
 import { quoteScriptValue } from "./utils/text.js";
 
 /**
@@ -102,6 +103,10 @@ export function applySummaryBody(result, { noInstall = false } = {}) {
   pushGroup(lines, "Notes", [
     ...result.pointers.map((pointer) => info(`${ITEM}${summaryPointer(pointer)}`)),
     ...result.inputWarnings.map((warning) => warn(`${ITEM}${warning}`)),
+    // #1033: a temporary folder the command could not remove; it finished all the same.
+    ...result.temporaryFolderLeftovers.map((leftover) =>
+      warn(`${ITEM}${temporaryFolderLeftoverLine(leftover)}`),
+    ),
   ]);
 
   return lines;

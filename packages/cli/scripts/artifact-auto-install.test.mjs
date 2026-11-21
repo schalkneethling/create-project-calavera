@@ -27,6 +27,7 @@ import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { applyRecipeObject } from "../src/index.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
+import { TemporaryFolderError } from "../src/utils/cleanup.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory as snapshot } from "./project-snapshot.mjs";
 import { vitePlusFixtureRelease, writeVitePlusFormatter } from "./vite-plus-fixtures.mjs";
@@ -734,7 +735,7 @@ test("apply that installs an unlocked artifact also restores a missing locked pa
   });
 });
 
-test("when removing the install's staging folder fails, apply still removes the rebuild folder and reports the failure", async (t) => {
+test("when removing the install's staging folder fails, apply finishes, still removes the rebuild folder, and reports the failure", async (t) => {
   await inProject(async () => {
     const releases = new Map([["skill-project-goal", "0.1.0"]]);
     const registry = stubRegistry(releases);
@@ -743,7 +744,7 @@ test("when removing the install's staging folder fails, apply still removes the 
     releases.set("skill-code-review", "0.3.0");
     const folders = recordRebuildFolders(t);
     const remove = fsPromises.rm;
-    const busy = new Error("EBUSY: resource busy");
+    const busy = Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" });
     t.mock.method(
       fsPromises,
       "rm",
@@ -756,19 +757,17 @@ test("when removing the install's staging folder fails, apply still removes the 
     );
     syncBuiltinESMExports();
 
-    await assert.rejects(
-      applyRecipeObject(
-        recipeWith(["skill-project-goal", "skill-code-review"]),
-        applyOptions,
-        registry,
-      ),
-      (/** @type {Error} */ error) => {
-        assert.ok(error instanceof AggregateError);
-        assert.deepEqual(error.errors, [busy]);
-        assert.match(error.message, /EBUSY: resource busy/);
-        return true;
-      },
+    // #1033 (owner decision of 2026-11-18): the failure comes after the AI outputs are written, so
+    // it is a warning that names the folder, and apply finishes.
+    const result = await applyRecipeObject(
+      recipeWith(["skill-project-goal", "skill-code-review"]),
+      applyOptions,
+      registry,
     );
+    assert.equal(result.temporaryFolderLeftovers.length, 1);
+    const [leftover] = result.temporaryFolderLeftovers;
+    assert.match(leftover.path, /\.calavera\/\.transactions\/\d+-\d+$/);
+    assert.match(leftover.reason, /could not remove this temporary folder \(EBUSY\)/);
     assert.equal(folders.length, 1, "apply rebuilds the missing locked package once");
     await assert.rejects(
       stat(folders[0]),
@@ -809,7 +808,12 @@ test("when a locked package cannot be rebuilt and removing its rebuild folder fa
       ),
       (/** @type {Error} */ error) => {
         assert.ok(error instanceof AggregateError);
-        assert.deepEqual(error.errors, [offlineMiss, busy]);
+        assert.equal(error.errors.length, 2);
+        assert.equal(error.errors[0], offlineMiss);
+        // The removal failure names the rebuild folder and keeps the underlying error as its cause.
+        assert.ok(error.errors[1] instanceof TemporaryFolderError);
+        assert.match(error.errors[1].path, /calavera-locked-artifact-/);
+        assert.equal(error.errors[1].cause, busy);
         assert.equal(error.cause, offlineMiss);
         return true;
       },

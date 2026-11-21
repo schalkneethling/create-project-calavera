@@ -5,7 +5,8 @@
 // manager, each integration with its packages, each artifact, and the notes. The `--json` result
 // keeps its shape.
 import { applySummaryBody } from "./apply-summary.js";
-import { ITEM, info, pushGroup } from "./summary-lines.js";
+import { ITEM, info, pushGroup, warn } from "./summary-lines.js";
+import { temporaryFolderLeftoverLine } from "./utils/cleanup.js";
 import { pluralizeCount, style } from "./utils/text.js";
 
 /**
@@ -140,6 +141,10 @@ export function initSummaryLines(result) {
     lines.push(
       { level: "success", text: "Calavera apply complete." },
       ...applyResult.pointers.filter((pointer) => !printed.has(pointer)).map(info),
+      // #1033: apply finished, but a temporary folder it could not remove is still named.
+      ...applyResult.temporaryFolderLeftovers.map((leftover) =>
+        warn(temporaryFolderLeftoverLine(leftover)),
+      ),
     );
   }
 

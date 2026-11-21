@@ -454,6 +454,7 @@ function emptyResult(overrides) {
     wiringWarnings: [],
     ignoreChanges: [],
     stagingLeftovers: [],
+    temporaryFolderLeftovers: [],
     recipe: { version: 1, integrations: [] },
     ...overrides,
   };

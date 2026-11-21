@@ -183,9 +183,15 @@ function initResult(overrides) {
   });
 }
 
-/** @param {string[]} pointers */
-function applyResult(pointers) {
-  return /** @type {import("../src/index.js").ApplyResult} */ ({ pointers });
+/**
+ * @param {string[]} pointers
+ * @param {import("../src/utils/cleanup.js").TemporaryFolderLeftover[]} [temporaryFolderLeftovers]
+ */
+function applyResult(pointers, temporaryFolderLeftovers = []) {
+  return /** @type {import("../src/index.js").ApplyResult} */ ({
+    pointers,
+    temporaryFolderLeftovers,
+  });
 }
 
 /** @param {import("../src/summary-lines.js").SummaryLine[]} lines */
@@ -271,6 +277,25 @@ test("init --apply closes without repeating what the apply dry run named (#1022)
       "info: only after apply",
     ],
   );
+  // #1033: a temporary folder the apply could not remove is still named, as a warning.
+  assert.deepEqual(
+    levels(
+      initSummaryLines(
+        initResult({
+          applyDryRun: applyResult([]),
+          applyResult: applyResult(
+            [],
+            [{ path: ".calavera/.staging/x", reason: "EBUSY. Remove it by hand." }],
+          ),
+        }),
+      ),
+    ),
+    [
+      "success: Wrote calavera.config.json.",
+      "success: Calavera apply complete.",
+      "warn: Not removed .calavera/.staging/x: EBUSY. Remove it by hand.",
+    ],
+  );
 });
 
 test("init --apply names a default input by its place in the recipe, under a heading, because the dry run names its artifact (#1022)", () => {
@@ -338,6 +363,7 @@ test("init --apply says in the dry run headline whether it has written the recip
     wiringChanges: [],
     scriptChanges: [],
     stagingLeftovers: [],
+    temporaryFolderLeftovers: [],
     autoInstalledArtifacts: [],
     artifactInputs: [],
     artifactRegistries: [],
