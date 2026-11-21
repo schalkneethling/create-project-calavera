@@ -19,6 +19,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { applyRecipeObject, initRecipe, parseArgs } from "../src/index.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
+import { createEmptyState } from "../src/state.js";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 import {
   copyReleaseFixture,
@@ -607,6 +608,79 @@ test("apply-at-ancestor stops before writing anything when the ancestor already 
     );
   }
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+test("apply-at-ancestor stops on state without a recipe and names the state file, not a recipe", async () => {
+  // #1038: the bootstrap that `--init` runs writes the state file without a recipe, so the stop
+  // must not claim the ancestor has a recipe of its own.
+  await using fixture = await directoryUnderUnmanagedProject();
+  await mkdir(join(fixture.root, ".calavera"));
+  await writeFile(join(fixture.root, ".calavera", "state.json"), json(createEmptyState()));
+  const before = await snapshotDirectory(fixture.root);
+
+  for (const dryRun of [true, false]) {
+    const stopped = await inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        dryRun,
+        assumeYes: true,
+        noInstall: true,
+        manifestChoice: "apply-at-ancestor",
+      }),
+    ).then(
+      () => assert.fail("apply-at-ancestor did not stop"),
+      (/** @type {Error} */ error) => error.message,
+    );
+    const statePath = join(fixture.root, ".calavera", "state.json");
+    assert.ok(
+      stopped.includes(
+        `but ${statePath} already exists there, so Calavera has already recorded state for that directory.`,
+      ),
+      stopped,
+    );
+    assert.doesNotMatch(stopped, /recipe of its own/);
+    assert.match(stopped, /with a recipe for that directory instead, or choose create-here\./);
+    assert.match(stopped, /Calavera stopped before writing anything\.$/);
+  }
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+test("apply-at-ancestor stops when the custom recipe path already exists in the ancestor", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await writeFile(join(fixture.root, "custom.json"), json(recipe));
+  const before = await snapshotDirectory(fixture.root);
+
+  await assert.rejects(
+    inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        dryRun: true,
+        assumeYes: true,
+        noInstall: true,
+        config: "custom.json",
+        manifestChoice: "apply-at-ancestor",
+      }),
+    ),
+    /custom\.json already exists there, so the directory has a Calavera recipe of its own\./,
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+test("apply-at-ancestor names the recipe when the ancestor has both a recipe and state", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await writeFile(join(fixture.root, "calavera.config.json"), json(recipe));
+  await mkdir(join(fixture.root, ".calavera"));
+  await writeFile(join(fixture.root, ".calavera", "state.json"), json(createEmptyState()));
+
+  await assert.rejects(
+    inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        dryRun: true,
+        assumeYes: true,
+        noInstall: true,
+        manifestChoice: "apply-at-ancestor",
+      }),
+    ),
+    /calavera\.config\.json already exists there, so the directory has a Calavera recipe of its own\./,
+  );
 });
 
 test("apply_recipe names the recipe file it wrote: none for abandon, the ancestor's for apply-at-ancestor", async () => {
