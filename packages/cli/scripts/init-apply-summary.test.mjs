@@ -4,6 +4,7 @@
 // summary above the dry run does not name a package or a file the dry run names again.
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
+import { existsSync, readFileSync } from "node:fs";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -395,5 +396,50 @@ test("with --no-install, the apply dry run and init --apply say the packages wil
       apply,
     );
     assert.doesNotMatch(apply, /Install command:/);
+  });
+});
+
+test("a real run with --no-install gives the command to install the packages later (#1022)", async () => {
+  await inManagedProject(async (root) => {
+    const later = "  Install them later with: vp add -D stylelint stylelint-config-standard\n";
+    const count = (/** @type {string} */ output) => output.split(later).length - 1;
+
+    // init --apply prints the dry run, which names the command; it prints it once.
+    const init = runCli(root, [
+      "init",
+      "--apply",
+      "--yes",
+      "--no-install",
+      "--profile",
+      "minimal",
+      "--package-manager",
+      "pnpm",
+      "--integrations",
+      "editorconfig,stylelint,stylelint-standard",
+    ]);
+    assert.equal(count(init), 1, init);
+
+    for (const command of ["apply", "update"]) {
+      const output = runCli(root, [command, "--yes", "--no-install"]);
+      assert.ok(
+        output.includes(`  Not installed, because apply ran with --no-install.\n${later}`),
+        output,
+      );
+
+      // The --json result keeps installCommand null, and has no field for the later command.
+      const result = JSON.parse(runCli(root, [command, "--yes", "--no-install", "--json"]));
+      assert.equal(result.installCommand, null);
+      assert.deepEqual(result.installNotes, []);
+      assert.equal("laterInstallCommand" in result, false);
+    }
+
+    // Nothing was installed: the vp stub records every install it is asked to run.
+    const log = join(root, "vp-invocations.log");
+    const installs = existsSync(log)
+      ? readFileSync(log, "utf8")
+          .split("\n")
+          .filter((line) => line.includes('"add"'))
+      : [];
+    assert.deepEqual(installs, []);
   });
 });

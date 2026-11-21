@@ -160,6 +160,9 @@ function integrationLines(result, noInstall) {
   if (result.dependencies.length > 0) {
     if (result.installCommand === null) {
       lines.push(info(`${ITEM}Not installed, because apply ran with --no-install.`));
+      if (result.laterInstallCommand !== undefined) {
+        lines.push(info(`${ITEM}Install them later with: ${result.laterInstallCommand}`));
+      }
     } else if (noInstall) {
       // Only a dry run plans the command under --no-install. The install notes say how apply
       // runs it, which it will not do, so they are left out, as apply itself leaves them out.

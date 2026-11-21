@@ -314,6 +314,7 @@ import { pluralizeCount, quoteScriptValue, titleCase } from "./utils/text.js";
  * @property {string[]} dependencies
  * @property {string | null} installCommand The command that installs `dependencies`, `vp add -D` in a Vite+-managed project (ADR-0012); null when the recipe has none, or when apply skips the install.
  * @property {string[]} installNotes How apply runs the install command, and what stops it, for the approval boundary.
+ * @property {string} [laterInstallCommand] The command that installs `dependencies` when a real apply skips the install under --no-install, which the human summary gives to run later (#1022). It is not enumerable, so the `--json` and MCP results leave it out.
  * @property {string[]} integrations
  * @property {ProjectInspection} projectInspection
  * @property {VitePlusReport} vitePlus
@@ -3568,8 +3569,9 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     detectedPackageJSON,
     packageManager,
   );
+  // Planned under --no-install too, so the summary can give the command to run later (#1022).
   const installPlan =
-    dependencyList.length > 0 && !(applyOptions.noInstall && !applyOptions.dryRun)
+    dependencyList.length > 0
       ? await planDevDependencyInstall(
           packageManager,
           vitePlusDetection,
@@ -3579,8 +3581,12 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
         )
       : undefined;
 
-  if (installPlan?.problem && !applyOptions.dryRun) {
-    throw installPlan.problem;
+  // A real apply skips the install under --no-install, so it neither runs nor reports the plan.
+  const skipsInstall = applyOptions.noInstall && !applyOptions.dryRun;
+  const runPlan = skipsInstall ? undefined : installPlan;
+
+  if (runPlan?.problem && !applyOptions.dryRun) {
+    throw runPlan.problem;
   }
 
   // #669 and ADR-0015, Decision 5: the text of every file Calavera generates comes from the
@@ -3940,8 +3946,8 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     stagingLeftovers = await removeStagingLeftovers(stagingPlan);
   }
 
-  if (installPlan?.spawn && !applyOptions.dryRun) {
-    const [command, commandArgs] = installPlan.spawn;
+  if (runPlan?.spawn && !applyOptions.dryRun) {
+    const [command, commandArgs] = runPlan.spawn;
     const spin = applyOptions.json ? null : spinner();
     spin?.start("Installing development dependencies...");
 
@@ -3960,7 +3966,7 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
         [
           "Calavera applied the recipe's files, package.json scripts, configuration, and state, but could not install the recipe's development dependencies, so the tools those scripts run are not installed yet.",
           `Already written: ${written.join(", ")}.`,
-          `Install command: ${formatCommand(installPlan.spawn)}`,
+          `Install command: ${formatCommand(runPlan.spawn)}`,
           describeCommandFailure(error),
           `To finish the install, run the install command in ${process.cwd()}.`,
         ].join("\n"),
@@ -3971,14 +3977,15 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     spin?.stop("Dependencies installed");
   }
 
-  return {
+  /** @type {ApplyResult} */
+  const result = {
     command: "apply",
     dryRun: applyOptions.dryRun,
     packageManager,
     dependencies: dependencyList,
-    installCommand: installPlan ? formatCommand(installPlan.command) : null,
-    installNotes: installPlan
-      ? [...installPlan.notes, ...declaredDevDependencyNotes(dependencyList, detectedPackageJSON)]
+    installCommand: runPlan ? formatCommand(runPlan.command) : null,
+    installNotes: runPlan
+      ? [...runPlan.notes, ...declaredDevDependencyNotes(dependencyList, detectedPackageJSON)]
       : [],
     integrations: integrations.map((integration) => integration.id),
     projectInspection,
@@ -4005,6 +4012,15 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     recipe,
     ...(manifestOutcome.decision ? { manifestDecision: manifestOutcome.decision } : {}),
   };
+  if (skipsInstall && installPlan) {
+    // Not enumerable, so the --json and MCP results keep their shape: installCommand stays null
+    // when apply skips the install, and only the human summary gives the command (#1022).
+    Object.defineProperty(result, "laterInstallCommand", {
+      value: formatCommand(installPlan.command),
+      enumerable: false,
+    });
+  }
+  return result;
 }
 
 /**

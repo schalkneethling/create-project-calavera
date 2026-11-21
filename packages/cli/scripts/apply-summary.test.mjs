@@ -718,6 +718,18 @@ test("integrations name their packages once and say how the install ran", () => 
     ...named,
     "  Not installed, because apply ran with --no-install.",
   ]);
+  // #1022: a real apply with --no-install gives the command to run later, as its dry run does.
+  // The command is not enumerable, so the --json and MCP results leave it out.
+  const applied = { ...base, dryRun: false };
+  Object.defineProperty(applied, "laterInstallCommand", {
+    value: "npm install --save-dev knip",
+    enumerable: false,
+  });
+  assert.deepEqual(integrations(applied), [
+    ...named,
+    "  Not installed, because apply ran with --no-install.",
+    "  Install them later with: npm install --save-dev knip",
+  ]);
   assert.deepEqual(
     integrations({
       ...base,
