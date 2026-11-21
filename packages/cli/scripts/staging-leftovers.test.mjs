@@ -21,6 +21,7 @@ import fsPromises, {
 import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import test from "node:test";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
@@ -211,7 +212,7 @@ test("apply keeps and reports every entry of .calavera/.staging that is not a co
     assert.match(leftover(applied, `${STAGING_ROOT}/notes.txt`).reason, /^It is a file, /);
     assert.match(
       leftover(applied, `${STAGING_ROOT}/skill-not-locked`).reason,
-      /^No package the lock records is named skill-not-locked, /,
+      /^No package the lock recorded before this run is named skill-not-locked, /,
     );
     assert.deepEqual(await snapshot(STAGING_ROOT), before, "apply changed .calavera/.staging");
   });
@@ -545,3 +546,42 @@ test(
     });
   },
 );
+
+test("a staging folder that matches an artifact apply installs in the same run is kept by both the dry run and apply, because neither lock recorded it before the run", async () => {
+  await using project = await mkdtempDisposable(join(tmpdir(), "calavera-staging-auto-install-"));
+  const originalDirectory = process.cwd();
+  process.chdir(project.path);
+  try {
+    await writeFile("package.json", `${JSON.stringify({ name: "fixture", scripts: {} })}\n`);
+    // Exactly what the registry stub extracts for the artifact, so the folder would match the
+    // lock entry the auto-install writes.
+    const artifact = artifactForId(ID);
+    assert.ok(artifact);
+    await mkdir(STAGING_ROOT, { recursive: true });
+    await cp(
+      fileURLToPath(new URL(`../../artifacts/${ID}/${artifact.payload}`, import.meta.url)),
+      `${LEFTOVER}/${artifact.payload}`,
+      { recursive: true },
+    );
+    const registry = stubRegistry(new Map([[ID, VERSION]]));
+
+    const dryRun = await applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry);
+    const applied = await applyRecipeObject(
+      dryRun.recipe,
+      { ...applyOptions, approvedArtifacts: dryRun.autoInstalledArtifacts },
+      registry,
+    );
+
+    assert.deepEqual(
+      dryRun.autoInstalledArtifacts.map(({ id }) => id),
+      [ID],
+      "the run does not auto-install the artifact",
+    );
+    assert.equal(leftover(dryRun, LEFTOVER).action, "keep");
+    assert.equal(leftover(applied, LEFTOVER).action, "keep");
+    assert.equal(leftover(applied, LEFTOVER).reason, leftover(dryRun, LEFTOVER).reason);
+    assert.equal(await exists(LEFTOVER), true, "apply removed a folder the dry run kept");
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});

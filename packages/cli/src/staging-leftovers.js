@@ -38,10 +38,13 @@ const REMEDY = "Remove it yourself if you no longer need it.";
  * a copy of the cache. It never throws: an entry it cannot read is kept and reported with the
  * error's code, so a cleanup step never stops apply.
  *
- * @param {{ dryRun: boolean, services?: import("./artifact-lifecycle.js").ArtifactServices }} options
+ * @param {{ dryRun: boolean, services?: import("./artifact-lifecycle.js").ArtifactServices, installedIds?: Set<string> }} options
+ *   `installedIds` are the artifacts the same apply run installs and locks before this plan. Their
+ *   lock entries are left out, so a dry run, whose lock does not hold them yet, and the real run
+ *   decide the same: a staging folder named after one is kept.
  * @returns {Promise<StagingLeftoverPlan>}
  */
-export async function planStagingLeftovers({ dryRun, services = {} }) {
+export async function planStagingLeftovers({ dryRun, services = {}, installedIds = new Set() }) {
   /** @type {StagingLeftoverPlan} */
   const plan = { items: [], expected: new Map() };
   let names;
@@ -66,7 +69,11 @@ export async function planStagingLeftovers({ dryRun, services = {} }) {
       );
       return plan;
     }
-    lockedById = new Map((await readLock()).artifacts.map((entry) => [entry.id, entry]));
+    lockedById = new Map(
+      (await readLock()).artifacts
+        .filter(({ id }) => !installedIds.has(id))
+        .map((entry) => [entry.id, entry]),
+    );
     // Sorted, so the dry run and apply list the entries in the same order on every file system.
     names = (await readdir(STAGING_ROOT)).sort();
   } catch (error) {
@@ -106,7 +113,7 @@ async function planEntry(plan, path, entry, dryRun, registry) {
     plan.items.push(
       keep(
         path,
-        `No package the lock records is named ${path.slice(STAGING_ROOT.length + 1)}, so nothing shows Calavera wrote it.`,
+        `No package the lock recorded before this run is named ${path.slice(STAGING_ROOT.length + 1)}, so nothing shows Calavera wrote it.`,
       ),
     );
     return;

@@ -3724,12 +3724,16 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     throw await errorAfterCleanups(error, [artifactPlan.dispose]);
   });
   // #1034: an old `.calavera/.staging/<id>` folder is removed only when it matches the package the
-  // lock records; every other entry there is reported. Planned before apply writes anything, and in
-  // the dry run too, so the dry run lists what apply removes. The plan never throws: a folder it
-  // cannot read is reported and kept.
+  // lock records; every other entry there is reported. Planned in the dry run too, so the dry run
+  // lists what apply removes. In a real run, prepareArtifactSources above has already committed
+  // the auto-install and written its entries to the lock, which the dry run has not, so the plan
+  // leaves out the ids the run installs: both decide against the lock as it was before the run.
+  // Planned before apply writes any project file or artifact output, and it never throws: a
+  // folder it cannot read is reported and kept.
   const stagingPlan = await planStagingLeftovers({
     dryRun: applyOptions.dryRun,
     services: artifactServices,
+    installedIds: new Set(artifactPlan.installed.map(({ id }) => id)),
   });
   let stagingLeftovers = stagingPlan.items;
   // #838: the state is formatted after the last planning step and before apply writes any project
