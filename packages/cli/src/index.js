@@ -231,7 +231,6 @@ import { pluralizeCount, quoteScriptValue, style, titleCase } from "./utils/text
  * @property {PackageManager} [packageManager]
  * @property {"append" | "fallback"} [agentsMd]
  * @property {McpHarness} [mcpHarness]
- * @property {AskForAgentBootstrap} [askForAgentBootstrap] Replaces the terminal prompts of `agent-init`, so tests can answer or cancel them (#1039). It is used only where `agent-init` could prompt.
  * @property {string} [profile]
  * @property {string[]} integrations
  * @property {{ id: string, target?: string }[]} aiArtifacts
@@ -4198,42 +4197,40 @@ function agentGuidanceNeedsMode(contents) {
  * (#1039). The person is asked only when AGENTS.md exists and holds no Calavera guidance.
  *
  * @param {CliOptions} options
+ * @param {AskForAgentBootstrap} ask
  * @returns {Promise<"append" | "fallback">}
  */
-async function resolveAgentBootstrapGuidanceMode(options) {
+async function resolveAgentBootstrapGuidanceMode(options, ask) {
   if (options.agentsMd) {
     return options.agentsMd;
   }
 
   if (
-    options.json ||
-    options.assumeYes ||
-    !process.stdin.isTTY ||
+    !canPrompt(options) ||
     !(await fileExists(AGENT_BOOTSTRAP_GUIDANCE_FILE)) ||
     !agentGuidanceNeedsMode(await readFile(AGENT_BOOTSTRAP_GUIDANCE_FILE, "utf8"))
   ) {
     return "fallback";
   }
 
-  return (options.askForAgentBootstrap ?? askForAgentBootstrap).guidanceMode();
+  return ask.guidanceMode();
 }
 
 /**
  * @param {CliOptions} options
+ * @param {AskForAgentBootstrap} ask
  * @returns {Promise<McpHarness>}
  */
-async function resolveAgentBootstrapMcpHarness(options) {
+async function resolveAgentBootstrapMcpHarness(options, ask) {
   if (options.mcpHarness) {
     return options.mcpHarness;
   }
 
-  if (options.json || options.assumeYes || !process.stdin.isTTY) {
+  if (!canPrompt(options)) {
     return "skip";
   }
 
-  return assertSupportedMcpHarness(
-    await (options.askForAgentBootstrap ?? askForAgentBootstrap).mcpHarness(),
-  );
+  return ask.mcpHarness();
 }
 
 /**
@@ -4604,9 +4601,11 @@ async function writeAgentBootstrapGuidance(options, mode, changes, guidanceText)
 
 /**
  * @param {Partial<CliOptions>} [options]
+ * @param {{ ask?: AskForAgentBootstrap }} [runtime] `ask` replaces the terminal prompts, so tests
+ *   can answer or cancel them (#1039). It is used only where `agent-init` could prompt.
  * @returns {Promise<AgentInitResult>}
  */
-export async function agentBootstrap(options = {}) {
+export async function agentBootstrap(options = {}, { ask = askForAgentBootstrap } = {}) {
   /** @type {CliOptions} */
   const bootstrapOptions = {
     command: "agent-init",
@@ -4670,8 +4669,8 @@ export async function agentBootstrap(options = {}) {
   );
   // #1039: both prompts come before the first write, because a cancel at either one ends the run
   // through exitIfCancel's process.exit(0), and a file written before it would stay unrecorded.
-  const guidanceMode = await resolveAgentBootstrapGuidanceMode(bootstrapOptions);
-  const mcpHarness = await resolveAgentBootstrapMcpHarness(bootstrapOptions);
+  const guidanceMode = await resolveAgentBootstrapGuidanceMode(bootstrapOptions, ask);
+  const mcpHarness = await resolveAgentBootstrapMcpHarness(bootstrapOptions, ask);
 
   if (!bootstrapOptions.dryRun) {
     await buildAiApplyResult(

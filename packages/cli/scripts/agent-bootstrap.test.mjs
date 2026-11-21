@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 
 import { listingViolations } from "../../../scripts/rehearsal-checks.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
+import { AGENT_BOOTSTRAP_SECTION_START } from "../src/agent-bootstrap-files.js";
 import { agentBootstrap, parseArgs } from "../src/index.js";
 import {
   NEXT_PROMPT_HEADING,
@@ -644,13 +645,14 @@ test("--init lists .calavera/state.json once when it updates it, and not when it
 const CANCELLED = new Error("the person cancelled at the prompt");
 
 /**
- * Runs the bootstrap in a terminal, answering each prompt from `answers`; a prompt whose answer is
- * CANCELLED ends the run there. It returns the prompts asked, in order, and the error that ended
- * the run, if any.
+ * Runs the bootstrap, in a terminal unless `terminal` is false, answering each prompt from
+ * `answers`; a prompt whose answer is CANCELLED ends the run there. It returns the prompts asked,
+ * in order, and the error that ended the run, if any.
  *
  * @param {{ guidanceMode?: "append" | "fallback" | Error, mcpHarness?: string | Error }} answers
+ * @param {{ options?: Record<string, unknown>, terminal?: boolean }} [setup]
  */
-async function bootstrapInTerminal(answers) {
+async function bootstrapInTerminal(answers, { options = {}, terminal = true } = {}) {
   /** @type {string[]} */
   const asked = [];
   const answer = (prompt) => async () => {
@@ -659,13 +661,10 @@ async function bootstrapInTerminal(answers) {
     return answers[prompt];
   };
   const original = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
-  Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+  Object.defineProperty(process.stdin, "isTTY", { value: terminal, configurable: true });
   try {
-    const result = await agentBootstrap({
-      askForAgentBootstrap: {
-        guidanceMode: answer("guidanceMode"),
-        mcpHarness: answer("mcpHarness"),
-      },
+    const result = await agentBootstrap(options, {
+      ask: { guidanceMode: answer("guidanceMode"), mcpHarness: answer("mcpHarness") },
     });
     return { asked, result };
   } catch (error) {
@@ -718,19 +717,49 @@ test("interactive agent-init uses the answers it asks for before writing (#1039)
 
     assert.deepEqual(asked, ["guidanceMode", "mcpHarness"]);
     assert.equal(result.mcp.action, "write");
-    assert.match(await readFile("AGENTS.md", "utf8"), /^# Existing project guidance\n[^]*calavera/);
+    const agentsMd = await readFile("AGENTS.md", "utf8");
+    assert.ok(agentsMd.startsWith("# Existing project guidance\n"));
+    assert.ok(agentsMd.includes(AGENT_BOOTSTRAP_SECTION_START));
     assert.ok(JSON.parse(await readFile(".mcp.json", "utf8")).mcpServers);
     assert.ok(JSON.parse(await readFile(".calavera/state.json", "utf8")));
   });
 });
 
 test("interactive agent-init does not ask about an AGENTS.md that already holds Calavera guidance (#1039)", async () => {
-  await withTempProject(async () => {
-    await agentBootstrap({ mcpHarness: "skip" });
+  // A whole-file AGENTS.md holds the marker; an appended section holds only the section markers.
+  for (const existing of [undefined, "# Existing project guidance\n"]) {
+    await withTempProject(async () => {
+      if (existing) await writeFile("AGENTS.md", existing);
+      await agentBootstrap({ agentsMd: "append", mcpHarness: "skip" });
 
-    const { asked, error } = await bootstrapInTerminal({ mcpHarness: "skip" });
+      const { asked, error } = await bootstrapInTerminal({ mcpHarness: "skip" });
 
-    assert.equal(error, undefined);
-    assert.deepEqual(asked, ["mcpHarness"]);
-  });
+      assert.equal(error, undefined);
+      assert.deepEqual(asked, ["mcpHarness"], `AGENTS.md: ${existing}`);
+    });
+  }
+});
+
+test("agent-init asks nothing when flags answer both questions or no terminal is attached (#1039)", async () => {
+  for (const setup of [
+    { options: { agentsMd: "append", mcpHarness: "claude-code" } },
+    { terminal: false },
+  ]) {
+    await withTempProject(async () => {
+      await writeFile("AGENTS.md", "# Existing project guidance\n");
+
+      const { asked, result } = await bootstrapInTerminal(
+        { guidanceMode: CANCELLED, mcpHarness: CANCELLED },
+        setup,
+      );
+
+      assert.deepEqual(asked, [], JSON.stringify(setup));
+      assert.equal(result.mcp.harness, setup.options ? "claude-code" : "skip");
+      assert.equal(
+        (await readFile("AGENTS.md", "utf8")).includes(AGENT_BOOTSTRAP_SECTION_START),
+        Boolean(setup.options),
+        "append writes the marked section; a run without a terminal writes the fallback file",
+      );
+    });
+  }
 });
