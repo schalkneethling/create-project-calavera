@@ -314,7 +314,7 @@ import { pluralizeCount, quoteScriptValue, titleCase } from "./utils/text.js";
  * @property {string[]} dependencies
  * @property {string | null} installCommand The command that installs `dependencies`, `vp add -D` in a Vite+-managed project (ADR-0012); null when the recipe has none, or when apply skips the install.
  * @property {string[]} installNotes How apply runs the install command, and what stops it, for the approval boundary.
- * @property {string} [laterInstallCommand] The command that installs `dependencies` when a real apply skips the install under --no-install, which the human summary gives to run later (#1022). It is not enumerable, so the `--json` and MCP results leave it out.
+ * @property {string} [laterInstallCommand] The command that installs `dependencies`, to run later, present only when an apply that is not a dry run skipped the install under --no-install, where `installCommand` is null (#1022).
  * @property {string[]} integrations
  * @property {ProjectInspection} projectInspection
  * @property {VitePlusReport} vitePlus
@@ -3987,6 +3987,11 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     installNotes: runPlan
       ? [...runPlan.notes, ...declaredDevDependencyNotes(dependencyList, detectedPackageJSON)]
       : [],
+    // installCommand stays null when apply skips the install, so the command to run later has
+    // its own field (#1022).
+    ...(skipsInstall && installPlan
+      ? { laterInstallCommand: formatCommand(installPlan.command) }
+      : {}),
     integrations: integrations.map((integration) => integration.id),
     projectInspection,
     vitePlus: vitePlusReport(projectInspection.vitePlus),
@@ -4012,14 +4017,6 @@ export async function applyRecipeObject(recipeInput, options = {}, artifactServi
     recipe,
     ...(manifestOutcome.decision ? { manifestDecision: manifestOutcome.decision } : {}),
   };
-  if (skipsInstall && installPlan) {
-    // Not enumerable, so the --json and MCP results keep their shape: installCommand stays null
-    // when apply skips the install, and only the human summary gives the command (#1022).
-    Object.defineProperty(result, "laterInstallCommand", {
-      value: formatCommand(installPlan.command),
-      enumerable: false,
-    });
-  }
   return result;
 }
 

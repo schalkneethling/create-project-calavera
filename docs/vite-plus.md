@@ -204,7 +204,12 @@ apply would stop. When the project already lists every package in
 `devDependencies`, a note says that apply still runs the command, which can
 update their versions and the lockfile. `dry_run_apply` and
 `apply --dry-run --json` report these as `installCommand` and `installNotes`
-(ADR-0012, Decision 3). A project detection reports as unmanaged, or as
+(ADR-0012, Decision 3). With `--no-install`, the dry run says instead that
+the packages will not be installed and gives the command to install them
+later. An apply that skips the install says the same after it runs, and
+`apply --no-install --json` and `apply_recipe` with `noInstall` report the
+command as `laterInstallCommand`, because `installCommand` is `null` when
+apply skips the install. A project detection reports as unmanaged, or as
 unknown outside a Vite+ workspace, keeps its package manager's own command,
 such as `pnpm add --save-dev knip`.
 

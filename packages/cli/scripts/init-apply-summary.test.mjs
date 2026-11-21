@@ -399,7 +399,7 @@ test("with --no-install, the apply dry run and init --apply say the packages wil
   });
 });
 
-test("a real run with --no-install gives the command to install the packages later (#1022)", async () => {
+test("a real run with --no-install gives the command to install the packages later, in its own field (#1022)", async () => {
   await inManagedProject(async (root) => {
     const later = "  Install them later with: vp add -D stylelint stylelint-config-standard\n";
     const count = (/** @type {string} */ output) => output.split(later).length - 1;
@@ -426,11 +426,11 @@ test("a real run with --no-install gives the command to install the packages lat
         output,
       );
 
-      // The --json result keeps installCommand null, and has no field for the later command.
+      // installCommand stays null when apply skips the install; the command has its own field.
       const result = JSON.parse(runCli(root, [command, "--yes", "--no-install", "--json"]));
       assert.equal(result.installCommand, null);
       assert.deepEqual(result.installNotes, []);
-      assert.equal("laterInstallCommand" in result, false);
+      assert.equal(result.laterInstallCommand, "vp add -D stylelint stylelint-config-standard");
     }
 
     // Nothing was installed: the vp stub records every install it is asked to run.
@@ -441,5 +441,14 @@ test("a real run with --no-install gives the command to install the packages lat
           .filter((line) => line.includes('"add"'))
       : [];
     assert.deepEqual(installs, []);
+
+    // Without a skipped install, the field is absent: a dry run carries installCommand instead,
+    // and so does an apply that installs.
+    const dryRun = JSON.parse(runCli(root, ["apply", "--dry-run", "--no-install", "--json"]));
+    assert.equal(dryRun.installCommand, "vp add -D stylelint stylelint-config-standard");
+    assert.equal("laterInstallCommand" in dryRun, false);
+    const installed = JSON.parse(runCli(root, ["apply", "--yes", "--json"]));
+    assert.equal(installed.installCommand, "vp add -D stylelint stylelint-config-standard");
+    assert.equal("laterInstallCommand" in installed, false);
   });
 });
