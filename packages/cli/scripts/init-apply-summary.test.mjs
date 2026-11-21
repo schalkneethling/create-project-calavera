@@ -138,7 +138,7 @@ test("init without --apply still lists the whole recipe in its summary (#1022)",
 
 test("init --apply prints a pointer the dry run already printed once, not again after applying (#1022)", async () => {
   await inManagedProject(async (root) => {
-    const output = runCli(root, [
+    const varlockArguments = [
       "init",
       "--apply",
       "--yes",
@@ -149,7 +149,10 @@ test("init --apply prints a pointer the dry run already printed once, not again 
       "pnpm",
       "--integrations",
       "editorconfig,varlock",
-    ]);
+    ];
+    // The dry run writes nothing, so it names the items the run below handles.
+    const { applyDryRun } = JSON.parse(runCli(root, [...varlockArguments, "--dry-run", "--json"]));
+    const output = runCli(root, varlockArguments);
 
     // init wrote the recipe before the dry run, so the headline does not say nothing changed.
     assert.match(
@@ -164,6 +167,11 @@ test("init --apply prints a pointer the dry run already printed once, not again 
       /\nNotes:\n {2}Review the Varlock schema and the ignore file listed under Files/,
     );
     assert.match(output, /\nWrote calavera\.config\.json\.\nCalavera apply complete\.\n$/);
+    // #1023: the rehearsal's listing check passes on the whole output, Varlock note included.
+    assert.deepEqual(
+      listingViolations(output, namedItems(applyDryRun), applyDryRun.vitePlus.lines),
+      [],
+    );
   });
 });
 
