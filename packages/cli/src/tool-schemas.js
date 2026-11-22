@@ -629,6 +629,25 @@ export const mcpOnlyToolSchemas = Object.freeze({
         .array(z.looseObject({}))
         .describe("The .gitignore changes the call made. This tool makes none, so it is empty."),
       pointers: z.array(z.string()),
+      phase: z
+        .string()
+        .optional()
+        .describe(
+          "Where the project is in Calavera's lifecycle. Present only as pending-transaction for now: an artifact operation stopped before its rollback ran, so the report lists no artifacts.",
+        ),
+      rollbackFiles: z
+        .array(z.string())
+        .nullable()
+        .optional()
+        .describe(
+          "With phase pending-transaction: the project paths of the files the rollback would restore from their backups or remove, or null when the journal cannot be read.",
+        ),
+      remedy: z
+        .string()
+        .optional()
+        .describe(
+          "With phase pending-transaction: what the person does next. Save any edits to the rollbackFiles, then run the artifacts status command it names, which rolls the transaction back.",
+        ),
     }),
   },
 });

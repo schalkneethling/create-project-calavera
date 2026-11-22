@@ -226,17 +226,17 @@ export async function runArtifactCommand(options, services = {}) {
  * The `artifacts status` report, read without writing anything into the project, for the read-only
  * `artifact_status` MCP tool (#1052, ADR-0018 Decision 3). It runs the same core function as
  * `artifacts status`, with three differences that ADR-0020, Decision 1 sets for the tool. It never
- * recovers a pending artifact transaction: it stops with the `pending-transaction` code before it
- * reads any record or resolves any package, and names the command that recovers it. With
- * `checkUpdates`, it plans and records no artifact cache block and resolves through a temporary
- * cache that it removes afterward, as a dry run does, so `ignoreChanges` and `pointers` are empty.
- * And it never loads the project's formatter, because it formats nothing.
+ * recovers a pending artifact transaction: it returns the `pending-transaction` report instead,
+ * before it reads any record or resolves any package. With `checkUpdates`, it plans and records no
+ * artifact cache block and resolves through a temporary cache that it removes afterward, as a dry
+ * run does, so `ignoreChanges` and `pointers` are empty. And it never loads the project's
+ * formatter, because it formats nothing.
  *
  * @param {{ config: string, checkUpdates?: boolean }} options
  * @param {ArtifactServices} [services] Only `resolve` is read; the formatter is never loaded.
  */
 export async function readArtifactStatus(options, services = {}) {
-  if (await fileExists(TRANSACTION_PATH)) throw await pendingTransactionError(options.config);
+  if (await fileExists(TRANSACTION_PATH)) return pendingTransactionReport(options.config);
   return artifactStatus(
     {
       config: options.config,
@@ -253,41 +253,63 @@ export async function readArtifactStatus(options, services = {}) {
 }
 
 /**
- * The error the read-only report gives while an artifact transaction is pending (ADR-0020, owner
- * decisions 20 and 23). It reads the journal without writing and names each file the rollback
- * would replace from its backup or remove, so the person can save edits to them before running
- * `artifacts status`, which rolls the transaction back. Nothing here may hide the
- * `pending-transaction` code: a journal or recipe it cannot read only leaves out the file list or
- * picks the npm runner for the command. Neither file's text reaches the message.
+ * The read-only report while an artifact transaction is pending (ADR-0020, owner decisions 20 and
+ * 23; owner decision of 2026-11-22 on #1052). It is a result, not an error, so the phase function
+ * that ADR-0020 adds later only adds fields. It carries the fields every status report carries,
+ * with no artifacts and `ok: false`, because the records cannot be read yet, and three more:
+ * `phase`, `rollbackFiles`, the project paths the rollback would restore from their backups or
+ * remove, read from the journal without writing, or null when the journal cannot be read, and
+ * `remedy`, which tells the person to save edits to those files before running `artifacts status`,
+ * which rolls the transaction back. A recipe it cannot read only makes the command use the npm
+ * runner, and no text from the recipe or the journal reaches the remedy.
  *
  * @param {string} config
  */
-async function pendingTransactionError(config) {
+async function pendingTransactionReport(config) {
   let recipe = {};
   try {
     recipe = await readJson(config);
   } catch {
     // A missing or unreadable recipe only changes the runner the command names.
   }
-  const files = await rollbackFilesSentence();
-  return Object.assign(
-    new Error(
-      `An artifact operation stopped before its rollback ran, so the project is in the pending-transaction phase and this read-only report does not read the artifact records, because the rollback may still change them.${files} Save any edits to those files first, then run: ${artifactCommand(recipe, config, ["status"])}. It rolls the transaction back and reports the artifact status.`,
-    ),
-    { code: "pending-transaction" },
-  );
+  const rollbackFiles = await pendingRollbackFiles();
+  const command = artifactCommand(recipe, config, ["status"]);
+  let files = `Save any edits to these files first: ${rollbackFiles?.join(", ")}. Then run`;
+  if (rollbackFiles === null) {
+    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, so it cannot list the files the rollback would replace or remove. Save any edits to the files the stopped operation was changing, then run`;
+  } else if (rollbackFiles.length === 0) {
+    files = "The rollback replaces or removes no file, so run";
+  }
+  return {
+    command: "artifacts status",
+    dryRun: false,
+    offline: true,
+    updateAllCommand: null,
+    checkUpdatesCommand: null,
+    updateAllBlockedBy: [],
+    ok: false,
+    artifacts: [],
+    ignoreChanges: [],
+    pointers: [],
+    phase: "pending-transaction",
+    rollbackFiles,
+    remedy: `An artifact operation stopped before its rollback ran, so this read-only report does not read the artifact records, because the rollback may still change them. ${files}: ${command}. It rolls the transaction back and reports the artifact status.`,
+  };
 }
 
 /**
- * The sentence that names each file the pending transaction's rollback would restore from its
- * backup or remove, as `recoverArtifactTransaction` decides it, read without writing.
+ * The project paths of the files the pending transaction's rollback would restore from their
+ * backups or remove, as `recoverArtifactTransaction` decides it, read without writing, or null
+ * when the journal cannot be read or fails its checks.
+ *
+ * @returns {Promise<string[] | null>}
  */
-async function rollbackFilesSentence() {
+async function pendingRollbackFiles() {
   let operations;
   try {
     ({ operations } = await readTransactionJournal());
   } catch {
-    return ` Calavera cannot read the journal, ${TRANSACTION_PATH}, so it cannot list the files the rollback would replace or remove.`;
+    return null;
   }
   const replaced = [];
   for (const operation of operations) {
@@ -295,9 +317,7 @@ async function rollbackFilesSentence() {
       replaced.push(relative(resolve("."), operation.target));
     }
   }
-  return replaced.length > 0
-    ? ` The rollback replaces or removes these files: ${replaced.join(", ")}.`
-    : " The rollback replaces or removes no file.";
+  return replaced;
 }
 
 /**
