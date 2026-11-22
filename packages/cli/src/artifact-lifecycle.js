@@ -315,13 +315,17 @@ async function pendingRollbackFiles() {
   } catch {
     return null;
   }
-  const replaced = [];
+  // A target the journal names twice is listed once. A target that is the project root itself has
+  // an empty project path, which names no file, so it is left out; #1193 makes the journal check
+  // refuse such a journal.
+  const replaced = new Set();
   for (const operation of operations) {
     if ((await fileExists(operation.backup)) || !operation.hadTarget) {
-      replaced.push(relative(resolve("."), operation.target));
+      const path = relative(resolve("."), operation.target);
+      if (path !== "") replaced.add(path);
     }
   }
-  return replaced;
+  return [...replaced];
 }
 
 /**

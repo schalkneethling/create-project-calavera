@@ -6,6 +6,7 @@
 // temporary cache outside the project.
 import assert from "node:assert/strict";
 import { mkdtempDisposable, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -465,5 +466,65 @@ test("the pending-transaction report says when the rollback replaces no file", a
 
     assert.deepEqual(report.rollbackFiles, []);
     assert.match(String(report.remedy), /restores or removes no file, so run: npm /);
+  });
+});
+
+test("artifact_status removes the temporary cache it resolved through after a checkUpdates call", async () => {
+  await inProject("calavera-mcp-status-temporary-cache-", async (directory) => {
+    await lockedProject();
+    const stub = stubRegistry(new Map([[ARTIFACT_ID, NEWER_VERSION]]));
+    /** @type {{ cache: string, existed: boolean }[]} */
+    const caches = [];
+    const resolve = (/** @type {Parameters<typeof stub.resolve>[0]} */ request) => {
+      caches.push({ cache: request.cache, existed: existsSync(request.cache) });
+      return stub.resolve(request);
+    };
+
+    await callMcpTool(
+      "artifact_status",
+      { checkUpdates: true },
+      { resolve, ...forbiddenFormatter },
+    );
+
+    assert.equal(caches.length, 1);
+    const [{ cache, existed }] = caches;
+    // The lookup used a real folder outside the project, and the call removed that exact folder.
+    assert.equal(existed, true);
+    assert.equal(cache.startsWith(directory), false, `${cache} is inside the project`);
+    assert.equal(existsSync(cache), false, `${cache} was not removed`);
+  });
+});
+
+test("the pending-transaction remedy keeps the caller's config path", async () => {
+  await inProject("calavera-mcp-status-pending-config-", async () => {
+    await mkdir(".calavera");
+    await mkdir("recipes");
+    await writeFile(
+      "recipes/calavera.json",
+      `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
+    );
+    await pendingJournal([{ target: "created.md", hadTarget: false, backup: false }]);
+
+    const report = await callMcpTool("artifact_status", { config: "recipes/calavera.json" });
+
+    assert.match(
+      String(report.remedy),
+      /then run: npm create project-calavera artifacts status -- --config recipes\/calavera\.json\./,
+    );
+  });
+});
+
+test("rollbackFiles lists each file once and leaves out a target that is the project root", async () => {
+  await inProject("calavera-mcp-status-pending-duplicates-", async () => {
+    await mkdir(".calavera");
+    await pendingJournal([
+      { target: "created.md", hadTarget: false, backup: false },
+      { target: "created.md", hadTarget: false, backup: false },
+      { target: ".", hadTarget: false, backup: false },
+    ]);
+
+    const report = await callMcpTool("artifact_status", {});
+
+    assert.deepEqual(report.rollbackFiles, ["created.md"]);
   });
 });
