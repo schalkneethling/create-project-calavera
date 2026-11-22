@@ -284,6 +284,7 @@ This amendment corrects the Context section's description of `.calavera/.staging
 
 ## Amendment 5: `eject` Leaves a Marker Block in `.gitignore`
 
+- **Status:** Accepted (2026-11-22, Schalk Neethling, merged in #1154)
 - **Date:** 2026-11-21
 - **Pull request:** https://github.com/schalkneethling/create-project-calavera/pull/1154 (#1112)
 
