@@ -121,6 +121,18 @@ test("the removed toolchain metadata lists exactly the ids ADR-0002 to ADR-0006 
   }
 });
 
+test("each removed toolchain integration names the ADR that removed it", () => {
+  const adr = Object.fromEntries(removedToolchainIntegrations.map(({ id, adr }) => [id, adr]));
+  const expected = [
+    ...removedOxlintIds.map((id) => [id, "ADR-0002"]),
+    ["oxfmt", "ADR-0003"],
+    [removedTypeScriptConfigId, "ADR-0004"],
+    ...removedEslintIds.map((id) => [id, "ADR-0005"]),
+    ...removedPrettierIds.map((id) => [id, "ADR-0006"]),
+  ];
+  for (const [id, expectedAdr] of expected) assert.equal(adr[id], expectedAdr, id);
+});
+
 test("each removed toolchain integration names what Vite+ provides in its place", () => {
   const provides = Object.fromEntries(
     removedToolchainIntegrations.map(({ id, provides }) => [id, provides]),
