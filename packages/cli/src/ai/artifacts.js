@@ -78,7 +78,7 @@ async function planCodeRabbitSkillConfig() {
     return { contents: CODE_RABBIT_SKILL_CONFIG, type: "write" };
   }
 
-  const { isMap, isScalar, isSeq, parseDocument } = await import("yaml");
+  const { LineCounter, isMap, isScalar, isSeq, parseDocument, visit } = await import("yaml");
   let current;
   try {
     current = await readFile(CODE_RABBIT_CONFIG_PATH, "utf8");
@@ -89,21 +89,24 @@ async function planCodeRabbitSkillConfig() {
       cause: error,
     });
   }
-  const document = parseDocument(current);
+  const lineCounter = new LineCounter();
+  const document = parseDocument(current, { lineCounter });
 
   if (document.errors.length > 0) {
     // The parser's message quotes the lines around each error, so only the position and the
     // parser's code reach the output (#1083).
     const positions = document.errors.map(({ code, linePos }) => {
       const start = linePos?.[0];
-      return start ? `line ${start.line}, column ${start.col} (${code})` : code;
+      return start
+        ? `line ${start.line}, column ${start.col} (${code})`
+        : `${code} at no known position`;
     });
     throw new Error(
       `Cannot update ${CODE_RABBIT_CONFIG_PATH}: it is not valid YAML at ${positions.join("; ")}.`,
     );
   }
   // An empty file has no contents, and `set` makes it a mapping. A top-level list or scalar
-  // makes `get` and `set` throw a message that does not name the file (#1083).
+  // makes `set` throw a message that does not name the file (#1083).
   if (document.contents !== null && !isMap(document.contents)) {
     throw new Error(`Cannot update ${CODE_RABBIT_CONFIG_PATH}: the top level must be a mapping.`);
   }
@@ -156,13 +159,37 @@ async function planCodeRabbitSkillConfig() {
       `Cannot update ${CODE_RABBIT_CONFIG_PATH}: ${anchored.label} has the anchor &${anchored.anchor}, so its aliases would change too. Add these to reviews.path_filters yourself, then run apply again: ${missingFilters.join(", ")}`,
     );
   }
+  // A file that already holds every filter is left as it is, because writing it again would
+  // change text the person wrote, such as mixed line endings or spacing (#1083). A new `reviews`
+  // or `path_filters` holds no filters, so it never reaches this return.
+  if (missingFilters.length === 0) return { type: "unchanged" };
+
+  // `parseDocument` accepts an alias whose anchor is missing or comes later, but `toString`
+  // throws a message that quotes the alias name and does not name the file (#1083).
+  /** @type {string[]} */
+  const unresolvedAliases = [];
+  visit(document, {
+    Alias: (_key, node) => {
+      if (node.resolve(document) === undefined && node.range) {
+        const { line, col } = lineCounter.linePos(node.range[0]);
+        unresolvedAliases.push(`line ${line}, column ${col}`);
+      }
+    },
+  });
+  if (unresolvedAliases.length > 0) {
+    throw new Error(
+      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: an alias has no anchor before it at ${unresolvedAliases.join("; ")}.`,
+    );
+  }
   for (const filter of missingFilters) pathFilters.add(filter);
 
-  // `toString` writes `\n` line endings, so a file that uses Windows line endings gets them back,
-  // as `findMarkedBlock` decides (#1083).
+  // `toString` writes `\n` line endings and drops a byte order mark, so a file that uses Windows
+  // line endings gets them back on every line, and a file that starts with a byte order mark keeps
+  // it (#1083).
   const written = document.toString({ lineWidth: 0 });
-  const contents = current.includes("\r\n") ? written.replaceAll("\n", "\r\n") : written;
-  return contents === current ? { type: "unchanged" } : { contents, type: "update" };
+  const lineEndings = current.includes("\r\n") ? written.replaceAll("\n", "\r\n") : written;
+  const contents = current.startsWith("\uFEFF") ? `\uFEFF${lineEndings}` : lineEndings;
+  return { contents, type: "update" };
 }
 
 /**
@@ -650,8 +677,16 @@ export async function buildAiApplyResult(recipe, options, previousState, sourceP
       const configPath = options.outputRoot
         ? resolve(options.outputRoot, CODE_RABBIT_CONFIG_PATH)
         : resolve(CODE_RABBIT_CONFIG_PATH);
-      await mkdir(dirname(configPath), { recursive: true });
-      await writeFile(configPath, codeRabbitPlan.contents);
+      try {
+        await mkdir(dirname(configPath), { recursive: true });
+        await writeFile(configPath, codeRabbitPlan.contents);
+      } catch (error) {
+        // A file system error names the path and the code, never the file's text (#1083).
+        const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? "unknown error";
+        throw new Error(`Cannot update ${CODE_RABBIT_CONFIG_PATH}: cannot write it (${code}).`, {
+          cause: error,
+        });
+      }
     }
   }
 

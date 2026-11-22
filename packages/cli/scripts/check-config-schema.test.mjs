@@ -3926,6 +3926,33 @@ for (const { name, current, expected } of [
       ),
   },
   {
+    // A file with both kinds of line ending gets Windows line endings on every line.
+    name: "a file with mixed line endings",
+    current: "language: en-US\r\nreviews:\n  profile: chill\r\n",
+    expected:
+      `language: en-US\nreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll(
+        "\n",
+        "\r\n",
+      ),
+  },
+  {
+    // A settled file is left as it is, so its mixed line endings stay.
+    name: "a file with mixed line endings that already holds every filter",
+    current: `reviews:\r\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+    expected: `reviews:\r\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    // The `yaml` package drops a byte order mark, so apply writes it back.
+    name: "a file that starts with a byte order mark",
+    current: "\uFEFFreviews:\n  profile: chill\n",
+    expected: `\uFEFFreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
+    name: "a file that starts with a byte order mark and already holds every filter",
+    current: `\uFEFFreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+    expected: `\uFEFFreviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`,
+  },
+  {
     // A settled file with Windows line endings needs no change, so apply leaves it alone.
     name: "a file with Windows line endings that already holds every filter",
     current: `reviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll("\n", "\r\n"),
@@ -3992,6 +4019,12 @@ for (const { current, error } of [
   {
     current: "reviews\n",
     error: /Cannot update \.coderabbit\.yaml: the top level must be a mapping\.$/,
+  },
+  // #1083: `toString` threw a message that quoted the alias name and did not name the file.
+  {
+    current: "reviews:\n  profile: *FAKE_SECRET_alias\n",
+    error:
+      /Cannot update \.coderabbit\.yaml: an alias has no anchor before it at line 2, column 12\.$/,
   },
   {
     current: "reviews: []\n",
@@ -4123,6 +4156,44 @@ test("a CodeRabbit parse error names each position without quoting the file", as
     await rm(projectDirectory, { force: true, recursive: true });
   }
 });
+
+// #1083: a write failure named only the path, without saying that the update stopped.
+test(
+  "a CodeRabbit configuration that cannot be written names the file and keeps the cause",
+  // A root user writes a read-only file, so the write cannot fail there.
+  { skip: process.getuid?.() === 0 && "root ignores file permissions" },
+  async () => {
+    const originalDirectory = process.cwd();
+    const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-read-only-"));
+    const recipe = buildRecipe("minimal", [], "npm", [
+      { type: "skill", src: "skills/frontend-engineering" },
+    ]);
+
+    try {
+      process.chdir(projectDirectory);
+      await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+      await lockArtifactFixtures(["skill-frontend-engineering"]);
+      await writeFile(".coderabbit.yaml", "language: en-US\n");
+      await chmod(".coderabbit.yaml", 0o444);
+
+      const error = await applyRecipeObject(recipe, {
+        json: true,
+        noInstall: true,
+        assumeYes: true,
+      }).then(
+        () => assert.fail("apply wrote a read-only .coderabbit.yaml"),
+        (/** @type {unknown} */ reason) => reason,
+      );
+      assert.ok(error instanceof Error);
+      assert.equal(error.message, "Cannot update .coderabbit.yaml: cannot write it (EACCES).");
+      assert.equal(/** @type {NodeJS.ErrnoException} */ (error.cause).code, "EACCES");
+      assert.equal(await readFile(".coderabbit.yaml", "utf8"), "language: en-US\n");
+    } finally {
+      process.chdir(originalDirectory);
+      await rm(projectDirectory, { force: true, recursive: true });
+    }
+  },
+);
 
 // #1083: a read failure named only the path, without saying that the update stopped.
 test("a CodeRabbit configuration that cannot be read names the file and keeps the cause", async () => {
