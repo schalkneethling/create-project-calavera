@@ -908,3 +908,57 @@ test("apply-at-ancestor with a custom recipe path still stops when the ancestor 
   }
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
 });
+
+// #1142: a recipe path outside the inspected directory does not move with apply-at-ancestor, so it
+// names the recipe being applied, not one the ancestor already has. Only the command-line apply
+// copies an outside recipe into the project first; applyRecipeObject takes the path as given.
+test("apply-at-ancestor does not stop on a recipe path outside the inspected directory", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+    "recipe.json": json(recipe),
+  });
+  await writeFile(join(fixture.root, "sibling.json"), json(recipe));
+
+  for (const config of [join(elsewhere.root, "recipe.json"), join("..", "sibling.json")]) {
+    const result = await inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        dryRun: true,
+        assumeYes: true,
+        noInstall: true,
+        config,
+        manifestChoice: "apply-at-ancestor",
+      }),
+    );
+    assert.equal(result.manifestDecision?.choice, "apply-at-ancestor", config);
+  }
+});
+
+test("apply-at-ancestor with a recipe path outside the inspected directory names only the ancestor's own recipe", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+    "recipe.json": json(recipe),
+  });
+  const ancestorRecipe = join(fixture.root, "calavera.config.json");
+  await writeFile(ancestorRecipe, json(recipe));
+
+  await assert.rejects(
+    inDirectory(fixture.project, false, () =>
+      applyRecipeObject(structuredClone(recipe), {
+        dryRun: true,
+        assumeYes: true,
+        noInstall: true,
+        config: join(elsewhere.root, "recipe.json"),
+        manifestChoice: "apply-at-ancestor",
+      }),
+    ),
+    (error) => {
+      assert.ok(error instanceof Error);
+      assert.ok(
+        error.message.includes(`but ${ancestorRecipe} already exists there`),
+        error.message,
+      );
+      assert.ok(!error.message.includes(elsewhere.root), error.message);
+      return true;
+    },
+  );
+});
