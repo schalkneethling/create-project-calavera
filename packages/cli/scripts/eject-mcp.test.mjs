@@ -352,7 +352,10 @@ for (const { harness, path, written } of JSON_HARNESSES) {
     await inProject(async () => {
       const text = written(npmLaunch).replace(/^\{\n/, '{\n  "theirs": 1,\n  "theirs": 2,\n');
       await write(path, text);
-      await assertKeptAndReported(path, /holds the key "theirs" more than once/);
+      await assertKeptAndReported(
+        path,
+        /holds the key "theirs" more than once in one object, again on line 3,/,
+      );
     });
   });
 

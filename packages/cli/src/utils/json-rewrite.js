@@ -82,8 +82,10 @@ export async function writeJSON(value, path, formatter) {
  * @param {string} path The file path relative to the project root, which picks the formatter's language.
  * @param {ProjectFormatter} formatter
  * @param {{ withoutValues?: boolean }} [options] `withoutValues` names the line of a number instead
- *   of the number, for a file that can hold tokens, such as an MCP harness file `eject` reports
- *   on. Apply's messages for Claude Code settings keep naming the number.
+ *   of the number, for a file that can hold tokens, such as an MCP harness file `eject` reports on
+ *   or a recipe `artifacts migrate` rewrites. A repeated key is named either way, and with
+ *   `withoutValues` its line too, so the person can find it (#1078). Apply's messages for Claude
+ *   Code settings keep naming the number.
  * @returns {Promise<string | undefined>}
  */
 export async function rewriteLossProblem(text, path, formatter, { withoutValues = false } = {}) {
@@ -94,9 +96,9 @@ export async function rewriteLossProblem(text, path, formatter, { withoutValues 
   const numbers = [];
   /** @type {number[]} The line of each number, counted from 1. */
   const lines = [];
-  /** @param {RegExpExecArray} match @param {string} number */
-  const lineOf = (match, number) =>
-    text.slice(0, match.index + match[0].length - number.length).split("\n").length;
+  /** @param {RegExpExecArray} match @param {string} matched The matched number or key. */
+  const lineOf = (match, matched) =>
+    text.slice(0, match.index + match[0].length - matched.length).split("\n").length;
   let expectKey = false;
   for (let match = token.exec(text); match !== null; match = token.exec(text)) {
     const [, punctuation, string, number] = match;
@@ -115,7 +117,8 @@ export async function rewriteLossProblem(text, path, formatter, { withoutValues 
       const key = JSON.parse(string);
       const keys = /** @type {Set<string>} */ (open.at(-1));
       if (keys.has(key)) {
-        return `holds the key ${string} more than once in one object, and only the last value would be kept`;
+        // A line number exposes no value, so every caller names it.
+        return `holds the key ${string} more than once in one object, again on line ${lineOf(match, string)}, and only the last value would be kept`;
       }
       keys.add(key);
     } else if (number !== undefined) {
@@ -125,7 +128,8 @@ export async function rewriteLossProblem(text, path, formatter, { withoutValues 
           : `holds the number ${number}, which is too large for Calavera to write`;
       }
       numbers.push(number);
-      // Only eject's reports name the line, so apply skips the extra scan.
+      // Only callers that pass withoutValues (eject and artifacts migrate) name a number's line,
+      // so apply skips the extra scan.
       if (withoutValues) lines.push(lineOf(match, number));
     }
   }
