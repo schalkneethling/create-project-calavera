@@ -871,3 +871,51 @@ test("the ignored project proxy warning says requests go direct when noproxy or 
     );
   }
 });
+
+test("under npm exec, a project user-agent with npm placeholders does not change the launcher", async () => {
+  const context = await npmExecFromBelowRoot({
+    npmrc: "user-agent=bun/1.3.9 npm/{npm-version}\nregistry=http://registry.example.com/\n",
+    member: "src",
+    rootPackage: { name: "repo" },
+    // npm replaces {npm-version} before it exports the variable.
+    exported: {
+      npm_config_user_agent: "bun/1.3.9 npm/11.20.0",
+      npm_config_registry: "http://registry.example.com/",
+    },
+  });
+  await assert.rejects(loadNpmRegistryOptions(context), /project \.npmrc must be an https URL/);
+});
+
+test("under npm run, a proxy that ~/.npmrc spells differently is ignored without a warning, as npm ignores it", async () => {
+  const directory = await temporaryDirectory("calavera-npm-config-spelling-");
+  const home = join(directory, "home");
+  const cwd = join(directory, "project");
+  await mkdir(home);
+  await mkdir(cwd);
+  await writeFile(join(home, ".npmrc"), "https_proxy=http://corp.example.com:8080/\n");
+  const { options, warnings } = await loadNpmRegistryOptions({
+    cwd,
+    scope: SCOPE,
+    env: {
+      HOME: home,
+      npm_command: "run-script",
+      npm_config_https_proxy: "http://corp.example.com:8080/",
+    },
+  });
+  assert.equal(options.httpsProxy, undefined);
+  assert.deepEqual(warnings, []);
+});
+
+test("for an http registry, the ignored project proxy warning names HTTP_PROXY", async () => {
+  const context = await fixture({
+    user: "registry=http://registry.example.com/\n",
+    project: "proxy=http://team.example.com:3128/\n",
+    env: { HTTP_PROXY: "http://corp.example.com:8080/" },
+  });
+  const { warnings } = await loadNpmRegistryOptions(context);
+  assert.ok(
+    warnings.some((warning) =>
+      warning.endsWith("Calavera uses the HTTP_PROXY environment variable instead."),
+    ),
+  );
+});

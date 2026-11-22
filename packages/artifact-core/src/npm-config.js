@@ -128,7 +128,7 @@ function exportedFrom(entries, key, value, env, otherSpellings = true) {
     const fileValue = entries[fileKey];
     return (
       !fileKey.startsWith("//") &&
-      (otherSpellings ? fileKey.toLowerCase().replace(/[^a-z0-9]/g, "-") : fileKey) === key &&
+      (otherSpellings ? normalizedKey(fileKey) : fileKey) === key &&
       typeof fileValue === "string" &&
       expandEnvironment(fileValue.trim(), env).text === value.trim()
     );
@@ -137,8 +137,8 @@ function exportedFrom(entries, key, value, env, otherSpellings = true) {
 
 /**
  * The package manager that started Calavera. npm exports a user-agent set in the project .npmrc
- * as npm_config_user_agent, so when a package manager started Calavera and the user agent equals
- * the project file's value, it came from repository content and says nothing about the launcher.
+ * as npm_config_user_agent, so when a package manager started Calavera and a project file sets
+ * user-agent, the variable may come from repository content and says nothing about the launcher.
  * Only npm exports project settings this way, so the launcher counts as npm.
  * @param {NodeJS.ProcessEnv} env
  * @param {string} cwd
@@ -153,7 +153,9 @@ async function launcherFor(env, cwd) {
   );
   for (const folder of folders) {
     const entries = await readNpmrc(resolve(folder, ".npmrc"), []);
-    if (exportedFrom(entries, "user-agent", agent, env) !== undefined) return "npm";
+    // npm replaces placeholders such as {npm-version} before it exports the value, so any
+    // user-agent in a project file counts, not only one equal to the variable.
+    if (Object.keys(entries).some((key) => normalizedKey(key) === "user-agent")) return "npm";
   }
   return launcher;
 }
@@ -317,8 +319,9 @@ export async function loadNpmRegistryOptions({
         if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
           // A passed-on proxy is the person's only when it equals the value in the user .npmrc and
           // that file is ~/.npmrc; the user layer applied it then. A value equal to a chosen user
-          // file's proxy was already ignored there with a warning.
-          if (exportedFrom(userEntries, rawKey, rawValue, env, false) === undefined) {
+          // file's proxy was already ignored there with a warning. A value the user file spells
+          // differently, such as https_proxy, is ignored silently, because npm does not use it.
+          if (exportedFrom(userEntries, rawKey, rawValue, env) === undefined) {
             rejectedProxies.push({ key: rawKey, setting, layer: PASSED_ON_SETTINGS });
           }
           continue;
@@ -525,6 +528,15 @@ function registryBypassesProxy(registryUrl, configured, env) {
         segments.length > 0 && segments.every((segment, index) => hostSegments[index] === segment)
       );
     });
+}
+
+/**
+ * A key as npm names its variable, back in key form: other spellings, such as https_proxy or
+ * HTTPS-PROXY, become https-proxy.
+ * @param {string} key
+ */
+function normalizedKey(key) {
+  return key.toLowerCase().replace(/[^a-z0-9]/g, "-");
 }
 
 /** @param {string} value */
