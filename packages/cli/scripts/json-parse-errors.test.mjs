@@ -228,6 +228,56 @@ for (const [text, problem] of [
   });
 }
 
+// Nesting deep enough to overflow jsonc-parser's recursive parser, after a secret. JSON.parse reads
+// it without recursion, so it rejects the text with a SyntaxError, and the position is unknown.
+const DEEP = `{"profile":"${SECRET}","x":${"[".repeat(20_000)}`;
+const UNKNOWN = "cannot be parsed as JSON: a syntax error at an unknown position";
+
+test("jsonSyntaxProblem names no position when nesting is too deep for jsonc-parser", () => {
+  assert.throws(() => JSON.parse(DEEP), SyntaxError);
+  assert.equal(jsonSyntaxProblem(DEEP), "a syntax error at an unknown position");
+});
+
+for (const [args, files, cwd] of [
+  [["doctor"], { "package.json": "{}\n", [RECIPE]: DEEP }, "."],
+  [["doctor", "--json"], { "package.json": "{}\n", [RECIPE]: DEEP }, "."],
+  [
+    ["--dry-run", "--config", `../outside/${RECIPE}`, "--new", "vite"],
+    { "project/.keep": "", [`outside/${RECIPE}`]: DEEP },
+    "project",
+  ],
+]) {
+  test(`${args.join(" ")} names a deeply nested broken recipe without quoting it`, async () => {
+    await using fixture = await project(files);
+    const { code, output } = await runCli(join(fixture.path, cwd), args);
+
+    assert.equal(code, 1, output);
+    assert.ok(!output.includes("FAKE_SECRE"), output);
+    assert.ok(!output.includes("RangeError"), output);
+    assert.ok(!output.includes("undefined"), output);
+    assert.ok(output.includes(RECIPE), output);
+    assert.ok(output.includes(UNKNOWN), output);
+  });
+}
+
+test("inspect_project reports a deeply nested broken package.json as a finding, not a rejection", async () => {
+  await using fixture = await project({ "package.json": DEEP });
+  const originalDirectory = process.cwd();
+  process.chdir(fixture.path);
+  try {
+    const response = await callMcpTool("inspect_project");
+    const finding = response.findings.find(({ kind }) => kind === "package-json-invalid");
+
+    assert.match(
+      finding?.message ?? "",
+      /could not be parsed: a syntax error at an unknown position/,
+    );
+    assert.ok(!JSON.stringify(response).includes("FAKE_SECRE"));
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});
+
 test("jsonSyntaxProblem names no position when the strict reading finds no error", () => {
   assert.equal(jsonSyntaxProblem("{}"), "a syntax error at an unknown position");
 });

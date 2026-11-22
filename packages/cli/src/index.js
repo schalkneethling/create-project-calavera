@@ -5227,11 +5227,10 @@ async function readNewProjectRecipe(source) {
   try {
     recipe = parseJSON(bytes.toString("utf8"), source);
   } catch (error) {
+    if (!(error instanceof JSONParseError)) throw error;
     // #1157: what is wrong, and where, with no cause, because JSON.parse's message quotes the file.
     throw new Error(
-      `--new refused: ${source}, given with --config, cannot be parsed as JSON: ${
-        /** @type {JSONParseError} */ (error).problem
-      }. Nothing was run and no files were changed.`,
+      `--new refused: ${source}, given with --config, cannot be parsed as JSON: ${error.problem}. Nothing was run and no files were changed.`,
     );
   }
 

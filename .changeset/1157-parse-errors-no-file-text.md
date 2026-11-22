@@ -2,7 +2,7 @@
 "create-project-calavera": patch
 ---
 
-When a JSON file a person writes is not valid JSON, Calavera now names the file, what is wrong, and the line and column, such as "calavera.config.json cannot be parsed as JSON: InvalidSymbol at line 3, column 14". Some commands name the file by its full path. Before, it passed on the message from `JSON.parse`, which quotes the text around the error, so a secret written in one of those files could reach terminal output, `--json` output, CI logs, and agents. This covers:
+When a JSON file a person writes is not valid JSON, Calavera now names the file, what is wrong, and the line and column, such as "calavera.config.json cannot be parsed as JSON: InvalidSymbol at line 3, column 14". Some commands name the file by its full path. When the text nests too deeply to locate the error, the message still names the file and says the position is unknown. Before, it passed on the message from `JSON.parse`, which quotes the text around the error, so a secret written in one of those files could reach terminal output, `--json` output, CI logs, and agents. This covers:
 
 - the recipe, `.calavera/state.json`, `.calavera/artifacts.lock.json`, the artifact transaction journal, and `package.json`, in `doctor`, the `artifacts` commands, `apply` and `update` with a recipe inside or outside the project, `--new --config`, and the `inspect_project` finding for an invalid `package.json`;
 - `.claude/settings.json`, in the `doctor` warning and the `apply` conflict;

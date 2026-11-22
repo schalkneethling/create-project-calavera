@@ -12,25 +12,34 @@ export function positionOf(text, offset) {
   return `line ${lines.length}, column ${(lines.at(-1)?.length ?? 0) + 1}`;
 }
 
+const UNKNOWN_POSITION = "a syntax error at an unknown position";
+
 /**
  * What is wrong with `text` as strict JSON, and where, such as "InvalidSymbol at line 3, column
  * 14", for text that `JSON.parse` rejected. It never holds text from `text`, unlike the message of
  * `JSON.parse`'s own error, which quotes the text around the error and so can carry a secret into
- * a log. When the strict JSON reading of `jsonc-parser` finds no error, it says so without a
- * position.
+ * a log. When the strict JSON reading of `jsonc-parser` finds no error, or the text nests too
+ * deeply for its recursive parser, it says so without a position.
  *
  * @param {string} text
  */
 export function jsonSyntaxProblem(text) {
   /** @type {import("jsonc-parser").ParseError[]} */
   const errors = [];
-  parseJsonc(text, errors, {
-    allowEmptyContent: false,
-    allowTrailingComma: false,
-    disallowComments: true,
-  });
+  try {
+    parseJsonc(text, errors, {
+      allowEmptyContent: false,
+      allowTrailingComma: false,
+      disallowComments: true,
+    });
+  } catch {
+    // jsonc-parser recurses once per nesting level, so deep nesting overflows the stack with a
+    // RangeError, which JSON.parse does not. The position is unknown then, but the caller still
+    // names the file, so no failure here may escape.
+    return UNKNOWN_POSITION;
+  }
   const [problem] = errors;
   return problem === undefined
-    ? "a syntax error at an unknown position"
+    ? UNKNOWN_POSITION
     : `${printParseErrorCode(problem.error)} at ${positionOf(text, problem.offset)}`;
 }
