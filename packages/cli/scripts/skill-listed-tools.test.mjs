@@ -80,6 +80,24 @@ function sectionText(text, heading, source) {
   return end === -1 ? rest : rest.slice(0, end);
 }
 
+/**
+ * The sentences that mention a refused or denied call and the CLI without forbidding the CLI or
+ * sending the agent back to the user.
+ *
+ * @param {string} text
+ * @returns {string[]}
+ */
+function cliAfterRefusal(text) {
+  return instructionsIn(text)
+    .flatMap(sentencesIn)
+    .filter(
+      (sentence) =>
+        /\b(?:den(?:y|ies|ied)|refus\w*|declin\w*)\b/i.test(sentence) &&
+        /\b(?:CLI|apply command|create-project-calavera)\b/.test(sentence) &&
+        !/\b(?:never|do not|ask the user)\b/i.test(sentence),
+    );
+}
+
 const APPROVAL_TOOLS = ["`compose_recipe`", "`dry_run_apply`", "`apply_recipe`"];
 
 test("both copies of the bundled Calavera skill are byte-identical", async () => {
@@ -90,6 +108,21 @@ test("both copies of the bundled Calavera skill are byte-identical", async () =>
       `${bundledSkillCopies[index + 1].source} differs from ${bundledSkillCopies[0].source}`,
     );
   }
+});
+
+test("the refusal check catches a sentence that runs the CLI after a denied call", () => {
+  assert.deepEqual(
+    cliAfterRefusal(
+      "If the user denied the call when prompted, run the CLI apply command instead.",
+    ),
+    ["If the user denied the call when prompted, run the CLI apply command instead."],
+  );
+  assert.deepEqual(
+    cliAfterRefusal(
+      "When the user refuses a Calavera tool call, stop, and never run the CLI apply command in its place.",
+    ),
+    [],
+  );
 });
 
 test("the sentence check ties the approval tools to applying nothing through MCP", () => {
@@ -115,12 +148,21 @@ for (const { source, url } of bundledSkillCopies) {
     const skill = await readFile(url, "utf8");
     const instructions = instructionsIn(skill);
 
-    const missingServer = onlyInstructionMatching(instructions, /the server is missing/i, source);
+    const missingServer = onlyInstructionMatching(
+      instructions,
+      /the Calavera tools are unavailable/i,
+      source,
+    );
     const missingTool = onlyInstructionMatching(instructions, /that is a missing tool/i, source);
 
     assert.notEqual(missingServer, missingTool, `${source} handles both cases in one instruction`);
-    assert.match(missingServer, /tell the user that the Calavera MCP server is missing/i, source);
-    assert.match(missingServer, /register or repair/i, `${source}: a missing server needs repair`);
+    // No listed tools can also mean the user's own deny rule, so the agent names both causes and
+    // asks before registering or repairing anything.
+    for (const cause of [/not registered/, /does not allow/]) {
+      assert.match(missingServer, cause, `${source}: no listed tools must name ${cause}`);
+    }
+    assert.match(missingServer, /tell the user that the Calavera tools are unavailable/i, source);
+    assert.match(missingServer, /ask the user before you register or repair/i, source);
     assert.match(missingTool, /does not need repair/i, `${source}: a missing tool needs no repair`);
     assert.match(missingTool, /tell the user which tool/i, `${source}: name the missing tool`);
     // A missing approval tool must not lead to an apply without a dry run (C8), so the rule must
@@ -131,18 +173,9 @@ for (const { source, url } of bundledSkillCopies) {
       /apply nothing through MCP/i,
       `${source}: a missing approval tool must stop applies through MCP`,
     );
-    // A tool the client hides, for example through a permission rule, is the user's choice, so the
-    // agent asks before switching to the CLI instead of working around the denial.
-    assert.match(
-      onlySentenceWith(missingTool, ["permission rule"], source),
-      /ask the user before/i,
-      `${source}: a hidden tool must not be sidestepped`,
-    );
-    assert.match(
-      onlySentenceWith(missingTool, ["server version lacks that approval tool"], source),
-      /Fallbacks/,
-      `${source}: a server that lacks the tool goes to Fallbacks`,
-    );
+    // The agent cannot tell a tool the server lacks from one the client hides, so no branch may
+    // send it to Fallbacks without asking (see the switch test below).
+    assert.doesNotMatch(missingTool, /Fallbacks/, `${source}: step 2 must not route to Fallbacks`);
     assert.doesNotMatch(missingTool, /would provide/, `${source}: a newer version may not have it`);
     assert.match(missingTool, /newer than the pinned one may provide the tool/, source);
   });
@@ -164,6 +197,46 @@ for (const { source, url } of bundledSkillCopies) {
       inspect,
       /missing approval tool/,
       `${source}: manual inspection excludes a missing approval tool`,
+    );
+  });
+
+  test(`the bundled Calavera skill at ${source} asks before switching from MCP to the CLI`, async () => {
+    const skill = await readFile(url, "utf8");
+    const rule = onlyInstructionMatching(
+      instructionsIn(skill),
+      /before you switch from the MCP tools to the CLI/i,
+      source,
+    );
+
+    assert.match(rule, /ask the user and wait for their agreement/i, source);
+    for (const reason of ["the server lacks", "the client hides", "permission prompt"]) {
+      assert.ok(rule.includes(reason), `${source}: the switch rule does not cover ${reason}`);
+    }
+    assert.match(
+      onlySentenceWith(rule, ["refuses a Calavera tool call"], source),
+      /never run the CLI apply command in its place/,
+      `${source}: a refused call must not lead to the CLI apply`,
+    );
+  });
+
+  test(`the bundled Calavera skill at ${source} never permits the CLI after a refused call`, async () => {
+    const skill = await readFile(url, "utf8");
+
+    assert.deepEqual(cliAfterRefusal(skill), [], `${source} permits the CLI after a refusal`);
+  });
+
+  test(`the bundled Calavera skill at ${source} keeps both approval steps`, async () => {
+    const skill = await readFile(url, "utf8");
+
+    assert.match(skill, /Call `apply_recipe` only after the user explicitly approves the dry run/);
+    assert.match(
+      sectionText(skill, "Fallbacks", source),
+      /Ask the user to approve the preview before running the matching apply command/,
+    );
+    assert.match(
+      onlySentenceWith(skill, ["`create-project-calavera apply`"], source),
+      /agreed to.*approves its preview/,
+      `${source}: the CLI apply needs the switch agreement and an approved preview`,
     );
   });
 
