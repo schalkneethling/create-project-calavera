@@ -1,6 +1,10 @@
 // @ts-check
-import { rm } from "node:fs/promises";
-import { isAbsolute, relative } from "node:path";
+import { rmSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative, resolve } from "node:path";
+
+import { onExit } from "signal-exit";
 
 /**
  * The failures of one or more cleanups. A cleanup that runs further cleanups throws this, so the
@@ -88,7 +92,80 @@ export class TemporaryFolderError extends Error {
 }
 
 /**
- * Removes `folder` and everything in it, if it is there.
+ * The temporary folders `createTemporaryFolder` made in this process and `removeTemporaryFolder`
+ * has not removed yet. They are the only folders the exit callback removes, each by its exact
+ * path, because other runs keep folders with the same prefix in the system's temporary folder
+ * (#1081). The set belongs to the process, as the exit it answers does.
+ *
+ * @type {Set<string>}
+ */
+const liveTemporaryFolders = new Set();
+
+/**
+ * Unregisters the exit callback, while one is registered.
+ *
+ * @type {(() => void) | undefined}
+ */
+let removeExitCallback;
+
+/**
+ * Removes every live temporary folder as the process exits. signal-exit's `onExit` calls this when
+ * the process exits normally, through `process.exit()`, or by a signal such as Ctrl+C (SIGINT) or
+ * SIGTERM, and then ends the process by that signal itself. signal-exit shares one set of signal
+ * listeners among every `onExit` registration in the process, such as the one execa makes for each
+ * subprocess, so they cooperate.
+ *
+ * signal-exit calls this for a signal only when the signal would end the process, that is, when no
+ * listener outside signal-exit handles it. When another listener handles the signal, such as a
+ * "press Ctrl+C again to quit" prompt, the process keeps running, and so does the run inside its
+ * folders, so nothing is removed then. The folders are removed later, when the process exits
+ * normally, through `process.exit()`, or by a signal that no other listener handles. Nothing can
+ * remove them when SIGKILL or a crash of Node itself ends the process.
+ *
+ * signal-exit calls every `onExit` callback in the process for the same signal, and a callback
+ * that returns `true` keeps the process running. No callback in this process does that today. If
+ * one did, the folders would already be removed while the run goes on, and signal-exit would not
+ * call this again when the process later exits.
+ *
+ * A folder whose earlier removal failed, which the command has already reported as left behind,
+ * stays recorded, so this tries to remove it once more when the process exits.
+ *
+ * The removal is synchronous, because the process ends as soon as this returns. Removal retries,
+ * because a copy into the folder that is still in flight can make it fail with ENOTEMPTY; a folder
+ * that still cannot be removed stays, as it would without this callback.
+ */
+function removeLiveFoldersOnExit() {
+  for (const folder of liveTemporaryFolders) {
+    try {
+      rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
+    } catch {
+      // The process is ending, so nothing could report the failure.
+    }
+  }
+}
+
+/**
+ * Creates a new, uniquely named folder in the system's temporary folder, whose name starts with
+ * `prefix`, and removes it if the process exits, for example because Ctrl+C or SIGTERM interrupts
+ * it, before `removeTemporaryFolder` removes it (#1081). The exit callback is registered only while
+ * such a folder exists. The folder's path is absolute.
+ *
+ * @param {string} prefix
+ * @returns {Promise<string>}
+ */
+export async function createTemporaryFolder(prefix) {
+  // os.tmpdir() returns a relative TMPDIR as it is, and the working folder can change before the
+  // process exits, so the folder is recorded and returned by its absolute path.
+  const folder = resolve(await mkdtemp(join(tmpdir(), prefix)));
+  liveTemporaryFolders.add(folder);
+  removeExitCallback ??= onExit(removeLiveFoldersOnExit);
+  return folder;
+}
+
+/**
+ * Removes `folder` and everything in it, if it is there. A folder that `createTemporaryFolder`
+ * made is no longer removed when the process exits once this succeeds; when this fails, it still
+ * is.
  *
  * @param {string} folder
  * @returns {Promise<void>}
@@ -98,6 +175,10 @@ export async function removeTemporaryFolder(folder) {
     await rm(folder, { recursive: true, force: true });
   } catch (error) {
     throw new TemporaryFolderError(folder, error);
+  }
+  if (liveTemporaryFolders.delete(folder) && liveTemporaryFolders.size === 0) {
+    removeExitCallback?.();
+    removeExitCallback = undefined;
   }
 }
 
