@@ -120,7 +120,7 @@ const GATE_SENTENCES = [
 function fallbacksWithoutAgreement(text) {
   return instructionsIn(text)
     .flatMap(sentencesIn)
-    .filter((sentence) => /Fallbacks/.test(sentence) && !/^#/.test(sentence))
+    .filter((sentence) => /Fallbacks/.test(sentence) && !sentence.startsWith("#"))
     .filter((sentence) => !/\b(?:agrees?|agreed|agreement|ask the user)\b/i.test(sentence));
 }
 
