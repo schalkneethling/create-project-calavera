@@ -1872,7 +1872,7 @@ test("a --new check names a project without Vite+ and a Plug'n'Play project that
     assert.doesNotMatch(error.actual, /--eval|pnpapi/);
     // The runtime's own output is not copied, because it can quote the files it read.
     assert.doesNotMatch(error.actual, /broken runtime/);
-    assert.match(error.actual, /Yarn's runtime failed before it read vite-plus\/package\.json/);
+    assert.match(error.actual, /the Plug'n'Play read ended without a version/);
     return true;
   });
   const corrupt = await newCheckContext("yarn dlx", async (project) => {
@@ -1970,13 +1970,13 @@ test("a Plug'n'Play read names why Yarn's runtime found no manifest it could rea
     [
       'throw new Error("vite-plus is not a dependency");',
       /no vite-plus that Yarn's runtime resolves/,
-      10,
+      64,
     ],
     // pnpapi resolves a path where no file is.
     [
       'return require("node:path").join(__dirname, "missing", "package.json");',
       /vite-plus\/package\.json that cannot be read/,
-      11,
+      65,
     ],
   ];
   for (const [body, reason, code] of cases) {

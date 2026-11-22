@@ -184,21 +184,22 @@ async function assertManaged(context, directory) {
 }
 
 /**
- * Why a Plug'n'Play read found no version, by the exit code the read script ends with. These fixed
- * texts are all the report takes from the child: the child's own output can quote the files it
- * read, such as a line of a manifest that is not valid JSON, so it is never copied.
+ * Why a Plug'n'Play read found no version, by the exit code the read script ends with. From a
+ * failed read, the report takes only the exit code and these fixed texts, never the child's
+ * output, because that output can quote the files it read, such as a line of a manifest that is
+ * not valid JSON. The codes start at 64, above the exit codes Node.js reserves for itself.
  */
 const PNP_READ_FAILURES = {
-  10: "it installed no vite-plus that Yarn's runtime resolves",
-  11: "it installed a vite-plus/package.json that cannot be read",
-  12: "it installed a vite-plus/package.json that is not valid JSON",
-  13: "it installed a vite-plus/package.json that names no version",
+  64: "it installed no vite-plus that Yarn's runtime resolves",
+  65: "it installed a vite-plus/package.json that cannot be read",
+  66: "it installed a vite-plus/package.json that is not valid JSON",
+  67: "it installed a vite-plus/package.json that names no version",
 };
 
 /**
  * Prints the version of the `vite-plus` package the project folder given as the first argument
- * depends on, or exits with a code from `PNP_READ_FAILURES` after writing its fixed text to
- * stderr. Yarn's `pnpapi` resolves the manifest from that folder without depending on the current
+ * depends on, or exits with a code from `PNP_READ_FAILURES`. The fixed text it writes to stderr
+ * is for a person who runs the script by hand; the rehearsal reads only the exit code. Yarn's `pnpapi` resolves the manifest from that folder without depending on the current
  * folder, and Yarn's runtime lets `fs` read inside the zip archive it points to.
  */
 const PNP_VITE_PLUS_VERSION = `const { readFileSync } = require("node:fs");
@@ -211,21 +212,21 @@ let file;
 try {
   file = require("pnpapi").resolveToUnqualified("vite-plus/package.json", process.argv[1]);
 } catch {
-  fail(10);
+  fail(64);
 }
 let text;
 try {
   text = readFileSync(file, "utf8");
 } catch {
-  fail(11);
+  fail(65);
 }
 let version;
 try {
   version = JSON.parse(text).version;
 } catch {
-  fail(12);
+  fail(66);
 }
-if (typeof version !== "string" || version === "") fail(13);
+if (typeof version !== "string" || version === "") fail(67);
 process.stdout.write(version);`;
 
 /**
@@ -254,7 +255,7 @@ async function installedVitePlus(context, project) {
     const label = `${pnp} reading vite-plus/package.json`;
     const reason =
       PNP_READ_FAILURES[/** @type {keyof typeof PNP_READ_FAILURES} */ (result.exitCode)] ??
-      "Yarn's runtime failed before it read vite-plus/package.json, and its output is left out because it can quote the files it read";
+      "the Plug'n'Play read ended without a version, and its output is left out because it can quote the files it read";
     return { problem: `${reason} (${label}: ${describeExit(result)})` };
   }
   const manifest = join(project, "node_modules", "vite-plus", "package.json");
