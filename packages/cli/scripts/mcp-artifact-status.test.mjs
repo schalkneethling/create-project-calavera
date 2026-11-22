@@ -1,9 +1,9 @@
 // #1052 (ADR-0018 Decisions 1 and 3, ADR-0020 Decision 1): the read-only `artifact_status` MCP tool
 // reports artifact status from the same core function as `artifacts status`, and writes nothing
-// into the project. Unlike the command, it never recovers a pending artifact transaction (it
-// returns the pending-transaction phase instead), never
-// writes or records the artifact cache block, never loads the project's formatter, and resolves
-// `checkUpdates` lookups through a temporary cache outside the project.
+// into the project. Unlike the command, it never recovers a pending artifact transaction, and
+// returns the pending-transaction phase instead. It also never writes or records the artifact cache
+// block, never loads the project's formatter, and resolves `checkUpdates` lookups through a
+// temporary cache outside the project.
 import assert from "node:assert/strict";
 import { mkdtempDisposable, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
@@ -199,6 +199,20 @@ test("the MCP server lists artifact_status as read-only and open-world, with an 
     openWorldHint: true,
   });
   assert.equal(tool.outputSchema?.type, "object");
+  // ADR-0018 Decision 6: declaring the pending-transaction fields as optional now means a later
+  // result that carries phase on every call adds no field to the declared shape.
+  const declared = /** @type {Record<string, { type?: unknown, anyOf?: unknown[] }>} */ (
+    tool.outputSchema?.properties
+  );
+  assert.equal(declared.phase?.type, "string");
+  assert.equal(declared.remedy?.type, "string");
+  assert.deepEqual(
+    declared.rollbackFiles?.anyOf?.map((option) => /** @type {{ type: string }} */ (option).type),
+    ["array", "null"],
+  );
+  for (const field of ["phase", "rollbackFiles", "remedy"]) {
+    assert.equal(tool.outputSchema?.required?.includes(field), false, `${field} is required`);
+  }
   assert.deepEqual(Object.keys(tool.inputSchema.properties ?? {}).sort(), [
     "checkUpdates",
     "config",
@@ -300,7 +314,7 @@ test("artifact_status returns the pending-transaction phase instead of recoverin
       phase: "pending-transaction",
       rollbackFiles: [".calavera/state.json"],
       remedy:
-        "An artifact operation stopped before its rollback ran, so this read-only report does not read the artifact records, because the rollback may still change them. Save any edits to these files first: .calavera/state.json. Then run: npm create project-calavera artifacts status. It rolls the transaction back and reports the artifact status.",
+        "An artifact operation stopped before its rollback ran, so this read-only report does not read the artifact records, because the rollback may still change them. Save any edits to the files in rollbackFiles first, then run: npm create project-calavera artifacts status. It rolls the transaction back and reports the artifact status.",
     });
     assert.deepEqual(await snapshotDirectory(), before);
     assert.deepEqual(registry.requests, [], "a pending transaction must resolve no package");
@@ -371,6 +385,15 @@ test("an MCP client accepts the structured result and the pending-transaction re
       /** @type {{ phase?: string }} */ (pending.structuredContent).phase,
       "pending-transaction",
     );
+
+    // A journal Calavera cannot read gives a null rollbackFiles, which the schema allows too.
+    await writeFile(".calavera/artifact-transaction.json", "{ not json\n");
+    const unreadable = await call();
+    assert.equal(unreadable.isError, undefined, JSON.stringify(unreadable.content));
+    assert.equal(
+      /** @type {{ rollbackFiles?: unknown }} */ (unreadable.structuredContent).rollbackFiles,
+      null,
+    );
   });
 });
 
@@ -429,10 +452,7 @@ test("the pending-transaction report names exactly the files the rollback restor
     const report = await callMcpTool("artifact_status", {});
 
     assert.deepEqual(report.rollbackFiles, ["restored.md", "created.md"]);
-    assert.match(
-      String(report.remedy),
-      /these files first: restored\.md, created\.md\. Then run: pnpm /,
-    );
+    assert.match(String(report.remedy), /the files in rollbackFiles first, then run: pnpm /);
   });
 });
 
@@ -444,6 +464,6 @@ test("the pending-transaction report says when the rollback replaces no file", a
     const report = await callMcpTool("artifact_status", {});
 
     assert.deepEqual(report.rollbackFiles, []);
-    assert.match(String(report.remedy), /replaces or removes no file, so run: npm /);
+    assert.match(String(report.remedy), /restores or removes no file, so run: npm /);
   });
 });

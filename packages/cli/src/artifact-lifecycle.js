@@ -257,11 +257,13 @@ export async function readArtifactStatus(options, services = {}) {
  * 23; owner decision of 2026-11-22 on #1052). It is a result, not an error, so the phase function
  * that ADR-0020 adds later only adds fields. It carries the fields every status report carries,
  * with no artifacts and `ok: false`, because the records cannot be read yet, and three more:
- * `phase`, `rollbackFiles`, the project paths the rollback would restore from their backups or
- * remove, read from the journal without writing, or null when the journal cannot be read, and
- * `remedy`, which tells the person to save edits to those files before running `artifacts status`,
- * which rolls the transaction back. A recipe it cannot read only makes the command use the npm
- * runner, and no text from the recipe or the journal reaches the remedy.
+ * `phase`; `rollbackFiles`, which lists the project paths the rollback would restore from their
+ * backups or remove, read from the journal without writing, or is null when the journal cannot be
+ * read; and `remedy`, which tells the person to save edits to those files before running
+ * `artifacts status`, which rolls the transaction back. The remedy is fixed text plus a command
+ * built from the recipe's package manager, which only selects a runner from a fixed list, so no
+ * text from the recipe or the journal reaches it; the journal's paths stay in `rollbackFiles`. A
+ * recipe it cannot read only makes the command use the npm runner.
  *
  * @param {string} config
  */
@@ -274,11 +276,13 @@ async function pendingTransactionReport(config) {
   }
   const rollbackFiles = await pendingRollbackFiles();
   const command = artifactCommand(recipe, config, ["status"]);
-  let files = `Save any edits to these files first: ${rollbackFiles?.join(", ")}. Then run`;
+  let files;
   if (rollbackFiles === null) {
-    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, so it cannot list the files the rollback would replace or remove. Save any edits to the files the stopped operation was changing, then run`;
+    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, so it cannot list the files the rollback would restore or remove. Save any edits to the files the stopped operation was changing, then run`;
   } else if (rollbackFiles.length === 0) {
-    files = "The rollback replaces or removes no file, so run";
+    files = "The rollback restores or removes no file, so run";
+  } else {
+    files = "Save any edits to the files in rollbackFiles first, then run";
   }
   return {
     command: "artifacts status",

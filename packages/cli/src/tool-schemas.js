@@ -617,9 +617,18 @@ export const mcpOnlyToolSchemas = Object.freeze({
       dryRun: z.boolean(),
       offline: z.boolean().describe("True when no update check ran."),
       updateAllCommand: z.string().nullable(),
-      checkUpdatesCommand: z.string().nullable(),
+      checkUpdatesCommand: z
+        .string()
+        .nullable()
+        .describe(
+          "The CLI command that checks for updates, after a report without an update check. Null after an update check, and in the pending-transaction result, where an update check cannot run.",
+        ),
       updateAllBlockedBy: z.array(z.string()),
-      ok: z.boolean().describe("True when every installed artifact is healthy."),
+      ok: z
+        .boolean()
+        .describe(
+          "True when every installed artifact is healthy. False in the pending-transaction result, whose artifacts cannot be read yet.",
+        ),
       artifacts: z
         .array(artifactStatusEntrySchema)
         .describe(
