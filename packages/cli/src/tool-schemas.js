@@ -14,7 +14,11 @@
 // check on the value and returns its message, so an MCP client reads the same explanation, with
 // its remedy, that the core gives.
 import * as z from "zod";
-import { normalizeBaselineTarget } from "@schalkneethling/calavera-baseline-core";
+import {
+  describeBaselineTarget,
+  normalizeBaselineTarget,
+  recommendBaselineTarget,
+} from "@schalkneethling/calavera-baseline-core";
 
 import {
   CODEQL_LANGUAGES,
@@ -24,17 +28,22 @@ import {
   MERGE_METHODS,
   RELEASE_ENVIRONMENT_MAX_WAIT_TIMER,
   REPOSITORY_NAME_PATTERN,
-  normalizeGithubRepositoryControlsOptions,
 } from "./github-repository-controls-options.js";
 import {
   STYLELINT_BASELINE_SEVERITIES,
+  assertAiArtifactInputsObject,
   assertKnownProfile,
+  describeIntegrationResponse,
+  normalizeAiTarget,
   normalizeIntegrationOptions,
   packageManagerIdsForRecipe,
   profileIdsForRecipe,
   recipeToolInputDescriptions,
+  validateRecipe,
+  validateRecipeCompositionInput,
 } from "./recipe.js";
-import { STRYKER_ID, normalizeStrykerOptions, strykerTestRunners } from "./stryker-options.js";
+import { STRYKER_ID, strykerTestRunners } from "./stryker-options.js";
+import { assertString } from "./utils/assertions.js";
 
 const nodeOnlyRegistry = z.registry();
 
@@ -53,17 +62,27 @@ function nodeOnly(schema) {
 }
 
 /**
- * An error map that runs `check`, a core check, on the refused value and returns the message it
- * throws. When the check passes, the schema's own message stays.
+ * @typedef {{ input?: unknown, path?: PropertyKey[] }} RefusedValue What Zod hands an error map: the
+ *   refused value and its full path from the tool input.
+ * @typedef {(value: unknown, issue: RefusedValue) => unknown} CoreCheck
+ */
+
+/**
+ * An error map that runs `check`, the core's own check, on the refused value and returns the
+ * message it throws, so every refusal carries the core's explanation and remedy (#1051, owner
+ * decision of 2026-11-22). A schema's map also covers the refusals of its checks, such as `.min`,
+ * and its unknown keys. When the check passes, the schema's own message stays. Wrap a core
+ * function in an arrow that passes only the value: `check` also receives the issue, which a core
+ * function would read as its own optional second parameter, such as normalizeBaselineTarget's data.
  *
- * @param {(value: unknown) => unknown} check
- * @returns {{ error: (issue: { input?: unknown }) => string | undefined }}
+ * @param {CoreCheck} check
  */
 function coreMessage(check) {
   return {
+    /** @param {RefusedValue} issue */
     error: (issue) => {
       try {
-        check(issue.input);
+        check(issue.input, issue);
       } catch (error) {
         return error instanceof Error ? error.message : undefined;
       }
@@ -83,7 +102,7 @@ function escapeRegExp(value) {
  * reads the choices from it.
  *
  * @param {readonly string[]} values
- * @param {(value: unknown) => unknown} check
+ * @param {CoreCheck} check
  */
 function trimmedEnum(values, check) {
   return z.union(
@@ -100,204 +119,285 @@ function trimmedEnum(values, check) {
 /**
  * A string that is not empty once trimmed, as the core requires of these strings.
  *
- * @param {(value: unknown) => unknown} check
+ * @param {CoreCheck} check
  */
 function nonBlankString(check) {
   return z.string(coreMessage(check)).regex(/\S/);
 }
 
+/**
+ * The position of the refused artifact in aiArtifacts, which the core names in its messages.
+ *
+ * @param {RefusedValue} issue
+ */
+const artifactIndex = (issue) => Number(issue.path?.[1]);
+
+/**
+ * Runs the core's composition check on a recipe whose only fault is the refused value.
+ *
+ * @param {(value: unknown) => Record<string, unknown>} fields
+ * @returns {CoreCheck}
+ */
+const compositionCheck = (fields) => (value) =>
+  validateRecipeCompositionInput({ profile: "default", ...fields(value) });
+
+/**
+ * Runs the core's integrationOptions check on the option `id` built from the refused value.
+ *
+ * @param {string} id
+ * @param {(value: unknown) => unknown} [options]
+ * @returns {CoreCheck}
+ */
+const optionCheck =
+  (id, options = (value) => value) =>
+  (value) =>
+    normalizeIntegrationOptions({ [id]: options(value) }, [id]);
+
 // A removed profile id fails the enum like any other value; the error map hands back the same
 // message validateRecipe gives, naming the replacement, so an MCP client sees it too (ADR-0011).
 const profileSchema = z.enum(
   profileIdsForRecipe(),
-  coreMessage((value) => {
-    if (typeof value === "string") assertKnownProfile(value);
-  }),
+  coreMessage((value) => assertKnownProfile(value)),
 );
 
-export const packageManagerSchema = z.enum(packageManagerIdsForRecipe());
+export const packageManagerSchema = z.enum(
+  packageManagerIdsForRecipe(),
+  coreMessage(compositionCheck((packageManager) => ({ packageManager }))),
+);
 
 export const recipeSchema = z
-  .record(z.string(), z.unknown())
+  .record(
+    z.string(),
+    z.unknown(),
+    coreMessage((value) => validateRecipe(value)),
+  )
   .describe(recipeToolInputDescriptions.recipe);
 
-const baselineTargetSchema = z.union([z.enum(["widely", "newly"]), z.number().int()]);
+const baselineTargetSchema = z.union(
+  [
+    z.enum(
+      ["widely", "newly"],
+      coreMessage((value) => describeBaselineTarget(value)),
+    ),
+    z.number(coreMessage((value) => describeBaselineTarget(value))).int(),
+  ],
+  coreMessage((value) => describeBaselineTarget(value)),
+);
 
-/** @param {string} field */
-const stylelintBaselineCheck = (field) => (/** @type {unknown} */ value) =>
-  normalizeIntegrationOptions({ "stylelint-baseline": { available: "widely", [field]: value } }, [
-    "stylelint-baseline",
-  ]);
+const STYLELINT_BASELINE = "stylelint-baseline";
+const stylelintBaselineOptionsSchema = z.strictObject(
+  {
+    // normalizeBaselineTarget also reads a four-digit year written as a string.
+    available: z.union(
+      [
+        z.enum(
+          ["widely", "newly"],
+          coreMessage((value) => normalizeBaselineTarget(value)),
+        ),
+        z.number(coreMessage((value) => normalizeBaselineTarget(value))).int(),
+        z.string(coreMessage((value) => normalizeBaselineTarget(value))).regex(/^\d{4}$/),
+      ],
+      coreMessage((value) => normalizeBaselineTarget(value)),
+    ),
+    severity: z
+      .enum(
+        STYLELINT_BASELINE_SEVERITIES,
+        coreMessage(
+          optionCheck(STYLELINT_BASELINE, (severity) => ({ available: "widely", severity })),
+        ),
+      )
+      .nullable()
+      .optional(),
+  },
+  coreMessage(optionCheck(STYLELINT_BASELINE)),
+);
 
-const stylelintBaselineOptionsSchema = z.strictObject({
-  // normalizeBaselineTarget also reads a four-digit year written as a string.
-  available: z.union(
-    [
-      z.enum(["widely", "newly"], coreMessage(normalizeBaselineTarget)),
-      z.number(coreMessage(normalizeBaselineTarget)).int(),
-      z.string(coreMessage(normalizeBaselineTarget)).regex(/^\d{4}$/),
-    ],
-    coreMessage(normalizeBaselineTarget),
-  ),
-  severity: z
-    .enum(STYLELINT_BASELINE_SEVERITIES, coreMessage(stylelintBaselineCheck("severity")))
-    .nullable()
-    .optional(),
-});
+const HTML_VALIDATE = "html-validate";
+const htmlValidateOptionsSchema = z.strictObject(
+  {
+    quality: z
+      .boolean(coreMessage(optionCheck(HTML_VALIDATE, (quality) => ({ quality }))))
+      .nullable()
+      .optional(),
+  },
+  coreMessage(optionCheck(HTML_VALIDATE)),
+);
 
-const htmlValidateOptionsSchema = z.strictObject({
-  quality: z.boolean().nullable().optional(),
-});
-
-/** @param {(value: unknown) => Record<string, unknown>} options */
-const strykerCheck = (options) => (/** @type {unknown} */ value) =>
-  normalizeStrykerOptions(options(value));
-const testFilesCheck = strykerCheck((testFiles) => ({ testRunner: "node:test", testFiles }));
-
-const strykerOptionsSchema = z.strictObject({
-  testRunner: z
-    .enum(
-      strykerTestRunners().map(({ id }) => id),
-      coreMessage(strykerCheck((testRunner) => ({ testRunner }))),
-    )
-    .optional(),
-  testFiles: z
-    .array(z.string(coreMessage((glob) => testFilesCheck([glob]))).min(1))
-    .min(1, coreMessage(testFilesCheck))
-    .optional(),
-});
+/** @param {unknown} testFiles */
+const nodeTestFiles = (testFiles) => ({ testRunner: "node:test", testFiles });
+const strykerOptionsSchema = z.strictObject(
+  {
+    testRunner: z
+      .enum(
+        strykerTestRunners().map(({ id }) => id),
+        coreMessage(optionCheck(STRYKER_ID, (testRunner) => ({ testRunner }))),
+      )
+      .optional(),
+    testFiles: z
+      .array(
+        z.string(coreMessage(optionCheck(STRYKER_ID, (glob) => nodeTestFiles([glob])))).min(1),
+        coreMessage(optionCheck(STRYKER_ID, nodeTestFiles)),
+      )
+      .min(1)
+      .optional(),
+  },
+  coreMessage(optionCheck(STRYKER_ID)),
+);
 
 /**
- * Runs the core's repository-controls check with a valid repository and `field` set to `value`.
+ * Runs the core's repository-controls check on options with a valid repository and the fields
+ * built from the refused value.
  *
- * @param {string} field
- * @param {(value: unknown) => unknown} [wrap] Turns a refused list item into the list.
+ * @param {(value: unknown) => Record<string, unknown>} fields
  */
-const repositoryControlsCheck =
-  (field, wrap = (value) => value) =>
-  (/** @type {unknown} */ value) =>
-    normalizeGithubRepositoryControlsOptions({ repository: "owner/name", [field]: wrap(value) });
-/** @param {unknown} value */
-const asList = (value) => [value];
+const repositoryControlsCheck = (fields) =>
+  optionCheck(GITHUB_REPOSITORY_CONTROLS_ID, (value) => ({
+    repository: "owner/name",
+    ...fields(value),
+  }));
+/** @param {string} field */
+const fieldCheck = (field) => repositoryControlsCheck((value) => ({ [field]: value }));
+/** @param {string} field */
+const itemCheck = (field) => repositoryControlsCheck((value) => ({ [field]: [value] }));
+/** @param {string} field */
+const repositoryControlsBoolean = (field) => z.boolean(coreMessage(fieldCheck(field))).optional();
 
 /**
  * @param {string} field
  * @param {readonly string[]} values
  */
 const repositoryControlsEnumList = (field, values) =>
-  z
-    .array(trimmedEnum(values, repositoryControlsCheck(field, asList)))
-    .min(1, coreMessage(repositoryControlsCheck(field)));
+  z.array(trimmedEnum(values, itemCheck(field)), coreMessage(fieldCheck(field))).min(1);
 
-const waitTimerMessage = coreMessage(
-  repositoryControlsCheck("releaseEnvironment", (waitTimer) => ({
-    reviewers: ["octocat"],
-    waitTimer,
-  })),
-);
+/**
+ * Runs the core's check on a release environment built from the refused value.
+ *
+ * @param {(value: unknown) => unknown} environment
+ */
+const releaseEnvironmentCheck = (environment) =>
+  repositoryControlsCheck((value) => ({ releaseEnvironment: environment(value) }));
+/** @param {string} field */
+const environmentFieldCheck = (field) =>
+  releaseEnvironmentCheck((value) => ({ reviewers: ["octocat"], [field]: value }));
 
 const releaseEnvironmentSchema = z.union(
   [
     z.literal(false),
     z.null(),
-    z.strictObject({
-      name: nonBlankString(
-        repositoryControlsCheck("releaseEnvironment", (name) => ({ name, reviewers: ["octocat"] })),
-      ).optional(),
-      reviewers: z
-        .array(
-          nonBlankString(
-            repositoryControlsCheck("releaseEnvironment", (reviewer) => ({
-              reviewers: [reviewer],
-            })),
-          ),
-        )
-        .min(
-          1,
-          coreMessage(
-            repositoryControlsCheck("releaseEnvironment", (reviewers) => ({ reviewers })),
-          ),
-        ),
-      waitTimer: z
-        .number(waitTimerMessage)
-        .int()
-        .min(0)
-        .max(RELEASE_ENVIRONMENT_MAX_WAIT_TIMER)
-        .nullable()
-        .optional(),
-      preventSelfReview: z.boolean().optional(),
-      branches: z
-        .array(
-          nonBlankString(
-            repositoryControlsCheck("releaseEnvironment", (branch) => ({
-              reviewers: ["octocat"],
-              branches: [branch],
-            })),
-          ),
-        )
-        .min(
-          1,
-          coreMessage(
-            repositoryControlsCheck("releaseEnvironment", (branches) => ({
-              reviewers: ["octocat"],
-              branches,
-            })),
-          ),
-        )
-        .optional(),
-    }),
+    z.strictObject(
+      {
+        name: nonBlankString(environmentFieldCheck("name")).optional(),
+        reviewers: z
+          .array(
+            nonBlankString(releaseEnvironmentCheck((reviewer) => ({ reviewers: [reviewer] }))),
+            coreMessage(releaseEnvironmentCheck((reviewers) => ({ reviewers }))),
+          )
+          .min(1),
+        waitTimer: z
+          .number(coreMessage(environmentFieldCheck("waitTimer")))
+          .int()
+          .min(0)
+          .max(RELEASE_ENVIRONMENT_MAX_WAIT_TIMER)
+          .nullable()
+          .optional(),
+        preventSelfReview: z
+          .boolean(coreMessage(environmentFieldCheck("preventSelfReview")))
+          .optional(),
+        branches: z
+          .array(
+            nonBlankString(
+              releaseEnvironmentCheck((branch) => ({ reviewers: ["octocat"], branches: [branch] })),
+            ),
+            coreMessage(environmentFieldCheck("branches")),
+          )
+          .min(1)
+          .optional(),
+      },
+      coreMessage(releaseEnvironmentCheck((environment) => environment)),
+    ),
   ],
-  coreMessage(repositoryControlsCheck("releaseEnvironment")),
+  coreMessage(releaseEnvironmentCheck((environment) => environment)),
 );
 
-const githubRepositoryControlsOptionsSchema = z.strictObject({
-  repository: z
-    .string(coreMessage(repositoryControlsCheck("repository")))
-    .regex(new RegExp(`^\\s*${REPOSITORY_NAME_PATTERN}\\s*$`)),
-  defaultBranch: nonBlankString(repositoryControlsCheck("defaultBranch")).optional(),
-  requiredChecks: z
-    .array(nonBlankString(repositoryControlsCheck("requiredChecks", asList)))
-    .optional(),
-  requireCodeqlResults: z.boolean().optional(),
-  mergeMethods: repositoryControlsEnumList("mergeMethods", MERGE_METHODS).optional(),
-  wiki: z.boolean().optional(),
-  projects: z.boolean().optional(),
-  autoMerge: z.boolean().optional(),
-  deleteBranchOnMerge: z.boolean().optional(),
-  updateBranch: z.boolean().optional(),
-  dependabotEcosystems: repositoryControlsEnumList(
-    "dependabotEcosystems",
-    DEPENDABOT_ECOSYSTEMS,
-  ).optional(),
-  codeqlLanguages: repositoryControlsEnumList("codeqlLanguages", CODEQL_LANGUAGES).optional(),
-  codeqlQuerySuite: z
-    .enum(CODEQL_QUERY_SUITES, coreMessage(repositoryControlsCheck("codeqlQuerySuite")))
-    .nullable()
-    .optional(),
-  releaseEnvironment: releaseEnvironmentSchema.optional(),
-});
+const githubRepositoryControlsOptionsSchema = z.strictObject(
+  {
+    repository: z
+      .string(
+        coreMessage(optionCheck(GITHUB_REPOSITORY_CONTROLS_ID, (repository) => ({ repository }))),
+      )
+      .regex(new RegExp(`^\\s*${REPOSITORY_NAME_PATTERN}\\s*$`)),
+    defaultBranch: nonBlankString(fieldCheck("defaultBranch")).optional(),
+    requiredChecks: z
+      .array(nonBlankString(itemCheck("requiredChecks")), coreMessage(fieldCheck("requiredChecks")))
+      .optional(),
+    requireCodeqlResults: repositoryControlsBoolean("requireCodeqlResults"),
+    mergeMethods: repositoryControlsEnumList("mergeMethods", MERGE_METHODS).optional(),
+    wiki: repositoryControlsBoolean("wiki"),
+    projects: repositoryControlsBoolean("projects"),
+    autoMerge: repositoryControlsBoolean("autoMerge"),
+    deleteBranchOnMerge: repositoryControlsBoolean("deleteBranchOnMerge"),
+    updateBranch: repositoryControlsBoolean("updateBranch"),
+    dependabotEcosystems: repositoryControlsEnumList(
+      "dependabotEcosystems",
+      DEPENDABOT_ECOSYSTEMS,
+    ).optional(),
+    codeqlLanguages: repositoryControlsEnumList("codeqlLanguages", CODEQL_LANGUAGES).optional(),
+    codeqlQuerySuite: z
+      .enum(CODEQL_QUERY_SUITES, coreMessage(fieldCheck("codeqlQuerySuite")))
+      .nullable()
+      .optional(),
+    releaseEnvironment: releaseEnvironmentSchema.optional(),
+  },
+  coreMessage(optionCheck(GITHUB_REPOSITORY_CONTROLS_ID)),
+);
 
 // normalizeIntegrationOptions refuses an ID other than these four, and a field an option does not
 // define, so the objects are strict. Whether the integration is selected is a check across
 // fields that the schema does not express.
-const integrationOptionsSchema = z.strictObject({
-  "stylelint-baseline": stylelintBaselineOptionsSchema.optional(),
-  "html-validate": htmlValidateOptionsSchema.optional(),
-  [GITHUB_REPOSITORY_CONTROLS_ID]: githubRepositoryControlsOptionsSchema.optional(),
-  [STRYKER_ID]: strykerOptionsSchema.optional(),
-});
+const integrationOptionsSchema = z.strictObject(
+  {
+    [STYLELINT_BASELINE]: stylelintBaselineOptionsSchema.optional(),
+    [HTML_VALIDATE]: htmlValidateOptionsSchema.optional(),
+    [GITHUB_REPOSITORY_CONTROLS_ID]: githubRepositoryControlsOptionsSchema.optional(),
+    [STRYKER_ID]: strykerOptionsSchema.optional(),
+  },
+  coreMessage((options) => normalizeIntegrationOptions(options, [])),
+);
 
-const aiArtifactInputSchema = z.object({
-  id: z.string().describe(recipeToolInputDescriptions.aiArtifactId),
-  target: z.string().optional().describe(recipeToolInputDescriptions.aiArtifactTarget),
-  // ADR-0018 Decision 4: only the MCP server reports the inputs an artifact declares.
-  inputs: nodeOnly(
-    z
-      .record(z.string(), z.string())
+const aiArtifactInputSchema = z.object(
+  {
+    id: z
+      .string(
+        coreMessage((id, issue) => assertString(`aiArtifacts[${artifactIndex(issue)}].id`, id)),
+      )
+      .describe(recipeToolInputDescriptions.aiArtifactId),
+    target: z
+      .string(coreMessage((target, issue) => normalizeAiTarget(target, artifactIndex(issue))))
       .optional()
-      .describe(recipeToolInputDescriptions.aiArtifactInputs),
-  ),
-});
+      .describe(recipeToolInputDescriptions.aiArtifactTarget),
+    // ADR-0018 Decision 4: only the MCP server reports the inputs an artifact declares.
+    inputs: nodeOnly(
+      z
+        .record(
+          z.string(),
+          z.string(
+            coreMessage((value, issue) =>
+              assertString(
+                `aiArtifacts[${artifactIndex(issue)}].inputs.${String(issue.path?.[3])}`,
+                value,
+              ),
+            ),
+          ),
+          coreMessage((inputs, issue) =>
+            assertAiArtifactInputsObject(inputs, artifactIndex(issue)),
+          ),
+        )
+        .optional()
+        .describe(recipeToolInputDescriptions.aiArtifactInputs),
+    ),
+  },
+  coreMessage(compositionCheck((item) => ({ aiArtifacts: [item] }))),
+);
 
 // Shared output schema for a catalog integration as returned by list_integrations and
 // describe_integration. Loose, because some catalog entries carry per-platform config blocks
@@ -377,7 +477,9 @@ export const sharedToolSchemas = Object.freeze({
   },
   describe_integration: {
     input: z.object({
-      id: z.string().describe(recipeToolInputDescriptions.integrationId),
+      id: z
+        .string(coreMessage((value) => describeIntegrationResponse(value)))
+        .describe(recipeToolInputDescriptions.integrationId),
     }),
     output: integrationOutputSchema,
   },
@@ -389,6 +491,8 @@ export const sharedToolSchemas = Object.freeze({
     }),
   },
   search_baseline_features: {
+    // The core reads any query and falls back to its default limit, so these refusals, which both
+    // surfaces declared before #1051, have no core message to carry.
     input: z.object({
       query: z.string().describe(recipeToolInputDescriptions.baselineQuery),
       limit: z
@@ -402,7 +506,13 @@ export const sharedToolSchemas = Object.freeze({
   },
   recommend_baseline_target: {
     input: z.object({
-      features: z.array(z.string()).min(1).describe(recipeToolInputDescriptions.baselineFeatures),
+      features: z
+        .array(
+          z.string(coreMessage((feature) => recommendBaselineTarget([feature]))),
+          coreMessage((value) => recommendBaselineTarget(value)),
+        )
+        .min(1)
+        .describe(recipeToolInputDescriptions.baselineFeatures),
     }),
   },
   compose_recipe: {
@@ -411,9 +521,18 @@ export const sharedToolSchemas = Object.freeze({
       packageManager: packageManagerSchema
         .default("npm")
         .describe(recipeToolInputDescriptions.packageManager),
-      tools: z.array(z.string()).optional().describe(recipeToolInputDescriptions.tools),
+      tools: z
+        .array(
+          z.string(coreMessage(compositionCheck((tool) => ({ tools: [tool] })))),
+          coreMessage(compositionCheck((tools) => ({ tools }))),
+        )
+        .optional()
+        .describe(recipeToolInputDescriptions.tools),
       aiArtifacts: z
-        .array(aiArtifactInputSchema)
+        .array(
+          aiArtifactInputSchema,
+          coreMessage(compositionCheck((aiArtifacts) => ({ aiArtifacts }))),
+        )
         .optional()
         .describe(recipeToolInputDescriptions.aiArtifacts),
       integrationOptions: integrationOptionsSchema
@@ -427,27 +546,37 @@ export const sharedToolSchemas = Object.freeze({
 
 /**
  * The JSON Schema form of a Zod schema, as the MCP SDK advertises it in `tools/list`: draft 7,
- * read as an input or as an output. With `browser`, a property marked `nodeOnly` becomes `false`,
- * the JSON Schema that no value matches, so the WebMCP form refuses it.
+ * read as an input or as an output.
+ *
+ * With `browser`, the form is the one the Composer registers. ADR-0018 Decision 2 says the WebMCP
+ * adapter leaves a Node.js-only part out, so a property marked `nodeOnly` is removed from
+ * `properties`, and `propertyNames` refuses its name, so the browser form still refuses it rather
+ * than treating it as an unknown key. The `$schema` key is left out too, as the hand-written WebMCP
+ * schemas did, because `registerTool` takes the schema object itself.
  *
  * @param {z.ZodType} schema
  * @param {{ io: "input" | "output", browser?: boolean }} options
  */
 export function toolJsonSchema(schema, { io, browser = false }) {
-  return z.toJSONSchema(schema, {
+  const jsonSchema = z.toJSONSchema(schema, {
     target: "draft-7",
     io,
     override: browser
       ? ({ zodSchema, jsonSchema }) => {
           if (!(zodSchema instanceof z.ZodObject) || !jsonSchema.properties) return;
-          for (const [key, property] of Object.entries(zodSchema.shape)) {
-            if (!nodeOnlyRegistry.has(property)) continue;
-            // A Node.js-only part is optional, so `required` never names it.
-            jsonSchema.properties[key] = false;
-          }
+          const nodeOnlyKeys = Object.keys(zodSchema.shape).filter((key) =>
+            nodeOnlyRegistry.has(zodSchema.shape[key]),
+          );
+          if (nodeOnlyKeys.length === 0) return;
+          // A Node.js-only part is optional, so `required` never names it.
+          for (const key of nodeOnlyKeys) delete jsonSchema.properties[key];
+          jsonSchema.propertyNames = { not: { enum: nodeOnlyKeys } };
         }
       : undefined,
   });
+  if (!browser) return jsonSchema;
+  const { $schema, ...browserSchema } = jsonSchema;
+  return browserSchema;
 }
 
 /**
@@ -463,7 +592,9 @@ export function webMcpToolSchemas() {
       name,
       {
         inputSchema: toolJsonSchema(input, { io: "input", browser: true }),
-        ...(output ? { outputSchema: toolJsonSchema(output, { io: "output" }) } : {}),
+        ...(output
+          ? { outputSchema: toolJsonSchema(output, { io: "output", browser: true }) }
+          : {}),
       },
     ]),
   );

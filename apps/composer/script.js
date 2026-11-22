@@ -39,7 +39,8 @@ import {
   composerNextCommands,
   composerRecipe,
 } from "./recipe-builder.js";
-import { webMcpToolSchemas } from "../../packages/cli/src/tool-schemas.js";
+// Generated from the core's shared tool definitions when Vite builds the page (webmcp-schemas-plugin.js).
+import webMcpSchemas from "virtual:webmcp-tool-schemas";
 
 const form = document.querySelector("#composer");
 const integrations = document.querySelector("#integrations");
@@ -806,9 +807,7 @@ function registerWebMcpTools() {
 
   try {
     // ADR-0018 Decision 2: the input and output schemas of the tools the MCP server shares come
-    // from one definition in the core.
-    const webMcpSchemas = webMcpToolSchemas();
-
+    // from one definition in the core, through webMcpSchemas.
     navigator.modelContext.registerTool({
       name: "list_profiles",
       description: recipeToolDescriptions.list_profiles,

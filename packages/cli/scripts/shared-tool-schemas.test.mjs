@@ -63,7 +63,8 @@ const coreCalls = {
   describe_integration: ({ id }) => describeIntegrationResponse(id),
   explain_recipe: ({ recipe }) => explainRecipeResponse(recipe),
   validate_recipe: ({ recipe }) => {
-    if (!validateRecipeResponse(recipe).ok) throw new Error("validate_recipe refused the recipe");
+    const validation = validateRecipeResponse(recipe);
+    if (!validation.ok) throw new Error(validation.errors[0]);
   },
 };
 
@@ -171,7 +172,10 @@ test("the MCP server advertises each shared tool's core input and output schema"
 
 test("MCP and WebMCP declare the same output schema for each shared tool", () => {
   for (const name of Object.keys(sharedToolSchemas)) {
-    assert.deepEqual(webMcpSchemas[name].outputSchema, mcpTools.get(name)?.outputSchema, name);
+    // The WebMCP form leaves out only the $schema key, because registerTool takes the schema itself.
+    const mcpOutput = mcpTools.get(name)?.outputSchema;
+    const { $schema, ...expected } = mcpOutput ?? {};
+    assert.deepEqual(webMcpSchemas[name].outputSchema, mcpOutput && expected, name);
   }
   assert.ok(webMcpSchemas.list_integrations.outputSchema);
   // The Stryker entry's test runners are the fields integrationOptions.stryker refers to.
@@ -181,10 +185,14 @@ test("MCP and WebMCP declare the same output schema for each shared tool", () =>
 
 test("MCP and WebMCP declare the same input schema apart from the Node.js-only artifact inputs", () => {
   for (const name of Object.keys(sharedToolSchemas)) {
-    const mcpInput = structuredClone(mcpTools.get(name)?.inputSchema);
+    const { $schema, ...mcpInput } = structuredClone(mcpTools.get(name)?.inputSchema);
+    assert.equal($schema, "http://json-schema.org/draft-07/schema#", name);
     if (name === "compose_recipe") {
-      assert.equal(mcpInput.properties.aiArtifacts.items.properties.inputs.type, "object");
-      mcpInput.properties.aiArtifacts.items.properties.inputs = false;
+      // ADR-0018 Decision 2: the WebMCP adapter leaves the Node.js-only part out, and refuses it.
+      const item = mcpInput.properties.aiArtifacts.items;
+      assert.equal(item.properties.inputs.type, "object");
+      delete item.properties.inputs;
+      item.propertyNames = { not: { enum: ["inputs"] } };
     }
     assert.deepEqual(webMcpSchemas[name].inputSchema, mcpInput, name);
   }
@@ -228,116 +236,135 @@ test("compose_recipe defaults packageManager to npm, as the core does", () => {
   assert.equal(composeRecipeResponse({ profile: "default" }).recipe.packageManager, "npm");
 });
 
-test("both declared schemas refuse the same inputs the core refuses", () => {
-  const refused = [
-    ["compose_recipe", {}],
-    ["compose_recipe", { profile: "default", packageManager: "deno" }],
-    ["compose_recipe", { profile: "default", integrationOptions: { eslint: {} } }],
-    // #1027: available is required.
-    ["compose_recipe", { profile: "default", integrationOptions: { "stylelint-baseline": {} } }],
-    [
-      "compose_recipe",
-      {
-        profile: "default",
-        integrationOptions: { "stylelint-baseline": { available: "newly", severity: "info" } },
-      },
-    ],
-    [
-      "compose_recipe",
-      {
-        profile: "default",
-        tools: ["html-validate"],
-        integrationOptions: { "html-validate": { quality: "no" } },
-      },
-    ],
-    [
-      "compose_recipe",
-      {
-        profile: "default",
-        tools: ["stryker"],
-        integrationOptions: { stryker: { testRunner: "jest" } },
-      },
-    ],
-    [
-      "compose_recipe",
-      {
-        profile: "default",
-        tools: ["github-repository-controls"],
-        integrationOptions: {
-          "github-repository-controls": { ...githubControls, codeqlLanguages: ["cobol"] },
-        },
-      },
-    ],
-    [
-      "compose_recipe",
-      {
-        profile: "default",
-        tools: ["github-repository-controls"],
-        integrationOptions: { "github-repository-controls": { repository: "no-slash" } },
-      },
-    ],
-    [
-      "compose_recipe",
-      {
-        profile: "default",
-        tools: ["github-repository-controls"],
-        integrationOptions: {
-          "github-repository-controls": { ...githubControls, releaseEnvironment: {} },
-        },
-      },
-    ],
-    [
-      "compose_recipe",
-      {
-        profile: "default",
-        tools: ["github-repository-controls"],
-        integrationOptions: { "github-repository-controls": { ...githubControls, wiki: "yes" } },
-      },
-    ],
-    ["describe_baseline_target", { target: "someday" }],
-    ...["x2024", "20245"].map((available) => [
-      "compose_recipe",
-      { profile: "default", integrationOptions: { "stylelint-baseline": { available } } },
-    ]),
-    ...[-1, 43_201].map((waitTimer) => [
-      "compose_recipe",
-      {
-        profile: "default",
-        tools: ["github-repository-controls"],
-        integrationOptions: {
-          "github-repository-controls": {
-            ...githubControls,
-            releaseEnvironment: { reviewers: ["octocat"], waitTimer },
-          },
-        },
-      },
-    ]),
-    ["explain_recipe", {}],
-    [
-      "compose_recipe",
-      {
-        profile: "default",
-        tools: ["github-repository-controls"],
-        integrationOptions: {
-          "github-repository-controls": {
-            ...githubControls,
-            releaseEnvironment: { reviewers: [] },
-          },
-        },
-      },
-    ],
-    ["recommend_baseline_target", { features: [] }],
-    ["describe_integration", {}],
-    ["validate_recipe", { recipe: [] }],
-  ];
+/** @param {Record<string, unknown>} fields */
+const compose = (fields) => ["compose_recipe", { profile: "default", ...fields }];
+/** @param {string} id @param {unknown} options */
+const option = (id, options) => compose({ tools: [id], integrationOptions: { [id]: options } });
+/** @param {Record<string, unknown>} fields */
+const github = (fields) => option("github-repository-controls", { ...githubControls, ...fields });
+/** @param {Record<string, unknown>} fields */
+const releaseEnvironment = (fields) =>
+  github({ releaseEnvironment: { reviewers: ["octocat"], ...fields } });
+/** @param {Record<string, unknown>} fields */
+const nodeTest = (fields) => option("stryker", { testRunner: "node:test", ...fields });
 
-  for (const [tool, input] of refused) {
-    assert.throws(
-      () => coreCalls[tool](structuredClone(input)),
-      `core ${tool}: ${JSON.stringify(input)}`,
-    );
-    assert.equal(mcpAccepts(tool, input), false, `MCP ${tool}: ${JSON.stringify(input)}`);
-    assert.equal(webMcpAccepts(tool, input), false, `WebMCP ${tool}: ${JSON.stringify(input)}`);
+// Inputs the core refuses, one fault each: unknown keys, wrong container types, and wrong values.
+const refused = [
+  ["compose_recipe", {}],
+  compose({ profile: 5 }),
+  compose({ profile: "not-a-profile" }),
+  compose({ packageManager: "deno" }),
+  compose({ tools: "stylelint" }),
+  compose({ tools: [5] }),
+  compose({ aiArtifacts: "skill-calavera" }),
+  compose({ aiArtifacts: [5] }),
+  compose({ aiArtifacts: [{}] }),
+  compose({ aiArtifacts: [{ id: "skill-calavera" }, { id: 5 }] }),
+  compose({ aiArtifacts: [{ id: "hook-block-dangerous-commands", target: 5 }] }),
+  compose({ integrationOptions: [] }),
+  compose({ integrationOptions: { eslint: {} } }),
+  option("stylelint-baseline", "widely"),
+  option("stylelint-baseline", { available: "widely", level: "error" }),
+  // #1027: available is required.
+  option("stylelint-baseline", {}),
+  ...["someday", "x2024", "20245", 2024.5].map((available) =>
+    option("stylelint-baseline", { available }),
+  ),
+  option("stylelint-baseline", { available: "newly", severity: "info" }),
+  option("html-validate", "no"),
+  option("html-validate", { quality: true, strict: true }),
+  option("html-validate", { quality: "no" }),
+  option("stryker", "vitest"),
+  option("stryker", { runner: "vitest" }),
+  option("stryker", { testRunner: "jest" }),
+  nodeTest({ testFiles: "tests/**/*.mjs" }),
+  nodeTest({ testFiles: [] }),
+  nodeTest({ testFiles: [""] }),
+  nodeTest({ testFiles: [5] }),
+  option("github-repository-controls", "octo/repo"),
+  option("github-repository-controls", {}),
+  github({ colour: "blue" }),
+  github({ repository: "no-slash" }),
+  github({ repository: 5 }),
+  github({ defaultBranch: " " }),
+  github({ requiredChecks: "ci" }),
+  github({ requiredChecks: [" "] }),
+  ...[
+    ["mergeMethods", "fast"],
+    ["dependabotEcosystems", "pip"],
+    ["codeqlLanguages", "cobol"],
+  ].flatMap(([field, unknown]) => [
+    github({ [field]: unknown }),
+    github({ [field]: [] }),
+    github({ [field]: [unknown] }),
+    github({ [field]: [5] }),
+  ]),
+  github({ codeqlQuerySuite: "x" }),
+  ...[
+    "requireCodeqlResults",
+    "wiki",
+    "projects",
+    "autoMerge",
+    "deleteBranchOnMerge",
+    "updateBranch",
+  ].map((field) => github({ [field]: "yes" })),
+  github({ releaseEnvironment: true }),
+  github({ releaseEnvironment: "release" }),
+  github({ releaseEnvironment: {} }),
+  releaseEnvironment({ colour: "blue" }),
+  releaseEnvironment({ reviewers: "octocat" }),
+  releaseEnvironment({ reviewers: [] }),
+  releaseEnvironment({ reviewers: [" "] }),
+  releaseEnvironment({ name: " " }),
+  ...[-1, 43_201, 1.5, "60"].map((waitTimer) => releaseEnvironment({ waitTimer })),
+  releaseEnvironment({ preventSelfReview: "yes" }),
+  releaseEnvironment({ branches: "main" }),
+  releaseEnvironment({ branches: [] }),
+  releaseEnvironment({ branches: [" "] }),
+  ["describe_integration", {}],
+  ["describe_integration", { id: 5 }],
+  ["describe_baseline_target", {}],
+  ["describe_baseline_target", { target: "someday" }],
+  ["describe_baseline_target", { target: 5.5 }],
+  ["recommend_baseline_target", { features: [] }],
+  ["recommend_baseline_target", { features: "grid" }],
+  ["recommend_baseline_target", { features: [5] }],
+  ["validate_recipe", {}],
+  ["validate_recipe", { recipe: [] }],
+  ["explain_recipe", {}],
+  ["explain_recipe", { recipe: "default" }],
+];
+
+test("both declared schemas refuse each input the core refuses, and MCP answers with the core's message", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createMcpServer();
+  const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    for (const [tool, input] of refused) {
+      const label = `${tool}: ${JSON.stringify(input)}`;
+      let coreMessage;
+      try {
+        coreCalls[tool](structuredClone(input));
+      } catch (error) {
+        coreMessage = error.message;
+      }
+      assert.equal(typeof coreMessage, "string", `the core refuses ${label}`);
+      assert.equal(mcpAccepts(tool, input), false, `MCP ${label}`);
+      assert.equal(webMcpAccepts(tool, input), false, `WebMCP ${label}`);
+
+      // ADR-0018 Decision 2 (#1051 owner decision of 2026-11-22): the SDK's invalid-arguments
+      // envelope carries the core's own message for the refused field.
+      const result = await client.callTool({ name: tool, arguments: input });
+      assert.equal(result.isError, true, label);
+      const [text] = result.content.map(({ text }) => text);
+      assert.ok(text.includes(`Invalid arguments for tool ${tool}: `), `${label}\n${text}`);
+      assert.ok(text.includes(coreMessage), `${label}\nexpected: ${coreMessage}\nactual: ${text}`);
+    }
+  } finally {
+    await client.close();
+    await server.close();
   }
 });
 
@@ -378,150 +405,6 @@ test("no shared schema holds a check that its JSON Schema form cannot carry", ()
   }
   for (const [name, schemas] of Object.entries(sharedToolSchemas)) visit(schemas, name);
   assert.ok(seen.size > 100, "the walk reached the nested schemas");
-});
-
-test("the MCP server answers a refused option with the core's message", async () => {
-  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
-  const server = createMcpServer();
-  const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
-  await server.connect(serverTransport);
-  await client.connect(clientTransport);
-  try {
-    const result = await client.callTool({
-      name: "compose_recipe",
-      arguments: {
-        profile: "default",
-        tools: ["github-repository-controls"],
-        integrationOptions: {
-          "github-repository-controls": { ...githubControls, codeqlLanguages: ["cobol"] },
-        },
-      },
-    });
-    assert.equal(result.isError, true);
-    assert.match(
-      result.content[0].text,
-      /Invalid github-repository-controls\.codeqlLanguages: cobol\. at integrationOptions\.github-repository-controls\.codeqlLanguages\[0\]/,
-    );
-  } finally {
-    await client.close();
-    await server.close();
-  }
-});
-
-test("each refused option field reports the core's message for that field", () => {
-  const cases = [
-    [{ "stylelint-baseline": { available: "someday" } }, /^Baseline target must be widely/],
-    [{ "stylelint-baseline": { available: 2024.5 } }, /^Baseline target must be widely/],
-    [
-      { "github-repository-controls": { ...githubControls, codeqlLanguages: ["cobol"] } },
-      /Invalid github-repository-controls\.codeqlLanguages: cobol\./,
-    ],
-    [
-      { "stylelint-baseline": { available: "widely", severity: "info" } },
-      /severity must be warning or error/,
-    ],
-    [{ stryker: { testRunner: "jest" } }, /stryker\.testRunner is "jest"/],
-    [{ stryker: { testFiles: [] } }, /testFiles must list at least one glob/],
-    [{ stryker: { testFiles: [""] } }, /testFiles must list at least one glob/],
-    [
-      { "github-repository-controls": { repository: "nope" } },
-      /repository must use owner\/name format/,
-    ],
-    [
-      { "github-repository-controls": { ...githubControls, defaultBranch: " " } },
-      /defaultBranch must be a non-empty string/,
-    ],
-    [
-      { "github-repository-controls": { ...githubControls, requiredChecks: [" "] } },
-      /requiredChecks must be an array of non-empty strings/,
-    ],
-    [
-      { "github-repository-controls": { ...githubControls, mergeMethods: ["fast"] } },
-      /Invalid github-repository-controls\.mergeMethods: fast\./,
-    ],
-    [
-      { "github-repository-controls": { ...githubControls, mergeMethods: [] } },
-      /mergeMethods must contain at least one method/,
-    ],
-    [
-      { "github-repository-controls": { ...githubControls, codeqlQuerySuite: "x" } },
-      /codeqlQuerySuite must be default or extended/,
-    ],
-    [
-      { "github-repository-controls": { ...githubControls, releaseEnvironment: {} } },
-      /reviewers must contain at least one GitHub login/,
-    ],
-    [
-      {
-        "github-repository-controls": { ...githubControls, releaseEnvironment: { reviewers: [] } },
-      },
-      /reviewers must contain at least one GitHub login/,
-    ],
-    [
-      {
-        "github-repository-controls": {
-          ...githubControls,
-          releaseEnvironment: { reviewers: [" "] },
-        },
-      },
-      /reviewers must be an array of non-empty strings/,
-    ],
-    [
-      {
-        "github-repository-controls": {
-          ...githubControls,
-          releaseEnvironment: { name: " ", reviewers: ["octocat"] },
-        },
-      },
-      /releaseEnvironment\.name must be a non-empty string/,
-    ],
-    [
-      {
-        "github-repository-controls": {
-          ...githubControls,
-          releaseEnvironment: { reviewers: ["octocat"], branches: [] },
-        },
-      },
-      /branches must contain at least one branch/,
-    ],
-    [
-      {
-        "github-repository-controls": {
-          ...githubControls,
-          releaseEnvironment: { reviewers: ["octocat"], branches: [" "] },
-        },
-      },
-      /branches must be an array of non-empty strings/,
-    ],
-    [
-      {
-        "github-repository-controls": {
-          ...githubControls,
-          releaseEnvironment: { reviewers: ["octocat"], waitTimer: -1 },
-        },
-      },
-      /waitTimer must be an integer from 0 to 43200/,
-    ],
-  ];
-
-  for (const [integrationOptions, message] of cases) {
-    const result = sharedToolSchemas.compose_recipe.input.safeParse({
-      profile: "default",
-      integrationOptions,
-    });
-    assert.equal(result.success, false, JSON.stringify(integrationOptions));
-    assert.match(
-      result.error.issues.map((issue) => issue.message).join("\n"),
-      message,
-      JSON.stringify(integrationOptions),
-    );
-  }
-});
-
-test("a profile that is not a string gets the schema's message, not the removed-profile one", () => {
-  const result = sharedToolSchemas.compose_recipe.input.safeParse({ profile: 5 });
-  assert.equal(result.success, false);
-  assert.doesNotMatch(result.error.issues[0].message, /profile must be a string/);
 });
 
 test("only the MCP schema accepts the Node.js-only artifact inputs", () => {

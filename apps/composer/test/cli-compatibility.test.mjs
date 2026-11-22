@@ -265,6 +265,41 @@ test("Composer build rejects Node-only modules in its browser graph", () => {
   );
 });
 
+test("Composer build keeps Zod out of its browser graph", () => {
+  const browserOnlyPlugin = viteConfig.plugins.find(
+    ({ name }) => name === "browser-only-module-graph",
+  );
+  const context = {
+    error(message) {
+      throw new Error(message);
+    },
+  };
+
+  for (const source of ["zod", "zod/mini"]) {
+    assert.throws(
+      () => browserOnlyPlugin.resolveId.call(context, source, "packages/cli/src/tool-schemas.js"),
+      {
+        message: `${source} reached the Composer from packages/cli/src/tool-schemas.js. The build generates the WebMCP schemas, so the page needs no Zod.`,
+      },
+    );
+  }
+});
+
+test("the build generates the WebMCP schemas from the core's shared tool definitions", async () => {
+  // #1051 owner decision of 2026-11-22: the schemas are generated at build time from
+  // sharedToolSchemas, so Zod stays out of the bundle and no generated copy can go stale.
+  const plugin = viteConfig.plugins.find(({ name }) => name === "webmcp-tool-schemas");
+  assert.ok(plugin);
+  const id = plugin.resolveId("virtual:webmcp-tool-schemas");
+  assert.equal(typeof id, "string");
+  assert.equal(plugin.resolveId("./script.js"), undefined);
+
+  const source = await plugin.load(id);
+  const exported = JSON.parse(source.replace(/^export default /, "").replace(/;\s*$/, ""));
+  assert.deepEqual(exported, webMcpToolSchemas());
+  assert.equal(await plugin.load("/script.js"), undefined);
+});
+
 test("stryker is offered from the CLI that added it and hidden from older ones", () => {
   const stryker = integrationCatalog.find(({ id }) => id === "stryker");
 

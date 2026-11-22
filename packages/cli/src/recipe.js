@@ -440,15 +440,26 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
 }
 
 /**
- * Checks the names and the shape of recorded input values. The value's own check, such as a valid
- * branch name, needs Git, so the CLI runs it before apply plans anything.
+ * Refuses artifact inputs that are not an object of values keyed by input name. The shared tool
+ * schema runs it too, so its refusal names the same fault.
+ *
+ * @param {unknown} inputs
+ * @param {number} index The artifact's position in aiArtifacts.
  */
-function normalizeAiArtifactInputValues(inputs, artifact, index) {
+export function assertAiArtifactInputsObject(inputs, index) {
   if (!isPlainObject(inputs)) {
     throw new Error(
       `Invalid aiArtifacts[${index}].inputs: expected an object of input values keyed by input name.`,
     );
   }
+}
+
+/**
+ * Checks the names and the shape of recorded input values. The value's own check, such as a valid
+ * branch name, needs Git, so the CLI runs it before apply plans anything.
+ */
+function normalizeAiArtifactInputValues(inputs, artifact, index) {
+  assertAiArtifactInputsObject(inputs, index);
 
   for (const [name, value] of Object.entries(inputs)) {
     if (!Object.hasOwn(artifact.inputs ?? {}, name)) {
