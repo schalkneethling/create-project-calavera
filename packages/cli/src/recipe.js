@@ -147,7 +147,7 @@ export const mcpComposeRecipeDescription = `${recipeToolDescriptions.compose_rec
 export const recipeToolInputDescriptions = Object.freeze({
   profile: "Base Calavera tooling profile.",
   profileFilter:
-    "Optional profile filter. Omit it, or pass null or an empty string, to list every integration.",
+    "Optional profile filter. Omit it, or pass null or an empty string, to list every integration. A value that is not a profile ID lists no integrations.",
   packageManager: "Package manager used for dependency installation and generated scripts.",
   tools: "Integration IDs or labels. Omit to use the selected profile defaults from list_profiles.",
   integrationId: "Integration ID or label from list_integrations.",
@@ -811,6 +811,11 @@ export function listProfilesResponse(options = {}) {
 }
 
 export function listIntegrationsResponse({ profile } = {}) {
+  // ADR-0011: a removed profile ID is refused with a message that names its replacement, instead of
+  // being read as a filter that matches no integration.
+  if (typeof profile === "string" && Object.hasOwn(removedProfileReplacements, profile)) {
+    assertKnownProfile(profile);
+  }
   return {
     // A falsy profile, such as "" or false, filters nothing, so the response reports no filter.
     profile: profile || null,

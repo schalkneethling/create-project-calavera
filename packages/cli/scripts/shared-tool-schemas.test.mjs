@@ -344,7 +344,6 @@ const refused = [
   releaseEnvironment({ branches: [] }),
   releaseEnvironment({ branches: [" "] }),
   ["describe_integration", {}],
-  ["describe_integration", { id: 5 }],
   ["describe_baseline_target", {}],
   ["describe_baseline_target", { target: "someday" }],
   ["describe_baseline_target", { target: 5.5 }],
@@ -399,8 +398,14 @@ test("both declared schemas refuse each input the core refuses, and MCP answers 
 // pass both, or the browser would refuse what it accepted before. Each value here was refused by a
 // declared schema until #1176 widened it (ADR-0018 Decision 6); a narrowing fails this test.
 const tolerated = [
-  // The core lists every integration for a falsy profile.
-  ...[null, "", false, 0].map((profile) => ["list_integrations", { profile }]),
+  // The core lists every integration for a falsy profile, and none for any other value that is
+  // not a profile ID; on main the Composer answered each of these with a list.
+  ...[null, "", false, 0, "unknown", "DEFAULT", " default", 5, ["default"], { id: "default" }].map(
+    (profile) => ["list_integrations", { profile }],
+  ),
+  // The core reads String(id), so these describe Stylelint, as the Composer did on main.
+  ["describe_integration", { id: ["stylelint"] }],
+  ["describe_integration", { id: [" Stylelint "] }],
   // The core reads any query as text and an absent or null one as empty, and reads any limit that
   // is not a positive integer as its default of 20; it serves a limit above 100.
   ["search_baseline_features", {}],
@@ -423,6 +428,7 @@ const tolerated = [
 // The core call behind each tolerated tool, which must answer instead of throwing.
 const tolerantCoreCalls = {
   compose_recipe: (input) => composeRecipeResponse(input),
+  describe_integration: ({ id }) => describeIntegrationResponse(id),
   list_integrations: (input) => listIntegrationsResponse(input),
   search_baseline_features: ({ query, limit }) => searchBaselineFeatures(query, { limit }),
   validate_recipe: ({ recipe }) => validateRecipeResponse(recipe),
@@ -481,24 +487,34 @@ test("validate_recipe answers a malformed recipe with its result on MCP, not an 
   }
 });
 
-test("both declared schemas still refuse the two values the core tolerates without a default", () => {
-  // The core lists no integrations for an unknown profile and converts a non-string ID with
-  // String(); both surfaces declared these refusals before #1051 (tool-schemas.js header).
-  const stillRefused = [
-    ["list_integrations", { profile: "not-a-profile" }],
-    ["describe_integration", { id: ["stylelint"] }],
-  ];
-  for (const [tool, input] of stillRefused) {
-    assert.equal(mcpAccepts(tool, input), false, `MCP ${tool}: ${JSON.stringify(input)}`);
-    assert.equal(webMcpAccepts(tool, input), false, `WebMCP ${tool}: ${JSON.stringify(input)}`);
-  } // The unknown profile is refused with the message the core's profile check gives.
-  const [issue] = sharedToolSchemas.list_integrations.input.safeParse({
-    profile: "not-a-profile",
-  }).error.issues;
-  assert.match(
-    issue.message,
-    /^Invalid profile: not-a-profile\. Allowed values: default, minimal\.$/,
-  );
+test("list_integrations refuses a removed profile ID in the core, which both schemas pass to it", () => {
+  // ADR-0011: modern and classic are refused with a message naming the replacement. The schemas
+  // accept any profile, so the refusal belongs to the core and both surfaces give it.
+  for (const profile of ["modern", "classic"]) {
+    assert.equal(mcpAccepts("list_integrations", { profile }), true);
+    assert.equal(webMcpAccepts("list_integrations", { profile }), true);
+    assert.throws(
+      () => listIntegrationsResponse({ profile }),
+      new RegExp(`The ${profile} profile was removed; use default instead\\.$`),
+    );
+  }
+  // Only a removed ID is refused; another value that is not a profile ID lists nothing.
+  assert.deepEqual(listIntegrationsResponse({ profile: "Modern" }).integrations, []);
+  assert.deepEqual(listIntegrationsResponse({ profile: ["modern"] }).integrations, []); // The response reports the filter as it was sent, and null when a falsy profile filters nothing.
+  assert.equal(listIntegrationsResponse({ profile: "minimal" }).profile, "minimal");
+  assert.equal(listIntegrationsResponse({ profile: "DEFAULT" }).profile, "DEFAULT");
+  for (const profile of [undefined, null, "", false, 0]) {
+    assert.equal(listIntegrationsResponse({ profile }).profile, null, JSON.stringify(profile));
+  }
+});
+
+test("describe_integration refuses a missing ID with the core's message on MCP", () => {
+  const [issue] = sharedToolSchemas.describe_integration.input.safeParse({}).error.issues;
+  assert.equal(issue.message, "Unknown integration: undefined.");
+  // An ID that resolves to no integration passes both schemas, and the core refuses it.
+  assert.equal(mcpAccepts("describe_integration", { id: 5 }), true);
+  assert.equal(webMcpAccepts("describe_integration", { id: 5 }), true);
+  assert.throws(() => describeIntegrationResponse(5), /^Error: Unknown integration: 5\.$/);
 });
 
 test("a widened field still advertises the value an agent should send first", () => {
@@ -514,7 +530,11 @@ test("a widened field still advertises the value an agent should send first", ()
   assert.deepEqual(tools.anyOf[0].anyOf[0], { type: "array", items: { type: "string" } });
   assert.equal(aiArtifacts.anyOf[0].anyOf[0].items.required[0], "id");
   const profile = webMcpSchemas.list_integrations.inputSchema.properties.profile;
-  assert.deepEqual(profile.anyOf[0].anyOf[0].enum, ["default", "minimal"]);
+  assert.deepEqual(profile.anyOf[0].enum, ["default", "minimal"]);
+  assert.deepEqual(profile.anyOf[1], {});
+  const { id } = webMcpSchemas.describe_integration.inputSchema.properties;
+  assert.deepEqual(id.anyOf[0], { type: "string" });
+  assert.deepEqual(webMcpSchemas.describe_integration.inputSchema.required, ["id"]);
 });
 
 test("no shared schema holds a check that its JSON Schema form cannot carry", () => {

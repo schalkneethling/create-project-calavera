@@ -10,7 +10,6 @@ import {
   profileCatalog,
   profileDefaults,
   profileIdsForRecipe,
-  assertKnownProfile,
   recipeToolDescriptions,
   recipeToolInputDescriptions,
   validateRecipe,
@@ -870,7 +869,6 @@ function registerWebMcpTools() {
       name: "list_integrations",
       description: recipeToolDescriptions.list_integrations,
       ...webMcpSchemas.list_integrations,
-      coreCheck: ({ profile }) => profile === undefined || assertKnownProfile(profile),
       annotations: {
         readOnlyHint: true,
         untrustedContentHint: false,

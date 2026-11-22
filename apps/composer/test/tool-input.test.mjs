@@ -94,6 +94,15 @@ function isPlainObject(value) {
   return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
+/** Sets the key at `path`, keeping it even when `value` is undefined, as a JavaScript caller can. */
+function withKey(input, path, value) {
+  const copy = structuredClone(input);
+  let parent = copy;
+  for (const key of path.slice(0, -1)) parent = parent[key];
+  parent[path.at(-1)] = value;
+  return copy;
+}
+
 function withValue(input, path, value) {
   if (path.length === 0) return value;
   const copy = structuredClone(input);
@@ -116,10 +125,14 @@ test("the checker accepts and refuses what Ajv does for every generated Composer
       { ...valid, extra: 1 },
       ...paths(valid).flatMap((path) => [
         ...PROBES.map((probe) => withValue(valid, path, probe)),
+        // The key is sent with the value undefined, not deleted.
+        ...(path.length > 0 ? [withKey(valid, path, undefined)] : []),
         ...(isPlainObject(valueAt(valid, path))
           ? [
               withValue(valid, [...path, "extra"], 1),
+              withKey(valid, [...path, "extra"], undefined),
               withValue(valid, [...path, "inputs"], { protectedBranch: "main" }),
+              withKey(valid, [...path, "inputs"], undefined),
             ]
           : []),
       ]),
@@ -171,6 +184,11 @@ test("the checker refuses a schema it cannot fully check", () => {
     () => schemaRefusal({ type: ["string", "date"] }, 1),
     /does not support the JSON Schema type date/,
   );
+  // An unknown type later in the list throws even when an earlier type matches the value.
+  assert.throws(
+    () => schemaRefusal({ type: ["string", "date"] }, "x"),
+    /does not support the JSON Schema type date/,
+  );
 });
 
 test("the checker names the refused part as the core does", () => {
@@ -218,7 +236,8 @@ test("a Node.js-only part is refused with the core's message even when the core 
 });
 
 test("a refusal the core has no message for is described from the schema", () => {
-  const schema = schemas.describe_integration.inputSchema;
+  // No generated schema refuses a value the core accepts any more, so this one stands in.
+  const schema = { type: "object", properties: { id: { type: "string" } }, required: ["id"] };
   const error = captureError(() => checkToolInput(schema, { id: ["stylelint"] }, () => {}));
   assert.ok(error instanceof ToolInputError);
   assert.equal(error.message, "Invalid id: expected a string.");
@@ -281,6 +300,8 @@ test("each keyword accepts and refuses what Ajv does on its own, whatever the va
     ["x", "y"],
     { x: "y" },
     { y: 1 },
+    { x: undefined },
+    { y: undefined },
   ];
   for (const schema of schemasByKeyword) {
     const validate = ajv.compile(schema);
@@ -372,7 +393,8 @@ test("each refusal names the refused part and the rule it broke", () => {
 });
 
 test("a refusal falls back to the schema's description when the core gives no Error", () => {
-  const schema = schemas.describe_integration.inputSchema;
+  // No generated schema refuses a value the core accepts any more, so this one stands in.
+  const schema = { type: "object", properties: { id: { type: "string" } }, required: ["id"] };
   for (const coreCheck of [
     undefined,
     () => {},

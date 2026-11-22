@@ -81,7 +81,9 @@ export function schemaRefusal(schema, value, path = []) {
     switch (keyword) {
       case "type": {
         const types = /** @type {string[]} */ (Array.isArray(rule) ? rule : [rule]);
-        if (!types.some((type) => hasType(value, type))) {
+        // Check every listed type first, so an unknown one throws even when an earlier type matches.
+        const matches = types.map((type) => hasType(value, type));
+        if (!matches.includes(true)) {
           const names = types.map((type) => (/^[aeiou]/.test(type) ? `an ${type}` : `a ${type}`));
           return refuse(keyword, `expected ${names.join(" or ")}`);
         }
@@ -132,7 +134,8 @@ export function schemaRefusal(schema, value, path = []) {
         break;
       case "required":
         if (isPlainObject(value)) {
-          const missing = /** @type {string[]} */ (rule).find((key) => !Object.hasOwn(value, key));
+          // A key whose value is undefined counts as missing, as Ajv counts it.
+          const missing = /** @type {string[]} */ (rule).find((key) => value[key] === undefined);
           if (missing !== undefined) return refuse(keyword, "is required", [...path, missing]);
         }
         break;
@@ -140,7 +143,9 @@ export function schemaRefusal(schema, value, path = []) {
         if (isPlainObject(value)) {
           const properties = /** @type {Record<string, JsonSchema>} */ (rule);
           for (const [key, propertySchema] of Object.entries(properties)) {
-            if (!Object.hasOwn(value, key)) continue;
+            // A key whose value is undefined is absent, as Ajv and the core read it. The key still
+            // counts for additionalProperties and propertyNames, as it does for Ajv.
+            if (!Object.hasOwn(value, key) || value[key] === undefined) continue;
             const refusal = schemaRefusal(propertySchema, value[key], [...path, key]);
             if (refusal) return refusal;
           }

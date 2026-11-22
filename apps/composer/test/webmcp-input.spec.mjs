@@ -55,14 +55,10 @@ const refusals = [
   ["list_profiles", [], "Invalid input: expected an object."],
   ["list_ai_artifacts", [], "Invalid input: expected an object."],
   ["list_baseline_targets", [], "Invalid input: expected an object."],
-  // The core lists no integration for an unknown profile; the check gives the core's message.
-  [
-    "list_integrations",
-    { profile: "DEFAULT" },
-    expect.stringMatching(/^Invalid profile: DEFAULT\. Allowed values: /),
-  ],
-  // The core reads String(id), so it would describe the integration.
-  ["describe_integration", { id: ["stylelint"] }, "Invalid id: expected a string."],
+  // The core reads any profile, so only the schema refuses a non-object.
+  ["list_integrations", [], "Invalid input: expected an object."],
+  // The core reads a missing ID as "undefined"; the check gives the core's message.
+  ["describe_integration", {}, "Unknown integration: undefined."],
   [
     "describe_baseline_target",
     { target: " widely" },
@@ -83,7 +79,6 @@ const refusals = [
   // Without the check, downloadRecipe reads no recipe from an array and saves the page's own.
   ["download_recipe", [], "Invalid input: expected an object."],
   // The core refuses these too, and its message, not the schema's, comes back.
-  ["describe_integration", { id: 5 }, "Unknown integration: 5."],
   [
     "compose_recipe",
     { profile: "default", packageManager: " npm" },
@@ -151,6 +146,25 @@ test("the handlers answer values the core tolerates, as the Composer did before 
     expect(listed.result.integrations).toEqual(allIntegrations.result.integrations);
     expect(listed.result.profile).toBeNull();
   }
+  // A value that is not a profile ID lists no integrations, as the Composer did on main.
+  for (const profile of ["unknown", "DEFAULT", " default"]) {
+    expect(await callTool(page, "list_integrations", { profile })).toEqual({
+      result: { profile, integrations: [] },
+    });
+  }
+  // ADR-0011: the core refuses a removed profile ID with a message naming its replacement.
+  expect(await callTool(page, "list_integrations", { profile: "modern" })).toEqual({
+    error: {
+      name: "Error",
+      message:
+        "Invalid profile: modern. Allowed values: default, minimal. The modern profile was removed; use default instead.",
+      path: undefined,
+    },
+  });
+  // The core reads String(id), so an array that holds the ID describes the integration.
+  const described = await callTool(page, "describe_integration", { id: ["stylelint"] });
+  expect(described.error).toBeUndefined();
+  expect(described.result.id).toBe("stylelint");
   for (const input of [
     {},
     { query: null },

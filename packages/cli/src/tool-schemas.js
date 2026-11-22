@@ -11,15 +11,12 @@
 // severity, also accepts null, which selects the default, and why a field the core reads as absent
 // when it is falsy also accepts false, 0, and "". The Composer's handlers enforce these schemas
 // (#1176), so a schema narrower than the core would refuse in the browser what the core accepts.
-// Three parts still accept less than the core. The browser form of compose_recipe refuses the
-// Node.js-only artifact inputs (ADR-0018, Decision 4). As they did before they moved here,
-// list_integrations refuses an unknown profile, for which the core lists no integrations, and
-// describe_integration refuses an ID that is not a string, which the core converts to one.
+// Only the browser form of compose_recipe accepts less than the core: it refuses the Node.js-only
+// artifact inputs (ADR-0018, Decision 4). Each input schema is an object, so it refuses arguments
+// that are not one, which the WebMCP specification also refuses before it calls execute.
 //
 // Each schema's error map runs the core's own check on a refused value and returns its message, so
-// an MCP client reads the same explanation, with its remedy, that the core gives. A
-// describe_integration ID that is not a string but converts to a known ID, such as ["stylelint"],
-// keeps Zod's message, because the core has none for it.
+// an MCP client reads the same explanation, with its remedy, that the core gives.
 import * as z from "zod";
 import {
   describeBaselineTarget,
@@ -119,6 +116,29 @@ function orFalsy(schema, check) {
  */
 function orAnyValue(schema) {
   return z.union([schema, z.unknown()]);
+}
+
+/**
+ * A required field the core reads whatever JSON value it is. Like orAnyValue, the first branch
+ * tells an agent what to send, but the others name each JSON type instead of accepting any value,
+ * because Zod refuses a missing key under z.unknown() with its own message, which no error map
+ * replaces. A missing key fails every branch, so `check` gives the core's message for it.
+ *
+ * @param {z.ZodType} schema
+ * @param {CoreCheck} check
+ */
+function orAnyJsonValue(schema, check) {
+  return z.union(
+    [
+      schema,
+      z.number(),
+      z.boolean(),
+      z.null(),
+      z.array(z.unknown()),
+      z.record(z.string(), z.unknown()),
+    ],
+    coreMessage(check),
+  );
 }
 
 /** @param {string} value */
@@ -471,21 +491,25 @@ export const sharedToolSchemas = Object.freeze({
   list_profiles: { input: z.object({}) },
   list_integrations: {
     input: z.object({
-      // The core lists every integration for a falsy profile.
-      profile: orFalsy(profileSchema, (value) => assertKnownProfile(value))
+      // The core lists every integration for a falsy profile, and no integration for any other
+      // value that is not a profile ID.
+      profile: orAnyValue(profileSchema)
         .optional()
         .describe(recipeToolInputDescriptions.profileFilter),
     }),
     output: z.object({
-      profile: z.string().nullable(),
+      // The profile the call filtered by, as it was sent, or null when nothing filtered.
+      profile: orAnyValue(z.string().nullable()),
       integrations: z.array(integrationOutputSchema),
     }),
   },
   describe_integration: {
     input: z.object({
-      id: z
-        .string(coreMessage((value) => describeIntegrationResponse(value)))
-        .describe(recipeToolInputDescriptions.integrationId),
+      // The core reads String(id), so ["stylelint"] describes Stylelint; it refuses an ID that
+      // resolves to no integration.
+      id: orAnyJsonValue(z.string(), (value) => describeIntegrationResponse(value)).describe(
+        recipeToolInputDescriptions.integrationId,
+      ),
     }),
     output: integrationOutputSchema,
   },
