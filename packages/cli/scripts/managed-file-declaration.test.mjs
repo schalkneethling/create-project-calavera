@@ -32,8 +32,9 @@ const integrationOptions = {
  * or that exited with the wrong code, fails here instead of passing (#1092).
  *
  * @param {string} cwd
+ * @param {0 | 1} expectedCode The exit code doctor must give, pinned rather than read from the report.
  */
-async function runDoctorJson(cwd) {
+async function runDoctorJson(cwd, expectedCode) {
   const { stdout, stderr, code } = await execFileAsync(
     process.execPath,
     [cliPath, "doctor", "--json"],
@@ -44,6 +45,7 @@ async function runDoctorJson(cwd) {
   );
   assert.equal(stderr, "", "doctor wrote to standard error");
   const report = JSON.parse(stdout);
+  assert.equal(code, expectedCode, "doctor exit code");
   assert.equal(code, report.issues.some(({ level }) => level === "error") ? 1 : 0);
   return report;
 }
@@ -185,7 +187,8 @@ test("doctor checks every planned file", async () => {
   );
 
   const prefix = "Missing managed file: ";
-  const messages = (await runDoctorJson(directory.path)).issues
+  // Missing managed files are warnings and nothing else is an error, so doctor exits 0.
+  const messages = (await runDoctorJson(directory.path, 0)).issues
     .map(({ message }) => message)
     .filter((message) => message.startsWith(prefix));
 
@@ -224,7 +227,7 @@ test("doctor run from a workspace member checks the repository-controls files at
     await writeFile(join(root, path), "");
   }
 
-  const { issues } = await runDoctorJson(member);
+  const { issues } = await runDoctorJson(member, 1);
   // github-repository-controls selected in a member is the one error, so doctor exits 1.
   const errors = issues.filter(({ level }) => level === "error").map(({ message }) => message);
   assert.equal(errors.length, 1, errors.join("\n"));

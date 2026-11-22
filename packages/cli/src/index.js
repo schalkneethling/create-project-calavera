@@ -5715,7 +5715,6 @@ function assertInitCanAsk(options, question, remedy) {
  * @typedef {{ select: typeof select, groupMultiselect: typeof groupMultiselect, confirm: typeof confirm }} InitPrompts
  */
 
-/** @type {InitPrompts} */
 const terminalInitPrompts = { select, groupMultiselect, confirm };
 
 /**
