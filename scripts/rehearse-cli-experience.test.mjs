@@ -24,6 +24,7 @@ import { fileURLToPath } from "node:url";
 import {
   buildEnvironment,
   compareRuns,
+  formatCommand,
   formatReport,
   isolationViolations,
   parseOptions,
@@ -1692,11 +1693,16 @@ test("eject-yes-footprint allows an empty removed folder only in Calavera's own 
  *
  * @param {string} project
  * @param {string} version
+ * @param {string} [manifest] the manifest's text, when it is not a valid one for `version`
  */
-async function writePnpProject(project, version) {
+async function writePnpProject(
+  project,
+  version,
+  manifest = JSON.stringify({ name: "vite-plus", version }),
+) {
   const store = join(project, ".yarn", "unplugged", "vite-plus");
   await mkdir(store, { recursive: true });
-  await writeFile(join(store, "package.json"), JSON.stringify({ name: "vite-plus", version }));
+  await writeFile(join(store, "package.json"), manifest);
   await writeFile(
     join(project, ".pnp.cjs"),
     `const Module = require("node:module");
@@ -1756,7 +1762,7 @@ async function newCheckContext(runner, layout) {
       /** @type {string[]} */ args,
       /** @type {{ cwd?: string }} */ options = {},
     ) => {
-      const display = `${command} ${args.join(" ")}`;
+      const display = formatCommand(command, args, options.cwd ?? root);
       if (command === "node") {
         const child = spawnSync(command, args, { cwd: options.cwd, encoding: "utf8" });
         return {
@@ -1861,7 +1867,12 @@ test("a --new check names a project without Vite+ and a Plug'n'Play project that
     assert.ok(error instanceof CheckFailure);
     assert.match(error.actual, /\.pnp\.cjs/);
     assert.match(error.actual, /exit code 1/);
-    assert.match(error.actual, /node --require \S+\.pnp\.cjs --eval/);
+    // A short label, not the script: the .pnp.cjs path and what was read.
+    assert.match(error.actual, /app\/\.pnp\.cjs reading vite-plus\/package\.json/);
+    assert.doesNotMatch(error.actual, /--eval|pnpapi/);
+    // The runtime's own output is not copied, because it can quote the files it read.
+    assert.doesNotMatch(error.actual, /broken runtime/);
+    assert.match(error.actual, /Yarn's runtime failed before it read vite-plus\/package\.json/);
     return true;
   });
   const corrupt = await newCheckContext("yarn dlx", async (project) => {
@@ -1905,5 +1916,89 @@ test("the flow project records the Vite+ it installed and fails when it is not t
       return true;
     });
     assert.equal(recordedVersions["Vite+ installed in the flow project"], recorded);
+  }
+});
+
+test("a corrupt manifest behind Plug'n'Play is reported without its text (#1090)", async () => {
+  const check = cliExperienceChecks.find(({ id }) => id === "new-yarn");
+  assert.ok(check);
+  const context = await newCheckContext("yarn dlx", (project) =>
+    writePnpProject(project, "1.6.0", '{\n  "token": "SECRET-TEXT-HERE" oops\n}\n'),
+  );
+  await assert.rejects(check.run(context), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.match(error.actual, /vite-plus\/package\.json that is not valid JSON/);
+    assert.doesNotMatch(error.actual, /SECRET-TEXT-HERE/);
+    assert.doesNotMatch(error.message, /SECRET-TEXT-HERE/);
+    return true;
+  });
+});
+
+test("a manifest without a string version is its own failure, not an installed undefined (#1090)", async () => {
+  const check = cliExperienceChecks.find(({ id }) => id === "new-yarn");
+  assert.ok(check);
+  const manifests = [
+    JSON.stringify({ name: "vite-plus", version: "" }),
+    JSON.stringify({ name: "vite-plus" }),
+    JSON.stringify({ name: "vite-plus", version: 16 }),
+  ];
+  for (const manifest of manifests) {
+    const layouts = [
+      (/** @type {string} */ project) => writePnpProject(project, "1.6.0", manifest),
+      async (/** @type {string} */ project) => {
+        await mkdir(join(project, "node_modules", "vite-plus"), { recursive: true });
+        await writeFile(join(project, "node_modules", "vite-plus", "package.json"), manifest);
+      },
+    ];
+    for (const layout of layouts) {
+      const context = await newCheckContext("yarn dlx", layout);
+      await assert.rejects(check.run(context), (error) => {
+        assert.ok(error instanceof CheckFailure);
+        assert.match(error.actual, /vite-plus\/package\.json that names no version/, manifest);
+        assert.doesNotMatch(error.actual, /undefined|installed 16/, manifest);
+        return true;
+      });
+    }
+  }
+});
+
+test("a Plug'n'Play read names why Yarn's runtime found no manifest it could read (#1090)", async () => {
+  const check = cliExperienceChecks.find(({ id }) => id === "new-yarn");
+  assert.ok(check);
+  const cases = [
+    // pnpapi throws, as Yarn's does for a package the project does not depend on.
+    [
+      'throw new Error("vite-plus is not a dependency");',
+      /no vite-plus that Yarn's runtime resolves/,
+      10,
+    ],
+    // pnpapi resolves a path where no file is.
+    [
+      'return require("node:path").join(__dirname, "missing", "package.json");',
+      /vite-plus\/package\.json that cannot be read/,
+      11,
+    ],
+  ];
+  for (const [body, reason, code] of cases) {
+    const context = await newCheckContext("yarn dlx", async (project) => {
+      await mkdir(project, { recursive: true });
+      await writeFile(
+        join(project, ".pnp.cjs"),
+        `const Module = require("node:module");
+const resolve = Module._resolveFilename;
+Module._resolveFilename = function (request, ...rest) {
+  return request === "pnpapi" ? __filename : resolve.call(this, request, ...rest);
+};
+module.exports = { resolveToUnqualified() { ${body} } };
+`,
+      );
+    });
+    await assert.rejects(check.run(context), (error) => {
+      assert.ok(error instanceof CheckFailure);
+      assert.match(error.actual, reason);
+      assert.match(error.actual, new RegExp(`exit code ${code}\\)$`));
+      assert.doesNotMatch(error.actual, /not a dependency/);
+      return true;
+    });
   }
 });

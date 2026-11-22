@@ -184,13 +184,49 @@ async function assertManaged(context, directory) {
 }
 
 /**
+ * Why a Plug'n'Play read found no version, by the exit code the read script ends with. These fixed
+ * texts are all the report takes from the child: the child's own output can quote the files it
+ * read, such as a line of a manifest that is not valid JSON, so it is never copied.
+ */
+const PNP_READ_FAILURES = {
+  10: "it installed no vite-plus that Yarn's runtime resolves",
+  11: "it installed a vite-plus/package.json that cannot be read",
+  12: "it installed a vite-plus/package.json that is not valid JSON",
+  13: "it installed a vite-plus/package.json that names no version",
+};
+
+/**
  * Prints the version of the `vite-plus` package the project folder given as the first argument
- * depends on. Yarn's `pnpapi` resolves the manifest from that folder without depending on the
- * current folder, and Yarn's runtime lets `fs` read inside the zip archive it points to.
+ * depends on, or exits with a code from `PNP_READ_FAILURES` after writing its fixed text to
+ * stderr. Yarn's `pnpapi` resolves the manifest from that folder without depending on the current
+ * folder, and Yarn's runtime lets `fs` read inside the zip archive it points to.
  */
 const PNP_VITE_PLUS_VERSION = `const { readFileSync } = require("node:fs");
-const file = require("pnpapi").resolveToUnqualified("vite-plus/package.json", process.argv[1]);
-process.stdout.write(String(JSON.parse(readFileSync(file, "utf8")).version));`;
+const failures = ${JSON.stringify(PNP_READ_FAILURES)};
+const fail = (code) => {
+  process.stderr.write(failures[code] + "\\n");
+  process.exit(code);
+};
+let file;
+try {
+  file = require("pnpapi").resolveToUnqualified("vite-plus/package.json", process.argv[1]);
+} catch {
+  fail(10);
+}
+let text;
+try {
+  text = readFileSync(file, "utf8");
+} catch {
+  fail(11);
+}
+let version;
+try {
+  version = JSON.parse(text).version;
+} catch {
+  fail(12);
+}
+if (typeof version !== "string" || version === "") fail(13);
+process.stdout.write(version);`;
 
 /**
  * The version of `vite-plus` installed in `project`, or why none could be read. A Yarn project
@@ -204,26 +240,22 @@ process.stdout.write(String(JSON.parse(readFileSync(file, "utf8")).version));`;
  * @param {string} project
  */
 async function installedVitePlus(context, project) {
-  if (existsSync(join(project, ".pnp.cjs"))) {
+  const pnp = join(project, ".pnp.cjs");
+  if (existsSync(pnp)) {
     const result = await context.run(
       "node",
       // Yarn's runtime maps only real paths to the project, so a folder reached through a symbolic
       // link, as the macOS temporary folder is, would resolve nothing. A trailing slash makes the
       // folder itself the issuer, not a file named like it.
-      [
-        "--require",
-        join(project, ".pnp.cjs"),
-        "--eval",
-        PNP_VITE_PLUS_VERSION,
-        "--",
-        `${await realpath(project)}/`,
-      ],
+      ["--require", pnp, "--eval", PNP_VITE_PLUS_VERSION, "--", `${await realpath(project)}/`],
     );
-    const version = result.stdout;
-    if (result.exitCode === 0 && version) return { version };
-    return {
-      problem: `it installed no vite-plus that .pnp.cjs resolves: ${result.display} ended with ${describeExit(result)}\n${tail(result.output)}`,
-    };
+    if (result.exitCode === 0 && result.stdout) return { version: result.stdout };
+    // A short label instead of the command, which would print the whole script.
+    const label = `${pnp} reading vite-plus/package.json`;
+    const reason =
+      PNP_READ_FAILURES[/** @type {keyof typeof PNP_READ_FAILURES} */ (result.exitCode)] ??
+      "Yarn's runtime failed before it read vite-plus/package.json, and its output is left out because it can quote the files it read";
+    return { problem: `${reason} (${label}: ${describeExit(result)})` };
   }
   const manifest = join(project, "node_modules", "vite-plus", "package.json");
   if (!existsSync(manifest)) {
@@ -232,12 +264,17 @@ async function installedVitePlus(context, project) {
         "it installed nothing: there is no node_modules/vite-plus/package.json and no .pnp.cjs",
     };
   }
+  let version;
   try {
-    return { version: String(JSON.parse(await readFile(manifest, "utf8")).version) };
+    version = JSON.parse(await readFile(manifest, "utf8")).version;
   } catch {
     // The parser's message can quote the file, so only the file is named.
     return { problem: "it installed a node_modules/vite-plus/package.json that is not valid JSON" };
   }
+  if (typeof version !== "string" || version === "") {
+    return { problem: "it installed a node_modules/vite-plus/package.json that names no version" };
+  }
+  return { version };
 }
 
 /**
