@@ -226,11 +226,13 @@ test("doctor run from a workspace member checks the repository-controls files at
 
   const { issues } = await runDoctorJson(member);
   // github-repository-controls selected in a member is the one error, so doctor exits 1.
-  assert.deepEqual(
-    issues
-      .filter(({ level }) => level === "error")
-      .map(({ message }) => message.slice(0, message.indexOf("."))),
-    ["github-repository-controls applies at the repository root, not in a workspace member"],
+  const errors = issues.filter(({ level }) => level === "error").map(({ message }) => message);
+  assert.equal(errors.length, 1, errors.join("\n"));
+  assert.ok(
+    errors[0].startsWith(
+      "github-repository-controls applies at the repository root, not in a workspace member.",
+    ),
+    errors[0],
   );
   const messages = issues
     .map(({ message }) => message)

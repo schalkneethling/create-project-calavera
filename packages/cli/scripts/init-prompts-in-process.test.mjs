@@ -115,10 +115,13 @@ test("init asks for the profile, package manager, integrations, and AI artifacts
   await using fixture = await createTemporaryFixture("init-prompts-recipe", {
     "package.json": json({ ...plainViteManifest, packageManager: "pnpm@10.0.0" }),
   });
+  // The minimal profile is not the default one, so the prompts after it show whether init used
+  // the answer; the integrations answer differs from minimal's defaults for the same reason.
+  assert.notDeepEqual(profileDefaults.minimal, profileDefaults.default);
   const { asked, remaining, prompts } = scriptedPrompts([
-    "default",
+    "minimal",
     "yarn",
-    ["editorconfig"],
+    ["editorconfig", "stylelint"],
     ["skill-frontend-engineering", "hook-block-dangerous-commands"],
     "codex",
   ]);
@@ -161,8 +164,8 @@ test("init asks for the profile, package manager, integrations, and AI artifacts
   // The integration prompt offers the chosen profile's integrations, preselects its defaults, not
   // the default profile's, and needs at least one; the AI artifact prompt preselects none and
   // needs none.
-  assert.deepEqual(integrations.options, groupedPromptOptions(listIntegrationOptions("default")));
-  assert.deepEqual(integrations.initialValues, profileDefaults.default);
+  assert.deepEqual(integrations.options, groupedPromptOptions(listIntegrationOptions("minimal")));
+  assert.deepEqual(integrations.initialValues, profileDefaults.minimal);
   assert.equal(integrations.required, true);
   assert.deepEqual(artifacts.initialValues, []);
   assert.equal(artifacts.required, false);
@@ -175,9 +178,9 @@ test("init asks for the profile, package manager, integrations, and AI artifacts
 
   const written = JSON.parse(await readFile(join(fixture.root, "calavera.config.json"), "utf8"));
   assert.deepEqual(written, result.recipe);
-  assert.equal(written.profile, "default");
+  assert.equal(written.profile, "minimal");
   assert.equal(written.packageManager, "yarn");
-  assert.deepEqual(written.integrations, ["editorconfig"]);
+  assert.deepEqual(written.integrations, ["editorconfig", "stylelint"]);
   assert.deepEqual(written.ai, [
     { id: "skill-frontend-engineering" },
     { id: "hook-block-dangerous-commands", target: "codex" },
