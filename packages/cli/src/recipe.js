@@ -462,6 +462,17 @@ export function assertAiArtifactInputsObject(inputs, index) {
 }
 
 /**
+ * The refusal of a tool input part that only the Node.js MCP server can serve, such as the artifact
+ * `inputs` of `compose_recipe` (ADR-0018, Decision 4). The Composer's WebMCP handlers give it,
+ * because the browser cannot check those values.
+ *
+ * @param {string} path Where the input names the part, such as aiArtifacts[0].inputs.
+ */
+export function nodeOnlyInputMessage(path) {
+  return `Invalid ${path}: only the Calavera MCP server accepts this field, because checking it needs Node.js. Leave it out of the Composer's tool call, or call the MCP server's tool of the same name.`;
+}
+
+/**
  * Checks the names and the shape of recorded input values. The value's own check, such as a valid
  * branch name, needs Git, so the CLI runs it before apply plans anything.
  */

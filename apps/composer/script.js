@@ -10,8 +10,11 @@ import {
   profileCatalog,
   profileDefaults,
   profileIdsForRecipe,
+  assertKnownProfile,
   recipeToolDescriptions,
   recipeToolInputDescriptions,
+  validateRecipe,
+  validateRecipeCompositionInput,
   validateRecipeResponse,
 } from "../../packages/cli/src/recipe.js";
 import { DEFAULT_AI_TARGET } from "../../packages/cli/src/ai/catalog.js";
@@ -39,6 +42,7 @@ import {
   composerNextCommands,
   composerRecipe,
 } from "./recipe-builder.js";
+import { checkToolInput } from "./tool-input.js";
 // Generated from the core's shared tool definitions when Vite builds the page (webmcp-schemas-plugin.js).
 import webMcpSchemas from "virtual:webmcp-tool-schemas";
 
@@ -800,6 +804,32 @@ function revealWebMcpBanner() {
   webMcpBanner.hidden = false;
 }
 
+const downloadRecipeInputSchema = {
+  type: "object",
+  properties: {
+    recipe: {
+      type: "object",
+      description: recipeToolInputDescriptions.optionalDownloadRecipe,
+    },
+  },
+  additionalProperties: false,
+};
+
+/**
+ * Registers a WebMCP tool whose execute function first checks its input against the inputSchema it
+ * registers (#1176). The browser does not check the input against the schema before it calls
+ * execute, so this is the only check. `coreCheck` runs the core's own check on a refused input, so
+ * the refusal carries the core's message.
+ *
+ * @param {{ inputSchema: Record<string, unknown>, execute: (input: any) => unknown, coreCheck?: (input: any) => unknown, [key: string]: unknown }} tool
+ */
+function registerCheckedTool({ coreCheck, execute, ...tool }) {
+  navigator.modelContext.registerTool({
+    ...tool,
+    execute: async (input) => execute(checkToolInput(tool.inputSchema, input, coreCheck)),
+  });
+}
+
 function registerWebMcpTools() {
   if (!navigator.modelContext?.registerTool) {
     return;
@@ -808,7 +838,7 @@ function registerWebMcpTools() {
   try {
     // ADR-0018 Decision 2: the input and output schemas of the tools the MCP server shares come
     // from one definition in the core, through webMcpSchemas.
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "list_profiles",
       description: recipeToolDescriptions.list_profiles,
       ...webMcpSchemas.list_profiles,
@@ -834,10 +864,11 @@ function registerWebMcpTools() {
       },
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "list_integrations",
       description: recipeToolDescriptions.list_integrations,
       ...webMcpSchemas.list_integrations,
+      coreCheck: ({ profile }) => profile === undefined || assertKnownProfile(profile),
       annotations: {
         readOnlyHint: true,
         untrustedContentHint: false,
@@ -848,10 +879,11 @@ function registerWebMcpTools() {
       },
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "describe_integration",
       description: recipeToolDescriptions.describe_integration,
       ...webMcpSchemas.describe_integration,
+      coreCheck: ({ id }) => describeIntegrationResponse(id),
       annotations: {
         readOnlyHint: true,
         untrustedContentHint: false,
@@ -871,7 +903,7 @@ function registerWebMcpTools() {
       },
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "list_ai_artifacts",
       description: recipeToolDescriptions.list_ai_artifacts,
       ...webMcpSchemas.list_ai_artifacts,
@@ -886,7 +918,7 @@ function registerWebMcpTools() {
         ),
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "list_baseline_targets",
       description: recipeToolDescriptions.list_baseline_targets,
       ...webMcpSchemas.list_baseline_targets,
@@ -894,15 +926,16 @@ function registerWebMcpTools() {
       execute: async () => ({ metadata: baselineMetadata, targets: listBaselineTargets() }),
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "describe_baseline_target",
       description: recipeToolDescriptions.describe_baseline_target,
       ...webMcpSchemas.describe_baseline_target,
+      coreCheck: ({ target }) => describeBaselineTarget(target),
       annotations: { readOnlyHint: true, untrustedContentHint: false },
       execute: async ({ target }) => describeBaselineTarget(target),
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "search_baseline_features",
       description: recipeToolDescriptions.search_baseline_features,
       ...webMcpSchemas.search_baseline_features,
@@ -913,18 +946,20 @@ function registerWebMcpTools() {
       }),
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "recommend_baseline_target",
       description: recipeToolDescriptions.recommend_baseline_target,
       ...webMcpSchemas.recommend_baseline_target,
+      coreCheck: ({ features }) => recommendBaselineTarget(features),
       annotations: { readOnlyHint: true, untrustedContentHint: false },
       execute: async ({ features }) => recommendBaselineTarget(features),
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "compose_recipe",
       description: recipeToolDescriptions.compose_recipe,
       ...webMcpSchemas.compose_recipe,
+      coreCheck: (input) => validateRecipeCompositionInput(input),
       annotations: {
         readOnlyHint: true,
         untrustedContentHint: false,
@@ -936,10 +971,11 @@ function registerWebMcpTools() {
       },
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "validate_recipe",
       description: recipeToolDescriptions.validate_recipe,
       ...webMcpSchemas.validate_recipe,
+      coreCheck: ({ recipe }) => validateRecipe(recipe),
       annotations: {
         readOnlyHint: true,
         untrustedContentHint: false,
@@ -962,10 +998,11 @@ function registerWebMcpTools() {
       },
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "explain_recipe",
       description: recipeToolDescriptions.explain_recipe,
       ...webMcpSchemas.explain_recipe,
+      coreCheck: ({ recipe }) => validateRecipe(recipe),
       annotations: {
         readOnlyHint: true,
         untrustedContentHint: false,
@@ -976,19 +1013,11 @@ function registerWebMcpTools() {
         ),
     });
 
-    navigator.modelContext.registerTool({
+    registerCheckedTool({
       name: "download_recipe",
       description: recipeToolDescriptions.download_recipe,
-      inputSchema: {
-        type: "object",
-        properties: {
-          recipe: {
-            type: "object",
-            description: recipeToolInputDescriptions.optionalDownloadRecipe,
-          },
-        },
-        additionalProperties: false,
-      },
+      inputSchema: downloadRecipeInputSchema,
+      coreCheck: ({ recipe }) => recipe === undefined || validateRecipe(recipe),
       annotations: {
         readOnlyHint: false,
         untrustedContentHint: false,
