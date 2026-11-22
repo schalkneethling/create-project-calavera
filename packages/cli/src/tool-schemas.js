@@ -11,13 +11,15 @@
 // severity, also accepts null, which selects the default, and why a field the core reads as absent
 // when it is falsy also accepts false, 0, and "". The Composer's handlers enforce these schemas
 // (#1176), so a schema narrower than the core would refuse in the browser what the core accepts.
-// Two schemas still accept less than the core, as they did before they moved here:
+// Three parts still accept less than the core. The browser form of compose_recipe refuses the
+// Node.js-only artifact inputs (ADR-0018, Decision 4). As they did before they moved here,
 // list_integrations refuses an unknown profile, for which the core lists no integrations, and
 // describe_integration refuses an ID that is not a string, which the core converts to one.
 //
 // Each schema's error map runs the core's own check on a refused value and returns its message, so
-// an MCP client reads the same explanation, with its remedy, that the core gives. A describe_integration
-// ID that is not a string keeps Zod's message, because the core converts it and has no message.
+// an MCP client reads the same explanation, with its remedy, that the core gives. A
+// describe_integration ID that is not a string but converts to a known ID, such as ["stylelint"],
+// keeps Zod's message, because the core has none for it.
 import * as z from "zod";
 import {
   describeBaselineTarget,

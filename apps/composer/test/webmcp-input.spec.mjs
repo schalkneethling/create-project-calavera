@@ -149,6 +149,7 @@ test("the handlers answer values the core tolerates, as the Composer did before 
     const listed = await callTool(page, "list_integrations", { profile });
     expect(listed.error, `profile ${JSON.stringify(profile)}`).toBeUndefined();
     expect(listed.result.integrations).toEqual(allIntegrations.result.integrations);
+    expect(listed.result.profile).toBeNull();
   }
   for (const input of [
     {},

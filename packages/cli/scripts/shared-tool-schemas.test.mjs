@@ -410,6 +410,11 @@ const tolerated = [
     "search_baseline_features",
     { query: "grid", limit },
   ]),
+  // The core reads a falsy tools or aiArtifacts as absent.
+  ...[false, 0, ""].flatMap((absent) => [
+    ["compose_recipe", { profile: "default", tools: absent }],
+    ["compose_recipe", { profile: "default", aiArtifacts: absent }],
+  ]),
   // validate_recipe reports a missing or malformed recipe in its { ok: false } result.
   ["validate_recipe", {}],
   ...[null, [], "default", 5].map((recipe) => ["validate_recipe", { recipe }]),
@@ -417,6 +422,7 @@ const tolerated = [
 
 // The core call behind each tolerated tool, which must answer instead of throwing.
 const tolerantCoreCalls = {
+  compose_recipe: (input) => composeRecipeResponse(input),
   list_integrations: (input) => listIntegrationsResponse(input),
   search_baseline_features: ({ query, limit }) => searchBaselineFeatures(query, { limit }),
   validate_recipe: ({ recipe }) => validateRecipeResponse(recipe),
@@ -430,6 +436,30 @@ test("both declared schemas accept each value the core tolerates", () => {
     assert.equal(webMcpAccepts(tool, input), true, `WebMCP ${label}`);
   }
   assert.equal(validateRecipeResponse([]).ok, false);
+});
+
+test("the MCP server answers each value the core tolerates, and the result fits its output schema", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createMcpServer();
+  const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    for (const [tool, input] of tolerated) {
+      const label = `${tool}: ${JSON.stringify(input)}`;
+      const result = await client.callTool({ name: tool, arguments: input });
+      assert.notEqual(result.isError, true, `${label}\n${result.content?.[0]?.text}`);
+      // The browser does not check results, so check the core's against the declared form too.
+      const outputSchema = webMcpSchemas[tool].outputSchema;
+      if (outputSchema) {
+        const core = tolerantCoreCalls[tool](structuredClone(input));
+        assert.equal(ajv.validate(outputSchema, core), true, `${label} output`);
+      }
+    }
+  } finally {
+    await client.close();
+    await server.close();
+  }
 });
 
 test("validate_recipe answers a malformed recipe with its result on MCP, not an invalid-arguments error", async () => {

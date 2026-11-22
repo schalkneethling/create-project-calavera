@@ -812,7 +812,8 @@ export function listProfilesResponse(options = {}) {
 
 export function listIntegrationsResponse({ profile } = {}) {
   return {
-    profile: profile ?? null,
+    // A falsy profile, such as "" or false, filters nothing, so the response reports no filter.
+    profile: profile || null,
     integrations: listIntegrationOptions(profile),
   };
 }
