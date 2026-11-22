@@ -929,11 +929,20 @@ version, so you can run it as printed. When Calavera runs from your project's ow
 notice adds that the dependency is unchanged and gives the command that updates it. The notice only
 informs: the command runs to the end with the installed version, and the exit code is unchanged.
 
-The check asks the registry and sends the credentials that your user and project `.npmrc` files and
-`npm_config_*` variables name. It follows the proxy environment variables in either letter case:
-`HTTPS_PROXY` for an `https:` registry, `HTTPS_PROXY`, `HTTP_PROXY`, or `PROXY` for an `http:`
-registry, and `NO_PROXY` for hosts that skip the proxy. It does not yet read the registry settings of Yarn 2 or later or of Bun, or
-proxy settings that exist only in `.npmrc`. The check waits at most 1.5 seconds and writes no file.
+The check asks the registry that your user and project `.npmrc` files and `npm_config_*` variables
+name, with the credentials described below, through the `proxy` or `https-proxy` that your user `.npmrc` or your
+own `npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`; under Bun, which does not
+support these `.npmrc` settings, they do not apply. A proxy in a project
+`.npmrc` or `.yarnrc.yml` is ignored with a warning. That
+includes a proxy that npm passes on from the project `.npmrc` it read, such as the workspace root's
+file when you run `npx` from a workspace member. Calavera never sends a credential over plain
+`http`, and when a package manager runs Calavera, as `npx` and `npm run` do, credentials come only
+from the `~/.npmrc` in your account's home folder. Under Yarn 2 or later, it asks the registry and proxy that your
+`.yarnrc.yml` files and `YARN_*` variables name, and under Bun, the registry that your `.npmrc` files, `bunfig.toml`, or a Bun registry variable
+such as `BUN_CONFIG_REGISTRY` names. When no proxy is configured, it follows the
+proxy environment variables in either letter case: `HTTPS_PROXY` for an `https:` registry,
+`HTTPS_PROXY`, `HTTP_PROXY`, or `PROXY` for an `http:` registry, and `NO_PROXY` for hosts that skip
+the proxy. The check waits at most 1.5 seconds and writes no file.
 A check that fails or runs out of time prints nothing; set `CALAVERA_DEBUG` to `1` or `true` to see
 why.
 
