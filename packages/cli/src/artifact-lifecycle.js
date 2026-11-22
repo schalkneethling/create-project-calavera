@@ -236,15 +236,7 @@ export async function runArtifactCommand(options, services = {}) {
  * @param {ArtifactServices} [services] Only `resolve` is read; the formatter is never loaded.
  */
 export async function readArtifactStatus(options, services = {}) {
-  if (await fileExists(TRANSACTION_PATH)) {
-    const recipe = (await fileExists(options.config)) ? await readJson(options.config) : {};
-    throw Object.assign(
-      new Error(
-        `An artifact operation stopped before its rollback ran, so the project is in the pending-transaction phase and this read-only report does not read the artifact records, because the rollback may still change them. The rollback restores each file the operation was changing from its backup, so save any edits to those files first, then run: ${artifactCommand(recipe, options.config, ["status"])}. It recovers the transaction and reports the artifact status.`,
-      ),
-      { code: "pending-transaction" },
-    );
-  }
+  if (await fileExists(TRANSACTION_PATH)) throw await pendingTransactionError(options.config);
   return artifactStatus(
     {
       config: options.config,
@@ -258,6 +250,54 @@ export async function readArtifactStatus(options, services = {}) {
     },
     { readOnly: true },
   );
+}
+
+/**
+ * The error the read-only report gives while an artifact transaction is pending (ADR-0020, owner
+ * decisions 20 and 23). It reads the journal without writing and names each file the rollback
+ * would replace from its backup or remove, so the person can save edits to them before running
+ * `artifacts status`, which rolls the transaction back. Nothing here may hide the
+ * `pending-transaction` code: a journal or recipe it cannot read only leaves out the file list or
+ * picks the npm runner for the command. Neither file's text reaches the message.
+ *
+ * @param {string} config
+ */
+async function pendingTransactionError(config) {
+  let recipe = {};
+  try {
+    recipe = await readJson(config);
+  } catch {
+    // A missing or unreadable recipe only changes the runner the command names.
+  }
+  const files = await rollbackFilesSentence();
+  return Object.assign(
+    new Error(
+      `An artifact operation stopped before its rollback ran, so the project is in the pending-transaction phase and this read-only report does not read the artifact records, because the rollback may still change them.${files} Save any edits to those files first, then run: ${artifactCommand(recipe, config, ["status"])}. It rolls the transaction back and reports the artifact status.`,
+    ),
+    { code: "pending-transaction" },
+  );
+}
+
+/**
+ * The sentence that names each file the pending transaction's rollback would restore from its
+ * backup or remove, as `recoverArtifactTransaction` decides it, read without writing.
+ */
+async function rollbackFilesSentence() {
+  let operations;
+  try {
+    ({ operations } = await readTransactionJournal());
+  } catch {
+    return ` Calavera cannot read the journal, ${TRANSACTION_PATH}, so it cannot list the files the rollback would replace or remove.`;
+  }
+  const replaced = [];
+  for (const operation of operations) {
+    if ((await fileExists(operation.backup)) || !operation.hadTarget) {
+      replaced.push(relative(resolve("."), operation.target));
+    }
+  }
+  return replaced.length > 0
+    ? ` The rollback replaces or removes these files: ${replaced.join(", ")}.`
+    : " The rollback replaces or removes no file.";
 }
 
 /**
@@ -1381,6 +1421,27 @@ export async function recoverArtifactTransaction(options = {}) {
   if (options.readOnly) {
     throw new Error("A pending artifact transaction requires recovery before a dry run.");
   }
+  const { transactionRoot, operations } = await readTransactionJournal();
+
+  for (const operation of operations.reverse()) {
+    if (await fileExists(operation.backup)) {
+      await rm(operation.target, { recursive: true, force: true });
+      await mkdir(dirname(operation.target), { recursive: true });
+      await rename(operation.backup, operation.target);
+    } else if (!operation.hadTarget) {
+      await rm(operation.target, { recursive: true, force: true });
+    }
+  }
+  await rm(TRANSACTION_PATH, { force: true });
+  await rm(transactionRoot, { recursive: true, force: true });
+}
+
+/**
+ * Reads the pending artifact transaction's journal without writing, and checks that every path it
+ * names stays in its workspace: staged files and backups in the transaction root, targets in the
+ * project. Throws on a journal that fails a check.
+ */
+async function readTransactionJournal() {
   const journal = await readJson(TRANSACTION_PATH);
   if (
     journal.schemaVersion !== 1 ||
@@ -1417,16 +1478,5 @@ export async function recoverArtifactTransaction(options = {}) {
     }
     return { staged, target, backup, hadTarget: operation.hadTarget };
   });
-
-  for (const operation of operations.reverse()) {
-    if (await fileExists(operation.backup)) {
-      await rm(operation.target, { recursive: true, force: true });
-      await mkdir(dirname(operation.target), { recursive: true });
-      await rename(operation.backup, operation.target);
-    } else if (!operation.hadTarget) {
-      await rm(operation.target, { recursive: true, force: true });
-    }
-  }
-  await rm(TRANSACTION_PATH, { force: true });
-  await rm(transactionRoot, { recursive: true, force: true });
+  return { transactionRoot, operations };
 }

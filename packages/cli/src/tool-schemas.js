@@ -1,6 +1,7 @@
 // @ts-check
 // The input and output schemas of every tool that the MCP server and the Composer's WebMCP tools
-// share by name (ADR-0018, Decisions 2 and 5). Each schema is defined once, here, in Zod: the MCP
+// share by name (ADR-0018, Decisions 2 and 5), and, in `mcpOnlyToolSchemas`, of the MCP-only tools
+// that moved here or were added after #1051. Each schema is defined once, here, in Zod: the MCP
 // server registers the Zod form, and the Composer registers the JSON Schema form that
 // `webMcpToolSchemas` generates from it. A part only Node.js can serve is wrapped in `nodeOnly`,
 // and the JSON Schema form refuses it.
@@ -565,18 +566,12 @@ const updateCheckFailureSchema = z.looseObject({
   unsetVariables: z.array(z.string()),
 });
 
-// One artifact in the artifact status report. Loose, because the report also carries each lock
-// entry's fields, and ADR-0018 Decision 6 lets the report gain fields, such as the condition that
-// ADR-0020 adds, without a breaking change.
+// One artifact in the artifact status report. It declares only the fields the report computes: an
+// entry copies a lock entry's fields, such as id, version, and tag, as the lock records them, and
+// `readLock` does not check them, so declaring their types would refuse a report that
+// `artifacts status --json` prints. Loose, because ADR-0018 Decision 6 also lets the report gain
+// fields, such as the condition that ADR-0020 adds, without a breaking change.
 const artifactStatusEntrySchema = z.looseObject({
-  id: z.string().describe("The catalog ID of the artifact."),
-  version: z
-    .string()
-    .nullable()
-    .describe(
-      "The locked version, or null when the recipe selects the artifact but the lock has no entry.",
-    ),
-  tag: z.enum(["latest", "next"]).describe("The release channel the artifact follows."),
   installed: z.boolean(),
   managed: z.boolean(),
   locallyEdited: z.boolean(),
@@ -613,15 +608,8 @@ export const mcpOnlyToolSchemas = Object.freeze({
       config: z
         .string()
         .default(CONFIG_FILE)
-        .describe(
-          "The recipe file path, relative to the project, as `artifacts status --config` names it.",
-        ),
-      checkUpdates: z
-        .boolean()
-        .default(false)
-        .describe(
-          "Resolve each artifact on its channel in the npm registry to report available updates, as `artifacts status --check-updates` does. The lookup contacts the registry and writes nothing into the project.",
-        ),
+        .describe(recipeToolInputDescriptions.artifactStatusConfig),
+      checkUpdates: z.boolean().default(false).describe(recipeToolInputDescriptions.checkUpdates),
     }),
     // Loose, so the report can gain fields without a breaking change (ADR-0018 Decision 6).
     output: z.looseObject({
@@ -632,7 +620,11 @@ export const mcpOnlyToolSchemas = Object.freeze({
       checkUpdatesCommand: z.string().nullable(),
       updateAllBlockedBy: z.array(z.string()),
       ok: z.boolean().describe("True when every installed artifact is healthy."),
-      artifacts: z.array(artifactStatusEntrySchema),
+      artifacts: z
+        .array(artifactStatusEntrySchema)
+        .describe(
+          "Each artifact the lock records or the recipe selects, with the lock entry's fields, such as id, version, and tag, and the fields the report computes.",
+        ),
       ignoreChanges: z
         .array(z.looseObject({}))
         .describe("The .gitignore changes the call made. This tool makes none, so it is empty."),

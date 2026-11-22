@@ -4,7 +4,7 @@
 // writes or records the artifact cache block, never loads the project's formatter, and resolves
 // `checkUpdates` lookups through a temporary cache outside the project.
 import assert from "node:assert/strict";
-import { mkdtempDisposable, mkdir, readdir, realpath, writeFile } from "node:fs/promises";
+import { mkdtempDisposable, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
@@ -280,7 +280,10 @@ test("artifact_status reports a pending artifact transaction instead of recoveri
       ),
       (error) => {
         assert.equal(/** @type {{ code?: string }} */ (error).code, "pending-transaction");
-        assert.match(String(/** @type {Error} */ (error).message), /artifacts status/);
+        const { message } = /** @type {Error} */ (error);
+        assert.match(message, /artifacts status/);
+        // The rollback restores the state from its backup, so the person must save edits to it.
+        assert.match(message, /replaces or removes these files: \.calavera\/state\.json\./);
         return true;
       },
     );
@@ -343,5 +346,108 @@ test("an MCP client accepts the structured result against the declared output sc
     assert.equal(pending.isError, true);
     const [content] = /** @type {{ text: string }[]} */ (pending.content);
     assert.equal(JSON.parse(content.text).error.code, "pending-transaction");
+  });
+});
+
+test("a recipe or journal artifact_status cannot read never hides the pending-transaction code", async () => {
+  await inProject("calavera-mcp-status-pending-unreadable-", async () => {
+    await lockedProject();
+    await writeFile("calavera.config.json", "{ not json\n");
+    await writeFile(".calavera/artifact-transaction.json", "{ not json either\n");
+    const before = await snapshotDirectory();
+
+    await assert.rejects(callMcpTool("artifact_status", {}), (error) => {
+      assert.equal(/** @type {{ code?: string }} */ (error).code, "pending-transaction");
+      const { message } = /** @type {Error} */ (error);
+      assert.match(message, /cannot read the journal/);
+      // The npm runner, because the recipe that names the package manager cannot be read.
+      assert.match(message, /npm create project-calavera artifacts status/);
+      assert.doesNotMatch(message, /not json/);
+      return true;
+    });
+    assert.deepEqual(await snapshotDirectory(), before);
+  });
+});
+
+test("an MCP client accepts a lock entry whose fields the CLI also reports unchanged", async () => {
+  await inProject("calavera-mcp-status-unusual-lock-", async () => {
+    await lockedProject();
+    const lock = JSON.parse(await readFile(".calavera/artifacts.lock.json", "utf8"));
+    lock.artifacts[0].tag = "beta";
+    await writeFile(".calavera/artifacts.lock.json", `${JSON.stringify(lock, null, 2)}\n`);
+
+    const result = await withClient(async (client) => {
+      await client.listTools();
+      return client.callTool({ name: "artifact_status", arguments: {} });
+    });
+
+    assert.equal(result.isError, undefined, JSON.stringify(result.content));
+    assert.deepEqual(result.structuredContent, await runArtifactCommand(statusOptions(false)));
+  });
+});
+
+/** Writes a pending journal with `operations`, each given as project paths and whether a backup exists. */
+async function pendingJournal(
+  /** @type {{ target: string, hadTarget: boolean, backup: boolean }[]} */ operations,
+) {
+  const transactionRoot = join(process.cwd(), ".calavera/.transactions/stopped");
+  await mkdir(join(transactionRoot, "backups"), { recursive: true });
+  const journalOperations = [];
+  for (const [index, { target, hadTarget, backup }] of operations.entries()) {
+    const backupPath = join(transactionRoot, "backups", String(index));
+    if (backup) await writeFile(backupPath, "backup\n");
+    journalOperations.push({
+      staged: join(transactionRoot, "staged", String(index)),
+      target: join(process.cwd(), target),
+      backup: backupPath,
+      hadTarget,
+    });
+  }
+  await writeFile(
+    ".calavera/artifact-transaction.json",
+    `${JSON.stringify({ schemaVersion: 1, transactionRoot, operations: journalOperations })}\n`,
+  );
+}
+
+/** @param {Record<string, unknown>} [input] */
+async function pendingMessage(input = {}) {
+  try {
+    await callMcpTool("artifact_status", input);
+  } catch (error) {
+    assert.equal(/** @type {{ code?: string }} */ (error).code, "pending-transaction");
+    return /** @type {Error} */ (error).message;
+  }
+  assert.fail("artifact_status did not report the pending transaction");
+}
+
+test("the pending-transaction error names exactly the files the rollback restores or removes, and the recipe's runner", async () => {
+  await inProject("calavera-mcp-status-pending-files-", async () => {
+    await mkdir(".calavera");
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify(buildRecipe("minimal", [], "pnpm"), null, 2)}\n`,
+    );
+    await pendingJournal([
+      // Restored from its backup.
+      { target: "restored.md", hadTarget: true, backup: true },
+      // Existed, but its backup was never made, so the rollback leaves it alone.
+      { target: "untouched.md", hadTarget: true, backup: false },
+      // New in the stopped operation, so the rollback removes it.
+      { target: "created.md", hadTarget: false, backup: false },
+    ]);
+
+    const message = await pendingMessage();
+
+    assert.match(message, /replaces or removes these files: restored\.md, created\.md\./);
+    assert.match(message, /run: pnpm /);
+  });
+});
+
+test("the pending-transaction error says when the rollback replaces no file", async () => {
+  await inProject("calavera-mcp-status-pending-none-", async () => {
+    await mkdir(".calavera");
+    await pendingJournal([]);
+
+    assert.match(await pendingMessage(), /The rollback replaces or removes no file\./);
   });
 });

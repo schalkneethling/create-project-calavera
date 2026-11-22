@@ -158,6 +158,10 @@ export const recipeToolInputDescriptions = Object.freeze({
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
     "Options keyed by selected integration ID. Stylelint Baseline requires available, which is widely, newly, or a Baseline year, and accepts severity, warning by default or error; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from; Stryker accepts testRunner, vitest by default or node:test for a project that tests with node:test, and, with node:test, testFiles, the globs the project's test script passes to node --test.",
+  artifactStatusConfig:
+    "The recipe file path, relative to the project, as `artifacts status --config` names it.",
+  checkUpdates:
+    "Resolve each artifact on its channel in the npm registry to report available updates, as `artifacts status --check-updates` does. The lookup contacts the registry and writes nothing into the project.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
   baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
   baselineLimit: "Maximum number of Baseline feature search results.",
