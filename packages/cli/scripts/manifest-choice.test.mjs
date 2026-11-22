@@ -919,7 +919,12 @@ test("apply-at-ancestor does not stop on a recipe path outside the inspected dir
   });
   await writeFile(join(fixture.root, "sibling.json"), json(recipe));
 
-  for (const config of [join(elsewhere.root, "recipe.json"), join("..", "sibling.json")]) {
+  // A folder that does not exist is compared as given.
+  for (const config of [
+    join(elsewhere.root, "recipe.json"),
+    join("..", "sibling.json"),
+    join(elsewhere.root, "missing", "recipe.json"),
+  ]) {
     const result = await inDirectory(fixture.project, false, () =>
       applyRecipeObject(structuredClone(recipe), {
         dryRun: true,
