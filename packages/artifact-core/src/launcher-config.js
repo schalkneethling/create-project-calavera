@@ -310,7 +310,7 @@ function withoutCredentialsExpansion(value, setting, layer) {
  * ("keys set in the local file override the same keys in the global file",
  * https://bun.com/docs/runtime/bunfig). The global file is `$XDG_CONFIG_HOME/.bunfig.toml` when
  * that variable is an absolute path, and `$HOME/.bunfig.toml` otherwise. Bun loads them after the
- * .npmrc files and before `BUN_CONFIG_REGISTRY` and `NPM_CONFIG_REGISTRY`
+ * .npmrc files and before the registry variables (see bunEnvironmentLayer)
  * (https://bun.com/docs/install/npmrc). A registry URL that starts with $ is read from the
  * variable it names, in the user file only.
  * @param {{ cwd: string, env: NodeJS.ProcessEnv, home: string, scope?: string, warnings: string[], notes: string[] }} context

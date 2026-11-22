@@ -990,3 +990,17 @@ test("under Bun, npm_config_* auth variables still pass through, and a registry 
   });
   assert.deepEqual((await loadNpmRegistryOptions(variable)).diagnostics, []);
 });
+
+test("under Yarn, the project proxy warning names YARN_HTTPS_PROXY when that variable wins", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: {
+      "home/.yarnrc.yml": "httpsProxy: http://corp.example.com:8080\n",
+      "workspace/project/.yarnrc.yml": "httpsProxy: http://team.example.com:3128\n",
+    },
+    env: { YARN_HTTPS_PROXY: "http://env.example.com:8080" },
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.proxy, "http://env.example.com:8080");
+  assert.match(warnings[0], /Calavera uses the one in the environment\.$/);
+});

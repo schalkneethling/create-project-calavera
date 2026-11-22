@@ -141,7 +141,8 @@ async function userConfigPath(env, home, launcher) {
  * Under npm, pnpm, and Yarn 1, the settings come from the .npmrc files and npm_config_* variables.
  * Under Yarn 2 or later, the registry and proxy come from .yarnrc.yml files and YARN_* variables,
  * and only the auth keys from the .npmrc files, because Yarn does not read them. Under Bun, the
- * bunfig.toml registry and BUN_CONFIG_REGISTRY override the .npmrc registry, and the .npmrc proxy
+ * bunfig.toml registry and then the first valid of BUN_CONFIG_REGISTRY, NPM_CONFIG_REGISTRY,
+ * and npm_config_registry override the .npmrc registry, and the .npmrc proxy
  * keys are not read, because Bun does not support them.
  *
  * `${VAR}` is expanded in keys and values of user files and the environment only. A project file
@@ -216,6 +217,8 @@ export async function loadNpmRegistryOptions({
   const options = {};
   /** @type {Record<string, ConfigLayer>} */
   const sources = {};
+  /** @type {{ key: string, setting: string, layer: string }[]} */
+  const rejectedProxies = [];
   for (const layer of layers) {
     const { name, entries, trusted } = layer;
     for (const [rawKey, entry] of Object.entries(entries)) {
@@ -244,14 +247,9 @@ export async function loadNpmRegistryOptions({
         // whatever the protocol, so the proxy would receive them in plain text. The entry is
         // skipped here, so it never replaces a proxy from a user file. An empty value and a
         // noproxy entry only remove the proxy, so a project file may still set them.
+        // The warning is written after every layer is read, so it names the proxy that applies.
         if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
-          const kept = sources[rawKey];
-          const outcome = kept?.trusted
-            ? `Calavera uses the one in the ${kept.name}.`
-            : "To use it, set it in your user configuration.";
-          const message = `Ignored ${setting} in the ${name}: Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials. ${outcome}`;
-          warnings.push(message);
-          notes.push(message);
+          rejectedProxies.push({ key: rawKey, setting, layer: name });
           continue;
         }
       } else if (layer.npmEnvironment && npmStarted) {
@@ -315,6 +313,16 @@ export async function loadNpmRegistryOptions({
       options[key] = value;
       sources[key] = layer;
     }
+  }
+
+  for (const { key, setting, layer } of rejectedProxies) {
+    // Only trusted layers can hold a proxy now; an empty value means no proxy.
+    const outcome = options[key]
+      ? `Calavera uses the one in the ${sources[key]?.name}.`
+      : "To use it, set it in your user configuration.";
+    const message = `Ignored ${setting} in the ${layer}: Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials. ${outcome}`;
+    warnings.push(message);
+    notes.push(message);
   }
 
   if (launcher === "yarn" && !options.registry) options.registry = YARN_DEFAULT_REGISTRY;

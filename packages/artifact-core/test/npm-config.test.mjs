@@ -576,3 +576,22 @@ test("a project .npmrc proxy does not remove the user .npmrc proxy, and the warn
     assert.doesNotMatch(warning, /set it in your user configuration/);
   }
 });
+
+test("the project proxy warning names the proxy that is used after every layer is read", async () => {
+  const overridden = await fixture({
+    user: "https-proxy=http://user-proxy.example.com/\n",
+    project: "https-proxy=http://team-proxy.example.com/\n",
+    env: { npm_config_https_proxy: "http://env-proxy.example.com/" },
+  });
+  const overriddenResult = await loadNpmRegistryOptions(overridden);
+  assert.equal(overriddenResult.options.httpsProxy, "http://env-proxy.example.com/");
+  assert.match(overriddenResult.warnings[0], /Calavera uses the one in the environment\.$/);
+
+  const emptyUser = await fixture({
+    user: "https-proxy=\n",
+    project: "https-proxy=http://team-proxy.example.com/\n",
+  });
+  const emptyResult = await loadNpmRegistryOptions(emptyUser);
+  assert.equal(emptyResult.options.httpsProxy, undefined);
+  assert.match(emptyResult.warnings[0], /To use it, set it in your user configuration\.$/);
+});
