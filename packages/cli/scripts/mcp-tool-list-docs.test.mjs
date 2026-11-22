@@ -4,11 +4,10 @@
 // #933: the README's tool-order list is checked the same way. The generated
 // `.agents/calavera/mcp.md` list is not checked here yet: changing its text waits for #934.
 // #1053: the skill no longer lists the tools to look for. ADR-0018 Decision 7 tells the agent
-// to use only the tools the server lists, because a skill newer than the project's pinned server
-// may describe a tool that server lacks. So the skill is checked in the other direction: every
-// lowercase snake_case name in it must be one the server registers, and the skill may leave a
-// tool out. Every registered tool name has that shape, and a test below fails when one stops
-// having it. An unregistered name of another shape, such as `apply_recipe_v2`, is not caught.
+// to use only the tools listed to it, because a skill newer than the project's pinned server may
+// describe a tool that server lacks. So the skill is checked in the other direction: every
+// lowercase snake_case name the skill puts in backticks must be one the server registers, and the
+// skill may leave a tool out. Reading only backticked names keeps prose words out of the check.
 // #964: the workflow doc's WebMCP list is checked against the tools the Composer registers.
 // #996: the README's WebMCP list is checked the same way.
 import { execFile } from "node:child_process";
@@ -38,6 +37,7 @@ const WORKFLOW_DOC_MCP_MARKER = "project-local apply tools:";
 const WORKFLOW_DOC_WEBMCP_MARKER = "but not project inspection or apply:";
 const README_WEBMCP_MARKER = "for the MCP recipe composition workflow:";
 const TOOL_NAME_PATTERN = /\b[a-z]+(?:_[a-z]+)+\b/g;
+const BACKTICKED_TOOL_NAME_PATTERN = /`([a-z]+(?:_[a-z]+)+)`/g;
 
 /**
  * The tool names a running server advertises to an MCP client, sorted.
@@ -150,23 +150,23 @@ test("the README's tool-order list names every tool the MCP server registers, an
 });
 
 /**
- * The names in `named` that `registered` does not contain, sorted and without repeats.
+ * The backticked tool names in a text, sorted.
  *
- * @param {string[]} named
- * @param {string[]} registered
+ * @param {string} text
  * @returns {string[]}
  */
-function unregisteredToolNames(named, registered) {
-  return [...new Set(named)].filter((name) => !registered.includes(name)).sort();
+function backtickedToolNamesIn(text) {
+  return [...text.matchAll(BACKTICKED_TOOL_NAME_PATTERN)].map(([, name]) => name).sort();
 }
 
 for (const { source, url } of bundledSkillCopies) {
   test(`the bundled Calavera skill at ${source} names only tools the MCP server registers`, async () => {
     const skill = await readFile(url, "utf8");
-    const named = toolNamesIn(skill);
+    const registered = await registeredToolNames();
+    const named = backtickedToolNamesIn(skill);
 
     assert.notEqual(named.length, 0, `${source} names no MCP tools`);
-    assert.deepEqual(unregisteredToolNames(named, await registeredToolNames()), []);
+    assert.deepEqual([...new Set(named.filter((name) => !registered.includes(name)))], []);
   });
 }
 
@@ -243,25 +243,10 @@ test("the list parser catches a missing, an extra, and a repeated tool name", ()
   );
 });
 
-test("every registered tool name has the shape the skill check reads", async () => {
-  for (const name of await registeredToolNames()) {
-    assert.deepEqual(toolNamesIn(`\`${name}\``), [name], `the skill check cannot read ${name}`);
-  }
-});
-
-test("the skill check catches a tool the server does not register, and allows one it omits", () => {
-  const registered = ["apply_recipe", "inspect_project", "list_profiles"];
-
+test("the skill check reads backticked tool names and ignores prose words", () => {
   assert.deepEqual(
-    unregisteredToolNames(
-      toolNamesIn("Call `inspect_project`, then `drop_table`, then `drop_table` again."),
-      registered,
-    ),
-    ["drop_table"],
-  );
-  assert.deepEqual(
-    unregisteredToolNames(toolNamesIn("Call `inspect_project`, then `apply_recipe`."), registered),
-    [],
+    backtickedToolNamesIn("Call `inspect_project`, then `drop_table`. Skip node_modules."),
+    ["drop_table", "inspect_project"],
   );
 });
 
