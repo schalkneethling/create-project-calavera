@@ -109,6 +109,20 @@ test("rewriteLossProblem without values names the line of a number, never the nu
   }
 });
 
+test("rewriteLossProblem names the line of a repeated key with or without values", async () => {
+  // A line number exposes no value, so apply's .claude/settings.json message names it too.
+  const found =
+    (await rewriteLossProblem(
+      '{\n  "model": "opus",\n  "model": "sonnet"\n}',
+      "a.json",
+      oxfmtFormatter,
+    )) ?? "";
+  assert.equal(
+    found,
+    'holds the key "model" more than once in one object, again on line 3, and only the last value would be kept',
+  );
+});
+
 test("rewriteLossProblem without values names the line of a repeated key as well as the key", async () => {
   // #1078: the line is the repeated key's own, the second time it appears. A string before it that
   // holds an escaped quote and a colon is not read as a key.

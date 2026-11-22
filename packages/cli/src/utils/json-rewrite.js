@@ -117,8 +117,8 @@ export async function rewriteLossProblem(text, path, formatter, { withoutValues 
       const key = JSON.parse(string);
       const keys = /** @type {Set<string>} */ (open.at(-1));
       if (keys.has(key)) {
-        const where = withoutValues ? `, again on line ${lineOf(match, string)},` : "";
-        return `holds the key ${string} more than once in one object${where} and only the last value would be kept`;
+        // A line number exposes no value, so every caller names it.
+        return `holds the key ${string} more than once in one object, again on line ${lineOf(match, string)}, and only the last value would be kept`;
       }
       keys.add(key);
     } else if (number !== undefined) {
@@ -128,7 +128,8 @@ export async function rewriteLossProblem(text, path, formatter, { withoutValues 
           : `holds the number ${number}, which is too large for Calavera to write`;
       }
       numbers.push(number);
-      // Only eject's reports name the line, so apply skips the extra scan.
+      // Only callers that pass withoutValues (eject and artifacts migrate) name a number's line,
+      // so apply skips the extra scan.
       if (withoutValues) lines.push(lineOf(match, number));
     }
   }
