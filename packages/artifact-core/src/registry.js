@@ -7,7 +7,7 @@ import pacote from "pacote";
 import semver from "semver";
 
 import { artifactForId } from "./catalog.js";
-import { loadNpmRegistryOptions } from "./npm-config.js";
+import { loadNpmRegistryOptions, requestOptions } from "./npm-config.js";
 
 const TAGS = new Set(["latest", "next"]);
 
@@ -16,7 +16,7 @@ const TAGS = new Set(["latest", "next"]);
  * variables; see `loadNpmRegistryOptions`. `cwd` (default: the current directory) holds the
  * project .npmrc, unless npm started Calavera: the project .npmrc is then the one npm read at
  * `npm_config_local_prefix`. `env` (default: the process environment) holds the variables.
- * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv }} request
+ * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv, accountHome?: string }} request
  */
 export async function resolveArtifactPackage(request) {
   const artifact = artifactForId(request.id);
@@ -31,7 +31,7 @@ export async function resolveArtifactPackage(request) {
   const manifest = await withNpmDiagnostics(npm, () =>
     withRegistryCode(artifact.packageName, () =>
       pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
-        ...npm.options,
+        ...requestOptions(npm.options, npm.registry.origin),
         cache: request.cache,
         offline: request.offline,
         fullMetadata: true,
@@ -67,17 +67,22 @@ export async function resolveArtifactPackage(request) {
  * with its credentials (ADR-0019 Decision 3). It reads the abbreviated package document, which
  * lists the dist-tags, and passes no `cache`, so it writes nothing. `fetchRetries: 0` and `signal`
  * let the caller hold the request to a deadline: pacote passes both through to npm-registry-fetch.
- * @param {{ packageName: string, tag: string, cwd?: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal }} request
+ * @param {{ packageName: string, tag: string, cwd?: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal, accountHome?: string }} request
  * @returns {Promise<string>}
  */
-export async function resolvePackageDistTag({ packageName, tag, cwd, env, signal }) {
+export async function resolvePackageDistTag({ packageName, tag, cwd, env, signal, accountHome }) {
   const npm = await loadNpmRegistryOptions({
     cwd,
     env,
+    accountHome,
     scope: packageScope({ packageName }),
   });
   const manifest = await withNpmDiagnostics(npm, () =>
-    pacote.manifest(`${packageName}@${tag}`, { ...npm.options, fetchRetries: 0, signal }),
+    pacote.manifest(`${packageName}@${tag}`, {
+      ...requestOptions(npm.options, npm.registry.origin),
+      fetchRetries: 0,
+      signal,
+    }),
   );
   if (manifest.name !== packageName || !semver.valid(manifest.version)) {
     throw new Error(`The registry named no valid version for ${packageName}@${tag}.`);
@@ -89,7 +94,7 @@ export async function resolvePackageDistTag({ packageName, tag, cwd, env, signal
  * @param {{ artifact: { id: string, type: string, packageName: string }, packageName: string, version: string, resolved: string, integrity?: string, tag: string, cache: string, offline: boolean }} resolution
  * @param {string} destination
  * @param {string} cliVersion
- * @param {{ cwd?: string, env?: NodeJS.ProcessEnv }} [npmContext] Where to read npm configuration; see resolveArtifactPackage.
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, accountHome?: string }} [npmContext] Where to read npm configuration; see resolveArtifactPackage.
  */
 export async function extractArtifactPackage(resolution, destination, cliVersion, npmContext) {
   const npm = await loadNpmRegistryOptions({
@@ -98,7 +103,7 @@ export async function extractArtifactPackage(resolution, destination, cliVersion
   });
   await withNpmDiagnostics(npm, () =>
     pacote.extract(resolution.resolved, destination, {
-      ...npm.options,
+      ...requestOptions(npm.options, resolution.resolved),
       cache: resolution.cache,
       integrity: resolution.integrity,
       offline: resolution.offline,

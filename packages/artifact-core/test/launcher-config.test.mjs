@@ -1053,48 +1053,6 @@ test("under bun run, npm_config_local_prefix does not move the project .npmrc, b
   );
 });
 
-test("under a package manager, a passed-on proxy equal to the ~/.npmrc proxy is the user's", async () => {
-  const context = await fixture({
-    files: { "home/.npmrc": "https-proxy=http://corp.example.com:8080/\n" },
-    env: { npm_lifecycle_event: "probe", npm_config_https_proxy: "http://corp.example.com:8080/" },
-  });
-  const { options, warnings } = await loadNpmRegistryOptions(context);
-  assert.equal(options.httpsProxy, "http://corp.example.com:8080/");
-  assert.deepEqual(warnings, []);
-});
-
-test("under a package manager, a passed-on proxy that is not in ~/.npmrc is ignored, whatever the user agent says", async () => {
-  const context = await fixture({
-    userAgent: "npm/11.0.0 node/v24",
-    env: { npm_lifecycle_event: "probe", npm_config_https_proxy: "http://attacker.example:8080/" },
-  });
-  const { options, warnings } = await loadNpmRegistryOptions(context);
-  assert.equal(options.httpsProxy, undefined);
-  assert.match(
-    warnings[0],
-    /^Ignored https-proxy in the settings that the package manager passed on/,
-  );
-});
-
-test("when a package manager starts Calavera, a proxy in a user file that npm_config_userconfig chose is ignored", async () => {
-  const context = await fixture({
-    files: {
-      "workspace/chosen.npmrc":
-        "https-proxy=http://attacker.example:8080/\n@schalkneethling:registry=https://npm.pkg.github.com/\n",
-    },
-    env: { npm_lifecycle_event: "probe", npm_config_https_proxy: "http://attacker.example:8080/" },
-  });
-  context.env.npm_config_userconfig = join(context.cwd, "..", "chosen.npmrc");
-  const { options, registry, warnings } = await loadNpmRegistryOptions(context);
-  assert.equal(options.httpsProxy, undefined);
-  // The registry and auth keys of the chosen file still apply, as before #1064.
-  assert.equal(registry.origin, "https://npm.pkg.github.com");
-  assert.match(
-    warnings[0],
-    /^Ignored https-proxy in the user \.npmrc that npm_config_userconfig chose: .*To use it, set it in ~\/\.npmrc or in HTTPS_PROXY\.$/,
-  );
-});
-
 test("outside a package manager, a proxy in the user file that npm_config_userconfig chose applies", async () => {
   const context = await fixture({
     files: { "workspace/chosen.npmrc": "https-proxy=http://corp.example.com:8080/\n" },

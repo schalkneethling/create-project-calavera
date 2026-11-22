@@ -1,6 +1,6 @@
 // @ts-check
 import { access } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 
 import { decode } from "ini";
@@ -46,9 +46,9 @@ const PROXY_PROTOCOLS = new Set([
   "socks5:",
   "socks5h:",
 ]);
-// How warnings name proxies that are ignored when a package manager starts Calavera.
-const PASSED_ON_SETTINGS = "settings that the package manager passed on";
-const CHOSEN_USER_FILE = "user .npmrc that npm_config_userconfig chose";
+// How warnings name the account's own user .npmrc, the only source of credentials when a package
+// manager starts Calavera.
+const ACCOUNT_NPMRC = "~/.npmrc";
 // Same expression as @npmcli/config: ${VAR}, ${VAR?} for an empty fallback, and backslash escapes.
 const ENV_EXPRESSION = /(?<!\\)(\\*)\$\{([^${}?]+)(\?)?\}/g;
 
@@ -136,31 +136,6 @@ function exportedFrom(entries, key, value, env, otherSpellings = true) {
 }
 
 /**
- * The package manager that started Calavera. npm exports a user-agent set in the project .npmrc
- * as npm_config_user_agent, so when a package manager started Calavera and a project file sets
- * user-agent, the variable may come from repository content and says nothing about the launcher.
- * Only npm exports project settings this way, so the launcher counts as npm.
- * @param {NodeJS.ProcessEnv} env
- * @param {string} cwd
- * @returns {Promise<Launcher>}
- */
-async function launcherFor(env, cwd) {
-  const launcher = detectLauncher(env);
-  const agent = env.npm_config_user_agent;
-  if (launcher === "npm" || !agent || !startedByNpm(env)) return launcher;
-  const folders = new Set(
-    [cwd, env.npm_config_local_prefix].filter((folder) => folder !== undefined),
-  );
-  for (const folder of folders) {
-    const entries = await readNpmrc(resolve(folder, ".npmrc"), []);
-    // npm replaces placeholders such as {npm-version} before it exports the value, so any
-    // user-agent in a project file counts, not only one equal to the variable.
-    if (Object.keys(entries).some((key) => normalizedKey(key) === "user-agent")) return "npm";
-  }
-  return launcher;
-}
-
-/**
  * The user .npmrc. Bun also reads `$XDG_CONFIG_HOME/.npmrc` when it exists and no userconfig is
  * set (https://bun.com/docs/install/npmrc).
  * @param {NodeJS.ProcessEnv} env @param {string} home @param {Launcher} launcher
@@ -204,13 +179,15 @@ async function userConfigPath(env, home, launcher) {
  * contains `${` is ignored, and so is a proxy it sets.
  * `warnings` are for the user. `diagnostics` hold every ignored entry and unset variable, for
  * failure messages. `unsetVariables` lists variable names. None of them ever contains a value.
- * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string }} [context]
+ * `accountHome` replaces the operating system account's home folder, for tests only.
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string, accountHome?: string }} [context]
  * @returns {Promise<{ options: Record<string, string>, registry: EffectiveRegistry, warnings: string[], diagnostics: string[], unsetVariables: string[] }>}
  */
 export async function loadNpmRegistryOptions({
   cwd = process.cwd(),
   env = process.env,
   scope,
+  accountHome,
 } = {}) {
   /** @type {string[]} */
   const warnings = [];
@@ -219,7 +196,7 @@ export async function loadNpmRegistryOptions({
   /** @type {Set<string>} */
   const unsetVariables = new Set();
   const home = env.HOME || homedir();
-  const launcher = await launcherFor(env, cwd);
+  const launcher = detectLauncher(env);
   // npm exports the .npmrc settings it resolved as npm_config_* variables, so the comparison with
   // exported values below applies under it. pnpm counts as npm here, but pnpm 12 exports no
   // settings, so the comparison finds nothing. Bun and Yarn 2 or later also set
@@ -232,16 +209,14 @@ export async function loadNpmRegistryOptions({
   // Reading the same file keeps those values labeled, and restricted, as project content.
   const projectPath = resolve((npmStarted && env.npm_config_local_prefix) || cwd, ".npmrc");
   const userPath = await userConfigPath(env, home, launcher);
-  // A package manager that starts Calavera passes on settings from project files as npm_config_*
-  // variables: npm exports what it resolved, including values it expands after loading its
-  // config and values an outer run passed down, and a project file can set userconfig, which
-  // chooses the file read as the user .npmrc. No comparison with files can tell all of these
-  // apart from the person's own settings, so a proxy is then trusted only from the default user
-  // .npmrc at ~/.npmrc, or from the proxy environment variables that @npmcli/agent reads. A
-  // package manager is recognized by the variables it sets for a script, not by the user agent,
-  // which a project .npmrc can set.
-  const defaultUserPath = join(home, ".npmrc");
-  const userProxyTrusted = !npmStarted || userPath === defaultUserPath;
+  // Invariant 2: when a package manager starts Calavera, the environment can carry repository
+  // content (npm exports project settings, a project can set userconfig or user-agent, and Yarn 4
+  // injects a committed .env.yarn). Credentials, and the ${VAR} expansion inside them, then come
+  // only from the account's own ~/.npmrc, with the home folder taken from the operating system
+  // account rather than HOME. Every other layer's credential keys are ignored with a warning.
+  const credentialsLocked = startedByNpm(env);
+  const credentialHome = accountHome ?? accountHomeFolder();
+  const credentialPath = credentialHome === undefined ? undefined : join(credentialHome, ".npmrc");
   const scopeKey = scope ? `${scope}:registry` : undefined;
   /** @param {string} key */
   const isRegistryKey = (key) => key === "registry" || key === scopeKey;
@@ -261,6 +236,21 @@ export async function loadNpmRegistryOptions({
     { name: "user .npmrc", entries: userEntries, trusted: true, accepts },
     { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
   ];
+  /** @type {ConfigLayer | undefined} */
+  let credentialLayer;
+  if (credentialsLocked && credentialPath !== undefined) {
+    if (credentialPath === userPath) {
+      credentialLayer = npmFiles[0];
+    } else {
+      credentialLayer = {
+        name: ACCOUNT_NPMRC,
+        entries: await readNpmrc(credentialPath, warnings),
+        trusted: true,
+        accepts: (key) => AUTH_KEY.test(key),
+      };
+      npmFiles.push(credentialLayer);
+    }
+  }
   /** @type {ConfigLayer} */
   const npmEnvironment = {
     name: "environment",
@@ -316,29 +306,14 @@ export async function loadNpmRegistryOptions({
           }
           continue;
         }
-        if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
-          // A passed-on proxy is the person's only when it equals the value in the user .npmrc and
-          // that file is ~/.npmrc; the user layer applied it then. A value equal to a chosen user
-          // file's proxy was already ignored there with a warning. A value the user file spells
-          // differently, such as https_proxy, is ignored silently, because npm does not use it.
-          if (exportedFrom(userEntries, rawKey, rawValue, env) === undefined) {
-            rejectedProxies.push({ key: rawKey, setting, layer: PASSED_ON_SETTINGS });
-          }
-          continue;
-        } else if (exportedFrom(userEntries, rawKey, rawValue, env, false) !== undefined) {
-          // A value equal to the user .npmrc value under the same key was applied by the user
-          // layer, or ignored there with a warning.
-          continue;
-        }
+        // A value equal to the user .npmrc value under the same key was applied by the user
+        // layer, or ignored there with a warning.
+        if (exportedFrom(userEntries, rawKey, rawValue, env, false) !== undefined) continue;
       }
-      if (
-        layer === npmFiles[0] &&
-        !userProxyTrusted &&
-        PROXY_URL_KEYS.has(rawKey) &&
-        accepts(rawKey) &&
-        rawValue.trim()
-      ) {
-        rejectedProxies.push({ key: rawKey, setting, layer: CHOSEN_USER_FILE });
+      if (credentialsLocked && AUTH_KEY.test(rawKey) && layer !== credentialLayer) {
+        const message = `Ignored ${setting} in the ${name}: when a package manager starts Calavera, credentials come only from ${ACCOUNT_NPMRC}, because the environment can carry repository content.`;
+        warnings.push(message);
+        notes.push(message);
         continue;
       }
       if (!trusted) {
@@ -451,12 +426,7 @@ export async function loadNpmRegistryOptions({
     : (proxyOrigins[options.httpsProxy ? "httpsProxy" : "proxy"] ??
       (environmentProxy ? `the ${printable(environmentProxy)} environment variable` : undefined));
   const registryProtocol = registryUrl.protocol.slice(0, -1);
-  const userFile =
-    launcher === "yarn"
-      ? "your user .yarnrc.yml"
-      : npmStarted
-        ? `~/.npmrc or in ${registryUrl.protocol === "https:" ? "HTTPS_PROXY" : "HTTP_PROXY"}`
-        : "your user .npmrc";
+  const userFile = launcher === "yarn" ? "your user .yarnrc.yml" : "your user .npmrc";
   for (const { key, setting, layer } of rejectedProxies) {
     const used =
       usedProxy === "direct"
@@ -474,18 +444,12 @@ export async function loadNpmRegistryOptions({
             .filter(Boolean)
             .join(" ")
         : (used ?? `No other proxy setting applies. To use it, set it in ${userFile}.`);
-    const reason =
-      layer === PASSED_ON_SETTINGS
-        ? "a package manager also passes on settings from project files, and a proxy from a project file could receive your credentials."
-        : layer === CHOSEN_USER_FILE
-          ? "a project file can set userconfig when a package manager starts Calavera, and a proxy from a project file could receive your credentials."
-          : "Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials.";
-    const message = `Ignored ${setting} in the ${layer}: ${reason} ${outcome}`;
+    const message = `Ignored ${setting} in the ${layer}: Calavera reads proxies only from user configuration files and environment variables. ${outcome}`;
     warnings.push(message);
     notes.push(message);
   }
-  // npm-registry-fetch picks credentials by host and ignores the protocol, so over http they
-  // travel in plain text.
+  // npm-registry-fetch picks credentials by host and ignores the protocol; requestOptions removes
+  // them for a plain-http request, so say why a request to this registry goes without them.
   if (
     registryUrl.protocol === "http:" &&
     Object.keys(options).some(
@@ -493,7 +457,7 @@ export async function loadNpmRegistryOptions({
     )
   ) {
     warnings.push(
-      `The registry ${registryUrl.origin} uses http, so the credentials configured for ${registryUrl.host} are sent in plain text.`,
+      `The registry ${registryUrl.origin} uses http, so Calavera sends no credentials to it, although some are configured for ${registryUrl.host}.`,
     );
   }
   return {
@@ -537,6 +501,33 @@ function registryBypassesProxy(registryUrl, configured, env) {
  */
 function normalizedKey(key) {
   return key.toLowerCase().replace(/[^a-z0-9]/g, "-");
+}
+
+/**
+ * The home folder of the operating system account, which, unlike HOME, the environment cannot
+ * redirect. Undefined when the account has no entry, as in some containers.
+ */
+function accountHomeFolder() {
+  try {
+    return userInfo().homedir || undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+/**
+ * Invariant 1: the options for one request to `url`, without any credential when it is not an
+ * https URL. npm-registry-fetch picks credentials by host and path and ignores the protocol, so a
+ * token, basic auth, or client certificate for a host would otherwise go with a plain-http request
+ * to it, registry or tarball. Calavera passes every pacote request through this function.
+ * @param {Record<string, string>} options
+ * @param {string} url
+ * @returns {Record<string, string>}
+ */
+export function requestOptions(options, url) {
+  // A local path, which pacote.extract also accepts, needs no credential either.
+  if (URL.canParse(url) && new URL(url).protocol === "https:") return options;
+  return Object.fromEntries(Object.entries(options).filter(([key]) => !AUTH_KEY.test(key)));
 }
 
 /** @param {string} value */

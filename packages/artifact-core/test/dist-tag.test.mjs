@@ -3,7 +3,7 @@
 // an abort signal, and nothing written to disk.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -91,7 +91,7 @@ test("resolves a dist-tag from the configured registry with the abbreviated docu
   assert.deepEqual(await readdir(context.cwd), []);
 });
 
-test("sends the user .npmrc credentials for the registry it asks", async (t) => {
+test("invariant 1: sends no credentials to a plain-http registry", async (t) => {
   const registry = await startRegistry((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(packument({ latest: "7.1.0" }));
@@ -110,7 +110,8 @@ test("sends the user .npmrc credentials for the registry it asks", async (t) => 
     cwd,
     env: { npm_config_userconfig: userconfig },
   });
-  assert.equal(registry.requests[0]?.authorization, "Bearer abc123");
+  assert.equal(registry.requests.length, 1);
+  assert.equal(registry.requests[0]?.authorization, undefined);
 });
 
 test("a failed response is not retried", async (t) => {
@@ -239,4 +240,38 @@ test("a host in the .npmrc noproxy skips the .npmrc proxy (#1064)", async (t) =>
   );
   assert.equal(proxy.requests.length, 0);
   assert.equal(registry.requests.length, 1);
+});
+
+test("invariant 1: a committed Yarn 4 .env.yarn that sets an http registry gets no credentials", async (t) => {
+  const registry = await startRegistry((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(packument({ latest: "7.3.0" }));
+  });
+  const cwd = await mkdtemp(join(tmpdir(), "calavera-dist-tag-env-yarn-"));
+  t.after(async () => {
+    await registry.close();
+    await rm(cwd, { recursive: true, force: true });
+  });
+  const accountHome = join(cwd, "account-home");
+  await mkdir(accountHome);
+  await writeFile(
+    join(accountHome, ".npmrc"),
+    `//${registry.host}/:_authToken=fake-account-token\n`,
+  );
+  // The same token in the HOME-based user file, which a .env.yarn could also point elsewhere.
+  await mkdir(join(cwd, "home"));
+  await writeFile(join(cwd, "home", ".npmrc"), `//${registry.host}/:_authToken=fake-home-token\n`);
+  // Yarn 4 injects .env.yarn into every process it starts, so these arrive as the environment.
+  const env = {
+    HOME: join(cwd, "home"),
+    npm_config_user_agent: "yarn/4.19.0 npm/? node/v24.3.0 darwin arm64",
+    npm_lifecycle_event: "probe",
+    YARN_NPM_REGISTRY_SERVER: registry.url,
+  };
+
+  assert.equal(
+    await resolvePackageDistTag({ packageName: NAME, tag: "latest", cwd, env, accountHome }),
+    "7.3.0",
+  );
+  assert.equal(registry.requests[0]?.authorization, undefined);
 });

@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test, { afterEach } from "node:test";
 import { inspect, promisify } from "node:util";
 
-import { loadNpmRegistryOptions } from "../src/npm-config.js";
+import { loadNpmRegistryOptions, requestOptions } from "../src/npm-config.js";
 import { removeTemporaryDirectories, temporaryDirectory } from "./temporary-directory.mjs";
 
 afterEach(removeTemporaryDirectories);
@@ -361,7 +361,7 @@ test("an http registry from the user .npmrc or the environment is allowed", asyn
   assert.deepEqual(env.registry, { origin: "http://registry.example.com", source: "environment" });
 });
 
-test("an http registry with credentials for its host warns about plain text", async () => {
+test("an http registry with credentials for its host warns that Calavera sends none to it", async () => {
   const withToken = await loadNpmRegistryOptions(
     await fixture({
       user: "registry=http://registry.example.com/\n//registry.example.com/:_authToken=abc\n",
@@ -369,7 +369,7 @@ test("an http registry with credentials for its host warns about plain text", as
   );
   assert.equal(withToken.warnings.length, 1);
   assert.match(withToken.warnings[0], /http:\/\/registry\.example\.com/);
-  assert.match(withToken.warnings[0], /plain text/);
+  assert.match(withToken.warnings[0], /uses http, so Calavera sends no credentials to it/);
   assert.doesNotMatch(withToken.warnings[0], /abc/);
 
   const withoutToken = await loadNpmRegistryOptions(
@@ -748,56 +748,6 @@ test("under npm exec, a project proxy written with another spelling is recognize
   }
 });
 
-test("under npm exec, a userconfig that npm passes on from the project .npmrc cannot bring in a proxy", async () => {
-  for (const written of ["evil.npmrc", "./${npm_command}/evil.npmrc"]) {
-    const directory = await temporaryDirectory("calavera-npm-userconfig-");
-    const cwd = join(directory, "repo");
-    await mkdir(cwd);
-    const evil = join(cwd, written);
-    await mkdir(join(evil, ".."), { recursive: true });
-    await writeFile(evil, "https-proxy=http://attacker.example:8080/\n");
-    await writeFile(join(cwd, ".npmrc"), `userconfig=${written}\n`);
-    const { options, warnings } = await loadNpmRegistryOptions({
-      cwd,
-      scope: SCOPE,
-      env: {
-        HOME: join(directory, "home"),
-        npm_command: "run-script",
-        npm_config_local_prefix: cwd,
-        npm_config_userconfig: evil,
-        npm_config_https_proxy: "http://attacker.example:8080/",
-      },
-    });
-    assert.equal(options.httpsProxy, undefined, written);
-    assert.ok(
-      warnings.some((warning) => warning.startsWith("Ignored https-proxy")),
-      written,
-    );
-  }
-});
-
-test("under npm exec, a user-agent that npm passes on from the project .npmrc does not change the launcher", async () => {
-  for (const agent of [
-    "bun/1.2.0 npm/? node/v24.3.0 darwin arm64",
-    "yarn/4.9.1 npm/? node/v24.3.0",
-  ]) {
-    const context = await fixture({
-      project: `user-agent=${agent}\nregistry=http://registry.example.com/\n`,
-      env: {
-        npm_command: "exec",
-        npm_config_user_agent: agent,
-        npm_config_registry: "http://registry.example.com/",
-      },
-    });
-    context.env.npm_config_local_prefix = context.cwd;
-    await assert.rejects(
-      loadNpmRegistryOptions(context),
-      /registry in the project \.npmrc must be an https URL/,
-      agent,
-    );
-  }
-});
-
 test("the ignored project proxy warning names HTTPS_PROXY when that variable carries the requests", async () => {
   const context = await fixture({
     project: "https-proxy=http://team.example.com:3128/\n",
@@ -806,18 +756,6 @@ test("the ignored project proxy warning names HTTPS_PROXY when that variable car
   context.env.npm_config_local_prefix = context.cwd;
   const { warnings } = await loadNpmRegistryOptions(context);
   assert.match(warnings[0], /Calavera uses the HTTPS_PROXY environment variable instead\.$/);
-});
-
-test("under npm exec from a workspace member, a root .npmrc user-agent does not change the launcher", async () => {
-  const agent = "bun/1.2.0 npm/? node/v24.3.0 darwin arm64";
-  const context = await npmExecFromBelowRoot({
-    npmrc: `user-agent=${agent}\nregistry=http://registry.example.com/\n`,
-    member: "packages/web",
-    rootPackage: { name: "repo", workspaces: ["packages/*"] },
-    memberPackage: { name: "web" },
-    exported: { npm_config_user_agent: agent, npm_config_registry: "http://registry.example.com/" },
-  });
-  await assert.rejects(loadNpmRegistryOptions(context), /project \.npmrc must be an https URL/);
 });
 
 test("npm_config_local_prefix alone marks a start by npm", async () => {
@@ -829,15 +767,6 @@ test("npm_config_local_prefix alone marks a start by npm", async () => {
   });
   delete context.env.npm_command;
   assert.equal((await loadNpmRegistryOptions(context)).options.httpsProxy, undefined);
-});
-
-test("a yarn-only proxy key in a chosen user .npmrc is not warned about under npm", async () => {
-  const context = await fixture({
-    user: "yarn-https-proxy=http://corp.example.com:8080/\n",
-    env: { npm_command: "exec" },
-  });
-  context.env.npm_config_local_prefix = context.cwd;
-  assert.deepEqual((await loadNpmRegistryOptions(context)).warnings, []);
 });
 
 /** The project folder of the fixture the previous test created. */
@@ -872,40 +801,6 @@ test("the ignored project proxy warning says requests go direct when noproxy or 
   }
 });
 
-test("under npm exec, a project user-agent with npm placeholders does not change the launcher", async () => {
-  const context = await npmExecFromBelowRoot({
-    npmrc: "user-agent=bun/1.3.9 npm/{npm-version}\nregistry=http://registry.example.com/\n",
-    member: "src",
-    rootPackage: { name: "repo" },
-    // npm replaces {npm-version} before it exports the variable.
-    exported: {
-      npm_config_user_agent: "bun/1.3.9 npm/11.20.0",
-      npm_config_registry: "http://registry.example.com/",
-    },
-  });
-  await assert.rejects(loadNpmRegistryOptions(context), /project \.npmrc must be an https URL/);
-});
-
-test("under npm run, a proxy that ~/.npmrc spells differently is ignored without a warning, as npm ignores it", async () => {
-  const directory = await temporaryDirectory("calavera-npm-config-spelling-");
-  const home = join(directory, "home");
-  const cwd = join(directory, "project");
-  await mkdir(home);
-  await mkdir(cwd);
-  await writeFile(join(home, ".npmrc"), "https_proxy=http://corp.example.com:8080/\n");
-  const { options, warnings } = await loadNpmRegistryOptions({
-    cwd,
-    scope: SCOPE,
-    env: {
-      HOME: home,
-      npm_command: "run-script",
-      npm_config_https_proxy: "http://corp.example.com:8080/",
-    },
-  });
-  assert.equal(options.httpsProxy, undefined);
-  assert.deepEqual(warnings, []);
-});
-
 test("for an http registry, the ignored project proxy warning names HTTP_PROXY", async () => {
   const context = await fixture({
     user: "registry=http://registry.example.com/\n",
@@ -918,4 +813,129 @@ test("for an http registry, the ignored project proxy warning names HTTP_PROXY",
       warning.endsWith("Calavera uses the HTTP_PROXY environment variable instead."),
     ),
   );
+});
+
+const SENTINEL = "SENTINELSECRET0123456789";
+
+/**
+ * Whether any option names the host or carries the sentinel. Only the verdict is reported, never
+ * the options, which hold credentials.
+ * @param {Record<string, string>} options
+ */
+function leaks(options, host = "evil.example.com") {
+  return Object.entries(options).some(
+    ([key, value]) => key.includes(host) || String(value).includes(SENTINEL),
+  );
+}
+
+/**
+ * An account home folder with a real-user .npmrc that holds a fake token for registry.example.com.
+ * @param {string} directory
+ */
+async function accountHomeWithToken(directory) {
+  const accountHome = join(directory, "account-home");
+  await mkdir(accountHome, { recursive: true });
+  await writeFile(
+    join(accountHome, ".npmrc"),
+    "//registry.example.com/:_authToken=fake-account-token\n",
+  );
+  return accountHome;
+}
+
+test("invariant 2: under a package manager, credentials come only from the account's ~/.npmrc, not a chosen userconfig", async () => {
+  const context = await fixture({
+    user: `//evil.example.com/:_authToken=\${SENTINEL_SECRET}\nregistry=https://evil.example.com/\n`,
+    env: { npm_command: "exec", SENTINEL_SECRET: SENTINEL },
+  });
+  const accountHome = await accountHomeWithToken(context.directory);
+  const { options, warnings } = await loadNpmRegistryOptions({ ...context, accountHome });
+  assert.equal(leaks(options), false);
+  assert.equal(options["//registry.example.com/:_authToken"], "fake-account-token");
+  assert.ok(warnings.some((warning) => warning.includes("//evil.example.com/:_authToken")));
+  assert.doesNotMatch(inspect(warnings), new RegExp(SENTINEL));
+});
+
+test("invariant 2: a project .npmrc userconfig cannot bring in credentials under npm exec", async () => {
+  const directory = await temporaryDirectory("calavera-npm-config-invariant-");
+  const cwd = join(directory, "repo");
+  await mkdir(cwd);
+  const evil = join(cwd, "evil.npmrc");
+  await writeFile(evil, `//evil.example.com/:_authToken=\${SENTINEL_SECRET}\n`);
+  await writeFile(join(cwd, ".npmrc"), "userconfig=./evil.npmrc\n");
+  const accountHome = await accountHomeWithToken(directory);
+  const { options } = await loadNpmRegistryOptions({
+    cwd,
+    scope: SCOPE,
+    accountHome,
+    env: {
+      HOME: join(directory, "home"),
+      SENTINEL_SECRET: SENTINEL,
+      npm_command: "exec",
+      npm_config_local_prefix: cwd,
+      npm_config_userconfig: evil,
+    },
+  });
+  assert.equal(leaks(options), false);
+  assert.equal(options["//registry.example.com/:_authToken"], "fake-account-token");
+});
+
+test("invariant 2: spoofed user agents do not let project or chosen files supply credentials", async () => {
+  // pnpm exports a pnpm-workspace.yaml userAgent as npm_config_user_agent without a local prefix.
+  const pnpmSpoof = await fixture({
+    project: "//evil.example.com/:_authToken=literal-project-token\n",
+    env: { npm_lifecycle_event: "probe", npm_config_user_agent: "bun/1.3.9 npm/? node/v24" },
+  });
+  const pnpmHome = await accountHomeWithToken(pnpmSpoof.directory);
+  assert.equal(
+    leaks((await loadNpmRegistryOptions({ ...pnpmSpoof, accountHome: pnpmHome })).options),
+    false,
+  );
+
+  // A workspace-root .npmrc user-agent, run from a member.
+  const member = await npmExecFromBelowRoot({
+    npmrc:
+      "user-agent=yarn/4.9.1 npm/? node/v24\n//evil.example.com/:_authToken=literal-root-token\n",
+    member: "packages/web",
+    rootPackage: { name: "repo", workspaces: ["packages/*"] },
+    memberPackage: { name: "web" },
+    exported: { npm_config_user_agent: "yarn/4.9.1 npm/? node/v24" },
+  });
+  const memberHome = await accountHomeWithToken(join(member.cwd, "..", ".."));
+  assert.equal(
+    leaks((await loadNpmRegistryOptions({ ...member, accountHome: memberHome })).options),
+    false,
+  );
+
+  // A user-agent in a chosen user file.
+  const chosen = await fixture({
+    user: `user-agent=bun/1.3.9\n//evil.example.com/:_authToken=\${SENTINEL_SECRET}\n`,
+    env: { npm_command: "exec", npm_config_user_agent: "bun/1.3.9", SENTINEL_SECRET: SENTINEL },
+  });
+  const chosenHome = await accountHomeWithToken(chosen.directory);
+  assert.equal(
+    leaks((await loadNpmRegistryOptions({ ...chosen, accountHome: chosenHome })).options),
+    false,
+  );
+});
+
+test("outside a package manager, the userconfig the caller names still supplies credentials", async () => {
+  const context = await fixture({ user: "//registry.example.com/:_authToken=from-userconfig\n" });
+  const { options } = await loadNpmRegistryOptions(context);
+  assert.equal(options["//registry.example.com/:_authToken"], "from-userconfig");
+});
+
+test("invariant 1: requestOptions removes every credential for a plain-http URL and keeps them for https", async () => {
+  const options = {
+    registry: "https://registry.example.com/",
+    "//registry.example.com/:_authToken": "fake-token",
+    "//registry.example.com/:username": "me",
+    "//registry.example.com/:_password": "cGFzcw==",
+    "//registry.example.com/:_auth": "bWU6cGFzcw==",
+    "//registry.example.com/:certfile": "/cert.pem",
+    "//registry.example.com/:keyfile": "/key.pem",
+    httpsProxy: "http://proxy.example.com/",
+  };
+  const http = requestOptions(options, "http://registry.example.com/pkg/-/pkg-1.0.0.tgz");
+  assert.deepEqual(Object.keys(http).sort(), ["httpsProxy", "registry"]);
+  assert.deepEqual(requestOptions(options, "https://registry.example.com/pkg"), options);
 });
