@@ -5878,7 +5878,7 @@ export async function initRecipe(options) {
     );
   }
   // The recipe written below records every input, so apply neither asks again nor refuses it.
-  // canPrompt checks only for a terminal, so the wizard adds the #1079 rule. apply, eject, and
+  // canPrompt ignores CI, so the wizard adds the #1079 rule. apply, eject, and
   // --init still use canPrompt alone, which is a known gap outside #1079.
   const interactive = canPrompt(options) && cannotPromptReasons().length === 0;
   const { recipe: recipeWithArtifactInputs, inputs: artifactInputs } = await resolveArtifactInputs(

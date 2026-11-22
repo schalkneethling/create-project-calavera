@@ -11,6 +11,10 @@ import test from "node:test";
 import { initRecipe, newProject } from "../src/index.js";
 import { createTemporaryFixture, json, plainViteManifest } from "./vite-plus-fixtures.mjs";
 
+// A prompt reached by a regression leaves a listener on stdin, which would keep the test
+// process alive until the CI job times out. Closing stdin lets the failure report at once.
+test.after(() => process.stdin.destroy());
+
 /**
  * @param {string} path
  */
