@@ -181,15 +181,15 @@ test("the checker names the refused part as the core does", () => {
     keyword: "propertyNames",
     reason: "is not accepted here",
   });
-  assert.deepEqual(schemaRefusal(schemas.search_baseline_features.inputSchema, {}), {
-    path: ["query"],
+  assert.deepEqual(schemaRefusal(schemas.describe_integration.inputSchema, {}), {
+    path: ["id"],
     keyword: "required",
     reason: "is required",
   });
 });
 
 test("a refusal carries the core's message, with the core's error as its cause", () => {
-  const schema = schemas.validate_recipe.inputSchema;
+  const schema = schemas.explain_recipe.inputSchema;
   const error = captureError(() =>
     checkToolInput(schema, { recipe: [] }, ({ recipe }) => validateRecipe(recipe)),
   );
@@ -218,10 +218,10 @@ test("a Node.js-only part is refused with the core's message even when the core 
 });
 
 test("a refusal the core has no message for is described from the schema", () => {
-  const schema = schemas.search_baseline_features.inputSchema;
-  const error = captureError(() => checkToolInput(schema, { query: "grid", limit: 0 }, () => {}));
+  const schema = schemas.describe_integration.inputSchema;
+  const error = captureError(() => checkToolInput(schema, { id: ["stylelint"] }, () => {}));
   assert.ok(error instanceof ToolInputError);
-  assert.equal(error.message, "Invalid limit: expected a number of at least 1.");
+  assert.equal(error.message, "Invalid id: expected a string.");
   assert.equal(
     captureError(() => checkToolInput(schema, "grid")).message,
     "Invalid input: expected an object.",
@@ -372,7 +372,7 @@ test("each refusal names the refused part and the rule it broke", () => {
 });
 
 test("a refusal falls back to the schema's description when the core gives no Error", () => {
-  const schema = schemas.search_baseline_features.inputSchema;
+  const schema = schemas.describe_integration.inputSchema;
   for (const coreCheck of [
     undefined,
     () => {},
@@ -380,13 +380,11 @@ test("a refusal falls back to the schema's description when the core gives no Er
       throw "not an Error";
     },
   ]) {
-    const error = captureError(() =>
-      checkToolInput(schema, { query: "grid", limit: 101 }, coreCheck),
-    );
+    const error = captureError(() => checkToolInput(schema, { id: 5 }, coreCheck));
     assert.equal(error.name, "ToolInputError");
-    assert.equal(error.message, "Invalid limit: expected a number of at most 100.");
-    assert.equal(error.path, "limit");
-    assert.equal(error.keyword, "maximum");
+    assert.equal(error.message, "Invalid id: expected a string.");
+    assert.equal(error.path, "id");
+    assert.equal(error.keyword, "type");
     assert.equal("cause" in error, false);
   }
 });

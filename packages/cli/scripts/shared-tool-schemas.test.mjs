@@ -11,6 +11,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   describeBaselineTarget,
   recommendBaselineTarget,
+  searchBaselineFeatures,
 } from "@schalkneethling/calavera-baseline-core";
 import Ajv from "ajv";
 import * as z from "zod";
@@ -21,6 +22,7 @@ import {
   composeRecipeResponse,
   describeIntegrationResponse,
   explainRecipeResponse,
+  listIntegrationsResponse,
   recipeCompositionToolNames,
   validateRecipeResponse,
 } from "../src/recipe.js";
@@ -154,9 +156,11 @@ const coreAcceptedComposeInputs = [
       },
     },
   },
-  // The core reads a falsy tools or aiArtifacts as absent; the schemas accept only null of those.
-  { profile: "default", tools: null },
-  { profile: "default", aiArtifacts: null },
+  // #1176: the core reads a falsy tools or aiArtifacts as absent, so the schemas accept each one.
+  ...[null, false, 0, ""].flatMap((absent) => [
+    { profile: "default", tools: absent },
+    { profile: "default", aiArtifacts: absent },
+  ]),
   // compose_recipe ignores a key it does not read, at the top level and on an artifact.
   { profile: "default", unknown: true },
   { profile: "default", aiArtifacts: [{ id: "skill-calavera", note: "kept out" }] },
@@ -198,7 +202,7 @@ test("MCP and WebMCP declare the same input schema apart from the Node.js-only a
     delete mcpInput.$schema;
     if (name === "compose_recipe") {
       // ADR-0018 Decision 2: the WebMCP adapter leaves the Node.js-only part out, and refuses it.
-      const item = mcpInput.properties.aiArtifacts.anyOf[0].items;
+      const item = mcpInput.properties.aiArtifacts.anyOf[0].anyOf[0].items;
       assert.equal(item.properties.inputs.type, "object");
       delete item.properties.inputs;
       item.propertyNames = { not: { enum: ["inputs"] } };
@@ -347,8 +351,6 @@ const refused = [
   ["recommend_baseline_target", { features: [] }],
   ["recommend_baseline_target", { features: "grid" }],
   ["recommend_baseline_target", { features: [5] }],
-  ["validate_recipe", {}],
-  ["validate_recipe", { recipe: [] }],
   ["explain_recipe", {}],
   ["explain_recipe", { recipe: "default" }],
 ];
@@ -393,22 +395,96 @@ test("both declared schemas refuse each input the core refuses, and MCP answers 
   }
 });
 
-test("both declared schemas refuse a few inputs the core tolerates, as both surfaces did before", () => {
-  // The core reads any query, falls back to its default limit, and lists no integrations for an
-  // unknown profile, so these refusals have no core message to carry. The schemas the two surfaces
-  // declared before #1051 already refused them.
-  const tolerated = [
-    ["search_baseline_features", { query: "grid", limit: 0 }],
-    ["search_baseline_features", { query: "grid", limit: 101 }],
-    ["search_baseline_features", {}],
-    ["search_baseline_features", { query: 5 }],
-    ["list_integrations", { profile: "not-a-profile" }],
-  ];
+// #1176: the Composer's handlers enforce the declared schemas, so a value the core tolerates must
+// pass both, or the browser would refuse what it accepted before. Each value here was refused by a
+// declared schema until #1176 widened it (ADR-0018 Decision 6); a narrowing fails this test.
+const tolerated = [
+  // The core lists every integration for a falsy profile.
+  ...[null, "", false, 0].map((profile) => ["list_integrations", { profile }]),
+  // The core reads any query as text and an absent or null one as empty, and reads any limit that
+  // is not a positive integer as its default of 20; it serves a limit above 100.
+  ["search_baseline_features", {}],
+  ["search_baseline_features", { query: null }],
+  ["search_baseline_features", { query: 5 }],
+  ...[null, 0, -1, 1.5, 101, 500, "5"].map((limit) => [
+    "search_baseline_features",
+    { query: "grid", limit },
+  ]),
+  // validate_recipe reports a missing or malformed recipe in its { ok: false } result.
+  ["validate_recipe", {}],
+  ...[null, [], "default", 5].map((recipe) => ["validate_recipe", { recipe }]),
+];
 
+// The core call behind each tolerated tool, which must answer instead of throwing.
+const tolerantCoreCalls = {
+  list_integrations: (input) => listIntegrationsResponse(input),
+  search_baseline_features: ({ query, limit }) => searchBaselineFeatures(query, { limit }),
+  validate_recipe: ({ recipe }) => validateRecipeResponse(recipe),
+};
+
+test("both declared schemas accept each value the core tolerates", () => {
   for (const [tool, input] of tolerated) {
+    const label = `${tool}: ${JSON.stringify(input)}`;
+    assert.doesNotThrow(() => tolerantCoreCalls[tool](structuredClone(input)), label);
+    assert.equal(mcpAccepts(tool, input), true, `MCP ${label}`);
+    assert.equal(webMcpAccepts(tool, input), true, `WebMCP ${label}`);
+  }
+  assert.equal(validateRecipeResponse([]).ok, false);
+});
+
+test("validate_recipe answers a malformed recipe with its result on MCP, not an invalid-arguments error", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createMcpServer();
+  const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const result = await client.callTool({ name: "validate_recipe", arguments: { recipe: [] } });
+    assert.notEqual(result.isError, true);
+    assert.deepEqual(JSON.parse(result.content[0].text), {
+      ok: false,
+      errors: ["Recipe must be an object."],
+    });
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("both declared schemas still refuse the two values the core tolerates without a default", () => {
+  // The core lists no integrations for an unknown profile and converts a non-string ID with
+  // String(); both surfaces declared these refusals before #1051 (tool-schemas.js header).
+  const stillRefused = [
+    ["list_integrations", { profile: "not-a-profile" }],
+    ["describe_integration", { id: ["stylelint"] }],
+  ];
+  for (const [tool, input] of stillRefused) {
     assert.equal(mcpAccepts(tool, input), false, `MCP ${tool}: ${JSON.stringify(input)}`);
     assert.equal(webMcpAccepts(tool, input), false, `WebMCP ${tool}: ${JSON.stringify(input)}`);
-  }
+  } // The unknown profile is refused with the message the core's profile check gives.
+  const [issue] = sharedToolSchemas.list_integrations.input.safeParse({
+    profile: "not-a-profile",
+  }).error.issues;
+  assert.match(
+    issue.message,
+    /^Invalid profile: not-a-profile\. Allowed values: default, minimal\.$/,
+  );
+});
+
+test("a widened field still advertises the value an agent should send first", () => {
+  const search = webMcpSchemas.search_baseline_features.inputSchema.properties;
+  assert.deepEqual(search.query.anyOf, [{ type: "string" }, {}]);
+  assert.equal(search.limit.anyOf[0].type, "integer");
+  assert.equal(search.limit.anyOf[0].minimum, 1);
+  assert.deepEqual(search.limit.anyOf[1], {});
+  const recipe = webMcpSchemas.validate_recipe.inputSchema.properties.recipe;
+  assert.equal(recipe.anyOf[0].type, "object");
+  assert.deepEqual(recipe.anyOf[1], {});
+  const { tools, aiArtifacts } = webMcpSchemas.compose_recipe.inputSchema.properties;
+  assert.deepEqual(tools.anyOf[0].anyOf[0], { type: "array", items: { type: "string" } });
+  assert.equal(aiArtifacts.anyOf[0].anyOf[0].items.required[0], "id");
+  const profile = webMcpSchemas.list_integrations.inputSchema.properties.profile;
+  assert.deepEqual(profile.anyOf[0].anyOf[0].enum, ["default", "minimal"]);
 });
 
 test("no shared schema holds a check that its JSON Schema form cannot carry", () => {

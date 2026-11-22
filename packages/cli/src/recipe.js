@@ -146,7 +146,8 @@ export const mcpComposeRecipeDescription = `${recipeToolDescriptions.compose_rec
 
 export const recipeToolInputDescriptions = Object.freeze({
   profile: "Base Calavera tooling profile.",
-  profileFilter: "Optional profile filter.",
+  profileFilter:
+    "Optional profile filter. Omit it, or pass null or an empty string, to list every integration.",
   packageManager: "Package manager used for dependency installation and generated scripts.",
   tools: "Integration IDs or labels. Omit to use the selected profile defaults from list_profiles.",
   integrationId: "Integration ID or label from list_integrations.",
@@ -163,8 +164,10 @@ export const recipeToolInputDescriptions = Object.freeze({
   checkUpdates:
     "Resolve each artifact on its channel in the npm registry to report available updates, as `artifacts status --check-updates` does. The lookup contacts the registry and writes nothing into the project.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
-  baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
-  baselineLimit: "Maximum number of Baseline feature search results.",
+  baselineQuery:
+    "Text used to search the CSS-focused Baseline feature catalog. Omit it, or pass null or an empty string, to list features without filtering.",
+  baselineLimit:
+    "Maximum number of Baseline feature search results, a positive integer. Any other value, such as null, uses the default of 20.",
   baselineFeatures: "One or more Baseline feature IDs used to calculate a recommendation.",
   recipe: "A Calavera recipe object.",
   packageManagerOverride:
@@ -447,13 +450,12 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
 }
 
 /**
- * Refuses artifact inputs that are not an object of values keyed by input name. The shared tool
- * schema runs it too, so its refusal names the same fault.
+ * Refuses artifact inputs that are not an object of values keyed by input name.
  *
  * @param {unknown} inputs
  * @param {number} index The artifact's position in aiArtifacts.
  */
-export function assertAiArtifactInputsObject(inputs, index) {
+function assertAiArtifactInputsObject(inputs, index) {
   if (!isPlainObject(inputs)) {
     throw new Error(
       `Invalid aiArtifacts[${index}].inputs: expected an object of input values keyed by input name.`,

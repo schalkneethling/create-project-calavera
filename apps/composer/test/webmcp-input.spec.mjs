@@ -40,7 +40,7 @@ function callTool(page, name, input) {
   );
 }
 
-// A recipe that compose_recipe returns for the default profile, so only the extra field is wrong.
+// A recipe that compose_recipe returns for the default profile.
 const recipe = {
   $schema: "https://calavera.schalkneethling.com/calavera.config.schema.json",
   version: 1,
@@ -68,24 +68,20 @@ const refusals = [
     { target: " widely" },
     "Baseline target must be widely, newly, or a year from 2015 through 2026.",
   ],
-  // The core falls back to its default limit.
-  [
-    "search_baseline_features",
-    { query: "grid", limit: 0 },
-    "Invalid limit: expected a number of at least 1.",
-  ],
+  // The core reads any query and limit, so only the schema refuses a non-object.
+  ["search_baseline_features", [], "Invalid input: expected an object."],
   ["recommend_baseline_target", { features: [] }, "Select at least one Baseline feature."],
-  // The core reads a falsy tools list as absent.
+  // A Node.js-only part, which the core would record.
   [
     "compose_recipe",
-    { profile: "default", tools: false },
-    "Invalid tools: expected an array or a null.",
+    { profile: "default", aiArtifacts: [{ id: "skill-code-review", inputs: {} }] },
+    nodeOnlyInputMessage("aiArtifacts[0].inputs"),
   ],
-  // The core returned { ok: false } for this before; the check refuses it as the schema does.
-  ["validate_recipe", { recipe: [] }, "Recipe must be an object."],
+  // validate_recipe answers any recipe with its result, so only the schema refuses a non-object.
+  ["validate_recipe", [], "Invalid input: expected an object."],
   ["explain_recipe", { recipe: [] }, "Recipe must be an object."],
-  // The core never sees the extra field, so the recipe would download.
-  ["download_recipe", { recipe, extra: 1 }, "Invalid extra: is not a known field."],
+  // Without the check, downloadRecipe reads no recipe from an array and saves the page's own.
+  ["download_recipe", [], "Invalid input: expected an object."],
   // The core refuses these too, and its message, not the schema's, comes back.
   ["describe_integration", { id: 5 }, "Unknown integration: 5."],
   [
@@ -136,9 +132,47 @@ test("compose_recipe refuses artifact inputs in the handler, so no recipe record
 });
 
 test("download_recipe saves nothing when it refuses its input", async ({ page }) => {
-  await callTool(page, "download_recipe", { recipe, extra: 1 });
+  await callTool(page, "download_recipe", []);
   expect(await page.evaluate(() => window.downloads)).toBe(0);
-  // The same recipe without the extra field downloads, so the count would show a save.
+  // A recipe downloads, so the count would show a save.
   expect((await callTool(page, "download_recipe", { recipe })).error).toBeUndefined();
   expect(await page.evaluate(() => window.downloads)).toBe(1);
+});
+
+// #1176: values the core tolerates, which the declared schemas refused until #1176 widened them
+// (ADR-0018 Decision 6). The handlers enforce the schemas, so each must still answer.
+test("the handlers answer values the core tolerates, as the Composer did before #1176", async ({
+  page,
+}) => {
+  const allIntegrations = await callTool(page, "list_integrations", {});
+  for (const profile of [null, "", false, 0]) {
+    const listed = await callTool(page, "list_integrations", { profile });
+    expect(listed.error, `profile ${JSON.stringify(profile)}`).toBeUndefined();
+    expect(listed.result.integrations).toEqual(allIntegrations.result.integrations);
+  }
+  for (const input of [
+    {},
+    { query: null },
+    { query: "grid", limit: null },
+    { query: "", limit: 500 },
+  ]) {
+    const searched = await callTool(page, "search_baseline_features", input);
+    expect(searched.error, JSON.stringify(input)).toBeUndefined();
+    expect(searched.result.features.length).toBeGreaterThan(0);
+  }
+  for (const absent of [null, false, 0, ""]) {
+    const composed = await callTool(page, "compose_recipe", {
+      profile: "default",
+      tools: absent,
+      aiArtifacts: absent,
+    });
+    expect(composed.error, JSON.stringify(absent)).toBeUndefined();
+  }
+  for (const input of [{}, { recipe: [] }, { recipe: "default" }]) {
+    expect(await callTool(page, "validate_recipe", input)).toEqual({
+      result: { ok: false, errors: ["Recipe must be an object."] },
+    });
+  }
+  // download_recipe ignores a field it does not read, as it did before #1176.
+  expect((await callTool(page, "download_recipe", { recipe, extra: 1 })).error).toBeUndefined();
 });

@@ -804,6 +804,7 @@ function revealWebMcpBanner() {
   webMcpBanner.hidden = false;
 }
 
+// download_recipe reads only recipe and ignores any other field, so the schema does not refuse one.
 const downloadRecipeInputSchema = {
   type: "object",
   properties: {
@@ -812,7 +813,6 @@ const downloadRecipeInputSchema = {
       description: recipeToolInputDescriptions.optionalDownloadRecipe,
     },
   },
-  additionalProperties: false,
 };
 
 /**
@@ -977,7 +977,6 @@ function registerWebMcpTools() {
       name: "validate_recipe",
       description: recipeToolDescriptions.validate_recipe,
       ...webMcpSchemas.validate_recipe,
-      coreCheck: ({ recipe }) => validateRecipe(recipe),
       annotations: {
         readOnlyHint: true,
         untrustedContentHint: false,
