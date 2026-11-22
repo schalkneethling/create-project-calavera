@@ -1,7 +1,7 @@
 // @ts-check
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
-import { dirname, join, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { decode } from "ini";
 
@@ -111,6 +111,27 @@ function environmentSettings(env) {
   return settings;
 }
 
+/**
+ * The key of `entries` whose value a package manager exported as the variable for `key`, if any.
+ * A variable name keeps only letters, digits, and underscores, so other spellings of a key, such
+ * as https_proxy or HTTPS-PROXY, export under the same name. Nerf-darted keys are never exported.
+ * @param {Record<string, unknown>} entries
+ * @param {string} key
+ * @param {string} value
+ * @param {NodeJS.ProcessEnv} env
+ */
+function exportedFrom(entries, key, value, env) {
+  return Object.keys(entries).find((fileKey) => {
+    const fileValue = entries[fileKey];
+    return (
+      !fileKey.startsWith("//") &&
+      fileKey.toLowerCase().replace(/[^a-z0-9]/g, "-") === key &&
+      typeof fileValue === "string" &&
+      expandEnvironment(fileValue.trim(), env).text === value.trim()
+    );
+  });
+}
+
 /** @param {string} value */
 function noProxyList(value) {
   if (value.startsWith("[")) {
@@ -124,24 +145,6 @@ function noProxyList(value) {
     }
   }
   return value.split("\n\n").join(",");
-}
-
-/**
- * The .npmrc files in the folders above the project folder, nearest first, without the user
- * .npmrc.
- * @param {string} projectPath
- * @param {string} userPath
- * @param {string[]} warnings
- */
-async function readParentNpmrcs(projectPath, userPath, warnings) {
-  const entries = [];
-  let directory = dirname(dirname(projectPath));
-  for (;;) {
-    const path = join(directory, ".npmrc");
-    if (path !== userPath) entries.push(await readNpmrc(path, warnings));
-    if (dirname(directory) === directory) return entries;
-    directory = dirname(directory);
-  }
 }
 
 /**
@@ -204,9 +207,10 @@ export async function loadNpmRegistryOptions({
   const launcher = detectLauncher(env);
   const home = env.HOME || homedir();
   const userPath = await userConfigPath(env, home, launcher);
-  // npm and Yarn 1 export the .npmrc settings they resolved as npm_config_* variables. Bun, Yarn 2
-  // or later, and pnpm also set npm_lifecycle_event and similar variables but read or export
-  // other settings, so the comparison with exported values below applies under npm and Yarn 1.
+  // npm and Yarn 1 export the .npmrc settings they resolved as npm_config_* variables, so the
+  // comparison with exported values below applies under them. pnpm counts as npm here, but pnpm 12
+  // exports no settings, so the comparison finds nothing. Bun and Yarn 2 or later also set
+  // npm_lifecycle_event and similar variables, but read their own settings.
   const npmStarted = launcher === "npm" && startedByNpm(env);
   // npm reads the project .npmrc at its local prefix: the nearest folder above the working
   // directory with a package.json or node_modules, or the workspace root of a member
@@ -228,26 +232,22 @@ export async function loadNpmRegistryOptions({
   const userEntries = await readNpmrc(userPath, warnings);
   // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
   const projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
-  // Yarn 1 also reads the .npmrc in every parent folder, with less weight than the user .npmrc,
-  // and exports what it resolved (`getPossibleConfigLocations` and `loadConfig` in Yarn 1.22's
-  // NpmRegistry). They can be repository content, such as a workspace root's file.
-  const parentEntries = isYarnClassic(env)
-    ? await readParentNpmrcs(projectPath, userPath, warnings)
-    : [];
   /** @type {ConfigLayer[]} */
   const npmFiles = [
-    // The farthest folder first, so the nearest wins.
-    ...parentEntries
-      .toReversed()
-      .map((entries) => ({ name: "project .npmrc", entries, trusted: false, accepts })),
     { name: "user .npmrc", entries: userEntries, trusted: true, accepts },
     { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
   ];
+  // Yarn 1 reads .npmrc and .yarnrc in the working folder and in every parent folder, accepts
+  // other spellings of their keys, and passes on what it resolved as npm_config_* variables
+  // (`getPossibleConfigLocations`, `loadConfig`, and `makeEnv` in Yarn 1.22). Calavera cannot
+  // tell which file a passed-on value came from, so it treats each one as project content unless
+  // it equals the value in the user .npmrc.
+  const yarnClassicStarted = isYarnClassic(env) && startedByNpm(env);
   /** @type {ConfigLayer} */
   const npmEnvironment = {
-    name: "environment",
+    name: yarnClassicStarted ? "settings that Yarn 1 passed on" : "environment",
     entries: environmentSettings(env),
-    trusted: true,
+    trusted: !yarnClassicStarted,
     // Under Bun, bunEnvironmentLayer reads the registry variables in Bun's own order.
     accepts: launcher === "bun" ? (key) => key !== "registry" && accepts(key) : accepts,
     npmEnvironment: true,
@@ -279,6 +279,28 @@ export async function loadNpmRegistryOptions({
       const rawValue = rawKey === "noproxy" && Array.isArray(entry) ? entry.join(",") : entry;
       if (typeof rawValue !== "string") continue;
       const setting = printable(layer.settingNames?.[rawKey] ?? rawKey);
+      if (layer.npmEnvironment && npmStarted) {
+        // npm and Yarn 1 export their resolved settings, and for a project .npmrc value they
+        // export the result of their own ${VAR} expansion. Such a value is project content, not
+        // environment, so it follows the project rules and keeps its label. npm exports a key
+        // written in another spelling, such as https_proxy, under the same variable, so the
+        // comparison normalizes the file's keys as the variable names are normalized.
+        const projectKey = exportedFrom(projectEntries, rawKey, rawValue, env);
+        if (projectKey !== undefined) {
+          // The project layer already applied it or ignored it with a warning, unless the file
+          // spells the key differently.
+          if (projectKey !== rawKey && PROXY_URL_KEYS.has(rawKey)) {
+            rejectedProxies.push({
+              key: rawKey,
+              setting: printable(projectKey),
+              layer: "project .npmrc",
+            });
+          }
+          continue;
+        }
+        // A value equal to the user .npmrc value was applied by the user layer.
+        if (exportedFrom(userEntries, rawKey, rawValue, env) !== undefined) continue;
+      }
       if (!trusted) {
         if (layer.accepts && !layer.accepts(rawKey)) continue;
         // Bun expands a value that starts with $ (`Scope.fromAPI` in Bun's src/install/npm.zig).
@@ -303,27 +325,6 @@ export async function loadNpmRegistryOptions({
         // The warning is written after every layer is read, so it names the proxy that applies.
         if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
           rejectedProxies.push({ key: rawKey, setting, layer: name });
-          continue;
-        }
-      } else if (layer.npmEnvironment && npmStarted) {
-        // npm exports its resolved settings, and for a project .npmrc value it exports the
-        // result of its own ${VAR} expansion. Such a value is project content, not environment,
-        // so it follows the project rules and keeps its label. A value that differs from what
-        // the file expands to was set in the environment by the caller.
-        const fromProjectFile = [projectEntries, ...parentEntries].some((entries) => {
-          const projectValue = entries[rawKey];
-          return (
-            typeof projectValue === "string" &&
-            expandEnvironment(projectValue.trim(), env).text === rawValue.trim()
-          );
-        });
-        // A project layer already applied it, or ignored it with a warning.
-        if (fromProjectFile) continue;
-        const userValue = userEntries[rawKey];
-        if (
-          typeof userValue === "string" &&
-          expandEnvironment(userValue.trim(), env).text === rawValue.trim()
-        ) {
           continue;
         }
       }

@@ -1053,13 +1053,11 @@ test("under bun run, npm_config_local_prefix does not move the project .npmrc, b
 
 const YARN_CLASSIC = "yarn/1.22.22 npm/? node/v24.3.0 darwin arm64";
 
-test("under Yarn 1 from a workspace member, a parent .npmrc proxy that Yarn passes on is a project proxy", async () => {
+test("under Yarn 1, a proxy Yarn passes on from a project file is ignored, whichever file set it", async () => {
+  // Yarn 1 reads .npmrc and .yarnrc in the working folder and every parent folder and passes on
+  // what it resolved, so the value could come from a workspace root's .yarnrc.
   const context = await fixture({
     userAgent: YARN_CLASSIC,
-    files: {
-      "workspace/.npmrc":
-        "https-proxy=http://attacker.example:8080/\nregistry=https://project-registry.example.com/\n",
-    },
     env: {
       npm_lifecycle_event: "probe",
       npm_config_https_proxy: "http://attacker.example:8080/",
@@ -1068,25 +1066,55 @@ test("under Yarn 1 from a workspace member, a parent .npmrc proxy that Yarn pass
   });
   const { options, registry, warnings } = await loadNpmRegistryOptions(context);
   assert.equal(options.httpsProxy, undefined);
-  assert.match(warnings[0], /^Ignored https-proxy in the project \.npmrc/);
+  assert.match(
+    warnings[0],
+    /^Ignored https-proxy in the settings that Yarn 1 passed on: .*To use it, set it in your user configuration\.$/,
+  );
   assert.deepEqual(registry, {
     origin: "https://project-registry.example.com",
-    source: "project .npmrc",
+    source: "settings that Yarn 1 passed on",
   });
 });
 
-test("under Yarn 1, the user .npmrc wins over a parent .npmrc, as in Yarn 1", async () => {
+test("under Yarn 1, a passed-on http registry follows the project rule", async () => {
+  const context = await fixture({
+    userAgent: YARN_CLASSIC,
+    env: { npm_lifecycle_event: "probe", npm_config_registry: "http://registry.example.com/" },
+  });
+  await assert.rejects(
+    loadNpmRegistryOptions(context),
+    /registry in the settings that Yarn 1 passed on must be an https URL/,
+  );
+});
+
+test("under Yarn 1, a passed-on value equal to the user .npmrc value is the user's", async () => {
   const context = await fixture({
     userAgent: YARN_CLASSIC,
     files: {
-      "home/.npmrc": "registry=https://user-registry.example.com/\n",
-      "workspace/.npmrc": "registry=https://parent-registry.example.com/\n",
+      "home/.npmrc":
+        "https-proxy=http://corp.example.com:8080/\nregistry=http://user-registry.example.com/\n",
+    },
+    env: {
+      npm_lifecycle_event: "probe",
+      npm_config_https_proxy: "http://corp.example.com:8080/",
+      npm_config_registry: "http://user-registry.example.com/",
     },
   });
-  assert.deepEqual((await loadNpmRegistryOptions(context)).registry, {
-    origin: "https://user-registry.example.com",
-    source: "user .npmrc",
+  const { options, registry, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, "http://corp.example.com:8080/");
+  assert.deepEqual(registry, { origin: "http://user-registry.example.com", source: "user .npmrc" });
+  assert.ok(!warnings.some((warning) => warning.startsWith("Ignored")));
+});
+
+test("without Yarn 1 starting Calavera, a yarn/1 user agent alone does not distrust the environment", async () => {
+  const context = await fixture({
+    userAgent: YARN_CLASSIC,
+    env: { npm_config_https_proxy: "http://env-proxy.example.com/" },
   });
+  assert.equal(
+    (await loadNpmRegistryOptions(context)).options.httpsProxy,
+    "http://env-proxy.example.com/",
+  );
 });
 
 test("a noproxy list that Yarn 1 passes on as JSON is joined with commas", async () => {

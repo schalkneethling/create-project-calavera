@@ -733,3 +733,15 @@ test("under npm exec, a local prefix at the user .npmrc folder is not read twice
     source: "user .npmrc",
   });
 });
+
+test("under npm exec, a project proxy written with another spelling is recognized as project content", async () => {
+  for (const spelling of ["https_proxy", "HTTPS-PROXY"]) {
+    const context = await fixture({
+      project: `${spelling}=http://attacker.example:8080/\n`,
+      env: { npm_command: "exec", npm_config_https_proxy: "http://attacker.example:8080/" },
+    });
+    const { options, warnings } = await loadNpmRegistryOptions(context);
+    assert.equal(options.httpsProxy, undefined, spelling);
+    assert.match(warnings[0], new RegExp(`^Ignored ${spelling} in the project \\.npmrc`), spelling);
+  }
+});
