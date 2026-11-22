@@ -253,6 +253,25 @@ the recipe (#961). When the ancestor is not managed, Calavera writes them
 unformatted. The `package.json` that `init` creates is not one of them, because
 the package manager writes it and Calavera only adds its scripts.
 
+Calavera runs that `vp fmt` in the new project's directory, not in the
+ancestor's. Runs against vite-plus 1.7.0, under a single ancestor project and
+under a workspace package, showed that `vp fmt` looks upward from its working
+directory for the nearest `vite.config.*` file with a `fmt` block (#1087). So
+it finds the ancestor's, applies its settings, and applies its `ignorePatterns`,
+which are relative to the ancestor's directory. The output matched a run in the
+ancestor's directory, and the ancestor's `vp check` accepted it.
+
+The same runs found two cases where they disagree, which #1182 tracks:
+
+- A `.editorconfig` in the new project's directory. Oxfmt reads `.editorconfig`
+  only from its working directory upward, so Calavera's run uses that file and
+  the ancestor's `vp check` does not, and the check can fail.
+- A `vite.config.*` file with its own `fmt` block in a folder below the
+  workspace root, such as a workspace package above the project. `vp fmt` uses
+  that block, but `vp check` uses the workspace root's `fmt` block when one
+  exists, so the check can fail. The Vite+ documentation recommends
+  `fmt.overrides` in the root `vite.config.ts` instead of nested `fmt` blocks.
+
 ## What the quality script runs
 
 In a project Calavera delegates to Vite+, the same projects whose development
