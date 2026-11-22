@@ -60,16 +60,18 @@ import { json, libraryManifest, plainViteManifest, vitePlusConfig, writeVitePlus
 
 const argv = process.argv.slice(2);
 
-// Corepack's auto-pin (#999): Corepack adds a packageManager field when no
-// package.json from the working directory up sets one. STUB_COREPACK_VERSION
+// Corepack's auto-pin (#999, #1080): Corepack adds a packageManager field when
+// no package.json from the working directory up sets one. STUB_COREPACK_VERSION
 // picks the rule: "0.32.0" pins unless COREPACK_ENABLE_AUTO_PIN is "0", as
 // Corepack 0.32.0 and earlier do; any other value, or none, pins only when it is
 // "1", as Corepack 0.33.0 to 0.36.0 do. Corepack writes the outermost
 // package.json it found; this stub writes the nearest one instead, so it never
-// walks past the test's own manifest. The Yarn reads below call this, as
-// Corepack would pin before it runs them. The runner does not, although
-// Corepack also pins for yarn dlx.
-function autoPin() {
+// walks past the test's own manifest. Corepack pins before it runs the package
+// manager, so the Yarn reads below and the pnpm and yarn runners call this
+// first. npm and bunx do not, because Corepack runs npm only after
+// "corepack enable npm" and never runs Bun; vp create receives "0" under
+// every runner in any case (#1080).
+function autoPin(packageManager = "yarn@4.18.1") {
   const value = process.env.COREPACK_ENABLE_AUTO_PIN;
   const pins = process.env.STUB_COREPACK_VERSION === "0.32.0" ? value !== "0" : value === "1";
   if (!pins) return;
@@ -78,7 +80,7 @@ function autoPin() {
     if (existsSync(manifestPath)) {
       const manifest = JSON.parse(readFileSync(manifestPath, "utf8"));
       if (manifest.packageManager === undefined) {
-        writeFileSync(manifestPath, json({ ...manifest, packageManager: "yarn@4.18.1" }));
+        writeFileSync(manifestPath, json({ ...manifest, packageManager }));
       }
       return;
     }
@@ -143,6 +145,10 @@ if (argv[0] === "node") {
   console.log("Done in 0.05s.");
   process.exit(0);
 }
+
+// Corepack's own pnpm and Yarn versions, which it would write.
+const corepackPin = { pnpm: "pnpm@12.9.1", yarn: "yarn@4.18.1" }[basename(process.argv[1])];
+if (corepackPin !== undefined) autoPin(corepackPin);
 
 appendFileSync(
   process.env.STUB_LOG,
@@ -1109,9 +1115,10 @@ test("--new does not blame Yarn 1 when Corepack ran yarn", async () => {
 });
 
 // A write while Calavera only reports an error is not one the user approved (#999).
-// Under Corepack, a failed yarn dlx usually pins first; the reads matter when it did
-// not, for example when Corepack could not download the Yarn that yarn dlx needs.
-// Both rules run, because only "0" turns auto-pin off under each of them.
+// The yarn dlx run itself does not pin, because vp create receives
+// COREPACK_ENABLE_AUTO_PIN=0 (#1080), so this test shows that the reads, which
+// run with Calavera's own environment, do not pin either. Both rules run,
+// because only "0" turns auto-pin off under each of them.
 for (const corepackVersion of ["0.32.0", "0.36.0"]) {
   test(`--new leaves package.json untouched while it reads Yarn under Corepack ${corepackVersion}'s auto-pin`, async () => {
     await using workspace = await createTemporaryWorkspace(`yarn-auto-pin-${corepackVersion}`);
@@ -1138,6 +1145,46 @@ for (const corepackVersion of ["0.32.0", "0.36.0"]) {
     assert.equal(await exists(`${workspace.log}.node`), true);
     assert.equal(await readFile(manifestPath, "utf8"), manifest);
   });
+}
+
+// #1080: Corepack pins for pnpm dlx and yarn dlx too, before the run starts, so
+// a successful run would edit a package.json above the new project as well as a
+// failed one. That edit is outside the project the person approved, so
+// vp create receives COREPACK_ENABLE_AUTO_PIN=0 under every runner, which
+// overrides a user's "1" for this run only.
+for (const corepackVersion of ["0.32.0", "0.36.0"]) {
+  for (const packageManager of ["pnpm", "yarn"]) {
+    for (const outcome of ["fail", "scaffold"]) {
+      test(`--new leaves a parent package.json untouched when ${packageManager} dlx runs under Corepack ${corepackVersion}'s auto-pin (${outcome})`, async () => {
+        await using workspace = await createTemporaryWorkspace(
+          `runner-auto-pin-${packageManager}-${outcome}`,
+        );
+        // --new refuses a directory with a package.json, so the one Corepack pins is above it.
+        const manifestPath = join(workspace.root, "package.json");
+        const manifest = json({ name: "workspace-root", private: true });
+        await writeFile(manifestPath, manifest);
+
+        const result = await runCli(
+          workspace,
+          ["--yes", "--package-manager", packageManager, "--new", "vite:library"],
+          {
+            STUB_MODE: outcome,
+            // Yarn 2 or later, so the Yarn reads of a failed run do not probe yarn node.
+            STUB_VERSION: "4.18.1",
+            STUB_COREPACK_VERSION: corepackVersion,
+            COREPACK_ENABLE_AUTO_PIN: "1",
+          },
+        );
+        const invocations = await readInvocations(workspace.log);
+
+        assert.equal(result.code, outcome === "fail" ? 1 : 0, result.stderr);
+        assert.equal(invocations.length, 1);
+        assert.equal(invocations[0].runner, packageManager);
+        assert.equal(await readFile(manifestPath, "utf8"), manifest);
+        assert.equal(invocations[0].env.COREPACK_ENABLE_AUTO_PIN, "0");
+      });
+    }
+  }
 }
 
 test("--new does not ask whether Corepack ran yarn when yarn --version reports Yarn 2 or later", async () => {
@@ -1699,12 +1746,12 @@ test("--new names the terminating signal when the runner is killed", async () =>
       command: "npm",
       args: ["create", "vite-plus@latest", "--", "vite:library"],
       cwd: workspace.work,
-      env: {},
+      env: { COREPACK_ENABLE_AUTO_PIN: "0" },
     },
   ]);
 });
 
-test("--new removes only the launch settings from the environment vp create receives", async () => {
+test("--new removes only the launch settings from the environment vp create receives and turns off Corepack's auto-pin", async () => {
   await using workspace = await createTemporaryWorkspace("launch-settings");
   const previousCwd = process.cwd();
   /** @type {Array<{ env?: Record<string, string | undefined> }>} */
@@ -1737,6 +1784,9 @@ test("--new removes only the launch settings from the environment vp create rece
           npm_config_user_agent: "yarn/1.22.22 npm/? node/v26.13.1 darwin arm64",
           NPM_CONFIG_USER_AGENT: "yarn/1.22.22 npm/? node/v26.13.1 darwin arm64",
           "npm_config_user-agent": "yarn/1.22.22 npm/? node/v26.13.1 darwin arm64",
+          // A user's own auto-pin setting (#1080), in any case as Windows reads it.
+          COREPACK_ENABLE_AUTO_PIN: "1",
+          corepack_enable_auto_pin: "1",
         },
         spawnRunner: async (invocation) => {
           spawned.push(invocation);
@@ -1749,7 +1799,8 @@ test("--new removes only the launch settings from the environment vp create rece
   }
 
   assert.equal(spawned.length, 1);
-  assert.deepEqual(spawned[0].env, kept);
+  // "0" is the one value that turns auto-pin off in every Corepack version (#1080).
+  assert.deepEqual(spawned[0].env, { ...kept, COREPACK_ENABLE_AUTO_PIN: "0" });
 });
 
 test("--new succeeds with npm when Calavera was started with npx --package (#689)", async () => {
@@ -1776,11 +1827,15 @@ test("--new succeeds with npm when Calavera was started with npx --package (#689
   assert.equal(invocations[0].runner, "npm");
 
   // Every variable Calavera was started with reaches the runner unchanged, except the
-  // two settings and the user agent (#1109).
+  // two settings and the user agent (#1109), and auto-pin is off (#1080).
   const expected = cliEnvironment(workspace, launch);
   delete expected.npm_config_package;
   delete expected.npm_config_call;
   delete expected.npm_config_user_agent;
+  for (const key of Object.keys(expected)) {
+    if (key.toUpperCase() === "COREPACK_ENABLE_AUTO_PIN") delete expected[key];
+  }
+  expected.COREPACK_ENABLE_AUTO_PIN = "0";
   assert.deepEqual(invocations[0].env, expected);
 });
 
