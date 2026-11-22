@@ -821,12 +821,14 @@ const downloadRecipeInputSchema = {
  * execute, so this is the only check. `coreCheck` runs the core's own check on a refused input, so
  * the refusal carries the core's message.
  *
- * @param {{ inputSchema: Record<string, unknown>, execute: (input: any) => unknown, coreCheck?: (input: any) => unknown, [key: string]: unknown }} tool
+ * @param {{ inputSchema: Record<string, unknown>, execute: (input: any, options?: unknown) => unknown, coreCheck?: (input: any) => unknown, [key: string]: unknown }} tool
  */
 function registerCheckedTool({ coreCheck, execute, ...tool }) {
   navigator.modelContext.registerTool({
     ...tool,
-    execute: async (input) => execute(checkToolInput(tool.inputSchema, input, coreCheck)),
+    // The second argument carries the call's AbortSignal (ToolExecuteCallbackOptions).
+    execute: async (input, options) =>
+      execute(checkToolInput(tool.inputSchema, input, coreCheck), options),
   });
 }
 

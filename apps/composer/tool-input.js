@@ -4,7 +4,8 @@
 // Composer handler checks its own input against the schema it registers. The schemas are the JSON
 // Schema forms the core generates from its shared tool definitions (ADR-0018, Decision 2), and the
 // Composer keeps Zod out of its bundle, so this checker reads only the keywords that generator
-// emits. It refuses a schema that uses any other keyword rather than skip a check it cannot run.
+// emits. It throws when it reaches any other keyword or type rather than skip a check it cannot
+// run; test/tool-input.test.mjs checks that every keyword and type the generator emits is supported.
 
 import { nodeOnlyInputMessage } from "../../packages/cli/src/recipe.js";
 
@@ -230,8 +231,10 @@ export class ToolInputError extends Error {
 /**
  * Returns `input` when `schema` accepts it. Otherwise it throws a ToolInputError whose message is
  * the core's: `coreCheck` runs the core's own check on the input, and its message wins, because it
- * names the fault with the core's remedy, as the MCP server's error maps do. A part only Node.js
- * can serve gets the core's message for that. Any other refusal, where the core accepts more than
+ * names the fault with the core's remedy, as the MCP server's error maps do. The core checks the
+ * whole input, so its message can name a different fault from the one at `path`; `path` and
+ * `keyword` always name the schema rule. A part only Node.js can serve gets the core's message for
+ * that, before the core's check runs. Any other refusal, where the core accepts more than
  * the schema, is described from the schema.
  *
  * @template T
@@ -245,6 +248,12 @@ export function checkToolInput(schema, input, coreCheck) {
   if (!refusal) return input;
 
   const path = formatInputPath(refusal.path);
+  // The core's generator marks a Node.js-only part by refusing its name with propertyNames. The
+  // core accepts that part and checks its contents, so its message would describe a fault in a
+  // field the agent must leave out; the Node.js-only message comes first.
+  if (refusal.keyword === "propertyNames") {
+    throw new ToolInputError(nodeOnlyInputMessage(path), { path, keyword: refusal.keyword });
+  }
   try {
     // The core's checks read fields of an object; a refusal of the input itself has no core message.
     if (isPlainObject(input)) coreCheck?.(input);
@@ -253,10 +262,8 @@ export function checkToolInput(schema, input, coreCheck) {
       throw new ToolInputError(error.message, { path, keyword: refusal.keyword, cause: error });
     }
   }
-  // The core's generator marks a Node.js-only part by refusing its name with propertyNames.
-  const message =
-    refusal.keyword === "propertyNames"
-      ? nodeOnlyInputMessage(path)
-      : `Invalid ${path || "input"}: ${refusal.reason}.`;
-  throw new ToolInputError(message, { path, keyword: refusal.keyword });
+  throw new ToolInputError(`Invalid ${path || "input"}: ${refusal.reason}.`, {
+    path,
+    keyword: refusal.keyword,
+  });
 }

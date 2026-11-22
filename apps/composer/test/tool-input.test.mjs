@@ -6,7 +6,11 @@ import { test } from "node:test";
 
 import Ajv from "ajv";
 
-import { nodeOnlyInputMessage, validateRecipe } from "../../../packages/cli/src/recipe.js";
+import {
+  nodeOnlyInputMessage,
+  validateRecipe,
+  validateRecipeCompositionInput,
+} from "../../../packages/cli/src/recipe.js";
 import { webMcpToolSchemas } from "../../../packages/cli/src/tool-schemas.js";
 import { ToolInputError, checkToolInput, schemaRefusal } from "../tool-input.js";
 
@@ -395,4 +399,20 @@ test("the core's check does not run on an input that is not an object", () => {
   );
   assert.equal(error.message, "Invalid input: expected an object.");
   assert.equal(error.path, "");
+});
+
+test("a Node.js-only part gets its own message even when its contents are also wrong", () => {
+  for (const inputs of [{ protectedBranch: "main", nope: "x" }, { protectedBranch: 5 }]) {
+    const error = captureError(() =>
+      checkToolInput(
+        schemas.compose_recipe.inputSchema,
+        { profile: "default", aiArtifacts: [{ id: "skill-protected-branch-guard", inputs }] },
+        (input) => validateRecipeCompositionInput(input),
+      ),
+    );
+    assert.equal(error.message, nodeOnlyInputMessage("aiArtifacts[0].inputs"));
+    assert.equal(error.path, "aiArtifacts[0].inputs");
+    assert.equal(error.keyword, "propertyNames");
+    assert.equal("cause" in error, false);
+  }
 });

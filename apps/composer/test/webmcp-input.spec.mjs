@@ -55,7 +55,7 @@ const refusals = [
   ["list_profiles", [], "Invalid input: expected an object."],
   ["list_ai_artifacts", [], "Invalid input: expected an object."],
   ["list_baseline_targets", [], "Invalid input: expected an object."],
-  // The core lists every integration for an unknown profile; the check gives the core's message.
+  // The core lists no integration for an unknown profile; the check gives the core's message.
   [
     "list_integrations",
     { profile: "DEFAULT" },
