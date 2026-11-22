@@ -154,7 +154,7 @@ const coreAcceptedComposeInputs = [
       },
     },
   },
-  // The core reads a falsy tools or aiArtifacts as absent.
+  // The core reads a falsy tools or aiArtifacts as absent; the schemas accept only null of those.
   { profile: "default", tools: null },
   { profile: "default", aiArtifacts: null },
   // compose_recipe ignores a key it does not read, at the top level and on an artifact.

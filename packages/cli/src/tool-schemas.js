@@ -531,7 +531,8 @@ export const sharedToolSchemas = Object.freeze({
           z.string(coreMessage(compositionCheck((tool) => ({ tools: [tool] })))),
           coreMessage(compositionCheck((tools) => ({ tools }))),
         )
-        // The core reads a falsy tools as absent, as it does aiArtifacts.
+        // The core reads any falsy tools as absent, as it does aiArtifacts; the schema widens only
+        // to null, so false, 0, and "" still get the schema's message (they were refused before too).
         .nullable()
         .optional()
         .describe(recipeToolInputDescriptions.tools),
