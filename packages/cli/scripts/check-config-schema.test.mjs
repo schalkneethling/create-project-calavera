@@ -4078,18 +4078,24 @@ for (const { current, error } of [
   {
     current: "reviews: &r {}\nother: *r\n",
     error:
-      /Cannot update \.coderabbit\.yaml: reviews has the anchor &r, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*, !pnpm-lock\.yaml/,
+      /Cannot update \.coderabbit\.yaml: reviews, which starts at line 1, column 13, has an anchor, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*, !pnpm-lock\.yaml$/,
   },
   {
     current: 'reviews: &r\n  path_filters:\n    - "!pnpm-lock.yaml"\nother: *r\n',
     error:
-      /Cannot update \.coderabbit\.yaml: reviews has the anchor &r, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*$/,
+      /Cannot update \.coderabbit\.yaml: reviews, which starts at line 2, column 3, has an anchor, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*$/,
+  },
+  // #1083: an anchor name is file text, so the message gives the anchored value's position.
+  {
+    current: "reviews: &FAKE_SECRET_x {}\nother: *FAKE_SECRET_x\n",
+    error:
+      /Cannot update \.coderabbit\.yaml: reviews, which starts at line 1, column 25, has an anchor, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*, !pnpm-lock\.yaml$/,
   },
   // Every alias of an anchored path_filters list would gain the filters too.
   {
     current: 'reviews:\n  path_filters: &p\n    - "!pnpm-lock.yaml"\nother: *p\n',
     error:
-      /Cannot update \.coderabbit\.yaml: reviews\.path_filters has the anchor &p, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*$/,
+      /Cannot update \.coderabbit\.yaml: reviews\.path_filters, which starts at line 3, column 5, has an anchor, so its aliases would change too\. Add these to reviews\.path_filters yourself, then run apply again: !\.claude\/skills\/\*\*, !\.agents\/skills\/\*\*, !\.agents\/agents\/claude-code\/\*\*, !\.calavera\/packages\/\*\*$/,
   },
 ]) {
   test(`skill apply rejects CodeRabbit configuration ${JSON.stringify(current)} before writing skills`, async () => {
@@ -4105,15 +4111,20 @@ for (const { current, error } of [
       await lockArtifactFixtures(["skill-frontend-engineering"]);
       await writeFile(".coderabbit.yaml", current);
 
-      await assert.rejects(
-        () =>
-          applyRecipeObject(recipe, {
-            json: true,
-            noInstall: true,
-            assumeYes: true,
-          }),
-        error,
+      const rejection = await applyRecipeObject(recipe, {
+        json: true,
+        noInstall: true,
+        assumeYes: true,
+      }).then(
+        () => assert.fail("apply accepted the CodeRabbit configuration"),
+        (/** @type {unknown} */ reason) => reason,
       );
+      assert.ok(rejection instanceof Error);
+      assert.match(rejection.message, error);
+      // #1083: no message quotes the file, so a planted value reaches neither the cause nor the
+      // stack, which `CALAVERA_DEBUG` prints.
+      assert.equal(rejection.cause, undefined);
+      assert.ok(!String(rejection.stack).includes("FAKE_SECRE"), "The stack quotes the file.");
       await assertPathMissing(".agents/skills/frontend-engineering");
       assert.equal(await readFile(".coderabbit.yaml", "utf8"), current);
     } finally {

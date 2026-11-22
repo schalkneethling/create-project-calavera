@@ -149,12 +149,16 @@ async function planCodeRabbitSkillConfig() {
   // An alias shares the anchored node, so every alias of an anchored `reviews`
   // mapping or `path_filters` list would gain the filters too.
   const anchored = [
-    { label: "reviews", anchor: reviews.anchor },
-    { label: "reviews.path_filters", anchor: pathFilters.anchor },
-  ].find(({ anchor }) => anchor);
+    { label: "reviews", node: reviews },
+    { label: "reviews.path_filters", node: pathFilters },
+  ].find(({ node }) => node.anchor);
   if (missingFilters.length > 0 && anchored) {
+    // The anchor name is file text, so the message gives where the anchored value starts. The
+    // parser records no position for the anchor itself (#1083). Only a parsed node has an anchor,
+    // so it always has a range.
+    const { line, col } = lineCounter.linePos(anchored.node.range?.[0] ?? 0);
     throw new Error(
-      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: ${anchored.label} has the anchor &${anchored.anchor}, so its aliases would change too. Add these to reviews.path_filters yourself, then run apply again: ${missingFilters.join(", ")}`,
+      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: ${anchored.label}, which starts at line ${line}, column ${col}, has an anchor, so its aliases would change too. Add these to reviews.path_filters yourself, then run apply again: ${missingFilters.join(", ")}`,
     );
   }
   // A file that already holds every filter is left as it is, because writing it again would
