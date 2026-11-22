@@ -28,6 +28,13 @@ describes the project shapes an integration suits, and the Vite+ warnings
   (ADR-0002 to ADR-0006), so `apply` refuses the recipe until they are
   removed. The warning names the integration and the matched detection signal,
   and `doctor` still writes nothing.
+- `doctor` also warns, in any project and whatever the Vite+ status, about
+  two kinds of recipe value that `apply` refuses: an integration ID the catalog does
+  not hold, and a profile that ADR-0011 removed, such as `modern`. Outside a
+  project Vite+ manages, a removed toolchain integration is named with the
+  ADR that removed it and ADR-0009's advice to run `vp create` or
+  `vp migrate` first. Any other unknown ID is named by its position in
+  `integrations`, so `doctor` does not repeat text from the recipe.
 
 Generated package scripts should stay ordinary package-manager scripts. Calavera
 should not replace them with `vp` commands or assume that a Vite+ project wants a

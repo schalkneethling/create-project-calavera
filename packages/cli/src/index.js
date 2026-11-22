@@ -41,7 +41,7 @@ import {
   prepareArtifactSources,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
-import { removedToolchainIntegrations } from "./catalog.js";
+import { integrationCatalog, removedToolchainIntegrations } from "./catalog.js";
 import {
   applySummaryLines,
   formatArtifactRegistry,
@@ -179,6 +179,7 @@ import {
   projectLocalCommandCatalog,
   profileIdsForRecipe,
   profileDefaults,
+  removedProfileReplacements,
   resolveRecipeIntegrations,
   validateRecipe,
   validateRecipeResponse,
@@ -6014,6 +6015,23 @@ export async function initRecipe(options) {
 }
 
 /**
+ * The removed toolchain integrations a recipe selects that the #431 warning covers: none unless
+ * Vite+ manages the project. `removedToolchainWarnings` and `unknownIntegrationWarnings` both read
+ * this, so a removed id gets exactly one of the two warnings.
+ *
+ * @param {Recipe} recipe
+ * @param {VitePlusDetection} detection
+ */
+function vitePlusRemovedToolchainSelections(recipe, detection) {
+  if (detection.status !== "managed") {
+    return [];
+  }
+
+  const selected = new Set(recipe.integrations ?? []);
+  return removedToolchainIntegrations.filter(({ id }) => selected.has(id));
+}
+
+/**
  * One warning for each JavaScript or TypeScript toolchain integration a recipe still selects in a
  * project Vite+ manages (#431). The removals (ADR-0002 to ADR-0006) made these ids unknown, so
  * apply refuses the recipe while `resolveRecipeIntegrations` drops them silently. Detection is the
@@ -6025,17 +6043,77 @@ export async function initRecipe(options) {
  * @returns {{ level: "warning", message: string }[]}
  */
 export function removedToolchainWarnings(recipe, detection, configPath) {
-  if (detection.status !== "managed") {
+  return vitePlusRemovedToolchainSelections(recipe, detection).map(({ id, provides }) => ({
+    level: "warning",
+    message: `${configPath} selects ${id}, a JavaScript and TypeScript ${provides} integration that Calavera removed. Vite+ manages this project (${detection.signal} signal at ${detection.manifestPath}) and provides ${provides}, so remove ${id} from ${configPath}; apply refuses the recipe until you do.`,
+  }));
+}
+
+/**
+ * One warning when a recipe names a profile that ADR-0011 removed (#1082), because apply's recipe
+ * validation refuses it. The warning names the profile by its fixed key in
+ * `removedProfileReplacements`, never by the recipe's text.
+ *
+ * @param {Recipe} recipe
+ * @param {string} configPath
+ * @returns {{ level: "warning", message: string }[]}
+ */
+export function removedProfileWarnings(recipe, configPath) {
+  const removed = Object.entries(removedProfileReplacements).find(
+    ([profile]) => profile === recipe.profile,
+  );
+  if (removed === undefined) {
     return [];
   }
 
-  const selected = new Set(recipe.integrations ?? []);
-  return removedToolchainIntegrations
-    .filter(({ id }) => selected.has(id))
-    .map(({ id, provides }) => ({
+  const [profile, replacement] = removed;
+  return [
+    {
       level: "warning",
-      message: `${configPath} selects ${id}, a JavaScript and TypeScript ${provides} integration that Calavera removed. Vite+ manages this project (${detection.signal} signal at ${detection.manifestPath}) and provides ${provides}, so remove ${id} from ${configPath}; apply refuses the recipe until you do.`,
-    }));
+      message: `${configPath} names the ${profile} profile, which Calavera removed (ADR-0011), so change profile to ${replacement} in ${configPath}; apply refuses the recipe until you do.`,
+    },
+  ];
+}
+
+/**
+ * One warning for each integration id a recipe selects that the catalog does not hold, in any
+ * project (#1082): apply's recipe validation refuses such a recipe whatever the Vite+ status. A
+ * removed toolchain id that the #431 warning already covers gets no second warning. A removed id
+ * is named by its catalog entry, with the ADR that removed it and ADR-0009's advice for a project
+ * without Vite+; any other id is text from the person's file, so the warning names its position in
+ * `integrations` instead of echoing it.
+ *
+ * @param {Recipe} recipe
+ * @param {VitePlusDetection} detection
+ * @param {string} configPath
+ * @returns {{ level: "warning", message: string }[]}
+ */
+export function unknownIntegrationWarnings(recipe, detection, configPath) {
+  const covered = new Set(
+    vitePlusRemovedToolchainSelections(recipe, detection).map(({ id }) => id),
+  );
+  const known = new Set(integrationCatalog.map(({ id }) => id));
+  /** @type {Set<string>} */
+  const seen = new Set();
+  /** @type {{ level: "warning", message: string }[]} */
+  const warnings = [];
+
+  for (const [index, id] of (recipe.integrations ?? []).entries()) {
+    if (known.has(id) || covered.has(id) || seen.has(id)) {
+      continue;
+    }
+    seen.add(id);
+
+    const removed = removedToolchainIntegrations.find((integration) => integration.id === id);
+    warnings.push({
+      level: "warning",
+      message: removed
+        ? `${configPath} selects ${removed.id}, a JavaScript and TypeScript ${removed.provides} integration that Calavera removed (${removed.adr}). Vite+ provides ${removed.provides}, and a project without Vite+ runs vp create or vp migrate first (ADR-0009). Remove ${removed.id} from ${configPath}; apply refuses the recipe until you do.`
+        : `${configPath} integrations[${index}] is not an integration Calavera knows, so remove it from ${configPath}; apply refuses the recipe until you do.`,
+    });
+  }
+
+  return warnings;
 }
 
 /**
@@ -6065,8 +6143,12 @@ async function doctor(options) {
 
   if (hasConfig) {
     const recipe = await readRecipe(options.config);
+    const detection = await detectVitePlus(process.cwd());
     issues.push(
-      ...removedToolchainWarnings(recipe, await detectVitePlus(process.cwd()), options.config),
+      // apply's validation checks the profile before the integrations, so doctor lists it first.
+      ...removedProfileWarnings(recipe, options.config),
+      ...removedToolchainWarnings(recipe, detection, options.config),
+      ...unknownIntegrationWarnings(recipe, detection, options.config),
     );
     const integrations = resolveRecipeIntegrations(recipe);
     const aiArtifacts = resolveAiArtifacts(recipe);

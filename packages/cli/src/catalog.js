@@ -8,8 +8,9 @@ export const integrationStatusLabels = Object.freeze({
 
 /**
  * The JavaScript and TypeScript toolchain integrations ADR-0002 to ADR-0006 removed from the
- * catalog, each with what Vite+ provides in its place. A recipe written before the removals can
- * still name them; `doctor` warns about each one in a project Vite+ manages (#431).
+ * catalog, each with what Vite+ provides in its place and the ADR that removed it. A recipe written
+ * before the removals can still name them, and `doctor` warns about each one in any project: with
+ * the Vite+ detection signal in a project Vite+ manages (#431), and with the ADR elsewhere (#1082).
  */
 export const removedToolchainIntegrations = Object.freeze(
   [
@@ -30,11 +31,11 @@ export const removedToolchainIntegrations = Object.freeze(
       "oxlint-nextjs",
       "oxlint-vue",
       "oxlint-jsdoc",
-    ].map((id) => ({ id, provides: "linting" })),
+    ].map((id) => ({ id, provides: "linting", adr: "ADR-0002" })),
     // ADR-0003: Oxfmt.
-    { id: "oxfmt", provides: "formatting" },
+    { id: "oxfmt", provides: "formatting", adr: "ADR-0003" },
     // ADR-0004: TypeScript configuration.
-    { id: "typescript", provides: "type-checking" },
+    { id: "typescript", provides: "type-checking", adr: "ADR-0004" },
     // ADR-0005: the ESLint flat config and the eleven entries that include it.
     ...[
       "eslint",
@@ -49,11 +50,12 @@ export const removedToolchainIntegrations = Object.freeze(
       "eslint-sonarjs",
       "eslint-vitest",
       "eslint-jest",
-    ].map((id) => ({ id, provides: "linting" })),
+    ].map((id) => ({ id, provides: "linting", adr: "ADR-0005" })),
     // ADR-0006: Prettier and its three plugins.
     ...["prettier", "prettier-tailwind", "prettier-svelte", "prettier-astro"].map((id) => ({
       id,
       provides: "formatting",
+      adr: "ADR-0006",
     })),
   ].map((entry) => Object.freeze(entry)),
 );

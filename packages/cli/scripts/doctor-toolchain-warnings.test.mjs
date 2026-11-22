@@ -2,7 +2,10 @@
 // Vite+ manages, warns about each JavaScript or TypeScript toolchain
 // integration a recipe written before the removals (ADR-0002 to ADR-0006)
 // still selects. These warnings stay advisory: doctor writes nothing, and a
-// warning alone leaves its exit status at 0 (#1030 covers errors).
+// warning alone leaves its exit status at 0 (#1030 covers errors). In a
+// project Vite+ does not manage, #1082's unknown integration warning names
+// each removed id instead; doctor-unknown-integration-warnings.test.mjs
+// covers that warning.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { writeFile } from "node:fs/promises";
@@ -72,7 +75,8 @@ async function doctorReport(cwd) {
 }
 
 /**
- * The doctor issues that name a removed toolchain integration.
+ * The doctor issues that name a removed toolchain integration, which in a project Vite+ manages is
+ * the #431 warning and elsewhere the #1082 unknown integration warning.
  *
  * @param {{ issues: { level: string, message: string }[] }} report
  */
@@ -81,6 +85,17 @@ function toolchainIssues(report) {
     removedToolchainIntegrations.some(({ id }) =>
       message.startsWith(`calavera.config.json selects ${id},`),
     ),
+  );
+}
+
+/**
+ * The #431 warnings only: those that say Vite+ manages the project.
+ *
+ * @param {{ issues: { level: string, message: string }[] }} report
+ */
+function vitePlusToolchainIssues(report) {
+  return toolchainIssues(report).filter(({ message }) =>
+    message.includes(". Vite+ manages this project ("),
   );
 }
 
@@ -243,7 +258,7 @@ for (const integrations of [
   ["oxlint", "oxfmt", "typescript", "eslint", "prettier"],
   keptIntegrations,
 ]) {
-  test(`doctor reports no toolchain warning in a plain Vite project (${integrations.join(", ")})`, async () => {
+  test(`doctor gives no #431 Vite+ warning in a plain Vite project (${integrations.join(", ")})`, async () => {
     await using fixture = await createTemporaryFixture("doctor-plain-vite", {
       "package.json": json(plainViteManifest),
       "vite.config.ts": plainViteConfig,
@@ -253,8 +268,18 @@ for (const integrations of [
 
     const report = await doctorReport(fixture.root);
 
-    assert.deepEqual(toolchainIssues(report), []);
-    for (const { message } of report.issues) {
+    // #431 stays silent here; #1082's advisory warning names each removed id instead.
+    assert.deepEqual(vitePlusToolchainIssues(report), []);
+    assert.deepEqual(
+      toolchainIssues(report).map(({ message }) => message.split(",")[0]),
+      integrations
+        .filter((id) => isRemovedToolchainId(id))
+        .map((id) => `calavera.config.json selects ${id}`),
+    );
+    assert.equal(report.ok, true);
+    for (const { message } of report.issues.filter(
+      (issue) => !toolchainIssues(report).includes(issue),
+    )) {
       assert.match(message, /^Missing managed file: /);
     }
   });
