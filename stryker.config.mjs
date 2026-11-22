@@ -25,8 +25,9 @@ const config = {
     // to its end instead of stopping at its first failure. Stryker still stops at the first
     // failing file.
     forceBail: false,
-    // Instrumented code runs several times slower, so the redaction timing budget
-    // cannot hold under Stryker. The normal test suite still enforces it.
+    // The redaction linear-time test also holds the 64 KiB input to an absolute limit of
+    // 25 ms. Instrumented code runs several times slower, so that limit cannot hold under
+    // Stryker and the test is skipped here. The normal test suite still runs it.
     // The setup module turns the CLI version check off, as the package's test script does
     // (ADR-0019 Decision 7), so no mutant run asks a registry for `latest`.
     nodeArgs: [
