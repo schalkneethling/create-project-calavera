@@ -934,7 +934,7 @@ The check asks the registry and sends the credentials that your user and project
 `npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`. A proxy in a project
 file is ignored, because it could receive your credentials. Under Yarn 2 or later, it asks the registry and proxy that your
 `.yarnrc.yml` files and `YARN_*` variables name, and under Bun, the registry that `bunfig.toml`,
-`BUN_CONFIG_REGISTRY`, or `NPM_CONFIG_REGISTRY` names. When no proxy is configured, it follows the
+or a Bun registry variable such as `BUN_CONFIG_REGISTRY` names. When no proxy is configured, it follows the
 proxy environment variables in either letter case: `HTTPS_PROXY` for an `https:` registry,
 `HTTPS_PROXY`, `HTTP_PROXY`, or `PROXY` for an `http:` registry, and `NO_PROXY` for hosts that skip
 the proxy. The check waits at most 1.5 seconds and writes no file.

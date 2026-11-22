@@ -456,11 +456,12 @@ test("a proxy in the project .npmrc is ignored with a warning, and its noproxy s
   assert.equal(options.proxy, undefined);
   assert.equal(options.noProxy, "registry.internal.example.com");
   assert.equal(warnings.length, 2);
+  // Warnings follow the order of the file.
   assert.match(
     warnings[0],
-    /^Ignored proxy in the project \.npmrc: Calavera reads proxies only from user/,
+    /^Ignored https-proxy in the project \.npmrc: Calavera reads proxies only from user.*To use it, set it in your user configuration\.$/,
   );
-  assert.match(warnings[1], /^Ignored https-proxy in the project \.npmrc/);
+  assert.match(warnings[1], /^Ignored proxy in the project \.npmrc/);
 });
 
 test("a noproxy list in the .npmrc is joined with commas, as npm joins it", async () => {
@@ -559,4 +560,19 @@ test("a project noproxy still applies for an http registry, because it only remo
   const { options, warnings } = await loadNpmRegistryOptions(context);
   assert.equal(options.noProxy, "registry.example.com");
   assert.deepEqual(warnings, []);
+});
+
+test("a project .npmrc proxy does not remove the user .npmrc proxy, and the warning says which one applies", async () => {
+  const context = await fixture({
+    user: "https-proxy=http://corp.example.com:8080/\nproxy=http://corp.example.com:8080/\n",
+    project: "https-proxy=http://team.example.com:3128/\nproxy=http://team.example.com:3128/\n",
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, "http://corp.example.com:8080/");
+  assert.equal(options.proxy, "http://corp.example.com:8080/");
+  assert.equal(warnings.length, 2);
+  for (const warning of warnings) {
+    assert.match(warning, /in the project \.npmrc: .*Calavera uses the one in the user \.npmrc\.$/);
+    assert.doesNotMatch(warning, /set it in your user configuration/);
+  }
 });

@@ -22,14 +22,14 @@ const YARN_VARIABLES = new Map([
 
 /**
  * @typedef {"npm" | "yarn" | "bun"} Launcher
- * @typedef {{ text: string, unset: string[] }} Expansion
+ * @typedef {{ text: string, unset: string[], notes?: string[] }} Expansion
  * @typedef {{
  *   name: string,
  *   entries: Record<string, unknown>,
  *   trusted: boolean,
  *   tool?: "Yarn" | "Bun",
  *   settingNames?: Record<string, string>,
- *   expand?: (value: string, env: NodeJS.ProcessEnv) => Expansion,
+ *   expand?: (value: string, env: NodeJS.ProcessEnv, context: { setting: string, layer: string }) => Expansion,
  * }} LauncherLayer
  */
 
@@ -198,8 +198,29 @@ export async function yarnLayers({ cwd, env, home, scope, warnings }) {
 }
 
 /**
+ * Removes a username and password from a Bun registry URL. Bun accepts them there, but Calavera
+ * reads credentials from .npmrc files only, and the URL must never carry them into a request
+ * option or a message.
+ * @param {string} url
+ */
+function withoutCredentials(url) {
+  if (!URL.canParse(url)) return { url, removed: false };
+  const parsed = new URL(url);
+  if (!parsed.username && !parsed.password) return { url, removed: false };
+  parsed.username = "";
+  parsed.password = "";
+  return { url: parsed.href, removed: true };
+}
+
+/** @param {string} setting @param {string} layer */
+function credentialsNote(setting, layer) {
+  return `Used ${setting} from the ${layer} without its credentials: Calavera does not read credentials from Bun's registry settings. Set them in an .npmrc file instead.`;
+}
+
+/**
  * The URL of a bunfig.toml registry value, which is a URL string or a table with `url`. Calavera
  * does not read the credentials a value can carry, so it removes them from the URL and notes it.
+ * A value that starts with $ is expanded later, and its credentials are removed then.
  * @param {unknown} value
  * @param {string} setting
  * @param {string} layer
@@ -214,21 +235,9 @@ function bunRegistryUrl(value, setting, layer, notes) {
     credentials = ["token", "username", "password"].some((key) => table[key] !== undefined);
   }
   if (typeof url !== "string") return undefined;
-  if (URL.canParse(url)) {
-    const parsed = new URL(url);
-    if (parsed.username || parsed.password) {
-      credentials = true;
-      parsed.username = "";
-      parsed.password = "";
-      url = parsed.href;
-    }
-  }
-  if (credentials) {
-    notes.push(
-      `Used ${setting} from the ${layer} without its credentials: Calavera does not read credentials from bunfig.toml. Set them in an .npmrc file instead.`,
-    );
-  }
-  return url;
+  const stripped = withoutCredentials(url);
+  if (credentials || stripped.removed) notes.push(credentialsNote(setting, layer));
+  return stripped.url;
 }
 
 /**
@@ -270,16 +279,30 @@ async function readBunfig(path, layer, scope, warnings, notes) {
 
 /**
  * Bun replaces a registry URL that starts with $ with the value of the variable it names
- * (`Scope.fromAPI` in Bun's src/install/npm.zig). The loader applies this to the user file only.
+ * (`Scope.fromAPI` in Bun's src/install/npm.zig). The loader applies this to the user file only,
+ * and removes credentials from the expanded value as it does from a literal one.
  * @param {string} text
  * @param {NodeJS.ProcessEnv} env
+ * @param {{ setting: string, layer: string }} context
  * @returns {Expansion}
  */
-function expandBun(text, env) {
+function expandBun(text, env, { setting, layer }) {
   if (!text.startsWith("$")) return { text, unset: [] };
   const name = text.slice(1);
   const value = env[name];
-  return value === undefined ? { text, unset: [name] } : { text: value, unset: [] };
+  if (value === undefined) return { text, unset: [name] };
+  return withoutCredentialsExpansion(value, setting, layer);
+}
+
+/**
+ * @param {string} value
+ * @param {string} setting
+ * @param {string} layer
+ * @returns {Expansion}
+ */
+function withoutCredentialsExpansion(value, setting, layer) {
+  const { url, removed } = withoutCredentials(value);
+  return { text: url, unset: [], notes: removed ? [credentialsNote(setting, layer)] : [] };
 }
 
 /**
@@ -313,21 +336,23 @@ export async function bunfigLayers({ cwd, env, home, scope, warnings, notes }) {
 }
 
 /**
- * `BUN_CONFIG_REGISTRY`, which Bun reads with `NPM_CONFIG_REGISTRY` after bunfig.toml. The Bun
- * documentation does not order the two; Calavera lets the Bun-specific name win.
+ * The registry variables Bun reads after bunfig.toml, in its order: the first that starts with
+ * https:// or http:// wins, and any other value is skipped (`load` in Bun 1.3.9's
+ * src/install/PackageManager/PackageManagerOptions.zig). Bun accepts credentials in the URL, so
+ * Calavera removes them, as it does for bunfig.toml.
  * @param {NodeJS.ProcessEnv} env
  * @returns {LauncherLayer}
  */
 export function bunEnvironmentLayer(env) {
-  // Bun skips a registry variable that does not start with https:// or http://
-  // (PackageManagerOptions.zig), so Calavera does too.
-  const value = env.BUN_CONFIG_REGISTRY;
+  const name = ["BUN_CONFIG_REGISTRY", "NPM_CONFIG_REGISTRY", "npm_config_registry"].find(
+    (variable) => /^https?:\/\//.test(env[variable] ?? ""),
+  );
   return {
     name: "environment",
-    entries: value && /^https?:\/\//.test(value) ? { registry: value } : {},
-    settingNames: { registry: "BUN_CONFIG_REGISTRY" },
+    entries: name ? { registry: env[name] } : {},
+    settingNames: name ? { registry: name } : {},
     trusted: true,
     tool: "Bun",
-    expand: (text) => ({ text, unset: [] }),
+    expand: (text, _env, { setting, layer }) => withoutCredentialsExpansion(text, setting, layer),
   };
 }

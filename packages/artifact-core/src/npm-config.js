@@ -191,7 +191,8 @@ export async function loadNpmRegistryOptions({
     name: "environment",
     entries: environmentSettings(env),
     trusted: true,
-    accepts,
+    // Under Bun, bunEnvironmentLayer reads the registry variables in Bun's own order.
+    accepts: launcher === "bun" ? (key) => key !== "registry" && accepts(key) : accepts,
     npmEnvironment: true,
   };
   const launcherContext = { cwd, env, home, scope, warnings, notes };
@@ -238,6 +239,21 @@ export async function loadNpmRegistryOptions({
           notes.push(message);
           continue;
         }
+        // A project file could name a proxy it controls together with a registry whose package
+        // documents point at http tarball URLs. npm-registry-fetch sends the credentials of a host
+        // whatever the protocol, so the proxy would receive them in plain text. The entry is
+        // skipped here, so it never replaces a proxy from a user file. An empty value and a
+        // noproxy entry only remove the proxy, so a project file may still set them.
+        if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
+          const kept = sources[rawKey];
+          const outcome = kept?.trusted
+            ? `Calavera uses the one in the ${kept.name}.`
+            : "To use it, set it in your user configuration.";
+          const message = `Ignored ${setting} in the ${name}: Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials. ${outcome}`;
+          warnings.push(message);
+          notes.push(message);
+          continue;
+        }
       } else if (layer.npmEnvironment && npmStarted) {
         // npm exports its resolved settings, and for a project .npmrc value it exports the
         // result of its own ${VAR} expansion. Such a value is project content, not environment,
@@ -264,7 +280,11 @@ export async function loadNpmRegistryOptions({
         ? { text: rawKey, unset: [] }
         : expandEnvironment(rawKey, env);
       if (layer.accepts && !layer.accepts(expandedKey.text)) continue;
-      const expandedValue = (layer.expand ?? expandEnvironment)(rawValue.trim(), env);
+      /** @type {import("./launcher-config.js").Expansion} */
+      const expandedValue = layer.expand
+        ? layer.expand(rawValue.trim(), env, { setting, layer: name })
+        : expandEnvironment(rawValue.trim(), env);
+      notes.push(...(expandedValue.notes ?? []));
       const unset = [...expandedKey.unset, ...expandedValue.unset];
       if (unset.length > 0) {
         // An entry that references an unset variable is absent. Sending the placeholder text as a
@@ -313,21 +333,10 @@ export async function loadNpmRegistryOptions({
   );
   for (const key of new Set([...NPM_PROXY_KEYS, ...PROXY_URL_KEYS])) {
     const value = options[key];
-    const layer = sources[key];
     delete options[key];
     const name = proxyNames.get(key);
     // An empty value leaves the proxy unset, as an empty npm setting does.
-    if (!name || !value || !layer) continue;
-    // A project file could name a proxy it controls together with a registry whose package
-    // documents point at http tarball URLs. npm-registry-fetch sends the credentials of a host
-    // whatever the protocol, so the proxy would receive them in plain text. A noproxy entry only
-    // removes the proxy, so a project file may still set it.
-    if (name !== "noProxy" && !layer.trusted) {
-      const message = `Ignored ${printable(layer.settingNames?.[key] ?? key)} in the ${layer.name}: Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials. To use it, set it in your user configuration.`;
-      warnings.push(message);
-      notes.push(message);
-      continue;
-    }
+    if (!name || !value) continue;
     options[name] = value;
   }
   // npm-registry-fetch picks credentials by host and ignores the protocol, so over http they

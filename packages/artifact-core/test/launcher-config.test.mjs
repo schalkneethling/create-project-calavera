@@ -869,7 +869,7 @@ test("under Yarn, a proxy from a project .yarnrc.yml is ignored", async () => {
   assert.match(warnings[0], /^Ignored httpsProxy in the project \.yarnrc\.yml/);
 });
 
-test("BUN_CONFIG_REGISTRY must start with the protocol, and its errors name the variable", async () => {
+test("BUN_CONFIG_REGISTRY must start with the protocol, loses its credentials, and its errors name the variable", async () => {
   const embedded = await fixture({
     userAgent: BUN,
     env: { BUN_CONFIG_REGISTRY: "mirror.example.com/https://registry.example.com/" },
@@ -880,12 +880,113 @@ test("BUN_CONFIG_REGISTRY must start with the protocol, and its errors name the 
     userAgent: BUN,
     env: { BUN_CONFIG_REGISTRY: `https://user:${SECRET}@registry.example.com/` },
   });
-  await assert.rejects(loadNpmRegistryOptions(credentials), (error) => {
-    assert.match(
-      String(error),
-      /^Error: The Bun setting BUN_CONFIG_REGISTRY must not include a username/,
-    );
-    assert.doesNotMatch(String(error), new RegExp(SECRET));
-    return true;
+  const { options, warnings, diagnostics } = await loadNpmRegistryOptions(credentials);
+  assert.equal(options.registry, "https://registry.example.com/");
+  assert.match(
+    diagnostics.join("\n"),
+    /Used BUN_CONFIG_REGISTRY from the environment without its credentials/,
+  );
+  assert.doesNotMatch(inspect([options, warnings, diagnostics]), new RegExp(SECRET));
+
+  const invalid = await fixture({ userAgent: BUN, env: { BUN_CONFIG_REGISTRY: "https://" } });
+  await assert.rejects(
+    loadNpmRegistryOptions(invalid),
+    /^Error: The Bun setting BUN_CONFIG_REGISTRY must be an http or https URL\.$/,
+  );
+});
+
+test("under Yarn, a project .yarnrc.yml proxy does not remove the home .yarnrc.yml proxy", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: {
+      "home/.yarnrc.yml": "httpsProxy: http://corp.example.com:8080\n",
+      "workspace/project/.yarnrc.yml": "httpsProxy: http://team.example.com:3128\n",
+    },
   });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.proxy, "http://corp.example.com:8080");
+  assert.equal(warnings.length, 1);
+  assert.match(
+    warnings[0],
+    /^Ignored httpsProxy in the project \.yarnrc\.yml: .*Calavera uses the one in the user \.yarnrc\.yml\.$/,
+  );
+});
+
+test("under Bun, the first registry variable that starts with http:// or https:// wins, as in Bun", async () => {
+  const files = { "home/.bunfig.toml": '[install]\nregistry = "https://file.example.com/"\n' };
+  /** @type {[Record<string, string>, string, string][]} */
+  const cases = [
+    [{ NPM_CONFIG_REGISTRY: "nope" }, "https://file.example.com", "user bunfig.toml"],
+    [{ npm_config_registry: "nope" }, "https://file.example.com", "user bunfig.toml"],
+    [
+      { BUN_CONFIG_REGISTRY: "nope", NPM_CONFIG_REGISTRY: "https://npm-upper.example.com/" },
+      "https://npm-upper.example.com",
+      "environment",
+    ],
+    [
+      {
+        BUN_CONFIG_REGISTRY: "nope",
+        NPM_CONFIG_REGISTRY: "nope",
+        npm_config_registry: "https://npm-lower.example.com/",
+      },
+      "https://npm-lower.example.com",
+      "environment",
+    ],
+    [
+      {
+        NPM_CONFIG_REGISTRY: "https://npm-upper.example.com/",
+        npm_config_registry: "https://npm-lower.example.com/",
+      },
+      "https://npm-upper.example.com",
+      "environment",
+    ],
+  ];
+  for (const [env, origin, source] of cases) {
+    const context = await fixture({ userAgent: BUN, files, env });
+    assert.deepEqual(
+      (await loadNpmRegistryOptions(context)).registry,
+      { origin, source },
+      JSON.stringify(env),
+    );
+  }
+});
+
+test("under Bun, a $VAR registry whose value carries credentials is used without them, as a literal one is", async () => {
+  const context = await fixture({
+    userAgent: BUN,
+    files: { "home/.bunfig.toml": '[install]\nregistry = "$MY_REGISTRY"\n' },
+    env: { MY_REGISTRY: `https://user:${SECRET}@registry.example.com/` },
+  });
+  const { options, registry, warnings, diagnostics } = await loadNpmRegistryOptions(context);
+  assert.equal(options.registry, "https://registry.example.com/");
+  assert.deepEqual(registry, {
+    origin: "https://registry.example.com",
+    source: "user bunfig.toml",
+  });
+  assert.match(
+    diagnostics.join("\n"),
+    /Used install\.registry from the user bunfig\.toml without its credentials/,
+  );
+  assert.doesNotMatch(inspect([options, warnings, diagnostics]), new RegExp(SECRET));
+});
+
+test("under Bun, npm_config_* auth variables still pass through, and a registry without credentials adds no note", async () => {
+  const context = await fixture({
+    userAgent: BUN,
+    files: { "home/.bunfig.toml": '[install]\nregistry = "$MY_REGISTRY"\n' },
+    env: {
+      MY_REGISTRY: "https://registry.example.com/",
+      "npm_config_//registry.example.com/:_authToken": "token-value",
+    },
+  });
+  const { options, diagnostics } = await loadNpmRegistryOptions(context);
+  assert.equal(options["//registry.example.com/:_authToken"], "token-value");
+  assert.equal(options.registry, "https://registry.example.com/");
+  assert.deepEqual(diagnostics, []);
+
+  const variable = await fixture({
+    userAgent: BUN,
+    env: { BUN_CONFIG_REGISTRY: "https://registry.example.com/" },
+  });
+  assert.deepEqual((await loadNpmRegistryOptions(variable)).diagnostics, []);
 });
