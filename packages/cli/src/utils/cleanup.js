@@ -122,6 +122,11 @@ let removeExitCallback;
  * normally, through `process.exit()`, or by a signal that no other listener handles. Nothing can
  * remove them when SIGKILL or a crash of Node itself ends the process.
  *
+ * signal-exit calls every `onExit` callback in the process for the same signal, and a callback
+ * that returns `true` keeps the process running. No callback in this process does that today. If
+ * one did, the folders would already be removed while the run goes on, and signal-exit would not
+ * call this again when the process later exits.
+ *
  * A folder whose earlier removal failed, which the command has already reported as left behind,
  * stays recorded, so this tries to remove it once more when the process exits.
  *

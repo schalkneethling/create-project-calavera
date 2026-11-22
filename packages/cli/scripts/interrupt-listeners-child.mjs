@@ -21,7 +21,8 @@ const [mode] = process.argv.slice(2);
 
 // execa registers its signal-exit callback synchronously when it starts the subprocess.
 function startSubprocess() {
-  const subprocess = execa(process.execPath, ["-e", "setInterval(() => {}, 60_000)"]);
+  // The subprocess ends itself after two minutes, so a failing test cannot leave it running.
+  const subprocess = execa(process.execPath, ["-e", "setTimeout(() => {}, 120_000)"]);
   // The subprocess ends with the signal that ends this process; that rejection is expected.
   subprocess.catch(() => {});
 }
