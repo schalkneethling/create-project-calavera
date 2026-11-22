@@ -32,9 +32,11 @@ const SECRET_NAME = new RegExp(
 const NEVER_SECRET_NAME = /^(?:OLD)?PWD$/i;
 
 // A session ID names a session and grants no access, as `PWD` names a folder,
-// so the `_SESSION_ID` ending does not make a name secret, and
-// `CLAUDE_CODE_SESSION_ID` keeps its value. The rest of the name still
-// decides, so `GITHUB_TOKEN_SESSION_ID` keeps its value hidden.
+// so the `_SESSION_ID` ending does not make an environment variable's name
+// secret, and `CLAUDE_CODE_SESSION_ID` keeps its value. The rest of the name
+// still decides, so `GITHUB_TOKEN_SESSION_ID` keeps its value hidden. A
+// session ID in a query string or a request body can be the credential for a
+// web session, so a keyed value such as `?app_session_id=` stays hidden.
 const SESSION_ID_ENDING = /_SESSION_ID$/i;
 
 // A shorter value, such as `true` or `1`, is a setting, not a secret, and
@@ -43,7 +45,7 @@ const MINIMUM_SECRET_VALUE_LENGTH = 8;
 
 /** @param {string} name */
 function isSecretName(name) {
-  const bare = name.replace(/^-+/, "").replace(SESSION_ID_ENDING, "");
+  const bare = name.replace(/^-+/, "");
   return bare !== "" && !NEVER_SECRET_NAME.test(bare) && SECRET_NAME.test(bare);
 }
 
@@ -184,7 +186,7 @@ export function redactSecrets(text, env) {
   const secretValues = Object.entries(env)
     .filter(
       ([name, value]) =>
-        isSecretName(name) &&
+        isSecretName(name.replace(SESSION_ID_ENDING, "")) &&
         typeof value === "string" &&
         value.length >= MINIMUM_SECRET_VALUE_LENGTH,
     )

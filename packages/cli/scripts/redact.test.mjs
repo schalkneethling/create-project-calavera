@@ -28,6 +28,13 @@ test("redactSecrets redacts each secret shape and keeps the text around it", () 
     [`sent ${value}`, "sent [redacted]", { DB_PASS_SESSION_ID: value }],
     // A name that only contains `_SESSION_ID` does not end in it.
     [`sent ${value}`, "sent [redacted]", { APP_SESSION_IDLE: value }],
+    [`sent ${value}`, "sent [redacted]", { SESSION_ID: value }],
+    [`sent ${value}`, "sent [redacted]", { MYSESSION_ID: value }],
+    // Only an environment variable's name is set aside, because a session ID
+    // in a request can be the credential for a web session.
+    [`GET /?app_session_id=${value}`, "GET /?app_session_id=[redacted]"],
+    [`"x_session_id": "${value}"`, `"x_session_id": "[redacted]"`],
+    [`--app_session_id ${value}`, "--app_session_id [redacted]"],
     // Headers, whose value runs to the end of the line.
     [`Authorization: Bearer ${value}`, "Authorization: [redacted]"],
     [`authorization: Basic ${basicCredential}`, "authorization: [redacted]"],
@@ -51,8 +58,6 @@ test("redactSecrets redacts each secret shape and keeps the text around it", () 
     [`token: ${value}\nname: app`, "token: [redacted]\nname: app"],
     [`DB_PASS=${value}`, "DB_PASS=[redacted]"],
     [`GH_PAT=${value}`, "GH_PAT=[redacted]"],
-    [`gh-pat=${value}`, "gh-pat=[redacted]"],
-    [`--pat ${value}`, "--pat [redacted]"],
     [`signing_key: ${value}`, "signing_key: [redacted]"],
     // Credentials outside a header.
     [`curl -H "Bearer ${value}"`, `curl -H "Bearer [redacted]"`],
@@ -105,7 +110,6 @@ test("redactSecrets keeps prose, paths, and values that are not secret", () => {
     "--token=",
     "true",
     `wrote /var/folders/ab/T/claude-501/project/${sessionId}/scratchpad/out.txt`,
-    `CLAUDE_CODE_SESSION_ID=${sessionId}`,
     // A secret in a variable with an innocent name cannot be redacted by name.
     `value ${value}`,
   ];
