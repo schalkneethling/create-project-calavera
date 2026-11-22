@@ -2,83 +2,22 @@
 // it created, by their exact paths, and leaves every other folder in the system's temporary
 // folder alone, including another run's folder with the same prefix.
 import assert from "node:assert/strict";
-import { spawn } from "node:child_process";
-import { once } from "node:events";
-import { mkdir, mkdtempDisposable, readdir, stat, writeFile } from "node:fs/promises";
-import { setTimeout as delay } from "node:timers/promises";
+import fsPromises, { mkdir, mkdtempDisposable, readdir, stat, writeFile } from "node:fs/promises";
+import { syncBuiltinESMExports } from "node:module";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createInterface } from "node:readline";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
-import { createTemporaryFolder, removeTemporaryFolder } from "../src/utils/cleanup.js";
+import {
+  TemporaryFolderError,
+  createTemporaryFolder,
+  removeTemporaryFolder,
+} from "../src/utils/cleanup.js";
+import { startSignalChild } from "./signal-child.mjs";
 
 const CHILD = fileURLToPath(new URL("./interrupted-dry-run-child.mjs", import.meta.url));
-const PRELOAD = fileURLToPath(new URL("./no-version-check.mjs", import.meta.url));
 const ANOTHER_RUN = ["calavera-locked-artifact-another-run", "calavera-artifact-stage-another-run"];
-// A bound on each wait, so a child that never gets ready or never ends fails the test instead of
-// hanging it. The dry run takes seconds; the bound is generous for a loaded machine.
-const WAIT_MS = 120_000;
-
-/**
- * Settles with `promise`, or rejects with `message` once `WAIT_MS` passes.
- *
- * @template T
- * @param {Promise<T>} promise
- * @param {string} message
- * @returns {Promise<T>}
- */
-async function bounded(promise, message) {
-  const timeout = new AbortController();
-  try {
-    return await Promise.race([
-      promise,
-      delay(WAIT_MS, undefined, { signal: timeout.signal }).then(() => {
-        throw new Error(message);
-      }),
-    ]);
-  } finally {
-    timeout.abort();
-  }
-}
-
-/**
- * Starts the child dry run with `temporaryRoot` as the system's temporary folder, waits until both
- * of its temporary folders exist, and returns the child and the folders it created.
- *
- * @param {string} temporaryRoot
- * @param {string} project
- */
-async function startInterruptibleDryRun(temporaryRoot, project) {
-  const child = spawn(process.execPath, ["--import", PRELOAD, CHILD, project], {
-    env: { ...process.env, TMPDIR: temporaryRoot, TMP: temporaryRoot, TEMP: temporaryRoot },
-    stdio: ["ignore", "pipe", "pipe"],
-  });
-  let stderr = "";
-  child.stderr.on("data", (chunk) => {
-    stderr += chunk;
-  });
-  const exited = once(child, "exit");
-  const lines = createInterface({ input: child.stdout });
-  const ready = new Promise((resolveReady, rejectReady) => {
-    lines.on("line", (line) => {
-      if (line === "ready") resolveReady(undefined);
-    });
-    exited.then(([code, signal]) =>
-      rejectReady(new Error(`The child exited (${code ?? signal}) before it was ready: ${stderr}`)),
-    );
-  });
-  // A bounded wait that fails stops the child in the test's `finally`, so no child outlives it.
-  await bounded(ready, `The child dry run was not ready within ${WAIT_MS} ms: ${stderr}`).catch(
-    (error) => {
-      child.kill("SIGKILL");
-      throw error;
-    },
-  );
-  const created = (await readdir(temporaryRoot)).filter((name) => !ANOTHER_RUN.includes(name));
-  return { child, exited, created };
-}
 
 for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
   // On Windows, a child process cannot handle a signal another process sends it.
@@ -99,22 +38,23 @@ for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
         await writeFile(join(temporaryRoot.path, name, "keep.txt"), "another run\n");
       }
 
-      const { child, exited, created } = await startInterruptibleDryRun(
-        temporaryRoot.path,
-        project.path,
-      );
+      const run = startSignalChild(CHILD, [project.path], temporaryRoot.path);
       let code;
       let exitSignal;
+      /** @type {string[]} */
+      let created = [];
       try {
+        assert.equal(await run.nextLine(), "ready");
+        created = (await readdir(temporaryRoot.path)).filter((name) => !ANOTHER_RUN.includes(name));
         assert.deepEqual(
           created.map((name) => name.replace(/[^-]+$/, "")).sort(),
           ["calavera-artifact-stage-", "calavera-locked-artifact-"],
           "the dry run rebuilds the locked package and stages the unlocked one",
         );
-        child.kill(signal);
-        [code, exitSignal] = await bounded(exited, `The child did not end within ${WAIT_MS} ms`);
+        run.child.kill(signal);
+        [code, exitSignal] = await run.exited();
       } finally {
-        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+        run.stop();
       }
 
       assert.equal(code, null);
@@ -175,5 +115,52 @@ test(
     );
     await assert.rejects(stat(first), { code: "ENOENT" });
     await assert.rejects(stat(second), { code: "ENOENT" });
+  },
+);
+
+// On Windows, os.tmpdir() reads TEMP and TMP, not TMPDIR.
+test(
+  "a folder whose removal failed stays recorded, so the interrupt handlers stay attached for it",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
+    const systemTemporaryFolder = process.env.TMPDIR;
+    process.env.TMPDIR = owned.path;
+    const remove = fsPromises.rm;
+    const busy = Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" });
+    let failRemoval = true;
+    t.mock.method(
+      fsPromises,
+      "rm",
+      (/** @type {string} */ path, /** @type {import("node:fs").RmOptions} */ rmOptions) =>
+        failRemoval ? Promise.reject(busy) : remove(path, rmOptions),
+    );
+    syncBuiltinESMExports();
+    t.after(() => {
+      t.mock.restoreAll();
+      syncBuiltinESMExports();
+      if (systemTemporaryFolder === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = systemTemporaryFolder;
+    });
+    const before = {
+      SIGINT: process.listenerCount("SIGINT"),
+      SIGTERM: process.listenerCount("SIGTERM"),
+    };
+
+    const folder = await createTemporaryFolder("calavera-locked-artifact-");
+    await assert.rejects(removeTemporaryFolder(folder), TemporaryFolderError);
+
+    assert.equal((await stat(folder)).isDirectory(), true);
+    assert.equal(
+      process.listenerCount("SIGINT"),
+      before.SIGINT + 1,
+      "the folder is still recorded",
+    );
+    assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
+
+    failRemoval = false;
+    await removeTemporaryFolder(folder);
+    assert.equal(process.listenerCount("SIGINT"), before.SIGINT);
+    assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM);
   },
 );
