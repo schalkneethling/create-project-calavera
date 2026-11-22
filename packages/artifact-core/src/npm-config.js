@@ -1,7 +1,7 @@
 // @ts-check
 import { access } from "node:fs/promises";
 import { homedir } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, join, resolve } from "node:path";
 
 import { decode } from "ini";
 
@@ -11,6 +11,7 @@ import {
   bunEnvironmentLayer,
   bunfigLayers,
   detectLauncher,
+  isYarnClassic,
   yarnLayers,
 } from "./launcher-config.js";
 
@@ -104,10 +105,43 @@ function environmentSettings(env) {
     // Nerf-darted keys keep their case and underscores; every other key is kebab-case.
     if (!key.startsWith("//")) key = key.replace(/(?!^)_/g, "-").toLowerCase();
     // npm exports a list setting joined with blank lines (`envVal` in @npmcli/config
-    // set-envs.js), but @npmcli/agent splits noProxy on commas only.
-    settings[key] = key === "noproxy" ? value.split("\n\n").join(",") : value;
+    // set-envs.js), and Yarn 1 as JSON text, but @npmcli/agent splits noProxy on commas only.
+    settings[key] = key === "noproxy" ? noProxyList(value) : value;
   }
   return settings;
+}
+
+/** @param {string} value */
+function noProxyList(value) {
+  if (value.startsWith("[")) {
+    try {
+      const list = JSON.parse(value);
+      if (Array.isArray(list) && list.every((host) => typeof host === "string")) {
+        return list.join(",");
+      }
+    } catch {
+      // Not a JSON list, so it is used as written.
+    }
+  }
+  return value.split("\n\n").join(",");
+}
+
+/**
+ * The .npmrc files in the folders above the project folder, nearest first, without the user
+ * .npmrc.
+ * @param {string} projectPath
+ * @param {string} userPath
+ * @param {string[]} warnings
+ */
+async function readParentNpmrcs(projectPath, userPath, warnings) {
+  const entries = [];
+  let directory = dirname(dirname(projectPath));
+  for (;;) {
+    const path = join(directory, ".npmrc");
+    if (path !== userPath) entries.push(await readNpmrc(path, warnings));
+    if (dirname(directory) === directory) return entries;
+    directory = dirname(directory);
+  }
 }
 
 /**
@@ -170,9 +204,9 @@ export async function loadNpmRegistryOptions({
   const launcher = detectLauncher(env);
   const home = env.HOME || homedir();
   const userPath = await userConfigPath(env, home, launcher);
-  // Bun and Yarn also set npm_lifecycle_event and similar variables, but only npm and pnpm
-  // export their resolved .npmrc settings, so the comparison with exported values below applies
-  // to them alone.
+  // npm and Yarn 1 export the .npmrc settings they resolved as npm_config_* variables. Bun, Yarn 2
+  // or later, and pnpm also set npm_lifecycle_event and similar variables but read or export
+  // other settings, so the comparison with exported values below applies under npm and Yarn 1.
   const npmStarted = launcher === "npm" && startedByNpm(env);
   // npm reads the project .npmrc at its local prefix: the nearest folder above the working
   // directory with a package.json or node_modules, or the workspace root of a member
@@ -194,8 +228,18 @@ export async function loadNpmRegistryOptions({
   const userEntries = await readNpmrc(userPath, warnings);
   // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
   const projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
+  // Yarn 1 also reads the .npmrc in every parent folder, with less weight than the user .npmrc,
+  // and exports what it resolved (`getPossibleConfigLocations` and `loadConfig` in Yarn 1.22's
+  // NpmRegistry). They can be repository content, such as a workspace root's file.
+  const parentEntries = isYarnClassic(env)
+    ? await readParentNpmrcs(projectPath, userPath, warnings)
+    : [];
   /** @type {ConfigLayer[]} */
   const npmFiles = [
+    // The farthest folder first, so the nearest wins.
+    ...parentEntries
+      .toReversed()
+      .map((entries) => ({ name: "project .npmrc", entries, trusted: false, accepts })),
     { name: "user .npmrc", entries: userEntries, trusted: true, accepts },
     { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
   ];
@@ -226,7 +270,7 @@ export async function loadNpmRegistryOptions({
   const options = {};
   /** @type {Record<string, ConfigLayer>} */
   const sources = {};
-  /** @type {{ setting: string, layer: string }[]} */
+  /** @type {{ key: string, setting: string, layer: string }[]} */
   const rejectedProxies = [];
   for (const layer of layers) {
     const { name, entries, trusted } = layer;
@@ -258,7 +302,7 @@ export async function loadNpmRegistryOptions({
         // noproxy entry only remove the proxy, so a project file may still set them.
         // The warning is written after every layer is read, so it names the proxy that applies.
         if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
-          rejectedProxies.push({ setting, layer: name });
+          rejectedProxies.push({ key: rawKey, setting, layer: name });
           continue;
         }
       } else if (layer.npmEnvironment && npmStarted) {
@@ -266,14 +310,15 @@ export async function loadNpmRegistryOptions({
         // result of its own ${VAR} expansion. Such a value is project content, not environment,
         // so it follows the project rules and keeps its label. A value that differs from what
         // the file expands to was set in the environment by the caller.
-        const projectValue = projectEntries[rawKey];
-        if (
-          typeof projectValue === "string" &&
-          expandEnvironment(projectValue.trim(), env).text === rawValue.trim()
-        ) {
-          // The project layer already applied it, or ignored it with a warning.
-          continue;
-        }
+        const fromProjectFile = [projectEntries, ...parentEntries].some((entries) => {
+          const projectValue = entries[rawKey];
+          return (
+            typeof projectValue === "string" &&
+            expandEnvironment(projectValue.trim(), env).text === rawValue.trim()
+          );
+        });
+        // A project layer already applied it, or ignored it with a warning.
+        if (fromProjectFile) continue;
         const userValue = userEntries[rawKey];
         if (
           typeof userValue === "string" &&
@@ -353,10 +398,19 @@ export async function loadNpmRegistryOptions({
   // The warning for an ignored project proxy names the proxy that requests use after every layer
   // is read: npm-registry-fetch uses httpsProxy when it is set and proxy otherwise.
   const usedProxy = proxyOrigins[options.httpsProxy ? "httpsProxy" : "proxy"];
-  for (const { setting, layer } of rejectedProxies) {
-    const outcome = usedProxy
-      ? `Calavera uses ${usedProxy} instead.`
-      : "No other proxy setting applies. To use it, set it in your user configuration.";
+  const registryProtocol = registryUrl.protocol.slice(0, -1);
+  for (const { key, setting, layer } of rejectedProxies) {
+    const used = usedProxy ? `Calavera uses ${usedProxy} instead.` : undefined;
+    // Under Yarn, a proxy for the other protocol would not apply even from a user file.
+    const outcome =
+      launcher === "yarn" && !proxyNames.has(key)
+        ? [
+            `Yarn uses it only for ${key === "yarn-http-proxy" ? "http" : "https"} registries, and the registry is ${registryProtocol}.`,
+            used,
+          ]
+            .filter(Boolean)
+            .join(" ")
+        : (used ?? "No other proxy setting applies. To use it, set it in your user configuration.");
     const message = `Ignored ${setting} in the ${layer}: Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials. ${outcome}`;
     warnings.push(message);
     notes.push(message);

@@ -1050,3 +1050,64 @@ test("under bun run, npm_config_local_prefix does not move the project .npmrc, b
     "https://cwd.example.com/",
   );
 });
+
+const YARN_CLASSIC = "yarn/1.22.22 npm/? node/v24.3.0 darwin arm64";
+
+test("under Yarn 1 from a workspace member, a parent .npmrc proxy that Yarn passes on is a project proxy", async () => {
+  const context = await fixture({
+    userAgent: YARN_CLASSIC,
+    files: {
+      "workspace/.npmrc":
+        "https-proxy=http://attacker.example:8080/\nregistry=https://project-registry.example.com/\n",
+    },
+    env: {
+      npm_lifecycle_event: "probe",
+      npm_config_https_proxy: "http://attacker.example:8080/",
+      npm_config_registry: "https://project-registry.example.com/",
+    },
+  });
+  const { options, registry, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, undefined);
+  assert.match(warnings[0], /^Ignored https-proxy in the project \.npmrc/);
+  assert.deepEqual(registry, {
+    origin: "https://project-registry.example.com",
+    source: "project .npmrc",
+  });
+});
+
+test("under Yarn 1, the user .npmrc wins over a parent .npmrc, as in Yarn 1", async () => {
+  const context = await fixture({
+    userAgent: YARN_CLASSIC,
+    files: {
+      "home/.npmrc": "registry=https://user-registry.example.com/\n",
+      "workspace/.npmrc": "registry=https://parent-registry.example.com/\n",
+    },
+  });
+  assert.deepEqual((await loadNpmRegistryOptions(context)).registry, {
+    origin: "https://user-registry.example.com",
+    source: "user .npmrc",
+  });
+});
+
+test("a noproxy list that Yarn 1 passes on as JSON is joined with commas", async () => {
+  const context = await fixture({
+    userAgent: YARN_CLASSIC,
+    env: { npm_lifecycle_event: "probe", npm_config_noproxy: '["a.example.com","b.example.com"]' },
+  });
+  assert.equal(
+    (await loadNpmRegistryOptions(context)).options.noProxy,
+    "a.example.com,b.example.com",
+  );
+});
+
+test("under Yarn, a rejected project proxy for the other protocol says Yarn would not use it", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: { "workspace/project/.yarnrc.yml": "httpProxy: http://team.example.com:3128\n" },
+  });
+  const { warnings } = await loadNpmRegistryOptions(context);
+  assert.match(
+    warnings[0],
+    /^Ignored httpProxy in the project \.yarnrc\.yml: .*Yarn uses it only for http registries, and the registry is https\.$/,
+  );
+});

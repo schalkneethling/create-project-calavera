@@ -703,3 +703,33 @@ test("a rejected project proxy warning names the user https-proxy that npm-regis
     /^Ignored proxy in the project \.npmrc: .*Calavera uses https-proxy from the user \.npmrc instead\.$/,
   );
 });
+
+test("under npm exec, a workspace member's own .npmrc is not read, as npm ignores it", async () => {
+  const context = await npmExecFromBelowRoot({
+    npmrc: "registry=https://root-registry.example.com/\n",
+    member: "packages/web",
+    rootPackage: { name: "repo", workspaces: ["packages/*"] },
+    memberPackage: { name: "web" },
+    exported: { npm_config_registry: "https://root-registry.example.com/" },
+  });
+  await writeFile(join(context.cwd, ".npmrc"), "registry=https://member-registry.example.com/\n");
+  assert.deepEqual((await loadNpmRegistryOptions(context)).registry, {
+    origin: "https://root-registry.example.com",
+    source: "project .npmrc",
+  });
+});
+
+test("under npm exec, a local prefix at the user .npmrc folder is not read twice as a project file", async () => {
+  const context = await npmExecFromBelowRoot({
+    npmrc: "registry=http://user-registry.example.com/\n",
+    member: "src",
+    rootPackage: { name: "repo" },
+    exported: { npm_config_registry: "http://user-registry.example.com/" },
+  });
+  // The repository root's .npmrc is the user's own file here, so its http registry is allowed.
+  context.env.npm_config_userconfig = join(context.env.npm_config_local_prefix, ".npmrc");
+  assert.deepEqual((await loadNpmRegistryOptions(context)).registry, {
+    origin: "http://user-registry.example.com",
+    source: "user .npmrc",
+  });
+});

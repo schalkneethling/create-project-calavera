@@ -14,7 +14,8 @@ const TAGS = new Set(["latest", "next"]);
 /**
  * Registry and auth settings come from the user and project .npmrc files and `npm_config_*`
  * variables; see `loadNpmRegistryOptions`. `cwd` (default: the current directory) holds the
- * project .npmrc, and `env` (default: the process environment) holds the variables.
+ * project .npmrc, unless npm started Calavera: the project .npmrc is then the one npm read at
+ * `npm_config_local_prefix`. `env` (default: the process environment) holds the variables.
  * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv }} request
  */
 export async function resolveArtifactPackage(request) {
