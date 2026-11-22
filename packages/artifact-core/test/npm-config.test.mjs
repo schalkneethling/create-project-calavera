@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test, { afterEach } from "node:test";
 import { inspect, promisify } from "node:util";
 
-import { loadNpmRegistryOptions, pacoteTarballUrl, requestOptions } from "../src/npm-config.js";
+import { loadNpmRegistryOptions, pacoteTarballUrl } from "../src/npm-config.js";
 import { removeTemporaryDirectories, temporaryDirectory } from "./temporary-directory.mjs";
 
 afterEach(removeTemporaryDirectories);
@@ -25,91 +25,122 @@ async function fixture({ project, user, env = {} }) {
   if (project !== undefined) await writeFile(join(cwd, ".npmrc"), project);
   const userconfig = join(directory, "user.npmrc");
   if (user !== undefined) await writeFile(userconfig, user);
-  // An empty account home, so no test reads the developer's ~/.npmrc.
-  const accountHome = join(directory, "account-home");
   return {
     directory,
     cwd,
-    accountHome,
     env: { npm_config_userconfig: userconfig, ...env },
     scope: SCOPE,
   };
 }
 
-test("a project .npmrc value with a variable reference is ignored with a warning that names the key", async () => {
+test("a project .npmrc proxy value with a variable reference is ignored with a warning that names the key", async () => {
   const context = await fixture({
-    project: `//registry.example.com/:_authToken=\${NPM_TOKEN}\n`,
-    env: { NPM_TOKEN: SECRET },
+    project: `https-proxy=http://\${PROXY_HOST}:8080/\n`,
+    env: { PROXY_HOST: SECRET },
   });
   const { options, warnings, diagnostics } = await loadNpmRegistryOptions(context);
   assert.deepEqual(options, {});
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /\/\/registry\.example\.com\/:_authToken/);
-  assert.match(warnings[0], /project \.npmrc/);
+  assert.match(warnings[0], /^Ignored https-proxy in the project \.npmrc: Calavera expands variables only/);
   assert.doesNotMatch(inspect([warnings, diagnostics]), new RegExp(SECRET));
 });
 
-test("a project .npmrc key with a variable reference is ignored", async () => {
+test("a key with a variable reference is not on the allowlist, so it is dropped without expansion or a warning", async () => {
   const context = await fixture({
-    project: `//\${HOST}/:_authToken=literal\n`,
-    env: { HOST: "registry.example.com" },
+    project: `\${KEY}=https://project.example.com/\n`,
+    user: `\${KEY}=https://user.example.com/\n`,
+    env: { KEY: "registry" },
   });
-  const { options, warnings } = await loadNpmRegistryOptions(context);
+  const { options, warnings, diagnostics } = await loadNpmRegistryOptions(context);
   assert.deepEqual(options, {});
-  assert.match(warnings[0], /\/\/\$\{HOST\}\/:_authToken/);
+  assert.deepEqual([warnings, diagnostics], [[], []]);
 });
 
 test("a project .npmrc drop does not remove a valid user .npmrc value", async () => {
   const context = await fixture({
-    project: `//registry.example.com/:_authToken=\${NPM_TOKEN}\n`,
-    user: "//registry.example.com/:_authToken=from-user\n",
-    env: { NPM_TOKEN: SECRET },
+    project: `https-proxy=http://\${PROXY_HOST}/\n`,
+    user: "https-proxy=http://user-proxy.example.com/\n",
+    env: { PROXY_HOST: SECRET },
   });
   const { options } = await loadNpmRegistryOptions(context);
-  assert.equal(options["//registry.example.com/:_authToken"], "from-user");
+  assert.equal(options.httpsProxy, "http://user-proxy.example.com/");
 });
 
-test("the user .npmrc and the environment expand variables in keys and values", async () => {
+test("the user .npmrc and the environment expand variables in proxy values", async () => {
   const context = await fixture({
-    user: `//\${CI_SERVER_HOST}/api/v4/projects/\${CI_PROJECT_ID}/packages/npm/:_authToken=\${CI_JOB_TOKEN}\n`,
-    env: { CI_SERVER_HOST: "gitlab.example.com", CI_PROJECT_ID: "42", CI_JOB_TOKEN: SECRET },
+    user: `https-proxy=http://\${PROXY_HOST}:8080/\n`,
+    env: { PROXY_HOST: "proxy.example.com", npm_config_noproxy: "\${NO_PROXY_HOST}" },
   });
+  context.env.NO_PROXY_HOST = "internal.example.com";
   const { options } = await loadNpmRegistryOptions(context);
   assert.deepEqual(options, {
-    "//gitlab.example.com/api/v4/projects/42/packages/npm/:_authToken": SECRET,
+    httpsProxy: "http://proxy.example.com:8080/",
+    noProxy: "internal.example.com",
   });
 });
 
-test("an unset variable drops the key, and the diagnostics name the key and variable", async () => {
-  const context = await fixture({
-    user: `//registry.example.com/:_authToken=\${CALAVERA_UNSET_TOKEN}\n//\${CALAVERA_UNSET_HOST}/:_authToken=${SECRET}\n`,
-  });
-  const { options, warnings, diagnostics } = await loadNpmRegistryOptions(context);
+test("an unset variable in a proxy drops the key, and the diagnostics name the key and variable", async () => {
+  const context = await fixture({ user: `https-proxy=http://\${CALAVERA_UNSET_HOST}/\n` });
+  const { options, warnings, diagnostics, unsetVariables } = await loadNpmRegistryOptions(context);
   assert.deepEqual(options, {});
   assert.deepEqual(warnings, []);
-  const text = diagnostics.join("\n");
-  assert.match(text, /CALAVERA_UNSET_TOKEN/);
-  assert.match(text, /CALAVERA_UNSET_HOST/);
-  assert.match(text, /\/\/registry\.example\.com\/:_authToken/);
-  assert.doesNotMatch(text, new RegExp(SECRET));
+  assert.deepEqual(unsetVariables, ["CALAVERA_UNSET_HOST"]);
+  assert.match(diagnostics.join("\n"), /^Ignored https-proxy in the user \.npmrc: environment variable CALAVERA_UNSET_HOST is not set\.$/m);
 });
 
-test("a registry URL with credentials is rejected, naming the auth keys and not the value", async () => {
+test("a username and password in a registry URL are removed with a warning that names the setting, not the value", async () => {
   const context = await fixture({
-    project: `${SCOPE}:registry=https://alice:${SECRET}@registry.example.com/\n`,
+    project: `${SCOPE}:registry=https://alice:${SECRET}@registry.example.com/npm/\n`,
   });
-  await assert.rejects(
-    () => loadNpmRegistryOptions(context),
-    (error) => {
-      assert.match(error.message, /@schalkneethling:registry/);
-      assert.match(error.message, /_authToken/);
-      assert.match(error.message, /_password/);
-      assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(`${SECRET}|alice`));
-      return true;
-    },
+  const result = await loadNpmRegistryOptions(context);
+  assert.deepEqual(result.options, { [`${SCOPE}:registry`]: "https://registry.example.com/npm/" });
+  assert.equal(result.registryUrl, "https://registry.example.com/npm/");
+  assert.deepEqual(result.warnings, [
+    "Used @schalkneethling:registry from the project .npmrc without the username and password in its URL: Calavera sends no credentials to any registry.",
+  ]);
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(`${SECRET}|alice`));
+
+  const plain = await loadNpmRegistryOptions(
+    await fixture({ user: `registry=https://${SECRET}@registry.example.com/\n` }),
   );
-  const plain = await fixture({ user: `registry=https://${SECRET}@registry.example.com/\n` });
-  await assert.rejects(() => loadNpmRegistryOptions(plain), /registry.*_authToken/s);
+  assert.equal(plain.options.registry, "https://registry.example.com/");
+  assert.match(plain.warnings[0], /^Used registry from the user \.npmrc without the username/);
+  assert.doesNotMatch(inspect(plain, { depth: 10 }), new RegExp(SECRET));
+});
+
+test("a registry value with a variable stops the command, from every npm layer, without echoing the value", async () => {
+  /** @type {[{ project?: string, user?: string, env?: Record<string, string> }, RegExp][]} */
+  const cases = [
+    [
+      { user: `registry=https://npm.example.com/\${TOKEN}/\n` },
+      /^The npm configuration key registry in the user \.npmrc contains a variable reference\./,
+    ],
+    [
+      { project: `${SCOPE}:registry=https://npm.example.com/\${TOKEN}/\n` },
+      /^The npm configuration key @schalkneethling:registry in the project \.npmrc contains a variable reference\./,
+    ],
+    [
+      { env: { npm_config_registry: `https://npm.example.com/\${TOKEN}/` } },
+      /^The npm configuration key registry in the environment contains a variable reference\./,
+    ],
+    // An unset variable stops the command too, rather than falling back to another registry.
+    [
+      { user: `registry=https://npm.example.com/\${CALAVERA_UNSET_TOKEN}/\n` },
+      /registry in the user \.npmrc contains a variable reference/,
+    ],
+  ];
+  for (const [files, message] of cases) {
+    const context = await fixture({
+      user: "registry=https://fallback.example.com/\n",
+      ...files,
+      env: { TOKEN: SECRET, ...files.env },
+    });
+    await assert.rejects(loadNpmRegistryOptions(context), (error) => {
+      assert.match(error.message, message);
+      assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(`${SECRET}|npm\\.example`));
+      return true;
+    });
+  }
 });
 
 test("only the registry and the artifact scope registry are validated", async () => {
@@ -177,31 +208,47 @@ test("npm_config_userconfig expands ~ and variables, and a project userconfig is
   assert.equal(viaHome.options.registry, "https://default.example.com/");
 });
 
-test("auth settings pass through in the form npm-registry-fetch reads", async () => {
+test("no credential key is returned or named, from any npm layer, and only allowlisted options come back", async () => {
+  const credentials = (/** @type {string} */ host) =>
+    [
+      `//${host}/:_authToken=${SECRET}`,
+      `//${host}/:_auth=${SECRET}`,
+      `//${host}/:username=alice`,
+      `//${host}/:_password=${SECRET}`,
+      `//${host}/:certfile=/etc/${SECRET}.pem`,
+      `//${host}/:keyfile=/etc/${SECRET}.key`,
+      `_authToken=${SECRET}`,
+      `cert=${SECRET}`,
+      `key=${SECRET}`,
+      "strict-ssl=false",
+      "",
+    ].join("\n");
   const context = await fixture({
-    user: [
-      "//a.example.com/:_auth=YWxpY2U6cHc=",
-      "//b.example.com/:username=alice",
-      "//b.example.com/:_password=cHc=",
-      "//c.example.com/:certfile=/etc/cert.pem",
-      "//c.example.com/:keyfile=/etc/key.pem",
-      "//d.example.com/:email=ignored@example.com",
-      "_authToken=not-nerf-darted",
-    ].join("\n"),
+    user: `registry=https://registry.example.com/\n${credentials("registry.example.com")}`,
+    project: `${SCOPE}:registry=https://scoped.example.com/\n${credentials("scoped.example.com")}`,
+    env: {
+      "npm_config_//registry.example.com/:_authToken": SECRET,
+      npm_config__auth: SECRET,
+      npm_config_cert: SECRET,
+      npm_config_force_auth: SECRET,
+    },
   });
-  const { options } = await loadNpmRegistryOptions(context);
-  assert.deepEqual(options, {
-    "//a.example.com/:_auth": "YWxpY2U6cHc=",
-    "//b.example.com/:username": "alice",
-    "//b.example.com/:_password": "cHc=",
-    "//c.example.com/:certfile": "/etc/cert.pem",
-    "//c.example.com/:keyfile": "/etc/key.pem",
+  const result = await loadNpmRegistryOptions(context);
+  assert.deepEqual(result.options, {
+    registry: "https://registry.example.com/",
+    [`${SCOPE}:registry`]: "https://scoped.example.com/",
   });
+  assert.deepEqual([result.warnings, result.diagnostics], [[], []]);
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(`${SECRET}|alice`));
 });
 
 test("the effective registry and where it came from are reported", async () => {
   const none = await loadNpmRegistryOptions(await fixture({}));
-  assert.deepEqual(none.registry, { origin: "https://registry.npmjs.org", source: "default" });
+  assert.deepEqual(none.registry, {
+    origin: "https://registry.npmjs.org",
+    source: "default",
+    setting: null,
+  });
 
   const user = await loadNpmRegistryOptions(
     await fixture({ user: "registry=https://user.example.com:8443/\n" }),
@@ -209,6 +256,7 @@ test("the effective registry and where it came from are reported", async () => {
   assert.deepEqual(user.registry, {
     origin: "https://user.example.com:8443",
     source: "user .npmrc",
+    setting: "registry",
   });
 
   const project = await loadNpmRegistryOptions(
@@ -220,6 +268,7 @@ test("the effective registry and where it came from are reported", async () => {
   assert.deepEqual(project.registry, {
     origin: "https://project.example.com",
     source: "project .npmrc",
+    setting: "@schalkneethling:registry",
   });
 
   const env = await loadNpmRegistryOptions(
@@ -228,7 +277,11 @@ test("the effective registry and where it came from are reported", async () => {
       env: { NPM_CONFIG_REGISTRY: "https://env.example.com/" },
     }),
   );
-  assert.deepEqual(env.registry, { origin: "https://env.example.com", source: "environment" });
+  assert.deepEqual(env.registry, {
+    origin: "https://env.example.com",
+    source: "environment",
+    setting: "registry",
+  });
 });
 
 // What `npm exec` and `npm run` export to a child, captured with npm 11.19.0 for a project
@@ -248,16 +301,14 @@ function npmExecEnvironment(cwd, userconfig) {
   };
 }
 
-test("a registry that npm expanded from the project .npmrc is not trusted as the environment", async () => {
+test("a registry that npm expanded from the project .npmrc stops the command, naming the project file", async () => {
   const context = await fixture({ project: "registry=https://evil.example/${SECRET_X}/\n" });
   const env = npmExecEnvironment(context.cwd, context.env.npm_config_userconfig);
-  const result = await loadNpmRegistryOptions({ ...context, env });
-  assert.equal(result.options.registry, undefined);
-  assert.deepEqual(result.registry, { origin: "https://registry.npmjs.org", source: "default" });
-  assert.equal(result.warnings.length, 1);
-  assert.match(result.warnings[0], /registry/);
-  assert.match(result.warnings[0], /project \.npmrc/);
-  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_X));
+  await assert.rejects(loadNpmRegistryOptions({ ...context, env }), (error) => {
+    assert.match(error.message, /^The npm configuration key registry in the project \.npmrc contains a variable reference\./);
+    assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(`${SECRET_X}|evil`));
+    return true;
+  });
 });
 
 test("npm run exports the same shape, so it is handled the same way", async () => {
@@ -267,9 +318,11 @@ test("npm run exports the same shape, so it is handled the same way", async () =
     npm_command: "run",
     npm_lifecycle_event: "show",
   };
-  const result = await loadNpmRegistryOptions({ ...context, env });
-  assert.equal(result.options.registry, undefined);
-  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_X));
+  await assert.rejects(loadNpmRegistryOptions({ ...context, env }), (error) => {
+    assert.match(error.message, /registry in the project \.npmrc contains a variable reference/);
+    assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(SECRET_X));
+    return true;
+  });
 });
 
 test("a registry that npm exported from a literal project .npmrc value is labeled as the project", async () => {
@@ -282,21 +335,27 @@ test("a registry that npm exported from a literal project .npmrc value is labele
   assert.deepEqual(result.registry, {
     origin: "https://project.example.com",
     source: "project .npmrc",
+    setting: "registry",
   });
 });
 
-test("a registry that npm exported from the user .npmrc is labeled as the user file", async () => {
-  const context = await fixture({ user: "registry=https://user.example.com/${SECRET_X}/\n" });
+test("npm's exported copy of a user .npmrc registry with a variable counts as the user file's value, so the command stops", async () => {
+  const TOKEN = "fake-path-token-0123456789";
+  const context = await fixture({ user: "registry=https://npm.example.com/${TOKEN}/\n" });
   const env = {
     ...npmExecEnvironment(context.cwd, context.env.npm_config_userconfig),
-    npm_config_registry: `https://user.example.com/${SECRET_X}/`,
+    TOKEN,
+    npm_config_registry: `https://npm.example.com/${TOKEN}/`,
   };
-  const result = await loadNpmRegistryOptions({ ...context, env });
-  assert.equal(result.registry.source, "user .npmrc");
+  await assert.rejects(loadNpmRegistryOptions({ ...context, env }), (error) => {
+    assert.match(error.message, /^The npm configuration key registry in the user \.npmrc contains a variable reference\./);
+    assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(TOKEN));
+    return true;
+  });
 });
 
 test("an explicit npm_config_registry still wins under npm when it differs from the project file", async () => {
-  const context = await fixture({ project: "registry=https://evil.example/${SECRET_X}/\n" });
+  const context = await fixture({ project: "registry=https://project.example.com/\n" });
   const env = {
     ...npmExecEnvironment(context.cwd, context.env.npm_config_userconfig),
     npm_config_registry: "https://chosen.example.com/",
@@ -305,19 +364,22 @@ test("an explicit npm_config_registry still wins under npm when it differs from 
   assert.deepEqual(result.registry, {
     origin: "https://chosen.example.com",
     source: "environment",
+    setting: "registry",
   });
 });
 
 test("the project file is not consulted for the environment when npm did not start Calavera", async () => {
-  const context = await fixture({ project: "registry=https://evil.example/${SECRET_X}/\n" });
-  const { npm_command, npm_lifecycle_event, npm_execpath, npm_config_local_prefix, ...env } =
-    npmExecEnvironment(context.cwd, context.env.npm_config_userconfig);
+  const context = await fixture({ project: "registry=https://chosen.example.com/\n" });
+  const { npm_command, npm_lifecycle_event, npm_execpath, npm_config_local_prefix, ...env } = {
+    ...npmExecEnvironment(context.cwd, context.env.npm_config_userconfig),
+    npm_config_registry: "https://chosen.example.com/",
+  };
   void [npm_command, npm_lifecycle_event, npm_execpath, npm_config_local_prefix];
   const result = await loadNpmRegistryOptions({ ...context, env });
   assert.equal(result.registry.source, "environment");
 });
 
-test("the environment npm creates for a real npm exec does not reach a request", async (t) => {
+test("the environment npm creates for a real npm exec stops the command and does not reach a request", async (t) => {
   const execFileAsync = promisify(execFile);
   const context = await fixture({ project: "registry=https://evil.example/${SECRET_X}/\n" });
   // Start from an environment without npm_config_* so the developer's own settings do not leak in.
@@ -340,9 +402,11 @@ test("the environment npm creates for a real npm exec does not reach a request",
   }
   const captured = JSON.parse(output);
   assert.equal(captured.npm_config_registry, `https://evil.example/${SECRET_X}/`);
-  const result = await loadNpmRegistryOptions({ ...context, env: captured });
-  assert.equal(result.options.registry, undefined);
-  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_X));
+  await assert.rejects(loadNpmRegistryOptions({ ...context, env: captured }), (error) => {
+    assert.match(error.message, /registry in the project \.npmrc contains a variable reference/);
+    assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(SECRET_X));
+    return true;
+  });
 });
 
 test("a project .npmrc cannot choose an http registry", async () => {
@@ -362,81 +426,42 @@ test("an http registry from the user .npmrc or the environment is allowed", asyn
   const user = await loadNpmRegistryOptions(
     await fixture({ user: "registry=http://registry.example.com/\n" }),
   );
-  assert.deepEqual(user.registry, { origin: "http://registry.example.com", source: "user .npmrc" });
+  assert.deepEqual(user.registry, {
+    origin: "http://registry.example.com",
+    source: "user .npmrc",
+    setting: "registry",
+  });
+  assert.deepEqual(user.warnings, []);
   const env = await loadNpmRegistryOptions(
     await fixture({ env: { npm_config_registry: "http://registry.example.com/" } }),
   );
-  assert.deepEqual(env.registry, { origin: "http://registry.example.com", source: "environment" });
-});
-
-test("an http registry with credentials for its host warns that Calavera sends none to it", async () => {
-  const withToken = await loadNpmRegistryOptions(
-    await fixture({
-      user: "registry=http://registry.example.com/\n//registry.example.com/:_authToken=abc\n",
-    }),
-  );
-  assert.equal(withToken.warnings.length, 1);
-  assert.match(withToken.warnings[0], /http:\/\/registry\.example\.com/);
-  assert.match(withToken.warnings[0], /uses http, so Calavera sends no credentials to it/);
-  assert.doesNotMatch(withToken.warnings[0], /abc/);
-
-  const withoutToken = await loadNpmRegistryOptions(
-    await fixture({ user: "registry=http://registry.example.com/\n" }),
-  );
-  assert.deepEqual(withoutToken.warnings, []);
-
-  const https = await loadNpmRegistryOptions(
-    await fixture({
-      user: "registry=https://registry.example.com/\n//registry.example.com/:_authToken=abc\n",
-    }),
-  );
-  assert.deepEqual(https.warnings, []);
-});
-
-test("a control character in a project key cannot reach a warning", async () => {
-  const key = "//evil.example/\u001b[31mred\u001b]0\u0007:_authToken";
-  const context = await fixture({ project: `${key}=\${SECRET_X}\n` });
-  const { warnings, diagnostics } = await loadNpmRegistryOptions(context);
-  assert.equal(warnings.length, 1);
-  for (const text of [...warnings, ...diagnostics]) {
-    assert.doesNotMatch(text, /\p{Cc}/u);
-    assert.match(text, /evil\.example/);
-  }
-
-  const long = await fixture({
-    project: `//${"a".repeat(500)}.example/:_authToken=\${SECRET_X}\n`,
+  assert.deepEqual(env.registry, {
+    origin: "http://registry.example.com",
+    source: "environment",
+    setting: "registry",
   });
-  assert.ok((await loadNpmRegistryOptions(long)).warnings[0].length < 400);
 });
 
-test("certfile and keyfile are read from the user .npmrc only", async () => {
-  const context = await fixture({
-    project: "//a.example.com/:certfile=/etc/cert.pem\n//a.example.com/:keyfile=/etc/key.pem\n",
-    user: "//b.example.com/:certfile=/etc/cert.pem\n//b.example.com/:keyfile=/etc/key.pem\n",
-  });
-  const { options, warnings } = await loadNpmRegistryOptions(context);
-  assert.deepEqual(Object.keys(options).sort(), [
-    "//b.example.com/:certfile",
-    "//b.example.com/:keyfile",
-  ]);
-  assert.equal(warnings.length, 2);
-  assert.match(warnings[0], /\/\/a\.example\.com\/:certfile/);
-  assert.match(warnings[1], /\/\/a\.example\.com\/:keyfile/);
-  assert.doesNotMatch(warnings.join("\n"), /\/etc\//);
+test("a key outside the allowlist, however it is written, is dropped without a warning", async () => {
+  const keys = [
+    "//evil.example/\u001b[31mred\u001b]0\u0007:_authToken",
+    `//${"a".repeat(500)}.example/:_authToken`,
+  ];
+  const context = await fixture({ project: keys.map((key) => `${key}=\${SECRET_X}\n`).join("") });
+  const { options, warnings, diagnostics } = await loadNpmRegistryOptions(context);
+  assert.deepEqual([options, warnings, diagnostics], [{}, [], []]);
 });
 
-test("a registry URL with credentials in the environment is rejected", async () => {
+test("a username and password in an environment registry URL are removed with a warning", async () => {
   const context = await fixture({
     env: { npm_config_registry: `https://alice:${SECRET}@registry.example.com/` },
   });
-  await assert.rejects(
-    () => loadNpmRegistryOptions(context),
-    (error) => {
-      assert.match(error.message, /_authToken/);
-      assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(`${SECRET}|alice`));
-      return true;
-    },
-  );
+  const result = await loadNpmRegistryOptions(context);
+  assert.equal(result.options.registry, "https://registry.example.com/");
+  assert.deepEqual(result.warnings, [
+    "Used registry from the environment without the username and password in its URL: Calavera sends no credentials to any registry.",
+  ]);
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(`${SECRET}|alice`));
 });
 
 const PROXY_SECRET = "PROXYPASS0123456789";
@@ -525,9 +550,9 @@ test("a project .npmrc proxy with a variable reference is ignored like other pro
   assert.doesNotMatch(inspect(warnings), new RegExp(PROXY_SECRET));
 });
 
-test("a project .npmrc proxy is ignored for an http registry, so it cannot read credentials in plain text", async () => {
+test("a project .npmrc proxy is ignored for an http registry, so it cannot change packages in transit", async () => {
   const context = await fixture({
-    user: "registry=http://registry.example.com/\n//registry.example.com/:_authToken=user-token\n",
+    user: "registry=http://registry.example.com/\n",
     project: "proxy=http://proxy.example.com/\nhttps-proxy=http://proxy.example.com/\n",
   });
   const { options, warnings } = await loadNpmRegistryOptions(context);
@@ -542,13 +567,6 @@ test("a user .npmrc proxy is still used for an http registry", async () => {
   });
   const { options } = await loadNpmRegistryOptions(context);
   assert.equal(options.proxy, "http://proxy.example.com/");
-});
-
-test("a long project key is shortened in a warning", async () => {
-  const key = `//${"a".repeat(200)}.example.com/:_authToken`;
-  const context = await fixture({ project: `${key}=\${NPM_TOKEN}\n` });
-  const { warnings } = await loadNpmRegistryOptions(context);
-  assert.match(warnings[0], new RegExp(`Ignored //${"a".repeat(118)}\\.\\.\\. in the project`));
 });
 
 test("an empty proxy in a later file unsets the proxy, as an empty npm setting does", async () => {
@@ -628,7 +646,6 @@ async function npmExecFromBelowRoot({ npmrc, member, rootPackage, memberPackage,
   return {
     cwd,
     scope: SCOPE,
-    accountHome: join(directory, "account-home"),
     env: {
       npm_config_userconfig: join(directory, "missing.npmrc"),
       npm_command: "exec",
@@ -669,6 +686,7 @@ test("under npm exec from a subdirectory without package.json, the package root 
   assert.deepEqual(registry, {
     origin: "https://project-registry.example.com",
     source: "project .npmrc",
+    setting: "registry",
   });
 });
 
@@ -727,6 +745,7 @@ test("under npm exec, a workspace member's own .npmrc is not read, as npm ignore
   assert.deepEqual((await loadNpmRegistryOptions(context)).registry, {
     origin: "https://root-registry.example.com",
     source: "project .npmrc",
+    setting: "registry",
   });
 });
 
@@ -742,6 +761,7 @@ test("under npm exec, a local prefix at the user .npmrc folder is not read twice
   assert.deepEqual((await loadNpmRegistryOptions(context)).registry, {
     origin: "http://user-registry.example.com",
     source: "user .npmrc",
+    setting: "registry",
   });
 });
 
@@ -824,265 +844,30 @@ test("for an http registry, the ignored project proxy warning names HTTP_PROXY",
   );
 });
 
-const SENTINEL = "SENTINELSECRET0123456789";
-
-/**
- * Whether any option names the host or carries the sentinel. Only the verdict is reported, never
- * the options, which hold credentials.
- * @param {Record<string, string>} options
- */
-function leaks(options, host = "evil.example.com") {
-  return Object.entries(options).some(
-    ([key, value]) => keyHostname(key) === host || String(value).includes(SENTINEL),
-  );
-}
-
-/**
- * The host name of a nerf-darted key such as //registry.example.com/:_authToken, parsed as a URL
- * so that it compares exactly, or undefined for any other key.
- * @param {string} key
- */
-function keyHostname(key) {
-  const match = /^\/\/([^/]+)\//.exec(key);
-  return match && URL.canParse(`https://${match[1]}`)
-    ? new URL(`https://${match[1]}`).hostname
-    : undefined;
-}
-
-/**
- * The key a warning names in "Ignored <key> in the ...", for exact comparison.
- * @param {string} warning
- */
-function ignoredKey(warning) {
-  return /^Ignored (\S+) in the /.exec(warning)?.[1];
-}
-
-/**
- * An account home folder with a real-user .npmrc that holds a fake token for registry.example.com.
- * @param {string} directory
- */
-async function accountHomeWithToken(directory) {
-  const accountHome = join(directory, "account-home");
-  await mkdir(accountHome, { recursive: true });
-  await writeFile(
-    join(accountHome, ".npmrc"),
-    "//registry.example.com/:_authToken=fake-account-token\n",
-  );
-  return accountHome;
-}
-
-test("invariant 2: under a package manager, credentials come only from the account's ~/.npmrc, not a chosen userconfig", async () => {
-  const context = await fixture({
-    user: `//evil.example.com/:_authToken=\${SENTINEL_SECRET}\nregistry=https://evil.example.com/\n`,
-    env: { npm_command: "exec", SENTINEL_SECRET: SENTINEL },
-  });
-  const accountHome = await accountHomeWithToken(context.directory);
-  const { options, warnings } = await loadNpmRegistryOptions({ ...context, accountHome });
-  assert.equal(leaks(options), false);
-  assert.equal(options["//registry.example.com/:_authToken"], "fake-account-token");
-  assert.ok(warnings.some((warning) => ignoredKey(warning) === "//evil.example.com/:_authToken"));
-  assert.doesNotMatch(inspect(warnings), new RegExp(SENTINEL));
-});
-
-test("invariant 2: a project .npmrc userconfig cannot bring in credentials under npm exec", async () => {
-  const directory = await temporaryDirectory("calavera-npm-config-invariant-");
-  const cwd = join(directory, "repo");
-  await mkdir(cwd);
-  const evil = join(cwd, "evil.npmrc");
-  await writeFile(evil, `//evil.example.com/:_authToken=\${SENTINEL_SECRET}\n`);
-  await writeFile(join(cwd, ".npmrc"), "userconfig=./evil.npmrc\n");
-  const accountHome = await accountHomeWithToken(directory);
-  const { options } = await loadNpmRegistryOptions({
-    cwd,
-    scope: SCOPE,
-    accountHome,
-    env: {
-      HOME: join(directory, "home"),
-      SENTINEL_SECRET: SENTINEL,
-      npm_command: "exec",
-      npm_config_local_prefix: cwd,
-      npm_config_userconfig: evil,
-    },
-  });
-  assert.equal(leaks(options), false);
-  assert.equal(options["//registry.example.com/:_authToken"], "fake-account-token");
-});
-
-test("invariant 2: spoofed user agents do not let project or chosen files supply credentials", async () => {
-  // pnpm exports a pnpm-workspace.yaml userAgent as npm_config_user_agent without a local prefix.
-  const pnpmSpoof = await fixture({
-    project: "//evil.example.com/:_authToken=literal-project-token\n",
-    env: { npm_lifecycle_event: "probe", npm_config_user_agent: "bun/1.3.9 npm/? node/v24" },
-  });
-  const pnpmHome = await accountHomeWithToken(pnpmSpoof.directory);
+test("pacoteTarballUrl moves a registry.npmjs.org tarball onto the given registry, as pacote does, and leaves other hosts", () => {
+  const npmjs = "https://registry.npmjs.org/@schalkneethling/a/-/a-1.0.0.tgz";
+  // The artifact scope's registry; pacote keeps the tarball path and drops the registry's path.
   assert.equal(
-    leaks((await loadNpmRegistryOptions({ ...pnpmSpoof, accountHome: pnpmHome })).options),
-    false,
+    pacoteTarballUrl(npmjs, "https://mirror.example.com/npm/"),
+    "https://mirror.example.com/@schalkneethling/a/-/a-1.0.0.tgz",
   );
+  // The default registry, when no scope registry applies.
+  assert.equal(pacoteTarballUrl(npmjs, "https://registry.npmjs.org/"), npmjs);
+  const other = "https://cdn.example.com/a-1.0.0.tgz";
+  assert.equal(pacoteTarballUrl(other, "https://mirror.example.com/"), other);
+  assert.equal(pacoteTarballUrl("not a url", "https://mirror.example.com/"), "not a url");
+});
 
-  // A workspace-root .npmrc user-agent, run from a member.
-  const member = await npmExecFromBelowRoot({
-    npmrc:
-      "user-agent=yarn/4.9.1 npm/? node/v24\n//evil.example.com/:_authToken=literal-root-token\n",
-    member: "packages/web",
-    rootPackage: { name: "repo", workspaces: ["packages/*"] },
-    memberPackage: { name: "web" },
-    exported: { npm_config_user_agent: "yarn/4.9.1 npm/? node/v24" },
+test("registryUrl is the artifact scope's registry, then the default registry, then npm's default", async () => {
+  const scoped = await fixture({
+    user: "registry=https://default.example.com/\n",
+    project: `${SCOPE}:registry=https://scoped.example.com/npm/\n`,
   });
-  const memberHome = await accountHomeWithToken(join(member.cwd, "..", ".."));
+  assert.equal((await loadNpmRegistryOptions(scoped)).registryUrl, "https://scoped.example.com/npm/");
+  const fallback = await fixture({ user: "registry=https://default.example.com/\n" });
+  assert.equal((await loadNpmRegistryOptions(fallback)).registryUrl, "https://default.example.com/");
   assert.equal(
-    leaks((await loadNpmRegistryOptions({ ...member, accountHome: memberHome })).options),
-    false,
+    (await loadNpmRegistryOptions(await fixture({}))).registryUrl,
+    "https://registry.npmjs.org/",
   );
-
-  // A user-agent in a chosen user file.
-  const chosen = await fixture({
-    user: `user-agent=bun/1.3.9\n//evil.example.com/:_authToken=\${SENTINEL_SECRET}\n`,
-    env: { npm_command: "exec", npm_config_user_agent: "bun/1.3.9", SENTINEL_SECRET: SENTINEL },
-  });
-  const chosenHome = await accountHomeWithToken(chosen.directory);
-  assert.equal(
-    leaks((await loadNpmRegistryOptions({ ...chosen, accountHome: chosenHome })).options),
-    false,
-  );
-});
-
-test("outside a package manager, the userconfig the caller names still supplies credentials", async () => {
-  const context = await fixture({ user: "//registry.example.com/:_authToken=from-userconfig\n" });
-  const { options } = await loadNpmRegistryOptions(context);
-  assert.equal(options["//registry.example.com/:_authToken"], "from-userconfig");
-});
-
-test("invariant 1: requestOptions removes every credential for a plain-http URL and keeps them for https", async () => {
-  const options = {
-    registry: "https://registry.example.com/",
-    "//registry.example.com/:_authToken": "fake-token",
-    "//registry.example.com/:username": "me",
-    "//registry.example.com/:_password": "cGFzcw==",
-    "//registry.example.com/:_auth": "bWU6cGFzcw==",
-    "//registry.example.com/:certfile": "/cert.pem",
-    "//registry.example.com/:keyfile": "/key.pem",
-    httpsProxy: "http://proxy.example.com/",
-  };
-  const http = requestOptions(options, "http://registry.example.com/pkg/-/pkg-1.0.0.tgz");
-  assert.deepEqual(Object.keys(http).sort(), ["httpsProxy", "registry"]);
-  assert.deepEqual(requestOptions(options, "https://registry.example.com/pkg"), options);
-});
-
-test("invariant 1: a registry.npmjs.org tarball that pacote rewrites onto an http registry loses its credentials", async () => {
-  const options = {
-    registry: "http://mirror.example.com/",
-    "//registry.npmjs.org/:_authToken": "fake-npmjs-token",
-    "//mirror.example.com/:_authToken": "fake-mirror-token",
-  };
-  const url = pacoteTarballUrl("https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz", options);
-  assert.equal(url, "http://mirror.example.com/pkg/-/pkg-1.0.0.tgz");
-  assert.deepEqual(Object.keys(requestOptions(options, url)), ["registry"]);
-  // A tarball on another host is fetched as written.
-  assert.equal(
-    pacoteTarballUrl("https://cdn.example.com/pkg-1.0.0.tgz", options),
-    "https://cdn.example.com/pkg-1.0.0.tgz",
-  );
-});
-
-test("invariant 2: a Yarn 4 bin or exec start, which sets no lifecycle variable, still locks credentials", async () => {
-  const context = await fixture({
-    user: `//evil.example.com/:_authToken=\${SENTINEL_SECRET}\n`,
-    env: {
-      SENTINEL_SECRET: SENTINEL,
-      npm_config_user_agent: "yarn/4.18.1 npm/? node/v24.3.0 darwin arm64",
-      npm_execpath: "/usr/local/lib/node_modules/yarn/bin/yarn.js",
-    },
-  });
-  const accountHome = await accountHomeWithToken(context.directory);
-  const { options } = await loadNpmRegistryOptions({ ...context, accountHome });
-  assert.equal(leaks(options), false);
-});
-
-test("invariant 2: a variable in a credential key of ~/.npmrc is not expanded under a package manager", async () => {
-  const context = await fixture({ env: { npm_command: "exec", TOKEN_HOST: "evil.example.com" } });
-  const accountHome = join(context.directory, "account-home");
-  await mkdir(accountHome);
-  await writeFile(join(accountHome, ".npmrc"), "//${TOKEN_HOST}/:_authToken=fake-account-token\n");
-  const { options, warnings } = await loadNpmRegistryOptions({ ...context, accountHome });
-  assert.equal(leaks(options), false);
-  assert.ok(warnings.some((warning) => ignoredKey(warning) === "//${TOKEN_HOST}/:_authToken"));
-});
-
-test("invariant 2: when the account home folder is unknown, every credential is ignored and the warning says why", async () => {
-  const context = await fixture({
-    user: "//registry.example.com/:_authToken=fake-token\n",
-    env: { npm_command: "exec" },
-  });
-  const { options, warnings } = await loadNpmRegistryOptions({ ...context, accountHome: "" });
-  assert.equal(options["//registry.example.com/:_authToken"], undefined);
-  assert.match(warnings[0], /the home folder of the operating system account is unknown/);
-});
-
-test("invariant 2: a key that becomes a credential key only after expansion is ignored under a package manager", async () => {
-  const context = await fixture({
-    user: `//evil.example.com/:\${TOKEN_NAME}=\${SENTINEL_SECRET}\n\${WHOLE_KEY}=\${SENTINEL_SECRET}\n`,
-    env: {
-      npm_config_user_agent: "yarn/4.18.1 npm/? node/v24.3.0",
-      TOKEN_NAME: "_authToken",
-      WHOLE_KEY: "//evil2.example.com/:_authToken",
-      SENTINEL_SECRET: SENTINEL,
-    },
-  });
-  const { options } = await loadNpmRegistryOptions(context);
-  assert.equal(leaks(options), false);
-  assert.equal(leaks(options, "evil2.example.com"), false);
-});
-
-test("invariant 2: npm_execpath alone locks credentials", async () => {
-  const context = await fixture({
-    user: `//evil.example.com/:_authToken=\${SENTINEL_SECRET}\n`,
-    env: { SENTINEL_SECRET: SENTINEL, npm_execpath: "/opt/package-manager/bin/cli.js" },
-  });
-  const accountHome = await accountHomeWithToken(context.directory);
-  const { options } = await loadNpmRegistryOptions({ ...context, accountHome });
-  assert.equal(leaks(options), false);
-  assert.equal(options["//registry.example.com/:_authToken"], "fake-account-token");
-});
-
-test("invariant 2: the account home comes from os.userInfo(), not HOME", async () => {
-  const directory = await temporaryDirectory("calavera-npm-config-account-home-");
-  const home = join(directory, "home");
-  const account = join(directory, "account");
-  const project = join(directory, "project");
-  for (const folder of [home, account, project]) await mkdir(folder);
-  await writeFile(join(home, ".npmrc"), "//registry.example.com/:_authToken=fake-home-token\n");
-  await writeFile(
-    join(account, ".npmrc"),
-    "//registry.example.com/:_authToken=fake-account-token\n",
-  );
-  // A child process with a stubbed os.userInfo, so the real account's ~/.npmrc is never read. It
-  // reports booleans only, never a value.
-  const script = join(directory, "probe.mjs");
-  const loader = new URL("../src/npm-config.js", import.meta.url).href;
-  await writeFile(
-    script,
-    `import os from "node:os";
-import { syncBuiltinESMExports } from "node:module";
-let stubbed = false;
-os.userInfo = () => { stubbed = true; return { homedir: process.env.STUB_ACCOUNT_HOME, username: "probe", uid: -1, gid: -1, shell: null }; };
-syncBuiltinESMExports();
-const { loadNpmRegistryOptions } = await import(${JSON.stringify(loader)});
-const { options } = await loadNpmRegistryOptions({
-  cwd: process.env.PROBE_CWD,
-  env: { HOME: process.env.PROBE_HOME, npm_command: "exec" },
-});
-const token = options["//registry.example.com/:_authToken"];
-console.log(JSON.stringify({ stubbed, account: token === "fake-account-token", home: token === "fake-home-token" }));
-`,
-  );
-  const { stdout } = await promisify(execFile)(process.execPath, [script], {
-    env: {
-      PATH: process.env.PATH,
-      STUB_ACCOUNT_HOME: account,
-      PROBE_HOME: home,
-      PROBE_CWD: project,
-    },
-  });
-  assert.deepEqual(JSON.parse(stdout), { stubbed: true, account: true, home: false });
 });

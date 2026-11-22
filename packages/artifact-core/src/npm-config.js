@@ -1,6 +1,6 @@
 // @ts-check
 import { access } from "node:fs/promises";
-import { homedir, userInfo } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 
 import { decode } from "ini";
@@ -18,18 +18,13 @@ import {
 
 // pacote and npm-registry-fetch do not read .npmrc files. The npm CLI loads them with
 // @npmcli/config and passes the result as options. This loader reproduces only the part that
-// decides where a request goes, through which proxy, and how it authenticates, with npm's
-// precedence for those keys: user .npmrc, then project .npmrc, then npm_config_* environment
+// decides where a request goes and through which proxy, with npm's precedence for those keys: user .npmrc, then project .npmrc, then npm_config_* environment
 // variables. Global and built-in npmrc files, command-line flags, and other settings (CA) are not
 // read. The project .npmrc is the one in `cwd`, or, when npm started Calavera, the one at npm's
 // local prefix, which is the file npm itself read.
 // Under Yarn 2 or later and Bun, the registry comes from their own settings; see
 // launcher-config.js.
 const DEFAULT_REGISTRY = "https://registry.npmjs.org/";
-// Nerf-darted keys such as //registry.example.com/:_authToken, as read by npm-registry-fetch.
-const AUTH_KEY = /^\/\/.+:(?:_authToken|_auth|username|_password|certfile|keyfile)$/;
-// Certificate files name paths on this machine, so only the user .npmrc may set them.
-const CERTIFICATE_KEY = /:(?:certfile|keyfile)$/;
 // The .npmrc proxy keys (@npmcli/config definitions). npm flattens them to `proxy`, `httpsProxy`,
 // and `noProxy`, which npm-registry-fetch passes to @npmcli/agent as
 // `proxy: opts.httpsProxy || opts.proxy` and `noProxy`.
@@ -46,15 +41,15 @@ const PROXY_PROTOCOLS = new Set([
   "socks5:",
   "socks5h:",
 ]);
-// How warnings name the account's own user .npmrc, the only source of credentials when a package
-// manager starts Calavera.
-const ACCOUNT_NPMRC = "~/.npmrc";
 // Same expression as @npmcli/config: ${VAR}, ${VAR?} for an empty fallback, and backslash escapes.
 const ENV_EXPRESSION = /(?<!\\)(\\*)\$\{([^${}?]+)(\?)?\}/g;
 
 /**
  * @typedef {string} Layer A configuration source, such as "user .npmrc" or "project bunfig.toml".
- * @typedef {{ origin: string, source: Layer | "default" }} EffectiveRegistry
+ * @typedef {{ origin: string, source: Layer | "default", setting: string | null }} EffectiveRegistry
+ *   `setting` names the setting that chose the registry, such as `@schalkneethling:registry` or
+ *   `npmScopes.schalkneethling.npmRegistryServer`, and is null for the default registry. It is for
+ *   messages only; the CLI's registry output keeps `origin` and `source`.
  * @typedef {import("./launcher-config.js").LauncherLayer & { accepts?: (key: string) => boolean, npmEnvironment?: boolean }} ConfigLayer
  */
 
@@ -103,9 +98,10 @@ function environmentSettings(env) {
   const settings = {};
   for (const [name, value] of Object.entries(env)) {
     if (!/^npm_config_/i.test(name) || !value) continue;
-    let key = name.slice("npm_config_".length);
-    // Nerf-darted keys keep their case and underscores; every other key is kebab-case.
-    if (!key.startsWith("//")) key = key.replace(/(?!^)_/g, "-").toLowerCase();
+    const key = name
+      .slice("npm_config_".length)
+      .replace(/(?!^)_/g, "-")
+      .toLowerCase();
     // npm exports a list setting joined with blank lines (`envVal` in @npmcli/config
     // set-envs.js), but @npmcli/agent splits noProxy on commas only.
     settings[key] = key === "noproxy" ? value.split("\n\n").join(",") : value;
@@ -116,7 +112,7 @@ function environmentSettings(env) {
 /**
  * The key of `entries` whose value a package manager exported as the variable for `key`, if any.
  * A variable name keeps only letters, digits, and underscores, so other spellings of a key, such
- * as https_proxy or HTTPS-PROXY, export under the same name. Nerf-darted keys are never exported.
+ * as https_proxy or HTTPS-PROXY, export under the same name.
  * @param {Record<string, unknown>} entries
  * @param {string} key
  * @param {string} value
@@ -127,7 +123,6 @@ function exportedFrom(entries, key, value, env, otherSpellings = true) {
   return Object.keys(entries).find((fileKey) => {
     const fileValue = entries[fileKey];
     return (
-      !fileKey.startsWith("//") &&
       (otherSpellings ? normalizedKey(fileKey) : fileKey) === key &&
       typeof fileValue === "string" &&
       expandEnvironment(fileValue.trim(), env).text === value.trim()
@@ -161,33 +156,35 @@ async function userConfigPath(env, home, launcher) {
 }
 
 /**
- * Load the registry, proxy, and auth settings that the package manager that started Calavera
- * would apply to a request, in the option names pacote and npm-registry-fetch read: `registry`,
- * the registry of `scope`, `proxy`, `httpsProxy`, `noProxy`, and nerf-darted auth keys. Registries
- * of other scopes are not read, so a broken one cannot stop an unrelated install.
+ * Load the registry and proxy settings that the package manager that started Calavera would apply
+ * to a request, in the option names pacote and npm-registry-fetch read: `registry`, the registry
+ * of `scope`, `proxy`, `httpsProxy`, and `noProxy`. Every other key is dropped as each layer is
+ * read, so no registry credential (`//host/:_authToken`, `_auth`, `username`, `_password`,
+ * `certfile`, or `keyfile`) is read, expanded, returned, or named (ADR-0021). Registries of other
+ * scopes are not read, so a broken one cannot stop an unrelated install.
  *
  * Under npm and pnpm, the settings come from the .npmrc files and npm_config_* variables. Yarn 1
  * counts as npm here, unchanged by #1064; #1175 removes its support.
- * Under Yarn 2 or later, the registry and proxy come from .yarnrc.yml files and YARN_* variables,
- * and only the auth keys from the .npmrc files, because Yarn does not read them. Under Bun, the
- * bunfig.toml registry and then the first valid of BUN_CONFIG_REGISTRY, NPM_CONFIG_REGISTRY,
- * and npm_config_registry override the .npmrc registry, and the .npmrc proxy
- * keys are not read, because Bun does not support them.
+ * Under Yarn 2 or later, they come from .yarnrc.yml files and YARN_* variables only, and no .npmrc
+ * file or npm_config_* variable is read. Under Bun, the bunfig.toml registry and then the first
+ * valid of BUN_CONFIG_REGISTRY, NPM_CONFIG_REGISTRY, and npm_config_registry override the .npmrc
+ * registry, and the .npmrc proxy keys are not read, because Bun does not support them.
  *
- * `${VAR}` is expanded in keys and values of user files and the environment only. A project file
- * is repository content and must not read the caller's environment, so an entry of it that
- * contains `${` is ignored, and so is a proxy it sets.
+ * A registry value is never expanded: one that holds a variable reference stops the command, and
+ * a username and password in a registry URL are removed with a warning. `${VAR}` is expanded in
+ * proxy values of user files and the environment only. A project file is repository content and
+ * must not read the caller's environment, so a proxy value of it that contains `${` is ignored,
+ * and so is a proxy it sets.
  * `warnings` are for the user. `diagnostics` hold every ignored entry and unset variable, for
  * failure messages. `unsetVariables` lists variable names. None of them ever contains a value.
- * `accountHome` replaces the operating system account's home folder, for tests only.
- * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string, accountHome?: string }} [context]
- * @returns {Promise<{ options: Record<string, string>, registry: EffectiveRegistry, warnings: string[], diagnostics: string[], unsetVariables: string[] }>}
+ * `registryUrl` is the URL of the registry that serves `scope`, without user information.
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string }} [context]
+ * @returns {Promise<{ options: Record<string, string>, registry: EffectiveRegistry, registryUrl: string, warnings: string[], diagnostics: string[], unsetVariables: string[] }>}
  */
 export async function loadNpmRegistryOptions({
   cwd = process.cwd(),
   env = process.env,
   scope,
-  accountHome,
 } = {}) {
   /** @type {string[]} */
   const warnings = [];
@@ -202,80 +199,60 @@ export async function loadNpmRegistryOptions({
   // settings, so the comparison finds nothing. Bun and Yarn 2 or later also set
   // npm_lifecycle_event and similar variables, but read their own settings.
   const npmStarted = launcher === "npm" && startedByNpm(env);
-  // npm reads the project .npmrc at its local prefix: the nearest folder above the working
-  // directory with a package.json or node_modules, or the workspace root of a member
-  // (`loadLocalPrefix` and `loadProjectConfig` in @npmcli/config). It exports that folder as
-  // npm_config_local_prefix (`setEnvs`), and the file's values as npm_config_* variables.
-  // Reading the same file keeps those values labeled, and restricted, as project content.
-  const projectPath = resolve((npmStarted && env.npm_config_local_prefix) || cwd, ".npmrc");
-  const userPath = await userConfigPath(env, home, launcher);
-  // Invariant 2: when a package manager starts Calavera, the environment can carry repository
-  // content (npm exports project settings, a project can set userconfig or user-agent, and Yarn 4
-  // injects a committed .env.yarn). Credentials, and the ${VAR} expansion inside them, then come
-  // only from the account's own ~/.npmrc, with the home folder taken from the operating system
-  // account rather than HOME. Every other layer's credential keys are ignored with a warning.
-  // Yarn 4 sets no lifecycle variable for `yarn <bin>` or `yarn exec`, but every package manager
-  // sets npm_execpath or npm_config_user_agent. Spoofing either only makes Calavera stricter.
-  const credentialsLocked =
-    startedByNpm(env) || Boolean(env.npm_execpath || env.npm_config_user_agent);
-  const credentialHome = (accountHome ?? accountHomeFolder()) || undefined;
-  const credentialPath = credentialHome === undefined ? undefined : join(credentialHome, ".npmrc");
   const scopeKey = scope ? `${scope}:registry` : undefined;
   /** @param {string} key */
   const isRegistryKey = (key) => key === "registry" || key === scopeKey;
-  /** @type {Record<Launcher, (key: string) => boolean>} */
-  const npmKeys = {
-    npm: (key) => isRegistryKey(key) || AUTH_KEY.test(key) || NPM_PROXY_KEYS.has(key),
-    bun: (key) => isRegistryKey(key) || AUTH_KEY.test(key),
-    yarn: (key) => AUTH_KEY.test(key),
-  };
-  const accepts = npmKeys[launcher];
+  // The keys each launcher reads from .npmrc files and npm_config_* variables. Yarn 2 or later
+  // reads neither, so they are not read under it at all.
+  const accepts =
+    launcher === "bun"
+      ? isRegistryKey
+      : (/** @type {string} */ key) => isRegistryKey(key) || NPM_PROXY_KEYS.has(key);
 
-  const userEntries = await readNpmrc(userPath, warnings);
-  // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
-  const projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
+  /** @type {Record<string, unknown>} */
+  let userEntries = {};
+  /** @type {Record<string, unknown>} */
+  let projectEntries = {};
   /** @type {ConfigLayer[]} */
-  const npmFiles = [
-    { name: "user .npmrc", entries: userEntries, trusted: true, accepts },
-    { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
-  ];
-  /** @type {ConfigLayer | undefined} */
-  let credentialLayer;
-  if (credentialsLocked && credentialPath !== undefined) {
-    if (credentialPath === userPath) {
-      credentialLayer = npmFiles[0];
-    } else {
-      credentialLayer = {
-        name: ACCOUNT_NPMRC,
-        entries: await readNpmrc(credentialPath, warnings),
+  let npmLayers = [];
+  if (launcher !== "yarn") {
+    // npm reads the project .npmrc at its local prefix: the nearest folder above the working
+    // directory with a package.json or node_modules, or the workspace root of a member
+    // (`loadLocalPrefix` and `loadProjectConfig` in @npmcli/config). It exports that folder as
+    // npm_config_local_prefix (`setEnvs`), and the file's values as npm_config_* variables.
+    // Reading the same file keeps those values labeled, and restricted, as project content.
+    const projectPath = resolve((npmStarted && env.npm_config_local_prefix) || cwd, ".npmrc");
+    const userPath = await userConfigPath(env, home, launcher);
+    userEntries = await readNpmrc(userPath, warnings);
+    // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
+    projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
+    npmLayers = [
+      { name: "user .npmrc", entries: userEntries, trusted: true, accepts },
+      { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
+      {
+        name: "environment",
+        entries: environmentSettings(env),
         trusted: true,
-        accepts: (key) => AUTH_KEY.test(key),
-      };
-      npmFiles.push(credentialLayer);
-    }
+        // Under Bun, bunEnvironmentLayer reads the registry variables in Bun's own order.
+        accepts: launcher === "bun" ? (key) => key !== "registry" && accepts(key) : accepts,
+        npmEnvironment: true,
+      },
+    ];
   }
-  /** @type {ConfigLayer} */
-  const npmEnvironment = {
-    name: "environment",
-    entries: environmentSettings(env),
-    trusted: true,
-    // Under Bun, bunEnvironmentLayer reads the registry variables in Bun's own order.
-    accepts: launcher === "bun" ? (key) => key !== "registry" && accepts(key) : accepts,
-    npmEnvironment: true,
-  };
-  const launcherContext = { cwd, env, home, scope, warnings, notes };
+  const launcherContext = { cwd, env, home, scope, warnings };
   /** @type {ConfigLayer[]} */
   const layers =
     launcher === "yarn"
-      ? [...npmFiles, npmEnvironment, ...(await yarnLayers(launcherContext))]
+      ? await yarnLayers(launcherContext)
       : launcher === "bun"
         ? [
-            ...npmFiles,
+            npmLayers[0],
+            npmLayers[1],
             ...(await bunfigLayers(launcherContext)),
-            npmEnvironment,
+            npmLayers[2],
             bunEnvironmentLayer(env),
           ]
-        : [...npmFiles, npmEnvironment];
+        : npmLayers;
 
   /** @type {Record<string, string>} */
   const options = {};
@@ -285,111 +262,74 @@ export async function loadNpmRegistryOptions({
   const rejectedProxies = [];
   for (const layer of layers) {
     const { name, entries, trusted } = layer;
-    for (const [rawKey, entry] of Object.entries(entries)) {
+    for (const [key, entry] of Object.entries(entries)) {
+      // The allowlist comes first, so the value of any other key, such as a credential, is never
+      // looked at. Launcher layers hold only the keys Calavera reads.
+      if (layer.accepts && !layer.accepts(key)) continue;
       // npm accepts noproxy as a list (noproxy[]=host) and joins it with commas.
-      const rawValue = rawKey === "noproxy" && Array.isArray(entry) ? entry.join(",") : entry;
+      const rawValue = key === "noproxy" && Array.isArray(entry) ? entry.join(",") : entry;
       if (typeof rawValue !== "string") continue;
-      const setting = printable(layer.settingNames?.[rawKey] ?? rawKey);
+      const setting = printable(layer.settingNames?.[key] ?? key);
       if (layer.npmEnvironment && npmStarted) {
         // npm exports its resolved settings, and for a project .npmrc value it exports the
         // result of its own ${VAR} expansion. Such a value is project content, not
         // environment, so it follows the project rules and keeps its label. npm exports a key
         // written in another spelling, such as https_proxy, under the same variable, so the
-        // comparison normalizes the file's keys as the variable names are normalized.
-        const projectKey = exportedFrom(projectEntries, rawKey, rawValue, env);
+        // comparison normalizes the file's keys as the variable names are normalized. The
+        // file's value is expanded only for this comparison, never used as a registry.
+        const projectKey = exportedFrom(projectEntries, key, rawValue, env);
         if (projectKey !== undefined) {
-          // The project layer already applied it or ignored it with a warning, unless the file
-          // spells the key differently.
-          if (projectKey !== rawKey && PROXY_URL_KEYS.has(rawKey)) {
-            rejectedProxies.push({
-              key: rawKey,
-              setting: printable(projectKey),
-              layer: "project .npmrc",
-            });
+          // The project layer already applied it, ignored it with a warning, or stopped,
+          // unless the file spells the key differently.
+          if (projectKey !== key && PROXY_URL_KEYS.has(key)) {
+            rejectedProxies.push({ key, setting: printable(projectKey), layer: "project .npmrc" });
           }
           continue;
         }
         // A value equal to the user .npmrc value under the same key was applied by the user
-        // layer, or ignored there with a warning.
-        if (exportedFrom(userEntries, rawKey, rawValue, env, false) !== undefined) continue;
+        // layer, or ignored or stopped there.
+        if (exportedFrom(userEntries, key, rawValue, env, false) !== undefined) continue;
       }
-      if (credentialsLocked && AUTH_KEY.test(rawKey) && layer !== credentialLayer) {
-        // A variable in a credential key of the account file is handled after expansion, below.
-        const reason =
-          credentialPath === undefined
-            ? `credentials come only from ${ACCOUNT_NPMRC}, and the home folder of the operating system account is unknown`
-            : `credentials come only from ${ACCOUNT_NPMRC}, because the environment can carry repository content`;
-        const message = `Ignored ${setting} in the ${name}: when a package manager starts Calavera, ${reason}.`;
-        warnings.push(message);
-        notes.push(message);
+      if (isRegistryKey(key)) {
+        const value = registryValue(setting, rawValue.trim(), layer, warnings);
+        if (value === undefined) continue;
+        options[key] = value;
+        sources[key] = layer;
         continue;
       }
       if (!trusted) {
-        if (layer.accepts && !layer.accepts(rawKey)) continue;
-        // Bun expands a value that starts with $ (`Scope.fromAPI` in Bun's src/install/npm.zig).
-        const bunVariable = layer.tool === "Bun" && rawValue.startsWith("$");
-        if (rawKey.includes("${") || rawValue.includes("${") || bunVariable) {
+        if (rawValue.includes("${")) {
           const message = `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`;
           warnings.push(message);
           notes.push(message);
           continue;
         }
-        if (CERTIFICATE_KEY.test(rawKey)) {
-          const message = `Ignored ${setting} in the ${name}: Calavera reads certificate files only from the user .npmrc.`;
-          warnings.push(message);
-          notes.push(message);
+        // A project file could name a proxy it controls, which would see which packages Calavera
+        // fetches and, for an http registry, could replace the package documents and tarballs
+        // together. The entry is skipped here, so it never replaces a proxy from a user file. An
+        // empty value and a noproxy entry only remove the proxy, so a project file may still set
+        // them. The warning is written after every layer is read, so it names the proxy that
+        // applies.
+        if (PROXY_URL_KEYS.has(key) && rawValue.trim()) {
+          rejectedProxies.push({ key, setting, layer: name });
           continue;
         }
-        // A project file could name a proxy it controls together with a registry whose package
-        // documents point at http tarball URLs. npm-registry-fetch sends the credentials of a host
-        // whatever the protocol, so the proxy would receive them in plain text. The entry is
-        // skipped here, so it never replaces a proxy from a user file. An empty value and a
-        // noproxy entry only remove the proxy, so a project file may still set them.
-        // The warning is written after every layer is read, so it names the proxy that applies.
-        if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
-          rejectedProxies.push({ key: rawKey, setting, layer: name });
-          continue;
-        }
-      }
-      // Launcher layers have fixed keys, so only .npmrc keys are expanded.
-      const expandedKey = layer.expand
-        ? { text: rawKey, unset: [] }
-        : expandEnvironment(rawKey, env);
-      if (layer.accepts && !layer.accepts(expandedKey.text)) continue;
-      // A key that becomes a credential key only after expansion, such as //host/:${NAME}, is
-      // held to the same rule as a written one, so the environment cannot build a credential.
-      if (credentialsLocked && AUTH_KEY.test(expandedKey.text) && expandedKey.text !== rawKey) {
-        const message = `Ignored ${setting} in the ${name}: when a package manager starts Calavera, Calavera does not expand variables in a credential key, because the environment can carry repository content.`;
-        warnings.push(message);
-        notes.push(message);
-        continue;
       }
       /** @type {import("./launcher-config.js").Expansion} */
-      const expandedValue = layer.expand
-        ? layer.expand(rawValue.trim(), env, { setting, layer: name })
+      const expanded = layer.expand
+        ? layer.expand(rawValue.trim(), env)
         : expandEnvironment(rawValue.trim(), env);
-      notes.push(...(expandedValue.notes ?? []));
-      const unset = [...expandedKey.unset, ...expandedValue.unset];
-      if (unset.length > 0) {
-        // An entry that references an unset variable is absent. Sending the placeholder text as a
-        // credential would only fail later with a misleading authentication error.
-        for (const variable of unset) unsetVariables.add(variable);
+      if (expanded.unset.length > 0) {
+        // An entry that references an unset variable is absent, rather than sent with the
+        // placeholder text.
+        for (const variable of expanded.unset) unsetVariables.add(variable);
         notes.push(
-          `Ignored ${setting} in the ${name}: environment variable ${[...new Set(unset)].join(", ")} is not set.`,
+          `Ignored ${setting} in the ${name}: environment variable ${[...new Set(expanded.unset)].join(", ")} is not set.`,
         );
         continue;
       }
-      const key = expandedKey.text;
-      const value = expandedValue.text;
-      if (isRegistryKey(key)) {
-        if (!value) {
-          const message = `Ignored ${setting} in the ${name} because it is empty.`;
-          warnings.push(message);
-          notes.push(message);
-          continue;
-        }
-        assertRegistryUrl(setting, value, layer);
-      } else if (PROXY_URL_KEYS.has(key) && value && !isProxyUrl(value)) {
+      const value = expanded.text;
+      if (PROXY_URL_KEYS.has(key) && value && !isProxyUrl(value)) {
         // The value is never echoed: a proxy URL can carry credentials.
         const message = `Ignored ${setting} in the ${name}: it must be an http, https, or socks proxy URL.`;
         warnings.push(message);
@@ -464,21 +404,16 @@ export async function loadNpmRegistryOptions({
     warnings.push(message);
     notes.push(message);
   }
-  // npm-registry-fetch picks credentials by host and ignores the protocol; requestOptions removes
-  // them for a plain-http request, so say why a request to this registry goes without them.
-  if (
-    registryUrl.protocol === "http:" &&
-    Object.keys(options).some(
-      (key) => nerfDartHost(key) === registryUrl.host && !CERTIFICATE_KEY.test(key),
-    )
-  ) {
-    warnings.push(
-      `The registry ${registryUrl.origin} uses http, so Calavera sends no credentials to it, although some are configured for ${registryUrl.host}.`,
-    );
-  }
   return {
     options,
-    registry: { origin: registryUrl.origin, source: sources[registryKey]?.name ?? "default" },
+    registry: {
+      origin: registryUrl.origin,
+      source: sources[registryKey]?.name ?? "default",
+      setting: sources[registryKey]
+        ? printable(sources[registryKey].settingNames?.[registryKey] ?? registryKey)
+        : null,
+    },
+    registryUrl: registryUrl.href,
     warnings,
     diagnostics: [...new Set([...warnings, ...notes])],
     unsetVariables: [...unsetVariables],
@@ -520,56 +455,20 @@ function normalizedKey(key) {
 }
 
 /**
- * The home folder of the operating system account, which, unlike HOME, the environment cannot
- * redirect. Undefined when the account has no entry, as in some containers.
- */
-function accountHomeFolder() {
-  try {
-    return userInfo().homedir || undefined;
-  } catch {
-    return undefined;
-  }
-}
-
-/**
- * Invariant 1: the options for one request to `url`, without any credential when it is not an
- * https URL. npm-registry-fetch picks credentials by host and path and ignores the protocol, so a
- * token, basic auth, or client certificate for a host would otherwise go with a plain-http request
- * to it, registry or tarball. Calavera passes every pacote request through this function.
- * @param {Record<string, string>} options
- * @param {string} url
- * @returns {Record<string, string>}
- */
-export function requestOptions(options, url) {
-  // A local path, which pacote.extract also accepts, needs no credential either.
-  if (URL.canParse(url) && new URL(url).protocol === "https:") return options;
-  return Object.fromEntries(Object.entries(options).filter(([key]) => !AUTH_KEY.test(key)));
-}
-
-/**
  * The URL pacote fetches for a tarball. Unless told otherwise, pacote moves a tarball on
- * registry.npmjs.org onto the configured default registry, which can use http
- * (`replaceRegistryHost` in pacote/lib/fetcher.js and lib/remote.js). requestOptions must judge
- * that URL, not the one the package document names.
+ * registry.npmjs.org onto the `registry` option, keeping the tarball's path and dropping any path
+ * of the registry URL (`replaceRegistryHost` in pacote/lib/fetcher.js and lib/remote.js).
+ * extractArtifactPackage passes the artifact scope's registry as that option, so the lookup and
+ * the download use the same registry (ADR-0021 Decision 4). A check on the downloaded URL must
+ * judge this URL, not the one the package document names.
  * @param {string} resolved
- * @param {Record<string, string>} options
+ * @param {string} registry The registry pacote is given, the artifact scope's registry.
  */
-export function pacoteTarballUrl(resolved, options) {
+export function pacoteTarballUrl(resolved, registry) {
   if (!URL.canParse(resolved)) return resolved;
   const url = new URL(resolved);
   if (url.host !== "registry.npmjs.org") return resolved;
-  const registry = (options.registry ?? "https://registry.npmjs.org").replace(/\/+$/, "");
-  return new URL(url.pathname, registry).href;
-}
-
-/**
- * The host, with its port, of a nerf-darted key such as //registry.example.com/:_authToken, parsed
- * as a URL so that it compares exactly, or undefined for any other key.
- * @param {string} key
- */
-function nerfDartHost(key) {
-  const host = /^\/\/([^/]+)\//.exec(key)?.[1];
-  return host && URL.canParse(`https://${host}`) ? new URL(`https://${host}`).host : undefined;
+  return new URL(url.pathname, registry.replace(/\/+$/, "")).href;
 }
 
 /** @param {string} value */
@@ -578,29 +477,64 @@ function isProxyUrl(value) {
 }
 
 /**
+ * How a message names a setting: "The npm configuration key registry" or "The Yarn setting
+ * npmRegistryServer", and where it came from.
  * @param {string} setting The key or setting name, as the person wrote it.
- * @param {string} value
  * @param {ConfigLayer} layer
  */
-function assertRegistryUrl(setting, value, layer) {
+function describeSetting(setting, layer) {
   const subject = layer.tool
     ? `The ${layer.tool} setting ${setting}`
     : `The npm configuration key ${setting}`;
-  const where = layer.name === "environment" ? "" : ` in the ${layer.name}`;
-  // The value is never echoed: a registry URL can carry credentials.
+  return { subject, where: layer.name === "environment" ? "" : ` in the ${layer.name}` };
+}
+
+/**
+ * The registry URL to use for a registry setting, or undefined when the setting is empty. The
+ * value is never echoed, because a registry URL can carry a secret. A value with a variable
+ * reference stops the command: Calavera never expands a registry value, and falling back to
+ * another layer would bypass a registry the person configured (ADR-0021 Decision 2). A username
+ * and password in the URL are removed with a warning, because Calavera sends no credentials, and
+ * minipass-fetch would turn them into basic authentication.
+ * @param {string} setting
+ * @param {string} value
+ * @param {ConfigLayer} layer
+ * @param {string[]} warnings
+ */
+function registryValue(setting, value, layer, warnings) {
+  const { subject, where } = describeSetting(setting, layer);
+  // Bun expands a value that starts with $ (`Scope.fromAPI` in Bun's src/install/npm.zig); npm
+  // and Yarn expand ${NAME}.
+  if (layer.tool === "Bun" ? value.startsWith("$") : value.includes("${")) {
+    const layerName = layer.name === "environment" ? " in the environment" : where;
+    throw new Error(
+      `${subject}${layerName} contains a variable reference. Calavera does not expand variables in a registry URL, because a variable there can carry a secret. Write the registry URL without a variable.`,
+    );
+  }
+  if (!value) {
+    warnings.push(`Ignored ${setting} in the ${layer.name} because it is empty.`);
+    return undefined;
+  }
   if (!URL.canParse(value) || !/^https?:$/.test(new URL(value).protocol)) {
     throw new Error(`${subject}${where} must be an http or https URL.`);
   }
-  if (!layer.trusted && new URL(value).protocol !== "https:") {
-    // A project file must not be able to send the credentials of the user .npmrc without TLS.
+  const url = new URL(value);
+  if (!layer.trusted && url.protocol !== "https:") {
+    // A package's integrity comes from the same package document as its tarball, so on an http
+    // registry anyone on the network path can replace both together, and the artifact still
+    // passes verification. A person may choose that in their own configuration, but a cloned
+    // repository may not choose it for them.
     throw new Error(
       `${subject}${where} must be an https URL. To use an http registry, set it in your user configuration.`,
     );
   }
-  const { username, password } = new URL(value);
-  if (username || password) {
-    throw new Error(
-      `${subject}${where} must not include a username or password in the URL. Set credentials with //host/:_authToken, //host/:_auth, or //host/:username and //host/:_password in an .npmrc file instead.`,
-    );
-  }
+  if (!url.username && !url.password) return value;
+  url.username = "";
+  url.password = "";
+  const layerName =
+    layer.name === "environment" ? " from the environment" : ` from the ${layer.name}`;
+  warnings.push(
+    `Used ${setting}${layerName} without the username and password in its URL: Calavera sends no credentials to any registry.`,
+  );
+  return url.href;
 }
