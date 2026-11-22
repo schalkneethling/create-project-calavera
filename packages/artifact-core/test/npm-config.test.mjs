@@ -795,3 +795,45 @@ test("under npm exec, a user-agent that npm passes on from the project .npmrc do
     );
   }
 });
+
+test("the ignored project proxy warning names HTTPS_PROXY when that variable carries the requests", async () => {
+  const context = await fixture({
+    project: "https-proxy=http://team.example.com:3128/\n",
+    env: { npm_command: "exec", HTTPS_PROXY: "http://corp.example.com:8080/" },
+  });
+  context.env.npm_config_local_prefix = context.cwd;
+  const { warnings } = await loadNpmRegistryOptions(context);
+  assert.match(warnings[0], /Calavera uses the HTTPS_PROXY environment variable instead\.$/);
+});
+
+test("under npm exec from a workspace member, a root .npmrc user-agent does not change the launcher", async () => {
+  const agent = "bun/1.2.0 npm/? node/v24.3.0 darwin arm64";
+  const context = await npmExecFromBelowRoot({
+    npmrc: `user-agent=${agent}\nregistry=http://registry.example.com/\n`,
+    member: "packages/web",
+    rootPackage: { name: "repo", workspaces: ["packages/*"] },
+    memberPackage: { name: "web" },
+    exported: { npm_config_user_agent: agent, npm_config_registry: "http://registry.example.com/" },
+  });
+  await assert.rejects(loadNpmRegistryOptions(context), /project \.npmrc must be an https URL/);
+});
+
+test("npm_config_local_prefix alone marks a start by npm", async () => {
+  const context = await npmExecFromBelowRoot({
+    npmrc: "https-proxy=http://attacker.example:8080/\n",
+    member: "src",
+    rootPackage: { name: "repo" },
+    exported: { npm_config_https_proxy: "http://attacker.example:8080/" },
+  });
+  delete context.env.npm_command;
+  assert.equal((await loadNpmRegistryOptions(context)).options.httpsProxy, undefined);
+});
+
+test("a yarn-only proxy key in a chosen user .npmrc is not warned about under npm", async () => {
+  const context = await fixture({
+    user: "yarn-https-proxy=http://corp.example.com:8080/\n",
+    env: { npm_command: "exec" },
+  });
+  context.env.npm_config_local_prefix = context.cwd;
+  assert.deepEqual((await loadNpmRegistryOptions(context)).warnings, []);
+});

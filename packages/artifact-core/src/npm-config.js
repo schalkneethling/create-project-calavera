@@ -354,6 +354,7 @@ export async function loadNpmRegistryOptions({
         layer === npmFiles[0] &&
         !userProxyTrusted &&
         PROXY_URL_KEYS.has(rawKey) &&
+        accepts(rawKey) &&
         rawValue.trim()
       ) {
         rejectedProxies.push({ key: rawKey, setting, layer: CHOSEN_USER_FILE });
@@ -456,13 +457,23 @@ export async function loadNpmRegistryOptions({
   }
   // The warning for an ignored project proxy names the proxy that requests use after every layer
   // is read: npm-registry-fetch uses httpsProxy when it is set and proxy otherwise.
-  const usedProxy = proxyOrigins[options.httpsProxy ? "httpsProxy" : "proxy"];
+  // Without one, @npmcli/agent falls back to the proxy environment variables, in either letter
+  // case: https_proxy for an https registry, and https_proxy, http_proxy, or proxy for http
+  // (`getProxy` in @npmcli/agent/lib/proxy.js).
+  const environmentProxy = (
+    registryUrl.protocol === "https:" ? ["https_proxy"] : ["https_proxy", "http_proxy", "proxy"]
+  )
+    .map((wanted) => Object.keys(env).find((name) => name.toLowerCase() === wanted && env[name]))
+    .find(Boolean);
+  const usedProxy =
+    proxyOrigins[options.httpsProxy ? "httpsProxy" : "proxy"] ??
+    (environmentProxy ? `the ${printable(environmentProxy)} environment variable` : undefined);
   const registryProtocol = registryUrl.protocol.slice(0, -1);
   const userFile =
     launcher === "yarn"
       ? "your user .yarnrc.yml"
       : npmStarted
-        ? "~/.npmrc or in HTTPS_PROXY"
+        ? `~/.npmrc or in ${registryUrl.protocol === "https:" ? "HTTPS_PROXY" : "HTTP_PROXY"}`
         : "your user .npmrc";
   for (const { key, setting, layer } of rejectedProxies) {
     const used = usedProxy ? `Calavera uses ${usedProxy} instead.` : undefined;
