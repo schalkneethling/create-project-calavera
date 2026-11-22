@@ -102,15 +102,24 @@ test("redactSecrets keeps prose, paths, and values that are not secret", () => {
 // the same time slows every call. Instead, each attempt times the same number
 // of characters two ways: as one long input, and as `GROWTH` inputs a
 // `GROWTH`th of its length. In linear time both take about as long, so the
-// ratio is near 1. In quadratic time, such as after a pattern starts to
-// backtrack, the long input takes about `GROWTH` times as long. Load slows
-// both measurements of an attempt alike, and the fastest of several attempts
-// is the one least disturbed, so the ratio stays near 1 under load.
+// ratio is near 1. A quadratic term, such as a pattern that starts to
+// backtrack, makes the long input slower in proportion to its length, so the
+// ratio rises toward `GROWTH` as that term outweighs the linear work. Load
+// can slow either measurement of an attempt, so the test compares the
+// fastest of each across every attempt, after one untimed run that compiles
+// the code. A constant-factor slowdown keeps the ratio near 1 and is not
+// caught here, because load would hide it from an absolute limit.
 test("redactSecrets takes linear time on adversarial input", () => {
   const GROWTH = 16;
-  const SHORT = 1024;
+  const SHORT = 4 * 1024;
   const LONG = SHORT * GROWTH;
   const ATTEMPTS = 10;
+  // The long input takes a few milliseconds in linear time. Once two attempts
+  // have both taken longer than this, the shape stops early, so a quadratic
+  // regression fails after two slow attempts instead of ten. The ratio still
+  // decides the result, so a pause that stops the process for a moment does
+  // not fail the test by itself.
+  const SLOW_LONG_INPUT = 1000;
   // Halfway between linear (about 1) and quadratic (about GROWTH) on a log
   // scale.
   const LIMIT = Math.sqrt(GROWTH);
@@ -139,28 +148,30 @@ test("redactSecrets takes linear time on adversarial input", () => {
   for (const shape of shapes) {
     const short = shape(SHORT);
     const long = shape(LONG);
+    const redactShortCopies = () => {
+      for (let copy = 0; copy < GROWTH; copy += 1) redactSecrets(short, env);
+    };
     let fastestShort = Infinity;
     let fastestLong = Infinity;
 
-    for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
-      fastestShort = Math.min(
-        fastestShort,
-        time(() => {
-          for (let copy = 0; copy < GROWTH; copy += 1) redactSecrets(short, env);
-        }),
-      );
+    redactShortCopies();
+    for (
+      let attempt = 0;
+      attempt < ATTEMPTS && (attempt < 2 || fastestLong < SLOW_LONG_INPUT);
+      attempt += 1
+    ) {
+      fastestShort = Math.min(fastestShort, time(redactShortCopies));
       fastestLong = Math.min(
         fastestLong,
         time(() => redactSecrets(long, env)),
       );
-      if (fastestLong < fastestShort * LIMIT) break;
     }
 
     assert.ok(
       fastestLong < fastestShort * LIMIT,
       `an input starting ${JSON.stringify(short.slice(0, 12))} took ${fastestLong.toFixed(2)} ms ` +
-        `at ${LONG} characters, against ${fastestShort.toFixed(2)} ms for ${GROWTH} inputs of ` +
-        `${SHORT} characters, so its time grows faster than its length`,
+        `at ${long.length} characters, against ${fastestShort.toFixed(2)} ms for ${GROWTH} ` +
+        `inputs of ${short.length} characters, so its time grows faster than its length`,
     );
   }
 });
