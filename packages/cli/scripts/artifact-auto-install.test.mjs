@@ -672,7 +672,7 @@ test("a dry run with every artifact locked removes its rebuild folders when form
 
     await assert.rejects(
       applyRecipeObject(recipe, { ...applyOptions, dryRun: true }, registry),
-      /cannot format \.calavera\/state\.json/,
+      /could not format \.calavera\/state\.json: it exited with code 2\./,
     );
 
     // #989: the folder is removed when formatting the state, the last step before apply disposes

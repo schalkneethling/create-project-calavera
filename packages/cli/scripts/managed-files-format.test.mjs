@@ -233,7 +233,7 @@ test("formatGeneratedText formats JSON and Markdown only, and refuses Markdown t
   const noisy = await loadProjectFormatter(project.root, "managed");
   await assert.rejects(
     formatGeneratedText("docs/notes.md", "# Notes\n", async () => noisy),
-    /returned text for docs\/notes\.md that does not start with the line Calavera sent, "# Notes"\. It begins: "dotenv: injected 2 variables"\. Make sure vite\.config\.ts prints nothing/,
+    /returned text for docs\/notes\.md that does not start with the first line Calavera sent, so something came before the formatted text, such as output that vite\.config\.ts printed\. Make sure vite\.config\.ts prints nothing/,
   );
 });
 

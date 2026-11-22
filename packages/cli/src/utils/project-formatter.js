@@ -105,21 +105,31 @@ export async function loadProjectFormatter(
         // completes; without a limit the dry run would hang with no message.
         timeout,
       });
+      // #1157: neither error quotes vp fmt's output or keeps the result as its cause, because
+      // vp fmt quotes the text it cannot parse, and vite.config.ts can print anything.
       if (result.timedOut) {
         throw new Error(
           `${description} did not finish formatting ${path} within ${timeout / 1000} seconds, so Calavera stopped it. Check that vite.config.ts does not wait on anything when vp fmt loads it, then run Calavera again.`,
-          { cause: result },
         );
       }
       if (result.exitCode !== 0 || result.failed) {
         throw new Error(
-          `${description} could not format ${path} (exit code ${result.exitCode ?? "none"}):\n${result.stderr || result.stdout || result.message}`,
-          { cause: result },
+          `${description} could not format ${path}: ${howItEnded(result)}. Calavera does not show vp fmt's output, because it can quote the file. Run vp fmt --check in the project to see that output, then run Calavera again.`,
         );
       }
       return result.stdout;
     },
   };
+}
+
+/**
+ * How a vp fmt run that did not succeed ended, from its exit code or signal alone.
+ *
+ * @param {{ exitCode?: number, signal?: string }} result
+ */
+function howItEnded({ exitCode, signal }) {
+  if (signal) return `it was stopped by the signal ${signal}`;
+  return exitCode === undefined ? "it did not start" : `it exited with code ${exitCode}`;
 }
 
 /**

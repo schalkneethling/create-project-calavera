@@ -85,13 +85,13 @@ test("Given formatter settings in the project, when Calavera formats a file, the
   assert.equal(await formatter.format("vendor/x.json", loose), loose);
 });
 
-test("Given text the project's Oxfmt cannot parse, when it is formatted, then the error names the file and shows where", async () => {
+test("Given text the project's Oxfmt cannot parse, when it is formatted, then the error names the file and the exit code", async () => {
   await using project = await createTemporaryFixture("formatter-error", {});
   await writeVitePlusFormatter(project.root);
   const formatter = await loadProjectFormatter(project.root, "managed");
   await assert.rejects(
     formatter.format(".claude/settings.json", '{"a": [1,'),
-    /vp fmt from vite-plus .* could not format \.claude\/settings\.json \(exit code 2\):\n.*Unexpected token/s,
+    /vp fmt from vite-plus .* could not format \.claude\/settings\.json: it exited with code 2\. .*Run vp fmt --check in the project/,
   );
 });
 
@@ -105,7 +105,8 @@ test("Given a vp fmt that never finishes, when Calavera formats a file, then it 
       error.message,
       /vp fmt from vite-plus .* did not finish formatting \.claude\/settings\.json within 0\.5 seconds, so Calavera stopped it\. Check that vite\.config\.ts does not wait on anything when vp fmt loads it, then run Calavera again\./,
     );
-    assert.equal(/** @type {{ timedOut?: boolean }} */ (error.cause).timedOut, true);
+    // #1157: no cause, because the execa result holds vp fmt's output.
+    assert.equal(error.cause, undefined);
     return true;
   });
 });

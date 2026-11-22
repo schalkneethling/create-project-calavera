@@ -1,6 +1,10 @@
 // @ts-check
 import { isDeepStrictEqual } from "node:util";
 
+/** The remedy for formatted text that does not hold what Calavera sent. */
+export const PRINTS_NOTHING =
+  "Make sure vite.config.ts prints nothing when vp fmt loads it, then run Calavera again.";
+
 // Calavera rewrites a whole JSON file when it changes part of it, such as the hook groups in
 // .claude/settings.json. The text it writes comes from the project's formatter (see
 // project-formatter.js), and a rewrite that would lose something the person wrote is reported
@@ -56,17 +60,20 @@ export async function writeJSON(value, path, formatter) {
   // The formatter runs the project's vite.config.ts, and anything that file prints, such as a
   // dotenv banner, arrives before the formatted text. Text that no longer holds the values goes
   // nowhere near the file.
+  // #1157: neither error quotes the text, because it can hold the file's values or whatever
+  // vite.config.ts printed.
   let parsed;
   try {
     parsed = JSON.parse(text);
   } catch {
-    parsed = undefined;
+    throw new Error(
+      `${formatter.description} returned text for ${path} that is not JSON, so something came with the formatted text, such as output that vite.config.ts printed. ${PRINTS_NOTHING}`,
+    );
   }
   // Compared with the JSON Calavera sent, not with `value`: JSON has no -0, so -0 arrives as 0.
   if (!isDeepStrictEqual(parsed, JSON.parse(json))) {
-    const start = text.trimStart().split("\n", 1)[0]?.slice(0, 120) ?? "";
     throw new Error(
-      `${formatter.description} returned text for ${path} that does not hold the values Calavera sent. It begins: "${start}". Make sure vite.config.ts prints nothing when vp fmt loads it, then run Calavera again.`,
+      `${formatter.description} returned text for ${path} that is JSON but holds other values than the ones Calavera sent. ${PRINTS_NOTHING}`,
     );
   }
   return text;

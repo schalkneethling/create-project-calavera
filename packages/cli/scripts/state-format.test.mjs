@@ -234,7 +234,7 @@ test("Given a Vite+ project whose vp fmt prints a banner, when artifacts install
         { config: "calavera.config.json", dryRun: true, artifactAction: "install" },
         registry,
       ),
-      /returned text for \.calavera\/state\.json that does not hold the values Calavera sent/,
+      /returned text for \.calavera\/state\.json that is not JSON/,
     );
     assert.deepEqual(await snapshotDirectory(), before, "the dry run changed the project");
   });
@@ -422,7 +422,8 @@ test("Given a Vite+ project whose vp fmt cannot format the state, when agent-ini
   // agent-init used to copy the skill files before that step.
   await writeVitePlusFormatter(project.root, { failFor: STATE_PATH });
   const options = { json: true, assumeYes: true, mcpHarness: "claude-code" };
-  const stop = /could not format \.calavera\/state\.json \(exit code 2\):\nvp stub: cannot format/;
+  const stop =
+    /could not format \.calavera\/state\.json: it exited with code 2\. Calavera does not show vp fmt's output/;
 
   await inDirectory(project.root, async () => {
     const before = await snapshotDirectory();
@@ -480,7 +481,7 @@ test("Given a Vite+ project whose vp fmt cannot format calavera.config.json, whe
     `${JSON.stringify({ ...recipe, ai: [{ type: "skill", src: "skills/project-goal" }] }, null, 2)}\n`,
   );
   const stop =
-    /could not format calavera\.config\.json \(exit code 2\):\nvp stub: cannot format calavera\.config\.json/;
+    /could not format calavera\.config\.json: it exited with code 2\. Calavera does not show vp fmt's output/;
 
   await inDirectory(project.root, async () => {
     const before = await snapshotDirectory();
