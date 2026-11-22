@@ -100,15 +100,19 @@ test("redactSecrets keeps prose, paths, and values that are not secret", () => {
 // Issue #1149: the time redaction takes must grow linearly with the text.
 // Absolute time cannot show that, because a machine running other suites at
 // the same time slows every call. Instead, each attempt times the same number
-// of characters two ways: as one long input, and as `GROWTH` inputs a
-// `GROWTH`th of its length. In linear time both take about as long, so the
+// of characters two ways: as one long input, and as 16 (`GROWTH`) inputs,
+// each one sixteenth of its length. In linear time both take about as long, so the
 // ratio is near 1. A quadratic term, such as a pattern that starts to
 // backtrack, makes the long input slower in proportion to its length, so the
 // ratio rises toward `GROWTH` as that term outweighs the linear work. Load
 // can slow either measurement of an attempt, so the test compares the
-// fastest of each across every attempt, after one untimed run that compiles
-// the code. A constant-factor slowdown keeps the ratio near 1 and is not
-// caught here, because load would hide it from an absolute limit.
+// fastest of each across every attempt, after one untimed run of the short
+// inputs that compiles the code. Two kinds of slowdown are not caught here: a
+// constant-factor slowdown, which keeps the ratio near 1 and which load would
+// hide from an absolute limit, and growth no faster than the 1.5th power of
+// the length, such as n log n or a quadratic term with a very small constant,
+// which keeps the ratio at or below `LIMIT`. Backtracking grows quadratically
+// or faster, so it is caught.
 test("redactSecrets takes linear time on adversarial input", () => {
   const GROWTH = 16;
   const SHORT = 4 * 1024;
@@ -171,7 +175,9 @@ test("redactSecrets takes linear time on adversarial input", () => {
       fastestLong < fastestShort * LIMIT,
       `an input starting ${JSON.stringify(short.slice(0, 12))} took ${fastestLong.toFixed(2)} ms ` +
         `at ${long.length} characters, against ${fastestShort.toFixed(2)} ms for ${GROWTH} ` +
-        `inputs of ${short.length} characters, so its time grows faster than its length`,
+        `inputs of ${short.length} characters, a ratio of ` +
+        `${(fastestLong / fastestShort).toFixed(2)} where the limit is ${LIMIT}, ` +
+        `so its time grows faster than its length`,
     );
   }
 });
