@@ -1,0 +1,6 @@
+---
+"@schalkneethling/calavera-skill-calavera": patch
+"create-project-calavera": patch
+---
+
+The Calavera skill no longer lists a fixed set of MCP tools to look for. It now tells the agent to use only the Calavera tools that the MCP server lists, because the skill and the project's pinned server update separately, and a skill newer than the server may describe a tool that the server does not have. The skill also separates two cases that it used to treat the same: when the client lists no Calavera tools, the server is missing and the agent helps the user register or repair it; when the server lists Calavera tools but not one a step names, the tool is missing, so the agent tells the user which tool the pinned server lacks and continues with the tools it lists. The copy that `--init` installs changes the same way (#1053).

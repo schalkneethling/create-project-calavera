@@ -1,9 +1,12 @@
 // #839: the README and `--help` tell people which MCP tools to confirm before composing a
 // recipe, and permission allow-lists are built from that list, so a tool the documents leave
 // out gets denied. These tests compare both lists with the tools the server registers.
-// #933: the README's tool-order list and the bundled Calavera skill, which tells an agent which
-// tools to look for, are checked the same way. The generated `.agents/calavera/mcp.md` list is
+// #933: the README's tool-order list is checked the same way. The generated `.agents/calavera/mcp.md` list is
 // not checked here yet: changing its text waits for #934.
+// #1053: the skill no longer lists the tools to look for. ADR-0018 Decision 7 tells the agent to
+// use only the tools the server lists, because a skill newer than the project's pinned server may
+// describe a tool that server lacks. So the skill is checked in the other direction: every tool
+// name it mentions anywhere must be one the server registers, and it may leave a tool out.
 // #964: the workflow doc's WebMCP list is checked against the tools the Composer registers.
 // #996: the README's WebMCP list is checked the same way.
 import { execFile } from "node:child_process";
@@ -29,7 +32,6 @@ const README_MARKER = "Confirm the Calavera MCP tools are exposed:";
 const WORKFLOW_DOC_MARKER = "Calavera MCP tools are exposed:";
 const HELP_MARKER = "Confirm these tools are visible before composing a recipe:";
 const README_ORDER_MARKER = "in this order:";
-const SKILL_MARKER = "Look for tools named";
 const WORKFLOW_DOC_MCP_MARKER = "project-local apply tools:";
 const WORKFLOW_DOC_WEBMCP_MARKER = "but not project inspection or apply:";
 const README_WEBMCP_MARKER = "for the MCP recipe composition workflow:";
@@ -145,12 +147,24 @@ test("the README's tool-order list names every tool the MCP server registers, an
   assert.deepEqual(documented, await registeredToolNames());
 });
 
-for (const { source, url } of bundledSkillCopies) {
-  test(`the bundled Calavera skill at ${source} lists every tool the MCP server registers, and no others`, async () => {
-    const skill = await readFile(url, "utf8");
-    const documented = toolNamesIn(listAfterMarker(skill, SKILL_MARKER, source));
+/**
+ * The names in `named` that `registered` does not contain, sorted and without repeats.
+ *
+ * @param {string[]} named
+ * @param {string[]} registered
+ * @returns {string[]}
+ */
+function unregisteredToolNames(named, registered) {
+  return [...new Set(named)].filter((name) => !registered.includes(name)).sort();
+}
 
-    assert.deepEqual(documented, await registeredToolNames());
+for (const { source, url } of bundledSkillCopies) {
+  test(`the bundled Calavera skill at ${source} names only tools the MCP server registers`, async () => {
+    const skill = await readFile(url, "utf8");
+    const named = toolNamesIn(skill);
+
+    assert.notEqual(named.length, 0, `${source} names no MCP tools`);
+    assert.deepEqual(unregisteredToolNames(named, await registeredToolNames()), []);
   });
 }
 
@@ -224,6 +238,22 @@ test("the list parser catches a missing, an extra, and a repeated tool name", ()
       ),
     ),
     registered,
+  );
+});
+
+test("the skill check catches a tool the server does not register, and allows one it omits", () => {
+  const registered = ["apply_recipe", "inspect_project", "list_profiles"];
+
+  assert.deepEqual(
+    unregisteredToolNames(
+      toolNamesIn("Call `inspect_project`, then `drop_table`, then `drop_table` again."),
+      registered,
+    ),
+    ["drop_table"],
+  );
+  assert.deepEqual(
+    unregisteredToolNames(toolNamesIn("Call `inspect_project`, then `apply_recipe`."), registered),
+    [],
   );
 });
 
