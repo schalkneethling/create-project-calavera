@@ -24,7 +24,12 @@ import {
   recipeCompositionToolNames,
   validateRecipeResponse,
 } from "../src/recipe.js";
-import { sharedToolSchemas, toolJsonSchema, webMcpToolSchemas } from "../src/tool-schemas.js";
+import {
+  nodeOnly,
+  sharedToolSchemas,
+  toolJsonSchema,
+  webMcpToolSchemas,
+} from "../src/tool-schemas.js";
 
 async function listMcpTools() {
   const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
@@ -149,6 +154,9 @@ const coreAcceptedComposeInputs = [
       },
     },
   },
+  // The core reads a falsy tools or aiArtifacts as absent.
+  { profile: "default", tools: null },
+  { profile: "default", aiArtifacts: null },
   // compose_recipe ignores a key it does not read, at the top level and on an artifact.
   { profile: "default", unknown: true },
   { profile: "default", aiArtifacts: [{ id: "skill-calavera", note: "kept out" }] },
@@ -190,7 +198,7 @@ test("MCP and WebMCP declare the same input schema apart from the Node.js-only a
     delete mcpInput.$schema;
     if (name === "compose_recipe") {
       // ADR-0018 Decision 2: the WebMCP adapter leaves the Node.js-only part out, and refuses it.
-      const item = mcpInput.properties.aiArtifacts.items;
+      const item = mcpInput.properties.aiArtifacts.anyOf[0].items;
       assert.equal(item.properties.inputs.type, "object");
       delete item.properties.inputs;
       item.propertyNames = { not: { enum: ["inputs"] } };
@@ -218,6 +226,8 @@ test("both declared schemas accept the other shared tools' valid inputs", () => 
     ["describe_baseline_target", { target: "widely" }],
     ["describe_baseline_target", { target: "newly" }],
     ["describe_baseline_target", { target: 2024 }],
+    // normalizeBaselineTarget reads a four-digit year written as a string.
+    ["describe_baseline_target", { target: "2024" }],
     ["search_baseline_features", { query: "grid" }],
     ["search_baseline_features", { query: "grid", limit: 5 }],
     ["search_baseline_features", { query: "grid", limit: 100 }],
@@ -360,8 +370,15 @@ test("both declared schemas refuse each input the core refuses, and MCP answers 
       const result = await client.callTool({ name: tool, arguments: input });
       assert.equal(result.isError, true, label);
       const [text] = result.content.map(({ text }) => text);
-      assert.ok(text.includes(`Invalid arguments for tool ${tool}: `), `${label}\n${text}`);
-      assert.ok(text.includes(coreMessage), `${label}\nexpected: ${coreMessage}\nactual: ${text}`);
+      const prefix = `MCP error -32602: Input validation error: Invalid arguments for tool ${tool}: `;
+      assert.ok(text.startsWith(prefix), `${label}\n${text}`);
+      // One fault, so one issue line, and it is the core's message followed by the path.
+      const lines = text.slice(prefix.length).split("\n");
+      assert.equal(lines.length, 1, `${label}\n${text}`);
+      assert.ok(
+        lines[0].startsWith(`${coreMessage} at `),
+        `${label}\nexpected: ${coreMessage}\nactual: ${lines[0]}`,
+      );
     }
   } finally {
     await client.close();
@@ -370,11 +387,14 @@ test("both declared schemas refuse each input the core refuses, and MCP answers 
 });
 
 test("both declared schemas refuse a few inputs the core tolerates, as both surfaces did before", () => {
-  // The core falls back to its default limit and lists no integrations for an unknown profile,
-  // but the schemas the two surfaces declared before #1051 already refused these.
+  // The core reads any query, falls back to its default limit, and lists no integrations for an
+  // unknown profile, so these refusals have no core message to carry. The schemas the two surfaces
+  // declared before #1051 already refused them.
   const tolerated = [
     ["search_baseline_features", { query: "grid", limit: 0 }],
     ["search_baseline_features", { query: "grid", limit: 101 }],
+    ["search_baseline_features", {}],
+    ["search_baseline_features", { query: 5 }],
     ["list_integrations", { profile: "not-a-profile" }],
   ];
 
@@ -415,6 +435,20 @@ test("only the MCP schema accepts the Node.js-only artifact inputs", () => {
   };
   assert.equal(mcpAccepts("compose_recipe", input), true);
   assert.equal(webMcpAccepts("compose_recipe", input), false);
+});
+
+test("the browser form refuses to leave out a required Node.js-only property", () => {
+  // The browser form refuses a Node.js-only property, so a required one could never be satisfied.
+  const optional = z.object({ id: z.string(), inputs: nodeOnly(z.string().optional()) });
+  assert.deepEqual(toolJsonSchema(optional, { io: "input", browser: true }).propertyNames, {
+    not: { enum: ["inputs"] },
+  });
+
+  const required = z.object({ id: z.string(), inputs: nodeOnly(z.string()) });
+  assert.throws(() => toolJsonSchema(required, { io: "input", browser: true }), {
+    message: "A Node.js-only property must be optional: inputs.",
+  });
+  assert.deepEqual(toolJsonSchema(required, { io: "input" }).required, ["id", "inputs"]);
 });
 
 test("the CodeQL language list reaches both surfaces from the repository-controls module", () => {

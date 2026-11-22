@@ -10,9 +10,10 @@
 // severity, also accepts null, which selects the default. A few schemas accept less than the core,
 // as they did before they moved here; tightening one to what the core enforces is not breaking.
 //
-// Where a Zod message would only say "Invalid input", the schema's error map runs the core's own
-// check on the value and returns its message, so an MCP client reads the same explanation, with
-// its remedy, that the core gives.
+// Each schema's error map runs the core's own check on a refused value and returns its message, so
+// an MCP client reads the same explanation, with its remedy, that the core gives. The refusals of
+// search_baseline_features keep Zod's messages, because the core reads any query and falls back to
+// its default limit; both surfaces refused those inputs before #1051.
 import * as z from "zod";
 import {
   describeBaselineTarget,
@@ -56,7 +57,7 @@ const nodeOnlyRegistry = z.registry();
  * @param {T} schema
  * @returns {T}
  */
-function nodeOnly(schema) {
+export function nodeOnly(schema) {
   nodeOnlyRegistry.add(schema, {});
   return schema;
 }
@@ -69,7 +70,7 @@ function nodeOnly(schema) {
 
 /**
  * An error map that runs `check`, the core's own check, on the refused value and returns the
- * message it throws, so every refusal carries the core's explanation and remedy (#1051, owner
+ * message it throws, so a refusal carries the core's explanation and remedy (#1051, owner
  * decision of 2026-11-22). A schema's map also covers the refusals of its checks, such as `.min`,
  * and its unknown keys. When the check passes, the schema's own message stays. Wrap a core
  * function in an arrow that passes only the value: `check` also receives the issue, which a core
@@ -179,32 +180,26 @@ export const recipeSchema = z
   )
   .describe(recipeToolInputDescriptions.recipe);
 
-const baselineTargetSchema = z.union(
-  [
-    z.enum(
-      ["widely", "newly"],
-      coreMessage((value) => describeBaselineTarget(value)),
-    ),
-    z.number(coreMessage((value) => describeBaselineTarget(value))).int(),
-  ],
-  coreMessage((value) => describeBaselineTarget(value)),
-);
+/**
+ * A Baseline target as normalizeBaselineTarget reads it: widely, newly, or a year, also written as
+ * a four-digit string.
+ *
+ * @param {CoreCheck} check
+ */
+const baselineTarget = (check) =>
+  z.union(
+    [
+      z.enum(["widely", "newly"], coreMessage(check)),
+      z.number(coreMessage(check)).int(),
+      z.string(coreMessage(check)).regex(/^\d{4}$/),
+    ],
+    coreMessage(check),
+  );
 
 const STYLELINT_BASELINE = "stylelint-baseline";
 const stylelintBaselineOptionsSchema = z.strictObject(
   {
-    // normalizeBaselineTarget also reads a four-digit year written as a string.
-    available: z.union(
-      [
-        z.enum(
-          ["widely", "newly"],
-          coreMessage((value) => normalizeBaselineTarget(value)),
-        ),
-        z.number(coreMessage((value) => normalizeBaselineTarget(value))).int(),
-        z.string(coreMessage((value) => normalizeBaselineTarget(value))).regex(/^\d{4}$/),
-      ],
-      coreMessage((value) => normalizeBaselineTarget(value)),
-    ),
+    available: baselineTarget((value) => normalizeBaselineTarget(value)),
     severity: z
       .enum(
         STYLELINT_BASELINE_SEVERITIES,
@@ -493,7 +488,9 @@ export const sharedToolSchemas = Object.freeze({
   list_baseline_targets: { input: z.object({}) },
   describe_baseline_target: {
     input: z.object({
-      target: baselineTargetSchema.describe(recipeToolInputDescriptions.baselineTarget),
+      target: baselineTarget((value) => describeBaselineTarget(value)).describe(
+        recipeToolInputDescriptions.baselineTarget,
+      ),
     }),
   },
   search_baseline_features: {
@@ -534,6 +531,8 @@ export const sharedToolSchemas = Object.freeze({
           z.string(coreMessage(compositionCheck((tool) => ({ tools: [tool] })))),
           coreMessage(compositionCheck((tools) => ({ tools }))),
         )
+        // The core reads a falsy tools as absent, as it does aiArtifacts.
+        .nullable()
         .optional()
         .describe(recipeToolInputDescriptions.tools),
       aiArtifacts: z
@@ -541,6 +540,7 @@ export const sharedToolSchemas = Object.freeze({
           aiArtifactInputSchema,
           coreMessage(compositionCheck((aiArtifacts) => ({ aiArtifacts }))),
         )
+        .nullable()
         .optional()
         .describe(recipeToolInputDescriptions.aiArtifacts),
       integrationOptions: integrationOptionsSchema
@@ -576,7 +576,12 @@ export function toolJsonSchema(schema, { io, browser = false }) {
             nodeOnlyRegistry.has(zodSchema.shape[key]),
           );
           if (nodeOnlyKeys.length === 0) return;
-          // A Node.js-only part is optional, so `required` never names it.
+          // The browser form refuses a Node.js-only part, so a required one would make the whole
+          // object impossible to satisfy there.
+          const required = nodeOnlyKeys.filter((key) => jsonSchema.required?.includes(key));
+          if (required.length > 0) {
+            throw new Error(`A Node.js-only property must be optional: ${required.join(", ")}.`);
+          }
           for (const key of nodeOnlyKeys) delete jsonSchema.properties[key];
           jsonSchema.propertyNames = { not: { enum: nodeOnlyKeys } };
         }
