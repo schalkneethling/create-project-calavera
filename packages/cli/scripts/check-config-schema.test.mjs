@@ -3909,19 +3909,21 @@ for (const { name, current, expected } of [
   {
     name: "a file with Windows line endings",
     current: "# Team settings\r\nlanguage: en-US\r\nreviews:\r\n  profile: chill\r\n",
-    expected: `# Team settings\nlanguage: en-US\nreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll(
-      "\n",
-      "\r\n",
-    ),
+    expected:
+      `# Team settings\nlanguage: en-US\nreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll(
+        "\n",
+        "\r\n",
+      ),
   },
   {
     // A literal block keeps its line breaks, which are line endings of the file too.
     name: "a file with Windows line endings and a literal block",
     current: "notes: |\r\n  first\r\n  second\r\nreviews:\r\n  profile: chill\r\n",
-    expected: `notes: |\n  first\n  second\nreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll(
-      "\n",
-      "\r\n",
-    ),
+    expected:
+      `notes: |\n  first\n  second\nreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll(
+        "\n",
+        "\r\n",
+      ),
   },
   {
     // A settled file with Windows line endings needs no change, so apply leaves it alone.
@@ -3979,7 +3981,8 @@ for (const { current, error } of [
   // because that message quotes the file's text.
   {
     current: "reviews: [\n",
-    error: /Cannot update \.coderabbit\.yaml: it is not valid YAML at line 2, column 1 \(BAD_INDENT\)\.$/,
+    error:
+      /Cannot update \.coderabbit\.yaml: it is not valid YAML at line 2, column 1 \(BAD_INDENT\)\.$/,
   },
   // #1083: a top-level list or scalar made the `yaml` package throw without naming the file.
   {
