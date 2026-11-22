@@ -25,6 +25,7 @@ import {
   copyReleaseFixture,
   createTemporaryFixture,
   json,
+  libraryManifest,
   plainViteManifest,
   readStubInvocations,
   writePackageManagerStubs,
@@ -39,11 +40,13 @@ const CHOICES = ["create-here", "apply-at-ancestor", "abandon"];
 /**
  * A new directory inside the committed `vp create` monorepo fixture, with the recipe saved as
  * `calavera.config.json` and no package.json of its own. The workspace root declares vite-plus
- * and has a stand-in vite-plus installed; the package-manager stand-ins and the logs live outside
- * the workspace.
+ * and, unless `installed` is false, has a stand-in vite-plus installed; the package-manager
+ * stand-ins and the logs live outside the workspace.
+ *
+ * @param {{ installed?: boolean }} [options]
  */
-async function directoryUnderManagedWorkspace() {
-  const workspace = await copyReleaseFixture("monorepo");
+async function directoryUnderManagedWorkspace({ installed = true } = {}) {
+  const workspace = await copyReleaseFixture("monorepo", { vitePlus: installed });
   const tools = await createTemporaryFixture("manifest-choice-tools", {});
   const project = join(workspace.root, "packages/fresh");
   const vpLog = join(tools.root, "vp.log");
@@ -53,7 +56,9 @@ async function directoryUnderManagedWorkspace() {
   await mkdir(project);
   await writeFile(join(project, "calavera.config.json"), json(recipe));
   await writePackageManagerStubs(join(tools.root, "bin"));
-  await writeVitePlusStub(workspace.root, { logPath: vpLog, fmtLogPath: fmtLog });
+  if (installed) {
+    await writeVitePlusStub(workspace.root, { logPath: vpLog, fmtLogPath: fmtLog });
+  }
 
   return {
     root: workspace.root,
@@ -306,6 +311,78 @@ test("create-here formats the files apply writes with vp fmt when the parent is 
     `apply did not format its state file with vp fmt: ${JSON.stringify(runs)}`,
   );
   assert.ok(runs.every(({ cwd }) => cwd === workspace.project));
+});
+
+/**
+ * The create-here runs that load the formatter before anything else stops them, so each reports a
+ * missing vite-plus through the formatter's error. A plain apply stops earlier, at the install
+ * plan, with a different message.
+ */
+const createHereRunsThatFormat = {
+  "apply --dry-run": ["apply", "--dry-run", "--json", "--manifest-choice", "create-here"],
+  "apply --no-install": ["apply", "--yes", "--no-install", "--manifest-choice", "create-here"],
+  "init --apply": [
+    "init",
+    "--apply",
+    "--yes",
+    "--json",
+    "--profile",
+    "minimal",
+    "--manifest-choice",
+    "create-here",
+  ],
+};
+
+/**
+ * Runs each create-here run that formats, and checks that it stops with `remedy`, without the
+ * remedy that names no directory, and without changing the inspected directory.
+ *
+ * @param {{ project: string, bin: string, packageManagerLog: string }} workspace
+ * @param {string} remedy
+ */
+async function assertEachRunStopsWith(workspace, remedy) {
+  for (const [name, args] of Object.entries(createHereRunsThatFormat)) {
+    const before = await snapshotDirectory(workspace.project);
+    const result = await runCli(workspace, args);
+    assert.equal(result.code, 1, `${name}: ${result.stderr}`);
+    assert.ok(result.stderr.includes(remedy), `${name}: ${result.stderr}`);
+    assert.doesNotMatch(result.stderr, /Run vp install, then/, name);
+    assert.deepEqual(await snapshotDirectory(workspace.project), before, name);
+  }
+}
+
+// #1084: under create-here, vite-plus is the parent's dependency, so the remedy for a missing
+// vite-plus names the parent, where vp install installs it, not the inspected directory.
+test("create-here under a Vite+ parent without vite-plus installed: the formatter error in apply --dry-run, apply --no-install, and init --apply says to run vp install in the parent", async () => {
+  await using workspace = await directoryUnderManagedWorkspace({ installed: false });
+  await assertEachRunStopsWith(
+    workspace,
+    `Run vp install in ${workspace.root}, then run Calavera again.`,
+  );
+});
+
+// #1084: the nearest manifest above can be managed only because a manifest further up declares
+// vite-plus. Outside a workspace, vp install in the nearest manifest's directory installs only its
+// own dependencies, so the remedy names the directory of the manifest that declares vite-plus.
+test("create-here below a member that a manifest further up manages: the remedy names the manifest that declares vite-plus", async () => {
+  await using fixture = await createTemporaryFixture("manifest-choice-declared-further-up", {
+    "package.json": json(libraryManifest),
+    "packages/member/package.json": json(plainViteManifest),
+    "packages/member/sub/calavera.config.json": json(recipe),
+  });
+  await using tools = await createTemporaryFixture("manifest-choice-declared-further-up-tools", {});
+  await mkdir(join(fixture.root, ".git"));
+  const bin = join(tools.root, "bin");
+  await writePackageManagerStubs(bin);
+
+  await assertEachRunStopsWith(
+    {
+      project: join(fixture.root, "packages/member/sub"),
+      bin,
+      packageManagerLog: join(tools.root, "package-manager.log"),
+    },
+    `Run vp install in ${fixture.root}, then run Calavera again.`,
+  );
 });
 
 test("create-here does not run vp fmt when the parent is not managed by Vite+", async () => {

@@ -527,6 +527,20 @@ const packageManagerCommands = {
 };
 
 /**
+ * Where vp install installs vite-plus for a directory that has no package.json of its own and
+ * follows the Vite+ verdict of the manifest above it (#961): the directory of the manifest that
+ * declares vite-plus, which the remedy for a missing vite-plus names (#1084). Nothing when the
+ * directory's own manifest decides, or when no manifest above it declares vite-plus.
+ *
+ * @param {VitePlusDetection} detection
+ */
+function vitePlusInstallDirectory(detection) {
+  const declaringManifestPath =
+    detection.status === "unknown" ? detection.ancestor?.declaringManifestPath : undefined;
+  return declaringManifestPath && dirname(declaringManifestPath);
+}
+
+/**
  * Whether apply delegates to Vite+, both for the development dependency
  * install (ADR-0012) and for the checks the generated `quality` script runs
  * (ADR-0013): the project is managed, or it has no manifest of its own and the
@@ -3642,6 +3656,7 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
       editorConfig: integrations.some(({ id }) => id === "editorconfig")
         ? CALAVERA_EDITORCONFIG
         : undefined,
+      installDirectory: vitePlusInstallDirectory(vitePlusDetection),
     },
   );
   const managedFilePlans = await formatManagedFilePlans(
@@ -5900,8 +5915,11 @@ export async function initRecipe(options) {
   // because ignoring abandon would write and apply the recipe.
   /** @type {ManifestDecision | undefined} */
   let decision;
+  /** @type {string | undefined} */
+  let installDirectory;
   if (options.apply) {
     const detection = await detectVitePlus(process.cwd());
+    installDirectory = vitePlusInstallDirectory(detection);
     decision = manifestDecision(process.cwd(), detection);
     if (!decision && options.manifestChoice !== undefined) {
       throw manifestChoiceNotApplicableError(process.cwd(), detection);
@@ -5965,7 +5983,7 @@ export async function initRecipe(options) {
   const configText = await formatGeneratedText(
     relative(process.cwd(), resolve(options.config)),
     `${JSON.stringify(recipe, null, 2)}\n`,
-    projectFormatterLoader(process.cwd(), decision?.ancestor.status),
+    projectFormatterLoader(process.cwd(), decision?.ancestor.status, { installDirectory }),
   );
   if (!options.dryRun) {
     await writeFile(options.config, configText);
