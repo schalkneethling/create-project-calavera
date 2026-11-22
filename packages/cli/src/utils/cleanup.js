@@ -4,6 +4,8 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { isAbsolute, join, relative } from "node:path";
 
+import { onExit } from "signal-exit";
+
 /**
  * The failures of one or more cleanups. A cleanup that runs further cleanups throws this, so the
  * caller can merge its failures into one flat list instead of nesting them.
@@ -91,73 +93,43 @@ export class TemporaryFolderError extends Error {
 
 /**
  * The temporary folders `createTemporaryFolder` made in this process and `removeTemporaryFolder`
- * has not removed yet. They are the only folders the interrupt handler removes, each by its exact
+ * has not removed yet. They are the only folders the exit callback removes, each by its exact
  * path, because other runs keep folders with the same prefix in the system's temporary folder
- * (#1081). The set belongs to the process, as the signals it answers do.
+ * (#1081). The set belongs to the process, as the exit it answers does.
  *
  * @type {Set<string>}
  */
 const liveTemporaryFolders = new Set();
-const INTERRUPT_SIGNALS = /** @type {const} */ (["SIGINT", "SIGTERM"]);
 
 /**
- * How many listeners `signal` has that defer to the others: signal-exit's. Its listener, which
- * execa registers while a subprocess such as `vp fmt` runs, acts only when it finds no listener
- * but its own, and then ends the process by the signal. It counts its loaded copies in the
- * emitter that signal-exit 4 keeps under `Symbol.for("signal-exit emitter")` and signal-exit 3
- * keeps in `process.__signal_exit_emitter__`; each copy adds one listener to each signal.
+ * Unregisters the exit callback, while one is registered.
+ *
+ * @type {(() => void) | undefined}
  */
-function deferringListenerCount() {
-  const emitters = [
-    Reflect.get(globalThis, Symbol.for("signal-exit emitter")),
-    Reflect.get(process, "__signal_exit_emitter__"),
-  ];
-  return emitters.reduce((total, emitter) => {
-    const count = emitter?.count;
-    return total + (typeof count === "number" ? count : 0);
-  }, 0);
-}
+let removeExitCallback;
 
 /**
- * Whether no listener of `signal` but signal-exit's would keep the process running.
+ * Removes every live temporary folder as the process exits. signal-exit's `onExit` calls this when
+ * the process exits normally, through `process.exit()`, or by a signal such as Ctrl+C (SIGINT) or
+ * SIGTERM, and then ends the process by that signal itself. signal-exit shares one set of signal
+ * listeners among every `onExit` registration in the process, such as the one execa makes for each
+ * subprocess, so they cooperate.
  *
- * @param {NodeJS.Signals} signal
- * @param {number} own How many of the listeners are this handler: 1 while it is attached.
+ * signal-exit calls this for a signal only when the signal would end the process, that is, when no
+ * listener outside signal-exit handles it. When another listener handles the signal, such as a
+ * "press Ctrl+C again to quit" prompt, the process keeps running, and so does the run inside its
+ * folders, so nothing is removed then. The folders are removed later, when the process exits
+ * normally, through `process.exit()`, or by a signal that no other listener handles. Nothing can
+ * remove them when SIGKILL or a crash of Node itself ends the process.
+ *
+ * A folder whose earlier removal failed, which the command has already reported as left behind,
+ * stays recorded, so this tries to remove it once more when the process exits.
+ *
+ * The removal is synchronous, because the process ends as soon as this returns. Removal retries,
+ * because a copy into the folder that is still in flight can make it fail with ENOTEMPTY; a folder
+ * that still cannot be removed stays, as it would without this callback.
  */
-function onlyDeferringListeners(signal, own) {
-  return process.listenerCount(signal) - own - deferringListenerCount() <= 0;
-}
-
-/**
- * Answers Ctrl+C (SIGINT) or SIGTERM while a temporary folder exists. The process ends by the
- * signal only when no listener but this one and signal-exit's would keep it running. Then this
- * handler removes every live folder, forgets them, detaches itself, and raises the signal again.
- * With no listener left, Node's default action ends the process. With signal-exit's listeners
- * left, each one ends the process by the signal once it finds no listener but signal-exit's:
- * during this delivery when it was registered after this handler, and on the raised signal when
- * it was registered before.
- *
- * The raised signal arrives on a later turn of the event loop. If signal-exit's last listener is
- * removed before then, as execa does when its subprocess ends, Node stops watching the signal and
- * the raised signal is lost. So on the next turn, when no listener but signal-exit's remains, this
- * handler raises the signal once more, which then ends the process.
- *
- * The removal is synchronous because the process ends right after the signal is raised again,
- * before any asynchronous removal could finish. Removal retries, because a copy into the folder
- * that is still in flight can make it fail with ENOTEMPTY; a folder that still cannot be removed
- * stays, as it would without this handler.
- *
- * When any other listener exists, that listener decides whether the process ends, and Node has
- * already called it for this delivery. This handler then removes nothing, because the run may go
- * on inside its folders, and it does not raise the signal again, so that listener runs once. It
- * stays attached, so the folders are removed on a later signal that ends the process, or by the
- * run's own cleanup. If that listener ends the process itself, for example with `process.exit()`,
- * the folders stay.
- *
- * @param {NodeJS.Signals} signal
- */
-function removeLiveFoldersOnInterrupt(signal) {
-  if (!onlyDeferringListeners(signal, 1)) return;
+function removeLiveFoldersOnExit() {
   for (const folder of liveTemporaryFolders) {
     try {
       rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
@@ -165,40 +137,28 @@ function removeLiveFoldersOnInterrupt(signal) {
       // The process is ending, so nothing could report the failure.
     }
   }
-  // The folders are gone, so a folder created later attaches this handler again.
-  liveTemporaryFolders.clear();
-  detachInterruptHandler();
-  process.kill(process.pid, signal);
-  setImmediate(() => {
-    if (onlyDeferringListeners(signal, 0)) process.kill(process.pid, signal);
-  });
-}
-
-function detachInterruptHandler() {
-  for (const signal of INTERRUPT_SIGNALS) process.off(signal, removeLiveFoldersOnInterrupt);
 }
 
 /**
  * Creates a new, uniquely named folder in the system's temporary folder, whose name starts with
- * `prefix`, and removes it if Ctrl+C or SIGTERM interrupts the process before
- * `removeTemporaryFolder` removes it (#1081). The handlers are attached only while such a folder
- * exists, so a command that has removed its folders handles the signals as it did before.
+ * `prefix`, and removes it if the process exits, for example because Ctrl+C or SIGTERM interrupts
+ * it, before `removeTemporaryFolder` removes it (#1081). The exit callback is registered only while
+ * such a folder exists.
  *
  * @param {string} prefix
  * @returns {Promise<string>}
  */
 export async function createTemporaryFolder(prefix) {
   const folder = await mkdtemp(join(tmpdir(), prefix));
-  if (liveTemporaryFolders.size === 0) {
-    for (const signal of INTERRUPT_SIGNALS) process.on(signal, removeLiveFoldersOnInterrupt);
-  }
   liveTemporaryFolders.add(folder);
+  removeExitCallback ??= onExit(removeLiveFoldersOnExit);
   return folder;
 }
 
 /**
  * Removes `folder` and everything in it, if it is there. A folder that `createTemporaryFolder`
- * made is no longer removed on an interrupt once this succeeds; when this fails, it still is.
+ * made is no longer removed when the process exits once this succeeds; when this fails, it still
+ * is.
  *
  * @param {string} folder
  * @returns {Promise<void>}
@@ -210,7 +170,8 @@ export async function removeTemporaryFolder(folder) {
     throw new TemporaryFolderError(folder, error);
   }
   if (liveTemporaryFolders.delete(folder) && liveTemporaryFolders.size === 0) {
-    detachInterruptHandler();
+    removeExitCallback?.();
+    removeExitCallback = undefined;
   }
 }
 
