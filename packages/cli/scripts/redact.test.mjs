@@ -97,26 +97,70 @@ test("redactSecrets keeps prose, paths, and values that are not secret", () => {
   }
 });
 
+// Issue #1149: the time redaction takes must grow linearly with the text.
+// Absolute time cannot show that, because a machine running other suites at
+// the same time slows every call. Instead, each attempt times the same number
+// of characters two ways: as one long input, and as `GROWTH` inputs a
+// `GROWTH`th of its length. In linear time both take about as long, so the
+// ratio is near 1. In quadratic time, such as after a pattern starts to
+// backtrack, the long input takes about `GROWTH` times as long. Load slows
+// both measurements of an attempt alike, and the fastest of several attempts
+// is the one least disturbed, so the ratio stays near 1 under load.
 test("redactSecrets takes linear time on adversarial input", () => {
-  const size = 1024 * 1024;
-  const inputs = [
-    "a-".repeat(size / 2),
-    "a".repeat(size),
-    `token${" ".repeat(size)}`,
-    `x://${"a".repeat(size)}`,
-    "a://".repeat(size / 4),
-    `Basic ${"A".repeat(size)}====`,
-    `Bearer ${"a".repeat(size)}`,
-    "token=".repeat(size / 6),
-    "a:".repeat(size / 2),
-    `"${"a".repeat(size)}`,
-    `--token "${"a".repeat(size)}`,
+  const GROWTH = 16;
+  const SHORT = 1024;
+  const LONG = SHORT * GROWTH;
+  const ATTEMPTS = 10;
+  // Halfway between linear (about 1) and quadratic (about GROWTH) on a log
+  // scale.
+  const LIMIT = Math.sqrt(GROWTH);
+  const shapes = [
+    (size) => "a-".repeat(size / 2),
+    (size) => "a".repeat(size),
+    (size) => `token${" ".repeat(size)}`,
+    (size) => `x://${"a".repeat(size)}`,
+    (size) => "a://".repeat(size / 4),
+    (size) => `Basic ${"A".repeat(size)}====`,
+    (size) => `Bearer ${"a".repeat(size)}`,
+    (size) => "token=".repeat(Math.floor(size / 6)),
+    (size) => "a:".repeat(size / 2),
+    (size) => `"${"a".repeat(size)}`,
+    (size) => `--token "${"a".repeat(size)}`,
   ];
+  const env = { NPM_TOKEN: value };
 
-  for (const input of inputs) {
+  /** @param {() => void} run */
+  const time = (run) => {
     const started = performance.now();
-    redactSecrets(input, { NPM_TOKEN: value });
-    const elapsed = performance.now() - started;
-    assert.ok(elapsed < 2000, `${elapsed} ms for an input starting ${input.slice(0, 12)}`);
+    run();
+    return performance.now() - started;
+  };
+
+  for (const shape of shapes) {
+    const short = shape(SHORT);
+    const long = shape(LONG);
+    let fastestShort = Infinity;
+    let fastestLong = Infinity;
+
+    for (let attempt = 0; attempt < ATTEMPTS; attempt += 1) {
+      fastestShort = Math.min(
+        fastestShort,
+        time(() => {
+          for (let copy = 0; copy < GROWTH; copy += 1) redactSecrets(short, env);
+        }),
+      );
+      fastestLong = Math.min(
+        fastestLong,
+        time(() => redactSecrets(long, env)),
+      );
+      if (fastestLong < fastestShort * LIMIT) break;
+    }
+
+    assert.ok(
+      fastestLong < fastestShort * LIMIT,
+      `an input starting ${JSON.stringify(short.slice(0, 12))} took ${fastestLong.toFixed(2)} ms ` +
+        `at ${LONG} characters, against ${fastestShort.toFixed(2)} ms for ${GROWTH} inputs of ` +
+        `${SHORT} characters, so its time grows faster than its length`,
+    );
   }
 });
