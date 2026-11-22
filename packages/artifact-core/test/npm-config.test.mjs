@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import { inspect, promisify } from "node:util";
 
 import { loadNpmRegistryOptions } from "../src/npm-config.js";
+import { removeTemporaryDirectories, temporaryDirectory } from "./temporary-directory.mjs";
+
+afterEach(removeTemporaryDirectories);
 
 const SCOPE = "@schalkneethling";
 const SECRET = "SECRETVALUE0123456789";
@@ -17,7 +19,7 @@ const SECRET = "SECRETVALUE0123456789";
  * @param {{ project?: string, user?: string, env?: Record<string, string> }} files
  */
 async function fixture({ project, user, env = {} }) {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-npm-config-"));
+  const directory = await temporaryDirectory("calavera-npm-config-");
   const cwd = join(directory, "project");
   await mkdir(cwd);
   if (project !== undefined) await writeFile(join(cwd, ".npmrc"), project);
@@ -608,7 +610,7 @@ test("the project proxy warning names the proxy that is used after every layer i
  * @param {{ npmrc: string, member: string, rootPackage: object, memberPackage?: object, exported: Record<string, string> }} setup
  */
 async function npmExecFromBelowRoot({ npmrc, member, rootPackage, memberPackage, exported }) {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-npm-prefix-"));
+  const directory = await temporaryDirectory("calavera-npm-prefix-");
   const root = join(directory, "repo");
   const cwd = join(root, member);
   await mkdir(cwd, { recursive: true });
@@ -748,7 +750,7 @@ test("under npm exec, a project proxy written with another spelling is recognize
 
 test("under npm exec, a userconfig that npm passes on from the project .npmrc cannot bring in a proxy", async () => {
   for (const written of ["evil.npmrc", "./${npm_command}/evil.npmrc"]) {
-    const directory = await mkdtemp(join(tmpdir(), "calavera-npm-userconfig-"));
+    const directory = await temporaryDirectory("calavera-npm-userconfig-");
     const cwd = join(directory, "repo");
     await mkdir(cwd);
     const evil = join(cwd, written);
@@ -836,4 +838,18 @@ test("a yarn-only proxy key in a chosen user .npmrc is not warned about under np
   });
   context.env.npm_config_local_prefix = context.cwd;
   assert.deepEqual((await loadNpmRegistryOptions(context)).warnings, []);
+});
+
+/** The project folder of the fixture the previous test created. */
+let previousFixtureFolder = "";
+
+test("a fixture folder exists during its test", async () => {
+  const context = await fixture({ project: "registry=https://registry.example.com/\n" });
+  previousFixtureFolder = context.cwd;
+  await access(previousFixtureFolder);
+});
+
+test("the previous test's fixture folder is removed after that test, by its exact path", async () => {
+  assert.notEqual(previousFixtureFolder, "");
+  await assert.rejects(access(previousFixtureFolder), { code: "ENOENT" });
 });

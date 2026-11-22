@@ -1,12 +1,14 @@
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, mkdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import test, { afterEach } from "node:test";
 import { inspect } from "node:util";
 
 import { detectLauncher } from "../src/launcher-config.js";
 import { loadNpmRegistryOptions } from "../src/npm-config.js";
+import { removeTemporaryDirectories, temporaryDirectory } from "./temporary-directory.mjs";
+
+afterEach(removeTemporaryDirectories);
 
 const SCOPE = "@schalkneethling";
 const SECRET = "SECRETVALUE0123456789";
@@ -20,7 +22,7 @@ const BUN = "bun/1.3.9 npm/? node/v24.3.0 darwin arm64";
  * @param {{ files?: Record<string, string>, env?: Record<string, string>, userAgent?: string }} setup
  */
 async function fixture({ files = {}, env = {}, userAgent }) {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-launcher-config-"));
+  const directory = await temporaryDirectory("calavera-launcher-config-");
   const home = join(directory, "home");
   const cwd = join(directory, "workspace", "project");
   await mkdir(home, { recursive: true });
@@ -1176,4 +1178,20 @@ test("under Yarn 1 with a .yarnrc userconfig, the ~/.npmrc proxy that Yarn passe
   const { options, warnings } = await loadNpmRegistryOptions(context);
   assert.equal(options.httpsProxy, "http://corp.example.com:8080/");
   assert.deepEqual(warnings, []);
+});
+
+/** The project folder of the fixture the previous test created. */
+let previousFixtureFolder = "";
+
+test("a fixture folder exists during its test", async () => {
+  const context = await fixture({
+    files: { "workspace/project/.npmrc": "registry=https://registry.example.com/\n" },
+  });
+  previousFixtureFolder = context.cwd;
+  await access(previousFixtureFolder);
+});
+
+test("the previous test's fixture folder is removed after that test, by its exact path", async () => {
+  assert.notEqual(previousFixtureFolder, "");
+  await assert.rejects(access(previousFixtureFolder), { code: "ENOENT" });
 });
