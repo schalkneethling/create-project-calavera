@@ -4,7 +4,7 @@
 // the process running, the folder stays while the run goes on, and is removed when the process
 // exits.
 import assert from "node:assert/strict";
-import { mkdtempDisposable, stat } from "node:fs/promises";
+import { mkdtempDisposable, realpath, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -21,6 +21,8 @@ const ENDING_MODES = {
   "subprocess-last": "with an execa subprocess started after the folder",
   "failed-removal": "after removing the folder failed",
   recreated: "with a folder created after another was removed",
+  "one-of-two-removed": "with one of two folders removed",
+  "relative-tmpdir": "with a relative temporary folder and a changed working folder",
 };
 
 for (const [mode, situation] of Object.entries(ENDING_MODES)) {
@@ -36,7 +38,12 @@ for (const [mode, situation] of Object.entries(ENDING_MODES)) {
         let exitSignal;
         try {
           folder = await run.nextLine();
-          assert.equal(folder.startsWith(owned.path), true, folder);
+          // Real paths, because on macOS the system's temporary folder is behind a symbolic link.
+          assert.equal(
+            (await realpath(folder)).startsWith(await realpath(owned.path)),
+            true,
+            folder,
+          );
           assert.equal((await stat(folder)).isDirectory(), true, "the folder exists");
           run.child.kill(signal);
           [code, exitSignal] = await run.exited();

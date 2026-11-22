@@ -6,12 +6,18 @@
 //   after the folder is created, as `vp fmt` runs while apply plans.
 // - "failed-removal": removeTemporaryFolder fails to remove the folder, so the folder stays.
 // - "recreated": the first folder is removed, and a second one is created.
+// - "one-of-two-removed": two folders are created and the first is removed, as one removal of
+//   several that run at the same time can finish first. The second folder is printed.
+// - "relative-tmpdir": the system's temporary folder is given as a path relative to the working
+//   folder, and the working folder changes after the folder is created, as apply changes it to
+//   an ancestor folder. The folder's absolute path is printed.
 // - "other-listener": a SIGINT and SIGTERM listener that keeps the process running, as a "press
 //   Ctrl+C again to quit" prompt would. It prints a line each time it runs. After its first call,
 //   it prints whether the folder still exists, and then ends the process with process.exit(0).
 import { existsSync } from "node:fs";
 import fsPromises from "node:fs/promises";
 import { syncBuiltinESMExports } from "node:module";
+import { join, resolve } from "node:path";
 
 import { execa } from "execa";
 
@@ -27,6 +33,15 @@ function startSubprocess() {
   subprocess.catch(() => {});
 }
 
+// The folder the test owns, which the child receives as its system temporary folder.
+const owned = /** @type {string} */ (process.env.TMPDIR);
+if (mode === "relative-tmpdir") {
+  // A relative path that stays below the owned folder, so it cannot resolve to the same place from
+  // another working folder.
+  process.chdir(owned);
+  await fsPromises.mkdir("tmp");
+  process.env.TMPDIR = "tmp";
+}
 if (mode === "subprocess-first") startSubprocess();
 let folder = await createTemporaryFolder("calavera-locked-artifact-");
 if (mode === "subprocess-last") startSubprocess();
@@ -44,6 +59,16 @@ if (mode === "failed-removal") {
 if (mode === "recreated") {
   await removeTemporaryFolder(folder);
   folder = await createTemporaryFolder("calavera-locked-artifact-");
+}
+if (mode === "one-of-two-removed") {
+  const second = await createTemporaryFolder("calavera-locked-artifact-");
+  await removeTemporaryFolder(folder);
+  folder = second;
+}
+if (mode === "relative-tmpdir") {
+  folder = resolve(owned, folder);
+  await fsPromises.mkdir(join(owned, "elsewhere"));
+  process.chdir(join(owned, "elsewhere"));
 }
 if (mode === "other-listener") {
   let calls = 0;

@@ -2,7 +2,7 @@
 import { rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative } from "node:path";
+import { isAbsolute, join, relative, resolve } from "node:path";
 
 import { onExit } from "signal-exit";
 
@@ -148,13 +148,15 @@ function removeLiveFoldersOnExit() {
  * Creates a new, uniquely named folder in the system's temporary folder, whose name starts with
  * `prefix`, and removes it if the process exits, for example because Ctrl+C or SIGTERM interrupts
  * it, before `removeTemporaryFolder` removes it (#1081). The exit callback is registered only while
- * such a folder exists.
+ * such a folder exists. The folder's path is absolute.
  *
  * @param {string} prefix
  * @returns {Promise<string>}
  */
 export async function createTemporaryFolder(prefix) {
-  const folder = await mkdtemp(join(tmpdir(), prefix));
+  // os.tmpdir() returns a relative TMPDIR as it is, and the working folder can change before the
+  // process exits, so the folder is recorded and returned by its absolute path.
+  const folder = resolve(await mkdtemp(join(tmpdir(), prefix)));
   liveTemporaryFolders.add(folder);
   removeExitCallback ??= onExit(removeLiveFoldersOnExit);
   return folder;
