@@ -2820,7 +2820,7 @@ async function inspectManagedFilePlan(filePlan, previousState, reownManagedFiles
       severity: "warning",
       kind: "managed-file-reown",
       path: filePlan.path,
-      message: `${filePlan.path} has local edits relative to Calavera state; this run will treat the current contents as an approved managed-file baseline before applying the recipe.`,
+      message: `${filePlan.path} has local edits relative to Calavera state; apply will replace its current contents with Calavera's, so the edits are lost unless you save a copy first.`,
     };
   }
 
@@ -6945,7 +6945,8 @@ Options:
                        items that match Calavera's records exactly
   --no-install         Write files without installing dependencies during apply
   --reown-managed-file <path>
-                      Treat a tracked managed file's current contents as approved
+                       Replace an edited, tracked managed file's contents with
+                       Calavera's; the edits are lost unless you save a copy first
   --manifest-choice <choice>
                       Without a package.json here but with one above: create-here,
                       apply-at-ancestor, or abandon

@@ -163,7 +163,7 @@ export const recipeToolInputDescriptions = Object.freeze({
   writeConfig: "Write the approved recipe to the config path before applying.",
   noInstall: "Skip package manager dependency installation.",
   reownManagedFiles:
-    "Tracked Calavera-managed file paths whose current contents the user has approved as the baseline for this dry-run/apply.",
+    "Tracked Calavera-managed file paths with local edits that the user has approved replacing: apply_recipe replaces each file's current contents with Calavera's, so the edits are lost unless the user saved a copy first.",
   manifestChoice:
     "Only when the current directory has no package.json of its own but dry_run_apply returned manifestDecision: the choice the user made. create-here creates package.json here and applies with the ancestor's Vite+ verdict; apply-at-ancestor applies in the ancestor manifest's directory instead; abandon changes nothing. Never choose for the user. Omit it otherwise.",
   optionalDownloadRecipe:
