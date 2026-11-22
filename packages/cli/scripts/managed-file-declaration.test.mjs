@@ -26,6 +26,28 @@ const integrationOptions = {
   "github-repository-controls": { repository: "octocat/example", defaultBranch: "main" },
 };
 
+/**
+ * Runs `doctor --json` in `cwd` and returns its report. Doctor exits 1 exactly when an issue is an
+ * error (#1030), and a crash writes to standard error, so a run that crashed after it printed JSON,
+ * or that exited with the wrong code, fails here instead of passing (#1092).
+ *
+ * @param {string} cwd
+ */
+async function runDoctorJson(cwd) {
+  const { stdout, stderr, code } = await execFileAsync(
+    process.execPath,
+    [cliPath, "doctor", "--json"],
+    { cwd, env: { ...process.env, NO_COLOR: "1" } },
+  ).then(
+    (result) => ({ ...result, code: 0 }),
+    (error) => error,
+  );
+  assert.equal(stderr, "", "doctor wrote to standard error");
+  const report = JSON.parse(stdout);
+  assert.equal(code, report.issues.some(({ level }) => level === "error") ? 1 : 0);
+  return report;
+}
+
 const repositoryControlFiles = [
   ".github/repository-controls.json",
   ".github/dependabot.yml",
@@ -162,13 +184,9 @@ test("doctor checks every planned file", async () => {
     })}\n`,
   );
 
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
-    cwd: directory.path,
-    env: { ...process.env, NO_COLOR: "1" },
-  }).catch((error) => error);
   const prefix = "Missing managed file: ";
-  const messages = JSON.parse(stdout)
-    .issues.map(({ message }) => message)
+  const messages = (await runDoctorJson(directory.path)).issues
+    .map(({ message }) => message)
     .filter((message) => message.startsWith(prefix));
 
   // #925: the github-repository-controls files are checked like every other managed file, and at
@@ -206,12 +224,16 @@ test("doctor run from a workspace member checks the repository-controls files at
     await writeFile(join(root, path), "");
   }
 
-  const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
-    cwd: member,
-    env: { ...process.env, NO_COLOR: "1" },
-  }).catch((error) => error);
-  const messages = JSON.parse(stdout)
-    .issues.map(({ message }) => message)
+  const { issues } = await runDoctorJson(member);
+  // github-repository-controls selected in a member is the one error, so doctor exits 1.
+  assert.deepEqual(
+    issues
+      .filter(({ level }) => level === "error")
+      .map(({ message }) => message.slice(0, message.indexOf("."))),
+    ["github-repository-controls applies at the repository root, not in a workspace member"],
+  );
+  const messages = issues
+    .map(({ message }) => message)
     .filter((message) => message.startsWith("Missing managed file: "));
 
   assert.equal(messages.length, 1, messages.join("\n"));
