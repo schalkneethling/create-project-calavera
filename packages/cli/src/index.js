@@ -527,6 +527,19 @@ const packageManagerCommands = {
 };
 
 /**
+ * Where `vp install` installs vite-plus for a directory that follows the Vite+ verdict of the
+ * manifest above it, because it has no package.json of its own (#961, #1084), or nothing when the
+ * directory's own manifest decides.
+ *
+ * @param {VitePlusDetection} detection
+ */
+function vitePlusInstallDirectory(detection) {
+  return detection.status === "unknown" && detection.ancestor?.status === "managed"
+    ? dirname(detection.ancestor.manifestPath)
+    : undefined;
+}
+
+/**
  * Whether apply delegates to Vite+, both for the development dependency
  * install (ADR-0012) and for the checks the generated `quality` script runs
  * (ADR-0013): the project is managed, or it has no manifest of its own and the
@@ -3642,6 +3655,7 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
       editorConfig: integrations.some(({ id }) => id === "editorconfig")
         ? CALAVERA_EDITORCONFIG
         : undefined,
+      installDirectory: vitePlusInstallDirectory(vitePlusDetection),
     },
   );
   const managedFilePlans = await formatManagedFilePlans(
@@ -5965,7 +5979,9 @@ export async function initRecipe(options) {
   const configText = await formatGeneratedText(
     relative(process.cwd(), resolve(options.config)),
     `${JSON.stringify(recipe, null, 2)}\n`,
-    projectFormatterLoader(process.cwd(), decision?.ancestor.status),
+    projectFormatterLoader(process.cwd(), decision?.ancestor.status, {
+      installDirectory: decision && dirname(decision.ancestor.manifestPath),
+    }),
   );
   if (!options.dryRun) {
     await writeFile(options.config, configText);

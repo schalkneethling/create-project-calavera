@@ -37,6 +37,10 @@ import {
  * @property {boolean} [removesEditorConfig] Whether the same run removes the project root's
  *   `.editorconfig`, as clean does when the recipe drops editorconfig; formatting a file stops when
  *   the removal would change the settings Oxfmt formats it with (#838).
+ * @property {string} [installDirectory] Where `vp install` installs the project's vite-plus, when
+ *   that is not the project directory. Under `--manifest-choice create-here`, the project follows
+ *   the Vite+ verdict of the manifest above it, so the remedy for a missing vite-plus names that
+ *   manifest's directory (#1084).
  */
 
 /** @type {ProjectFormatter} */
@@ -59,7 +63,7 @@ const unformatted = {
 export async function loadProjectFormatter(
   projectDirectory,
   vitePlusStatus,
-  { timeout = 60_000, editorConfig, removesEditorConfig = false } = {},
+  { timeout = 60_000, editorConfig, removesEditorConfig = false, installDirectory } = {},
 ) {
   if (vitePlusStatus !== "managed") return unformatted;
 
@@ -69,8 +73,9 @@ export async function loadProjectFormatter(
   try {
     manifestPath = require.resolve("vite-plus/package.json");
   } catch (error) {
+    const install = installDirectory ? `vp install in ${installDirectory}` : "vp install";
     throw new Error(
-      `${projectDirectory} uses Vite+, but Calavera cannot find its vite-plus package, so it cannot format the files it writes the way vp check expects. Run vp install, then run Calavera again.`,
+      `${projectDirectory} uses Vite+, but Calavera cannot find its vite-plus package, so it cannot format the files it writes the way vp check expects. Run ${install}, then run Calavera again.`,
       { cause: error },
     );
   }
