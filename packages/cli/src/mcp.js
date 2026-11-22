@@ -22,15 +22,13 @@ import {
   listAiArtifactsResponse,
   listIntegrationsResponse,
   listProfilesResponse,
-  packageManagerIdsForRecipe,
-  assertKnownProfile,
-  profileIdsForRecipe,
   mcpComposeRecipeDescription,
   recipeToolDescriptions,
   recipeToolInputDescriptions,
   validateRecipe,
   validateRecipeResponse,
 } from "./recipe.js";
+import { packageManagerSchema, recipeSchema, sharedToolSchemas } from "./tool-schemas.js";
 import { describeArtifactInputs } from "./ai/artifact-inputs.js";
 import { describeIntegrationInputs } from "./integration-inputs.js";
 import { manifestChoices, pathAtAncestor } from "./manifest-decision.js";
@@ -51,22 +49,9 @@ const SERVER_VERSION = packageJson.version;
 const SERVER_INSTRUCTIONS =
   "Compose Calavera recipes for the current project. Start with inspect_project, list_profiles, list_integrations, describe_integration when details are needed, and list_ai_artifacts to discover valid IDs, then call compose_recipe, validate_recipe, explain_recipe, and dry_run_apply. Present the dry-run summary to the user and call apply_recipe only after explicit approval.";
 
-const profileIds = profileIdsForRecipe();
-// A removed profile id fails the enum like any other value; the error map hands back the same
-// message validateRecipe gives, naming the replacement, so an MCP client sees it too (ADR-0011).
-const profileSchema = z.enum(profileIds, {
-  error: (issue) => {
-    if (typeof issue.input !== "string") return undefined;
-    try {
-      assertKnownProfile(issue.input);
-    } catch (error) {
-      return error instanceof Error ? error.message : undefined;
-    }
-    return undefined;
-  },
-});
-const packageManagerIds = packageManagerIdsForRecipe();
-const recipeSchema = z.record(z.string(), z.unknown()).describe("A Calavera recipe object.");
+const packageManagerOverrideSchema = packageManagerSchema
+  .optional()
+  .describe(recipeToolInputDescriptions.packageManagerOverride);
 const manifestChoiceSchema = z
   .enum(manifestChoices)
   .optional()
@@ -75,72 +60,6 @@ const reownManagedFilesSchema = z
   .array(z.string())
   .optional()
   .describe(recipeToolInputDescriptions.reownManagedFiles);
-const aiArtifactInputSchema = z.object({
-  id: z.string().describe(recipeToolInputDescriptions.aiArtifactId),
-  target: z.string().optional().describe(recipeToolInputDescriptions.aiArtifactTarget),
-  inputs: z
-    .record(z.string(), z.string())
-    .optional()
-    .describe(recipeToolInputDescriptions.aiArtifactInputs),
-});
-const baselineTargetSchema = z
-  .union([z.enum(["widely", "newly"]), z.number().int()])
-  .describe(recipeToolInputDescriptions.baselineTarget);
-
-// Shared output schema for a catalog integration as returned by list_integrations and
-// describe_integration. Loose, because some catalog entries carry per-platform config blocks
-// (stylelint, htmlValidate) beyond this shape: a strict object is advertised with
-// additionalProperties: false, and clients that validate structuredContent reject those entries.
-const integrationOutputSchema = z.looseObject({
-  id: z.string().describe("Stable integration ID used in recipes."),
-  label: z.string().describe("Human-readable integration name."),
-  summary: z.string().describe("One-sentence plain-language summary of what the tool does."),
-  homepage: z.string().describe("The https URL to the tool's own site or repository."),
-  group: z.string().describe("Catalog group the integration belongs to."),
-  platform: z.string().describe("Tool family the integration's generation code keys off."),
-  status: z
-    .string()
-    .describe(
-      "Whether the integration is recommended, optional, experimental, or framework-specific.",
-    ),
-  statusLabel: z
-    .string()
-    .describe("Display label for status, such as Recommended or Framework-specific."),
-  dependencies: z
-    .array(z.string())
-    .describe(
-      "Development packages installed for the integration. An integration with testRunners also installs the dependencies of the runner the recipe selects.",
-    ),
-  profiles: z.array(z.string()).describe("Profiles the integration is available in."),
-  description: z.string().describe("Generated description prefixed with the integration summary."),
-  minimumCliVersion: z.string().optional(),
-  optionsMinimumCliVersion: z
-    .string()
-    .optional()
-    .describe("The first CLI version that accepts this integration's integrationOptions entry."),
-  appliesAt: z.string().optional(),
-  notes: z
-    .array(z.string())
-    .describe(
-      "Plain-language conditions to tell the user before selecting the integration, such as that it needs a project that Vite+ manages or applies in a workspace member, not at a workspace root.",
-    ),
-  testRunners: z
-    .array(
-      z.looseObject({
-        id: z.string().describe("The value of integrationOptions[id].testRunner."),
-        label: z.string(),
-        dependencies: z
-          .array(z.string())
-          .describe("Development packages installed with dependencies when this runner is chosen."),
-        testFiles: z.array(z.string()).describe("The test files the runner reads by default."),
-      }),
-    )
-    .optional()
-    .describe(
-      "The test runners the integration can drive, chosen with integrationOptions[id].testRunner. The first is the default.",
-    ),
-  includes: z.array(z.string()).optional(),
-});
 
 const toolAnnotations = {
   read: {
@@ -160,8 +79,8 @@ const toolAnnotations = {
 /**
  * @typedef {{
  *   description: string,
- *   inputSchema: Record<string, z.ZodTypeAny>,
- *   outputSchema?: Record<string, z.ZodTypeAny> | typeof integrationOutputSchema,
+ *   inputSchema: z.ZodObject,
+ *   outputSchema?: z.ZodObject,
  *   annotations: typeof toolAnnotations.read | typeof toolAnnotations.apply,
  * }} ToolConfig
  */
@@ -170,122 +89,82 @@ const toolAnnotations = {
 const toolConfigs = {
   list_profiles: {
     description: recipeToolDescriptions.list_profiles,
-    inputSchema: {},
+    inputSchema: sharedToolSchemas.list_profiles.input,
     annotations: toolAnnotations.read,
   },
   inspect_project: {
     description: recipeToolDescriptions.inspect_project,
-    inputSchema: {
+    inputSchema: z.object({
       recipe: recipeSchema.optional().describe(recipeToolInputDescriptions.recipe),
       reownManagedFiles: reownManagedFilesSchema,
-    },
+    }),
     annotations: toolAnnotations.read,
   },
   list_integrations: {
     description: recipeToolDescriptions.list_integrations,
-    inputSchema: {
-      profile: profileSchema.optional().describe(recipeToolInputDescriptions.profileFilter),
-    },
-    outputSchema: {
-      profile: z.string().nullable(),
-      integrations: z.array(integrationOutputSchema),
-    },
+    inputSchema: sharedToolSchemas.list_integrations.input,
+    outputSchema: sharedToolSchemas.list_integrations.output,
     annotations: toolAnnotations.read,
   },
   describe_integration: {
     description: recipeToolDescriptions.describe_integration,
-    inputSchema: {
-      id: z.string().describe(recipeToolInputDescriptions.integrationId),
-    },
-    outputSchema: integrationOutputSchema,
+    inputSchema: sharedToolSchemas.describe_integration.input,
+    outputSchema: sharedToolSchemas.describe_integration.output,
     annotations: toolAnnotations.read,
   },
   list_ai_artifacts: {
     description: recipeToolDescriptions.list_ai_artifacts,
-    inputSchema: {},
+    inputSchema: sharedToolSchemas.list_ai_artifacts.input,
     annotations: toolAnnotations.read,
   },
   list_baseline_targets: {
     description: recipeToolDescriptions.list_baseline_targets,
-    inputSchema: {},
+    inputSchema: sharedToolSchemas.list_baseline_targets.input,
     annotations: toolAnnotations.read,
   },
   describe_baseline_target: {
     description: recipeToolDescriptions.describe_baseline_target,
-    inputSchema: { target: baselineTargetSchema },
+    inputSchema: sharedToolSchemas.describe_baseline_target.input,
     annotations: toolAnnotations.read,
   },
   search_baseline_features: {
     description: recipeToolDescriptions.search_baseline_features,
-    inputSchema: {
-      query: z.string().describe(recipeToolInputDescriptions.baselineQuery),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
-        .optional()
-        .describe(recipeToolInputDescriptions.baselineLimit),
-    },
+    inputSchema: sharedToolSchemas.search_baseline_features.input,
     annotations: toolAnnotations.read,
   },
   recommend_baseline_target: {
     description: recipeToolDescriptions.recommend_baseline_target,
-    inputSchema: {
-      features: z.array(z.string()).min(1).describe(recipeToolInputDescriptions.baselineFeatures),
-    },
+    inputSchema: sharedToolSchemas.recommend_baseline_target.input,
     annotations: toolAnnotations.read,
   },
   compose_recipe: {
     description: mcpComposeRecipeDescription,
-    inputSchema: {
-      profile: profileSchema.describe(recipeToolInputDescriptions.profile),
-      packageManager: z
-        .enum(packageManagerIds)
-        .default("npm")
-        .describe(recipeToolInputDescriptions.packageManager),
-      tools: z.array(z.string()).optional().describe(recipeToolInputDescriptions.tools),
-      aiArtifacts: z
-        .array(aiArtifactInputSchema)
-        .optional()
-        .describe(recipeToolInputDescriptions.aiArtifacts),
-      integrationOptions: z
-        .record(z.string(), z.unknown())
-        .optional()
-        .describe(recipeToolInputDescriptions.integrationOptions),
-    },
+    inputSchema: sharedToolSchemas.compose_recipe.input,
     annotations: toolAnnotations.read,
   },
   validate_recipe: {
     description: recipeToolDescriptions.validate_recipe,
-    inputSchema: {
-      recipe: recipeSchema,
-    },
+    inputSchema: sharedToolSchemas.validate_recipe.input,
     annotations: toolAnnotations.read,
   },
   explain_recipe: {
     description: recipeToolDescriptions.explain_recipe,
-    inputSchema: {
-      recipe: recipeSchema,
-    },
+    inputSchema: sharedToolSchemas.explain_recipe.input,
     annotations: toolAnnotations.read,
   },
   dry_run_apply: {
     description: recipeToolDescriptions.dry_run_apply,
-    inputSchema: {
+    inputSchema: z.object({
       recipe: recipeSchema,
-      packageManager: z
-        .enum(packageManagerIds)
-        .optional()
-        .describe(recipeToolInputDescriptions.packageManagerOverride),
+      packageManager: packageManagerOverrideSchema,
       config: z.string().default(CONFIG_FILE).describe(recipeToolInputDescriptions.config),
       writeConfig: z.boolean().default(true).describe(recipeToolInputDescriptions.writeConfig),
       reownManagedFiles: reownManagedFilesSchema,
       manifestChoice: manifestChoiceSchema,
-    },
-    // Loose, as integrationOutputSchema is: the result carries more than this declares, and a
-    // strict object is advertised with additionalProperties: false.
-    outputSchema: {
+    }),
+    // Loose, as the integration output schema in tool-schemas.js is: the result carries more than
+    // this declares, and a strict object is advertised with additionalProperties: false.
+    outputSchema: z.object({
       approvalBoundary: z.string(),
       result: z.looseObject({
         autoInstalledArtifacts: z
@@ -304,23 +183,20 @@ const toolConfigs = {
             "Selected artifacts without a lock entry, which apply installs and locks before it applies the recipe.",
           ),
       }),
-    },
+    }),
     annotations: toolAnnotations.read,
   },
   apply_recipe: {
     description: recipeToolDescriptions.apply_recipe,
-    inputSchema: {
+    inputSchema: z.object({
       recipe: recipeSchema,
-      packageManager: z
-        .enum(packageManagerIds)
-        .optional()
-        .describe(recipeToolInputDescriptions.packageManagerOverride),
+      packageManager: packageManagerOverrideSchema,
       config: z.string().default(CONFIG_FILE).describe(recipeToolInputDescriptions.config),
       writeConfig: z.boolean().default(true).describe(recipeToolInputDescriptions.writeConfig),
       noInstall: z.boolean().default(false).describe(recipeToolInputDescriptions.noInstall),
       reownManagedFiles: reownManagedFilesSchema,
       manifestChoice: manifestChoiceSchema,
-    },
+    }),
     annotations: toolAnnotations.apply,
   },
 };

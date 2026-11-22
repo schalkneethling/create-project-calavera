@@ -4,7 +4,12 @@ import test from "node:test";
 import Ajv from "ajv";
 import { integrationCatalog } from "../../../packages/cli/src/catalog.js";
 import { aiArtifactCatalog } from "../../../packages/cli/src/ai/catalog.js";
-import { profileCatalog } from "../../../packages/cli/src/recipe.js";
+import {
+  describeIntegrationResponse,
+  listIntegrationsResponse,
+  profileCatalog,
+} from "../../../packages/cli/src/recipe.js";
+import { webMcpToolSchemas } from "../../../packages/cli/src/tool-schemas.js";
 import {
   artifactResponseForCli,
   assertRecipeArtifactsSupported,
@@ -22,16 +27,40 @@ import {
   versionMeetsMinimum,
 } from "../cli-compatibility.js";
 import viteConfig from "../vite.config.js";
-import { releaseEnvironmentInputSchema } from "../repository-controls-input-schema.js";
+
+const webMcpSchemas = webMcpToolSchemas();
 
 test("WebMCP release-environment schema accepts every disabled representation", () => {
-  const validate = new Ajv({ strict: true }).compile(releaseEnvironmentInputSchema);
+  const validate = new Ajv({ strict: true }).compile(
+    webMcpSchemas.compose_recipe.inputSchema.properties.integrationOptions.properties[
+      "github-repository-controls"
+    ].properties.releaseEnvironment,
+  );
 
   assert.equal(validate(false), true);
   assert.equal(validate(null), true);
   assert.equal(validate({ reviewers: ["octocat"] }), true);
   assert.equal(validate({}), false);
   assert.equal(validate({ reviewers: ["octocat"], waitTimer: 43_201 }), false);
+});
+
+test("the Composer's integration responses match the WebMCP output schemas", () => {
+  const ajv = new Ajv({ allErrors: true, strict: false });
+  for (const version of [SAFE_CLI_FALLBACK_VERSION, "6.2.1"]) {
+    const list = integrationResponseForCli(listIntegrationsResponse(), version);
+    assert.equal(ajv.validate(webMcpSchemas.list_integrations.outputSchema, list), true, version);
+
+    for (const integration of filterIntegrationsForCli(list.integrations, version)) {
+      assert.equal(
+        ajv.validate(
+          webMcpSchemas.describe_integration.outputSchema,
+          describeIntegrationResponse(integration.id),
+        ),
+        true,
+        integration.id,
+      );
+    }
+  }
 });
 
 test("version comparison keeps unreleased integrations behind their CLI release", () => {
@@ -234,6 +263,41 @@ test("Composer build rejects Node-only modules in its browser graph", () => {
       message: "Node-only module node:path reached the Composer from packages/cli/src/recipe.js.",
     },
   );
+});
+
+test("Composer build keeps Zod out of its browser graph", () => {
+  const browserOnlyPlugin = viteConfig.plugins.find(
+    ({ name }) => name === "browser-only-module-graph",
+  );
+  const context = {
+    error(message) {
+      throw new Error(message);
+    },
+  };
+
+  for (const source of ["zod", "zod/mini"]) {
+    assert.throws(
+      () => browserOnlyPlugin.resolveId.call(context, source, "packages/cli/src/tool-schemas.js"),
+      {
+        message: `${source} reached the Composer from packages/cli/src/tool-schemas.js. The build generates the WebMCP schemas, so the page needs no Zod.`,
+      },
+    );
+  }
+});
+
+test("the build generates the WebMCP schemas from the core's shared tool definitions", async () => {
+  // #1051 owner decision of 2026-11-22: the schemas are generated at build time from
+  // sharedToolSchemas, so Zod stays out of the bundle and no generated copy can go stale.
+  const plugin = viteConfig.plugins.find(({ name }) => name === "webmcp-tool-schemas");
+  assert.ok(plugin);
+  const id = plugin.resolveId("virtual:webmcp-tool-schemas");
+  assert.equal(typeof id, "string");
+  assert.equal(plugin.resolveId("./script.js"), undefined);
+
+  const source = await plugin.load(id);
+  const exported = JSON.parse(source.replace(/^export default /, "").replace(/;\s*$/, ""));
+  assert.deepEqual(exported, webMcpToolSchemas());
+  assert.equal(await plugin.load("/script.js"), undefined);
 });
 
 test("stryker is offered from the CLI that added it and hidden from older ones", () => {

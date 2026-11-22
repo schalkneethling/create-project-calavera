@@ -75,6 +75,9 @@ export const projectLocalCommandNotes = Object.freeze({
 
 export const aiArtifactTypes = ["skill", "hook", "agent"];
 
+/** The values integrationOptions.stylelint-baseline.severity accepts; the first is the default. */
+export const STYLELINT_BASELINE_SEVERITIES = Object.freeze(["warning", "error"]);
+
 export const recipeCompositionToolNames = Object.freeze([
   "list_profiles",
   "list_integrations",
@@ -151,7 +154,7 @@ export const recipeToolInputDescriptions = Object.freeze({
     'Values for the inputs the artifact declares, keyed by input name, such as { protectedBranch: "main" }. compose_recipe reports each declared input with its default; confirm the value with the user before dry_run_apply.',
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
-    "Options keyed by selected integration ID. Stylelint Baseline accepts available and severity; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from; Stryker accepts testRunner, vitest by default or node:test for a project that tests with node:test, and, with node:test, testFiles, the globs the project's test script passes to node --test.",
+    "Options keyed by selected integration ID. Stylelint Baseline requires available, which is widely, newly, or a Baseline year, and accepts severity, warning by default or error; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from; Stryker accepts testRunner, vitest by default or node:test for a project that tests with node:test, and, with node:test, testFiles, the globs the project's test script passes to node --test.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
   baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
   baselineLimit: "Maximum number of Baseline feature search results.",
@@ -437,15 +440,26 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
 }
 
 /**
- * Checks the names and the shape of recorded input values. The value's own check, such as a valid
- * branch name, needs Git, so the CLI runs it before apply plans anything.
+ * Refuses artifact inputs that are not an object of values keyed by input name. The shared tool
+ * schema runs it too, so its refusal names the same fault.
+ *
+ * @param {unknown} inputs
+ * @param {number} index The artifact's position in aiArtifacts.
  */
-function normalizeAiArtifactInputValues(inputs, artifact, index) {
+export function assertAiArtifactInputsObject(inputs, index) {
   if (!isPlainObject(inputs)) {
     throw new Error(
       `Invalid aiArtifacts[${index}].inputs: expected an object of input values keyed by input name.`,
     );
   }
+}
+
+/**
+ * Checks the names and the shape of recorded input values. The value's own check, such as a valid
+ * branch name, needs Git, so the CLI runs it before apply plans anything.
+ */
+function normalizeAiArtifactInputValues(inputs, artifact, index) {
+  assertAiArtifactInputsObject(inputs, index);
 
   for (const [name, value] of Object.entries(inputs)) {
     if (!Object.hasOwn(artifact.inputs ?? {}, name)) {
@@ -591,9 +605,9 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
     }
 
     const available = normalizeBaselineTarget(options.available);
-    const severity = options.severity ?? "warning";
+    const severity = options.severity ?? STYLELINT_BASELINE_SEVERITIES[0];
 
-    if (severity !== "warning" && severity !== "error") {
+    if (!STYLELINT_BASELINE_SEVERITIES.includes(severity)) {
       throw new Error("Stylelint Baseline severity must be warning or error.");
     }
 

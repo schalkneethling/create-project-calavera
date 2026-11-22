@@ -130,6 +130,7 @@ import {
   validateRecipeResponse,
   webMcpToolNames,
 } from "../src/recipe.js";
+import { webMcpToolSchemas } from "../src/tool-schemas.js";
 import { composerRegisteredToolNames } from "./composer-webmcp-tools.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -1390,7 +1391,7 @@ test("CLI rich composer dry-run apply keeps the review boundary non-destructive"
 
 test("integrationOptions description names only Stylelint Baseline fields the validator accepts", () => {
   const match = recipeToolInputDescriptions.integrationOptions.match(
-    /Stylelint Baseline accepts (\w+) and (\w+);/,
+    /Stylelint Baseline requires (\w+), [^;]*?and accepts (\w+),/,
   );
   assert.ok(match, "the description names the Stylelint Baseline fields");
   const namedFields = match.slice(1);
@@ -1404,6 +1405,15 @@ test("integrationOptions description names only Stylelint Baseline fields the va
   ]);
   assert.deepEqual(normalized["stylelint-baseline"], options);
   assert.deepEqual(namedFields.toSorted(), ["available", "severity"]);
+
+  // The field the description calls required is the one the shared tool schema requires (#1051).
+  const [requiredField, optionalField] = namedFields;
+  const { required } =
+    webMcpToolSchemas().compose_recipe.inputSchema.properties.integrationOptions.properties[
+      "stylelint-baseline"
+    ];
+  assert.deepEqual(required, [requiredField]);
+  assert.ok(!required.includes(optionalField));
 });
 
 test("standard MCP workflow exposes dry-run and apply tools", () => {
