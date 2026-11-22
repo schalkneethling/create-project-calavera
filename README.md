@@ -930,9 +930,11 @@ notice adds that the dependency is unchanged and gives the command that updates 
 informs: the command runs to the end with the installed version, and the exit code is unchanged.
 
 The check asks the registry and sends the credentials that your user and project `.npmrc` files and
-`npm_config_*` variables name, through the `proxy` or `https-proxy` that your user `.npmrc` or
-`npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`. A proxy in a project
-file is ignored, because it could receive your credentials. Under Yarn 2 or later, it asks the registry and proxy that your
+`npm_config_*` variables name, through the `proxy` or `https-proxy` that your user `.npmrc` or your
+own `npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`. A proxy in a project
+`.npmrc` or `.yarnrc.yml` is ignored with a warning, because it could receive your credentials. That
+includes a proxy that npm passes on from the project `.npmrc` it read, such as the workspace root's
+file when you run `npx` from a workspace member. Under Yarn 2 or later, it asks the registry and proxy that your
 `.yarnrc.yml` files and `YARN_*` variables name, and under Bun, the registry that your `.npmrc` files, `bunfig.toml`, or a Bun registry variable
 such as `BUN_CONFIG_REGISTRY` names. When no proxy is configured, it follows the
 proxy environment variables in either letter case: `HTTPS_PROXY` for an `https:` registry,

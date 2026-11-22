@@ -572,7 +572,10 @@ test("a project .npmrc proxy does not remove the user .npmrc proxy, and the warn
   assert.equal(options.proxy, "http://corp.example.com:8080/");
   assert.equal(warnings.length, 2);
   for (const warning of warnings) {
-    assert.match(warning, /in the project \.npmrc: .*Calavera uses the one in the user \.npmrc\.$/);
+    assert.match(
+      warning,
+      /in the project \.npmrc: .*Calavera uses https-proxy from the user \.npmrc instead\.$/,
+    );
     assert.doesNotMatch(warning, /set it in your user configuration/);
   }
 });
@@ -585,7 +588,10 @@ test("the project proxy warning names the proxy that is used after every layer i
   });
   const overriddenResult = await loadNpmRegistryOptions(overridden);
   assert.equal(overriddenResult.options.httpsProxy, "http://env-proxy.example.com/");
-  assert.match(overriddenResult.warnings[0], /Calavera uses the one in the environment\.$/);
+  assert.match(
+    overriddenResult.warnings[0],
+    /Calavera uses https-proxy from the environment instead\.$/,
+  );
 
   const emptyUser = await fixture({
     user: "https-proxy=\n",
@@ -594,4 +600,106 @@ test("the project proxy warning names the proxy that is used after every layer i
   const emptyResult = await loadNpmRegistryOptions(emptyUser);
   assert.equal(emptyResult.options.httpsProxy, undefined);
   assert.match(emptyResult.warnings[0], /To use it, set it in your user configuration\.$/);
+});
+
+/**
+ * A repository whose root .npmrc holds `npmrc`, run as `npm exec` from `member` (a path below the
+ * root). npm reads the project .npmrc at its local prefix, the root here, and exports its values.
+ * @param {{ npmrc: string, member: string, rootPackage: object, memberPackage?: object, exported: Record<string, string> }} setup
+ */
+async function npmExecFromBelowRoot({ npmrc, member, rootPackage, memberPackage, exported }) {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-npm-prefix-"));
+  const root = join(directory, "repo");
+  const cwd = join(root, member);
+  await mkdir(cwd, { recursive: true });
+  await writeFile(join(root, ".npmrc"), npmrc);
+  await writeFile(join(root, "package.json"), JSON.stringify(rootPackage));
+  if (memberPackage) await writeFile(join(cwd, "package.json"), JSON.stringify(memberPackage));
+  return {
+    cwd,
+    scope: SCOPE,
+    env: {
+      npm_config_userconfig: join(directory, "missing.npmrc"),
+      npm_command: "exec",
+      npm_config_local_prefix: root,
+      ...exported,
+    },
+  };
+}
+
+test("under npm exec from a workspace member, the workspace root .npmrc proxy is a project proxy", async () => {
+  const context = await npmExecFromBelowRoot({
+    npmrc: "https-proxy=http://attacker.example:8080/\n",
+    member: "packages/web",
+    rootPackage: { name: "repo", workspaces: ["packages/*"] },
+    memberPackage: { name: "web" },
+    exported: { npm_config_https_proxy: "http://attacker.example:8080/" },
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, undefined);
+  assert.match(warnings[0], /^Ignored https-proxy in the project \.npmrc/);
+});
+
+test("under npm exec from a subdirectory without package.json, the package root .npmrc is the project file", async () => {
+  const context = await npmExecFromBelowRoot({
+    npmrc:
+      "https-proxy=http://attacker.example:8080/\nregistry=https://project-registry.example.com/\n",
+    member: "src/lib",
+    rootPackage: { name: "repo" },
+    exported: {
+      npm_config_https_proxy: "http://attacker.example:8080/",
+      npm_config_registry: "https://project-registry.example.com/",
+    },
+  });
+  const { options, registry, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, undefined);
+  assert.match(warnings[0], /^Ignored https-proxy in the project \.npmrc/);
+  // The registry keeps its project label, as when npm runs from the root itself.
+  assert.deepEqual(registry, {
+    origin: "https://project-registry.example.com",
+    source: "project .npmrc",
+  });
+});
+
+test("under npm exec from a workspace member, the root .npmrc cannot choose an http registry", async () => {
+  const context = await npmExecFromBelowRoot({
+    npmrc: "registry=http://registry.example.com/\n",
+    member: "packages/web",
+    rootPackage: { name: "repo", workspaces: ["packages/*"] },
+    memberPackage: { name: "web" },
+    exported: { npm_config_registry: "http://registry.example.com/" },
+  });
+  await assert.rejects(loadNpmRegistryOptions(context), /project \.npmrc must be an https URL/);
+});
+
+test("npm_config_noproxy in npm's exported list format is joined with commas", async () => {
+  const exported = await fixture({
+    user: "noproxy[]=a.example.com\nnoproxy[]=b.example.com\n",
+    env: {
+      npm_command: "exec",
+      npm_config_noproxy: "a.example.com\n\nb.example.com",
+    },
+  });
+  assert.equal(
+    (await loadNpmRegistryOptions(exported)).options.noProxy,
+    "a.example.com,b.example.com",
+  );
+  const plain = await fixture({ env: { npm_config_noproxy: "a.example.com\n\nb.example.com" } });
+  assert.equal(
+    (await loadNpmRegistryOptions(plain)).options.noProxy,
+    "a.example.com,b.example.com",
+  );
+});
+
+test("a rejected project proxy warning names the user https-proxy that npm-registry-fetch uses", async () => {
+  const context = await fixture({
+    user: "https-proxy=http://corp.example.com:8080/\n",
+    project: "proxy=http://team.example.com:3128/\n",
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, "http://corp.example.com:8080/");
+  assert.match(
+    warnings[0],
+    /^Ignored proxy in the project \.npmrc: .*Calavera uses https-proxy from the user \.npmrc instead\.$/,
+  );
 });

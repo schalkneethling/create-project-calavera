@@ -908,7 +908,7 @@ test("under Yarn, a project .yarnrc.yml proxy does not remove the home .yarnrc.y
   assert.equal(warnings.length, 1);
   assert.match(
     warnings[0],
-    /^Ignored httpsProxy in the project \.yarnrc\.yml: .*Calavera uses the one in the user \.yarnrc\.yml\.$/,
+    /^Ignored httpsProxy in the project \.yarnrc\.yml: .*Calavera uses httpsProxy from the user \.yarnrc\.yml instead\.$/,
   );
 });
 
@@ -1002,5 +1002,51 @@ test("under Yarn, the project proxy warning names YARN_HTTPS_PROXY when that var
   });
   const { options, warnings } = await loadNpmRegistryOptions(context);
   assert.equal(options.proxy, "http://env.example.com:8080");
-  assert.match(warnings[0], /Calavera uses the one in the environment\.$/);
+  assert.match(warnings[0], /Calavera uses YARN_HTTPS_PROXY from the environment instead\.$/);
+});
+
+test("under Yarn, a rejected project proxy warning names the proxy Yarn uses for the registry protocol", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: {
+      "home/.yarnrc.yml": "httpsProxy: http://corp.example.com:8080\n",
+      "workspace/project/.yarnrc.yml": "httpProxy: http://team.example.com:3128\n",
+    },
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.proxy, "http://corp.example.com:8080");
+  assert.match(
+    warnings[0],
+    /^Ignored httpProxy in the project \.yarnrc\.yml: .*Calavera uses httpsProxy from the user \.yarnrc\.yml instead\.$/,
+  );
+
+  const unused = await fixture({
+    userAgent: YARN,
+    files: {
+      "home/.yarnrc.yml": "httpProxy: http://corp.example.com:8080\n",
+      "workspace/project/.yarnrc.yml": "httpsProxy: http://team.example.com:3128\n",
+    },
+  });
+  const unusedResult = await loadNpmRegistryOptions(unused);
+  assert.equal(unusedResult.options.proxy, undefined);
+  assert.match(
+    unusedResult.warnings[0],
+    /No other proxy setting applies\. To use it, set it in your user configuration\.$/,
+  );
+});
+
+test("under bun run, npm_config_local_prefix does not move the project .npmrc, because only npm exports its settings", async () => {
+  const context = await fixture({
+    userAgent: BUN,
+    files: {
+      "workspace/project/.npmrc": "registry=https://cwd.example.com/\n",
+      "workspace/.npmrc": "registry=https://prefix.example.com/\n",
+    },
+    env: { npm_command: "run-script", npm_lifecycle_event: "start" },
+  });
+  context.env.npm_config_local_prefix = join(context.cwd, "..");
+  assert.equal(
+    (await loadNpmRegistryOptions(context)).options.registry,
+    "https://cwd.example.com/",
+  );
 });

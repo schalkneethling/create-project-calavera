@@ -21,7 +21,8 @@ import {
 // decides where a request goes, through which proxy, and how it authenticates, with npm's
 // precedence for those keys: user .npmrc, then project .npmrc, then npm_config_* environment
 // variables. Global and built-in npmrc files, command-line flags, and other settings (CA) are not
-// read. The project .npmrc is the one in `cwd`; parent directories are not searched.
+// read. The project .npmrc is the one in `cwd`, or, when npm started Calavera, the one at npm's
+// local prefix, which is the file npm itself read.
 // Under Yarn 2 or later and Bun, the registry comes from their own settings; see
 // launcher-config.js.
 const DEFAULT_REGISTRY = "https://registry.npmjs.org/";
@@ -102,7 +103,9 @@ function environmentSettings(env) {
     let key = name.slice("npm_config_".length);
     // Nerf-darted keys keep their case and underscores; every other key is kebab-case.
     if (!key.startsWith("//")) key = key.replace(/(?!^)_/g, "-").toLowerCase();
-    settings[key] = value;
+    // npm exports a list setting joined with blank lines (`envVal` in @npmcli/config
+    // set-envs.js), but @npmcli/agent splits noProxy on commas only.
+    settings[key] = key === "noproxy" ? value.split("\n\n").join(",") : value;
   }
   return settings;
 }
@@ -167,7 +170,16 @@ export async function loadNpmRegistryOptions({
   const launcher = detectLauncher(env);
   const home = env.HOME || homedir();
   const userPath = await userConfigPath(env, home, launcher);
-  const projectPath = resolve(cwd, ".npmrc");
+  // Bun and Yarn also set npm_lifecycle_event and similar variables, but only npm and pnpm
+  // export their resolved .npmrc settings, so the comparison with exported values below applies
+  // to them alone.
+  const npmStarted = launcher === "npm" && startedByNpm(env);
+  // npm reads the project .npmrc at its local prefix: the nearest folder above the working
+  // directory with a package.json or node_modules, or the workspace root of a member
+  // (`loadLocalPrefix` and `loadProjectConfig` in @npmcli/config). It exports that folder as
+  // npm_config_local_prefix (`setEnvs`), and the file's values as npm_config_* variables.
+  // Reading the same file keeps those values labeled, and restricted, as project content.
+  const projectPath = resolve((npmStarted && env.npm_config_local_prefix) || cwd, ".npmrc");
   const scopeKey = scope ? `${scope}:registry` : undefined;
   /** @param {string} key */
   const isRegistryKey = (key) => key === "registry" || key === scopeKey;
@@ -209,15 +221,12 @@ export async function loadNpmRegistryOptions({
             bunEnvironmentLayer(env),
           ]
         : [...npmFiles, npmEnvironment];
-  // Bun and Yarn also set npm_lifecycle_event and similar variables, but only npm and pnpm
-  // export their resolved .npmrc settings, so the comparison below applies to them alone.
-  const npmStarted = launcher === "npm" && startedByNpm(env);
 
   /** @type {Record<string, string>} */
   const options = {};
   /** @type {Record<string, ConfigLayer>} */
   const sources = {};
-  /** @type {{ key: string, setting: string, layer: string }[]} */
+  /** @type {{ setting: string, layer: string }[]} */
   const rejectedProxies = [];
   for (const layer of layers) {
     const { name, entries, trusted } = layer;
@@ -249,7 +258,7 @@ export async function loadNpmRegistryOptions({
         // noproxy entry only remove the proxy, so a project file may still set them.
         // The warning is written after every layer is read, so it names the proxy that applies.
         if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
-          rejectedProxies.push({ key: rawKey, setting, layer: name });
+          rejectedProxies.push({ setting, layer: name });
           continue;
         }
       } else if (layer.npmEnvironment && npmStarted) {
@@ -315,16 +324,6 @@ export async function loadNpmRegistryOptions({
     }
   }
 
-  for (const { key, setting, layer } of rejectedProxies) {
-    // Only trusted layers can hold a proxy now; an empty value means no proxy.
-    const outcome = options[key]
-      ? `Calavera uses the one in the ${sources[key]?.name}.`
-      : "To use it, set it in your user configuration.";
-    const message = `Ignored ${setting} in the ${layer}: Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials. ${outcome}`;
-    warnings.push(message);
-    notes.push(message);
-  }
-
   if (launcher === "yarn" && !options.registry) options.registry = YARN_DEFAULT_REGISTRY;
   const registryKey = scopeKey && options[scopeKey] ? scopeKey : "registry";
   const registryUrl = new URL(options[registryKey] ?? DEFAULT_REGISTRY);
@@ -339,13 +338,28 @@ export async function loadNpmRegistryOptions({
           ["noproxy", "noProxy"],
         ],
   );
+  /** @type {Record<string, string>} */
+  const proxyOrigins = {};
   for (const key of new Set([...NPM_PROXY_KEYS, ...PROXY_URL_KEYS])) {
     const value = options[key];
+    const layer = sources[key];
     delete options[key];
     const name = proxyNames.get(key);
     // An empty value leaves the proxy unset, as an empty npm setting does.
-    if (!name || !value) continue;
+    if (!name || !value || !layer) continue;
     options[name] = value;
+    proxyOrigins[name] = `${printable(layer.settingNames?.[key] ?? key)} from the ${layer.name}`;
+  }
+  // The warning for an ignored project proxy names the proxy that requests use after every layer
+  // is read: npm-registry-fetch uses httpsProxy when it is set and proxy otherwise.
+  const usedProxy = proxyOrigins[options.httpsProxy ? "httpsProxy" : "proxy"];
+  for (const { setting, layer } of rejectedProxies) {
+    const outcome = usedProxy
+      ? `Calavera uses ${usedProxy} instead.`
+      : "No other proxy setting applies. To use it, set it in your user configuration.";
+    const message = `Ignored ${setting} in the ${layer}: Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials. ${outcome}`;
+    warnings.push(message);
+    notes.push(message);
   }
   // npm-registry-fetch picks credentials by host and ignores the protocol, so over http they
   // travel in plain text.
