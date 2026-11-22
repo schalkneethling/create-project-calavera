@@ -182,7 +182,7 @@ An error fails the command's verdict and exits 1. A warning and a note do not. `
 
 The `ejected` line is an error in both doctors, as for `unmanaged`, because the owner decided that a project without Calavera's files fails both doctors (owner decision 2), and an ejected project has none apart from the marker. The line differs from `unmanaged` only in what it says.
 
-`doctor`'s other checks keep their wording and levels in every phase in which they run today: the missing `package.json` warning, the removed-toolchain warnings, the root-only and Git-hook refusals, and the missing Varlock schema warning.
+`doctor`'s other checks keep their wording and levels in every phase in which they run today: the missing `package.json` warning, the removed-toolchain warnings (#431), the root-only and Git-hook refusals, and the missing Varlock schema warning. The same holds for the two warnings #1082 adds in PR #1170: the removed-profile warning (`removedProfileWarnings`), which names a profile ADR-0011 removed, such as `modern` or `classic`, with its replacement, and the unknown-integration warning (`unknownIntegrationWarnings`), which names a removed toolchain integration by its catalog ID with the ADR that removed it and any other unknown ID by its position, such as `integrations[2]`.
 
 **Artifacts.** Both doctors give each artifact the same condition and report it at the same error or warning level, as Decision 5 states exactly. `doctor` reads the lock through the phase function, so it now reports lock entries, edits, and unrecorded outputs, which it does not see today, at the levels #994 set for `artifacts doctor` (owner decision 10).
 
