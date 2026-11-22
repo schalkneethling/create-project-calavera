@@ -465,9 +465,10 @@ export async function loadNpmRegistryOptions({
   )
     .map((wanted) => Object.keys(env).find((name) => name.toLowerCase() === wanted && env[name]))
     .find(Boolean);
-  const usedProxy =
-    proxyOrigins[options.httpsProxy ? "httpsProxy" : "proxy"] ??
-    (environmentProxy ? `the ${printable(environmentProxy)} environment variable` : undefined);
+  const usedProxy = registryBypassesProxy(registryUrl, options.noProxy, env)
+    ? "direct"
+    : (proxyOrigins[options.httpsProxy ? "httpsProxy" : "proxy"] ??
+      (environmentProxy ? `the ${printable(environmentProxy)} environment variable` : undefined));
   const registryProtocol = registryUrl.protocol.slice(0, -1);
   const userFile =
     launcher === "yarn"
@@ -476,7 +477,12 @@ export async function loadNpmRegistryOptions({
         ? `~/.npmrc or in ${registryUrl.protocol === "https:" ? "HTTPS_PROXY" : "HTTP_PROXY"}`
         : "your user .npmrc";
   for (const { key, setting, layer } of rejectedProxies) {
-    const used = usedProxy ? `Calavera uses ${usedProxy} instead.` : undefined;
+    const used =
+      usedProxy === "direct"
+        ? "The registry host is excluded from proxies, so requests go to it directly."
+        : usedProxy
+          ? `Calavera uses ${usedProxy} instead.`
+          : undefined;
     // Under Yarn, a proxy for the other protocol would not apply even from a user file.
     const outcome =
       launcher === "yarn" && !proxyNames.has(key)
@@ -516,6 +522,31 @@ export async function loadNpmRegistryOptions({
     diagnostics: [...new Set([...warnings, ...notes])],
     unsetVariables: [...unsetVariables],
   };
+}
+
+/**
+ * Whether @npmcli/agent sends requests to the registry without a proxy: a configured noProxy
+ * replaces the no_proxy variable (any letter case), and an entry matches a host whose trailing
+ * name segments equal it (`getProxy` and `isNoProxy` in @npmcli/agent/lib/proxy.js).
+ * @param {URL} registryUrl
+ * @param {string | undefined} configured
+ * @param {NodeJS.ProcessEnv} env
+ */
+function registryBypassesProxy(registryUrl, configured, env) {
+  const list =
+    configured ||
+    Object.entries(env).find(([name, value]) => name.toLowerCase() === "no_proxy" && value)?.[1];
+  if (!list) return false;
+  const hostSegments = registryUrl.hostname.split(".").reverse();
+  return list
+    .split(",")
+    .map((entry) => entry.trim())
+    .some((entry) => {
+      const segments = entry.split(".").filter(Boolean).reverse();
+      return (
+        segments.length > 0 && segments.every((segment, index) => hostSegments[index] === segment)
+      );
+    });
 }
 
 /** @param {string} value */

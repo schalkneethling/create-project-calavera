@@ -1191,7 +1191,7 @@ test("a fixture folder exists during its test", async () => {
   await access(previousFixtureFolder);
 });
 
-test("the previous test's fixture folder is removed after that test, by its exact path", async () => {
+test("the previous test's fixture folder is removed after that test", async () => {
   assert.notEqual(previousFixtureFolder, "");
   await assert.rejects(access(previousFixtureFolder), { code: "ENOENT" });
 });

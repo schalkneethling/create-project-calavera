@@ -849,7 +849,25 @@ test("a fixture folder exists during its test", async () => {
   await access(previousFixtureFolder);
 });
 
-test("the previous test's fixture folder is removed after that test, by its exact path", async () => {
+test("the previous test's fixture folder is removed after that test", async () => {
   assert.notEqual(previousFixtureFolder, "");
   await assert.rejects(access(previousFixtureFolder), { code: "ENOENT" });
+});
+
+test("the ignored project proxy warning says requests go direct when noproxy or NO_PROXY excludes the registry", async () => {
+  /** @type {Record<string, string>[]} */
+  const exclusions = [{ NO_PROXY: "registry.npmjs.org" }, { npm_config_noproxy: "npmjs.org" }];
+  for (const exclusion of exclusions) {
+    const context = await fixture({
+      user: "https-proxy=http://corp.example.com:8080/\n",
+      project: "https-proxy=http://team.example.com:3128/\n",
+      env: { HTTPS_PROXY: "http://env-proxy.example.com/", ...exclusion },
+    });
+    const { warnings } = await loadNpmRegistryOptions(context);
+    assert.match(
+      warnings[0],
+      /The registry host is excluded from proxies, so requests go to it directly\.$/,
+      JSON.stringify(exclusion),
+    );
+  }
 });

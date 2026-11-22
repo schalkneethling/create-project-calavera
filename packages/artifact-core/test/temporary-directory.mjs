@@ -18,7 +18,11 @@ export async function temporaryDirectory(prefix) {
   return directory;
 }
 
-/** Removes every folder that temporaryDirectory created since the last call. Use in afterEach. */
+/**
+ * Removes every folder that temporaryDirectory created since the last call. Use in a top-level
+ * afterEach. node:test also runs that hook after each subtest, so a test that creates a folder must
+ * not start subtests with t.test, or the first subtest's hook removes the parent's folder.
+ */
 export async function removeTemporaryDirectories() {
   for (const directory of created.splice(0)) {
     await rm(directory, { recursive: true, force: true });
