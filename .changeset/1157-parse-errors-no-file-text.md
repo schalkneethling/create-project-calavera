@@ -2,4 +2,11 @@
 "create-project-calavera": patch
 ---
 
-When the recipe, `.calavera/state.json`, `.calavera/artifacts.lock.json`, the artifact transaction journal, or `package.json` is not valid JSON, Calavera now names the file, what is wrong, and the line and column, such as "calavera.config.json cannot be parsed as JSON: InvalidSymbol at line 3, column 14". Some commands name the file by its full path. Before, it passed on the message from `JSON.parse`, which quotes the text around the error, so a secret written in one of those files could reach terminal output, `--json` output, CI logs, and the `inspect_project` finding for an invalid `package.json`. This covers `doctor`, `artifacts` commands, `apply` and `update` with a recipe inside or outside the project, and `--new --config`. A parse error message no longer quotes the file, with or without `CALAVERA_DEBUG`. A missing or unreadable file still fails with its own error, such as `ENOENT` or `EISDIR`, and `--new --config` now reports a recipe that is not valid JSON separately from one that is not a valid recipe (#1157).
+When a JSON file a person writes is not valid JSON, Calavera now names the file, what is wrong, and the line and column, such as "calavera.config.json cannot be parsed as JSON: InvalidSymbol at line 3, column 14". Some commands name the file by its full path. Before, it passed on the message from `JSON.parse`, which quotes the text around the error, so a secret written in one of those files could reach terminal output, `--json` output, CI logs, and agents. This covers:
+
+- the recipe, `.calavera/state.json`, `.calavera/artifacts.lock.json`, the artifact transaction journal, and `package.json`, in `doctor`, the `artifacts` commands, `apply` and `update` with a recipe inside or outside the project, `--new --config`, and the `inspect_project` finding for an invalid `package.json`;
+- `.claude/settings.json`, in the `doctor` warning and the `apply` conflict;
+- `.mcp.json`, `.cursor/mcp.json`, and `opencode.json`, when the `--init` bootstrap writes the Calavera MCP entry;
+- `.github/repository-controls.json`, in the generated `scripts/repository-controls.mjs`, which also no longer prints the parser's error as the cause.
+
+A parse error message no longer quotes the file, with or without `CALAVERA_DEBUG`. A missing or unreadable file still fails with its own error, such as `ENOENT` or `EISDIR`, and `--new --config` now reports a recipe that is not valid JSON separately from one that is not a valid recipe (#1157).

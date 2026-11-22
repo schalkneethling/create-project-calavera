@@ -39,14 +39,96 @@ export function readBoundedJson(path, limit = CONFIG_LIMIT) {
   if (contents.byteLength > limit) {
     throw new Error(`${path} exceeded the ${limit}-byte safety limit while being read.`);
   }
+  const text = contents.toString("utf8");
   try {
-    return JSON.parse(contents.toString("utf8"));
-  } catch (error) {
-    if (error instanceof SyntaxError) {
-      throw new Error(`${path} is not valid JSON.`, { cause: error });
-    }
-    throw error;
+    return JSON.parse(text);
+  } catch {
+    // Never JSON.parse's error, as message or cause: its message quotes the text around the
+    // error, which can hold a token. The position is found without it.
+    throw new Error(`${path} cannot be parsed as JSON at ${jsonErrorPosition(text)}.`);
   }
+}
+
+/**
+ * Where strict JSON parsing of `text` first fails, as "line L, column C", both counted from 1.
+ * This script runs in the project without Calavera's dependencies, so it scans the text itself
+ * rather than read the position from JSON.parse's message, whose wording differs between
+ * Node.js versions and which quotes the text. Call it only for text JSON.parse rejected.
+ *
+ * @param {string} text
+ */
+export function jsonErrorPosition(text) {
+  let index = 0;
+  const fail = () => {
+    throw index;
+  };
+  const space = () => {
+    while (/[ \t\n\r]/.test(text[index] ?? "")) index += 1;
+  };
+  const expect = (character) => {
+    if (text[index] !== character) fail();
+    index += 1;
+  };
+  const string = () => {
+    expect('"');
+    for (;;) {
+      const character = text[index];
+      if (character === undefined || character < " ") fail();
+      if (character === '"') break;
+      if (character === "\\") {
+        index += 1;
+        if (text[index] === "u") {
+          if (!/^[0-9a-fA-F]{4}$/.test(text.slice(index + 1, index + 5))) fail();
+          index += 4;
+        } else if (!'"\\/bfnrt'.includes(text[index] ?? "x")) fail();
+      }
+      index += 1;
+    }
+    index += 1;
+  };
+  const value = () => {
+    space();
+    const character = text[index];
+    if (character === "{" || character === "[") {
+      const close = character === "{" ? "}" : "]";
+      index += 1;
+      space();
+      if (text[index] === close) {
+        index += 1;
+        return;
+      }
+      for (;;) {
+        if (close === "}") {
+          space();
+          string();
+          space();
+          expect(":");
+        }
+        value();
+        space();
+        if (text[index] === close) break;
+        expect(",");
+      }
+      index += 1;
+    } else if (character === '"') {
+      string();
+    } else {
+      const literal = /-?(?:0|[1-9]\d*)(?:\.\d+)?(?:[eE][+-]?\d+)?|true|false|null/y;
+      literal.lastIndex = index;
+      if (!literal.test(text)) fail();
+      index = literal.lastIndex;
+    }
+  };
+  try {
+    value();
+    space();
+    if (index < text.length) fail();
+  } catch (offset) {
+    if (typeof offset !== "number") return "an unknown position";
+    const lines = text.slice(0, offset).split("\n");
+    return `line ${lines.length}, column ${(lines.at(-1)?.length ?? 0) + 1}`;
+  }
+  return "an unknown position";
 }
 
 export class GitHubApi {

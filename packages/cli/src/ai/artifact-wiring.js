@@ -17,6 +17,7 @@ import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 
 import { resolveAiArtifacts } from "./artifacts.js";
 import { planClaudeSettings, runsSkill } from "./claude-settings.js";
+import { jsonSyntaxProblem } from "../utils/parse-position.js";
 import {
   fillInputPlaceholders,
   planViteHookBlock,
@@ -636,9 +637,10 @@ export async function artifactWiringFindings({
       try {
         const settings = JSON.parse(contents);
         if (isObject(settings) && isObject(settings.hooks)) hooks = settings.hooks;
-      } catch (error) {
+      } catch {
+        // #1157: what is wrong, and where, never JSON.parse's message, which quotes the file.
         warn(
-          `${path} is not valid JSON (${error instanceof Error ? error.message : String(error)}), so doctor cannot check the ${id} groups Calavera recorded there, and the next apply stops. Fix the JSON and run doctor again.`,
+          `${path} cannot be parsed as JSON: ${jsonSyntaxProblem(contents)}, so doctor cannot check the ${id} groups Calavera recorded there, and the next apply stops. Fix the JSON and run doctor again.`,
         );
         continue;
       }
