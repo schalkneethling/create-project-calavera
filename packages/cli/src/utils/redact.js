@@ -31,13 +31,19 @@ const SECRET_NAME = new RegExp(
 // The working directory variables hold paths, never secrets.
 const NEVER_SECRET_NAME = /^(?:OLD)?PWD$/i;
 
+// A session ID names a session and grants no access, as `PWD` names a folder,
+// so the `_SESSION_ID` ending does not make a name secret, and
+// `CLAUDE_CODE_SESSION_ID` keeps its value. The rest of the name still
+// decides, so `GITHUB_TOKEN_SESSION_ID` keeps its value hidden.
+const SESSION_ID_ENDING = /_SESSION_ID$/i;
+
 // A shorter value, such as `true` or `1`, is a setting, not a secret, and
 // redacting it everywhere it appears would hide ordinary text.
 const MINIMUM_SECRET_VALUE_LENGTH = 8;
 
 /** @param {string} name */
 function isSecretName(name) {
-  const bare = name.replace(/^-+/, "");
+  const bare = name.replace(/^-+/, "").replace(SESSION_ID_ENDING, "");
   return bare !== "" && !NEVER_SECRET_NAME.test(bare) && SECRET_NAME.test(bare);
 }
 
