@@ -181,3 +181,41 @@ test("an artifact transaction moves a staged file to a target whose name starts 
     assert.equal(await readFile(join(project, "..a.txt"), "utf8"), "staged\n");
   });
 });
+
+// #1092: a commit that fails part way leaves the journal it wrote before moving anything, and
+// recovery rolls the project back from that journal alone. The test reads the journal the commit
+// wrote, not one the test wrote, so emptying or changing it fails here.
+test("a commit that fails part way leaves a journal of every operation, and recovery rolls back from it", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    const replaced = join(project, "replaced.txt");
+    await writeFile(replaced, "before\n");
+    const created = join(root, "created.txt");
+    await writeFile(created, "created\n");
+    // The third operation stages the file the first one moves, so it exists when the commit
+    // checks it and is gone when its move runs, after the first two moved.
+    const operations = [
+      { staged, target: replaced },
+      { staged: created, target: join(project, "created.txt") },
+      { staged, target: join(project, "never.txt") },
+    ];
+
+    await assert.rejects(commitArtifactTransaction(root, operations), { code: "ENOENT" });
+
+    assert.deepEqual(JSON.parse(await readFile(TRANSACTION_PATH, "utf8")), {
+      schemaVersion: 1,
+      transactionRoot: root,
+      operations: operations.map((operation, index) => ({
+        ...operation,
+        backup: join(root, "backups", String(index)),
+        hadTarget: index === 0,
+      })),
+    });
+    assert.equal(await readFile(replaced, "utf8"), "staged\n");
+
+    await recoverArtifactTransaction();
+
+    assert.equal(await readFile(replaced, "utf8"), "before\n");
+    assert.deepEqual((await readdir(project)).sort(), [".calavera", "replaced.txt"]);
+    assert.deepEqual(await readdir(join(project, ".calavera")), [".transactions"]);
+  });
+});

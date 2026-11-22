@@ -237,6 +237,7 @@ import { VARLOCK_POINTER, VARLOCK_SCHEMA_PATH } from "./varlock.js";
  * @property {boolean} [writeConfig]
  * @property {import("./stryker-options.js").AskForTestRunner} [askForTestRunner] Replaces the terminal prompts for the Stryker test runner, so tests can answer them (#890). It is used only where apply could prompt.
  * @property {ManifestChoice} [manifestChoice] The person's choice when the directory has no package.json of its own but a manifest above it was found (#430). Apply never makes this choice itself.
+ * @property {InitPrompts} [initPrompts] Replaces the terminal prompts that `init` itself asks, so tests can answer them in-process (#1092). The input and test runner prompts that apply also asks are not part of it.
  * @property {import("./manifest-decision.js").AskForManifestChoice} [askForManifestChoice] Replaces the terminal prompt for the manifest choice, so tests can answer it (#430). It is used only where apply could prompt, and never in a dry run.
  * @property {ArtifactLockEntry[]} [approvedArtifacts] Artifacts a dry run reported it would lock; apply installs them at exactly those versions.
  * @property {PackageManager} [packageManager]
@@ -5709,6 +5710,15 @@ function assertInitCanAsk(options, question, remedy) {
 }
 
 /**
+ * The prompts `init` asks for its recipe and its apply confirmation, which `CliOptions.initPrompts`
+ * replaces in tests (#1092).
+ *
+ * @typedef {{ select: typeof select, groupMultiselect: typeof groupMultiselect, confirm: typeof confirm }} InitPrompts
+ */
+
+const terminalInitPrompts = { select, groupMultiselect, confirm };
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<string>}
  */
@@ -5729,7 +5739,7 @@ async function promptForProfile(options) {
 
   const selected =
     options.profile ??
-    (await select({
+    (await (options.initPrompts ?? terminalInitPrompts).select({
       message: "Choose a tooling profile",
       options: supportedProfiles.map((id) => ({
         value: id,
@@ -5760,7 +5770,7 @@ async function promptForPackageManager(options, detectedPackageManager) {
     options.packageManager ??
     (options.assumeYes
       ? detectedPackageManager
-      : await select({
+      : await (options.initPrompts ?? terminalInitPrompts).select({
           message: "Choose a package manager",
           initialValue: detectedPackageManager,
           options: recipePackageManagers.map((id) => ({
@@ -5793,7 +5803,7 @@ async function promptForIntegrations(options, profile) {
     return defaults;
   }
 
-  const selected = await groupMultiselect({
+  const selected = await (options.initPrompts ?? terminalInitPrompts).groupMultiselect({
     message: "Choose integration packs",
     options: groupedPromptOptions(listIntegrationOptions(profile)),
     initialValues: defaults,
@@ -5827,7 +5837,7 @@ async function promptForAiArtifacts(options) {
     "Pass --yes to use the defaults, or answer it with --ai-artifact.",
   );
   const artifactOptions = listAiArtifactOptions();
-  const selected = await groupMultiselect({
+  const selected = await (options.initPrompts ?? terminalInitPrompts).groupMultiselect({
     message: "Choose AI artifacts",
     options: groupedPromptOptions(artifactOptions),
     initialValues: [],
@@ -5852,7 +5862,7 @@ async function promptForAiArtifacts(options) {
     }
 
     // #990: recipe validation accepts only the artifact's target IDs, so the prompt offers those.
-    const target = await select({
+    const target = await (options.initPrompts ?? terminalInitPrompts).select({
       message: `Target for ${artifact.label}`,
       options: artifactTargetPromptOptions(artifact),
       initialValue: artifact.defaultTarget,
@@ -5972,7 +5982,7 @@ export async function initRecipe(options) {
 
     const shouldApply =
       options.assumeYes ||
-      (await confirm({
+      (await (options.initPrompts ?? terminalInitPrompts).confirm({
         message: "Apply these Calavera-managed changes now?",
         initialValue: false,
       }));
