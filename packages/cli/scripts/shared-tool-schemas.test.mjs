@@ -173,9 +173,9 @@ test("the MCP server advertises each shared tool's core input and output schema"
 test("MCP and WebMCP declare the same output schema for each shared tool", () => {
   for (const name of Object.keys(sharedToolSchemas)) {
     // The WebMCP form leaves out only the $schema key, because registerTool takes the schema itself.
-    const mcpOutput = mcpTools.get(name)?.outputSchema;
-    const { $schema, ...expected } = mcpOutput ?? {};
-    assert.deepEqual(webMcpSchemas[name].outputSchema, mcpOutput && expected, name);
+    const expected = structuredClone(mcpTools.get(name)?.outputSchema);
+    if (expected) delete expected.$schema;
+    assert.deepEqual(webMcpSchemas[name].outputSchema, expected, name);
   }
   assert.ok(webMcpSchemas.list_integrations.outputSchema);
   // The Stryker entry's test runners are the fields integrationOptions.stryker refers to.
@@ -185,8 +185,9 @@ test("MCP and WebMCP declare the same output schema for each shared tool", () =>
 
 test("MCP and WebMCP declare the same input schema apart from the Node.js-only artifact inputs", () => {
   for (const name of Object.keys(sharedToolSchemas)) {
-    const { $schema, ...mcpInput } = structuredClone(mcpTools.get(name)?.inputSchema);
-    assert.equal($schema, "http://json-schema.org/draft-07/schema#", name);
+    const mcpInput = structuredClone(mcpTools.get(name)?.inputSchema);
+    assert.equal(mcpInput.$schema, "http://json-schema.org/draft-07/schema#", name);
+    delete mcpInput.$schema;
     if (name === "compose_recipe") {
       // ADR-0018 Decision 2: the WebMCP adapter leaves the Node.js-only part out, and refuses it.
       const item = mcpInput.properties.aiArtifacts.items;

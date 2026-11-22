@@ -139,7 +139,13 @@ const artifactIndex = (issue) => Number(issue.path?.[1]);
  * @returns {CoreCheck}
  */
 const compositionCheck = (fields) => (value) =>
-  validateRecipeCompositionInput({ profile: "default", ...fields(value) });
+  validateRecipeCompositionInput(
+    // The core reads untyped tool input, so it takes the refused value as it came.
+    /** @type {Parameters<typeof validateRecipeCompositionInput>[0]} */ ({
+      profile: "default",
+      ...fields(value),
+    }),
+  );
 
 /**
  * Runs the core's integrationOptions check on the option `id` built from the refused value.
@@ -508,8 +514,10 @@ export const sharedToolSchemas = Object.freeze({
     input: z.object({
       features: z
         .array(
-          z.string(coreMessage((feature) => recommendBaselineTarget([feature]))),
-          coreMessage((value) => recommendBaselineTarget(value)),
+          z.string(
+            coreMessage((feature) => recommendBaselineTarget(/** @type {string[]} */ ([feature]))),
+          ),
+          coreMessage((value) => recommendBaselineTarget(/** @type {string[]} */ (value))),
         )
         .min(1)
         .describe(recipeToolInputDescriptions.baselineFeatures),
@@ -574,9 +582,8 @@ export function toolJsonSchema(schema, { io, browser = false }) {
         }
       : undefined,
   });
-  if (!browser) return jsonSchema;
-  const { $schema, ...browserSchema } = jsonSchema;
-  return browserSchema;
+  if (browser) delete jsonSchema.$schema;
+  return jsonSchema;
 }
 
 /**
