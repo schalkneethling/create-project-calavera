@@ -28,10 +28,12 @@ import {
 } from "./project-local-commands.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import {
+  cleanupFailures,
   createTemporaryFolder,
   errorAfterCleanups,
   removeTemporaryFolder,
   runCleanups,
+  temporaryFolderLeftovers,
 } from "./utils/cleanup.js";
 import { fileExists, isPathInside, parseJSON, readJSON } from "./utils/fs.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
@@ -1118,7 +1120,9 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     },
     registry,
   );
-  await result.dispose();
+  // #1136: the install has committed here, so a staging folder the command cannot remove is
+  // reported with its remedy, as apply reports it (#1033), and the command still finishes.
+  const leftoverFolders = temporaryFolderLeftovers(await cleanupFailures([result.dispose]));
   return {
     command,
     dryRun: options.dryRun,
@@ -1133,6 +1137,7 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     pointers: artifactCachePointers(cacheBlock.changes),
     registries: result.registries,
     warnings: result.warnings,
+    temporaryFolderLeftovers: leftoverFolders,
   };
 }
 

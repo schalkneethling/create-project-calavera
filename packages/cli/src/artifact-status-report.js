@@ -1,5 +1,8 @@
 // @ts-check
+import { temporaryFolderLeftoverLine } from "./utils/cleanup.js";
 import { isPlainObject } from "./utils/guards.js";
+
+/** @typedef {import("./utils/cleanup.js").TemporaryFolderLeftover} TemporaryFolderLeftover */
 
 /**
  * One artifact as `artifacts status` and `artifacts doctor` report it.
@@ -343,4 +346,15 @@ export function formatRemovedLockEntries({ dryRun, removedLockEntries }) {
     ({ id, version, tag }) =>
       `${removed} the lock entry for ${id} ${version} (${tag}), because the recipe no longer selects it. Its installed files stay in place.`,
   );
+}
+
+/**
+ * The warnings `artifacts install` and `artifacts update` print for each temporary folder they
+ * could not remove once the install no longer needed it (#1136). The command still finished.
+ *
+ * @param {{ temporaryFolderLeftovers: TemporaryFolderLeftover[] }} result
+ * @returns {string[]}
+ */
+export function formatTemporaryFolderLeftovers({ temporaryFolderLeftovers }) {
+  return temporaryFolderLeftovers.map(temporaryFolderLeftoverLine);
 }
