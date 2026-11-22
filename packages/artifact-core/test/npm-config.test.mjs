@@ -746,69 +746,29 @@ test("under npm exec, a project proxy written with another spelling is recognize
   }
 });
 
-test("under npm exec, a userconfig that npm passes on from the project .npmrc does not choose the user file", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-npm-userconfig-"));
-  const cwd = join(directory, "repo");
-  await mkdir(cwd);
-  const evil = join(cwd, "evil.npmrc");
-  await writeFile(
-    evil,
-    "https-proxy=http://attacker.example:8080/\nregistry=http://evil.example/\n",
-  );
-  await writeFile(join(cwd, ".npmrc"), `userconfig=${evil}\n`);
-  const { options, registry } = await loadNpmRegistryOptions({
-    cwd,
-    scope: SCOPE,
-    env: {
-      HOME: join(directory, "home"),
-      npm_command: "exec",
-      npm_config_local_prefix: cwd,
-      npm_config_userconfig: evil,
-    },
-  });
-  assert.equal(options.httpsProxy, undefined);
-  assert.deepEqual(registry, { origin: "https://registry.npmjs.org", source: "default" });
-});
-
-test("under npm exec, a user proxy that the user .npmrc spells differently still applies from the variable", async () => {
-  const context = await fixture({
-    user: "https_proxy=http://user-proxy.example.com/\n",
-    env: { npm_command: "exec", npm_config_https_proxy: "http://user-proxy.example.com/" },
-  });
-  assert.equal(
-    (await loadNpmRegistryOptions(context)).options.httpsProxy,
-    "http://user-proxy.example.com/",
-  );
-});
-
-test("under npm exec, a relative or ${VAR} userconfig that npm passes on from the project .npmrc does not choose the user file", async () => {
-  for (const written of ["evil.npmrc", "./evil.npmrc", "${PROJECT_DIR}/evil.npmrc"]) {
-    const directory = await mkdtemp(join(tmpdir(), "calavera-npm-userconfig-relative-"));
+test("under npm exec, a userconfig that npm passes on from the project .npmrc cannot bring in a proxy", async () => {
+  for (const written of ["evil.npmrc", "./${npm_command}/evil.npmrc"]) {
+    const directory = await mkdtemp(join(tmpdir(), "calavera-npm-userconfig-"));
     const cwd = join(directory, "repo");
     await mkdir(cwd);
-    const evil = join(cwd, "evil.npmrc");
-    await writeFile(
-      evil,
-      "https-proxy=http://attacker.example:8080/\nregistry=http://evil.example/\n",
-    );
+    const evil = join(cwd, written);
+    await mkdir(join(evil, ".."), { recursive: true });
+    await writeFile(evil, "https-proxy=http://attacker.example:8080/\n");
     await writeFile(join(cwd, ".npmrc"), `userconfig=${written}\n`);
-    const { options, registry } = await loadNpmRegistryOptions({
+    const { options, warnings } = await loadNpmRegistryOptions({
       cwd,
       scope: SCOPE,
       env: {
         HOME: join(directory, "home"),
-        PROJECT_DIR: cwd,
-        INIT_CWD: cwd,
-        npm_command: "exec",
+        npm_command: "run-script",
         npm_config_local_prefix: cwd,
-        // npm resolves a userconfig path against the folder it ran in and exports it absolute.
         npm_config_userconfig: evil,
+        npm_config_https_proxy: "http://attacker.example:8080/",
       },
     });
     assert.equal(options.httpsProxy, undefined, written);
-    assert.deepEqual(
-      registry,
-      { origin: "https://registry.npmjs.org", source: "default" },
+    assert.ok(
+      warnings.some((warning) => warning.startsWith("Ignored https-proxy")),
       written,
     );
   }

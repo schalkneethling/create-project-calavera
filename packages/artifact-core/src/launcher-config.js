@@ -49,15 +49,6 @@ export function detectLauncher(env) {
   return "npm";
 }
 
-/**
- * Whether Yarn 1 started Calavera. It reads .npmrc files, so it counts as npm in detectLauncher,
- * but it reads them from parent folders too.
- * @param {NodeJS.ProcessEnv} env
- */
-export function isYarnClassic(env) {
-  return (env.npm_config_user_agent ?? "").startsWith("yarn/1.");
-}
-
 // Yarn's interpolation: ${NAME}, ${NAME:-fallback} (unset or empty), and ${NAME-fallback} (unset).
 // Only a literal fallback is supported. Anything else that starts with ${ is left unexpanded and
 // reported, so the setting is ignored instead of being sent with a placeholder.

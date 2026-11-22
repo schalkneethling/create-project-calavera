@@ -11,7 +11,6 @@ import {
   bunEnvironmentLayer,
   bunfigLayers,
   detectLauncher,
-  isYarnClassic,
   yarnLayers,
 } from "./launcher-config.js";
 
@@ -47,8 +46,9 @@ const PROXY_PROTOCOLS = new Set([
   "socks5:",
   "socks5h:",
 ]);
-// How warnings name the npm_config_* values that Yarn 1 passes on.
-const YARN_CLASSIC_SETTINGS = "settings that Yarn 1 passed on";
+// How warnings name proxies that are ignored when a package manager starts Calavera.
+const PASSED_ON_SETTINGS = "settings that the package manager passed on";
+const CHOSEN_USER_FILE = "user .npmrc that npm_config_userconfig chose";
 // Same expression as @npmcli/config: ${VAR}, ${VAR?} for an empty fallback, and backslash escapes.
 const ENV_EXPRESSION = /(?<!\\)(\\*)\$\{([^${}?]+)(\?)?\}/g;
 
@@ -135,32 +135,6 @@ function exportedFrom(entries, key, value, env, otherSpellings = true) {
   });
 }
 
-/**
- * A userconfig path as npm resolves it: `~/` against the home folder, anything else against
- * `base`, after ${VAR} expansion.
- * @param {string} value @param {NodeJS.ProcessEnv} env @param {string} home @param {string} base
- */
-function configPath(value, env, home, base) {
-  const { text } = expandEnvironment(value.trim(), env);
-  const homePattern = process.platform === "win32" ? /^~(\/|\\)/ : /^~\//;
-  return homePattern.test(text) ? resolve(home, text.slice(2)) : resolve(base, text);
-}
-
-/**
- * Whether the project file sets the userconfig that npm passed on as `value`.
- * @param {Record<string, unknown>} projectFile @param {string} value
- * @param {NodeJS.ProcessEnv} env @param {string} home @param {string} base
- */
-function projectSetsUserconfig(projectFile, value, env, home, base) {
-  const exported = configPath(value, env, home, base);
-  return Object.entries(projectFile).some(
-    ([key, fileValue]) =>
-      key.toLowerCase().replace(/[^a-z0-9]/g, "-") === "userconfig" &&
-      typeof fileValue === "string" &&
-      configPath(fileValue, env, home, base) === exported,
-  );
-}
-
 /** @param {string} value */
 function noProxyList(value) {
   if (value.startsWith("[")) {
@@ -180,12 +154,17 @@ function noProxyList(value) {
  * The user .npmrc. Bun also reads `$XDG_CONFIG_HOME/.npmrc` when it exists and no userconfig is
  * set (https://bun.com/docs/install/npmrc).
  * @param {NodeJS.ProcessEnv} env @param {string} home @param {Launcher} launcher
- * @param {unknown} configured The userconfig value from the environment, when it may choose the file.
+ * @param {string} [xdgConfigHome] The XDG_CONFIG_HOME to use, when `env` is not the environment.
  */
-async function userConfigPath(env, home, launcher, configured) {
-  if (typeof configured === "string") return configPath(configured, env, home, process.cwd());
-  if (launcher === "bun" && env.XDG_CONFIG_HOME) {
-    const xdgPath = resolve(env.XDG_CONFIG_HOME, ".npmrc");
+async function userConfigPath(env, home, launcher, xdgConfigHome = env.XDG_CONFIG_HOME) {
+  const configured = environmentSettings(env).userconfig;
+  if (typeof configured === "string") {
+    const { text } = expandEnvironment(configured, env);
+    const homePattern = process.platform === "win32" ? /^~(\/|\\)/ : /^~\//;
+    return homePattern.test(text) ? resolve(home, text.slice(2)) : resolve(text);
+  }
+  if (launcher === "bun" && xdgConfigHome) {
+    const xdgPath = resolve(xdgConfigHome, ".npmrc");
     if (
       await access(xdgPath).then(
         () => true,
@@ -236,41 +215,23 @@ export async function loadNpmRegistryOptions({
   // exports no settings, so the comparison finds nothing. Bun and Yarn 2 or later also set
   // npm_lifecycle_event and similar variables, but read their own settings.
   const npmStarted = launcher === "npm" && startedByNpm(env);
-  // Yarn 1 reads .npmrc and .yarnrc in the working folder and in every parent folder and passes
-  // on what it resolved as lowercase npm_config_* variables (`getPossibleConfigLocations`,
-  // `loadConfig`, and `makeEnv` in Yarn 1.22). Calavera cannot tell which file a passed-on value
-  // came from, so under Yarn 1 a passed-on proxy is used only when it equals the user .npmrc
-  // value, and only the uppercase NPM_CONFIG_USERCONFIG, which Yarn 1 never writes, chooses the
-  // user .npmrc. Other passed-on values are read as before #1064.
-  const yarnClassicStarted = isYarnClassic(env) && startedByNpm(env);
   // npm reads the project .npmrc at its local prefix: the nearest folder above the working
   // directory with a package.json or node_modules, or the workspace root of a member
   // (`loadLocalPrefix` and `loadProjectConfig` in @npmcli/config). It exports that folder as
   // npm_config_local_prefix (`setEnvs`), and the file's values as npm_config_* variables.
-  // Reading the same file keeps those values labeled, and restricted, as project content. Yarn 1
-  // does not set the variable, but a .yarnrc could, so it is not used under Yarn 1.
-  const projectPath = resolve(
-    (npmStarted && !yarnClassicStarted && env.npm_config_local_prefix) || cwd,
-    ".npmrc",
-  );
-  const projectFile = await readNpmrc(projectPath, warnings);
-  // A project file can set userconfig, and npm passes it on as npm_config_userconfig, resolved
-  // against the folder npm ran in (INIT_CWD). The variable chooses the user .npmrc only when the
-  // project file did not set it.
-  const configuredUserFile = yarnClassicStarted
-    ? env.NPM_CONFIG_USERCONFIG
-    : environmentSettings(env).userconfig;
-  const userconfigFromProject =
-    npmStarted &&
-    !yarnClassicStarted &&
-    typeof configuredUserFile === "string" &&
-    projectSetsUserconfig(projectFile, configuredUserFile, env, home, env.INIT_CWD || cwd);
-  const userPath = await userConfigPath(
-    env,
-    home,
-    launcher,
-    userconfigFromProject ? undefined : configuredUserFile,
-  );
+  // Reading the same file keeps those values labeled, and restricted, as project content.
+  const projectPath = resolve((npmStarted && env.npm_config_local_prefix) || cwd, ".npmrc");
+  const userPath = await userConfigPath(env, home, launcher);
+  // A package manager that starts Calavera passes on settings from project files as npm_config_*
+  // variables: npm and Yarn 1 export what they resolved, Yarn 1 includes the .npmrc and .yarnrc
+  // files of parent folders, and a project file can set userconfig, which chooses the file read as
+  // the user .npmrc. No comparison with files can tell all of these apart from the person's own
+  // settings, so a proxy is then trusted only from the default user .npmrc, the file at
+  // ~/.npmrc that no setting can redirect, or from the proxy environment variables that
+  // @npmcli/agent reads. A package manager is recognized by the variables it sets for a script,
+  // not by the user agent, which a .yarnrc can set.
+  const defaultUserPath = await userConfigPath({}, home, launcher, env.XDG_CONFIG_HOME);
+  const userProxyTrusted = !npmStarted || userPath === defaultUserPath;
   const scopeKey = scope ? `${scope}:registry` : undefined;
   /** @param {string} key */
   const isRegistryKey = (key) => key === "registry" || key === scopeKey;
@@ -284,7 +245,7 @@ export async function loadNpmRegistryOptions({
 
   const userEntries = await readNpmrc(userPath, warnings);
   // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
-  const projectEntries = projectPath === userPath ? {} : projectFile;
+  const projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
   /** @type {ConfigLayer[]} */
   const npmFiles = [
     { name: "user .npmrc", entries: userEntries, trusted: true, accepts },
@@ -345,12 +306,22 @@ export async function loadNpmRegistryOptions({
           }
           continue;
         }
-        // A value equal to the user .npmrc value under the same key was applied by the user layer.
+        // A value equal to the user .npmrc value under the same key was applied by the user layer,
+        // or ignored there with a warning.
         if (exportedFrom(userEntries, rawKey, rawValue, env, false) !== undefined) continue;
-        if (yarnClassicStarted && PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
-          rejectedProxies.push({ key: rawKey, setting, layer: YARN_CLASSIC_SETTINGS });
+        if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
+          rejectedProxies.push({ key: rawKey, setting, layer: PASSED_ON_SETTINGS });
           continue;
         }
+      }
+      if (
+        layer === npmFiles[0] &&
+        !userProxyTrusted &&
+        PROXY_URL_KEYS.has(rawKey) &&
+        rawValue.trim()
+      ) {
+        rejectedProxies.push({ key: rawKey, setting, layer: CHOSEN_USER_FILE });
+        continue;
       }
       if (!trusted) {
         if (layer.accepts && !layer.accepts(rawKey)) continue;
@@ -451,7 +422,8 @@ export async function loadNpmRegistryOptions({
   // is read: npm-registry-fetch uses httpsProxy when it is set and proxy otherwise.
   const usedProxy = proxyOrigins[options.httpsProxy ? "httpsProxy" : "proxy"];
   const registryProtocol = registryUrl.protocol.slice(0, -1);
-  const userFile = launcher === "yarn" ? "user .yarnrc.yml" : "user .npmrc";
+  const userFile =
+    launcher === "yarn" ? "your user .yarnrc.yml" : npmStarted ? "~/.npmrc" : "your user .npmrc";
   for (const { key, setting, layer } of rejectedProxies) {
     const used = usedProxy ? `Calavera uses ${usedProxy} instead.` : undefined;
     // Under Yarn, a proxy for the other protocol would not apply even from a user file.
@@ -463,11 +435,13 @@ export async function loadNpmRegistryOptions({
           ]
             .filter(Boolean)
             .join(" ")
-        : (used ?? `No other proxy setting applies. To use it, set it in your ${userFile}.`);
+        : (used ?? `No other proxy setting applies. To use it, set it in ${userFile}.`);
     const reason =
-      layer === YARN_CLASSIC_SETTINGS
-        ? "Yarn 1 also passes on settings from project .npmrc and .yarnrc files, and a proxy from a project file could receive your credentials."
-        : "Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials.";
+      layer === PASSED_ON_SETTINGS
+        ? "a package manager also passes on settings from project files, and a proxy from a project file could receive your credentials."
+        : layer === CHOSEN_USER_FILE
+          ? "a project file can set userconfig when a package manager starts Calavera, and a proxy from a project file could receive your credentials."
+          : "Calavera reads proxies only from user configuration files and environment variables, because a proxy from a project file could receive your credentials.";
     const message = `Ignored ${setting} in the ${layer}: ${reason} ${outcome}`;
     warnings.push(message);
     notes.push(message);

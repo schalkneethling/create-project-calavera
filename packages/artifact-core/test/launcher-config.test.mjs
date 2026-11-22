@@ -1068,13 +1068,13 @@ test("under Yarn 1, a proxy Yarn passes on from a project file is ignored, which
   assert.equal(options.httpsProxy, undefined);
   assert.match(
     warnings[0],
-    /^Ignored https-proxy in the settings that Yarn 1 passed on: Yarn 1 also passes on settings from project \.npmrc and \.yarnrc files, .*To use it, set it in your user \.npmrc\.$/,
+    /^Ignored https-proxy in the settings that the package manager passed on: a package manager also passes on settings from project files, .*To use it, set it in ~\/\.npmrc\.$/,
   );
-  // The registry Yarn 1 passes on is read as before #1064.
+  // The registry the package manager passes on is read as before #1064.
   assert.deepEqual(registry, { origin: "https://registry.yarnpkg.com", source: "environment" });
 });
 
-test("under Yarn 1, a passed-on proxy equal to the user .npmrc proxy is the user's", async () => {
+test("under Yarn 1, a passed-on proxy equal to the ~/.npmrc proxy is the user's", async () => {
   const context = await fixture({
     userAgent: YARN_CLASSIC,
     files: { "home/.npmrc": "https-proxy=http://corp.example.com:8080/\n" },
@@ -1085,35 +1085,48 @@ test("under Yarn 1, a passed-on proxy equal to the user .npmrc proxy is the user
   assert.deepEqual(warnings, []);
 });
 
-test("under Yarn 1, only the uppercase NPM_CONFIG_USERCONFIG chooses the user file, and npm_config_local_prefix is not used", async () => {
+test("a .yarnrc user-agent that hides Yarn 1 does not make a passed-on proxy trusted", async () => {
+  const context = await fixture({
+    userAgent: "npm/11.0.0 node/v24",
+    env: { npm_lifecycle_event: "probe", npm_config_https_proxy: "http://attacker.example:8080/" },
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, undefined);
+  assert.match(
+    warnings[0],
+    /^Ignored https-proxy in the settings that the package manager passed on/,
+  );
+});
+
+test("when a package manager starts Calavera, a proxy in a user file that npm_config_userconfig chose is ignored", async () => {
   const context = await fixture({
     userAgent: YARN_CLASSIC,
     files: {
-      "home/.npmrc": "registry=https://user-registry.example.com/\n",
-      "workspace/evil.npmrc":
-        "https-proxy=http://attacker.example:8080/\nregistry=http://evil.example/\n",
-      "workspace/runner.npmrc": "@schalkneethling:registry=https://npm.pkg.github.com/\n",
-      "workspace/.npmrc": "registry=https://prefix-registry.example.com/\n",
+      "workspace/chosen.npmrc":
+        "https-proxy=http://attacker.example:8080/\n@schalkneethling:registry=https://npm.pkg.github.com/\n",
     },
-    env: { npm_lifecycle_event: "probe" },
+    env: { npm_lifecycle_event: "probe", npm_config_https_proxy: "http://attacker.example:8080/" },
   });
-  // Yarn 1 writes only lowercase npm_config_* names, so a lowercase userconfig may come from a
-  // project file, and the uppercase one, as actions/setup-node sets it, is the caller's.
-  context.env.npm_config_userconfig = join(context.cwd, "..", "evil.npmrc");
-  context.env.npm_config_local_prefix = join(context.cwd, "..");
-  const lowercase = await loadNpmRegistryOptions(context);
-  assert.equal(lowercase.options.httpsProxy, undefined);
-  assert.deepEqual(lowercase.registry, {
-    origin: "https://user-registry.example.com",
-    source: "user .npmrc",
-  });
+  context.env.npm_config_userconfig = join(context.cwd, "..", "chosen.npmrc");
+  const { options, registry, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, undefined);
+  // The registry and auth keys of the chosen file still apply, as before #1064.
+  assert.equal(registry.origin, "https://npm.pkg.github.com");
+  assert.match(
+    warnings[0],
+    /^Ignored https-proxy in the user \.npmrc that npm_config_userconfig chose: .*To use it, set it in ~\/\.npmrc\.$/,
+  );
+});
 
-  context.env.NPM_CONFIG_USERCONFIG = join(context.cwd, "..", "runner.npmrc");
-  const uppercase = await loadNpmRegistryOptions(context);
-  assert.deepEqual(uppercase.registry, {
-    origin: "https://npm.pkg.github.com",
-    source: "user .npmrc",
+test("outside a package manager, a proxy in the user file that npm_config_userconfig chose applies", async () => {
+  const context = await fixture({
+    files: { "workspace/chosen.npmrc": "https-proxy=http://corp.example.com:8080/\n" },
   });
+  context.env.npm_config_userconfig = join(context.cwd, "..", "chosen.npmrc");
+  assert.equal(
+    (await loadNpmRegistryOptions(context)).options.httpsProxy,
+    "http://corp.example.com:8080/",
+  );
 });
 
 test("without Yarn 1 starting Calavera, a yarn/1 user agent alone does not distrust the environment", async () => {
