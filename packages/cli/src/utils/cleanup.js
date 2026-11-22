@@ -183,8 +183,10 @@ export async function removeTemporaryFolder(folder) {
 }
 
 const LEFTOVER_REMEDY = "Nothing in the project uses it, so remove it yourself.";
+// Calavera does not evaluate the project's ignore rules, and the person may ignore the folder, so
+// the note holds whether or not Git ignores it (#1136).
 const IN_PROJECT_NOTE =
-  "It is inside the project and Git does not ignore it, so remove it before you commit.";
+  "It is inside the project, so if Git does not ignore it, remove it before you commit.";
 
 /** @param {unknown} error */
 function codeOf(error) {

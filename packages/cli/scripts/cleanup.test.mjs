@@ -192,7 +192,7 @@ test("temporaryFolderLeftovers names each folder left with its code, never a mes
   ]);
 });
 
-test("temporaryFolderLeftovers says when a folder left is inside the project, which Git does not ignore", () => {
+test("temporaryFolderLeftovers says when a folder left is inside the project, which Git may track", () => {
   const inside = join(process.cwd(), ".calavera", ".transactions", "1-2");
 
   assert.deepEqual(
@@ -201,7 +201,7 @@ test("temporaryFolderLeftovers says when a folder left is inside the project, wh
       {
         path: inside,
         reason:
-          "Calavera could not remove this temporary folder (EBUSY). Nothing in the project uses it, so remove it yourself. It is inside the project and Git does not ignore it, so remove it before you commit.",
+          "Calavera could not remove this temporary folder (EBUSY). Nothing in the project uses it, so remove it yourself. It is inside the project, so if Git does not ignore it, remove it before you commit.",
       },
     ],
   );
