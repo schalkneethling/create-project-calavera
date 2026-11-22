@@ -6186,15 +6186,21 @@ async function doctor(options) {
   }
 
   if (hasConfig) {
-    const detection = await detectVitePlus(process.cwd());
     let recipe;
     let integrations;
     let aiArtifacts;
-    // #1141: a recipe doctor cannot read, parse, or resolve is an error issue, so `doctor --json`
-    // still prints a result for a CI step to parse. The issue keeps the issues found before it and
-    // the error's causes; a JSONParseError names the file and position without quoting it (#1157).
+    let rootOnlyIds;
+    let gitHookIds;
+    let repositoryRoot;
+    let packageManager;
+    const projectDirectory = process.cwd();
+    // #1141: a recipe doctor cannot read, parse, or resolve, including its package manager, is an
+    // error issue, so `doctor --json` still prints a result for a CI step to parse. The issue keeps
+    // the issues found before it and the error's causes; a JSONParseError names the file and
+    // position without quoting it (#1157).
     try {
       recipe = await readRecipe(options.config);
+      const detection = await detectVitePlus(projectDirectory);
       issues.push(
         // apply's validation checks the profile before the integrations, so doctor lists it first.
         ...removedProfileWarnings(recipe, options.config),
@@ -6214,33 +6220,36 @@ async function doctor(options) {
       }
       integrations = resolveRecipeIntegrations(recipe);
       aiArtifacts = resolveAiArtifacts(recipe);
+      // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the
+      // repository root, so doctor run from a workspace member checks them there (#925).
+      rootOnlyIds = new Set(
+        integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
+      );
+      gitHookIds = gitHookArtifactIds(recipe);
+      repositoryRoot =
+        rootOnlyIds.size > 0 || gitHookIds.length > 0
+          ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
+          : projectDirectory;
+      // package.json is read only here, so a recipe that selects neither a root-only integration
+      // nor a Git hook artifact is checked as before. resolveApplyPackageManager refuses a recipe
+      // packageManager that Calavera does not support, as apply does.
+      if (repositoryRoot !== projectDirectory) {
+        packageManager = resolveApplyPackageManager(
+          recipe,
+          options,
+          await readPackageJSONIfPresent(),
+        );
+      }
     } catch (error) {
       issues.push({ level: "error", message: errorText(error) });
       return { command: "doctor", ok: false, issues };
     }
-    // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the
-    // repository root, so doctor run from a workspace member checks them there (#925).
-    const rootOnlyIds = new Set(
-      integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
-    );
-    const gitHookIds = gitHookArtifactIds(recipe);
-    const projectDirectory = process.cwd();
-    const repositoryRoot =
-      rootOnlyIds.size > 0 || gitHookIds.length > 0
-        ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
-        : projectDirectory;
 
     // #997 and #1031: apply refuses a root-only integration and an artifact that writes Git hooks
     // outside the repository root, so doctor reports apply's own refusals, naming the package
     // manager apply would name. apply stops at the first; doctor reports both, so one run names
-    // every change the recipe needs. package.json is read only here, so a recipe that selects
-    // neither is checked as before.
-    if (repositoryRoot !== projectDirectory) {
-      const packageManager = resolveApplyPackageManager(
-        recipe,
-        options,
-        await readPackageJSONIfPresent(),
-      );
+    // every change the recipe needs.
+    if (packageManager !== undefined) {
       for (const refusal of [
         rootOnlyIntegrationRefusal(integrations, projectDirectory, packageManager),
         gitHookArtifactRefusal(gitHookIds, projectDirectory, packageManager),

@@ -3,7 +3,7 @@
 // result to parse. Before, the error escaped doctor, and the CLI printed it as plain text on
 // standard error with nothing on standard output. The text output reports the same error.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, execFileSync } from "node:child_process";
 import { mkdir } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
@@ -60,28 +60,48 @@ const cases = [
     expected: /calavera\.config\.json must contain a JSON object\./,
   },
   {
-    label: "a recipe whose AI entry no catalog artifact provides",
+    label: "a recipe whose legacy AI entry has a source outside src/ai/",
     files: {
       [RECIPE]: json({
         version: 1,
         profile: "default",
         integrations: [],
-        ai: [{ type: "skill", src: "skills/not-a-catalog-skill" }],
+        ai: [{ type: "skill", src: "skills/outside-src-ai" }],
       }),
     },
-    expected: /not-a-catalog-skill/,
+    expected: /AI item at index 0 source must stay within src\/ai\//,
+  },
+  {
+    label: "a recipe whose package manager Calavera does not support",
+    // From a workspace member, a root-only integration makes doctor resolve the package manager
+    // apply would name; with no packageManager in package.json and no lockfile, that is the
+    // recipe's, which recipeFromJSON accepts as any non-empty string.
+    cwd: "member",
+    files: {
+      [`member/${RECIPE}`]: json({
+        version: 1,
+        profile: "default",
+        packageManager: "deno",
+        integrations: ["github-repository-controls"],
+      }),
+    },
+    setup: async (root) => {
+      execFileSync("git", ["init", "--quiet"], { cwd: root });
+    },
+    packageJSON: "member/package.json",
+    expected: /Invalid package manager: deno\. Allowed values: npm, pnpm, yarn, bun\./,
   },
 ];
 
-for (const { label, files, setup, expected } of cases) {
+for (const { label, files, setup, expected, cwd = ".", packageJSON = "package.json" } of cases) {
   test(`doctor --json prints a JSON result with the error as an issue for ${label}`, async () => {
     await using fixture = await createTemporaryFixture("doctor-json-recipe-error", {
-      "package.json": json({ name: "doctor-json-recipe-error", private: true }),
+      [packageJSON]: json({ name: "doctor-json-recipe-error", private: true }),
       ...files,
     });
     await setup?.(fixture.root);
 
-    const { code, stdout, stderr } = await runDoctor(fixture.root, ["--json"]);
+    const { code, stdout, stderr } = await runDoctor(join(fixture.root, cwd), ["--json"]);
 
     assert.equal(code, 1, `doctor exited ${code}\n${stdout}\n${stderr}`);
     let report;
@@ -98,12 +118,12 @@ for (const { label, files, setup, expected } of cases) {
 
   test(`doctor reports the error for ${label} in its text output and exits 1`, async () => {
     await using fixture = await createTemporaryFixture("doctor-text-recipe-error", {
-      "package.json": json({ name: "doctor-text-recipe-error", private: true }),
+      [packageJSON]: json({ name: "doctor-text-recipe-error", private: true }),
       ...files,
     });
     await setup?.(fixture.root);
 
-    const { code, stdout, stderr } = await runDoctor(fixture.root, []);
+    const { code, stdout, stderr } = await runDoctor(join(fixture.root, cwd), []);
 
     assert.equal(code, 1, `doctor exited ${code}\n${stdout}\n${stderr}`);
     assert.match(`${stdout}${stderr}`, expected);
