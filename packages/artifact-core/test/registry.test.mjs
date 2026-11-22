@@ -888,3 +888,63 @@ test("a project .npmrc cannot select an http registry, so no request is made", a
     await registry.close();
   }
 });
+
+test("a download failure from another host behind the default registry, without a code or method, names the default registry", async (t) => {
+  const fixture = await npmConfigFixture("");
+  t.mock.method(pacote, "extract", async () => {
+    // A non-http URL has no usable origin, so the message falls back to the registry's.
+    throw Object.assign(new Error(`registry text ${TOKEN}`), {
+      statusCode: 403,
+      uri: "https://cdn.example.com/-/artifact.tgz",
+    });
+  });
+  const resolution = {
+    artifact,
+    packageName: artifact.packageName,
+    version: "1.0.0",
+    resolved: "https://cdn.example.com/-/artifact.tgz",
+    integrity: "sha512-AAAA",
+    tag: "latest",
+    cache: fixture.cache,
+    offline: false,
+  };
+  const failure = await extractArtifactPackage(
+    resolution,
+    join(fixture.directory, "package"),
+    "2.2.0",
+    { cwd: fixture.cwd, env: fixture.env },
+  ).then(
+    () => assert.fail("Expected the download failure to reject."),
+    (error) => error,
+  );
+  assert.equal(
+    failure.message,
+    [
+      `The tarball host https://cdn.example.com answered 403 for ${artifact.packageName}@1.0.0.`,
+      "Calavera sends no credentials to any registry or tarball host. The default registry https://registry.npmjs.org named this download. If the host requires authentication, configure a registry whose packages download without authentication.",
+    ].join("\n"),
+  );
+  assert.equal(failure.code, "E403");
+  assert.equal(failure.cause.message, "https://cdn.example.com answered 403 (E403).");
+
+  t.mock.restoreAll();
+  t.mock.method(pacote, "extract", async () => {
+    throw Object.assign(new Error("denied"), {
+      code: "E401",
+      statusCode: 401,
+      method: "not a method",
+      uri: "git+https://cdn.example.com/-/artifact.tgz",
+    });
+  });
+  const fallback = await extractArtifactPackage(
+    resolution,
+    join(fixture.directory, "package"),
+    "2.2.0",
+    { cwd: fixture.cwd, env: fixture.env },
+  ).then(
+    () => assert.fail("Expected the download failure to reject."),
+    (error) => error,
+  );
+  assert.equal(fallback.origin, "https://registry.npmjs.org");
+  assert.equal(fallback.cause.message, "https://registry.npmjs.org answered 401 (E401).");
+});

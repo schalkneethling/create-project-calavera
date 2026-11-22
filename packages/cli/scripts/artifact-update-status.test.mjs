@@ -2136,3 +2136,45 @@ test("a 401 from a real registry behind a loader diagnostic keeps the origin, se
     await new Promise((done) => server.close(() => done(undefined)));
   }
 });
+
+test("the update check keeps only a well-formed origin, and falls back when the registry or layer is missing", async () => {
+  const failures = {
+    // An origin field that is not an origin, such as a URL with a path, is not trusted.
+    "skill-project-goal": registryError("401", {
+      code: "E401",
+      statusCode: 401,
+      origin: "https://npm.example.com/secret-path",
+    }),
+    // Without the configured registry's origin, the failing origin is called the registry.
+    "skill-code-review": registryError("403", {
+      code: "E403",
+      statusCode: 403,
+      origin: "https://npm.example.com",
+      setting: "registry",
+    }),
+    // A failure without an HTTP status has no origin, whatever the error carries.
+    "skill-css-tokens": registryError("offline", {
+      code: "ENOTFOUND",
+      origin: "https://npm.example.com",
+    }),
+  };
+  const ids = Object.keys(failures);
+  await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+    const result = await runArtifactCommand(statusOptions(), statusRegistry({}, {}, failures));
+    const byId = Object.fromEntries(
+      result.artifacts.map(({ id, updateCheckFailure }) => [id, updateCheckFailure]),
+    );
+    assert.equal(byId["skill-project-goal"]?.origin, null);
+    assert.doesNotMatch(JSON.stringify(byId["skill-project-goal"]), /secret-path/);
+    assert.equal(
+      byId["skill-code-review"]?.reason,
+      "the registry https://npm.example.com answered 403 (E403), and Calavera sends no credentials to any registry",
+    );
+    // A setting without its layer is not named.
+    assert.match(
+      byId["skill-code-review"]?.remedy ?? "",
+      /^If this registry requires authentication, point the registry setting at/,
+    );
+    assert.equal(byId["skill-css-tokens"]?.origin, null);
+  });
+});

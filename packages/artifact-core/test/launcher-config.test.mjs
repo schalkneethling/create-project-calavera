@@ -1086,3 +1086,19 @@ test("the previous test's fixture folder is removed after that test", async () =
   assert.notEqual(previousFixtureFolder, "");
   await assert.rejects(access(previousFixtureFolder), { code: "ENOENT" });
 });
+
+test("under Bun, npm_config_@scope:registry still sets the artifact scope's registry, but npm_config_registry gives way to Bun's order", async () => {
+  const context = await fixture({
+    userAgent: BUN,
+    files: { "home/.bunfig.toml": '[install]\nregistry = "https://file.example.com/"\n' },
+    env: { [`npm_config_${SCOPE}:registry`]: "https://scoped-env.example.com/" },
+  });
+  const { options, registry } = await loadNpmRegistryOptions(context);
+  assert.equal(options[`${SCOPE}:registry`], "https://scoped-env.example.com/");
+  assert.equal(options.registry, "https://file.example.com/");
+  assert.deepEqual(registry, {
+    origin: "https://scoped-env.example.com",
+    source: "environment",
+    setting: `${SCOPE}:registry`,
+  });
+});

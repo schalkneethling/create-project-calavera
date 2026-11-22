@@ -188,6 +188,7 @@ export async function loadNpmRegistryOptions({
 } = {}) {
   /** @type {string[]} */
   const warnings = [];
+  // Notes for failure messages only; `diagnostics` adds every warning to them.
   /** @type {string[]} */
   const notes = [];
   /** @type {Set<string>} */
@@ -299,9 +300,9 @@ export async function loadNpmRegistryOptions({
       }
       if (!trusted) {
         if (rawValue.includes("${")) {
-          const message = `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`;
-          warnings.push(message);
-          notes.push(message);
+          warnings.push(
+            `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`,
+          );
           continue;
         }
         // A project file could name a proxy it controls, which would see which packages Calavera
@@ -331,9 +332,9 @@ export async function loadNpmRegistryOptions({
       const value = expanded.text;
       if (PROXY_URL_KEYS.has(key) && value && !isProxyUrl(value)) {
         // The value is never echoed: a proxy URL can carry credentials.
-        const message = `Ignored ${setting} in the ${name}: it must be an http, https, or socks proxy URL.`;
-        warnings.push(message);
-        notes.push(message);
+        warnings.push(
+          `Ignored ${setting} in the ${name}: it must be an http, https, or socks proxy URL.`,
+        );
         continue;
       }
       options[key] = value;
@@ -468,7 +469,7 @@ export function pacoteTarballUrl(resolved, registry) {
   if (!URL.canParse(resolved)) return resolved;
   const url = new URL(resolved);
   if (url.host !== "registry.npmjs.org") return resolved;
-  return new URL(url.pathname, registry.replace(/\/+$/, "")).href;
+  return new URL(url.pathname, registry).href;
 }
 
 /** @param {string} value */
@@ -531,10 +532,8 @@ function registryValue(setting, value, layer, warnings) {
   if (!url.username && !url.password) return value;
   url.username = "";
   url.password = "";
-  const layerName =
-    layer.name === "environment" ? " from the environment" : ` from the ${layer.name}`;
   warnings.push(
-    `Used ${setting}${layerName} without the username and password in its URL: Calavera sends no credentials to any registry.`,
+    `Used ${setting} from the ${layer.name} without the username and password in its URL: Calavera sends no credentials to any registry.`,
   );
   return url.href;
 }

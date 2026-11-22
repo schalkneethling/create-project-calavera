@@ -645,3 +645,8 @@ test("a registry 401 shows its redacted cause only with CALAVERA_DEBUG, and neve
     assert.doesNotMatch(text, /secret-path|registry-response-text/);
   }
 });
+
+test("an error marked debugOnly is still shown when it is the error itself", () => {
+  const error = Object.assign(new Error("Shown in any case."), { debugOnly: true });
+  assert.equal(formatErrorChain(error, {}), "Shown in any case.");
+});
