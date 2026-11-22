@@ -123,8 +123,8 @@ registration float to a later package release.
 
 After registration, restart or reload the agent session if the MCP host does not
 discover new tools dynamically. Before composing a recipe, confirm these
-Calavera MCP tools are exposed: `inspect_project`, `list_profiles`,
-`list_integrations`, `describe_integration`, `list_ai_artifacts`,
+Calavera MCP tools are exposed: `inspect_project`, `artifact_status`,
+`list_profiles`, `list_integrations`, `describe_integration`, `list_ai_artifacts`,
 `list_baseline_targets`, `describe_baseline_target`, `search_baseline_features`,
 `recommend_baseline_target`, `compose_recipe`, `validate_recipe`,
 `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
@@ -444,19 +444,20 @@ project inspection, Baseline lookup, recipe composition, and project-local
 apply tools:
 
 1. `inspect_project`
-2. `list_profiles`
-3. `list_integrations`
-4. `describe_integration`
-5. `list_ai_artifacts`
-6. `list_baseline_targets`
-7. `describe_baseline_target`
-8. `search_baseline_features`
-9. `recommend_baseline_target`
-10. `compose_recipe`
-11. `validate_recipe`
-12. `explain_recipe`
-13. `dry_run_apply`
-14. `apply_recipe`
+2. `artifact_status`
+3. `list_profiles`
+4. `list_integrations`
+5. `describe_integration`
+6. `list_ai_artifacts`
+7. `list_baseline_targets`
+8. `describe_baseline_target`
+9. `search_baseline_features`
+10. `recommend_baseline_target`
+11. `compose_recipe`
+12. `validate_recipe`
+13. `explain_recipe`
+14. `dry_run_apply`
+15. `apply_recipe`
 
 WebMCP exposes the browser-safe subset: Baseline lookup, recipe composition,
 and recipe download, but not project inspection or apply:

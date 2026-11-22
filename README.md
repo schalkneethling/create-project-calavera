@@ -57,7 +57,7 @@ commands for it. It does not apply the recipe.
 3. Choose exactly one project-local MCP host when prompted: Claude Code, Codex,
    Cursor, OpenCode, or skip/manual.
 4. Restart or reload the agent session if your MCP host does not discover new tools dynamically.
-5. Confirm the Calavera MCP tools are exposed: `inspect_project`, `list_profiles`, `list_integrations`, `describe_integration`, `list_ai_artifacts`, `list_baseline_targets`, `describe_baseline_target`, `search_baseline_features`, `recommend_baseline_target`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
+5. Confirm the Calavera MCP tools are exposed: `inspect_project`, `artifact_status`, `list_profiles`, `list_integrations`, `describe_integration`, `list_ai_artifacts`, `list_baseline_targets`, `describe_baseline_target`, `search_baseline_features`, `recommend_baseline_target`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
 6. Start the agent from the project root.
 7. Agent prompt: `Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, validate and explain it, show me the dry-run result, and apply it only after I approve.`
 
@@ -834,19 +834,20 @@ Calavera apply run, or apply an approved recipe. An MCP client can use the tools
 in this order:
 
 1. `inspect_project`
-2. `list_profiles`
-3. `list_integrations`
-4. `describe_integration`
-5. `list_ai_artifacts`
-6. `list_baseline_targets`
-7. `describe_baseline_target`
-8. `search_baseline_features`
-9. `recommend_baseline_target`
-10. `compose_recipe`
-11. `validate_recipe`
-12. `explain_recipe`
-13. `dry_run_apply`
-14. `apply_recipe`
+2. `artifact_status`
+3. `list_profiles`
+4. `list_integrations`
+5. `describe_integration`
+6. `list_ai_artifacts`
+7. `list_baseline_targets`
+8. `describe_baseline_target`
+9. `search_baseline_features`
+10. `recommend_baseline_target`
+11. `compose_recipe`
+12. `validate_recipe`
+13. `explain_recipe`
+14. `dry_run_apply`
+15. `apply_recipe`
 
 `dry_run_apply` returns structured JSON with the package manager, integrations,
 dependency packages, the command that installs them, the Vite+ detection
@@ -1253,6 +1254,8 @@ Update every artifact: npm create project-calavera artifacts update -- --all
 ```
 
 The commands use the runner for the recipe's package manager, add `--tag next` for an artifact on the `next` channel, and add `--config` when the recipe is not `calavera.config.json`. The all-artifacts command appears only when an update is available, the recipe selects more than one artifact, every locked selection follows the same channel, and the update check succeeded for every selected artifact, because `--all` moves every artifact to the channel that `--tag` names. A targeted `artifacts update <id>` advances only the artifact it names. The other locked selections stay at their locked versions, and their outputs and local edits are checked as on every update. A selection that has no lock entry yet stays as it is until `artifacts install` installs it, or until `artifacts update --all` installs it on the channel that `--tag` names, or `latest` without `--tag`. When an update is available and the recipe has such selections, status says so after the update commands. The recipe is the source of truth for which artifacts stay locked: `artifacts install` and `artifacts update` remove the lock entry of an artifact the recipe no longer selects, and leave its installed files in place. Status marks such an artifact as not selected and says that the next install or update removes its lock entry; when the recipe selects no artifacts at all, it names only install, because `artifacts update` then refuses to run. The install or update, its dry run included, names each lock entry it removes or would remove. The release-notes link points at the `CHANGELOG.md` in the directory that the package's published `repository` metadata names on GitHub. When that metadata is missing, names a host other than GitHub, or names no package directory or one outside the repository, status still reports the update and its command, and says that there is no link. When the registry lookup for one artifact fails, for example because the artifact is locked on `next` and npm has no `next` tag for its package, status reports that artifact as "update check failed" and reports every other artifact as usual. It names the cause, the npm configuration Calavera ignored that may explain it, and, where one applies, what to do: follow `latest` instead for a missing `next` tag, wait for the registry to list the version a tag names, or check the credentials, the registry settings, or the network, then run the check again. A fetch failure also names its kind, such as `request-timeout` or `invalid-json`, and a package document that the registry returns but Calavera cannot read, such as `null`, is reported with the code `EBADPACKUMENT`. An error from the local file system, such as a cache folder Calavera cannot write, still stops the command. The cause names the missing tag, or the registry error code and HTTP status, but never the registry's own message, which is raw registry text that can hold the request URL and response details. An error that Calavera raises itself, such as an invalid `.npmrc` registry or a package whose identity or integrity does not match, still stops the command with its own message. A failed check does not count as a problem for `artifacts doctor`, so it does not change `ok` or the exit status; doctor's closing lines name the artifacts whose check failed. Status does not say that every artifact is up to date while a check has failed. When every artifact is current, status says so. `--json` returns the same information: each artifact's `latestVersion`, `updateAvailable`, `releaseNotesUrl`, `updateCommand`, and, for a selection without a lock entry, `installCommand`, and `updateCheckFailure`, which is null unless the lookup failed and then holds the error's `code`, `statusCode`, `reason`, `remedy` (null when there is nothing to do), `type` (the kind of a fetch failure, or null), `npmDiagnostics`, and `unsetVariables`, plus `updateAllCommand`, `updateAllBlockedBy`, which names the selected artifacts whose failed check withholds the all-artifacts command, and, without `--check-updates`, `checkUpdatesCommand`. Each artifact also has `selected`, which is false for a lock entry the recipe no longer selects and null when the recipe file does not exist, and the `--json` result of `artifacts install` and `artifacts update` lists those entries in `removedLockEntries`. The `--json` results of install, update, and status also carry `ignoreChanges`, the artifact cache block the command writes or would write in `.gitignore`, and `pointers`, which explains the block when the command adds it.
+
+The MCP server's `artifact_status` tool returns the same report as `artifacts status --json`, so an agent can see which artifacts have updates, local edits, or missing files without leaving the MCP tool sequence. Its optional `checkUpdates` input works like `--check-updates`, and its optional `config` input works like `--config`. The tool writes nothing into the project, which makes three differences. With `checkUpdates`, it resolves packages through a temporary cache that it removes afterward, and it writes no artifact cache block, so its `ignoreChanges` and `pointers` are always empty. It never loads the project's formatter. While an artifact transaction is pending, it does not roll the transaction back as `artifacts status` does: it returns an error with the code `pending-transaction` that names the `artifacts status` command to run, which rolls it back. Installing, updating, and migrating artifacts stay CLI commands.
 
 Commit `.calavera/artifacts.lock.json` and `.calavera/packages/`, but not `.calavera/cache/`. The cache is a local npm download cache, so it does not belong in Git. While the recipe selects an artifact, or while the cache folder exists, `apply` keeps the folder out of Git with a marked block in `.gitignore`, between `# calavera:artifact-cache:start` and `# calavera:artifact-cache:end`, and says so when it adds the block. The dry run lists the block like the integrations' `.gitignore` blocks. `artifacts install`, `artifacts update`, and `artifacts status --check-updates` write and record the same block before they resolve any package, so the cache stays out of Git even when the registry fails part way, and their dry runs list it. An edited block stops these commands before they write anything, as it stops `apply`. A `.gitignore` line does not untrack files Git already tracks, so if a project committed the cache before this block existed, run `git rm -r --cached .calavera/cache` once and commit the result.
 

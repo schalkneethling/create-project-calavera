@@ -43,6 +43,7 @@ import {
   validateRecipe,
   validateRecipeCompositionInput,
 } from "./recipe.js";
+import { CONFIG_FILE } from "./project-local-commands.js";
 import { STRYKER_ID, strykerTestRunners } from "./stryker-options.js";
 import { assertString } from "./utils/assertions.js";
 
@@ -551,6 +552,93 @@ export const sharedToolSchemas = Object.freeze({
   },
   validate_recipe: { input: z.object({ recipe: recipeSchema }) },
   explain_recipe: { input: z.object({ recipe: recipeSchema }) },
+});
+
+// The failed registry lookup of one artifact, as `artifacts status --check-updates` reports it (#993).
+const updateCheckFailureSchema = z.looseObject({
+  code: z.string().describe("The registry error's code, such as ETARGET for a missing dist-tag."),
+  type: z.string().nullable(),
+  statusCode: z.number().nullable().describe("The registry's HTTP status, when it answered."),
+  reason: z.string(),
+  remedy: z.string().nullable(),
+  npmDiagnostics: z.array(z.string()),
+  unsetVariables: z.array(z.string()),
+});
+
+// One artifact in the artifact status report. Loose, because the report also carries each lock
+// entry's fields, and ADR-0018 Decision 6 lets the report gain fields, such as the condition that
+// ADR-0020 adds, without a breaking change.
+const artifactStatusEntrySchema = z.looseObject({
+  id: z.string().describe("The catalog ID of the artifact."),
+  version: z
+    .string()
+    .nullable()
+    .describe(
+      "The locked version, or null when the recipe selects the artifact but the lock has no entry.",
+    ),
+  tag: z.enum(["latest", "next"]).describe("The release channel the artifact follows."),
+  installed: z.boolean(),
+  managed: z.boolean(),
+  locallyEdited: z.boolean(),
+  latestVersion: z
+    .string()
+    .nullable()
+    .describe("The release on the artifact's channel, or null when no update check ran."),
+  updateAvailable: z.boolean(),
+  releaseNotesUrl: z.string().nullable(),
+  updateCommand: z
+    .string()
+    .nullable()
+    .describe("The CLI command that applies the update. The person runs it; this tool does not."),
+  installCommand: z.string().nullable(),
+  selected: z
+    .boolean()
+    .nullable()
+    .describe(
+      "False for a lock entry the recipe no longer selects, and null when there is no recipe to compare the lock with.",
+    ),
+  updateCheckFailure: updateCheckFailureSchema
+    .nullable()
+    .describe("Why the update check could not look up this artifact's channel, or null."),
+});
+
+/**
+ * The input and output schemas of each tool only the MCP server offers, because it reports on the
+ * project in the working directory, which the Composer's WebMCP tools in the browser cannot read
+ * (ADR-0018, Decisions 3 and 4). The Composer registers none of them.
+ */
+export const mcpOnlyToolSchemas = Object.freeze({
+  artifact_status: {
+    input: z.object({
+      config: z
+        .string()
+        .default(CONFIG_FILE)
+        .describe(
+          "The recipe file path, relative to the project, as `artifacts status --config` names it.",
+        ),
+      checkUpdates: z
+        .boolean()
+        .default(false)
+        .describe(
+          "Resolve each artifact on its channel in the npm registry to report available updates, as `artifacts status --check-updates` does. The lookup contacts the registry and writes nothing into the project.",
+        ),
+    }),
+    // Loose, so the report can gain fields without a breaking change (ADR-0018 Decision 6).
+    output: z.looseObject({
+      command: z.string(),
+      dryRun: z.boolean(),
+      offline: z.boolean().describe("True when no update check ran."),
+      updateAllCommand: z.string().nullable(),
+      checkUpdatesCommand: z.string().nullable(),
+      updateAllBlockedBy: z.array(z.string()),
+      ok: z.boolean().describe("True when every installed artifact is healthy."),
+      artifacts: z.array(artifactStatusEntrySchema),
+      ignoreChanges: z
+        .array(z.looseObject({}))
+        .describe("The .gitignore changes the call made. This tool makes none, so it is empty."),
+      pointers: z.array(z.string()),
+    }),
+  },
 });
 
 /**
