@@ -1,14 +1,14 @@
 // #839: the README and `--help` tell people which MCP tools to confirm before composing a
 // recipe, and permission allow-lists are built from that list, so a tool the documents leave
 // out gets denied. These tests compare both lists with the tools the server registers.
-// #933: the README's tool-order list is checked the same way. The generated `.agents/calavera/mcp.md` list is
-// not checked here yet: changing its text waits for #934.
+// #933: the README's tool-order list is checked the same way. The generated
+// `.agents/calavera/mcp.md` list is not checked here yet: changing its text waits for #934.
 // #1053: the skill no longer lists the tools to look for. ADR-0018 Decision 7 tells the agent
 // to use only the tools the server lists, because a skill newer than the project's pinned server
 // may describe a tool that server lacks. So the skill is checked in the other direction: every
-// lowercase snake_case name in it, the shape of every registered tool name, must be one the
-// server registers, and the skill may leave a tool out. A test below fails when a registered
-// name stops having that shape, so the pattern cannot silently miss a tool.
+// lowercase snake_case name in it must be one the server registers, and the skill may leave a
+// tool out. Every registered tool name has that shape, and a test below fails when one stops
+// having it, so the pattern cannot silently miss a tool.
 // #964: the workflow doc's WebMCP list is checked against the tools the Composer registers.
 // #996: the README's WebMCP list is checked the same way.
 import { execFile } from "node:child_process";
