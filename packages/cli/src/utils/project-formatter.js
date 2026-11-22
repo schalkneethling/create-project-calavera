@@ -40,8 +40,8 @@ import {
  * @property {string} [installDirectory] The directory the remedy for a missing vite-plus tells the
  *   person to run `vp install` in, when that is not the project directory. Under
  *   `--manifest-choice create-here`, the project has no package.json yet and follows the Vite+
- *   verdict of the nearest manifest above it, so the remedy names that manifest's directory
- *   (#1084).
+ *   verdict of the manifest above it, so the remedy names the directory of the manifest that
+ *   declares vite-plus (#1084).
  */
 
 /** @type {ProjectFormatter} */

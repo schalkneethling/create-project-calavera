@@ -12,8 +12,12 @@ import { isPathInside } from "./utils/fs.js";
  *   signal?: "vite-plus-dependency",
  *   manifestPath?: string,
  *   corroborating: Array<"vite-plus-config-import" | "vite-plus-core-pin" | "vp-scripts">,
- *   ancestor?: { manifestPath: string, status: "managed" | "unmanaged" }
+ *   ancestor?: { manifestPath: string, status: "managed" | "unmanaged", declaringManifestPath?: string }
  * }} VitePlusDetection
+ *
+ * `ancestor.declaringManifestPath` is present when `ancestor.status` is "managed". It is the
+ * manifest that declares vite-plus, which is the nearest manifest itself or one further up, and
+ * the directory where vp install installs vite-plus (#1084).
  */
 
 /**
@@ -138,13 +142,13 @@ async function findDeclaringManifest(projectDirectory) {
 
 /**
  * Finds the nearest readable manifest strictly above the inspected directory,
- * and reports whether it, or anything above it, declares `vite-plus`. One
- * climb answers both questions: the first manifest yielded is the nearest one,
- * and the walk continues only to learn whether any level declares the
- * dependency.
+ * and reports whether it, or anything above it, declares `vite-plus`, and
+ * which manifest does. One climb answers all three questions: the first
+ * manifest yielded is the nearest one, and the walk continues only to find the
+ * manifest that declares the dependency.
  *
  * @param {string} projectDirectory
- * @returns {Promise<{ manifestPath: string, status: "managed" | "unmanaged" } | undefined>}
+ * @returns {Promise<VitePlusDetection["ancestor"]>}
  */
 async function findAncestorVerdict(projectDirectory) {
   const parent = dirname(projectDirectory);
@@ -159,7 +163,11 @@ async function findAncestorVerdict(projectDirectory) {
     nearestManifestPath ??= entry.manifestPath;
 
     if (declaresVitePlus(entry.manifest)) {
-      return { manifestPath: nearestManifestPath, status: "managed" };
+      return {
+        manifestPath: nearestManifestPath,
+        status: "managed",
+        declaringManifestPath: entry.manifestPath,
+      };
     }
   }
 

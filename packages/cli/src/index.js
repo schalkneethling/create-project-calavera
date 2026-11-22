@@ -527,16 +527,17 @@ const packageManagerCommands = {
 };
 
 /**
- * The directory of the nearest manifest above a directory that has no package.json of its own and
- * follows that manifest's Vite+ verdict (#961), which the remedy for a missing vite-plus names
- * (#1084), or nothing when the directory's own manifest decides.
+ * Where vp install installs vite-plus for a directory that has no package.json of its own and
+ * follows the Vite+ verdict of the manifest above it (#961): the directory of the manifest that
+ * declares vite-plus, which the remedy for a missing vite-plus names (#1084). Nothing when the
+ * directory's own manifest decides, or when no manifest above it declares vite-plus.
  *
  * @param {VitePlusDetection} detection
  */
 function vitePlusInstallDirectory(detection) {
-  return detection.status === "unknown" && detection.ancestor?.status === "managed"
-    ? dirname(detection.ancestor.manifestPath)
-    : undefined;
+  const declaringManifestPath =
+    detection.status === "unknown" ? detection.ancestor?.declaringManifestPath : undefined;
+  return declaringManifestPath && dirname(declaringManifestPath);
 }
 
 /**
@@ -5914,8 +5915,11 @@ export async function initRecipe(options) {
   // because ignoring abandon would write and apply the recipe.
   /** @type {ManifestDecision | undefined} */
   let decision;
+  /** @type {string | undefined} */
+  let installDirectory;
   if (options.apply) {
     const detection = await detectVitePlus(process.cwd());
+    installDirectory = vitePlusInstallDirectory(detection);
     decision = manifestDecision(process.cwd(), detection);
     if (!decision && options.manifestChoice !== undefined) {
       throw manifestChoiceNotApplicableError(process.cwd(), detection);
@@ -5979,9 +5983,7 @@ export async function initRecipe(options) {
   const configText = await formatGeneratedText(
     relative(process.cwd(), resolve(options.config)),
     `${JSON.stringify(recipe, null, 2)}\n`,
-    projectFormatterLoader(process.cwd(), decision?.ancestor.status, {
-      installDirectory: decision && dirname(decision.ancestor.manifestPath),
-    }),
+    projectFormatterLoader(process.cwd(), decision?.ancestor.status, { installDirectory }),
   );
   if (!options.dryRun) {
     await writeFile(options.config, configText);
