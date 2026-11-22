@@ -301,9 +301,9 @@ const releaseEnvironmentSchema = z.union(
           .max(RELEASE_ENVIRONMENT_MAX_WAIT_TIMER)
           .nullable()
           .optional(),
-        preventSelfReview: z
-          .boolean(coreMessage(environmentFieldCheck("preventSelfReview")))
-          .optional(),
+        // A value of the wrong type fails the whole union, whose error map below runs the core's
+        // check on the environment, so this field needs no map of its own.
+        preventSelfReview: z.boolean().optional(),
         branches: z
           .array(
             nonBlankString(

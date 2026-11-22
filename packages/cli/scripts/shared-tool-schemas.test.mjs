@@ -272,6 +272,13 @@ const refused = [
   compose({ aiArtifacts: [{}] }),
   compose({ aiArtifacts: [{ id: "skill-calavera" }, { id: 5 }] }),
   compose({ aiArtifacts: [{ id: "hook-block-dangerous-commands", target: 5 }] }),
+  compose({ aiArtifacts: [{ id: "skill-protected-branch-guard", inputs: "main" }] }),
+  compose({
+    aiArtifacts: [
+      { id: "skill-calavera" },
+      { id: "skill-protected-branch-guard", inputs: { protectedBranch: 5 } },
+    ],
+  }),
   compose({ integrationOptions: [] }),
   compose({ integrationOptions: { eslint: {} } }),
   option("stylelint-baseline", "widely"),
@@ -444,11 +451,18 @@ test("the browser form refuses to leave out a required Node.js-only property", (
     not: { enum: ["inputs"] },
   });
 
-  const required = z.object({ id: z.string(), inputs: nodeOnly(z.string()) });
-  assert.throws(() => toolJsonSchema(required, { io: "input", browser: true }), {
-    message: "A Node.js-only property must be optional: inputs.",
+  const noneRequired = z.object({ inputs: nodeOnly(z.string().optional()) });
+  assert.deepEqual(toolJsonSchema(noneRequired, { io: "input", browser: true }).properties, {});
+
+  const required = z.object({
+    id: z.string(),
+    inputs: nodeOnly(z.string()),
+    secrets: nodeOnly(z.string()),
   });
-  assert.deepEqual(toolJsonSchema(required, { io: "input" }).required, ["id", "inputs"]);
+  assert.throws(() => toolJsonSchema(required, { io: "input", browser: true }), {
+    message: "A Node.js-only property must be optional: inputs, secrets.",
+  });
+  assert.deepEqual(toolJsonSchema(required, { io: "input" }).required, ["id", "inputs", "secrets"]);
 });
 
 test("the CodeQL language list reaches both surfaces from the repository-controls module", () => {
