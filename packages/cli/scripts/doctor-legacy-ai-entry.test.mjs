@@ -148,6 +148,14 @@ test("Given a legacy entry selects the protected branch guard, doctor reports ap
       issues.filter((/** @type {{ level: string }} */ { level }) => level === "error"),
       [{ level: "error", message: GUARD_LEGACY_REFUSAL }],
     );
+    // The refusal comes before the findings whose remedy is to run apply, which apply refuses
+    // until artifacts migrate rewrites the entry.
+    const messages = issues.map((/** @type {{ message: string }} */ { message }) => message);
+    const missingGuard = messages.findIndex((message) =>
+      message.startsWith("Missing managed AI skill: .agents/skills/protected-branch-guard."),
+    );
+    assert.ok(missingGuard > 0, messages.join("\n"));
+    assert.ok(messages.indexOf(GUARD_LEGACY_REFUSAL) < missingGuard, messages.join("\n"));
   });
 });
 
