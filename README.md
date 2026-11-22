@@ -934,9 +934,9 @@ The check asks the registry and sends the credentials that your user and project
 own `npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`. A proxy in a project
 `.npmrc` or `.yarnrc.yml` is ignored with a warning, because it could receive your credentials. That
 includes a proxy that npm passes on from the project `.npmrc` it read, such as the workspace root's
-file when you run `npx` from a workspace member. When Yarn 1 runs Calavera, a proxy it passes on is
-used only when it equals the one in your user `.npmrc`, because Yarn 1 also passes on settings from
-project `.npmrc` and `.yarnrc` files in parent folders. Under Yarn 2 or later, it asks the registry and proxy that your
+file when you run `npx` from a workspace member. When Yarn 1 runs Calavera, the settings it passes on rank below your `.npmrc` files, and a proxy or an
+`http` registry among them is ignored with a warning unless it equals the one in your user `.npmrc`,
+because Yarn 1 also passes on settings from project `.npmrc` and `.yarnrc` files in parent folders. Under Yarn 2 or later, it asks the registry and proxy that your
 `.yarnrc.yml` files and `YARN_*` variables name, and under Bun, the registry that your `.npmrc` files, `bunfig.toml`, or a Bun registry variable
 such as `BUN_CONFIG_REGISTRY` names. When no proxy is configured, it follows the
 proxy environment variables in either letter case: `HTTPS_PROXY` for an `https:` registry,

@@ -459,7 +459,7 @@ test("a proxy in the project .npmrc is ignored with a warning, and its noproxy s
   // Warnings follow the order of the file.
   assert.match(
     warnings[0],
-    /^Ignored https-proxy in the project \.npmrc: Calavera reads proxies only from user.*To use it, set it in your user configuration\.$/,
+    /^Ignored https-proxy in the project \.npmrc: Calavera reads proxies only from user.*To use it, set it in your user \.npmrc\.$/,
   );
   assert.match(warnings[1], /^Ignored proxy in the project \.npmrc/);
 });
@@ -576,7 +576,7 @@ test("a project .npmrc proxy does not remove the user .npmrc proxy, and the warn
       warning,
       /in the project \.npmrc: .*Calavera uses https-proxy from the user \.npmrc instead\.$/,
     );
-    assert.doesNotMatch(warning, /set it in your user configuration/);
+    assert.doesNotMatch(warning, /No other proxy setting applies/);
   }
 });
 
@@ -599,7 +599,7 @@ test("the project proxy warning names the proxy that is used after every layer i
   });
   const emptyResult = await loadNpmRegistryOptions(emptyUser);
   assert.equal(emptyResult.options.httpsProxy, undefined);
-  assert.match(emptyResult.warnings[0], /To use it, set it in your user configuration\.$/);
+  assert.match(emptyResult.warnings[0], /To use it, set it in your user \.npmrc\.$/);
 });
 
 /**
@@ -744,4 +744,39 @@ test("under npm exec, a project proxy written with another spelling is recognize
     assert.equal(options.httpsProxy, undefined, spelling);
     assert.match(warnings[0], new RegExp(`^Ignored ${spelling} in the project \\.npmrc`), spelling);
   }
+});
+
+test("under npm exec, a userconfig that npm passes on from the project .npmrc does not choose the user file", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-npm-userconfig-"));
+  const cwd = join(directory, "repo");
+  await mkdir(cwd);
+  const evil = join(cwd, "evil.npmrc");
+  await writeFile(
+    evil,
+    "https-proxy=http://attacker.example:8080/\nregistry=http://evil.example/\n",
+  );
+  await writeFile(join(cwd, ".npmrc"), `userconfig=${evil}\n`);
+  const { options, registry } = await loadNpmRegistryOptions({
+    cwd,
+    scope: SCOPE,
+    env: {
+      HOME: join(directory, "home"),
+      npm_command: "exec",
+      npm_config_local_prefix: cwd,
+      npm_config_userconfig: evil,
+    },
+  });
+  assert.equal(options.httpsProxy, undefined);
+  assert.deepEqual(registry, { origin: "https://registry.npmjs.org", source: "default" });
+});
+
+test("under npm exec, a user proxy that the user .npmrc spells differently still applies from the variable", async () => {
+  const context = await fixture({
+    user: "https_proxy=http://user-proxy.example.com/\n",
+    env: { npm_command: "exec", npm_config_https_proxy: "http://user-proxy.example.com/" },
+  });
+  assert.equal(
+    (await loadNpmRegistryOptions(context)).options.httpsProxy,
+    "http://user-proxy.example.com/",
+  );
 });

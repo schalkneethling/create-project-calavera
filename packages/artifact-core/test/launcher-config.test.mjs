@@ -1031,7 +1031,7 @@ test("under Yarn, a rejected project proxy warning names the proxy Yarn uses for
   assert.equal(unusedResult.options.proxy, undefined);
   assert.match(
     unusedResult.warnings[0],
-    /No other proxy setting applies\. To use it, set it in your user configuration\.$/,
+    /No other proxy setting applies\. To use it, set it in your user \.yarnrc\.yml\.$/,
   );
 });
 
@@ -1068,26 +1068,29 @@ test("under Yarn 1, a proxy Yarn passes on from a project file is ignored, which
   assert.equal(options.httpsProxy, undefined);
   assert.match(
     warnings[0],
-    /^Ignored https-proxy in the settings that Yarn 1 passed on: .*To use it, set it in your user configuration\.$/,
+    /^Ignored https-proxy in the settings that Yarn 1 passed on: Yarn 1 also passes on settings from project \.npmrc and \.yarnrc files, .*To use it, set it in your user \.npmrc\.$/,
   );
+  // With no .npmrc registry, the registry Yarn 1 passes on applies.
   assert.deepEqual(registry, {
     origin: "https://project-registry.example.com",
     source: "settings that Yarn 1 passed on",
   });
 });
 
-test("under Yarn 1, a passed-on http registry follows the project rule", async () => {
+test("under Yarn 1, a passed-on http registry is ignored with a warning instead of stopping", async () => {
   const context = await fixture({
     userAgent: YARN_CLASSIC,
-    env: { npm_lifecycle_event: "probe", npm_config_registry: "http://registry.example.com/" },
+    env: { npm_lifecycle_event: "probe", npm_config_registry: "http://localhost:4873/" },
   });
-  await assert.rejects(
-    loadNpmRegistryOptions(context),
-    /registry in the settings that Yarn 1 passed on must be an https URL/,
+  const { registry, warnings } = await loadNpmRegistryOptions(context);
+  assert.deepEqual(registry, { origin: "https://registry.npmjs.org", source: "default" });
+  assert.match(
+    warnings[0],
+    /^Ignored registry in the settings that Yarn 1 passed on: it uses http, .*To use an http registry, set it in your user \.npmrc\.$/,
   );
 });
 
-test("under Yarn 1, a passed-on value equal to the user .npmrc value is the user's", async () => {
+test("under Yarn 1, the .npmrc registry wins over the Yarn default that Yarn 1 always passes on", async () => {
   const context = await fixture({
     userAgent: YARN_CLASSIC,
     files: {
@@ -1097,13 +1100,35 @@ test("under Yarn 1, a passed-on value equal to the user .npmrc value is the user
     env: {
       npm_lifecycle_event: "probe",
       npm_config_https_proxy: "http://corp.example.com:8080/",
-      npm_config_registry: "http://user-registry.example.com/",
+      npm_config_registry: "https://registry.yarnpkg.com",
     },
   });
   const { options, registry, warnings } = await loadNpmRegistryOptions(context);
   assert.equal(options.httpsProxy, "http://corp.example.com:8080/");
   assert.deepEqual(registry, { origin: "http://user-registry.example.com", source: "user .npmrc" });
   assert.ok(!warnings.some((warning) => warning.startsWith("Ignored")));
+});
+
+test("under Yarn 1, npm_config_userconfig and npm_config_local_prefix are not used, because a .yarnrc can set them", async () => {
+  const context = await fixture({
+    userAgent: YARN_CLASSIC,
+    files: {
+      "home/.npmrc": "registry=https://user-registry.example.com/\n",
+      "workspace/evil.npmrc":
+        "https-proxy=http://attacker.example:8080/\nregistry=http://evil.example/\n",
+      "workspace/project/.npmrc": "registry=https://cwd-registry.example.com/\n",
+      "workspace/.npmrc": "registry=https://prefix-registry.example.com/\n",
+    },
+    env: { npm_lifecycle_event: "probe" },
+  });
+  context.env.npm_config_userconfig = join(context.cwd, "..", "evil.npmrc");
+  context.env.npm_config_local_prefix = join(context.cwd, "..");
+  const { options, registry } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, undefined);
+  assert.deepEqual(registry, {
+    origin: "https://cwd-registry.example.com",
+    source: "project .npmrc",
+  });
 });
 
 test("without Yarn 1 starting Calavera, a yarn/1 user agent alone does not distrust the environment", async () => {
