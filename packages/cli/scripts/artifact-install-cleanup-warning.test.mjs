@@ -61,7 +61,8 @@ async function inProject(callback) {
   } finally {
     process.chdir(originalDirectory);
     for (const folder of stuckStagingFolders.splice(0)) {
-      await chmod(join(folder, "stuck"), 0o700);
+      // The stand-in records the folder before it makes `stuck`, which may not exist.
+      await chmod(join(folder, "stuck"), 0o700).catch(() => {});
       await rm(folder, { recursive: true, force: true });
     }
     await rm(project, { recursive: true, force: true });

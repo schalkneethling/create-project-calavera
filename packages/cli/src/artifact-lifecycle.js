@@ -1120,7 +1120,7 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     },
     registry,
   );
-  // #1136: the install has committed here, so a staging folder the command cannot remove is
+  // #1136: the install has committed, or the dry run has finished, here, so a staging folder the command cannot remove is
   // reported with its remedy, as apply reports it (#1033), and the command still finishes.
   const leftoverFolders = temporaryFolderLeftovers(await cleanupFailures([result.dispose]));
   return {
