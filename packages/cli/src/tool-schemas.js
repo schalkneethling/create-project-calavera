@@ -1,6 +1,7 @@
 // @ts-check
 // The input and output schemas of every tool that the MCP server and the Composer's WebMCP tools
-// share by name (ADR-0018, Decisions 2 and 5). Each schema is defined once, here, in Zod: the MCP
+// share by name (ADR-0018, Decisions 2 and 5), and, in `mcpOnlyToolSchemas`, of the MCP-only tools
+// that moved here or were added after #1051. Each schema is defined once, here, in Zod: the MCP
 // server registers the Zod form, and the Composer registers the JSON Schema form that
 // `webMcpToolSchemas` generates from it. A part only Node.js can serve is wrapped in `nodeOnly`,
 // and the JSON Schema form refuses it.
@@ -43,6 +44,7 @@ import {
   validateRecipe,
   validateRecipeCompositionInput,
 } from "./recipe.js";
+import { CONFIG_FILE } from "./project-local-commands.js";
 import { STRYKER_ID, strykerTestRunners } from "./stryker-options.js";
 import { assertString } from "./utils/assertions.js";
 
@@ -551,6 +553,112 @@ export const sharedToolSchemas = Object.freeze({
   },
   validate_recipe: { input: z.object({ recipe: recipeSchema }) },
   explain_recipe: { input: z.object({ recipe: recipeSchema }) },
+});
+
+// The failed registry lookup of one artifact, as `artifacts status --check-updates` reports it (#993).
+const updateCheckFailureSchema = z.looseObject({
+  code: z.string().describe("The registry error's code, such as ETARGET for a missing dist-tag."),
+  type: z.string().nullable(),
+  statusCode: z.number().nullable().describe("The registry's HTTP status, when it answered."),
+  reason: z.string(),
+  remedy: z.string().nullable(),
+  npmDiagnostics: z.array(z.string()),
+  unsetVariables: z.array(z.string()),
+});
+
+// One artifact in the artifact status report. It declares only the fields the report computes: an
+// entry copies a lock entry's fields, such as id, version, and tag, as the lock records them, and
+// `readLock` does not check them, so declaring their types would refuse a report that
+// `artifacts status --json` prints. Loose, because ADR-0018 Decision 6 also lets the report gain
+// fields, such as the condition that ADR-0020 adds, without a breaking change.
+const artifactStatusEntrySchema = z.looseObject({
+  installed: z.boolean(),
+  managed: z.boolean(),
+  locallyEdited: z.boolean(),
+  latestVersion: z
+    .string()
+    .nullable()
+    .describe("The release on the artifact's channel, or null when no update check ran."),
+  updateAvailable: z.boolean(),
+  releaseNotesUrl: z.string().nullable(),
+  updateCommand: z
+    .string()
+    .nullable()
+    .describe("The CLI command that applies the update. The person runs it; this tool does not."),
+  installCommand: z.string().nullable(),
+  selected: z
+    .boolean()
+    .nullable()
+    .describe(
+      "False for a lock entry the recipe no longer selects, and null when there is no recipe to compare the lock with.",
+    ),
+  updateCheckFailure: updateCheckFailureSchema
+    .nullable()
+    .describe("Why the update check could not look up this artifact's channel, or null."),
+});
+
+/**
+ * The input and output schemas of each tool only the MCP server offers, because it reports on the
+ * project in the working directory, which the Composer's WebMCP tools in the browser cannot read
+ * (ADR-0018, Decisions 3 and 4). The Composer registers none of them.
+ */
+export const mcpOnlyToolSchemas = Object.freeze({
+  artifact_status: {
+    input: z.object({
+      config: z
+        .string()
+        .default(CONFIG_FILE)
+        .describe(recipeToolInputDescriptions.artifactStatusConfig),
+      checkUpdates: z.boolean().default(false).describe(recipeToolInputDescriptions.checkUpdates),
+    }),
+    // Loose, so the report can gain fields without a breaking change (ADR-0018 Decision 6).
+    output: z.looseObject({
+      command: z.string(),
+      dryRun: z.boolean(),
+      offline: z.boolean().describe("True when no update check ran."),
+      updateAllCommand: z.string().nullable(),
+      checkUpdatesCommand: z
+        .string()
+        .nullable()
+        .describe(
+          "The CLI command that checks for updates, after a report without an update check. Null after an update check, and in the pending-transaction result, where an update check cannot run.",
+        ),
+      updateAllBlockedBy: z.array(z.string()),
+      ok: z
+        .boolean()
+        .describe(
+          "True when every installed artifact is healthy. False in the pending-transaction result, whose artifacts cannot be read yet.",
+        ),
+      artifacts: z
+        .array(artifactStatusEntrySchema)
+        .describe(
+          "Each artifact the lock records or the recipe selects, with the lock entry's fields, such as id, version, and tag, and the fields the report computes.",
+        ),
+      ignoreChanges: z
+        .array(z.looseObject({}))
+        .describe("The .gitignore changes the call made. This tool makes none, so it is empty."),
+      pointers: z.array(z.string()),
+      phase: z
+        .string()
+        .optional()
+        .describe(
+          "Where the project is in Calavera's lifecycle. Present only as pending-transaction for now: an artifact operation stopped before its rollback ran, so the report lists no artifacts.",
+        ),
+      rollbackFiles: z
+        .array(z.string())
+        .nullable()
+        .optional()
+        .describe(
+          "With phase pending-transaction: the project paths of the files the rollback would restore from their backups or remove, or null when the journal cannot be read.",
+        ),
+      remedy: z
+        .string()
+        .optional()
+        .describe(
+          "With phase pending-transaction: what the person does next. Save any edits to the rollbackFiles, then run the artifacts status command it names, which rolls the transaction back.",
+        ),
+    }),
+  },
 });
 
 /**

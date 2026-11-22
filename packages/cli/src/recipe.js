@@ -94,6 +94,7 @@ export const recipeCompositionToolNames = Object.freeze([
 
 export const standardMcpToolNames = Object.freeze([
   "inspect_project",
+  "artifact_status",
   ...recipeCompositionToolNames,
   "dry_run_apply",
   "apply_recipe",
@@ -104,6 +105,8 @@ export const webMcpToolNames = Object.freeze([...recipeCompositionToolNames, "do
 export const recipeToolDescriptions = Object.freeze({
   inspect_project:
     "Inspect the current project for package-manager signals, existing tooling files, and likely Calavera adoption conflicts before composing or applying a recipe. Also reports whether the project is managed by Vite+ and which signal matched.",
+  artifact_status:
+    "Report the agent artifacts the recipe selects and the artifact lock records, from the same core function as the artifacts status CLI command: each artifact's locked version and channel, whether its files are installed, managed, or locally edited, and, with checkUpdates, whether its channel has a newer release and the CLI command that applies it. Writes nothing into the project, so it never rolls back a pending artifact transaction: it then returns phase pending-transaction and no artifacts, with rollbackFiles, which lists the files the rollback would restore or remove, and remedy. Show rollbackFiles and remedy to the user, who must save any edits to those files before running artifacts status. Installing, updating, and migrating artifacts stay CLI commands.",
   list_profiles:
     "List Calavera profiles, package managers, and default integrations. Use this first when composing a recipe.",
   list_integrations:
@@ -155,6 +158,10 @@ export const recipeToolInputDescriptions = Object.freeze({
   aiArtifacts: "Bundled AI skills, hooks, and agents to include in the recipe.",
   integrationOptions:
     "Options keyed by selected integration ID. Stylelint Baseline requires available, which is widely, newly, or a Baseline year, and accepts severity, warning by default or error; HTML Validate accepts quality, which is false to leave lint:html out of the generated quality script in a project without static HTML files; GitHub repository controls require repository identity and accept governance policy overrides; defaultBranch has no fixed default: record the repository's default branch, or let the apply dry run fill it in from the repository and report where the value came from; Stryker accepts testRunner, vitest by default or node:test for a project that tests with node:test, and, with node:test, testFiles, the globs the project's test script passes to node --test.",
+  artifactStatusConfig:
+    "The recipe file path, relative to the project, as `artifacts status --config` names it.",
+  checkUpdates:
+    "Resolve each artifact on its channel in the npm registry to report available updates, as `artifacts status --check-updates` does. The lookup contacts the registry and writes nothing into the project.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
   baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
   baselineLimit: "Maximum number of Baseline feature search results.",

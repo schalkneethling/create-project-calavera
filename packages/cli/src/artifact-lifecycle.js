@@ -223,6 +223,112 @@ export async function runArtifactCommand(options, services = {}) {
 }
 
 /**
+ * The `artifacts status` report, read without writing anything into the project, for the read-only
+ * `artifact_status` MCP tool (#1052, ADR-0018 Decision 3). It runs the same core function as
+ * `artifacts status`, with three differences that ADR-0020, Decision 1 sets for the tool. It never
+ * recovers a pending artifact transaction: it returns the `pending-transaction` report instead,
+ * before it reads any record or resolves any package. With `checkUpdates`, it plans and records no
+ * artifact cache block and resolves through a temporary cache that it removes afterward, as a dry
+ * run does, so `ignoreChanges` and `pointers` are empty. And it never loads the project's
+ * formatter, because it formats nothing.
+ *
+ * @param {{ config: string, checkUpdates?: boolean }} options
+ * @param {ArtifactServices} [services] Only `resolve` is read; the formatter is never loaded.
+ */
+export async function readArtifactStatus(options, services = {}) {
+  if (await fileExists(TRANSACTION_PATH)) return pendingTransactionReport(options.config);
+  return artifactStatus(
+    {
+      config: options.config,
+      dryRun: false,
+      artifactAction: "status",
+      checkUpdates: options.checkUpdates,
+    },
+    artifactRegistry(services),
+    async () => {
+      throw new Error("The read-only artifact status report never loads the formatter.");
+    },
+    { readOnly: true },
+  );
+}
+
+/**
+ * The read-only report while an artifact transaction is pending (ADR-0020, owner decisions 20 and
+ * 23; owner decision of 2026-11-22 on #1052). It is a result, not an error, so the phase function
+ * that ADR-0020 adds later only adds fields. It carries the fields every status report carries,
+ * with no artifacts and `ok: false`, because the records cannot be read yet, and three more:
+ * `phase`; `rollbackFiles`, which lists the project paths the rollback would restore from their
+ * backups or remove, read from the journal without writing, or is null when the journal cannot be
+ * read; and `remedy`, which tells the person to save edits to those files before running
+ * `artifacts status`, which rolls the transaction back. The remedy is fixed text plus a command
+ * built from the recipe's package manager, which only selects a runner from a fixed list, so no
+ * text from the recipe or the journal reaches it; the journal's paths stay in `rollbackFiles`. A
+ * recipe it cannot read only makes the command use the npm runner.
+ *
+ * @param {string} config
+ */
+async function pendingTransactionReport(config) {
+  let recipe = {};
+  try {
+    recipe = await readJson(config);
+  } catch {
+    // A missing or unreadable recipe only changes the runner the command names.
+  }
+  const rollbackFiles = await pendingRollbackFiles();
+  const command = artifactCommand(recipe, config, ["status"]);
+  let files;
+  if (rollbackFiles === null) {
+    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, so it cannot list the files the rollback would restore or remove. Save any edits to the files the stopped operation was changing, then run`;
+  } else if (rollbackFiles.length === 0) {
+    files = "The rollback restores or removes no file, so run";
+  } else {
+    files = "Save any edits to the files in rollbackFiles first, then run";
+  }
+  return {
+    command: "artifacts status",
+    dryRun: false,
+    offline: true,
+    updateAllCommand: null,
+    checkUpdatesCommand: null,
+    updateAllBlockedBy: [],
+    ok: false,
+    artifacts: [],
+    ignoreChanges: [],
+    pointers: [],
+    phase: "pending-transaction",
+    rollbackFiles,
+    remedy: `An artifact operation stopped before its rollback ran, so this read-only report does not read the artifact records, because the rollback may still change them. ${files}: ${command}. It rolls the transaction back and reports the artifact status.`,
+  };
+}
+
+/**
+ * The project paths of the files the pending transaction's rollback would restore from their
+ * backups or remove, as `recoverArtifactTransaction` decides it, read without writing, or null
+ * when the journal cannot be read or fails its checks.
+ *
+ * @returns {Promise<string[] | null>}
+ */
+async function pendingRollbackFiles() {
+  let operations;
+  try {
+    ({ operations } = await readTransactionJournal());
+  } catch {
+    return null;
+  }
+  // A target the journal names twice is listed once. A target that is the project root itself has
+  // an empty project path, which names no file, so it is left out; #1193 makes the journal check
+  // refuse such a journal.
+  const replaced = new Set();
+  for (const operation of operations) {
+    if ((await fileExists(operation.backup)) || !operation.hadTarget) {
+      const path = relative(resolve("."), operation.target);
+      if (path !== "") replaced.add(path);
+    }
+  }
+  return [...replaced];
+}
+
+/**
  * Returns the payload source of every artifact a recipe selects, keyed by artifact ID, for apply.
  * Selections without a lock entry are installed first, as `artifacts install` would: only those
  * selections gain lock entries and outputs, and selections already locked keep their exact locked
@@ -605,8 +711,10 @@ async function migrateRecipe(options, loadFormatter) {
  * @param {ArtifactOptions} options
  * @param {{ resolve: typeof resolveArtifactPackage }} registry
  * @param {() => Promise<ProjectFormatter>} loadFormatter Formats the state when the cache block is recorded.
+ * @param {{ readOnly?: boolean }} [mode] With `readOnly`, as `readArtifactStatus` runs it, the
+ *   report plans no cache block and resolves through a temporary cache, so it writes nothing.
  */
-async function artifactStatus(options, registry, loadFormatter) {
+async function artifactStatus(options, registry, loadFormatter, { readOnly = false } = {}) {
   const recipeFound = await fileExists(options.config);
   const recipe = recipeFound ? await readJson(options.config) : {};
   const selections = normalizePackageSelections(recipe.ai);
@@ -621,22 +729,24 @@ async function artifactStatus(options, registry, loadFormatter) {
   const unlockedSelections = selections.filter(({ id }) => !lockedIds.has(id));
   // #960: checking for updates resolves every lock entry and unlocked selection through the cache,
   // so the cache block is written first. A dry run plans it and resolves through a temporary
-  // cache, so it writes nothing.
+  // cache, so it writes nothing. A read-only report (#1052) does not plan it at all, because it
+  // neither writes the block nor reports a change to it, and resolves through a temporary cache.
   const resolvesPackages = Boolean(
     options.checkUpdates && lock.artifacts.length + unlockedSelections.length > 0,
   );
-  const cacheBlock = resolvesPackages
-    ? await planArtifactCacheBlock(
-        state,
-        await artifactCacheIgnoreLines(recipe, { resolvesPackages }),
-        `artifacts ${options.artifactAction} --check-updates`,
-      )
-    : undefined;
+  const cacheBlock =
+    resolvesPackages && !readOnly
+      ? await planArtifactCacheBlock(
+          state,
+          await artifactCacheIgnoreLines(recipe, { resolvesPackages }),
+          `artifacts ${options.artifactAction} --check-updates`,
+        )
+      : undefined;
   if (cacheBlock) {
     await commitArtifactCacheBlock(cacheBlock, state, loadFormatter, options.dryRun);
   }
   const temporaryCache =
-    resolvesPackages && options.dryRun
+    resolvesPackages && (options.dryRun || readOnly)
       ? await mkdtemp(join(tmpdir(), "calavera-artifact-status-"))
       : undefined;
   const cache = temporaryCache ?? resolve(CACHE_PATH);
@@ -1339,6 +1449,27 @@ export async function recoverArtifactTransaction(options = {}) {
   if (options.readOnly) {
     throw new Error("A pending artifact transaction requires recovery before a dry run.");
   }
+  const { transactionRoot, operations } = await readTransactionJournal();
+
+  for (const operation of operations.reverse()) {
+    if (await fileExists(operation.backup)) {
+      await rm(operation.target, { recursive: true, force: true });
+      await mkdir(dirname(operation.target), { recursive: true });
+      await rename(operation.backup, operation.target);
+    } else if (!operation.hadTarget) {
+      await rm(operation.target, { recursive: true, force: true });
+    }
+  }
+  await rm(TRANSACTION_PATH, { force: true });
+  await rm(transactionRoot, { recursive: true, force: true });
+}
+
+/**
+ * Reads the pending artifact transaction's journal without writing, and checks that every path it
+ * names stays in its workspace: staged files and backups in the transaction root, targets in the
+ * project. Throws on a journal that fails a check.
+ */
+async function readTransactionJournal() {
   const journal = await readJson(TRANSACTION_PATH);
   if (
     journal.schemaVersion !== 1 ||
@@ -1375,16 +1506,5 @@ export async function recoverArtifactTransaction(options = {}) {
     }
     return { staged, target, backup, hadTarget: operation.hadTarget };
   });
-
-  for (const operation of operations.reverse()) {
-    if (await fileExists(operation.backup)) {
-      await rm(operation.target, { recursive: true, force: true });
-      await mkdir(dirname(operation.target), { recursive: true });
-      await rename(operation.backup, operation.target);
-    } else if (!operation.hadTarget) {
-      await rm(operation.target, { recursive: true, force: true });
-    }
-  }
-  await rm(TRANSACTION_PATH, { force: true });
-  await rm(transactionRoot, { recursive: true, force: true });
+  return { transactionRoot, operations };
 }

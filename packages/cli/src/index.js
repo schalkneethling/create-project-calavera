@@ -7080,10 +7080,11 @@ MCP-first workflow:
   2. Choose exactly one project-local MCP host when prompted, or skip for manual setup.
   3. Reload or restart the agent session if required by your MCP host.
   4. Confirm these tools are visible before composing a recipe:
-     inspect_project, list_profiles, list_integrations, describe_integration,
-     list_ai_artifacts, list_baseline_targets, describe_baseline_target,
-     search_baseline_features, recommend_baseline_target, compose_recipe,
-     validate_recipe, explain_recipe, dry_run_apply, apply_recipe.
+     inspect_project, artifact_status, list_profiles, list_integrations,
+     describe_integration, list_ai_artifacts, list_baseline_targets,
+     describe_baseline_target, search_baseline_features,
+     recommend_baseline_target, compose_recipe, validate_recipe,
+     explain_recipe, dry_run_apply, apply_recipe.
 
 Package-runner syntax:
   npm create needs -- before Calavera flags, for example:

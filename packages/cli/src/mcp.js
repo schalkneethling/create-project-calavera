@@ -13,6 +13,7 @@ import {
   searchBaselineFeatures,
 } from "@schalkneethling/calavera-baseline-core";
 
+import { readArtifactStatus } from "./artifact-lifecycle.js";
 import { applyRecipeObject, inspectProject, reportVitePlus } from "./index.js";
 import {
   CONFIG_FILE,
@@ -28,7 +29,12 @@ import {
   validateRecipe,
   validateRecipeResponse,
 } from "./recipe.js";
-import { packageManagerSchema, recipeSchema, sharedToolSchemas } from "./tool-schemas.js";
+import {
+  mcpOnlyToolSchemas,
+  packageManagerSchema,
+  recipeSchema,
+  sharedToolSchemas,
+} from "./tool-schemas.js";
 import { describeArtifactInputs } from "./ai/artifact-inputs.js";
 import { describeIntegrationInputs } from "./integration-inputs.js";
 import { manifestChoices, pathAtAncestor } from "./manifest-decision.js";
@@ -47,7 +53,7 @@ import { assertWorkspacePath } from "./utils/fs.js";
 const SERVER_NAME = "create-project-calavera";
 const SERVER_VERSION = packageJson.version;
 const SERVER_INSTRUCTIONS =
-  "Compose Calavera recipes for the current project. Start with inspect_project, list_profiles, list_integrations, describe_integration when details are needed, and list_ai_artifacts to discover valid IDs, then call compose_recipe, validate_recipe, explain_recipe, and dry_run_apply. Present the dry-run summary to the user and call apply_recipe only after explicit approval.";
+  "Compose Calavera recipes for the current project. Start with inspect_project, list_profiles, list_integrations, describe_integration when details are needed, and list_ai_artifacts to discover valid IDs, then call compose_recipe, validate_recipe, explain_recipe, and dry_run_apply. Call artifact_status to see whether the project's agent artifacts are installed, edited, or have updates. Present the dry-run summary to the user and call apply_recipe only after explicit approval.";
 
 const packageManagerOverrideSchema = packageManagerSchema
   .optional()
@@ -68,6 +74,14 @@ const toolAnnotations = {
     idempotentHint: true,
     openWorldHint: false,
   },
+  // #1052: reads the project like `read`, but a call with `checkUpdates` contacts the npm registry
+  // (ADR-0018 Decision 3).
+  readRegistry: {
+    readOnlyHint: true,
+    destructiveHint: false,
+    idempotentHint: true,
+    openWorldHint: true,
+  },
   apply: {
     readOnlyHint: false,
     destructiveHint: true,
@@ -81,7 +95,7 @@ const toolAnnotations = {
  *   description: string,
  *   inputSchema: z.ZodObject,
  *   outputSchema?: z.ZodObject,
- *   annotations: typeof toolAnnotations.read | typeof toolAnnotations.apply,
+ *   annotations: typeof toolAnnotations.read | typeof toolAnnotations.readRegistry | typeof toolAnnotations.apply,
  * }} ToolConfig
  */
 
@@ -185,6 +199,12 @@ const toolConfigs = {
       }),
     }),
     annotations: toolAnnotations.read,
+  },
+  artifact_status: {
+    description: recipeToolDescriptions.artifact_status,
+    inputSchema: mcpOnlyToolSchemas.artifact_status.input,
+    outputSchema: mcpOnlyToolSchemas.artifact_status.output,
+    annotations: toolAnnotations.readRegistry,
   },
   apply_recipe: {
     description: recipeToolDescriptions.apply_recipe,
@@ -372,6 +392,20 @@ async function dryRunApplyTool(args, artifactServices) {
 }
 
 /**
+ * The artifact status report, read without writing (#1052). The recipe path must stay inside the
+ * project, and the report receives it as the caller wrote it, as `artifacts status --config` does,
+ * so the commands it names carry the same `--config` value.
+ *
+ * @param {Record<string, unknown>} args
+ * @param {ArtifactServices} artifactServices
+ */
+async function artifactStatusTool(args, artifactServices) {
+  const config = typeof args.config === "string" ? args.config : CONFIG_FILE;
+  await assertWorkspacePath(config, process.cwd(), "artifact_status config path");
+  return readArtifactStatus({ config, checkUpdates: args.checkUpdates === true }, artifactServices);
+}
+
+/**
  * @param {Record<string, unknown>} args
  * @param {ArtifactServices} artifactServices
  * @returns {Promise<Record<string, unknown>>}
@@ -489,6 +523,8 @@ export async function callMcpTool(name, input = {}, artifactServices = {}) {
       return explainRecipeTool(args);
     case "dry_run_apply":
       return dryRunApplyTool(args, artifactServices);
+    case "artifact_status":
+      return artifactStatusTool(args, artifactServices);
     case "apply_recipe":
       return applyRecipeTool(args, artifactServices);
     default:
