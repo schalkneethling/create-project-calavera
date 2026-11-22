@@ -97,9 +97,10 @@ test("redactSecrets keeps prose, paths, and values that are not secret", () => {
   }
 });
 
-// Issue #1149: the time redaction takes must grow linearly with the text.
-// Absolute time cannot show that, because a machine running other suites at
-// the same time slows every call. Instead, each attempt times the same number
+// Issue #1149: the time redaction takes must grow linearly with the text, and
+// stay small. A single absolute time cannot show the first, because a machine
+// running other suites at the same time slows every call. Instead, each
+// attempt times the same number
 // of characters two ways: as one long input, and as 16 (`GROWTH`) inputs,
 // each one sixteenth of its length. In linear time both take about as long, so the
 // ratio is near 1. A quadratic term, such as a pattern that starts to
@@ -107,12 +108,12 @@ test("redactSecrets keeps prose, paths, and values that are not secret", () => {
 // ratio rises toward `GROWTH` as that term outweighs the linear work. Load
 // can slow either measurement of an attempt, so the test compares the
 // fastest of each across every attempt, after one untimed run of the short
-// inputs that compiles the code. Two kinds of slowdown are not caught here: a
-// constant-factor slowdown, which keeps the ratio near 1 and which load would
-// hide from an absolute limit, and growth no faster than the 1.5th power of
-// the length, such as n log n or a quadratic term with a very small constant,
-// which keeps the ratio at or below `LIMIT`. Backtracking grows quadratically
-// or faster, so it is caught.
+// inputs that compiles the code. Backtracking grows quadratically or faster,
+// so the ratio catches it. A constant-factor slowdown keeps the ratio near 1,
+// so the fastest long time must also stay under `LONG_INPUT_LIMIT`. Growth no
+// faster than the 1.5th power of the length, such as n log n or a quadratic
+// term with a very small constant, keeps the ratio at or below `LIMIT` and is
+// caught only if it also crosses that limit.
 test("redactSecrets takes linear time on adversarial input", () => {
   const GROWTH = 16;
   const SHORT = 4 * 1024;
@@ -127,6 +128,14 @@ test("redactSecrets takes linear time on adversarial input", () => {
   // Halfway between linear (about 1) and quadratic (about GROWTH) on a log
   // scale.
   const LIMIT = Math.sqrt(GROWTH);
+  // Measured on an 11-core Apple Silicon Mac, the fastest 64 KiB time of the
+  // slowest shape (`a:a:…`) was 2.8 to 3.1 ms on a quiet machine and 2.8 to
+  // 2.9 ms with 44 busy processes running, because only the fastest attempt
+  // counts. A redaction made uniformly 20 times slower took 53 to 54 ms. The
+  // limit sits about 8 times above the healthy time, which leaves room for a
+  // slower continuous integration runner, and about half the 20-times time,
+  // so that slowdown fails.
+  const LONG_INPUT_LIMIT = 25;
   const shapes = [
     (size) => "a-".repeat(size / 2),
     (size) => "a".repeat(size),
@@ -178,6 +187,12 @@ test("redactSecrets takes linear time on adversarial input", () => {
         `inputs of ${short.length} characters, a ratio of ` +
         `${(fastestLong / fastestShort).toFixed(2)} where the limit is ${LIMIT}, ` +
         `so its time grows faster than its length`,
+    );
+    assert.ok(
+      fastestLong < LONG_INPUT_LIMIT,
+      `an input starting ${JSON.stringify(short.slice(0, 12))} took ${fastestLong.toFixed(2)} ms ` +
+        `at its fastest at ${long.length} characters, where the limit is ${LONG_INPUT_LIMIT} ms, ` +
+        `so redaction has become slower at every length`,
     );
   }
 });
