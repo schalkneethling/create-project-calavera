@@ -10,6 +10,7 @@ import {
   mkdtemp,
   readFile,
   readdir,
+  realpath,
   rm,
   rmdir,
   symlink,
@@ -1682,4 +1683,217 @@ test("eject-yes-footprint allows an empty removed folder only in Calavera's own 
     extraDirectories: [".agents/calavera"],
   });
   await ejectCheck("eject-yes-footprint").run(agents.context);
+});
+
+/**
+ * A stand-in for Yarn's `.pnp.cjs`: loaded with `--require`, it makes `require("pnpapi")` return
+ * an API whose `resolveToUnqualified` maps `vite-plus/package.json` to a file outside any
+ * node_modules folder, as Yarn's maps it into a zip archive in its cache.
+ *
+ * @param {string} project
+ * @param {string} version
+ */
+async function writePnpProject(project, version) {
+  const store = join(project, ".yarn", "unplugged", "vite-plus");
+  await mkdir(store, { recursive: true });
+  await writeFile(join(store, "package.json"), JSON.stringify({ name: "vite-plus", version }));
+  await writeFile(
+    join(project, ".pnp.cjs"),
+    `const Module = require("node:module");
+const { join } = require("node:path");
+const api = {
+  resolveToUnqualified(request, issuer) {
+    if (request !== "vite-plus/package.json") throw new Error("not a dependency: " + request);
+    if (issuer !== ${JSON.stringify(`${await realpath(project)}/`)}) throw new Error("the issuer must be the project's real path");
+    return join(${JSON.stringify(store)}, "package.json");
+  },
+};
+const resolve = Module._resolveFilename;
+Module._resolveFilename = function (request, ...rest) {
+  return request === "pnpapi" ? __filename : resolve.call(this, request, ...rest);
+};
+module.exports = api;
+`,
+  );
+}
+
+/** @param {string} project @param {string} version */
+async function writeNodeModulesProject(project, version) {
+  const directory = join(project, "node_modules", "vite-plus");
+  await mkdir(directory, { recursive: true });
+  await writeFile(join(directory, "package.json"), JSON.stringify({ name: "vite-plus", version }));
+}
+
+/**
+ * A context for one --new check: the launcher "scaffolds" with `layout`, prints the runner it
+ * implies, and the registry log shows the release candidate's tarball. Node.js runs for real, so
+ * the Plug'n'Play read goes through `.pnp.cjs`. The MCP server does not exist, so a check that
+ * gets past the version reaches `inspect_project` and fails there. The projects folder is a
+ * symbolic link.
+ *
+ * @param {string} runner
+ * @param {(project: string) => Promise<void>} layout
+ */
+async function newCheckContext(runner, layout) {
+  const root = await mkdtemp(join(scratch, "new-check-"));
+  // Reached through a symbolic link, as the macOS temporary folder is, so a Plug'n'Play read that
+  // passes Yarn a path that is not the real one fails here on every platform.
+  await mkdir(join(root, "real-projects"));
+  await symlink(join(root, "real-projects"), join(root, "projects"));
+  /** @type {string[]} */
+  const requests = [];
+  return {
+    dirs: { projects: join(root, "projects") },
+    env: process.env,
+    vitePlusVersion: "1.6.0",
+    versions: {},
+    registry: { url: "http://127.0.0.1:0", requests },
+    calavera: { version: "9.9.9", mcpBin: join(root, "missing-mcp") },
+    recordEnvironment: () => {},
+    freshEnvironment: async () => process.env,
+    run: async (
+      /** @type {string} */ command,
+      /** @type {string[]} */ args,
+      /** @type {{ cwd?: string }} */ options = {},
+    ) => {
+      const display = `${command} ${args.join(" ")}`;
+      if (command === "node") {
+        const child = spawnSync(command, args, { cwd: options.cwd, encoding: "utf8" });
+        return {
+          exitCode: child.status,
+          signal: child.signal,
+          timedOut: false,
+          stdout: child.stdout,
+          stderr: child.stderr,
+          output: `${child.stdout}${child.stderr}`,
+          display,
+        };
+      }
+      await layout(join(options.cwd ?? root, "app"));
+      requests.push("/create-project-calavera/-/create-project-calavera-9.9.9.tgz");
+      const stdout = `Command: ${runner} create-vite-plus@latest vite:library\n`;
+      return {
+        exitCode: 0,
+        signal: null,
+        timedOut: false,
+        stdout,
+        stderr: "",
+        output: stdout,
+        display,
+      };
+    },
+  };
+}
+
+/** The --new check for `id`, with the runner line its launcher prints. */
+const newChecks = [
+  ["new-npm", "npm exec --"],
+  ["new-pnpm", "pnpm dlx"],
+  ["new-yarn", "yarn dlx"],
+  ["new-bun", "bunx"],
+  ["new-npx-package", "npx"],
+];
+
+test("every --new check fails when the launcher installed another Vite+ than the run's (#1090)", async () => {
+  for (const [id, runner] of newChecks) {
+    const check = cliExperienceChecks.find((candidate) => candidate.id === id);
+    assert.ok(check, id);
+    const context = await newCheckContext(runner, (project) =>
+      writeNodeModulesProject(project, "1.5.0"),
+    );
+    await assert.rejects(check.run(context), (error) => {
+      assert.ok(error instanceof CheckFailure, id);
+      assert.match(error.expected, /to install Vite\+ 1\.6\.0/, id);
+      assert.match(error.actual, /installed 1\.5\.0/, id);
+      return true;
+    });
+  }
+});
+
+test("a --new check gets past the Vite+ version when the launcher installed the run's (#1090)", async () => {
+  for (const [id, runner] of newChecks) {
+    const check = cliExperienceChecks.find((candidate) => candidate.id === id);
+    assert.ok(check, id);
+    const context = await newCheckContext(runner, (project) =>
+      writeNodeModulesProject(project, "1.6.0"),
+    );
+    // The missing MCP server is the next step, so the version check passed.
+    await assert.rejects(check.run(context), /the MCP server to start/, id);
+  }
+});
+
+test("the Yarn --new check reads the Vite+ version through Plug'n'Play, with no node_modules (#1090)", async () => {
+  const check = cliExperienceChecks.find((candidate) => candidate.id === "new-yarn");
+  assert.ok(check);
+  const heldBack = await newCheckContext("yarn dlx", (project) =>
+    writePnpProject(project, "1.5.0"),
+  );
+  await assert.rejects(check.run(heldBack), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.match(error.actual, /installed 1\.5\.0/);
+    return true;
+  });
+  const current = await newCheckContext("yarn dlx", (project) => writePnpProject(project, "1.6.0"));
+  await assert.rejects(check.run(current), /the MCP server to start/);
+});
+
+test("a --new check names a project without Vite+ and a Plug'n'Play project that cannot resolve it (#1090)", async () => {
+  const check = cliExperienceChecks.find((candidate) => candidate.id === "new-yarn");
+  assert.ok(check);
+  const empty = await newCheckContext("yarn dlx", (project) => mkdir(project, { recursive: true }));
+  await assert.rejects(check.run(empty), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.match(
+      error.actual,
+      /it installed nothing: there is no node_modules\/vite-plus\/package\.json and no \.pnp\.cjs/,
+    );
+    return true;
+  });
+  const broken = await newCheckContext("yarn dlx", async (project) => {
+    await mkdir(project, { recursive: true });
+    // A runtime that prints before it fails: its output is not a version.
+    await writeFile(
+      join(project, ".pnp.cjs"),
+      'process.stdout.write("1.6.0");\nthrow new Error("broken runtime");\n',
+    );
+  });
+  await assert.rejects(check.run(broken), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.match(error.actual, /\.pnp\.cjs/);
+    assert.match(error.actual, /exit code 1/);
+    return true;
+  });
+});
+
+test("the flow project records the Vite+ it installed and fails when it is not the run's (#1090)", async () => {
+  const check = cliExperienceChecks.find(({ id }) => id === "init-output");
+  assert.ok(check);
+  for (const [layout, recorded] of [
+    [(/** @type {string} */ project) => writeNodeModulesProject(project, "1.5.0"), "1.5.0"],
+    [(/** @type {string} */ project) => mkdir(project, { recursive: true }), "not installed"],
+  ]) {
+    const root = await mkdtemp(join(scratch, "flow-version-"));
+    await mkdir(join(root, "projects"));
+    /** @type {Record<string, string>} */
+    const recordedVersions = {};
+    const context = {
+      dirs: { projects: join(root, "projects") },
+      vitePlusVersion: "1.6.0",
+      versions: recordedVersions,
+      runOrThrow: async (
+        /** @type {string} */ _command,
+        /** @type {string[]} */ _args,
+        /** @type {{ cwd: string }} */ { cwd },
+      ) => {
+        await layout(join(cwd, "app"));
+      },
+    };
+    await assert.rejects(check.run(context), (error) => {
+      assert.ok(error instanceof CheckFailure);
+      assert.match(error.expected, /the flow project to install Vite\+ 1\.6\.0/);
+      assert.match(error.command, /pnpm create vite-plus vite:library/);
+      return true;
+    });
+    assert.equal(recordedVersions["Vite+ installed in the flow project"], recorded);
+  }
 });
