@@ -84,6 +84,7 @@ const cases = [
   { command: ["doctor"], file: RECIPE, files: { [RECIPE]: BROKEN } },
   { command: ["doctor"], file: STATE, files: { [RECIPE]: VALID_RECIPE, [STATE]: BROKEN } },
   { command: ["artifacts", "doctor"], file: RECIPE, files: { [RECIPE]: BROKEN } },
+  { command: ["artifacts", "migrate"], file: RECIPE, files: { [RECIPE]: BROKEN } },
   {
     command: ["artifacts", "doctor"],
     file: LOCK,

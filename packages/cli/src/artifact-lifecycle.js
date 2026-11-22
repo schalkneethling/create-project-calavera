@@ -28,7 +28,7 @@ import {
 } from "./project-local-commands.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import { errorAfterCleanups, removeTemporaryFolder, runCleanups } from "./utils/cleanup.js";
-import { fileExists, isPathInside, readJSON } from "./utils/fs.js";
+import { fileExists, isPathInside, parseJSON, readJSON } from "./utils/fs.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { rewriteLossProblem } from "./utils/json-rewrite.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
@@ -551,7 +551,7 @@ export async function rebuildLockedPackage(entry, temporaryRoot, dryRun, registr
  */
 async function migrateRecipe(options, loadFormatter) {
   const text = await readFile(options.config, "utf8");
-  const recipe = JSON.parse(text);
+  const recipe = /** @type {Record<string, unknown>} */ (parseJSON(text, options.config));
   if (!Array.isArray(recipe.ai)) return { command: "artifacts migrate", migrated: 0 };
   let migrated = 0;
   const ai = recipe.ai.map((/** @type {unknown} */ item) => {
