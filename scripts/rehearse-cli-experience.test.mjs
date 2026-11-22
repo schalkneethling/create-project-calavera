@@ -1861,6 +1861,16 @@ test("a --new check names a project without Vite+ and a Plug'n'Play project that
     assert.ok(error instanceof CheckFailure);
     assert.match(error.actual, /\.pnp\.cjs/);
     assert.match(error.actual, /exit code 1/);
+    assert.match(error.actual, /node --require \S+\.pnp\.cjs --eval/);
+    return true;
+  });
+  const corrupt = await newCheckContext("yarn dlx", async (project) => {
+    await mkdir(join(project, "node_modules", "vite-plus"), { recursive: true });
+    await writeFile(join(project, "node_modules", "vite-plus", "package.json"), "{ not json");
+  });
+  await assert.rejects(check.run(corrupt), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.match(error.actual, /package\.json that is not valid JSON/);
     return true;
   });
 });

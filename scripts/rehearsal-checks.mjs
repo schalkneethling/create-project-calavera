@@ -185,10 +185,8 @@ async function assertManaged(context, directory) {
 
 /**
  * Prints the version of the `vite-plus` package the project folder given as the first argument
- * depends on.
- * `vite-plus` does not export `./package.json`, so `require.resolve` cannot find the file; Yarn's
- * `pnpapi` resolves it without reading the exports, and Yarn's runtime lets `fs` read inside the
- * zip archive it points to.
+ * depends on. Yarn's `pnpapi` resolves the manifest from that folder without depending on the
+ * current folder, and Yarn's runtime lets `fs` read inside the zip archive it points to.
  */
 const PNP_VITE_PLUS_VERSION = `const { readFileSync } = require("node:fs");
 const file = require("pnpapi").resolveToUnqualified("vite-plus/package.json", process.argv[1]);
@@ -224,7 +222,7 @@ async function installedVitePlus(context, project) {
     const version = result.stdout;
     if (result.exitCode === 0 && version) return { version };
     return {
-      problem: `it installed no vite-plus that .pnp.cjs resolves (${describeExit(result)})\n${tail(result.output)}`,
+      problem: `it installed no vite-plus that .pnp.cjs resolves: ${result.display} ended with ${describeExit(result)}\n${tail(result.output)}`,
     };
   }
   const manifest = join(project, "node_modules", "vite-plus", "package.json");
@@ -234,7 +232,12 @@ async function installedVitePlus(context, project) {
         "it installed nothing: there is no node_modules/vite-plus/package.json and no .pnp.cjs",
     };
   }
-  return { version: String(JSON.parse(await readFile(manifest, "utf8")).version) };
+  try {
+    return { version: String(JSON.parse(await readFile(manifest, "utf8")).version) };
+  } catch {
+    // The parser's message can quote the file, so only the file is named.
+    return { problem: "it installed a node_modules/vite-plus/package.json that is not valid JSON" };
+  }
 }
 
 /**
