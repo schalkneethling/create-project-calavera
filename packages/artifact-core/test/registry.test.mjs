@@ -622,7 +622,11 @@ test("a missing dist-tag behind npm configuration notes keeps the tags on its ca
 test("a scope registry with a username and password is used without them, so no request carries an authorization header", async () => {
   const directory = await mkdtemp(join(tmpdir(), "calavera-registry-userinfo-"));
   const packed = await packFixture(directory);
-  const registry = await startRegistry(packed);
+  // The package document names a registry.npmjs.org tarball, so pacote rewrites it onto the
+  // scope registry: the rewritten URL must not carry the user information either.
+  const registry = await startRegistry(packed, {
+    tarball: "https://registry.npmjs.org/-/artifact.tgz",
+  });
   try {
     const fixture = await npmConfigFixture(
       "",
@@ -947,4 +951,32 @@ test("a download failure from another host behind the default registry, without 
   );
   assert.equal(fallback.origin, "https://registry.npmjs.org");
   assert.equal(fallback.cause.message, "https://registry.npmjs.org answered 401 (E401).");
+});
+
+test("a user .npmrc registry with a variable stops resolution before any request", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-variable-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry(packed);
+  try {
+    const fixture = await npmConfigFixture(
+      "",
+      `@schalkneethling:registry=http://${registry.host}/\${CALAVERA_TEST_TOKEN}/\n`,
+    );
+    await assert.rejects(
+      resolveArtifactPackage({
+        id: "skill-project-goal",
+        cache: fixture.cache,
+        cwd: fixture.cwd,
+        env: { ...fixture.env, CALAVERA_TEST_TOKEN: TOKEN },
+      }),
+      (error) => {
+        assert.match(error.message, /in the user \.npmrc contains a variable reference/);
+        assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(TOKEN));
+        return true;
+      },
+    );
+    assert.equal(registry.requests.length, 0);
+  } finally {
+    await registry.close();
+  }
 });

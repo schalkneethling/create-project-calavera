@@ -351,7 +351,7 @@ test("a registry that npm exported from a literal project .npmrc value is labele
   });
 });
 
-test("npm's exported copy of a user .npmrc registry with a variable counts as the user file's value, so the command stops", async () => {
+test("under npm exec, a user .npmrc registry with a variable stops the command, although npm exports the expanded copy", async () => {
   const TOKEN = "fake-path-token-0123456789";
   const context = await fixture({ user: "registry=https://npm.example.com/${TOKEN}/\n" });
   const env = {

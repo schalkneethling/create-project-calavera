@@ -981,6 +981,19 @@ function originField(value) {
 }
 
 /**
+ * The origin of an http or https URL, or null; the path and query, which can carry a token, are
+ * dropped.
+ *
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function uriOrigin(value) {
+  if (typeof value !== "string" || !URL.canParse(value)) return null;
+  const url = new URL(value);
+  return /^https?:$/.test(url.protocol) ? url.origin : null;
+}
+
+/**
  * The report of a failed registry lookup, or undefined for an error that is not one.
  *
  * @param {unknown} error
@@ -989,7 +1002,7 @@ function originField(value) {
  */
 function updateCheckFailure(error, { packageName, tag, followLatestCommand, retryCommand }) {
   const fields =
-    /** @type {{ code?: unknown, statusCode?: unknown, npmDiagnostics?: unknown, unsetVariables?: unknown, distTags?: unknown, type?: unknown, origin?: unknown, setting?: unknown, layer?: unknown, registryOrigin?: unknown, cause?: { distTags?: unknown } }} */ (
+    /** @type {{ code?: unknown, statusCode?: unknown, npmDiagnostics?: unknown, unsetVariables?: unknown, distTags?: unknown, type?: unknown, origin?: unknown, setting?: unknown, layer?: unknown, registryOrigin?: unknown, uri?: unknown, cause?: { distTags?: unknown, uri?: unknown } }} */ (
       error ?? {}
     );
   if (typeof fields.code !== "string" || !REGISTRY_LOOKUP_CODE.test(fields.code)) return undefined;
@@ -998,7 +1011,12 @@ function updateCheckFailure(error, { packageName, tag, followLatestCommand, retr
   const type =
     typeof fields.type === "string" && FETCH_ERROR_TYPE.test(fields.type) ? fields.type : null;
   // ADR-0021: the origin that answered an HTTP failure, or null for a failure without one.
-  const origin = statusCode === null ? null : originField(fields.origin);
+  // artifact-core sets `origin` on a 401 or 403; npm-registry-fetch sets `uri` on every HTTP
+  // error, kept on the cause when the loader's notes wrap it. Only its origin is kept.
+  const origin =
+    statusCode === null
+      ? null
+      : (originField(fields.origin) ?? uriOrigin(fields.uri) ?? uriOrigin(fields.cause?.uri));
   const notes = {
     type,
     origin,

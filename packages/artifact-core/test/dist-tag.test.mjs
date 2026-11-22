@@ -91,7 +91,7 @@ test("resolves a dist-tag from the configured registry with the abbreviated docu
   assert.deepEqual(await readdir(context.cwd), []);
 });
 
-test("invariant 1: sends no credentials to a plain-http registry", async (t) => {
+test("sends no credentials to a plain-http registry", async (t) => {
   const registry = await startRegistry((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(packument({ latest: "7.1.0" }));

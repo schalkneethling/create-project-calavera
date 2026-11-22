@@ -2178,3 +2178,29 @@ test("the update check keeps only a well-formed origin, and falls back when the 
     assert.equal(byId["skill-css-tokens"]?.origin, null);
   });
 });
+
+test("any HTTP failure reports the origin of the URL that failed, never its path", async () => {
+  const failures = {
+    "skill-project-goal": registryError("404 Not Found", {
+      code: "E404",
+      statusCode: 404,
+      uri: "https://npm.example.com/secret-path/pkg",
+    }),
+    // withNpmDiagnostics keeps npm-registry-fetch's error, and its uri, as the cause.
+    "skill-code-review": registryError("500", {
+      code: "E500",
+      statusCode: 500,
+      cause: { uri: "https://mirror.example.com:8443/secret-path" },
+    }),
+  };
+  const ids = Object.keys(failures);
+  await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+    const result = await runArtifactCommand(statusOptions(), statusRegistry({}, {}, failures));
+    const byId = Object.fromEntries(
+      result.artifacts.map(({ id, updateCheckFailure }) => [id, updateCheckFailure]),
+    );
+    assert.equal(byId["skill-project-goal"]?.origin, "https://npm.example.com");
+    assert.equal(byId["skill-code-review"]?.origin, "https://mirror.example.com:8443");
+    assert.doesNotMatch(JSON.stringify(result), /secret-path/);
+  });
+});
