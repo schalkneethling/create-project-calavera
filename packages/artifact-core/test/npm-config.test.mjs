@@ -773,3 +773,25 @@ test("under npm exec, a userconfig that npm passes on from the project .npmrc ca
     );
   }
 });
+
+test("under npm exec, a user-agent that npm passes on from the project .npmrc does not change the launcher", async () => {
+  for (const agent of [
+    "bun/1.2.0 npm/? node/v24.3.0 darwin arm64",
+    "yarn/4.9.1 npm/? node/v24.3.0",
+  ]) {
+    const context = await fixture({
+      project: `user-agent=${agent}\nregistry=http://registry.example.com/\n`,
+      env: {
+        npm_command: "exec",
+        npm_config_user_agent: agent,
+        npm_config_registry: "http://registry.example.com/",
+      },
+    });
+    context.env.npm_config_local_prefix = context.cwd;
+    await assert.rejects(
+      loadNpmRegistryOptions(context),
+      /registry in the project \.npmrc must be an https URL/,
+      agent,
+    );
+  }
+});

@@ -135,6 +135,29 @@ function exportedFrom(entries, key, value, env, otherSpellings = true) {
   });
 }
 
+/**
+ * The package manager that started Calavera. npm exports a user-agent set in the project .npmrc
+ * as npm_config_user_agent, so when a package manager started Calavera and the user agent equals
+ * the project file's value, it came from repository content and says nothing about the launcher.
+ * Only npm and Yarn 1 export project settings, and both read .npmrc files, so it counts as npm.
+ * @param {NodeJS.ProcessEnv} env
+ * @param {string} cwd
+ * @returns {Promise<Launcher>}
+ */
+async function launcherFor(env, cwd) {
+  const launcher = detectLauncher(env);
+  const agent = env.npm_config_user_agent;
+  if (launcher === "npm" || !agent || !startedByNpm(env)) return launcher;
+  const folders = new Set(
+    [cwd, env.npm_config_local_prefix].filter((folder) => folder !== undefined),
+  );
+  for (const folder of folders) {
+    const entries = await readNpmrc(resolve(folder, ".npmrc"), []);
+    if (exportedFrom(entries, "user-agent", agent, env) !== undefined) return "npm";
+  }
+  return launcher;
+}
+
 /** @param {string} value */
 function noProxyList(value) {
   if (value.startsWith("[")) {
@@ -154,17 +177,16 @@ function noProxyList(value) {
  * The user .npmrc. Bun also reads `$XDG_CONFIG_HOME/.npmrc` when it exists and no userconfig is
  * set (https://bun.com/docs/install/npmrc).
  * @param {NodeJS.ProcessEnv} env @param {string} home @param {Launcher} launcher
- * @param {string} [xdgConfigHome] The XDG_CONFIG_HOME to use, when `env` is not the environment.
  */
-async function userConfigPath(env, home, launcher, xdgConfigHome = env.XDG_CONFIG_HOME) {
+async function userConfigPath(env, home, launcher) {
   const configured = environmentSettings(env).userconfig;
   if (typeof configured === "string") {
     const { text } = expandEnvironment(configured, env);
     const homePattern = process.platform === "win32" ? /^~(\/|\\)/ : /^~\//;
     return homePattern.test(text) ? resolve(home, text.slice(2)) : resolve(text);
   }
-  if (launcher === "bun" && xdgConfigHome) {
-    const xdgPath = resolve(xdgConfigHome, ".npmrc");
+  if (launcher === "bun" && env.XDG_CONFIG_HOME) {
+    const xdgPath = resolve(env.XDG_CONFIG_HOME, ".npmrc");
     if (
       await access(xdgPath).then(
         () => true,
@@ -208,8 +230,8 @@ export async function loadNpmRegistryOptions({
   const notes = [];
   /** @type {Set<string>} */
   const unsetVariables = new Set();
-  const launcher = detectLauncher(env);
   const home = env.HOME || homedir();
+  const launcher = await launcherFor(env, cwd);
   // npm and Yarn 1 export the .npmrc settings they resolved as npm_config_* variables, so the
   // comparison with exported values below applies under them. pnpm counts as npm here, but pnpm 12
   // exports no settings, so the comparison finds nothing. Bun and Yarn 2 or later also set
@@ -230,7 +252,7 @@ export async function loadNpmRegistryOptions({
   // ~/.npmrc that no setting can redirect, or from the proxy environment variables that
   // @npmcli/agent reads. A package manager is recognized by the variables it sets for a script,
   // not by the user agent, which a .yarnrc can set.
-  const defaultUserPath = await userConfigPath({}, home, launcher, env.XDG_CONFIG_HOME);
+  const defaultUserPath = join(home, ".npmrc");
   const userProxyTrusted = !npmStarted || userPath === defaultUserPath;
   const scopeKey = scope ? `${scope}:registry` : undefined;
   /** @param {string} key */
@@ -244,6 +266,10 @@ export async function loadNpmRegistryOptions({
   const accepts = npmKeys[launcher];
 
   const userEntries = await readNpmrc(userPath, warnings);
+  const defaultEntries =
+    !npmStarted || userPath === defaultUserPath
+      ? userEntries
+      : await readNpmrc(defaultUserPath, warnings);
   // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
   const projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
   /** @type {ConfigLayer[]} */
@@ -306,11 +332,21 @@ export async function loadNpmRegistryOptions({
           }
           continue;
         }
-        // A value equal to the user .npmrc value under the same key was applied by the user layer,
-        // or ignored there with a warning.
-        if (exportedFrom(userEntries, rawKey, rawValue, env, false) !== undefined) continue;
         if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
-          rejectedProxies.push({ key: rawKey, setting, layer: PASSED_ON_SETTINGS });
+          // A passed-on proxy is the person's only when it equals the default user .npmrc value.
+          // Yarn 1 reads that file whatever userconfig says, so the value can apply even when
+          // npm_config_userconfig chose another file.
+          if (exportedFrom(defaultEntries, rawKey, rawValue, env, false) === undefined) {
+            if (exportedFrom(userEntries, rawKey, rawValue, env, false) === undefined) {
+              rejectedProxies.push({ key: rawKey, setting, layer: PASSED_ON_SETTINGS });
+            }
+            continue;
+          }
+          // The user layer already applied it when the user file is the default one.
+          if (userProxyTrusted) continue;
+        } else if (exportedFrom(userEntries, rawKey, rawValue, env, false) !== undefined) {
+          // A value equal to the user .npmrc value under the same key was applied by the user
+          // layer, or ignored there with a warning.
           continue;
         }
       }
@@ -423,7 +459,11 @@ export async function loadNpmRegistryOptions({
   const usedProxy = proxyOrigins[options.httpsProxy ? "httpsProxy" : "proxy"];
   const registryProtocol = registryUrl.protocol.slice(0, -1);
   const userFile =
-    launcher === "yarn" ? "your user .yarnrc.yml" : npmStarted ? "~/.npmrc" : "your user .npmrc";
+    launcher === "yarn"
+      ? "your user .yarnrc.yml"
+      : npmStarted
+        ? "~/.npmrc or in HTTPS_PROXY"
+        : "your user .npmrc";
   for (const { key, setting, layer } of rejectedProxies) {
     const used = usedProxy ? `Calavera uses ${usedProxy} instead.` : undefined;
     // Under Yarn, a proxy for the other protocol would not apply even from a user file.

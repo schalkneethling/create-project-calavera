@@ -1068,7 +1068,7 @@ test("under Yarn 1, a proxy Yarn passes on from a project file is ignored, which
   assert.equal(options.httpsProxy, undefined);
   assert.match(
     warnings[0],
-    /^Ignored https-proxy in the settings that the package manager passed on: a package manager also passes on settings from project files, .*To use it, set it in ~\/\.npmrc\.$/,
+    /^Ignored https-proxy in the settings that the package manager passed on: a package manager also passes on settings from project files, .*To use it, set it in ~\/\.npmrc or in HTTPS_PROXY\.$/,
   );
   // The registry the package manager passes on is read as before #1064.
   assert.deepEqual(registry, { origin: "https://registry.yarnpkg.com", source: "environment" });
@@ -1114,7 +1114,7 @@ test("when a package manager starts Calavera, a proxy in a user file that npm_co
   assert.equal(registry.origin, "https://npm.pkg.github.com");
   assert.match(
     warnings[0],
-    /^Ignored https-proxy in the user \.npmrc that npm_config_userconfig chose: .*To use it, set it in ~\/\.npmrc\.$/,
+    /^Ignored https-proxy in the user \.npmrc that npm_config_userconfig chose: .*To use it, set it in ~\/\.npmrc or in HTTPS_PROXY\.$/,
   );
 });
 
@@ -1161,4 +1161,19 @@ test("under Yarn, a rejected project proxy for the other protocol says Yarn woul
     warnings[0],
     /^Ignored httpProxy in the project \.yarnrc\.yml: .*Yarn uses it only for http registries, and the registry is https\.$/,
   );
+});
+
+test("under Yarn 1 with a .yarnrc userconfig, the ~/.npmrc proxy that Yarn passes on still applies", async () => {
+  const context = await fixture({
+    userAgent: YARN_CLASSIC,
+    files: {
+      "home/.npmrc": "https-proxy=http://corp.example.com:8080/\n",
+      "workspace/chosen.npmrc": "registry=https://registry.example.com/\n",
+    },
+    env: { npm_lifecycle_event: "probe", npm_config_https_proxy: "http://corp.example.com:8080/" },
+  });
+  context.env.npm_config_userconfig = join(context.cwd, "..", "chosen.npmrc");
+  const { options, warnings } = await loadNpmRegistryOptions(context);
+  assert.equal(options.httpsProxy, "http://corp.example.com:8080/");
+  assert.deepEqual(warnings, []);
 });
