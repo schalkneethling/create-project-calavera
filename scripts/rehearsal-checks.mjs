@@ -7,9 +7,12 @@
 // notice from #675), a check asserts the property Section 0 states, not a guessed snapshot.
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
-import { cp, lstat, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { existsSync } from "node:fs";
+import { cp, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
+
+import semver from "semver";
 
 import { snapshotDirectory } from "../packages/cli/scripts/project-snapshot.mjs";
 import { CheckFailure, describeExit, tail } from "./rehearsal-failure.mjs";
@@ -183,6 +186,130 @@ async function assertManaged(context, directory) {
 }
 
 /**
+ * Why a Plug'n'Play read found no version, by the exit code the read script ends with. From a
+ * failed read, the report takes only the exit code and these fixed texts, never the child's
+ * output, because that output can quote the files it read, such as a line of a manifest that is
+ * not valid JSON. The codes start at 64, above the exit codes Node.js reserves for itself.
+ */
+const PNP_READ_FAILURES = {
+  64: "it installed no vite-plus that Yarn's runtime resolves",
+  65: "it installed a vite-plus/package.json that cannot be read",
+  66: "it installed a vite-plus/package.json that is not valid JSON",
+  67: "it installed a vite-plus/package.json that names no version",
+};
+
+/**
+ * Prints the version of the `vite-plus` package the project folder given as the first argument
+ * depends on, or exits with a code from `PNP_READ_FAILURES`. The fixed text it writes to stderr
+ * is for a person who runs the script by hand; the rehearsal reads only the exit code. Yarn's `pnpapi` resolves the manifest from that folder without depending on the current
+ * folder, and Yarn's runtime lets `fs` read inside the zip archive it points to.
+ */
+const PNP_VITE_PLUS_VERSION = `const { readFileSync } = require("node:fs");
+const failures = ${JSON.stringify(PNP_READ_FAILURES)};
+const fail = (code) => {
+  process.stderr.write(failures[code] + "\\n");
+  process.exit(code);
+};
+let file;
+try {
+  file = require("pnpapi").resolveToUnqualified("vite-plus/package.json", process.argv[1]);
+} catch {
+  fail(64);
+}
+let text;
+try {
+  text = readFileSync(file, "utf8");
+} catch {
+  fail(65);
+}
+let version;
+try {
+  version = JSON.parse(text).version;
+} catch {
+  fail(66);
+}
+if (typeof version !== "string" || version === "") fail(67);
+process.stdout.write(version);`;
+
+/**
+ * The version of `vite-plus` installed in `project`, or why none could be read. A Yarn project
+ * that uses Plug'n'Play has no node_modules folder: its packages stay in zip archives that only
+ * Yarn's runtime, `.pnp.cjs`, resolves, so a Node.js child loads that runtime to read the version.
+ * Vite+ 1.6.0 writes `nodeLinker: node-modules` for a Yarn project it creates, but a `.yarnrc.yml`
+ * that already exists wins, and Yarn removes `.pnp.cjs` when it installs into node_modules, so
+ * `.pnp.cjs` decides which layout the project uses.
+ *
+ * @param {RehearsalContext} context
+ * @param {string} project
+ */
+async function installedVitePlus(context, project) {
+  const pnp = join(project, ".pnp.cjs");
+  if (existsSync(pnp)) {
+    const result = await context.run(
+      "node",
+      // Yarn's runtime maps only real paths to the project, so a folder reached through a symbolic
+      // link, as the macOS temporary folder is, would resolve nothing. A trailing slash makes the
+      // folder itself the issuer, not a file named like it.
+      ["--require", pnp, "--eval", PNP_VITE_PLUS_VERSION, "--", `${await realpath(project)}/`],
+    );
+    // A preload or runtime that prints to stdout would otherwise reach the report, so only a clean
+    // version is taken from the child; anything else gets a fixed reason without its output.
+    if (result.exitCode === 0 && semver.valid(result.stdout)) return { version: result.stdout };
+    if (result.exitCode === 0) {
+      return {
+        problem: `the Plug'n'Play read printed something other than a version, and its output is left out because it can quote the files it read (${pnp} reading vite-plus/package.json)`,
+      };
+    }
+    // A short label instead of the command, which would print the whole script.
+    const label = `${pnp} reading vite-plus/package.json`;
+    const reason =
+      PNP_READ_FAILURES[/** @type {keyof typeof PNP_READ_FAILURES} */ (result.exitCode)] ??
+      "the Plug'n'Play read ended without a version, and its output is left out because it can quote the files it read";
+    return { problem: `${reason} (${label}: ${describeExit(result)})` };
+  }
+  const manifest = join(project, "node_modules", "vite-plus", "package.json");
+  if (!existsSync(manifest)) {
+    return {
+      problem:
+        "it installed nothing: there is no node_modules/vite-plus/package.json and no .pnp.cjs",
+    };
+  }
+  let version;
+  try {
+    version = JSON.parse(await readFile(manifest, "utf8")).version;
+  } catch {
+    // The parser's message can quote the file, so only the file is named.
+    return { problem: "it installed a node_modules/vite-plus/package.json that is not valid JSON" };
+  }
+  if (typeof version !== "string" || version === "") {
+    return { problem: "it installed a node_modules/vite-plus/package.json that names no version" };
+  }
+  return { version };
+}
+
+/**
+ * Throws when `project` does not have the run's Vite+ installed. A package manager that holds back
+ * releases younger than its minimum release age, as pnpm and Yarn 4 do, can install an older Vite+
+ * than the run asked for, and every later check would then test that release instead.
+ *
+ * @param {RehearsalContext} context
+ * @param {string} project
+ * @param {string} subject what installed Vite+, as the failure names it
+ * @param {string} command
+ * @param {string} [versionLabel] the row of the versions table that records what was installed
+ */
+async function assertVitePlusVersion(context, project, subject, command, versionLabel) {
+  const installed = await installedVitePlus(context, project);
+  if (versionLabel) context.versions[versionLabel] = installed.version ?? "not installed";
+  if (installed.version === context.vitePlusVersion) return;
+  throw new CheckFailure({
+    expected: `${subject} to install Vite+ ${context.vitePlusVersion}`,
+    actual: installed.problem ?? `it installed ${installed.version}`,
+    command,
+  });
+}
+
+/**
  * The launchers of Section 0 item 1, each with the runner it implies for `vp create` (#909: the
  * runner follows the launcher). The runner is read from the "Command:" line --new prints.
  */
@@ -280,7 +407,9 @@ function newProjectCheck(launcher) {
           command: result.display,
         });
       }
-      await assertManaged(context, join(cwd, "app"));
+      const project = join(cwd, "app");
+      await assertVitePlusVersion(context, project, launcher.label, result.display);
+      await assertManaged(context, project);
     },
   };
 }
@@ -705,22 +834,13 @@ function flowProject(context) {
     await mkdir(cwd, { recursive: true });
     await context.runOrThrow("pnpm", ["create", "vite-plus", ...SCAFFOLD_ARGS], { cwd });
     const project = join(cwd, "app");
-    // pnpm holds back releases younger than its minimum release age, so it can install an older
-    // Vite+ than the run asked for. Record what was installed, and stop if it is not that version.
-    const installed = await readFile(
-      join(project, "node_modules", "vite-plus", "package.json"),
-      "utf8",
-    )
-      .then((text) => String(JSON.parse(text).version))
-      .catch(() => "not installed");
-    context.versions["Vite+ installed in the flow project"] = installed;
-    if (installed !== context.vitePlusVersion) {
-      throw new CheckFailure({
-        expected: `the flow project to install Vite+ ${context.vitePlusVersion}`,
-        actual: `it installed ${installed}`,
-        command: `(cd ${cwd} && pnpm create vite-plus ${SCAFFOLD_ARGS.join(" ")})`,
-      });
-    }
+    await assertVitePlusVersion(
+      context,
+      project,
+      "the flow project",
+      `(cd ${cwd} && pnpm create vite-plus ${SCAFFOLD_ARGS.join(" ")})`,
+      "Vite+ installed in the flow project",
+    );
     return project;
   });
 }
