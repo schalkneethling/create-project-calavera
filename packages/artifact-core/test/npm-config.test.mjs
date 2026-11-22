@@ -780,3 +780,36 @@ test("under npm exec, a user proxy that the user .npmrc spells differently still
     "http://user-proxy.example.com/",
   );
 });
+
+test("under npm exec, a relative or ${VAR} userconfig that npm passes on from the project .npmrc does not choose the user file", async () => {
+  for (const written of ["evil.npmrc", "./evil.npmrc", "${PROJECT_DIR}/evil.npmrc"]) {
+    const directory = await mkdtemp(join(tmpdir(), "calavera-npm-userconfig-relative-"));
+    const cwd = join(directory, "repo");
+    await mkdir(cwd);
+    const evil = join(cwd, "evil.npmrc");
+    await writeFile(
+      evil,
+      "https-proxy=http://attacker.example:8080/\nregistry=http://evil.example/\n",
+    );
+    await writeFile(join(cwd, ".npmrc"), `userconfig=${written}\n`);
+    const { options, registry } = await loadNpmRegistryOptions({
+      cwd,
+      scope: SCOPE,
+      env: {
+        HOME: join(directory, "home"),
+        PROJECT_DIR: cwd,
+        INIT_CWD: cwd,
+        npm_command: "exec",
+        npm_config_local_prefix: cwd,
+        // npm resolves a userconfig path against the folder it ran in and exports it absolute.
+        npm_config_userconfig: evil,
+      },
+    });
+    assert.equal(options.httpsProxy, undefined, written);
+    assert.deepEqual(
+      registry,
+      { origin: "https://registry.npmjs.org", source: "default" },
+      written,
+    );
+  }
+});

@@ -1061,7 +1061,7 @@ test("under Yarn 1, a proxy Yarn passes on from a project file is ignored, which
     env: {
       npm_lifecycle_event: "probe",
       npm_config_https_proxy: "http://attacker.example:8080/",
-      npm_config_registry: "https://project-registry.example.com/",
+      npm_config_registry: "https://registry.yarnpkg.com",
     },
   });
   const { options, registry, warnings } = await loadNpmRegistryOptions(context);
@@ -1070,64 +1070,49 @@ test("under Yarn 1, a proxy Yarn passes on from a project file is ignored, which
     warnings[0],
     /^Ignored https-proxy in the settings that Yarn 1 passed on: Yarn 1 also passes on settings from project \.npmrc and \.yarnrc files, .*To use it, set it in your user \.npmrc\.$/,
   );
-  // With no .npmrc registry, the registry Yarn 1 passes on applies.
-  assert.deepEqual(registry, {
-    origin: "https://project-registry.example.com",
-    source: "settings that Yarn 1 passed on",
-  });
+  // The registry Yarn 1 passes on is read as before #1064.
+  assert.deepEqual(registry, { origin: "https://registry.yarnpkg.com", source: "environment" });
 });
 
-test("under Yarn 1, a passed-on http registry is ignored with a warning instead of stopping", async () => {
+test("under Yarn 1, a passed-on proxy equal to the user .npmrc proxy is the user's", async () => {
   const context = await fixture({
     userAgent: YARN_CLASSIC,
-    env: { npm_lifecycle_event: "probe", npm_config_registry: "http://localhost:4873/" },
+    files: { "home/.npmrc": "https-proxy=http://corp.example.com:8080/\n" },
+    env: { npm_lifecycle_event: "probe", npm_config_https_proxy: "http://corp.example.com:8080/" },
   });
-  const { registry, warnings } = await loadNpmRegistryOptions(context);
-  assert.deepEqual(registry, { origin: "https://registry.npmjs.org", source: "default" });
-  assert.match(
-    warnings[0],
-    /^Ignored registry in the settings that Yarn 1 passed on: it uses http, .*To use an http registry, set it in your user \.npmrc\.$/,
-  );
-});
-
-test("under Yarn 1, the .npmrc registry wins over the Yarn default that Yarn 1 always passes on", async () => {
-  const context = await fixture({
-    userAgent: YARN_CLASSIC,
-    files: {
-      "home/.npmrc":
-        "https-proxy=http://corp.example.com:8080/\nregistry=http://user-registry.example.com/\n",
-    },
-    env: {
-      npm_lifecycle_event: "probe",
-      npm_config_https_proxy: "http://corp.example.com:8080/",
-      npm_config_registry: "https://registry.yarnpkg.com",
-    },
-  });
-  const { options, registry, warnings } = await loadNpmRegistryOptions(context);
+  const { options, warnings } = await loadNpmRegistryOptions(context);
   assert.equal(options.httpsProxy, "http://corp.example.com:8080/");
-  assert.deepEqual(registry, { origin: "http://user-registry.example.com", source: "user .npmrc" });
-  assert.ok(!warnings.some((warning) => warning.startsWith("Ignored")));
+  assert.deepEqual(warnings, []);
 });
 
-test("under Yarn 1, npm_config_userconfig and npm_config_local_prefix are not used, because a .yarnrc can set them", async () => {
+test("under Yarn 1, only the uppercase NPM_CONFIG_USERCONFIG chooses the user file, and npm_config_local_prefix is not used", async () => {
   const context = await fixture({
     userAgent: YARN_CLASSIC,
     files: {
       "home/.npmrc": "registry=https://user-registry.example.com/\n",
       "workspace/evil.npmrc":
         "https-proxy=http://attacker.example:8080/\nregistry=http://evil.example/\n",
-      "workspace/project/.npmrc": "registry=https://cwd-registry.example.com/\n",
+      "workspace/runner.npmrc": "@schalkneethling:registry=https://npm.pkg.github.com/\n",
       "workspace/.npmrc": "registry=https://prefix-registry.example.com/\n",
     },
     env: { npm_lifecycle_event: "probe" },
   });
+  // Yarn 1 writes only lowercase npm_config_* names, so a lowercase userconfig may come from a
+  // project file, and the uppercase one, as actions/setup-node sets it, is the caller's.
   context.env.npm_config_userconfig = join(context.cwd, "..", "evil.npmrc");
   context.env.npm_config_local_prefix = join(context.cwd, "..");
-  const { options, registry } = await loadNpmRegistryOptions(context);
-  assert.equal(options.httpsProxy, undefined);
-  assert.deepEqual(registry, {
-    origin: "https://cwd-registry.example.com",
-    source: "project .npmrc",
+  const lowercase = await loadNpmRegistryOptions(context);
+  assert.equal(lowercase.options.httpsProxy, undefined);
+  assert.deepEqual(lowercase.registry, {
+    origin: "https://user-registry.example.com",
+    source: "user .npmrc",
+  });
+
+  context.env.NPM_CONFIG_USERCONFIG = join(context.cwd, "..", "runner.npmrc");
+  const uppercase = await loadNpmRegistryOptions(context);
+  assert.deepEqual(uppercase.registry, {
+    origin: "https://npm.pkg.github.com",
+    source: "user .npmrc",
   });
 });
 
