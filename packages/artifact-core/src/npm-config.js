@@ -213,9 +213,12 @@ export async function loadNpmRegistryOptions({
   let userEntries = {};
   /** @type {Record<string, unknown>} */
   let projectEntries = {};
+  const launcherContext = { cwd, env, home, scope, warnings };
   /** @type {ConfigLayer[]} */
-  let npmLayers = [];
-  if (launcher !== "yarn") {
+  let layers;
+  if (launcher === "yarn") {
+    layers = await yarnLayers(launcherContext);
+  } else {
     // npm reads the project .npmrc at its local prefix: the nearest folder above the working
     // directory with a package.json or node_modules, or the workspace root of a member
     // (`loadLocalPrefix` and `loadProjectConfig` in @npmcli/config). It exports that folder as
@@ -226,33 +229,30 @@ export async function loadNpmRegistryOptions({
     userEntries = await readNpmrc(userPath, warnings);
     // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
     projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
-    npmLayers = [
+    /** @type {ConfigLayer[]} */
+    const npmFiles = [
       { name: "user .npmrc", entries: userEntries, trusted: true, accepts },
       { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
-      {
-        name: "environment",
-        entries: environmentSettings(env),
-        trusted: true,
-        // Under Bun, bunEnvironmentLayer reads the registry variables in Bun's own order.
-        accepts: launcher === "bun" ? (key) => key !== "registry" && accepts(key) : accepts,
-        npmEnvironment: true,
-      },
     ];
-  }
-  const launcherContext = { cwd, env, home, scope, warnings };
-  /** @type {ConfigLayer[]} */
-  const layers =
-    launcher === "yarn"
-      ? await yarnLayers(launcherContext)
-      : launcher === "bun"
+    /** @type {ConfigLayer} */
+    const npmEnvironment = {
+      name: "environment",
+      entries: environmentSettings(env),
+      trusted: true,
+      // Under Bun, bunEnvironmentLayer reads the registry variables in Bun's own order.
+      accepts: launcher === "bun" ? (key) => key !== "registry" && accepts(key) : accepts,
+      npmEnvironment: true,
+    };
+    layers =
+      launcher === "bun"
         ? [
-            npmLayers[0],
-            npmLayers[1],
+            ...npmFiles,
             ...(await bunfigLayers(launcherContext)),
-            npmLayers[2],
+            npmEnvironment,
             bunEnvironmentLayer(env),
           ]
-        : npmLayers;
+        : [...npmFiles, npmEnvironment];
+  }
 
   /** @type {Record<string, string>} */
   const options = {};

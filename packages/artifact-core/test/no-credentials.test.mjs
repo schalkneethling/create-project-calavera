@@ -35,7 +35,13 @@ const PLANTED = {
 const PLANTED_PATTERN = new RegExp(
   [...Object.values(PLANTED), "fake-user", "fake-auth-password", "fake-password-0123"].join("|"),
 );
-const ALLOWED_OPTIONS = new Set(["registry", `${SCOPE}:registry`, "proxy", "httpsProxy", "noProxy"]);
+const ALLOWED_OPTIONS = new Set([
+  "registry",
+  `${SCOPE}:registry`,
+  "proxy",
+  "httpsProxy",
+  "noProxy",
+]);
 
 /**
  * A local server that records the authorization header of every request and answers with

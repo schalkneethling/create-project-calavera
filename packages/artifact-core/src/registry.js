@@ -180,7 +180,8 @@ const METHOD = /^[A-Za-z]{1,16}$/;
  * original error, whose message holds the URL and the registry's own text, is dropped. Its cause
  * keeps only the method, `code`, `statusCode`, and origin, and is marked `debugOnly`, so the CLI
  * prints it only with CALAVERA_DEBUG. The error keeps `code` (E401, E403, EOTP, or EAUTHIP) and
- * `statusCode`, and gains `origin`, and the configured registry's `setting` and `layer`.
+ * `statusCode`, and gains `origin`, and the configured registry's `setting`, `layer`, and
+ * `registryOrigin`, so the update check can tell the registry from a host it redirected to.
  * @template T
  * @param {{ registry: RegistryReport }} npm
  * @param {{ subject: string, download: boolean }} request What was asked for, and whether it was a download.
@@ -235,6 +236,7 @@ async function withAuthFailure({ registry }, { subject, download }, run) {
       origin,
       setting: registry.setting,
       layer: registry.source,
+      registryOrigin: registry.origin,
     });
   }
 }
@@ -252,8 +254,8 @@ function httpOrigin(url) {
 /**
  * Adds what the loader ignored to a registry failure, so an ignored setting or unset variable is
  * visible. The original error stays as `cause`, and its `code`, `statusCode`, minipass-fetch's
- * `type` (the kind of a FETCH_ERROR, such as invalid-json), and the `origin`, `setting`, and
- * `layer` of an authentication failure are kept. The notes are also
+ * `type` (the kind of a FETCH_ERROR, such as invalid-json), and the `origin`, `setting`, `layer`,
+ * and `registryOrigin` of an authentication failure are kept. The notes are also
  * kept as `npmDiagnostics` and `unsetVariables`, so a caller that withholds the registry's own
  * message can still name them (#993); like the loader's notes, they never contain a value.
  * @template T
@@ -282,6 +284,7 @@ async function withNpmDiagnostics(npm, run) {
         origin: /** @type {{ origin?: unknown }} */ (error).origin,
         setting: /** @type {{ setting?: unknown }} */ (error).setting,
         layer: /** @type {{ layer?: unknown }} */ (error).layer,
+        registryOrigin: /** @type {{ registryOrigin?: unknown }} */ (error).registryOrigin,
         npmDiagnostics: npm.diagnostics,
         unsetVariables: npm.unsetVariables,
       },

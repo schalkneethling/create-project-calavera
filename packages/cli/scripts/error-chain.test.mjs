@@ -586,3 +586,62 @@ test("the CLI prints an embedded cause once and a deferred cause after the messa
     await rm(directory, { force: true, recursive: true });
   }
 });
+
+test("a cause marked debugOnly appears only with CALAVERA_DEBUG, in the terminal and MCP chains", () => {
+  const error = new Error("The registry https://npm.example.com answered 401 for a package.", {
+    cause: Object.assign(new Error("GET https://npm.example.com answered 401 (E401)."), {
+      code: "E401",
+      debugOnly: true,
+    }),
+  });
+  assert.equal(
+    formatErrorChain(error, {}),
+    "The registry https://npm.example.com answered 401 for a package.",
+  );
+  assert.equal(errorChain(error, {}).length, 1);
+  const debug = { CALAVERA_DEBUG: "1" };
+  assert.match(
+    formatErrorChain(error, debug),
+    /\nCaused by: GET https:\/\/npm\.example\.com answered 401 \(E401\)\./,
+  );
+  assert.equal(
+    errorChain(error, debug)[1]?.message,
+    "GET https://npm.example.com answered 401 (E401).",
+  );
+});
+
+test("a registry 401 shows its redacted cause only with CALAVERA_DEBUG, and never the URL path or registry text", async (t) => {
+  const { createServer } = await import("node:http");
+  const { resolveArtifactPackage } =
+    await import("@schalkneethling/calavera-artifact-core/registry");
+  const server = createServer((_request, response) => {
+    response.writeHead(401, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "registry-response-text" }));
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", () => done(undefined)));
+  t.after(() => new Promise((done) => server.close(() => done(undefined))));
+  const { port } = /** @type {import("node:net").AddressInfo} */ (server.address());
+  const directory = await mkdtemp(join(tmpdir(), "calavera-debug-only-cause-"));
+  t.after(() => rm(directory, { recursive: true, force: true }));
+  const userconfig = join(directory, "user.npmrc");
+  await writeFile(userconfig, `@schalkneethling:registry=http://127.0.0.1:${port}/secret-path/\n`);
+  const failure = await resolveArtifactPackage({
+    id: "skill-project-goal",
+    cache: join(directory, "cache"),
+    cwd: directory,
+    env: { npm_config_userconfig: userconfig },
+  }).then(
+    () => assert.fail("Expected the registry failure to reject."),
+    (error) => error,
+  );
+  const plain = formatErrorChain(failure, {});
+  const debug = formatErrorChain(failure, { CALAVERA_DEBUG: "1" });
+  assert.doesNotMatch(plain, /Caused by/);
+  assert.match(
+    debug,
+    new RegExp(`Caused by: GET http://127\\.0\\.0\\.1:${port} answered 401 \\(E401\\)\\.`),
+  );
+  for (const text of [plain, debug, JSON.stringify(errorChain(failure, { CALAVERA_DEBUG: "1" }))]) {
+    assert.doesNotMatch(text, /secret-path|registry-response-text/);
+  }
+});

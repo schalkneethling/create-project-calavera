@@ -234,6 +234,9 @@ function chainEntries(error, env) {
   const visit = (value) => {
     if (visited.has(value)) return;
     visited.add(value);
+    // A cause marked debugOnly, such as the redacted cause of a registry 401 or 403 (ADR-0021),
+    // is shown only with the debug switch on. The error itself is always shown.
+    if (entries.length > 0 && readProperty(value, "debugOnly") === true && !debug) return;
 
     const text = redact(ownText(value));
     const whole = normalize(text);

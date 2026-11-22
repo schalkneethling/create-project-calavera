@@ -314,14 +314,23 @@ test("a 401 for the version lookup names the registry and says Calavera sends no
     await rm(context.cwd, { recursive: true, force: true });
   });
 
-  const failure = await resolvePackageDistTag({ packageName: NAME, tag: "latest", ...context }).then(
+  const failure = await resolvePackageDistTag({
+    packageName: NAME,
+    tag: "latest",
+    ...context,
+  }).then(
     () => assert.fail("Expected the lookup to reject."),
     (error) => error,
   );
   assert.match(
     failure.message,
-    new RegExp(`^The registry http://${registry.host} answered 401 for ${NAME}\\.\nCalavera sends no credentials to any registry\\.`),
+    new RegExp(
+      `^The registry http://${registry.host} answered 401 for ${NAME}\\.\nCalavera sends no credentials to any registry\\.`,
+    ),
   );
-  assert.deepEqual([failure.code, failure.statusCode, failure.origin], ["E401", 401, `http://${registry.host}`]);
+  assert.deepEqual(
+    [failure.code, failure.statusCode, failure.origin],
+    ["E401", 401, `http://${registry.host}`],
+  );
   assert.doesNotMatch(failure.message, /registry text/);
 });

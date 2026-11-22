@@ -188,7 +188,10 @@ test("under Yarn, a registry value with a variable stops the command, from a use
     });
     await assert.rejects(loadNpmRegistryOptions(context), (error) => {
       assert.match(error.message, message);
-      assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(`${SECRET}|registry\\.example`));
+      assert.doesNotMatch(
+        inspect(error, { depth: 10 }),
+        new RegExp(`${SECRET}|registry\\.example`),
+      );
       return true;
     });
   }
@@ -664,7 +667,11 @@ test("under Yarn, only the registry and proxy options reach pacote", async () =>
       "home/.yarnrc.yml":
         "httpProxy: http://plain-proxy.example.com\nhttpsProxy: http://secure-proxy.example.com\nenableScripts: false\nnpmAuthToken: token-value\n",
     },
-    env: { YARN_ENABLE_TELEMETRY: "0", YARN_NPM_AUTH_TOKEN: "token-value", OTHER_VARIABLE: "value" },
+    env: {
+      YARN_ENABLE_TELEMETRY: "0",
+      YARN_NPM_AUTH_TOKEN: "token-value",
+      OTHER_VARIABLE: "value",
+    },
   });
   const { options } = await loadNpmRegistryOptions(context);
   assert.deepEqual(options, {
@@ -815,7 +822,9 @@ test("under Bun, a $VAR registry stops the command, from the user or a project b
     await assert.rejects(loadNpmRegistryOptions(context), (error) => {
       assert.match(
         error.message,
-        new RegExp(`^The Bun setting install\\.registry in the ${layer} bunfig\\.toml contains a variable reference\\.`),
+        new RegExp(
+          `^The Bun setting install\\.registry in the ${layer} bunfig\\.toml contains a variable reference\\.`,
+        ),
       );
       assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(SECRET));
       return true;

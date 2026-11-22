@@ -41,7 +41,10 @@ test("a project .npmrc proxy value with a variable reference is ignored with a w
   const { options, warnings, diagnostics } = await loadNpmRegistryOptions(context);
   assert.deepEqual(options, {});
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /^Ignored https-proxy in the project \.npmrc: Calavera expands variables only/);
+  assert.match(
+    warnings[0],
+    /^Ignored https-proxy in the project \.npmrc: Calavera expands variables only/,
+  );
   assert.doesNotMatch(inspect([warnings, diagnostics]), new RegExp(SECRET));
 });
 
@@ -69,9 +72,12 @@ test("a project .npmrc drop does not remove a valid user .npmrc value", async ()
 test("the user .npmrc and the environment expand variables in proxy values", async () => {
   const context = await fixture({
     user: `https-proxy=http://\${PROXY_HOST}:8080/\n`,
-    env: { PROXY_HOST: "proxy.example.com", npm_config_noproxy: "\${NO_PROXY_HOST}" },
+    env: {
+      PROXY_HOST: "proxy.example.com",
+      npm_config_noproxy: "${NO_PROXY_HOST}",
+      NO_PROXY_HOST: "internal.example.com",
+    },
   });
-  context.env.NO_PROXY_HOST = "internal.example.com";
   const { options } = await loadNpmRegistryOptions(context);
   assert.deepEqual(options, {
     httpsProxy: "http://proxy.example.com:8080/",
@@ -85,7 +91,10 @@ test("an unset variable in a proxy drops the key, and the diagnostics name the k
   assert.deepEqual(options, {});
   assert.deepEqual(warnings, []);
   assert.deepEqual(unsetVariables, ["CALAVERA_UNSET_HOST"]);
-  assert.match(diagnostics.join("\n"), /^Ignored https-proxy in the user \.npmrc: environment variable CALAVERA_UNSET_HOST is not set\.$/m);
+  assert.match(
+    diagnostics.join("\n"),
+    /^Ignored https-proxy in the user \.npmrc: environment variable CALAVERA_UNSET_HOST is not set\.$/m,
+  );
 });
 
 test("a username and password in a registry URL are removed with a warning that names the setting, not the value", async () => {
@@ -305,7 +314,10 @@ test("a registry that npm expanded from the project .npmrc stops the command, na
   const context = await fixture({ project: "registry=https://evil.example/${SECRET_X}/\n" });
   const env = npmExecEnvironment(context.cwd, context.env.npm_config_userconfig);
   await assert.rejects(loadNpmRegistryOptions({ ...context, env }), (error) => {
-    assert.match(error.message, /^The npm configuration key registry in the project \.npmrc contains a variable reference\./);
+    assert.match(
+      error.message,
+      /^The npm configuration key registry in the project \.npmrc contains a variable reference\./,
+    );
     assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(`${SECRET_X}|evil`));
     return true;
   });
@@ -348,7 +360,10 @@ test("npm's exported copy of a user .npmrc registry with a variable counts as th
     npm_config_registry: `https://npm.example.com/${TOKEN}/`,
   };
   await assert.rejects(loadNpmRegistryOptions({ ...context, env }), (error) => {
-    assert.match(error.message, /^The npm configuration key registry in the user \.npmrc contains a variable reference\./);
+    assert.match(
+      error.message,
+      /^The npm configuration key registry in the user \.npmrc contains a variable reference\./,
+    );
     assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(TOKEN));
     return true;
   });
@@ -863,9 +878,15 @@ test("registryUrl is the artifact scope's registry, then the default registry, t
     user: "registry=https://default.example.com/\n",
     project: `${SCOPE}:registry=https://scoped.example.com/npm/\n`,
   });
-  assert.equal((await loadNpmRegistryOptions(scoped)).registryUrl, "https://scoped.example.com/npm/");
+  assert.equal(
+    (await loadNpmRegistryOptions(scoped)).registryUrl,
+    "https://scoped.example.com/npm/",
+  );
   const fallback = await fixture({ user: "registry=https://default.example.com/\n" });
-  assert.equal((await loadNpmRegistryOptions(fallback)).registryUrl, "https://default.example.com/");
+  assert.equal(
+    (await loadNpmRegistryOptions(fallback)).registryUrl,
+    "https://default.example.com/",
+  );
   assert.equal(
     (await loadNpmRegistryOptions(await fixture({}))).registryUrl,
     "https://registry.npmjs.org/",

@@ -192,7 +192,10 @@ const TOKEN = "npm_0123456789abcdefSECRETTOKEN";
  * @param {{ tarball: Buffer, version: string, integrity: string }} packed
  * @param {{ status?: number, repository?: unknown, packument?: string, tarball?: string, redirectTo?: string }} [options] `packument` replaces the package document with this raw text. `tarball` replaces the tarball URL the package document names. `redirectTo` answers every request with a redirect to that origin.
  */
-async function startRegistry(packed, { status = 200, repository, packument, tarball, redirectTo } = {}) {
+async function startRegistry(
+  packed,
+  { status = 200, repository, packument, tarball, redirectTo } = {},
+) {
   const requests = [];
   const server = createServer((req, res) => {
     requests.push({ url: req.url, authorization: req.headers.authorization });
@@ -256,7 +259,10 @@ test("resolution and extraction use the configured scoped registry", async () =>
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed);
   try {
-    const fixture = await npmConfigFixture("", `@schalkneethling:registry=http://${registry.host}/\n`);
+    const fixture = await npmConfigFixture(
+      "",
+      `@schalkneethling:registry=http://${registry.host}/\n`,
+    );
     const resolution = await resolveArtifactPackage({
       id: "skill-project-goal",
       cache: fixture.cache,
@@ -291,7 +297,9 @@ test("a registry.npmjs.org tarball downloads from the artifact scope's registry,
   // The default registry requires authentication; the scope registry serves anonymously and names
   // a registry.npmjs.org tarball, as a mirror of the public registry does.
   const locked = await startRegistry(packed, { status: 401 });
-  const scope = await startRegistry(packed, { tarball: "https://registry.npmjs.org/-/artifact.tgz" });
+  const scope = await startRegistry(packed, {
+    tarball: "https://registry.npmjs.org/-/artifact.tgz",
+  });
   try {
     const fixture = await npmConfigFixture(
       "",
@@ -325,7 +333,9 @@ test("a registry.npmjs.org tarball downloads from the artifact scope's registry,
 test("without a scope registry, a registry.npmjs.org tarball downloads from the default registry", async () => {
   const directory = await mkdtemp(join(tmpdir(), "calavera-registry-default-download-"));
   const packed = await packFixture(directory);
-  const mirror = await startRegistry(packed, { tarball: "https://registry.npmjs.org/-/artifact.tgz" });
+  const mirror = await startRegistry(packed, {
+    tarball: "https://registry.npmjs.org/-/artifact.tgz",
+  });
   try {
     const fixture = await npmConfigFixture("", `registry=http://${mirror.host}/\n`);
     const npm = { cwd: fixture.cwd, env: fixture.env };
@@ -487,6 +497,7 @@ test("a 401 behind a loader diagnostic keeps the message, the notes, and the ori
     assert.equal(failure.origin, `http://${registry.host}`);
     assert.equal(failure.setting, "@schalkneethling:registry");
     assert.equal(failure.layer, "user .npmrc");
+    assert.equal(failure.registryOrigin, `http://${registry.host}`);
     assert.equal(failure.cause.code, "E401");
     assert.deepEqual(failure.unsetVariables, ["CALAVERA_UNSET_PROXY"]);
     assert.match(failure.npmDiagnostics.join("\n"), /^Ignored https-proxy in the user \.npmrc/m);
@@ -694,11 +705,20 @@ test("a 401 or 403 from the registry names its origin, says Calavera sends no cr
       );
       assert.deepEqual(
         [failure.code, failure.statusCode, failure.origin, failure.setting, failure.layer],
-        [`E${status}`, status, `http://${registry.host}`, "@schalkneethling:registry", "user .npmrc"],
+        [
+          `E${status}`,
+          status,
+          `http://${registry.host}`,
+          "@schalkneethling:registry",
+          "user .npmrc",
+        ],
       );
       // The cause keeps only the method, code, status, and origin, and prints only with
       // CALAVERA_DEBUG. The registry's own text and the URL path are gone.
-      assert.equal(failure.cause.message, `GET http://${registry.host} answered ${status} (E${status}).`);
+      assert.equal(
+        failure.cause.message,
+        `GET http://${registry.host} answered ${status} (E${status}).`,
+      );
       assert.equal(failure.cause.debugOnly, true);
       assert.equal(failure.cause.cause, undefined);
       assert.doesNotMatch(inspect(failure, { depth: 10 }), new RegExp(`${TOKEN}|denied|path-`));
@@ -714,7 +734,10 @@ test("a 403 from a tarball host names the host and the registry setting that nam
   const tarballHost = await startRegistry(packed, { status: 403 });
   const registry = await startRegistry(packed);
   try {
-    const fixture = await npmConfigFixture("", `@schalkneethling:registry=http://${registry.host}/\n`);
+    const fixture = await npmConfigFixture(
+      "",
+      `@schalkneethling:registry=http://${registry.host}/\n`,
+    );
     const npm = { cwd: fixture.cwd, env: fixture.env };
     const resolution = await resolveArtifactPackage({
       id: "skill-project-goal",
@@ -751,7 +774,10 @@ test("a lookup that a registry redirects to another host that answers 401 names 
   const target = await startRegistry(packed, { status: 401 });
   const registry = await startRegistry(packed, { redirectTo: `http://${target.host}` });
   try {
-    const fixture = await npmConfigFixture("", `@schalkneethling:registry=http://${registry.host}/\n`);
+    const fixture = await npmConfigFixture(
+      "",
+      `@schalkneethling:registry=http://${registry.host}/\n`,
+    );
     const failure = await resolveArtifactPackage({
       id: "skill-project-goal",
       cache: fixture.cache,
@@ -769,6 +795,7 @@ test("a lookup that a registry redirects to another host that answers 401 names 
       ].join("\n"),
     );
     assert.equal(failure.origin, `http://${target.host}`);
+    assert.equal(failure.registryOrigin, `http://${registry.host}`);
     assert.equal(target.requests[0]?.authorization, undefined);
   } finally {
     await target.close();
@@ -861,4 +888,3 @@ test("a project .npmrc cannot select an http registry, so no request is made", a
     await registry.close();
   }
 });
-
