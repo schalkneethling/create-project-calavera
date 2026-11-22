@@ -19,6 +19,24 @@ import { startSignalChild } from "./signal-child.mjs";
 const CHILD = fileURLToPath(new URL("./interrupted-dry-run-child.mjs", import.meta.url));
 const ANOTHER_RUN = ["calavera-locked-artifact-another-run", "calavera-artifact-stage-another-run"];
 
+/**
+ * Makes `folder` the system's temporary folder for the rest of test `t`: os.tmpdir() reads TMPDIR
+ * on Linux and macOS, and TEMP and TMP on Windows.
+ *
+ * @param {import("node:test").TestContext} t
+ * @param {string} folder
+ */
+function useSystemTemporaryFolder(t, folder) {
+  for (const name of ["TMPDIR", "TEMP", "TMP"]) {
+    const previous = process.env[name];
+    process.env[name] = folder;
+    t.after(() => {
+      if (previous === undefined) delete process.env[name];
+      else process.env[name] = previous;
+    });
+  }
+}
+
 for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
   // On Windows, a child process cannot handle a signal another process sends it.
   test(
@@ -73,94 +91,68 @@ for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
   );
 }
 
-// On Windows, os.tmpdir() reads TEMP and TMP, not TMPDIR.
-test(
-  "the interrupt handlers stay attached only while a temporary folder exists",
-  { skip: process.platform === "win32" },
-  async (t) => {
-    // The folders go into a folder the test owns, so disposing it removes them whatever the outcome.
-    await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
-    const systemTemporaryFolder = process.env.TMPDIR;
-    process.env.TMPDIR = owned.path;
-    t.after(() => {
-      if (systemTemporaryFolder === undefined) delete process.env.TMPDIR;
-      else process.env.TMPDIR = systemTemporaryFolder;
-    });
-    const before = {
-      SIGINT: process.listenerCount("SIGINT"),
-      SIGTERM: process.listenerCount("SIGTERM"),
-    };
+test("the interrupt handlers stay attached only while a temporary folder exists", async (t) => {
+  // The folders go into a folder the test owns, so disposing it removes them whatever the outcome.
+  await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
+  useSystemTemporaryFolder(t, owned.path);
+  const before = {
+    SIGINT: process.listenerCount("SIGINT"),
+    SIGTERM: process.listenerCount("SIGTERM"),
+  };
 
-    const first = await createTemporaryFolder("calavera-locked-artifact-");
-    assert.equal(
-      process.listenerCount("SIGINT"),
-      before.SIGINT + 1,
-      "the first folder attaches it",
-    );
-    assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
-    const second = await createTemporaryFolder("calavera-locked-artifact-");
-    assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1);
-    assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
+  const first = await createTemporaryFolder("calavera-locked-artifact-");
+  assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1, "the first folder attaches it");
+  assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
+  const second = await createTemporaryFolder("calavera-locked-artifact-");
+  assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1);
+  assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
 
-    await removeTemporaryFolder(first);
-    assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1, "a folder still exists");
+  await removeTemporaryFolder(first);
+  assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1, "a folder still exists");
 
-    await removeTemporaryFolder(second);
-    assert.equal(process.listenerCount("SIGINT"), before.SIGINT);
-    assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM);
-    assert.equal(
-      first.startsWith(owned.path),
-      true,
-      "the folder is in the system's temporary folder",
-    );
-    await assert.rejects(stat(first), { code: "ENOENT" });
-    await assert.rejects(stat(second), { code: "ENOENT" });
-  },
-);
+  await removeTemporaryFolder(second);
+  assert.equal(process.listenerCount("SIGINT"), before.SIGINT);
+  assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM);
+  assert.equal(
+    first.startsWith(owned.path),
+    true,
+    "the folder is in the system's temporary folder",
+  );
+  await assert.rejects(stat(first), { code: "ENOENT" });
+  await assert.rejects(stat(second), { code: "ENOENT" });
+});
 
-// On Windows, os.tmpdir() reads TEMP and TMP, not TMPDIR.
-test(
-  "a folder whose removal failed stays recorded, so the interrupt handlers stay attached for it",
-  { skip: process.platform === "win32" },
-  async (t) => {
-    await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
-    const systemTemporaryFolder = process.env.TMPDIR;
-    process.env.TMPDIR = owned.path;
-    const remove = fsPromises.rm;
-    const busy = Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" });
-    let failRemoval = true;
-    t.mock.method(
-      fsPromises,
-      "rm",
-      (/** @type {string} */ path, /** @type {import("node:fs").RmOptions} */ rmOptions) =>
-        failRemoval ? Promise.reject(busy) : remove(path, rmOptions),
-    );
+test("a folder whose removal failed stays recorded, so the interrupt handlers stay attached for it", async (t) => {
+  await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
+  useSystemTemporaryFolder(t, owned.path);
+  const remove = fsPromises.rm;
+  const busy = Object.assign(new Error("EBUSY: resource busy"), { code: "EBUSY" });
+  let failRemoval = true;
+  t.mock.method(
+    fsPromises,
+    "rm",
+    (/** @type {string} */ path, /** @type {import("node:fs").RmOptions} */ rmOptions) =>
+      failRemoval ? Promise.reject(busy) : remove(path, rmOptions),
+  );
+  syncBuiltinESMExports();
+  t.after(() => {
+    t.mock.restoreAll();
     syncBuiltinESMExports();
-    t.after(() => {
-      t.mock.restoreAll();
-      syncBuiltinESMExports();
-      if (systemTemporaryFolder === undefined) delete process.env.TMPDIR;
-      else process.env.TMPDIR = systemTemporaryFolder;
-    });
-    const before = {
-      SIGINT: process.listenerCount("SIGINT"),
-      SIGTERM: process.listenerCount("SIGTERM"),
-    };
+  });
+  const before = {
+    SIGINT: process.listenerCount("SIGINT"),
+    SIGTERM: process.listenerCount("SIGTERM"),
+  };
 
-    const folder = await createTemporaryFolder("calavera-locked-artifact-");
-    await assert.rejects(removeTemporaryFolder(folder), TemporaryFolderError);
+  const folder = await createTemporaryFolder("calavera-locked-artifact-");
+  await assert.rejects(removeTemporaryFolder(folder), TemporaryFolderError);
 
-    assert.equal((await stat(folder)).isDirectory(), true);
-    assert.equal(
-      process.listenerCount("SIGINT"),
-      before.SIGINT + 1,
-      "the folder is still recorded",
-    );
-    assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
+  assert.equal((await stat(folder)).isDirectory(), true);
+  assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1, "the folder is still recorded");
+  assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
 
-    failRemoval = false;
-    await removeTemporaryFolder(folder);
-    assert.equal(process.listenerCount("SIGINT"), before.SIGINT);
-    assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM);
-  },
-);
+  failRemoval = false;
+  await removeTemporaryFolder(folder);
+  assert.equal(process.listenerCount("SIGINT"), before.SIGINT);
+  assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM);
+});

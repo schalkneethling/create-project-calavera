@@ -16,31 +16,34 @@ const CHILD = fileURLToPath(new URL("./interrupt-listeners-child.mjs", import.me
 // On Windows, a child process cannot handle a signal another process sends it.
 const skip = process.platform === "win32";
 
-for (const mode of ["signal-exit-first", "signal-exit-last"]) {
-  for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
-    test(
-      `with signal-exit's listener registered ${mode.replace("signal-exit-", "")}, ${signal} removes the folder and ends the process`,
-      { skip },
-      async () => {
-        await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
-        const run = startSignalChild(CHILD, [mode], owned.path);
-        let folder;
-        let code;
-        let exitSignal;
-        try {
-          folder = await run.nextLine();
-          assert.equal(folder.startsWith(owned.path), true, folder);
-          run.child.kill(signal);
-          [code, exitSignal] = await run.exited();
-        } finally {
-          run.stop();
-        }
+const ENDING_MODES = {
+  "signal-exit-first": "with signal-exit's listener registered first",
+  "signal-exit-last": "with signal-exit's listener registered last",
+  "signal-exit-leaves": "when signal-exit's listener is removed before the raised signal arrives",
+  "signal-exit-3": "with signal-exit 3's listener registered first",
+};
 
-        assert.equal(code, null);
-        assert.equal(exitSignal, signal, "the process ends by the signal it received");
-        await assert.rejects(stat(folder), { code: "ENOENT" });
-      },
-    );
+for (const [mode, situation] of Object.entries(ENDING_MODES)) {
+  for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
+    test(`${situation}, ${signal} removes the folder and ends the process`, { skip }, async () => {
+      await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
+      const run = startSignalChild(CHILD, [mode], owned.path);
+      let folder;
+      let code;
+      let exitSignal;
+      try {
+        folder = await run.nextLine();
+        assert.equal(folder.startsWith(owned.path), true, folder);
+        run.child.kill(signal);
+        [code, exitSignal] = await run.exited();
+      } finally {
+        run.stop();
+      }
+
+      assert.equal(code, null);
+      assert.equal(exitSignal, signal, "the process ends by the signal it received");
+      await assert.rejects(stat(folder), { code: "ENOENT" });
+    });
   }
 }
 
@@ -55,9 +58,9 @@ for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
         const folder = await run.nextLine();
         run.child.kill(signal);
 
-        // The listener prints a second after its first call, so a signal raised again would have
-        // called it a second time by then.
-        assert.equal(await run.nextLine(), "calls 1");
+        // "done" arrives after any signal Calavera raised again during the first call.
+        assert.equal(await run.nextLine(), "call 1");
+        assert.equal(await run.nextLine(), "done", "the other listener runs once");
         assert.equal(run.child.exitCode, null, "the other listener keeps the process running");
         assert.equal(run.child.signalCode, null);
         assert.equal(

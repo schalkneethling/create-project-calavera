@@ -119,11 +119,29 @@ function deferringListenerCount() {
 }
 
 /**
+ * Whether no listener of `signal` but signal-exit's would keep the process running.
+ *
+ * @param {NodeJS.Signals} signal
+ * @param {number} own How many of the listeners are this handler: 1 while it is attached.
+ */
+function onlyDeferringListeners(signal, own) {
+  return process.listenerCount(signal) - own - deferringListenerCount() <= 0;
+}
+
+/**
  * Answers Ctrl+C (SIGINT) or SIGTERM while a temporary folder exists. The process ends by the
  * signal only when no listener but this one and signal-exit's would keep it running. Then this
- * handler removes every live folder, detaches itself, and raises the signal again. With no
- * listener left, Node's default action ends the process. With signal-exit's listeners left, they
- * now find no other listener, so they run their exit callbacks and end the process by the signal.
+ * handler removes every live folder, forgets them, detaches itself, and raises the signal again.
+ * With no listener left, Node's default action ends the process. With signal-exit's listeners
+ * left, each one ends the process by the signal once it finds no listener but signal-exit's:
+ * during this delivery when it was registered after this handler, and on the raised signal when
+ * it was registered before.
+ *
+ * The raised signal arrives on a later turn of the event loop. If signal-exit's last listener is
+ * removed before then, as execa does when its subprocess ends, Node stops watching the signal and
+ * the raised signal is lost. So on the next turn, when no listener but signal-exit's remains, this
+ * handler raises the signal once more, which then ends the process.
+ *
  * The removal is synchronous because the process ends right after the signal is raised again,
  * before any asynchronous removal could finish. Removal retries, because a copy into the folder
  * that is still in flight can make it fail with ENOTEMPTY; a folder that still cannot be removed
@@ -139,8 +157,7 @@ function deferringListenerCount() {
  * @param {NodeJS.Signals} signal
  */
 function removeLiveFoldersOnInterrupt(signal) {
-  const otherListeners = process.listenerCount(signal) - 1 - deferringListenerCount();
-  if (otherListeners > 0) return;
+  if (!onlyDeferringListeners(signal, 1)) return;
   for (const folder of liveTemporaryFolders) {
     try {
       rmSync(folder, { recursive: true, force: true, maxRetries: 3 });
@@ -148,8 +165,13 @@ function removeLiveFoldersOnInterrupt(signal) {
       // The process is ending, so nothing could report the failure.
     }
   }
+  // The folders are gone, so a folder created later attaches this handler again.
+  liveTemporaryFolders.clear();
   detachInterruptHandler();
   process.kill(process.pid, signal);
+  setImmediate(() => {
+    if (onlyDeferringListeners(signal, 0)) process.kill(process.pid, signal);
+  });
 }
 
 function detachInterruptHandler() {
