@@ -79,13 +79,33 @@ async function planCodeRabbitSkillConfig() {
   }
 
   const { isMap, isScalar, isSeq, parseDocument } = await import("yaml");
-  const current = await readFile(CODE_RABBIT_CONFIG_PATH, "utf8");
+  let current;
+  try {
+    current = await readFile(CODE_RABBIT_CONFIG_PATH, "utf8");
+  } catch (error) {
+    // A file system error names the path and the code, never the file's text.
+    const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? "unknown error";
+    throw new Error(`Cannot update ${CODE_RABBIT_CONFIG_PATH}: cannot read it (${code}).`, {
+      cause: error,
+    });
+  }
   const document = parseDocument(current);
 
   if (document.errors.length > 0) {
+    // The parser's message quotes the lines around each error, so only the position and the
+    // parser's code reach the output (#1083).
+    const positions = document.errors.map(({ code, linePos }) => {
+      const start = linePos?.[0];
+      return start ? `line ${start.line}, column ${start.col} (${code})` : code;
+    });
     throw new Error(
-      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: ${document.errors.map(({ message }) => message).join("; ")}`,
+      `Cannot update ${CODE_RABBIT_CONFIG_PATH}: it is not valid YAML at ${positions.join("; ")}.`,
     );
+  }
+  // An empty file has no contents, and `set` makes it a mapping. A top-level list or scalar
+  // makes `get` and `set` throw a message that does not name the file (#1083).
+  if (document.contents !== null && !isMap(document.contents)) {
+    throw new Error(`Cannot update ${CODE_RABBIT_CONFIG_PATH}: the top level must be a mapping.`);
   }
 
   // `set` stores a plain JavaScript value as is, so new collections go through
@@ -138,7 +158,10 @@ async function planCodeRabbitSkillConfig() {
   }
   for (const filter of missingFilters) pathFilters.add(filter);
 
-  const contents = document.toString({ lineWidth: 0 });
+  // `toString` writes `\n` line endings, so a file that uses Windows line endings gets them back,
+  // as `findMarkedBlock` decides (#1083).
+  const written = document.toString({ lineWidth: 0 });
+  const contents = current.includes("\r\n") ? written.replaceAll("\n", "\r\n") : written;
   return contents === current ? { type: "unchanged" } : { contents, type: "update" };
 }
 

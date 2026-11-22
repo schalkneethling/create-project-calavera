@@ -3905,6 +3905,30 @@ for (const { name, current, expected } of [
     expected:
       'reviews: { profile: chill, path_filters: [ "!.claude/skills/**", "!.agents/skills/**", "!.agents/agents/claude-code/**", "!.calavera/packages/**", "!pnpm-lock.yaml" ] }\n',
   },
+  // #1083: an update keeps Windows line endings (`\r\n`), as the `yaml` package writes `\n`.
+  {
+    name: "a file with Windows line endings",
+    current: "# Team settings\r\nlanguage: en-US\r\nreviews:\r\n  profile: chill\r\n",
+    expected: `# Team settings\nlanguage: en-US\nreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll(
+      "\n",
+      "\r\n",
+    ),
+  },
+  {
+    // A literal block keeps its line breaks, which are line endings of the file too.
+    name: "a file with Windows line endings and a literal block",
+    current: "notes: |\r\n  first\r\n  second\r\nreviews:\r\n  profile: chill\r\n",
+    expected: `notes: |\n  first\n  second\nreviews:\n  profile: chill\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll(
+      "\n",
+      "\r\n",
+    ),
+  },
+  {
+    // A settled file with Windows line endings needs no change, so apply leaves it alone.
+    name: "a file with Windows line endings that already holds every filter",
+    current: `reviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll("\n", "\r\n"),
+    expected: `reviews:\n  path_filters:\n${CODE_RABBIT_FILTER_LIST}\n`.replaceAll("\n", "\r\n"),
+  },
 ]) {
   test(`skill apply adds CodeRabbit path filters as a YAML list to ${name}`, async () => {
     const originalDirectory = process.cwd();
@@ -3951,20 +3975,37 @@ for (const { name, current, expected } of [
 }
 
 for (const { current, error } of [
+  // #1083: a parse error names the position and the parser's code, never the parser's message,
+  // because that message quotes the file's text.
   {
     current: "reviews: [\n",
-    error: /Cannot update \.coderabbit\.yaml: Flow sequence in block collection/,
+    error: /Cannot update \.coderabbit\.yaml: it is not valid YAML at line 2, column 1 \(BAD_INDENT\)\.$/,
   },
-  { current: "reviews: []\n", error: /\.coderabbit\.yaml: reviews must be a mapping/ },
+  // #1083: a top-level list or scalar made the `yaml` package throw without naming the file.
+  {
+    current: "- reviews\n- language\n",
+    error: /Cannot update \.coderabbit\.yaml: the top level must be a mapping\.$/,
+  },
+  {
+    current: "reviews\n",
+    error: /Cannot update \.coderabbit\.yaml: the top level must be a mapping\.$/,
+  },
+  {
+    current: "reviews: []\n",
+    error: /Cannot update \.coderabbit\.yaml: reviews must be a mapping\.$/,
+  },
   // An empty value is null, not a missing key, so apply does not replace it.
-  { current: "reviews:\n", error: /\.coderabbit\.yaml: reviews must be a mapping/ },
+  {
+    current: "reviews:\n",
+    error: /Cannot update \.coderabbit\.yaml: reviews must be a mapping\.$/,
+  },
   {
     current: "reviews:\n  path_filters:\n",
-    error: /\.coderabbit\.yaml: reviews\.path_filters must be an array/,
+    error: /Cannot update \.coderabbit\.yaml: reviews\.path_filters must be an array\.$/,
   },
   {
     current: 'reviews:\n  path_filters: "src/**"\n',
-    error: /\.coderabbit\.yaml: reviews\.path_filters must be an array/,
+    error: /Cannot update \.coderabbit\.yaml: reviews\.path_filters must be an array\.$/,
   },
   // A new local path_filters list would replace the list `<<` merges in, dropping "!dist/**".
   {
@@ -4040,6 +4081,78 @@ for (const { current, error } of [
     }
   });
 }
+
+// #1083: the `yaml` package's message quotes the lines around a parse error, so a secret written
+// next to the error would reach the terminal and CI logs.
+test("a CodeRabbit parse error names each position without quoting the file", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-parse-secret-"));
+  const secret = "FAKE_SECRET_9f3a7c";
+  const current = `reviews:\n  token: ${secret}\n   bad: [\n`;
+  const recipe = buildRecipe("minimal", [], "npm", [
+    { type: "skill", src: "skills/frontend-engineering" },
+  ]);
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await lockArtifactFixtures(["skill-frontend-engineering"]);
+    await writeFile(".coderabbit.yaml", current);
+
+    const error = await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    }).then(
+      () => assert.fail("apply accepted a .coderabbit.yaml that is not valid YAML"),
+      (/** @type {unknown} */ reason) => reason,
+    );
+    assert.ok(error instanceof Error);
+    assert.equal(
+      error.message,
+      "Cannot update .coderabbit.yaml: it is not valid YAML at line 2, column 10 (BLOCK_AS_IMPLICIT_KEY); line 2, column 10 (MULTILINE_IMPLICIT_KEY); line 4, column 1 (BAD_INDENT).",
+    );
+    assert.equal(error.cause, undefined);
+    assert.ok(!String(error.stack).includes("FAKE_SECRE"), "The stack quotes the file.");
+    assert.equal(await readFile(".coderabbit.yaml", "utf8"), current);
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
+
+// #1083: a read failure named only the path, without saying that the update stopped.
+test("a CodeRabbit configuration that cannot be read names the file and keeps the cause", async () => {
+  const originalDirectory = process.cwd();
+  const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-coderabbit-unreadable-"));
+  const recipe = buildRecipe("minimal", [], "npm", [
+    { type: "skill", src: "skills/frontend-engineering" },
+  ]);
+
+  try {
+    process.chdir(projectDirectory);
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+    await lockArtifactFixtures(["skill-frontend-engineering"]);
+    // A folder in the file's place exists but cannot be read as a file.
+    await mkdir(".coderabbit.yaml");
+
+    const error = await applyRecipeObject(recipe, {
+      json: true,
+      noInstall: true,
+      assumeYes: true,
+    }).then(
+      () => assert.fail("apply accepted a .coderabbit.yaml it cannot read"),
+      (/** @type {unknown} */ reason) => reason,
+    );
+    assert.ok(error instanceof Error);
+    assert.equal(error.message, "Cannot update .coderabbit.yaml: cannot read it (EISDIR).");
+    assert.equal(/** @type {NodeJS.ErrnoException} */ (error.cause).code, "EISDIR");
+    await assertPathMissing(".agents/skills/frontend-engineering");
+  } finally {
+    process.chdir(originalDirectory);
+    await rm(projectDirectory, { force: true, recursive: true });
+  }
+});
 
 test("an unedited hook from an earlier payload updates instead of stopping as a local edit", async () => {
   const originalDirectory = process.cwd();
