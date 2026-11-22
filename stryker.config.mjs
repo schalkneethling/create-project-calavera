@@ -2,7 +2,10 @@
 // Run Stryker on the lines a change touched, and only the test files that cover them:
 //
 //   pnpm test:mutation --mutate packages/cli/src/<file>.js:<start>-<end> \
-//     --testFiles packages/cli/scripts/<file>.test.mjs
+//     --testFiles packages/cli/scripts/<file>.test.mjs,packages/cli/scripts/<other>.test.mjs
+//
+// --testFiles takes one comma-separated list. Repeating the flag does not add files, because only
+// the last --testFiles counts.
 //
 // Without --testFiles, Stryker's first run of all CLI test files together takes longer than its
 // 5-minute dryRunTimeoutMinutes limit (more than 9 minutes when measured for #985), so the run
