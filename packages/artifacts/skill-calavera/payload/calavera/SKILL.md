@@ -9,9 +9,9 @@ Use Calavera to compose and apply project tooling through its MCP tools whenever
 
 ## Start Here
 
-1. Confirm whether Calavera MCP tools are available. Look for tools named `inspect_project`, `list_profiles`, `list_integrations`, `describe_integration`, `list_ai_artifacts`, `list_baseline_targets`, `describe_baseline_target`, `search_baseline_features`, `recommend_baseline_target`, `compose_recipe`, `validate_recipe`, `explain_recipe`, `dry_run_apply`, and `apply_recipe`.
-2. If the Calavera MCP tools are not available, stop and help the user register or repair the MCP server before composing or applying anything. Do not inspect npm cache internals or import Calavera source files from package cache paths as a substitute for MCP setup.
-3. Call `inspect_project` when available, or inspect the project manually only when the MCP server cannot be registered and the user chooses a fallback flow. Check files such as `package.json`, `calavera.config.json`, `.editorconfig`, and `.stylelintrc.json`.
+1. Check which Calavera tools are listed to you, and use only the Calavera tools listed to you: the tools the server provides and the client allows. If no Calavera tools are listed to you at all, the Calavera tools are unavailable, and there are two possible causes. The server may be missing, because it is not registered, did not start, or the session has not reloaded since registration. Or the client does not allow the tools, for example because of the user's permission rules. Tell the user that the Calavera tools are unavailable and name both causes, then stop and ask the user before you register or repair the server, as MCP Setup describes, and before composing or applying anything. Do not inspect npm cache internals or import Calavera source files from package cache paths as a substitute for MCP setup.
+2. This skill and the project's pinned MCP server update separately, so a later step may name a tool that the pinned server does not have. Never call a tool that is not listed to you. When Calavera tools are listed to you but not a tool that a step names, that is a missing tool, not a missing server, so the registration does not need repair: the pinned server may predate the tool, or the client may hide it. Tell the user which tool is not listed, skip the part of the step that needs it, and continue with the tools that are listed. When `compose_recipe`, `dry_run_apply`, or `apply_recipe` is missing, apply nothing through MCP, because without `compose_recipe` you must not hand-author the recipe, and through MCP the user approves changes only from a `dry_run_apply` result. When you ask the user whether to switch to Fallbacks because a tool is not listed, name both possible causes: the pinned server version lacks the tool, or the user's own permission rules hide it. A server version newer than the pinned one may provide the tool, but changing the registration needs the user's approval, as MCP Setup describes.
+3. Call `inspect_project` when the server lists it. Inspect the project manually only after the user agrees to switch to Fallbacks, for example because the MCP server cannot be registered or a missing approval tool stops the MCP flow, as step 2 describes. Check files such as `package.json`, `calavera.config.json`, `.editorconfig`, and `.stylelintrc.json`.
    If likely conflicts exist, pause before applying changes. List each conflict as a hard stop or a migration decision the user can approve, and use `dry_run_apply` to show concrete impact when adoption still looks possible.
 4. Use AskUserTool or the agent client's equivalent when available to clarify profile preferences, framework needs, conflict decisions, and apply approval. If no such tool exists, ask the user directly.
 5. List choices with `list_profiles`, `list_integrations`, and `list_ai_artifacts`. Use `describe_integration` when the user asks for more information or when you need to compare options.
@@ -26,9 +26,11 @@ Use Calavera to compose and apply project tooling through its MCP tools whenever
 10. Call `apply_recipe` only after the user explicitly approves the dry run. Pass it the recipe from the dry run's `result.recipe`, which records every artifact input and integration input; `apply_recipe` refuses an input the recipe does not record. Show the user each line in `wiringChanges`, each warning in `wiringWarnings` and `inputWarnings`, each value in `integrationInputs`, and each entry in `ignoreChanges`, which lists the lines apply adds to or removes from `.gitignore` and `.htmlvalidateignore`, and each entry in `stagingLeftovers`, which lists the old folders in `.calavera/.staging/` that apply removes and the entries there it keeps, as part of the dry run. After `dry_run_apply` and again after `apply_recipe`, show each entry in `temporaryFolderLeftovers` as a warning with its remedy: each is a temporary folder Calavera could not remove, which the user should remove; the command still finished.
 11. If the MCP transport closes or reports `-32000` during or immediately after `apply_recipe`, treat the outcome as unknown instead of failed. Inspect `calavera.config.json`, `.calavera/state.json`, generated files, and package metadata before retrying the apply.
 
-Do not hand-author `calavera.config.json` when the Calavera MCP server is available. Let Calavera compose, validate, dry-run, and apply the recipe so generated files, package scripts, dependencies, AI artifacts, and managed state stay consistent.
+Do not hand-author `calavera.config.json`, even when a Calavera tool is missing. Let Calavera compose, validate, dry-run, and apply the recipe so generated files, package scripts, dependencies, AI artifacts, and managed state stay consistent.
 
-Treat files listed by `dry_run_apply` as Calavera-managed outputs. Do not hand-write or edit them; let `apply_recipe` or `create-project-calavera apply` create them after approval.
+Before you switch from the MCP tools to the CLI in Fallbacks, for any reason, ask the user and wait for their agreement. This covers a tool the server lacks, a tool the client hides, every Calavera tool being unavailable, and a call the user refused at a permission prompt. A refused call is the user's answer, not a missing tool: in some clients the tool stays listed after the user refuses it, so step 2 does not apply. When the user refuses a Calavera tool call at a permission prompt, stop and ask the user how to continue, and never run the CLI apply command in its place unless the user then agrees to switch to Fallbacks.
+
+Treat files listed by `dry_run_apply` as Calavera-managed outputs. Do not hand-write or edit them. Let `apply_recipe` create them after the user approves the dry run. In Fallbacks that the user agreed to, `create-project-calavera apply` creates them after the user approves its preview.
 
 `apply_recipe.writeConfig: false` only skips writing `calavera.config.json`. Do not use it to bypass managed-file conflicts, stale state hashes, or an unapproved dry-run result.
 
@@ -38,7 +40,7 @@ When the user asks to stop Calavera managing the project and keep the tooling it
 
 ## MCP Setup
 
-If the Calavera MCP tools are not available, help the user register this server from the project root. Check the target project's `package.json` first and use the package manager declared by `packageManager` or `devEngines.packageManager`.
+If the Calavera MCP server is missing, help the user register this server from the project root. Check the target project's `package.json` first and use the package manager declared by `packageManager` or `devEngines.packageManager`.
 
 ```json
 {
@@ -67,16 +69,16 @@ Registering the Calavera MCP server is a persistent code-execution change that r
 
 ## Fallbacks
 
-If the MCP server cannot be registered, use the hosted Calavera Web UI to compose and download a recipe:
+Use this flow only after the user agrees to switch from the MCP tools to the CLI, for example when the MCP server cannot be registered, or when `compose_recipe`, `dry_run_apply`, or `apply_recipe` is missing. Compose and download a recipe in the hosted Calavera Web UI:
 
 https://calavera.schalkneethling.com
 
-After a recipe exists, preview local changes with the package-manager-specific apply dry-run command, pinned to the same explicit package version used for MCP setup: `npm create project-calavera@<version> apply -- --dry-run` for npm, `pnpm dlx create-project-calavera@<version> apply --dry-run` for pnpm, `yarn dlx create-project-calavera@<version> apply --dry-run` for Yarn, or `bunx create-project-calavera@<version> apply --dry-run` for Bun. Ask the user to approve the preview before running the matching apply command.
+After a recipe exists, preview local changes with the package-manager-specific apply dry-run command, pinned to the same explicit package version used for MCP setup: `npm create project-calavera@<version> apply -- --dry-run` for npm, `pnpm dlx create-project-calavera@<version> apply --dry-run` for pnpm, `yarn dlx create-project-calavera@<version> apply --dry-run` for Yarn, or `bunx create-project-calavera@<version> apply --dry-run` for Bun. When a recipe was already composed through MCP, do not ask the user to compose it again and do not write it to `calavera.config.json` yourself: save the recipe, from the dry run's `result.recipe` or from the `recipe` that `compose_recipe` returned, to a file outside the project, and pass its path with `--config`, for example `pnpm dlx create-project-calavera@<version> apply --config <path> --dry-run`, or `npm create project-calavera@<version> apply -- --config <path> --dry-run` for npm. Ask the user to approve the preview before running the matching apply command.
 
 ## User Prompt
 
 When the user wants to start from a scaffolded or existing project, suggest:
 
 ```text
-Use Calavera for this project. First verify that the Calavera MCP tools are available. If they are not available, stop and help me configure the MCP server before composing or applying anything. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.
+Use Calavera for this project. First check which Calavera MCP tools are available, and use only those. If none are available, stop, tell me the possible causes, and ask me before configuring the MCP server or composing or applying anything. If a tool you need is missing, tell me which one, and do not apply anything without a dry run I approve. Once the tools are available, inspect the current project for existing tooling and possible config conflicts, list the available profiles, integrations, and AI artifacts, compose a recipe, show me the dry-run result, and apply it only after I approve.
 ```

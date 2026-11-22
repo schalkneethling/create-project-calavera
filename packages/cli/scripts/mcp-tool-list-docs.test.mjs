@@ -1,9 +1,13 @@
 // #839: the README and `--help` tell people which MCP tools to confirm before composing a
 // recipe, and permission allow-lists are built from that list, so a tool the documents leave
 // out gets denied. These tests compare both lists with the tools the server registers.
-// #933: the README's tool-order list and the bundled Calavera skill, which tells an agent which
-// tools to look for, are checked the same way. The generated `.agents/calavera/mcp.md` list is
-// not checked here yet: changing its text waits for #934.
+// #933: the README's tool-order list is checked the same way. The generated
+// `.agents/calavera/mcp.md` list is not checked here yet: changing its text waits for #934.
+// #1053: the skill no longer lists the tools to look for. ADR-0018 Decision 7 tells the agent
+// to use only the tools listed to it, because a skill newer than the project's pinned server may
+// describe a tool that server lacks. So the skill is checked in the other direction: every
+// lowercase snake_case name the skill puts in backticks must be one the server registers, and the
+// skill may leave a tool out. Reading only backticked names keeps prose words out of the check.
 // #964: the workflow doc's WebMCP list is checked against the tools the Composer registers.
 // #996: the README's WebMCP list is checked the same way.
 import { execFile } from "node:child_process";
@@ -29,11 +33,11 @@ const README_MARKER = "Confirm the Calavera MCP tools are exposed:";
 const WORKFLOW_DOC_MARKER = "Calavera MCP tools are exposed:";
 const HELP_MARKER = "Confirm these tools are visible before composing a recipe:";
 const README_ORDER_MARKER = "in this order:";
-const SKILL_MARKER = "Look for tools named";
 const WORKFLOW_DOC_MCP_MARKER = "project-local apply tools:";
 const WORKFLOW_DOC_WEBMCP_MARKER = "but not project inspection or apply:";
 const README_WEBMCP_MARKER = "for the MCP recipe composition workflow:";
 const TOOL_NAME_PATTERN = /\b[a-z]+(?:_[a-z]+)+\b/g;
+const BACKTICKED_TOOL_NAME_PATTERN = /`([a-z]+(?:_[a-z]+)+)`/g;
 
 /**
  * The tool names a running server advertises to an MCP client, sorted.
@@ -145,12 +149,24 @@ test("the README's tool-order list names every tool the MCP server registers, an
   assert.deepEqual(documented, await registeredToolNames());
 });
 
-for (const { source, url } of bundledSkillCopies) {
-  test(`the bundled Calavera skill at ${source} lists every tool the MCP server registers, and no others`, async () => {
-    const skill = await readFile(url, "utf8");
-    const documented = toolNamesIn(listAfterMarker(skill, SKILL_MARKER, source));
+/**
+ * The backticked tool names in a text, sorted.
+ *
+ * @param {string} text
+ * @returns {string[]}
+ */
+function backtickedToolNamesIn(text) {
+  return [...text.matchAll(BACKTICKED_TOOL_NAME_PATTERN)].map(([, name]) => name).sort();
+}
 
-    assert.deepEqual(documented, await registeredToolNames());
+for (const { source, url } of bundledSkillCopies) {
+  test(`the bundled Calavera skill at ${source} names only tools the MCP server registers`, async () => {
+    const skill = await readFile(url, "utf8");
+    const registered = await registeredToolNames();
+    const named = backtickedToolNamesIn(skill);
+
+    assert.notEqual(named.length, 0, `${source} names no MCP tools`);
+    assert.deepEqual([...new Set(named.filter((name) => !registered.includes(name)))], []);
   });
 }
 
@@ -224,6 +240,13 @@ test("the list parser catches a missing, an extra, and a repeated tool name", ()
       ),
     ),
     registered,
+  );
+});
+
+test("the skill check reads backticked tool names and ignores prose words", () => {
+  assert.deepEqual(
+    backtickedToolNamesIn("Call `inspect_project`, then `drop_table`. Skip node_modules."),
+    ["drop_table", "inspect_project"],
   );
 });
 
