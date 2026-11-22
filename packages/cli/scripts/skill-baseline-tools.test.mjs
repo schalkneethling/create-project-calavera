@@ -1,6 +1,6 @@
-// #965: an agent needs to know when to call the Baseline tools. These tests fail when either copy's guidance for a
-// recipe that selects `stylelint-baseline` stops naming a Baseline tool or the recipe option that
-// records the chosen target.
+// #965: an agent needs to know when to call the Baseline tools. These tests fail when either
+// copy's guidance for a recipe that selects `stylelint-baseline` stops naming a Baseline tool or
+// the recipe option that records the chosen target.
 import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import test from "node:test";

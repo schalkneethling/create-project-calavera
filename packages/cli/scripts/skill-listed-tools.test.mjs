@@ -2,7 +2,8 @@
 // a skill newer than the server may describe a tool the server does not have. The skill must tell
 // the agent to use only the tools the server lists, and to treat a missing tool differently from a
 // missing server: a missing server needs registering or repair, a missing tool does not. These
-// tests fail when either copy loses one of those instructions or goes back to a fixed tool list.
+// tests fail when either copy loses one of those instructions, lets a missing tool lead to an
+// apply without a dry run, or brings back the old "Look for tools named" list.
 import { readFile } from "node:fs/promises";
 import assert from "node:assert/strict";
 import test from "node:test";
@@ -55,8 +56,14 @@ for (const { source, url } of bundledSkillCopies) {
     const missingTool = onlyInstructionMatching(instructions, /a missing tool/i, source);
 
     assert.notEqual(missingServer, missingTool, `${source} handles both cases in one instruction`);
+    assert.match(missingServer, /tell the user that the Calavera MCP server is missing/i, source);
     assert.match(missingServer, /register or repair/i, `${source}: a missing server needs repair`);
     assert.match(missingTool, /does not need repair/i, `${source}: a missing tool needs no repair`);
     assert.match(missingTool, /tell the user which tool/i, `${source}: name the missing tool`);
+    // A missing approval tool must not lead to an apply without a dry run (C8).
+    for (const name of ["compose_recipe", "dry_run_apply", "apply_recipe"]) {
+      assert.ok(missingTool.includes(`\`${name}\``), `${source}: missing \`${name}\` case`);
+    }
+    assert.match(missingTool, /apply nothing through MCP and use Fallbacks/, source);
   });
 }
