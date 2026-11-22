@@ -45,7 +45,7 @@ function onlyInstructionMatching(instructions, pattern, source) {
  * @returns {string[]}
  */
 function sentencesIn(instruction) {
-  return instruction.split(/(?<=\.)\s+(?=[A-Z])/);
+  return instruction.split(/(?<=\.)\s+(?=[A-Z`])/);
 }
 
 /**
@@ -98,6 +98,7 @@ test("the sentence check ties the approval tools to applying nothing through MCP
   const sentence = onlySentenceWith(unsafe, APPROVAL_TOOLS, "fixture");
 
   assert.doesNotMatch(sentence, /apply nothing through MCP/i);
+  assert.equal(sentencesIn("Call `a_b` now. `c_d` follows.").length, 2);
 });
 
 for (const { source, url } of bundledSkillCopies) {
@@ -123,7 +124,8 @@ for (const { source, url } of bundledSkillCopies) {
     assert.match(missingTool, /does not need repair/i, `${source}: a missing tool needs no repair`);
     assert.match(missingTool, /tell the user which tool/i, `${source}: name the missing tool`);
     // A missing approval tool must not lead to an apply without a dry run (C8), so the rule must
-    // name all three tools and the outcome in the same sentence.
+    // name all three tools and the outcome in the same sentence. This checks that the safe rule
+    // exists; it cannot prove that no other sentence in the skill contradicts it.
     assert.match(
       onlySentenceWith(missingTool, APPROVAL_TOOLS, source),
       /apply nothing through MCP/i,
@@ -137,7 +139,7 @@ for (const { source, url } of bundledSkillCopies) {
       `${source}: a hidden tool must not be sidestepped`,
     );
     assert.match(
-      onlySentenceWith(missingTool, ["server version lacks the tool"], source),
+      onlySentenceWith(missingTool, ["server version lacks that approval tool"], source),
       /Fallbacks/,
       `${source}: a server that lacks the tool goes to Fallbacks`,
     );
@@ -158,7 +160,11 @@ for (const { source, url } of bundledSkillCopies) {
       /^\d+\. Call `inspect_project`/,
       source,
     );
-    assert.match(inspect, /missing tool/, `${source}: manual inspection excludes a missing tool`);
+    assert.match(
+      inspect,
+      /missing approval tool/,
+      `${source}: manual inspection excludes a missing approval tool`,
+    );
   });
 
   test(`the bundled Calavera skill at ${source} suggests a prompt that does not stop on a missing tool`, async () => {

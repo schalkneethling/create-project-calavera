@@ -8,7 +8,7 @@
 // may describe a tool that server lacks. So the skill is checked in the other direction: every
 // lowercase snake_case name in it must be one the server registers, and the skill may leave a
 // tool out. Every registered tool name has that shape, and a test below fails when one stops
-// having it, so the pattern cannot silently miss a tool.
+// having it. An unregistered name of another shape, such as `apply_recipe_v2`, is not caught.
 // #964: the workflow doc's WebMCP list is checked against the tools the Composer registers.
 // #996: the README's WebMCP list is checked the same way.
 import { execFile } from "node:child_process";
