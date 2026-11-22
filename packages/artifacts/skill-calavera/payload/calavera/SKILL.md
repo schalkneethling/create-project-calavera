@@ -32,7 +32,7 @@ Treat files listed by `dry_run_apply` as Calavera-managed outputs. Do not hand-w
 
 `apply_recipe.writeConfig: false` only skips writing `calavera.config.json`. Do not use it to bypass managed-file conflicts, stale state hashes, or an unapproved dry-run result.
 
-Use `reownManagedFiles` only after the user explicitly approves treating listed Calavera-tracked files' current contents as intentional local state before dry-run/apply.
+Use `reownManagedFiles` only after the user explicitly approves losing their local edits to the listed Calavera-tracked files: `apply_recipe` replaces each listed file's current contents with Calavera's, so the edits are lost unless they save a copy first. Tell the user this before they approve, and never use it to keep an edit.
 
 When the user asks to stop Calavera managing the project and keep the tooling it installed, that is the CLI command `eject`, not an MCP tool, because it removes the Calavera MCP registration. Ask the user to run the dry run, pinned to a release that has `eject`, such as `latest`, because the version pinned for MCP setup may predate it: `npm create project-calavera@latest eject -- --dry-run` for npm, `pnpm dlx create-project-calavera@latest eject --dry-run` for pnpm, `yarn dlx create-project-calavera@latest eject --dry-run` for Yarn, or `bunx create-project-calavera@latest eject --dry-run` for Bun, and then the same command without `--dry-run` in their own terminal, where they approve the list it shows. Do not delete Calavera's files by hand or run `eject --yes` for them.
 
