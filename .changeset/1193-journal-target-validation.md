@@ -1,0 +1,5 @@
+---
+"create-project-calavera": patch
+---
+
+The rollback of an interrupted artifact transaction, which every `artifacts` command and `eject` run first, and the read-only `artifact_status` MCP tool now refuse a transaction journal whose target is not a path an artifact transaction writes: `.gitignore`, `.calavera/state.json`, `.calavera/artifacts.lock.json`, `.coderabbit.yaml`, or a path below `.calavera/packages/`, `.agents/skills/`, `.agents/hooks/`, `.agents/agents/`, or `.codex/agents/`. Before, a corrupted or hostile journal that named the project root as a new file made the rollback remove the whole project. Recovery also refuses a journal path that lies below a symbolic link, because the rollback would then remove or move files outside the project. A refused journal stops recovery with a message that names the operation and the path, and leaves the project and the journal as they were; `artifact_status` then reports `rollbackFiles` as null. Committing a transaction refuses such a target before anything moves (#1193).

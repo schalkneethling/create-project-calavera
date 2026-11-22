@@ -1,6 +1,16 @@
 // @ts-check
-import { cp, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
+import { dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 
 import { artifactForId, artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
@@ -12,6 +22,7 @@ import {
 import packageJson from "../package.json" with { type: "json" };
 
 import {
+  AI_ARTIFACT_OUTPUT_FOLDERS,
   aiArtifactOutputPaths,
   buildAiApplyResult,
   CODE_RABBIT_CONFIG_PATH,
@@ -325,14 +336,12 @@ async function pendingRollbackFiles() {
   } catch {
     return null;
   }
-  // A target the journal names twice is listed once. A target that is the project root itself has
-  // an empty project path, which names no file, so it is left out; #1193 makes the journal check
-  // refuse such a journal.
+  // A target the journal names twice is listed once. The journal check refuses a target that is
+  // the project root (#1193), so every target has a project path.
   const replaced = new Set();
   for (const operation of operations) {
     if ((await fileExists(operation.backup)) || !operation.hadTarget) {
-      const path = relative(resolve("."), operation.target);
-      if (path !== "") replaced.add(path);
+      replaced.add(relative(resolve("."), operation.target));
     }
   }
   return [...replaced];
@@ -1465,12 +1474,47 @@ async function formatRecordText(path, value, loadFormatter) {
 }
 
 /**
+ * The project files an artifact transaction may target (#1193). The two callers of
+ * `commitArtifactTransaction` write them: `commitArtifactCacheBlock` targets `.gitignore` and the
+ * state, and `stageArtifactInstall` the state, the lock, and `.coderabbit.yaml`.
+ */
+const TRANSACTION_TARGET_FILES = Object.freeze([
+  GITIGNORE_PATH,
+  STATE_PATH,
+  LOCK_PATH,
+  CODE_RABBIT_CONFIG_PATH,
+]);
+
+/**
+ * The project folders an artifact transaction may target paths strictly below, never the folder
+ * itself (#1193): `stageArtifactInstall` targets package folders and AI artifact outputs.
+ */
+const TRANSACTION_TARGET_FOLDERS = Object.freeze([PACKAGE_PATH, ...AI_ARTIFACT_OUTPUT_FOLDERS]);
+
+/**
+ * Whether an artifact transaction may target the absolute path `target`: one of
+ * `TRANSACTION_TARGET_FILES`, or a path strictly below one of `TRANSACTION_TARGET_FOLDERS`. The
+ * project root, its parent folders, and the target folders themselves are never targets.
+ *
+ * @param {string} target
+ */
+function isTransactionTarget(target) {
+  return (
+    TRANSACTION_TARGET_FILES.some((file) => resolve(file) === target) ||
+    TRANSACTION_TARGET_FOLDERS.some((folder) => {
+      const root = resolve(folder);
+      return root !== target && isPathInside(root, target);
+    })
+  );
+}
+
+/**
  * Moves each staged path to its target through a journal that
  * `recoverArtifactTransaction` rolls back. Refuses, before anything moves, a
  * transaction root outside `.calavera/.transactions`, and an operation whose
  * staged path is outside the transaction root or missing, whose target is
- * outside the project, or whose target an earlier operation already names,
- * each with its own message.
+ * outside the project or not a path a transaction may target, or whose target
+ * an earlier operation already names, each with its own message.
  *
  * @param {string} transactionRoot
  * @param {{ staged: string, target: string }[]} operations
@@ -1497,6 +1541,11 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
     if (!isPathInside(projectRoot, target)) {
       throw new Error(
         `Artifact transaction operation ${index} targets ${target}, which is outside the project ${projectRoot}.`,
+      );
+    }
+    if (!isTransactionTarget(target)) {
+      throw new Error(
+        `Artifact transaction operation ${index} targets ${target}, which is not a path an artifact transaction writes.`,
       );
     }
     const earlier = seenTargets.get(target);
@@ -1562,9 +1611,14 @@ export async function recoverArtifactTransaction(options = {}) {
 }
 
 /**
- * Reads the pending artifact transaction's journal without writing, and checks that every path it
- * names stays in its workspace: staged files and backups in the transaction root, targets in the
- * project. Throws on a journal that fails a check.
+ * Reads the pending artifact transaction's journal without writing, and checks every path it
+ * names: staged files and backups stay in the transaction root, and each target is a path a
+ * transaction may target (`isTransactionTarget`), so never the project root, a parent folder of
+ * it, or a file outside the paths a transaction writes (#1193). No folder between the project root
+ * and the transaction root, a backup, or a target may be a symbolic link, because the rollback
+ * would then remove or move files outside the project. Throws on a journal that fails a check;
+ * a message names an operation by its index and a target by its project path, and quotes nothing
+ * else from the journal.
  */
 async function readTransactionJournal() {
   const journal = await readJson(TRANSACTION_PATH);
@@ -1580,7 +1634,7 @@ async function readTransactionJournal() {
   if (!isPathInside(resolve(TRANSACTION_ROOT), transactionRoot)) {
     throw new Error("Invalid artifact transaction root.");
   }
-  const operations = journal.operations.map((operation) => {
+  const operations = journal.operations.map((operation, index) => {
     if (
       !operation ||
       typeof operation !== "object" ||
@@ -1601,7 +1655,51 @@ async function readTransactionJournal() {
     ) {
       throw new Error("Artifact transaction journal path escapes its workspace.");
     }
+    if (!isTransactionTarget(target)) {
+      const path = relative(projectRoot, target);
+      throw new Error(
+        `Artifact transaction journal operation ${index} targets ${path === "" ? "the project root" : path}, which is not a path an artifact transaction writes.`,
+      );
+    }
     return { staged, target, backup, hadTarget: operation.hadTarget };
   });
+  for (const path of [
+    transactionRoot,
+    ...operations.flatMap(({ target, backup }) => [target, backup]),
+  ]) {
+    const link = await linkedFolder(projectRoot, path);
+    if (link !== null) {
+      throw new Error(
+        `Artifact transaction journal path ${relative(projectRoot, path)} lies below the symbolic link ${relative(projectRoot, link)}.`,
+      );
+    }
+  }
   return { transactionRoot, operations };
+}
+
+/**
+ * The first folder strictly between `projectRoot` and `path` that is a symbolic link, or null when
+ * none is. Stops at the first folder that does not exist, because nothing below it exists either.
+ * Throws when it cannot check a folder, for example because a file stands where a folder would be
+ * or a folder cannot be read, so the rollback stops before it changes anything. `path` itself is
+ * not checked: removing or replacing a symbolic link changes only the link.
+ *
+ * @param {string} projectRoot
+ * @param {string} path An absolute path inside `projectRoot`.
+ * @returns {Promise<string | null>}
+ */
+async function linkedFolder(projectRoot, path) {
+  let folder = projectRoot;
+  for (const name of relative(projectRoot, dirname(path)).split(sep).filter(Boolean)) {
+    folder = join(folder, name);
+    let stats;
+    try {
+      stats = await lstat(folder);
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return null;
+      throw error;
+    }
+    if (stats.isSymbolicLink()) return folder;
+  }
+  return null;
 }

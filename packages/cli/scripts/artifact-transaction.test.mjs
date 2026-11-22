@@ -1,7 +1,17 @@
 // Issue #619: each way an artifact transaction is refused has its own message,
 // so distinct failures stay distinguishable.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, readdir, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -11,6 +21,7 @@ import {
   commitArtifactTransaction,
   recoverArtifactTransaction,
 } from "../src/artifact-lifecycle.js";
+import { snapshotDirectory } from "./project-snapshot.mjs";
 
 /**
  * Runs `callback` in a new temporary project that has one staged file,
@@ -38,15 +49,16 @@ async function inTransactionProject(callback) {
 test("an artifact transaction refuses each invalid operation with its own message and moves nothing", async () => {
   await inTransactionProject(async ({ project, root, staged }) => {
     const outside = join(project, "..", "outside.txt");
+    const skill = join(project, ".agents/skills/a");
     const cases = [
       {
         root: join(project, ".calavera/elsewhere"),
-        operations: [{ staged, target: join(project, "a.txt") }],
+        operations: [{ staged, target: skill }],
         message: `The artifact transaction root ${join(project, ".calavera/elsewhere")} is outside ${join(project, ".calavera/.transactions")}.`,
       },
       {
         root,
-        operations: [{ staged: join(project, "package.json"), target: join(project, "a.txt") }],
+        operations: [{ staged: join(project, "package.json"), target: skill }],
         message: `Artifact transaction operation 0 stages ${join(project, "package.json")}, which is outside the transaction root ${root}.`,
       },
       {
@@ -56,16 +68,21 @@ test("an artifact transaction refuses each invalid operation with its own messag
       },
       {
         root,
-        operations: [
-          { staged, target: join(project, "a.txt") },
-          { staged, target: join(project, "b.txt") },
-          { staged, target: join(project, "a.txt") },
-        ],
-        message: `Artifact transaction operations 0 and 2 both target ${join(project, "a.txt")}.`,
+        operations: [{ staged, target: join(project, "package.json") }],
+        message: `Artifact transaction operation 0 targets ${join(project, "package.json")}, which is not a path an artifact transaction writes.`,
       },
       {
         root,
-        operations: [{ staged: join(root, "missing.txt"), target: join(project, "a.txt") }],
+        operations: [
+          { staged, target: skill },
+          { staged, target: join(project, ".agents/skills/b") },
+          { staged, target: skill },
+        ],
+        message: `Artifact transaction operations 0 and 2 both target ${skill}.`,
+      },
+      {
+        root,
+        operations: [{ staged: join(root, "missing.txt"), target: skill }],
         message: `Artifact transaction operation 0 stages ${join(root, "missing.txt")}, which does not exist.`,
       },
     ];
@@ -106,7 +123,11 @@ test("recovery refuses a journal whose root or paths leave their workspace and c
   await inTransactionProject(async ({ project, root, staged }) => {
     const outside = join(project, "..", "outside.txt");
     const lookAlike = `${project}-two/a.txt`;
-    const valid = { staged, target: join(project, "a.txt"), backup: join(root, "backup.txt") };
+    const valid = {
+      staged,
+      target: join(project, ".agents/skills/a"),
+      backup: join(root, "backup.txt"),
+    };
     const cases = [
       {
         root: join(project, ".calavera/elsewhere"),
@@ -149,14 +170,15 @@ test("recovery refuses a journal whose root or paths leave their workspace and c
 // A name that starts with `..`, such as `..a.txt`, is a file in its folder (#1026), so a journal
 // that uses such names for its staged, backup, and target paths is rolled back like any other.
 for (const names of [
-  { staged: "staged.txt", backup: "backup.txt", target: "a.txt" },
-  { staged: "..staged.txt", backup: "..backup.txt", target: "..a.txt" },
+  { staged: "staged.txt", backup: "backup.txt", target: "a" },
+  { staged: "..staged.txt", backup: "..backup.txt", target: "..a" },
 ]) {
   test(`recovery with a journal whose paths stay inside rolls back and removes the journal (${names.target})`, async () => {
     await inTransactionProject(async ({ project, root }) => {
       const staged = join(root, names.staged);
       await writeFile(staged, "staged\n");
-      const target = join(project, names.target);
+      const target = join(project, ".agents/skills", names.target);
+      await mkdir(join(project, ".agents/skills"), { recursive: true });
       await writeFile(target, "half-moved\n");
       await writeFile(
         TRANSACTION_PATH,
@@ -170,15 +192,16 @@ for (const names of [
       await recoverArtifactTransaction();
 
       assert.deepEqual(await readdir(join(project, ".calavera")), [".transactions"]);
-      assert.deepEqual(await readdir(project), [".calavera"]);
+      assert.deepEqual(await readdir(join(project, ".agents/skills")), []);
     });
   });
 }
 
 test("an artifact transaction moves a staged file to a target whose name starts with `..`", async () => {
   await inTransactionProject(async ({ project, root, staged }) => {
-    await commitArtifactTransaction(root, [{ staged, target: join(project, "..a.txt") }]);
-    assert.equal(await readFile(join(project, "..a.txt"), "utf8"), "staged\n");
+    const target = join(project, ".agents/skills/..a");
+    await commitArtifactTransaction(root, [{ staged, target }]);
+    assert.equal(await readFile(target, "utf8"), "staged\n");
   });
 });
 
@@ -187,7 +210,9 @@ test("an artifact transaction moves a staged file to a target whose name starts 
 // wrote, not one the test wrote, so emptying or changing it fails here.
 test("a commit that fails part way leaves a journal of every operation, and recovery rolls back from it", async () => {
   await inTransactionProject(async ({ project, root, staged }) => {
-    const replaced = join(project, "replaced.txt");
+    const skills = join(project, ".agents/skills");
+    await mkdir(skills, { recursive: true });
+    const replaced = join(skills, "replaced");
     await writeFile(replaced, "before\n");
     const created = join(root, "created.txt");
     await writeFile(created, "created\n");
@@ -195,8 +220,8 @@ test("a commit that fails part way leaves a journal of every operation, and reco
     // checks it and is gone when its move runs, after the first two moved.
     const operations = [
       { staged, target: replaced },
-      { staged: created, target: join(project, "created.txt") },
-      { staged, target: join(project, "never.txt") },
+      { staged: created, target: join(skills, "created") },
+      { staged, target: join(skills, "never") },
     ];
 
     await assert.rejects(commitArtifactTransaction(root, operations), { code: "ENOENT" });
@@ -215,7 +240,211 @@ test("a commit that fails part way leaves a journal of every operation, and reco
     await recoverArtifactTransaction();
 
     assert.equal(await readFile(replaced, "utf8"), "before\n");
-    assert.deepEqual((await readdir(project)).sort(), [".calavera", "replaced.txt"]);
+    assert.deepEqual(await readdir(skills), ["replaced"]);
     assert.deepEqual(await readdir(join(project, ".calavera")), [".transactions"]);
   });
 });
+
+/**
+ * Writes a pending journal with one operation per entry of `operations`, each given as absolute
+ * paths, and returns the journal text.
+ *
+ * @param {string} transactionRoot
+ * @param {{ staged: string, target: string, backup: string, hadTarget: boolean }[]} operations
+ */
+async function writeJournal(transactionRoot, operations) {
+  const journal = `${JSON.stringify({ schemaVersion: 1, transactionRoot, operations })}\n`;
+  await writeFile(TRANSACTION_PATH, journal);
+  return journal;
+}
+
+// #1193: recovery refuses a journal whose target is the project root, a parent folder, a path no
+// transaction writes, or a path below a symbolic link, each with its own message, before it moves
+// anything. Each journal would otherwise make the rollback remove or replace files the transaction
+// never wrote, inside the project or, through a link, outside it. The project and the folder the
+// links point to stay byte-identical, and the journal stays for a later recovery.
+test("recovery refuses a journal that targets the root, a parent folder, an unlisted path, or a linked folder, and changes nothing", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "calavera-transaction-outside-")));
+    try {
+      await writeFile(join(project, "package.json"), "{}\n");
+      await mkdir(join(project, ".calavera/.transactions/t/backups"), { recursive: true });
+      // `.agents` links to a folder outside the project that holds a skill.
+      await mkdir(join(outside, "agents/skills/x"), { recursive: true });
+      await writeFile(join(outside, "agents/skills/x/SKILL.md"), "# Outside\n");
+      await symlink(join(outside, "agents"), join(project, ".agents"));
+      // A transaction root below a link to an outside folder.
+      await mkdir(join(outside, "transactions/inner"), { recursive: true });
+      await writeFile(join(outside, "transactions/inner/keep.txt"), "keep\n");
+      await symlink(join(outside, "transactions"), join(project, ".calavera/.transactions/linked"));
+      // A backups folder that links to an outside folder.
+      await mkdir(join(outside, "backups"), { recursive: true });
+      await writeFile(join(outside, "backups/0"), "outside backup\n");
+      const linkedRoot = join(project, ".calavera/.transactions/b");
+      await mkdir(linkedRoot);
+      await symlink(join(outside, "backups"), join(linkedRoot, "backups"));
+
+      const backup = join(root, "backups/0");
+      const operation = (/** @type {string} */ target) => ({
+        staged,
+        target,
+        backup,
+        hadTarget: false,
+      });
+      const notWritten = (/** @type {string} */ path) =>
+        `Artifact transaction journal operation 0 targets ${path}, which is not a path an artifact transaction writes.`;
+      const cases = [
+        {
+          root,
+          operations: [operation(project)],
+          message: notWritten("the project root"),
+        },
+        {
+          root,
+          operations: [operation(join(project, ".."))],
+          message: "Artifact transaction journal path escapes its workspace.",
+        },
+        {
+          root,
+          operations: [operation(join(project, ".calavera"))],
+          message: notWritten(".calavera"),
+        },
+        {
+          root,
+          operations: [operation(join(project, ".calavera/packages"))],
+          message: notWritten(".calavera/packages"),
+        },
+        {
+          root,
+          operations: [operation(join(project, "package.json"))],
+          message: notWritten("package.json"),
+        },
+        {
+          root,
+          operations: [operation(join(project, ".agents/skills/x"))],
+          message:
+            "Artifact transaction journal path .agents/skills/x lies below the symbolic link .agents.",
+        },
+        {
+          root: join(project, ".calavera/.transactions/linked/inner"),
+          operations: [],
+          message:
+            "Artifact transaction journal path .calavera/.transactions/linked/inner lies below the symbolic link .calavera/.transactions/linked.",
+        },
+        {
+          root: linkedRoot,
+          operations: [
+            {
+              staged: join(linkedRoot, "staged"),
+              target: join(project, ".codex/agents/y.toml"),
+              backup: join(linkedRoot, "backups/0"),
+              hadTarget: true,
+            },
+          ],
+          message:
+            "Artifact transaction journal path .calavera/.transactions/b/backups/0 lies below the symbolic link .calavera/.transactions/b/backups.",
+        },
+      ];
+
+      const projectBefore = await snapshotDirectory(project);
+      const outsideBefore = await snapshotDirectory(outside);
+      for (const { root: transactionRoot, operations, message } of cases) {
+        const journal = await writeJournal(transactionRoot, operations);
+        const projectWithJournal = await snapshotDirectory(project);
+        await assert.rejects(recoverArtifactTransaction(), { message }, message);
+        assert.deepEqual(await snapshotDirectory(project), projectWithJournal, message);
+        assert.equal(await readFile(TRANSACTION_PATH, "utf8"), journal);
+        await rm(TRANSACTION_PATH);
+        assert.deepEqual(await snapshotDirectory(project), projectBefore, message);
+        assert.deepEqual(await snapshotDirectory(outside), outsideBefore, message);
+      }
+    } finally {
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+});
+
+// #1193: every path the two journal writers target is accepted, so each entry of the allowed set
+// is needed: a file the cache block or the install writes, and a path below each output folder.
+test("recovery rolls back each path an artifact transaction writes", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    const targets = [
+      ".gitignore",
+      ".calavera/state.json",
+      ".calavera/artifacts.lock.json",
+      ".coderabbit.yaml",
+      ".calavera/packages/a/1.0.0",
+      ".agents/skills/a",
+      ".agents/hooks/claude-code/a.mjs",
+      ".agents/agents/claude-code/a.md",
+      ".codex/agents/a.toml",
+    ].map((path) => join(project, path));
+    for (const target of targets) {
+      await mkdir(join(target, ".."), { recursive: true });
+      await writeFile(target, "new\n");
+    }
+    await writeJournal(
+      root,
+      targets.map((target, index) => ({
+        staged,
+        target,
+        backup: join(root, "backups", String(index)),
+        hadTarget: false,
+      })),
+    );
+
+    await recoverArtifactTransaction();
+
+    for (const target of targets) {
+      await assert.rejects(readFile(target), { code: "ENOENT" }, target);
+    }
+    await assert.rejects(readFile(TRANSACTION_PATH), { code: "ENOENT" });
+  });
+});
+
+// #1193: when recovery cannot tell whether a folder above a journal path is a symbolic link, it
+// stops before it changes anything, even for an operation it could otherwise roll back.
+// A process that runs as root reads any folder, so the unreadable-folder case cannot fail there.
+for (const { name, code, plant, skip = false } of [
+  {
+    name: "a file stands where a folder would be",
+    code: "ENOTDIR",
+    plant: async (/** @type {string} */ project) => writeFile(join(project, ".agents"), "file\n"),
+  },
+  {
+    name: "a folder cannot be read",
+    code: "EACCES",
+    plant: async (/** @type {string} */ project) => {
+      await mkdir(join(project, ".agents/skills/x"), { recursive: true });
+      await chmod(join(project, ".agents"), 0o000);
+    },
+    skip: process.getuid?.() === 0,
+  },
+]) {
+  test(`recovery stops and changes nothing when ${name}`, { skip }, async () => {
+    await inTransactionProject(async ({ project, root, staged }) => {
+      const created = join(project, ".codex/agents/created.toml");
+      await mkdir(join(project, ".codex/agents"), { recursive: true });
+      await writeFile(created, "created\n");
+      const journal = await writeJournal(root, [
+        {
+          staged,
+          target: join(project, ".agents/skills/x"),
+          backup: join(root, "backups/0"),
+          hadTarget: false,
+        },
+        { staged, target: created, backup: join(root, "backups/1"), hadTarget: false },
+      ]);
+      const before = await snapshotDirectory(project);
+      await plant(project);
+      try {
+        await assert.rejects(recoverArtifactTransaction(), { code });
+      } finally {
+        await chmod(join(project, ".agents"), 0o755);
+      }
+      await rm(join(project, ".agents"), { recursive: true, force: true });
+      assert.deepEqual(await snapshotDirectory(project), before);
+      assert.equal(await readFile(TRANSACTION_PATH, "utf8"), journal);
+    });
+  });
+}
