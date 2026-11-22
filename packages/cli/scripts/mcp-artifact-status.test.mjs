@@ -514,35 +514,24 @@ test("the pending-transaction remedy keeps the caller's config path", async () =
   });
 });
 
-test("rollbackFiles lists each file once", async () => {
-  await inProject("calavera-mcp-status-pending-duplicates-", async () => {
-    await mkdir(".calavera");
-    await pendingJournal([
-      { target: ".agents/skills/created", hadTarget: false, backup: false },
-      { target: ".agents/skills/created", hadTarget: false, backup: false },
-    ]);
-
-    const report = await callMcpTool("artifact_status", {});
-
-    assert.deepEqual(report.rollbackFiles, [".agents/skills/created"]);
-  });
-});
-
 // #1193: the status tool reads the journal through the rollback's checks, so a journal whose target
-// is the project root, or any other path a transaction never writes, lists no files.
-test("rollbackFiles is null for a journal that targets the project root", async () => {
-  await inProject("calavera-mcp-status-pending-root-", async () => {
-    await mkdir(".calavera");
-    await pendingJournal([
-      { target: ".agents/skills/created", hadTarget: false, backup: false },
-      { target: ".", hadTarget: false, backup: false },
-    ]);
-    const before = await snapshotDirectory();
+// is the project root, any other path a transaction never writes, or a path another target also
+// names, lists no files.
+for (const [name, targets] of [
+  ["targets the project root", [".agents/skills/created", "."]],
+  ["names a target twice", [".agents/skills/created", ".agents/skills/created"]],
+]) {
+  test(`rollbackFiles is null for a journal that ${name}`, async () => {
+    await inProject("calavera-mcp-status-pending-refused-", async () => {
+      await mkdir(".calavera");
+      await pendingJournal(targets.map((target) => ({ target, hadTarget: false, backup: false })));
+      const before = await snapshotDirectory();
 
-    const report = await callMcpTool("artifact_status", {});
+      const report = await callMcpTool("artifact_status", {});
 
-    assert.equal(report.rollbackFiles, null);
-    assert.match(String(report.remedy), /cannot read the journal/);
-    assert.deepEqual(await snapshotDirectory(), before);
+      assert.equal(report.rollbackFiles, null);
+      assert.match(String(report.remedy), /or the journal fails the rollback's checks/);
+      assert.deepEqual(await snapshotDirectory(), before);
+    });
   });
-});
+}

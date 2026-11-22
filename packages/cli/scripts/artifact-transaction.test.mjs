@@ -13,12 +13,13 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, win32 } from "node:path";
 import test from "node:test";
 
 import {
   TRANSACTION_PATH,
   commitArtifactTransaction,
+  isTransactionTarget,
   recoverArtifactTransaction,
 } from "../src/artifact-lifecycle.js";
 import { snapshotDirectory } from "./project-snapshot.mjs";
@@ -79,6 +80,15 @@ test("an artifact transaction refuses each invalid operation with its own messag
           { staged, target: skill },
         ],
         message: `Artifact transaction operations 0 and 2 both target ${skill}.`,
+      },
+      {
+        root,
+        operations: [
+          { staged, target: join(project, ".agents/skills/a/inner") },
+          { staged, target: join(project, ".agents/skills/b") },
+          { staged, target: skill },
+        ],
+        message: `Artifact transaction operations 0 and 2 target ${join(project, ".agents/skills/a/inner")} and ${skill}, one inside the other.`,
       },
       {
         root,
@@ -245,6 +255,9 @@ test("a commit that fails part way leaves a journal of every operation, and reco
   });
 });
 
+const REMEDY =
+  "Calavera does not roll this journal back. Restore the files it names by hand if needed, using the backups in .calavera/.transactions, then remove .calavera/artifact-transaction.json.";
+
 /**
  * Writes a pending journal with one operation per entry of `operations`, each given as absolute
  * paths, and returns the journal text.
@@ -281,6 +294,9 @@ test("recovery refuses a journal that targets the root, a parent folder, an unli
       await mkdir(join(outside, "backups"), { recursive: true });
       await writeFile(join(outside, "backups/0"), "outside backup\n");
       const linkedRoot = join(project, ".calavera/.transactions/b");
+      // A backup that is itself a link to an outside folder that holds `victim`.
+      await mkdir(join(outside, "nested/victim"), { recursive: true });
+      await symlink(join(outside, "nested"), join(root, "backups/outside"));
       await mkdir(linkedRoot);
       await symlink(join(outside, "backups"), join(linkedRoot, "backups"));
 
@@ -292,7 +308,7 @@ test("recovery refuses a journal that targets the root, a parent folder, an unli
         hadTarget: false,
       });
       const notWritten = (/** @type {string} */ path) =>
-        `Artifact transaction journal operation 0 targets ${path}, which is not a path an artifact transaction writes.`;
+        `Artifact transaction journal operation 0 targets ${path}, which is not a path an artifact transaction writes. ${REMEDY}`;
       const cases = [
         {
           root,
@@ -322,14 +338,12 @@ test("recovery refuses a journal that targets the root, a parent folder, an unli
         {
           root,
           operations: [operation(join(project, ".agents/skills/x"))],
-          message:
-            "Artifact transaction journal path .agents/skills/x lies below the symbolic link .agents.",
+          message: `Artifact transaction journal path .agents/skills/x lies below the symbolic link .agents. ${REMEDY}`,
         },
         {
           root: join(project, ".calavera/.transactions/linked/inner"),
           operations: [],
-          message:
-            "Artifact transaction journal path .calavera/.transactions/linked/inner lies below the symbolic link .calavera/.transactions/linked.",
+          message: `Artifact transaction journal path .calavera/.transactions/linked/inner lies below the symbolic link .calavera/.transactions/linked. ${REMEDY}`,
         },
         {
           root: linkedRoot,
@@ -341,8 +355,35 @@ test("recovery refuses a journal that targets the root, a parent folder, an unli
               hadTarget: true,
             },
           ],
-          message:
-            "Artifact transaction journal path .calavera/.transactions/b/backups/0 lies below the symbolic link .calavera/.transactions/b/backups.",
+          message: `Artifact transaction journal path .calavera/.transactions/b/backups/0 lies below the symbolic link .calavera/.transactions/b/backups. ${REMEDY}`,
+        },
+        {
+          root,
+          operations: [
+            operation(join(project, ".codex/agents/a.toml")),
+            operation(join(project, ".codex/agents/a.toml")),
+          ],
+          message: `Artifact transaction journal operations 0 and 1 target .codex/agents/a.toml and .codex/agents/a.toml, the same path or one inside the other. ${REMEDY}`,
+        },
+        // The backup of the second operation links outside. Rolled back first, it would move the
+        // link to .codex/agents/foo, and removing the first target would then follow the link.
+        {
+          root,
+          operations: [
+            {
+              staged,
+              target: join(project, ".codex/agents/foo/victim"),
+              backup: join(root, "backups/0"),
+              hadTarget: false,
+            },
+            {
+              staged,
+              target: join(project, ".codex/agents/foo"),
+              backup: join(root, "backups/outside"),
+              hadTarget: true,
+            },
+          ],
+          message: `Artifact transaction journal operations 0 and 1 target .codex/agents/foo/victim and .codex/agents/foo, the same path or one inside the other. ${REMEDY}`,
         },
       ];
 
@@ -448,3 +489,15 @@ for (const { name, code, plant, skip = false } of [
     });
   });
 }
+
+// #1193: on Windows, paths that differ only in letter case name the same file, so changing the
+// case of a target folder does not make it a path below that folder, and a journal written while
+// the working folder had other letter case still names the files a transaction writes.
+test("the allowed targets compare Windows paths without letter case", () => {
+  const root = "C:\\proj";
+  assert.equal(isTransactionTarget(root, "c:\\PROJ\\.calavera\\packages", win32), false);
+  assert.equal(isTransactionTarget(root, "c:\\PROJ\\.agents\\skills", win32), false);
+  assert.equal(isTransactionTarget(root, "c:\\PROJ", win32), false);
+  assert.equal(isTransactionTarget(root, "c:\\PROJ\\.gitignore", win32), true);
+  assert.equal(isTransactionTarget(root, "c:\\PROJ\\.agents\\skills\\a", win32), true);
+});

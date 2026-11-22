@@ -10,7 +10,7 @@ import {
   rmdir,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, relative, resolve, sep } from "node:path";
+import nodePath, { dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 
 import { artifactForId, artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
@@ -299,7 +299,7 @@ async function pendingTransactionReport(config) {
   const command = artifactCommand(recipe, config, ["status"]);
   let files;
   if (rollbackFiles === null) {
-    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, so it cannot list the files the rollback would restore or remove. Save any edits to the files the stopped operation was changing, then run`;
+    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, or the journal fails the rollback's checks, so it cannot list the files the rollback would restore or remove. Save any edits to the files the stopped operation was changing, then run`;
   } else if (rollbackFiles.length === 0) {
     files = "The rollback restores or removes no file, so run";
   } else {
@@ -336,15 +336,15 @@ async function pendingRollbackFiles() {
   } catch {
     return null;
   }
-  // A target the journal names twice is listed once. The journal check refuses a target that is
-  // the project root (#1193), so every target has a project path.
-  const replaced = new Set();
+  // The journal check refuses a target that is the project root or that another target equals
+  // (#1193), so every target has its own, non-empty project path.
+  const replaced = [];
   for (const operation of operations) {
     if ((await fileExists(operation.backup)) || !operation.hadTarget) {
-      replaced.add(relative(resolve("."), operation.target));
+      replaced.push(relative(resolve("."), operation.target));
     }
   }
-  return [...replaced];
+  return replaced;
 }
 
 /**
@@ -1492,21 +1492,33 @@ const TRANSACTION_TARGET_FILES = Object.freeze([
 const TRANSACTION_TARGET_FOLDERS = Object.freeze([PACKAGE_PATH, ...AI_ARTIFACT_OUTPUT_FOLDERS]);
 
 /**
- * Whether an artifact transaction may target the absolute path `target`: one of
- * `TRANSACTION_TARGET_FILES`, or a path strictly below one of `TRANSACTION_TARGET_FOLDERS`. The
- * project root, its parent folders, and the target folders themselves are never targets.
+ * Whether an artifact transaction may target the absolute path `target` in the project at
+ * `projectRoot`: one of `TRANSACTION_TARGET_FILES`, or a path strictly below one of
+ * `TRANSACTION_TARGET_FOLDERS`. The project root, its parent folders, and the target folders
+ * themselves are never targets. Paths are compared with `relative`, as `isPathInside` does, so a
+ * path that differs only in letter case on Windows counts as the same path.
  *
+ * @param {string} projectRoot
  * @param {string} target
+ * @param {Pick<typeof nodePath, "join" | "relative" | "isAbsolute" | "sep">} [pathRules] The
+ *   platform's path rules; tests pass `path.win32`.
  */
-function isTransactionTarget(target) {
+export function isTransactionTarget(projectRoot, target, pathRules = nodePath) {
+  const samePath = (/** @type {string} */ path) => pathRules.relative(path, target) === "";
   return (
-    TRANSACTION_TARGET_FILES.some((file) => resolve(file) === target) ||
+    TRANSACTION_TARGET_FILES.some((file) => samePath(pathRules.join(projectRoot, file))) ||
     TRANSACTION_TARGET_FOLDERS.some((folder) => {
-      const root = resolve(folder);
-      return root !== target && isPathInside(root, target);
+      const root = pathRules.join(projectRoot, folder);
+      return !samePath(root) && isPathInside(root, target, pathRules);
     })
   );
 }
+
+/**
+ * Ends each message that refuses a journal, because every `artifacts` command and `eject` recover
+ * the journal first and stay blocked until it is gone.
+ */
+const JOURNAL_REFUSAL_REMEDY = `Calavera does not roll this journal back. Restore the files it names by hand if needed, using the backups in ${TRANSACTION_ROOT}, then remove ${TRANSACTION_PATH}.`;
 
 /**
  * Moves each staged path to its target through a journal that
@@ -1543,7 +1555,7 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
         `Artifact transaction operation ${index} targets ${target}, which is outside the project ${projectRoot}.`,
       );
     }
-    if (!isTransactionTarget(target)) {
+    if (!isTransactionTarget(projectRoot, target)) {
       throw new Error(
         `Artifact transaction operation ${index} targets ${target}, which is not a path an artifact transaction writes.`,
       );
@@ -1553,6 +1565,14 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
       throw new Error(
         `Artifact transaction operations ${earlier} and ${index} both target ${target}.`,
       );
+    }
+    // Recovery refuses nested targets, so a commit that wrote them could never be rolled back.
+    for (const [other, otherIndex] of seenTargets) {
+      if (isPathInside(other, target) || isPathInside(target, other)) {
+        throw new Error(
+          `Artifact transaction operations ${otherIndex} and ${index} target ${other} and ${target}, one inside the other.`,
+        );
+      }
     }
     if (!(await fileExists(staged))) {
       throw new Error(
@@ -1616,9 +1636,11 @@ export async function recoverArtifactTransaction(options = {}) {
  * transaction may target (`isTransactionTarget`), so never the project root, a parent folder of
  * it, or a file outside the paths a transaction writes (#1193). No folder between the project root
  * and the transaction root, a backup, or a target may be a symbolic link, because the rollback
- * would then remove or move files outside the project. Throws on a journal that fails a check;
- * a message names an operation by its index and a target by its project path, and quotes nothing
- * else from the journal.
+ * would then remove or move files outside the project, and no target may equal or lie inside
+ * another. Throws on a journal that fails a check; a message names operations by their index and
+ * paths by their project path, and quotes nothing else from the journal. The checks run once,
+ * before the rollback moves anything, so a process that replaces a folder with a symbolic link
+ * while the rollback runs is not detected.
  */
 async function readTransactionJournal() {
   const journal = await readJson(TRANSACTION_PATH);
@@ -1655,14 +1677,25 @@ async function readTransactionJournal() {
     ) {
       throw new Error("Artifact transaction journal path escapes its workspace.");
     }
-    if (!isTransactionTarget(target)) {
+    if (!isTransactionTarget(projectRoot, target)) {
       const path = relative(projectRoot, target);
       throw new Error(
-        `Artifact transaction journal operation ${index} targets ${path === "" ? "the project root" : path}, which is not a path an artifact transaction writes.`,
+        `Artifact transaction journal operation ${index} targets ${path === "" ? "the project root" : path}, which is not a path an artifact transaction writes. ${JOURNAL_REFUSAL_REMEDY}`,
       );
     }
     return { staged, target, backup, hadTarget: operation.hadTarget };
   });
+  // A target equal to or inside another one is refused: the rollback could otherwise move a
+  // backup, which may be a symbolic link, into a folder that a later step removes files through.
+  for (const [index, { target }] of operations.entries()) {
+    for (const [earlier, other] of operations.slice(0, index).entries()) {
+      if (isPathInside(other.target, target) || isPathInside(target, other.target)) {
+        throw new Error(
+          `Artifact transaction journal operations ${earlier} and ${index} target ${relative(projectRoot, other.target)} and ${relative(projectRoot, target)}, the same path or one inside the other. ${JOURNAL_REFUSAL_REMEDY}`,
+        );
+      }
+    }
+  }
   for (const path of [
     transactionRoot,
     ...operations.flatMap(({ target, backup }) => [target, backup]),
@@ -1670,7 +1703,7 @@ async function readTransactionJournal() {
     const link = await linkedFolder(projectRoot, path);
     if (link !== null) {
       throw new Error(
-        `Artifact transaction journal path ${relative(projectRoot, path)} lies below the symbolic link ${relative(projectRoot, link)}.`,
+        `Artifact transaction journal path ${relative(projectRoot, path)} lies below the symbolic link ${relative(projectRoot, link)}. ${JOURNAL_REFUSAL_REMEDY}`,
       );
     }
   }
