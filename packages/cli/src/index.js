@@ -207,6 +207,8 @@ import { textHash } from "./utils/hash.js";
 import { logger } from "./utils/logger.js";
 import {
   createCodexMcpTomlBlock,
+  createCursorMcpEntry,
+  createCursorMcpJsonConfig,
   createMcpServersJsonConfig,
   createOpenCodeMcpJsonConfig,
   projectMcpConfigPath,
@@ -2165,21 +2167,14 @@ function createMcpManualCommandReference() {
 }
 
 /**
- * @param {{ command: string, args: string[] }} launchCommand
- * @returns {string}
- */
-function createMcpServerConfigSnippet(launchCommand) {
-  return JSON.stringify(createMcpServersJsonConfig(launchCommand), null, 2);
-}
-
-/**
  * @param {PackageManager} packageManager
  * @returns {string}
  */
 function createAgentBootstrapMcpInstructions(packageManager) {
   const commands = projectLocalCommandCatalog[packageManager];
   const launchCommand = createMcpLaunchCommand(packageManager);
-  const mcpConfig = createMcpServerConfigSnippet(launchCommand);
+  const mcpConfig = JSON.stringify(createMcpServersJsonConfig(launchCommand), null, 2);
+  const cursorConfig = JSON.stringify(createCursorMcpJsonConfig(launchCommand), null, 2);
   const codexConfig = createCodexMcpTomlBlock(launchCommand).trimEnd();
   const opencodeConfig = JSON.stringify(createOpenCodeMcpJsonConfig(launchCommand), null, 2);
   const shellCommand = formatShellCommand(launchCommand);
@@ -2210,7 +2205,7 @@ ${mcpConfig}
 ### Cursor: \`.cursor/mcp.json\`
 
 \`\`\`json
-${mcpConfig}
+${cursorConfig}
 \`\`\`
 
 ### Codex: \`.codex/config.toml\`
@@ -4398,7 +4393,7 @@ async function writeAgentBootstrapMcpConfig(
       case "cursor":
         action = await writeMcpServersJsonConfig(
           path,
-          launchCommand,
+          harness === "cursor" ? createCursorMcpEntry(launchCommand) : launchCommand,
           dryRun,
           changes,
           loadFormatter,

@@ -85,6 +85,7 @@ import { findBlock, findMarkedBlock } from "./utils/marked-block.js";
 import {
   OPENCODE_CONFIG_SCHEMA,
   createCodexMcpTomlBlock,
+  createCursorMcpEntry,
   createMcpServersJsonConfig,
   createOpenCodeMcpJsonConfig,
   projectMcpConfigPath,
@@ -1350,6 +1351,9 @@ async function planMcpEntries(guidance, loadFormatter) {
             createMcpServersJsonConfig(launch)
           ).mcpServers.calavera,
       );
+      // `.cursor/mcp.json` gets `type: "stdio"`, and 6.2.1 and earlier releases wrote the launch
+      // command alone there, so both are Calavera's (#1089).
+      if (harness === "cursor") expected.unshift(...launches.map(createCursorMcpEntry));
       parts.push(await planJsonMcpEntry(path, "mcpServers", expected, loadOnce));
     }
   }

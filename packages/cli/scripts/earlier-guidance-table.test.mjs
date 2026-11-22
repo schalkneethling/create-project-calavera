@@ -77,7 +77,10 @@ test("Given a fixture, when it is read back as a project file, then the CLI name
 });
 
 test("Given a pinned setup note, then it names the release it pins and the kinds do not match each other", async () => {
-  const { id, releases } = epochs.mcp[epochs.mcp.length - 1];
+  // The latest template that more than two releases wrote, so the test can pin two of them.
+  const { id, releases } = /** @type {(typeof epochs.mcp)[number]} */ (
+    epochs.mcp.findLast(({ releases: written }) => written.length > 2)
+  );
   const text = await mcpText(id, "pnpm", releases[1]);
   assert.equal(findEarlierGuidance("mcp", text)?.description, releases[1]);
   assert.equal(findEarlierGuidance("guidance", text), undefined);
