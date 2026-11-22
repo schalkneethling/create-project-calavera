@@ -102,10 +102,13 @@ const INTERRUPT_SIGNALS = /** @type {const} */ (["SIGINT", "SIGTERM"]);
 
 /**
  * Removes every live temporary folder when Ctrl+C (SIGINT) or SIGTERM interrupts the process, and
- * then raises the signal again without this handler, so the process still ends as the signal
- * intends: by Node's default action, or by another handler when the command installed one. The
- * removal is synchronous, because the process may end as soon as this handler returns. A folder
- * that cannot be removed stays, as it would without the handler.
+ * detaches this handler. When no other listener handles the signal, it then raises the signal
+ * again, so Node's default action ends the process by that signal, as it would have without this
+ * handler. When another listener exists, Node has already called it for this delivery, so the
+ * signal is not raised again and that listener decides what happens. The removal is synchronous,
+ * because the default action ends the process right after the signal is raised again, before any
+ * asynchronous removal could finish. A folder that cannot be removed stays, as it would without
+ * the handler.
  *
  * @param {NodeJS.Signals} signal
  */
@@ -119,7 +122,7 @@ function removeLiveFoldersOnInterrupt(signal) {
   }
   liveTemporaryFolders.clear();
   detachInterruptHandler();
-  process.kill(process.pid, signal);
+  if (process.listenerCount(signal) === 0) process.kill(process.pid, signal);
 }
 
 function detachInterruptHandler() {

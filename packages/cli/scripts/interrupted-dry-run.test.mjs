@@ -81,86 +81,99 @@ async function startInterruptibleDryRun(temporaryRoot, project) {
 }
 
 for (const signal of /** @type {const} */ (["SIGINT", "SIGTERM"])) {
-  test(`a mixed locked and unlocked dry run that ${signal} interrupts removes only the temporary folders it created`, async () => {
-    // One folder the test owns holds the child's system temporary folder and its project, so
-    // disposing it removes everything the run left, whatever the outcome.
-    await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
-    const temporaryRoot = { path: join(owned.path, "tmp") };
-    const project = { path: join(owned.path, "project") };
-    await mkdir(temporaryRoot.path);
-    await mkdir(project.path);
-    // Another run's folders, with the same prefixes as the ones the dry run creates.
-    for (const name of ANOTHER_RUN) {
-      await mkdir(join(temporaryRoot.path, name));
-      await writeFile(join(temporaryRoot.path, name, "keep.txt"), "another run\n");
-    }
+  // On Windows, a child process cannot handle a signal another process sends it.
+  test(
+    `a mixed locked and unlocked dry run that ${signal} interrupts removes only the temporary folders it created`,
+    { skip: process.platform === "win32" },
+    async () => {
+      // One folder the test owns holds the child's system temporary folder and its project, so
+      // disposing it removes everything the run left, whatever the outcome.
+      await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
+      const temporaryRoot = { path: join(owned.path, "tmp") };
+      const project = { path: join(owned.path, "project") };
+      await mkdir(temporaryRoot.path);
+      await mkdir(project.path);
+      // Another run's folders, with the same prefixes as the ones the dry run creates.
+      for (const name of ANOTHER_RUN) {
+        await mkdir(join(temporaryRoot.path, name));
+        await writeFile(join(temporaryRoot.path, name, "keep.txt"), "another run\n");
+      }
 
-    const { child, exited, created } = await startInterruptibleDryRun(
-      temporaryRoot.path,
-      project.path,
-    );
-    assert.deepEqual(
-      created.map((name) => name.replace(/[^-]+$/, "")).sort(),
-      ["calavera-artifact-stage-", "calavera-locked-artifact-"],
-      "the dry run rebuilds the locked package and stages the unlocked one",
-    );
-
-    let code;
-    let exitSignal;
-    try {
-      child.kill(signal);
-      [code, exitSignal] = await bounded(exited, `The child did not end within ${WAIT_MS} ms`);
-    } finally {
-      if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
-    }
-
-    assert.equal(code, null);
-    assert.equal(exitSignal, signal, "the process still ends by the signal it received");
-    for (const name of created) {
-      await assert.rejects(stat(join(temporaryRoot.path, name)), { code: "ENOENT" }, name);
-    }
-    for (const name of ANOTHER_RUN) {
-      assert.equal(
-        (await stat(join(temporaryRoot.path, name, "keep.txt"))).isFile(),
-        true,
-        `${name} survives`,
+      const { child, exited, created } = await startInterruptibleDryRun(
+        temporaryRoot.path,
+        project.path,
       );
-    }
-  });
+      let code;
+      let exitSignal;
+      try {
+        assert.deepEqual(
+          created.map((name) => name.replace(/[^-]+$/, "")).sort(),
+          ["calavera-artifact-stage-", "calavera-locked-artifact-"],
+          "the dry run rebuilds the locked package and stages the unlocked one",
+        );
+        child.kill(signal);
+        [code, exitSignal] = await bounded(exited, `The child did not end within ${WAIT_MS} ms`);
+      } finally {
+        if (child.exitCode === null && child.signalCode === null) child.kill("SIGKILL");
+      }
+
+      assert.equal(code, null);
+      assert.equal(exitSignal, signal, "the process still ends by the signal it received");
+      for (const name of created) {
+        await assert.rejects(stat(join(temporaryRoot.path, name)), { code: "ENOENT" }, name);
+      }
+      for (const name of ANOTHER_RUN) {
+        assert.equal(
+          (await stat(join(temporaryRoot.path, name, "keep.txt"))).isFile(),
+          true,
+          `${name} survives`,
+        );
+      }
+    },
+  );
 }
 
-test("the interrupt handlers stay attached only while a temporary folder exists", async (t) => {
-  // The folders go into a folder the test owns, so disposing it removes them whatever the outcome.
-  await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
-  const systemTemporaryFolder = process.env.TMPDIR;
-  process.env.TMPDIR = owned.path;
-  t.after(() => {
-    if (systemTemporaryFolder === undefined) delete process.env.TMPDIR;
-    else process.env.TMPDIR = systemTemporaryFolder;
-  });
-  const before = {
-    SIGINT: process.listenerCount("SIGINT"),
-    SIGTERM: process.listenerCount("SIGTERM"),
-  };
+// On Windows, os.tmpdir() reads TEMP and TMP, not TMPDIR.
+test(
+  "the interrupt handlers stay attached only while a temporary folder exists",
+  { skip: process.platform === "win32" },
+  async (t) => {
+    // The folders go into a folder the test owns, so disposing it removes them whatever the outcome.
+    await using owned = await mkdtempDisposable(join(tmpdir(), "calavera-1081-"));
+    const systemTemporaryFolder = process.env.TMPDIR;
+    process.env.TMPDIR = owned.path;
+    t.after(() => {
+      if (systemTemporaryFolder === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = systemTemporaryFolder;
+    });
+    const before = {
+      SIGINT: process.listenerCount("SIGINT"),
+      SIGTERM: process.listenerCount("SIGTERM"),
+    };
 
-  const first = await createTemporaryFolder("calavera-locked-artifact-");
-  assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1, "the first folder attaches it");
-  assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
-  const second = await createTemporaryFolder("calavera-locked-artifact-");
-  assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1);
-  assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
+    const first = await createTemporaryFolder("calavera-locked-artifact-");
+    assert.equal(
+      process.listenerCount("SIGINT"),
+      before.SIGINT + 1,
+      "the first folder attaches it",
+    );
+    assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
+    const second = await createTemporaryFolder("calavera-locked-artifact-");
+    assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1);
+    assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM + 1);
 
-  await removeTemporaryFolder(first);
-  assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1, "a folder still exists");
+    await removeTemporaryFolder(first);
+    assert.equal(process.listenerCount("SIGINT"), before.SIGINT + 1, "a folder still exists");
 
-  await removeTemporaryFolder(second);
-  assert.equal(process.listenerCount("SIGINT"), before.SIGINT);
-  assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM);
-  assert.equal(
-    first.startsWith(owned.path),
-    true,
-    "the folder is in the system's temporary folder",
-  );
-  await assert.rejects(stat(first), { code: "ENOENT" });
-  await assert.rejects(stat(second), { code: "ENOENT" });
-});
+    await removeTemporaryFolder(second);
+    assert.equal(process.listenerCount("SIGINT"), before.SIGINT);
+    assert.equal(process.listenerCount("SIGTERM"), before.SIGTERM);
+    assert.equal(
+      first.startsWith(owned.path),
+      true,
+      "the folder is in the system's temporary folder",
+    );
+    await assert.rejects(stat(first), { code: "ENOENT" });
+    await assert.rejects(stat(second), { code: "ENOENT" });
+  },
+);
