@@ -34,8 +34,9 @@ export function jsonSyntaxProblem(text) {
     });
   } catch {
     // jsonc-parser recurses once per nesting level, so deep nesting overflows the stack with a
-    // RangeError, which JSON.parse does not. The position is unknown then, but the caller still
-    // names the file, so no failure here may escape.
+    // RangeError, which JSON.parse does not. The catch is deliberately broad: any failure here
+    // would otherwise escape parseJSON as a raw error that names no file, so it becomes an
+    // unknown position, and the caller still names the file.
     return UNKNOWN_POSITION;
   }
   const [problem] = errors;

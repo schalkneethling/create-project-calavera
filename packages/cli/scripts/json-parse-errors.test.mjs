@@ -230,6 +230,8 @@ for (const [text, problem] of [
 
 // Nesting deep enough to overflow jsonc-parser's recursive parser, after a secret. JSON.parse reads
 // it without recursion, so it rejects the text with a SyntaxError, and the position is unknown.
+// If jsonc-parser stops recursing, or runs with a larger stack, it reports a real position and
+// these tests fail, which is the signal to pick a deeper input or drop the fallback.
 const DEEP = `{"profile":"${SECRET}","x":${"[".repeat(20_000)}`;
 const UNKNOWN = "cannot be parsed as JSON: a syntax error at an unknown position";
 
