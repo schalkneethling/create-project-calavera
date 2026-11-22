@@ -180,12 +180,26 @@ export function assertFirstSelection(firstIndexById, id, index) {
  * `{ "type": "skill", "src": "skills/protected-branch-guard" }`, that selects an artifact that
  * declares wiring or inputs, because a legacy entry cannot record the inputs and Calavera does not
  * guess them. `artifacts migrate` rewrites each legacy entry as an ID entry. Apply, update, their
- * dry runs, and the MCP apply tools call this before they plan or write anything. Clean and doctor
- * still read a legacy entry.
+ * dry runs, and the MCP apply tools call this before they plan or write anything. Clean still
+ * reads a legacy entry; doctor reports the refusal with `legacyEntryWiringRefusal` (#1140).
  *
  * @param {unknown} aiConfig
  */
 export function assertNoLegacyEntryNeedsWiring(aiConfig) {
+  const refusal = legacyEntryWiringRefusal(aiConfig, "Calavera stopped before writing anything");
+  if (refusal !== undefined) throw new Error(refusal);
+}
+
+/**
+ * The message apply's legacy-entry refusal raises (#1125), or undefined when apply would not
+ * refuse. doctor reports the same entries and remedy (#1140), so the rule and its remedy live in
+ * one place. Only the outcome differs: apply stopped, while doctor says that apply stops.
+ *
+ * @param {unknown} aiConfig
+ * @param {string} outcome What the refusal means for this command, such as "apply stops before writing anything".
+ * @returns {string | undefined}
+ */
+export function legacyEntryWiringRefusal(aiConfig, outcome) {
   const refused = normalizeAiItems(aiConfig).flatMap((item, index) => {
     if (item.id !== undefined) return [];
     const artifact = /** @type {(typeof aiArtifactCatalog)[number]} */ (
@@ -201,14 +215,12 @@ export function assertNoLegacyEntryNeedsWiring(aiConfig) {
       `- ai[${index}] ${entry} selects ${artifact.id} by its legacy type and src, and ${artifact.id} needs ${needs}, which a legacy entry cannot record.`,
     ];
   });
-  if (refused.length === 0) return;
-  throw new Error(
-    [
-      "Calavera stopped before writing anything, because these legacy AI entries select artifacts that need wiring or inputs:",
-      ...refused,
-      "Run create-project-calavera artifacts migrate, which rewrites each legacy entry as an ID entry, then apply the recipe again. Apply in a terminal asks for each input value the recipe does not record; any other run names where the recipe must record it.",
-    ].join("\n"),
-  );
+  if (refused.length === 0) return undefined;
+  return [
+    `${outcome}, because these legacy AI entries select artifacts that need wiring or inputs:`,
+    ...refused,
+    "Run create-project-calavera artifacts migrate, which rewrites each legacy entry as an ID entry, then apply the recipe again. Apply in a terminal asks for each input value the recipe does not record; any other run names where the recipe must record it.",
+  ].join("\n");
 }
 
 /**
