@@ -3248,13 +3248,20 @@ export async function applyRecipe(options) {
  * @returns {Promise<boolean>}
  */
 async function isInWorkingDirectory(path) {
-  let directory = dirname(path);
-  try {
-    directory = await realpath(directory);
-  } catch {
-    // A directory that does not exist is compared as given; reading the recipe reports it.
-  }
-  return isPathInside(await realpath(process.cwd()), join(directory, basename(path)));
+  return isPathInside(await realpath(process.cwd()), await withDirectoryLinksResolved(path));
+}
+
+/**
+ * `path` with the links in its directory resolved and its last name kept, so a link to the file
+ * itself is not followed. A directory that does not exist stays as given; reading or writing the
+ * file reports it.
+ *
+ * @param {string} path Absolute path.
+ * @returns {Promise<string>}
+ */
+async function withDirectoryLinksResolved(path) {
+  const directory = await realpath(dirname(path)).catch(() => dirname(path));
+  return join(directory, basename(path));
 }
 
 /**
@@ -3357,8 +3364,11 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
   if (choice === "apply-at-ancestor") {
     const ancestorDirectory = dirname(decision.ancestor.manifestPath);
     // A recipe path given relative to this directory moves with the apply, so nothing is written
-    // here.
-    const givenConfig = resolve(directory, applyOptions.config ?? CONFIG_FILE);
+    // here. Directory links are resolved first, so a path that reaches this directory through a
+    // link moves, and is checked, like any other path inside it.
+    const givenConfig = await withDirectoryLinksResolved(
+      resolve(directory, applyOptions.config ?? CONFIG_FILE),
+    );
     const config = pathAtAncestor(chosen, givenConfig);
 
     // Another project's recipe or state is a hard stop, not something to replace. The ancestor's
@@ -3367,8 +3377,8 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
     // no managed file there can be reowned, so reownManagedFiles needs no translation. The recipe
     // paths come first, so a directory with both a recipe and state names its recipe (#1038). A
     // path listed twice is checked twice, which is harmless because the first hit stops. A recipe
-    // path outside this directory does not move, so it names the recipe being applied, not one
-    // the ancestor already has, and is not checked (#1142).
+    // path outside this directory does not move, so a file there is not one the ancestor already
+    // has, and is not checked (#1142).
     for (const [existing, kind] of /** @type {const} */ ([
       ...(isPathInside(directory, givenConfig) ? /** @type {const} */ ([[config, "recipe"]]) : []),
       [join(ancestorDirectory, CONFIG_FILE), "recipe"],

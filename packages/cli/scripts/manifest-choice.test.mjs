@@ -8,7 +8,7 @@
 // PATH record what apply ran.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -909,9 +909,9 @@ test("apply-at-ancestor with a custom recipe path still stops when the ancestor 
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
 });
 
-// #1142: a recipe path outside the inspected directory does not move with apply-at-ancestor, so it
-// names the recipe being applied, not one the ancestor already has. Only the command-line apply
-// copies an outside recipe into the project first; applyRecipeObject takes the path as given.
+// #1142: a recipe path outside the inspected directory does not move with apply-at-ancestor, so a
+// file there is not one the ancestor already has. The command-line apply and update copy an outside
+// recipe into the project first; applyRecipeObject takes the path as given.
 test("apply-at-ancestor does not stop on a recipe path outside the inspected directory", async () => {
   await using fixture = await directoryUnderUnmanagedProject();
   await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
@@ -961,4 +961,28 @@ test("apply-at-ancestor with a recipe path outside the inspected directory names
       return true;
     },
   );
+});
+
+test("apply-at-ancestor moves a recipe path that reaches the inspected directory through a link", async () => {
+  // Review of #1142: the path names the inspected directory's own recipe through a link, so it is
+  // inside, moves to the ancestor, and the local recipe is left as it is.
+  await using fixture = await directoryUnderUnmanagedProject();
+  const localRecipe = join(fixture.project, "calavera.config.json");
+  const localBytes = `${JSON.stringify(recipe)}\n`;
+  await writeFile(localRecipe, localBytes);
+  const link = join(fixture.root, "linked-sub");
+  await symlink(fixture.project, link, "junction");
+
+  const applied = await inDirectory(fixture.project, false, () =>
+    applyRecipeObject(structuredClone(recipe), {
+      assumeYes: true,
+      noInstall: true,
+      writeConfig: true,
+      config: join(link, "calavera.config.json"),
+      manifestChoice: "apply-at-ancestor",
+    }),
+  );
+  assert.equal(applied.manifestDecision?.choice, "apply-at-ancestor");
+  assert.equal(await readFile(localRecipe, "utf8"), localBytes);
+  assert.ok((await readFile(join(fixture.root, "calavera.config.json"), "utf8")).length > 0);
 });
