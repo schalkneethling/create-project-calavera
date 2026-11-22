@@ -4026,6 +4026,11 @@ for (const { current, error } of [
     error:
       /Cannot update \.coderabbit\.yaml: an alias has no anchor before it at line 2, column 12\.$/,
   },
+  // The writer rejects an anchor with a control character, and its message quotes the anchor.
+  {
+    current: "x: &FAKE_SECRET\u0007anchor 1\nreviews:\n  profile: chill\n",
+    error: /Cannot update \.coderabbit\.yaml: the YAML writer failed \(Error\)\.$/,
+  },
   {
     current: "reviews: []\n",
     error: /Cannot update \.coderabbit\.yaml: reviews must be a mapping\.$/,
@@ -4185,8 +4190,15 @@ test(
         (/** @type {unknown} */ reason) => reason,
       );
       assert.ok(error instanceof Error);
-      assert.equal(error.message, "Cannot update .coderabbit.yaml: cannot write it (EACCES).");
-      assert.equal(/** @type {NodeJS.ErrnoException} */ (error.cause).code, "EACCES");
+      // Windows reports EPERM where macOS and Linux report EACCES.
+      assert.match(
+        error.message,
+        /^Cannot update \.coderabbit\.yaml: cannot write it \((EACCES|EPERM)\)\.$/,
+      );
+      assert.match(
+        String(/** @type {NodeJS.ErrnoException} */ (error.cause).code),
+        /^(EACCES|EPERM)$/,
+      );
       assert.equal(await readFile(".coderabbit.yaml", "utf8"), "language: en-US\n");
     } finally {
       process.chdir(originalDirectory);

@@ -97,9 +97,7 @@ async function planCodeRabbitSkillConfig() {
     // parser's code reach the output (#1083).
     const positions = document.errors.map(({ code, linePos }) => {
       const start = linePos?.[0];
-      return start
-        ? `line ${start.line}, column ${start.col} (${code})`
-        : `${code} at no known position`;
+      return start ? `line ${start.line}, column ${start.col} (${code})` : `${code} (no position)`;
     });
     throw new Error(
       `Cannot update ${CODE_RABBIT_CONFIG_PATH}: it is not valid YAML at ${positions.join("; ")}.`,
@@ -186,7 +184,15 @@ async function planCodeRabbitSkillConfig() {
   // `toString` writes `\n` line endings and drops a byte order mark, so a file that uses Windows
   // line endings gets them back on every line, and a file that starts with a byte order mark keeps
   // it (#1083).
-  const written = document.toString({ lineWidth: 0 });
+  let written;
+  try {
+    written = document.toString({ lineWidth: 0 });
+  } catch (error) {
+    // The writer's messages quote anchor and alias names from the file, so only the error's
+    // type reaches the output, and the error is not kept as the cause (#1083).
+    const type = error instanceof Error ? error.name : typeof error;
+    throw new Error(`Cannot update ${CODE_RABBIT_CONFIG_PATH}: the YAML writer failed (${type}).`);
+  }
   const lineEndings = current.includes("\r\n") ? written.replaceAll("\n", "\r\n") : written;
   const contents = current.startsWith("\uFEFF") ? `\uFEFF${lineEndings}` : lineEndings;
   return { contents, type: "update" };
