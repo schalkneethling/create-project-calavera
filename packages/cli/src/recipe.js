@@ -187,10 +187,10 @@ const profileSpecificIntegrations = {
 };
 
 /**
- * Profile ids removed by ADR-0011, kept only so that validation can name the
+ * Profile ids removed by ADR-0011, kept only so that validation and `doctor` can name the
  * replacement. None of them is accepted anywhere.
  */
-const removedProfileReplacements = {
+export const removedProfileReplacements = {
   modern: "default",
   classic: "default",
 };

@@ -334,8 +334,11 @@ values: default, minimal. The modern profile was removed; use default
 instead." (ADR-0011, Decision; `packages/cli/src/recipe.js`,
 `assertKnownProfile`.)
 
+`doctor` warns about a recipe that still names either one, with the same
+replacement, because `apply` refuses that recipe (#1082). The warning is
+advisory, so it does not change `doctor`'s exit status.
+
 ## Not yet
 
 - [#433](https://github.com/schalkneethling/create-project-calavera/issues/433): regenerate the `vp` detection fixtures against a newer vite-plus release.
-- [#431](https://github.com/schalkneethling/create-project-calavera/issues/431): `doctor` warns when a recipe still carries a JavaScript or TypeScript toolchain integration in a `vp`-managed project.
 - [#430](https://github.com/schalkneethling/create-project-calavera/issues/430): offer create-here, apply-at-ancestor, or abandon when the inspected directory has no manifest of its own.
