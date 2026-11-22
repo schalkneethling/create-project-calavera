@@ -90,7 +90,7 @@ import {
   rootOnlyIntegrationRefusal,
 } from "./repository-root.js";
 import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
-import { assertNoLegacyEntryNeedsWiring } from "./ai/recipe-items.js";
+import { assertNoLegacyEntryNeedsWiring, legacyEntryWiringRefusal } from "./ai/recipe-items.js";
 import { defaultBranchWarnings, resolveIntegrationInputs } from "./integration-inputs.js";
 import {
   artifactWiringFindings,
@@ -6175,6 +6175,16 @@ async function doctor(options) {
       ...removedToolchainWarnings(recipe, detection, options.config),
       ...unknownIntegrationWarnings(recipe, detection, options.config),
     );
+    // #1140: right after validating the recipe, apply refuses a legacy entry that selects an
+    // artifact with wiring or inputs (#1125), so doctor reports that refusal, with apply's entries
+    // and its `artifacts migrate` remedy, before the findings whose remedy is to run apply.
+    const legacyRefusal = legacyEntryWiringRefusal(
+      recipe.ai,
+      "apply stops before writing anything",
+    );
+    if (legacyRefusal !== undefined) {
+      issues.push({ level: "error", message: legacyRefusal });
+    }
     const integrations = resolveRecipeIntegrations(recipe);
     const aiArtifacts = resolveAiArtifacts(recipe);
     // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the

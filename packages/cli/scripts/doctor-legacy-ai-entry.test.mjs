@@ -121,3 +121,87 @@ test("Given a legacy entry that names a source no catalog provides, doctor repor
     assert.match(`${stdout}${stderr}`, /skills\/not-in-catalog/);
   });
 });
+
+// Issue #1140: since #1125, apply refuses a legacy entry that selects an artifact with wiring or
+// inputs and points to `artifacts migrate`. doctor reports that refusal as an error, with the
+// entries and the remedy apply names, as it reports apply's other refusals (#997, #1031).
+const GUARD_LEGACY_REFUSAL = [
+  "apply stops before writing anything, because these legacy AI entries select artifacts that need wiring or inputs:",
+  '- ai[1] {"type":"skill","src":"skills/protected-branch-guard"} selects skill-protected-branch-guard by its legacy type and src, and skill-protected-branch-guard needs wiring and inputs, which a legacy entry cannot record.',
+  "Run create-project-calavera artifacts migrate, which rewrites each legacy entry as an ID entry, then apply the recipe again. Apply in a terminal asks for each input value the recipe does not record; any other run names where the recipe must record it.",
+].join("\n");
+
+test("Given a legacy entry selects the protected branch guard, doctor reports apply's refusal as an error and exits 1", async () => {
+  await inProject(async () => {
+    await writeRecipe(
+      recipeWith([
+        { type: "skill", src: "skills/project-goal" },
+        { type: "skill", src: "skills/protected-branch-guard" },
+      ]),
+    );
+
+    const { status, stdout, stderr } = runDoctor();
+    assert.equal(status, 1, `doctor exited ${status}\n${stdout}\n${stderr}`);
+    const { ok, issues } = JSON.parse(stdout);
+    assert.equal(ok, false);
+    assert.deepEqual(
+      issues.filter((/** @type {{ level: string }} */ { level }) => level === "error"),
+      [{ level: "error", message: GUARD_LEGACY_REFUSAL }],
+    );
+    // The refusal comes before the findings whose remedy is to run apply, which apply refuses
+    // until artifacts migrate rewrites the entry.
+    const messages = issues.map((/** @type {{ message: string }} */ { message }) => message);
+    const missingGuard = messages.findIndex((message) =>
+      message.startsWith("Missing managed AI skill: .agents/skills/protected-branch-guard."),
+    );
+    assert.ok(missingGuard > 0, messages.join("\n"));
+    assert.ok(messages.indexOf(GUARD_LEGACY_REFUSAL) < missingGuard, messages.join("\n"));
+  });
+});
+
+test("Given a legacy entry selects the guard, doctor names the same entries and remedy as apply's refusal", async () => {
+  await inProject(async () => {
+    await writeRecipe(
+      recipeWith([
+        { type: "skill", src: "skills/project-goal" },
+        { type: "skill", src: "skills/protected-branch-guard" },
+      ]),
+    );
+
+    const apply = spawnSync(process.execPath, [cli, "apply", "--dry-run", "--json"], {
+      encoding: "utf8",
+      env: { ...process.env, NO_COLOR: "1" },
+    });
+    assert.notEqual(apply.status, 0, apply.stdout);
+    const [, applyDetails] =
+      /because these legacy AI entries[^\n]*\n([\s\S]*?apply the recipe again\.)/.exec(
+        apply.stderr,
+      ) ?? [undefined, apply.stderr];
+    const [doctorError] = JSON.parse(runDoctor().stdout).issues.filter(
+      (/** @type {{ level: string }} */ { level }) => level === "error",
+    );
+    assert.ok(
+      doctorError.message.includes(applyDetails),
+      `${doctorError.message}\n---\n${apply.stderr}`,
+    );
+  });
+});
+
+test("Given ID entries and a legacy entry for an artifact with no wiring or inputs, doctor reports no refusal", async () => {
+  await inProject(async () => {
+    await writeRecipe(
+      recipeWith([
+        { type: "skill", src: "skills/project-goal" },
+        { id: "skill-protected-branch-guard", inputs: { protectedBranch: "main" } },
+      ]),
+    );
+
+    const { stdout } = runDoctor();
+    assert.deepEqual(
+      JSON.parse(stdout).issues.filter(
+        (/** @type {{ level: string }} */ { level }) => level === "error",
+      ),
+      [],
+    );
+  });
+});
