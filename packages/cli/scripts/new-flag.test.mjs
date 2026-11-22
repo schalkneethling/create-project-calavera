@@ -1988,9 +1988,10 @@ test("--new --config refuses malformed JSON and an invalid recipe before spawnin
   await writeFile(malformed, "{ not json");
   await writeFile(invalid, json({ version: 1, profile: "no-such-profile" }));
 
-  for (const [recipePath, cause] of [
-    [malformed, /JSON/],
-    [invalid, /profile/i],
+  // #1157: malformed JSON and an invalid recipe stay distinguishable.
+  for (const [recipePath, failure, cause] of [
+    [malformed, /cannot be parsed as JSON/, /at line 1, column \d+/],
+    [invalid, /not a valid recipe/, /profile/i],
   ]) {
     const result = await runCli(workspace, ["--yes", "--config", recipePath, "--new", "vite"], {
       STUB_MODE: "scaffold",
@@ -1998,7 +1999,7 @@ test("--new --config refuses malformed JSON and an invalid recipe before spawnin
 
     assert.equal(result.code, 1);
     assert.match(result.stderr, /--new refused/);
-    assert.match(result.stderr, /not a valid recipe/);
+    assert.match(result.stderr, failure);
     assert.ok(result.stderr.includes(recipePath), result.stderr);
     assert.match(result.stderr, cause);
   }

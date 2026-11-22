@@ -2,7 +2,7 @@
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
-import { fileExists } from "./fs.js";
+import { fileExists, parseJSON } from "./fs.js";
 import { formatGeneratedText } from "./generated-text.js";
 import { isPlainObject } from "./guards.js";
 
@@ -52,7 +52,7 @@ async function readProjectJsonConfigIfPresent(path) {
 
   const currentContents = await readFile(path, "utf8");
   return {
-    currentConfig: assertJsonObjectConfig(JSON.parse(currentContents), path),
+    currentConfig: assertJsonObjectConfig(parseJSON(currentContents, path), path),
     currentContents,
   };
 }

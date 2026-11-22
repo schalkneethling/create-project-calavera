@@ -76,6 +76,7 @@ import {
 import { GITIGNORE_PATH, withoutGitignoreBlock } from "./ignore-lines.js";
 import { CONFIG_FILE } from "./project-local-commands.js";
 import { assertWorkspacePath } from "./utils/fs.js";
+import { positionOf } from "./utils/parse-position.js";
 import { isCodeRabbitTextCalaveraWrote } from "./utils/earlier-coderabbit.js";
 import { findEarlierGuidance, normalizePinnedVersion } from "./utils/earlier-guidance.js";
 import { isPlainObject } from "./utils/guards.js";
@@ -1304,17 +1305,6 @@ function tomlNeighborHidden(lines) {
     }
     return header;
   };
-}
-
-/**
- * Where `offset` falls in `text`, as "line L, column C", both counted from 1.
- *
- * @param {string} text
- * @param {number} offset
- */
-function positionOf(text, offset) {
-  const lines = text.slice(0, offset).split("\n");
-  return `line ${lines.length}, column ${(lines.at(-1)?.length ?? 0) + 1}`;
 }
 
 /**

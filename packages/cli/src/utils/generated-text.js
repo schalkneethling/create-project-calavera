@@ -1,5 +1,5 @@
 // @ts-check
-import { writeJSON } from "./json-rewrite.js";
+import { CHANGED_CONTENT, PRINTS_NOTHING, writeJSON } from "./json-rewrite.js";
 
 // The JSON and Markdown files Calavera generates pass through the project's formatter before the
 // dry run, so a Vite+ project's `vp check` accepts them as written (#669). Nothing formats them
@@ -62,10 +62,16 @@ export async function formatGeneratedText(path, text, loadFormatter) {
     // that line back followed by "\r\n", not "\n".
     const firstLine = text.split("\n", 1)[0] ?? "";
     const formattedFirstLine = formatted.split(/\r?\n/, 1)[0];
-    if (formattedFirstLine !== firstLine || formattedFirstLine.length === formatted.length) {
-      const start = formatted.trimStart().split(/\r?\n/, 1)[0]?.slice(0, 120) ?? "";
+    // #1157: neither error quotes a line, because either one can hold the file's text or
+    // whatever vite.config.ts printed.
+    if (formattedFirstLine !== firstLine) {
       throw new Error(
-        `${formatter.description} returned text for ${path} that does not start with the line Calavera sent, "${firstLine}". It begins: "${start}". Make sure vite.config.ts prints nothing when vp fmt loads it, then run Calavera again.`,
+        `${formatter.description} returned text for ${path} that does not start with the first line Calavera sent, so something came before the formatted text, such as output that vite.config.ts printed. ${PRINTS_NOTHING}`,
+      );
+    }
+    if (formattedFirstLine.length === formatted.length) {
+      throw new Error(
+        `${formatter.description} returned text for ${path} that ends after the first line, so it lost the rest of what Calavera sent. ${CHANGED_CONTENT}`,
       );
     }
     return formatted;

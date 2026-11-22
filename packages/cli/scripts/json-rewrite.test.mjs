@@ -154,7 +154,7 @@ test("Given a vite.config.ts that prints, when its text would reach the file, th
   });
   const noisy = await loadProjectFormatter(project.root, "managed");
   const problem =
-    /vp fmt from vite-plus .* returned text for \.claude\/settings\.json that does not hold the values Calavera sent\. It begins: "\[dotenv@17\.2\.0\] injecting env \(3\) from \.env"/;
+    /vp fmt from vite-plus .* returned text for \.claude\/settings\.json that is not JSON, so something came with the formatted text, such as output that vite\.config\.ts printed\./;
   await assert.rejects(writeJSON(samples.shortArray, ".claude/settings.json", noisy), problem);
   // The number check formats through writeJSON too, so it reports the same cause.
   await assert.rejects(rewriteLossProblem('{"n": 1}', ".claude/settings.json", noisy), problem);

@@ -544,7 +544,11 @@ test("Given unreadable settings or a broken marker pair, doctor's wiring finding
 
   assert.deepEqual(await findings(), []);
 
-  await writeFile(join(project.root, ".claude/settings.json"), "{");
+  // #1157: a secret beside the syntax error must not reach the finding.
+  await writeFile(
+    join(project.root, ".claude/settings.json"),
+    '{\n  "env": { "TOKEN": FAKE_SECRET_9f3a7c }\n}\n',
+  );
   const prePush = join(project.root, ".vite-hooks/pre-push");
   await writeFile(prePush, (await readFile(prePush, "utf8")).replace(`# calavera:${id}:end\n`, ""));
   const messages = (await findings()).map(({ level, message }) => `${level} ${message}`);
@@ -555,8 +559,9 @@ test("Given unreadable settings or a broken marker pair, doctor's wiring finding
   );
   assert.match(
     messages[1] ?? "",
-    /^warning \.claude\/settings\.json is not valid JSON .*Fix the JSON and run doctor again\./,
+    /^warning \.claude\/settings\.json cannot be parsed as JSON: InvalidSymbol at line 2, column 21, so doctor .*Fix the JSON and run doctor again\./,
   );
+  assert.ok(!messages[1]?.includes("FAKE_SECRE"), messages[1]);
 });
 
 test("Given a deselected artifact's wiring that is missing or edited, doctor's remedy is the apply that drops the record or the person's own removal", async () => {

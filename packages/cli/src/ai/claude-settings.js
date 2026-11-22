@@ -2,6 +2,7 @@
 import { inspect, isDeepStrictEqual } from "node:util";
 
 import { rewriteLossProblem, toJSONText, writeJSON } from "../utils/json-rewrite.js";
+import { jsonSyntaxProblem } from "../utils/parse-position.js";
 import { viteHookCommandProblem } from "./vite-hook-blocks.js";
 
 // ADR-0015, Decision 5: apply adds an artifact's Claude Code hook groups to the committed
@@ -230,9 +231,10 @@ export async function planClaudeSettings({
   if (contents !== undefined) {
     try {
       settings = JSON.parse(contents);
-    } catch (error) {
+    } catch {
+      // #1157: what is wrong, and where, never JSON.parse's message, which quotes the file.
       return conflict(
-        `is not valid JSON (${error instanceof Error ? error.message : String(error)}). Calavera does not rewrite a file it cannot read. Fix the JSON and run apply again.`,
+        `cannot be parsed as JSON: ${jsonSyntaxProblem(contents)}. Calavera does not rewrite a file it cannot read. Fix the JSON and run apply again.`,
       );
     }
   }

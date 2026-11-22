@@ -105,21 +105,36 @@ export async function loadProjectFormatter(
         // completes; without a limit the dry run would hang with no message.
         timeout,
       });
+      // #1157: neither error quotes vp fmt's output or keeps the result as its cause, because
+      // vp fmt quotes the text it cannot parse, and vite.config.ts can print anything.
       if (result.timedOut) {
         throw new Error(
           `${description} did not finish formatting ${path} within ${timeout / 1000} seconds, so Calavera stopped it. Check that vite.config.ts does not wait on anything when vp fmt loads it, then run Calavera again.`,
-          { cause: result },
         );
       }
       if (result.exitCode !== 0 || result.failed) {
         throw new Error(
-          `${description} could not format ${path} (exit code ${result.exitCode ?? "none"}):\n${result.stderr || result.stdout || result.message}`,
-          { cause: result },
+          `${description} could not format ${path}: ${howItEnded(result)}. Calavera does not show vp fmt's output, because it can quote the file. Check that vite.config.ts loads without errors, which vp fmt --check in the project reports, then run Calavera again.`,
         );
       }
       return result.stdout;
     },
   };
+}
+
+/**
+ * How a vp fmt run that did not succeed ended, from the fields of its execa result that hold no
+ * output: whether its output outgrew the buffer, the signal, the exit code, or why it did not
+ * start.
+ *
+ * @param {{ exitCode?: number, signal?: string, isMaxBuffer?: boolean, code?: string }} result
+ */
+export function howItEnded({ exitCode, signal, isMaxBuffer, code }) {
+  // execa stops a process whose output outgrows the buffer itself, with SIGTERM.
+  if (isMaxBuffer) return "its output outgrew the buffer, so Calavera stopped it";
+  if (signal) return `it was stopped by the signal ${signal}`;
+  if (exitCode !== undefined) return `it exited with code ${exitCode}`;
+  return code ? `it did not start (${code})` : "it did not start";
 }
 
 /**
