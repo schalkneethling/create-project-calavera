@@ -14,6 +14,10 @@ import { listIntegrationOptions, profileDefaults } from "../src/recipe.js";
 import { groupedPromptOptions } from "../src/utils/prompt-options.js";
 import { createTemporaryFixture, json, plainViteManifest } from "./vite-plus-fixtures.mjs";
 
+// A regression that reaches a real terminal prompt leaves a listener on stdin, which would keep
+// the test process alive until the CI job times out. Closing stdin lets the failure report at once.
+test.after(() => process.stdin.destroy());
+
 /**
  * @param {string} path
  */
@@ -66,8 +70,8 @@ function scriptedPrompts(answers) {
 }
 
 /**
- * Runs `callback` in `directory` with standard input reported as a terminal, as an interactive
- * init sees it, and restores both afterwards.
+ * Runs `callback` in `directory` with standard input reported as a terminal and `CI` unset, as an
+ * interactive init sees them (#1079), and restores all three afterwards.
  *
  * @template T
  * @param {string} directory
@@ -77,12 +81,17 @@ function scriptedPrompts(answers) {
 async function inTerminal(directory, callback) {
   const originalDirectory = process.cwd();
   const originalIsTTY = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+  const originalCI = process.env.CI;
   Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+  delete process.env.CI;
   process.chdir(directory);
   try {
     return await callback();
   } finally {
     process.chdir(originalDirectory);
+    if (originalCI !== undefined) {
+      process.env.CI = originalCI;
+    }
     if (originalIsTTY) {
       Object.defineProperty(process.stdin, "isTTY", originalIsTTY);
     } else {
