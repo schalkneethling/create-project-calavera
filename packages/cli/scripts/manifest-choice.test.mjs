@@ -314,7 +314,7 @@ test("create-here formats the files apply writes with vp fmt when the parent is 
 
 // #1084: under create-here, vite-plus is the parent's dependency, so the remedy for a missing
 // vite-plus names the parent, where vp install installs it, not the inspected directory.
-test("create-here under a Vite+ parent without vite-plus installed: apply and init --apply say to run vp install in the parent", async () => {
+test("create-here under a Vite+ parent without vite-plus installed: the formatter error in apply --dry-run and init --apply says to run vp install in the parent", async () => {
   await using workspace = await directoryUnderManagedWorkspace({ installed: false });
   const remedy = `Run vp install in ${workspace.root}, then run Calavera again.`;
 

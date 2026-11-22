@@ -37,10 +37,11 @@ import {
  * @property {boolean} [removesEditorConfig] Whether the same run removes the project root's
  *   `.editorconfig`, as clean does when the recipe drops editorconfig; formatting a file stops when
  *   the removal would change the settings Oxfmt formats it with (#838).
- * @property {string} [installDirectory] Where `vp install` installs the project's vite-plus, when
- *   that is not the project directory. Under `--manifest-choice create-here`, the project follows
- *   the Vite+ verdict of the manifest above it, so the remedy for a missing vite-plus names that
- *   manifest's directory (#1084).
+ * @property {string} [installDirectory] The directory the remedy for a missing vite-plus tells the
+ *   person to run `vp install` in, when that is not the project directory. Under
+ *   `--manifest-choice create-here`, the project has no package.json yet and follows the Vite+
+ *   verdict of the nearest manifest above it, so the remedy names that manifest's directory
+ *   (#1084).
  */
 
 /** @type {ProjectFormatter} */

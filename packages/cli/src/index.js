@@ -527,9 +527,9 @@ const packageManagerCommands = {
 };
 
 /**
- * Where `vp install` installs vite-plus for a directory that follows the Vite+ verdict of the
- * manifest above it, because it has no package.json of its own (#961, #1084), or nothing when the
- * directory's own manifest decides.
+ * The directory of the nearest manifest above a directory that has no package.json of its own and
+ * follows that manifest's Vite+ verdict (#961), which the remedy for a missing vite-plus names
+ * (#1084), or nothing when the directory's own manifest decides.
  *
  * @param {VitePlusDetection} detection
  */
