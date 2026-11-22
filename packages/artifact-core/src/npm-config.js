@@ -313,21 +313,16 @@ export async function loadNpmRegistryOptions({
         // layer, or ignored there with a warning.
         if (exportedFrom(userEntries, rawKey, rawValue, env, false) !== undefined) continue;
       }
-      if (credentialsLocked && AUTH_KEY.test(rawKey)) {
+      if (credentialsLocked && AUTH_KEY.test(rawKey) && layer !== credentialLayer) {
+        // A variable in a credential key of the account file is handled after expansion, below.
         const reason =
-          layer !== credentialLayer
-            ? credentialPath === undefined
-              ? `credentials come only from ${ACCOUNT_NPMRC}, and the home folder of the operating system account is unknown`
-              : `credentials come only from ${ACCOUNT_NPMRC}, because the environment can carry repository content`
-            : rawKey.includes("${")
-              ? "Calavera does not expand variables in a credential key, because the environment can carry repository content"
-              : undefined;
-        if (reason) {
-          const message = `Ignored ${setting} in the ${name}: when a package manager starts Calavera, ${reason}.`;
-          warnings.push(message);
-          notes.push(message);
-          continue;
-        }
+          credentialPath === undefined
+            ? `credentials come only from ${ACCOUNT_NPMRC}, and the home folder of the operating system account is unknown`
+            : `credentials come only from ${ACCOUNT_NPMRC}, because the environment can carry repository content`;
+        const message = `Ignored ${setting} in the ${name}: when a package manager starts Calavera, ${reason}.`;
+        warnings.push(message);
+        notes.push(message);
+        continue;
       }
       if (!trusted) {
         if (layer.accepts && !layer.accepts(rawKey)) continue;
@@ -474,7 +469,7 @@ export async function loadNpmRegistryOptions({
   if (
     registryUrl.protocol === "http:" &&
     Object.keys(options).some(
-      (key) => key.startsWith(`//${registryUrl.host}/`) && !CERTIFICATE_KEY.test(key),
+      (key) => nerfDartHost(key) === registryUrl.host && !CERTIFICATE_KEY.test(key),
     )
   ) {
     warnings.push(
@@ -565,6 +560,16 @@ export function pacoteTarballUrl(resolved, options) {
   if (url.host !== "registry.npmjs.org") return resolved;
   const registry = (options.registry ?? "https://registry.npmjs.org").replace(/\/+$/, "");
   return new URL(url.pathname, registry).href;
+}
+
+/**
+ * The host, with its port, of a nerf-darted key such as //registry.example.com/:_authToken, parsed
+ * as a URL so that it compares exactly, or undefined for any other key.
+ * @param {string} key
+ */
+function nerfDartHost(key) {
+  const host = /^\/\/([^/]+)\//.exec(key)?.[1];
+  return host && URL.canParse(`https://${host}`) ? new URL(`https://${host}`).host : undefined;
 }
 
 /** @param {string} value */

@@ -833,8 +833,28 @@ const SENTINEL = "SENTINELSECRET0123456789";
  */
 function leaks(options, host = "evil.example.com") {
   return Object.entries(options).some(
-    ([key, value]) => key.includes(host) || String(value).includes(SENTINEL),
+    ([key, value]) => keyHostname(key) === host || String(value).includes(SENTINEL),
   );
+}
+
+/**
+ * The host name of a nerf-darted key such as //registry.example.com/:_authToken, parsed as a URL
+ * so that it compares exactly, or undefined for any other key.
+ * @param {string} key
+ */
+function keyHostname(key) {
+  const match = /^\/\/([^/]+)\//.exec(key);
+  return match && URL.canParse(`https://${match[1]}`)
+    ? new URL(`https://${match[1]}`).hostname
+    : undefined;
+}
+
+/**
+ * The key a warning names in "Ignored <key> in the ...", for exact comparison.
+ * @param {string} warning
+ */
+function ignoredKey(warning) {
+  return /^Ignored (\S+) in the /.exec(warning)?.[1];
 }
 
 /**
@@ -860,7 +880,7 @@ test("invariant 2: under a package manager, credentials come only from the accou
   const { options, warnings } = await loadNpmRegistryOptions({ ...context, accountHome });
   assert.equal(leaks(options), false);
   assert.equal(options["//registry.example.com/:_authToken"], "fake-account-token");
-  assert.ok(warnings.some((warning) => warning.includes("//evil.example.com/:_authToken")));
+  assert.ok(warnings.some((warning) => ignoredKey(warning) === "//evil.example.com/:_authToken"));
   assert.doesNotMatch(inspect(warnings), new RegExp(SENTINEL));
 });
 
@@ -986,7 +1006,7 @@ test("invariant 2: a variable in a credential key of ~/.npmrc is not expanded un
   await writeFile(join(accountHome, ".npmrc"), "//${TOKEN_HOST}/:_authToken=fake-account-token\n");
   const { options, warnings } = await loadNpmRegistryOptions({ ...context, accountHome });
   assert.equal(leaks(options), false);
-  assert.ok(warnings.some((warning) => warning.includes("//${TOKEN_HOST}/:_authToken")));
+  assert.ok(warnings.some((warning) => ignoredKey(warning) === "//${TOKEN_HOST}/:_authToken"));
 });
 
 test("invariant 2: when the account home folder is unknown, every credential is ignored and the warning says why", async () => {
@@ -1012,4 +1032,57 @@ test("invariant 2: a key that becomes a credential key only after expansion is i
   const { options } = await loadNpmRegistryOptions(context);
   assert.equal(leaks(options), false);
   assert.equal(leaks(options, "evil2.example.com"), false);
+});
+
+test("invariant 2: npm_execpath alone locks credentials", async () => {
+  const context = await fixture({
+    user: `//evil.example.com/:_authToken=\${SENTINEL_SECRET}\n`,
+    env: { SENTINEL_SECRET: SENTINEL, npm_execpath: "/opt/package-manager/bin/cli.js" },
+  });
+  const accountHome = await accountHomeWithToken(context.directory);
+  const { options } = await loadNpmRegistryOptions({ ...context, accountHome });
+  assert.equal(leaks(options), false);
+  assert.equal(options["//registry.example.com/:_authToken"], "fake-account-token");
+});
+
+test("invariant 2: the account home comes from os.userInfo(), not HOME", async () => {
+  const directory = await temporaryDirectory("calavera-npm-config-account-home-");
+  const home = join(directory, "home");
+  const account = join(directory, "account");
+  const project = join(directory, "project");
+  for (const folder of [home, account, project]) await mkdir(folder);
+  await writeFile(join(home, ".npmrc"), "//registry.example.com/:_authToken=fake-home-token\n");
+  await writeFile(
+    join(account, ".npmrc"),
+    "//registry.example.com/:_authToken=fake-account-token\n",
+  );
+  // A child process with a stubbed os.userInfo, so the real account's ~/.npmrc is never read. It
+  // reports booleans only, never a value.
+  const script = join(directory, "probe.mjs");
+  const loader = new URL("../src/npm-config.js", import.meta.url).href;
+  await writeFile(
+    script,
+    `import os from "node:os";
+import { syncBuiltinESMExports } from "node:module";
+let stubbed = false;
+os.userInfo = () => { stubbed = true; return { homedir: process.env.STUB_ACCOUNT_HOME, username: "probe", uid: -1, gid: -1, shell: null }; };
+syncBuiltinESMExports();
+const { loadNpmRegistryOptions } = await import(${JSON.stringify(loader)});
+const { options } = await loadNpmRegistryOptions({
+  cwd: process.env.PROBE_CWD,
+  env: { HOME: process.env.PROBE_HOME, npm_command: "exec" },
+});
+const token = options["//registry.example.com/:_authToken"];
+console.log(JSON.stringify({ stubbed, account: token === "fake-account-token", home: token === "fake-home-token" }));
+`,
+  );
+  const { stdout } = await promisify(execFile)(process.execPath, [script], {
+    env: {
+      PATH: process.env.PATH,
+      STUB_ACCOUNT_HOME: account,
+      PROBE_HOME: home,
+      PROBE_CWD: project,
+    },
+  });
+  assert.deepEqual(JSON.parse(stdout), { stubbed: true, account: true, home: false });
 });

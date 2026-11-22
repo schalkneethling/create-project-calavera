@@ -931,7 +931,8 @@ informs: the command runs to the end with the installed version, and the exit co
 
 The check asks the registry that your user and project `.npmrc` files and `npm_config_*` variables
 name, with the credentials described below, through the `proxy` or `https-proxy` that your user `.npmrc` or your
-own `npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`. A proxy in a project
+own `npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`; under Bun, which does not
+support these `.npmrc` settings, they do not apply. A proxy in a project
 `.npmrc` or `.yarnrc.yml` is ignored with a warning. That
 includes a proxy that npm passes on from the project `.npmrc` it read, such as the workspace root's
 file when you run `npx` from a workspace member. Calavera never sends a credential over plain

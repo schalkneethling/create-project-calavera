@@ -502,8 +502,9 @@ test("a registry failure names the ignored token entry and the unset variable", 
     // still name what Calavera ignored. They never contain a value.
     assert.deepEqual(failure.unsetVariables, ["CALAVERA_UNSET_TOKEN"]);
     assert.ok(
-      failure.npmDiagnostics.some((/** @type {string} */ note) =>
-        note.includes(`//${registry.host}/:_authToken`),
+      failure.npmDiagnostics.some(
+        (/** @type {string} */ note) =>
+          /^Ignored (\S+) in the /.exec(note)?.[1] === `//${registry.host}/:_authToken`,
       ),
       failure.npmDiagnostics.join("\n"),
     );
