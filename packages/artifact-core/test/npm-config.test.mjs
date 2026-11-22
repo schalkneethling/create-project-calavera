@@ -998,3 +998,18 @@ test("invariant 2: when the account home folder is unknown, every credential is 
   assert.equal(options["//registry.example.com/:_authToken"], undefined);
   assert.match(warnings[0], /the home folder of the operating system account is unknown/);
 });
+
+test("invariant 2: a key that becomes a credential key only after expansion is ignored under a package manager", async () => {
+  const context = await fixture({
+    user: `//evil.example.com/:\${TOKEN_NAME}=\${SENTINEL_SECRET}\n\${WHOLE_KEY}=\${SENTINEL_SECRET}\n`,
+    env: {
+      npm_config_user_agent: "yarn/4.18.1 npm/? node/v24.3.0",
+      TOKEN_NAME: "_authToken",
+      WHOLE_KEY: "//evil2.example.com/:_authToken",
+      SENTINEL_SECRET: SENTINEL,
+    },
+  });
+  const { options } = await loadNpmRegistryOptions(context);
+  assert.equal(leaks(options), false);
+  assert.equal(leaks(options, "evil2.example.com"), false);
+});

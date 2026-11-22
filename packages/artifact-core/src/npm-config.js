@@ -361,6 +361,14 @@ export async function loadNpmRegistryOptions({
         ? { text: rawKey, unset: [] }
         : expandEnvironment(rawKey, env);
       if (layer.accepts && !layer.accepts(expandedKey.text)) continue;
+      // A key that becomes a credential key only after expansion, such as //host/:${NAME}, is
+      // held to the same rule as a written one, so the environment cannot build a credential.
+      if (credentialsLocked && AUTH_KEY.test(expandedKey.text) && expandedKey.text !== rawKey) {
+        const message = `Ignored ${setting} in the ${name}: when a package manager starts Calavera, Calavera does not expand variables in a credential key, because the environment can carry repository content.`;
+        warnings.push(message);
+        notes.push(message);
+        continue;
+      }
       /** @type {import("./launcher-config.js").Expansion} */
       const expandedValue = layer.expand
         ? layer.expand(rawValue.trim(), env, { setting, layer: name })
