@@ -12,6 +12,8 @@ import { cp, lstat, mkdir, readFile, realpath, rm, writeFile } from "node:fs/pro
 import { join, relative } from "node:path";
 import { pathToFileURL } from "node:url";
 
+import semver from "semver";
+
 import { snapshotDirectory } from "../packages/cli/scripts/project-snapshot.mjs";
 import { CheckFailure, describeExit, tail } from "./rehearsal-failure.mjs";
 
@@ -250,7 +252,14 @@ async function installedVitePlus(context, project) {
       // folder itself the issuer, not a file named like it.
       ["--require", pnp, "--eval", PNP_VITE_PLUS_VERSION, "--", `${await realpath(project)}/`],
     );
-    if (result.exitCode === 0 && result.stdout) return { version: result.stdout };
+    // A preload or runtime that prints to stdout would otherwise reach the report, so only a clean
+    // version is taken from the child; anything else gets a fixed reason without its output.
+    if (result.exitCode === 0 && semver.valid(result.stdout)) return { version: result.stdout };
+    if (result.exitCode === 0) {
+      return {
+        problem: `the Plug'n'Play read printed something other than a version, and its output is left out because it can quote the files it read (${pnp} reading vite-plus/package.json)`,
+      };
+    }
     // A short label instead of the command, which would print the whole script.
     const label = `${pnp} reading vite-plus/package.json`;
     const reason =

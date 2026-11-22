@@ -1919,6 +1919,22 @@ test("the flow project records the Vite+ it installed and fails when it is not t
   }
 });
 
+test("a Plug'n'Play read that prints more than a version is reported without that output (#1090)", async () => {
+  const check = cliExperienceChecks.find((candidate) => candidate.id === "new-yarn");
+  assert.ok(check);
+  const context = await newCheckContext("yarn dlx", async (project) => {
+    await writePnpProject(project, "1.6.0");
+    const pnp = join(project, ".pnp.cjs");
+    await writeFile(pnp, `process.stdout.write("RUNTIME-NOISE ");\n${await readFile(pnp, "utf8")}`);
+  });
+  await assert.rejects(check.run(context), (error) => {
+    assert.ok(error instanceof CheckFailure);
+    assert.match(error.actual, /printed something other than a version/);
+    assert.doesNotMatch(`${error.actual}\n${error.message}`, /RUNTIME-NOISE/);
+    return true;
+  });
+});
+
 test("a corrupt manifest behind Plug'n'Play is reported without its text (#1090)", async () => {
   const check = cliExperienceChecks.find(({ id }) => id === "new-yarn");
   assert.ok(check);
