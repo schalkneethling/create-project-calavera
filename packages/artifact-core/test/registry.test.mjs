@@ -292,6 +292,43 @@ test("invariant 1: resolution and extraction use the configured scoped registry 
   }
 });
 
+test("invariant 1: a registry.npmjs.org tarball that pacote moves onto an http registry is fetched without a token", async () => {
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-rewritten-tarball-"));
+  const packed = await packFixture(directory);
+  const mirror = await startRegistry(packed);
+  try {
+    // pacote moves a registry.npmjs.org tarball onto the default registry, here a plain-http one.
+    const fixture = await npmConfigFixture(
+      "",
+      `registry=http://${mirror.host}/\n//${mirror.host}/:_authToken=${TOKEN}\n//registry.npmjs.org/:_authToken=${TOKEN}\n`,
+    );
+    const resolution = {
+      artifact,
+      packageName: artifact.packageName,
+      version: packed.version,
+      resolved: "https://registry.npmjs.org/-/artifact.tgz",
+      integrity: packed.integrity,
+      tag: "latest",
+      cache: fixture.cache,
+      offline: false,
+    };
+    const result = await extractArtifactPackage(
+      resolution,
+      join(fixture.directory, "package"),
+      "2.2.0",
+      {
+        cwd: fixture.cwd,
+        env: fixture.env,
+      },
+    );
+    assert.equal(result.manifest.id, "skill-project-goal");
+    assert.equal(mirror.requests.length, 1);
+    assert.equal(mirror.requests[0]?.authorization, undefined);
+  } finally {
+    await mirror.close();
+  }
+});
+
 test("invariant 1: an http tarball URL from an https registry is fetched without the registry's token", async () => {
   const directory = await mkdtemp(join(tmpdir(), "calavera-registry-http-tarball-"));
   const packed = await packFixture(directory);

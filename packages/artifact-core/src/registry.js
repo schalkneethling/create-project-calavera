@@ -7,7 +7,7 @@ import pacote from "pacote";
 import semver from "semver";
 
 import { artifactForId } from "./catalog.js";
-import { loadNpmRegistryOptions, requestOptions } from "./npm-config.js";
+import { loadNpmRegistryOptions, pacoteTarballUrl, requestOptions } from "./npm-config.js";
 
 const TAGS = new Set(["latest", "next"]);
 
@@ -103,7 +103,7 @@ export async function extractArtifactPackage(resolution, destination, cliVersion
   });
   await withNpmDiagnostics(npm, () =>
     pacote.extract(resolution.resolved, destination, {
-      ...requestOptions(npm.options, resolution.resolved),
+      ...requestOptions(npm.options, pacoteTarballUrl(resolution.resolved, npm.options)),
       cache: resolution.cache,
       integrity: resolution.integrity,
       offline: resolution.offline,

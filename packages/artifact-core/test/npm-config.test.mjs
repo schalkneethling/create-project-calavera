@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test, { afterEach } from "node:test";
 import { inspect, promisify } from "node:util";
 
-import { loadNpmRegistryOptions, requestOptions } from "../src/npm-config.js";
+import { loadNpmRegistryOptions, pacoteTarballUrl, requestOptions } from "../src/npm-config.js";
 import { removeTemporaryDirectories, temporaryDirectory } from "./temporary-directory.mjs";
 
 afterEach(removeTemporaryDirectories);
@@ -25,7 +25,15 @@ async function fixture({ project, user, env = {} }) {
   if (project !== undefined) await writeFile(join(cwd, ".npmrc"), project);
   const userconfig = join(directory, "user.npmrc");
   if (user !== undefined) await writeFile(userconfig, user);
-  return { directory, cwd, env: { npm_config_userconfig: userconfig, ...env }, scope: SCOPE };
+  // An empty account home, so no test reads the developer's ~/.npmrc.
+  const accountHome = join(directory, "account-home");
+  return {
+    directory,
+    cwd,
+    accountHome,
+    env: { npm_config_userconfig: userconfig, ...env },
+    scope: SCOPE,
+  };
 }
 
 test("a project .npmrc value with a variable reference is ignored with a warning that names the key", async () => {
@@ -620,6 +628,7 @@ async function npmExecFromBelowRoot({ npmrc, member, rootPackage, memberPackage,
   return {
     cwd,
     scope: SCOPE,
+    accountHome: join(directory, "account-home"),
     env: {
       npm_config_userconfig: join(directory, "missing.npmrc"),
       npm_command: "exec",
@@ -938,4 +947,54 @@ test("invariant 1: requestOptions removes every credential for a plain-http URL 
   const http = requestOptions(options, "http://registry.example.com/pkg/-/pkg-1.0.0.tgz");
   assert.deepEqual(Object.keys(http).sort(), ["httpsProxy", "registry"]);
   assert.deepEqual(requestOptions(options, "https://registry.example.com/pkg"), options);
+});
+
+test("invariant 1: a registry.npmjs.org tarball that pacote rewrites onto an http registry loses its credentials", async () => {
+  const options = {
+    registry: "http://mirror.example.com/",
+    "//registry.npmjs.org/:_authToken": "fake-npmjs-token",
+    "//mirror.example.com/:_authToken": "fake-mirror-token",
+  };
+  const url = pacoteTarballUrl("https://registry.npmjs.org/pkg/-/pkg-1.0.0.tgz", options);
+  assert.equal(url, "http://mirror.example.com/pkg/-/pkg-1.0.0.tgz");
+  assert.deepEqual(Object.keys(requestOptions(options, url)), ["registry"]);
+  // A tarball on another host is fetched as written.
+  assert.equal(
+    pacoteTarballUrl("https://cdn.example.com/pkg-1.0.0.tgz", options),
+    "https://cdn.example.com/pkg-1.0.0.tgz",
+  );
+});
+
+test("invariant 2: a Yarn 4 bin or exec start, which sets no lifecycle variable, still locks credentials", async () => {
+  const context = await fixture({
+    user: `//evil.example.com/:_authToken=\${SENTINEL_SECRET}\n`,
+    env: {
+      SENTINEL_SECRET: SENTINEL,
+      npm_config_user_agent: "yarn/4.18.1 npm/? node/v24.3.0 darwin arm64",
+      npm_execpath: "/usr/local/lib/node_modules/yarn/bin/yarn.js",
+    },
+  });
+  const accountHome = await accountHomeWithToken(context.directory);
+  const { options } = await loadNpmRegistryOptions({ ...context, accountHome });
+  assert.equal(leaks(options), false);
+});
+
+test("invariant 2: a variable in a credential key of ~/.npmrc is not expanded under a package manager", async () => {
+  const context = await fixture({ env: { npm_command: "exec", TOKEN_HOST: "evil.example.com" } });
+  const accountHome = join(context.directory, "account-home");
+  await mkdir(accountHome);
+  await writeFile(join(accountHome, ".npmrc"), "//${TOKEN_HOST}/:_authToken=fake-account-token\n");
+  const { options, warnings } = await loadNpmRegistryOptions({ ...context, accountHome });
+  assert.equal(leaks(options), false);
+  assert.ok(warnings.some((warning) => warning.includes("//${TOKEN_HOST}/:_authToken")));
+});
+
+test("invariant 2: when the account home folder is unknown, every credential is ignored and the warning says why", async () => {
+  const context = await fixture({
+    user: "//registry.example.com/:_authToken=fake-token\n",
+    env: { npm_command: "exec" },
+  });
+  const { options, warnings } = await loadNpmRegistryOptions({ ...context, accountHome: "" });
+  assert.equal(options["//registry.example.com/:_authToken"], undefined);
+  assert.match(warnings[0], /the home folder of the operating system account is unknown/);
 });

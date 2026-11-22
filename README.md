@@ -929,8 +929,8 @@ version, so you can run it as printed. When Calavera runs from your project's ow
 notice adds that the dependency is unchanged and gives the command that updates it. The notice only
 informs: the command runs to the end with the installed version, and the exit code is unchanged.
 
-The check asks the registry and sends the credentials that your user and project `.npmrc` files and
-`npm_config_*` variables name, through the `proxy` or `https-proxy` that your user `.npmrc` or your
+The check asks the registry that your user and project `.npmrc` files and `npm_config_*` variables
+name, with the credentials described below, through the `proxy` or `https-proxy` that your user `.npmrc` or your
 own `npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`. A proxy in a project
 `.npmrc` or `.yarnrc.yml` is ignored with a warning. That
 includes a proxy that npm passes on from the project `.npmrc` it read, such as the workspace root's

@@ -214,8 +214,11 @@ export async function loadNpmRegistryOptions({
   // injects a committed .env.yarn). Credentials, and the ${VAR} expansion inside them, then come
   // only from the account's own ~/.npmrc, with the home folder taken from the operating system
   // account rather than HOME. Every other layer's credential keys are ignored with a warning.
-  const credentialsLocked = startedByNpm(env);
-  const credentialHome = accountHome ?? accountHomeFolder();
+  // Yarn 4 sets no lifecycle variable for `yarn <bin>` or `yarn exec`, but every package manager
+  // sets npm_execpath or npm_config_user_agent. Spoofing either only makes Calavera stricter.
+  const credentialsLocked =
+    startedByNpm(env) || Boolean(env.npm_execpath || env.npm_config_user_agent);
+  const credentialHome = (accountHome ?? accountHomeFolder()) || undefined;
   const credentialPath = credentialHome === undefined ? undefined : join(credentialHome, ".npmrc");
   const scopeKey = scope ? `${scope}:registry` : undefined;
   /** @param {string} key */
@@ -310,11 +313,21 @@ export async function loadNpmRegistryOptions({
         // layer, or ignored there with a warning.
         if (exportedFrom(userEntries, rawKey, rawValue, env, false) !== undefined) continue;
       }
-      if (credentialsLocked && AUTH_KEY.test(rawKey) && layer !== credentialLayer) {
-        const message = `Ignored ${setting} in the ${name}: when a package manager starts Calavera, credentials come only from ${ACCOUNT_NPMRC}, because the environment can carry repository content.`;
-        warnings.push(message);
-        notes.push(message);
-        continue;
+      if (credentialsLocked && AUTH_KEY.test(rawKey)) {
+        const reason =
+          layer !== credentialLayer
+            ? credentialPath === undefined
+              ? `credentials come only from ${ACCOUNT_NPMRC}, and the home folder of the operating system account is unknown`
+              : `credentials come only from ${ACCOUNT_NPMRC}, because the environment can carry repository content`
+            : rawKey.includes("${")
+              ? "Calavera does not expand variables in a credential key, because the environment can carry repository content"
+              : undefined;
+        if (reason) {
+          const message = `Ignored ${setting} in the ${name}: when a package manager starts Calavera, ${reason}.`;
+          warnings.push(message);
+          notes.push(message);
+          continue;
+        }
       }
       if (!trusted) {
         if (layer.accepts && !layer.accepts(rawKey)) continue;
@@ -528,6 +541,22 @@ export function requestOptions(options, url) {
   // A local path, which pacote.extract also accepts, needs no credential either.
   if (URL.canParse(url) && new URL(url).protocol === "https:") return options;
   return Object.fromEntries(Object.entries(options).filter(([key]) => !AUTH_KEY.test(key)));
+}
+
+/**
+ * The URL pacote fetches for a tarball. Unless told otherwise, pacote moves a tarball on
+ * registry.npmjs.org onto the configured default registry, which can use http
+ * (`replaceRegistryHost` in pacote/lib/fetcher.js and lib/remote.js). requestOptions must judge
+ * that URL, not the one the package document names.
+ * @param {string} resolved
+ * @param {Record<string, string>} options
+ */
+export function pacoteTarballUrl(resolved, options) {
+  if (!URL.canParse(resolved)) return resolved;
+  const url = new URL(resolved);
+  if (url.host !== "registry.npmjs.org") return resolved;
+  const registry = (options.registry ?? "https://registry.npmjs.org").replace(/\/+$/, "");
+  return new URL(url.pathname, registry).href;
 }
 
 /** @param {string} value */

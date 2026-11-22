@@ -275,3 +275,37 @@ test("invariant 1: a committed Yarn 4 .env.yarn that sets an http registry gets 
   );
   assert.equal(registry.requests[0]?.authorization, undefined);
 });
+
+test("invariant 1: a committed Yarn 4 .env.yarn with an http registry and an http proxy gives the proxy no credentials", async (t) => {
+  const proxy = await startRegistry((_request, response) => {
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(packument({ latest: "7.4.0" }));
+  });
+  const cwd = await mkdtemp(join(tmpdir(), "calavera-dist-tag-env-yarn-proxy-"));
+  t.after(async () => {
+    await proxy.close();
+    await rm(cwd, { recursive: true, force: true });
+  });
+  const accountHome = join(cwd, "account-home");
+  await mkdir(accountHome);
+  await writeFile(
+    join(accountHome, ".npmrc"),
+    "//registry.calavera.invalid/:_authToken=fake-account-token\n",
+  );
+  // A repository's .env.yarn reaches Calavera as environment: an http registry and a proxy it runs.
+  const env = {
+    HOME: join(cwd, "home"),
+    npm_config_user_agent: "yarn/4.19.0 npm/? node/v24.3.0 darwin arm64",
+    npm_execpath: "/opt/yarn/yarn.js",
+    YARN_NPM_REGISTRY_SERVER: "http://registry.calavera.invalid",
+    YARN_HTTP_PROXY: proxy.url,
+  };
+
+  assert.equal(
+    await resolvePackageDistTag({ packageName: NAME, tag: "latest", cwd, env, accountHome }),
+    "7.4.0",
+  );
+  assert.equal(proxy.requests.length, 1);
+  assert.equal(proxy.requests[0]?.url, `http://registry.calavera.invalid/${NAME}`);
+  assert.equal(proxy.requests[0]?.authorization, undefined);
+});

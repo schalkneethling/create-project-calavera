@@ -34,6 +34,8 @@ async function fixture({ files = {}, env = {}, userAgent }) {
   return {
     cwd,
     scope: SCOPE,
+    // The account home is the fixture's home folder, so no test reads the developer's ~/.npmrc.
+    accountHome: home,
     env: {
       HOME: home,
       ...(userAgent ? { npm_config_user_agent: userAgent } : {}),
@@ -972,7 +974,7 @@ test("under Bun, a $VAR registry whose value carries credentials is used without
   assert.doesNotMatch(inspect([options, warnings, diagnostics]), new RegExp(SECRET));
 });
 
-test("under Bun, npm_config_* auth variables still pass through, and a registry without credentials adds no note", async () => {
+test("invariant 2: under Bun, npm_config_* credential variables are ignored, and a registry without credentials adds no note", async () => {
   const context = await fixture({
     userAgent: BUN,
     files: { "home/.bunfig.toml": '[install]\nregistry = "$MY_REGISTRY"\n' },
@@ -981,10 +983,15 @@ test("under Bun, npm_config_* auth variables still pass through, and a registry 
       "npm_config_//registry.example.com/:_authToken": "token-value",
     },
   });
-  const { options, diagnostics } = await loadNpmRegistryOptions(context);
-  assert.equal(options["//registry.example.com/:_authToken"], "token-value");
+  const { options, warnings, diagnostics } = await loadNpmRegistryOptions(context);
+  assert.equal(options["//registry.example.com/:_authToken"], undefined);
   assert.equal(options.registry, "https://registry.example.com/");
-  assert.deepEqual(diagnostics, []);
+  assert.equal(warnings.length, 1);
+  assert.match(
+    warnings[0],
+    /^Ignored \/\/registry\.example\.com\/:_authToken in the environment: when a package manager starts Calavera, credentials come only from ~\/\.npmrc/,
+  );
+  assert.deepEqual(diagnostics, warnings);
 
   const variable = await fixture({
     userAgent: BUN,
