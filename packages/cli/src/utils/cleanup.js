@@ -1,6 +1,8 @@
 // @ts-check
-import { rm } from "node:fs/promises";
-import { isAbsolute, relative } from "node:path";
+import { rmSync } from "node:fs";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { isAbsolute, join, relative } from "node:path";
 
 /**
  * The failures of one or more cleanups. A cleanup that runs further cleanups throws this, so the
@@ -88,7 +90,63 @@ export class TemporaryFolderError extends Error {
 }
 
 /**
- * Removes `folder` and everything in it, if it is there.
+ * The temporary folders `createTemporaryFolder` made in this process and `removeTemporaryFolder`
+ * has not removed yet. They are the only folders the interrupt handler removes, each by its exact
+ * path, because other runs keep folders with the same prefix in the system's temporary folder
+ * (#1081). The set belongs to the process, as the signals it answers do.
+ *
+ * @type {Set<string>}
+ */
+const liveTemporaryFolders = new Set();
+const INTERRUPT_SIGNALS = /** @type {const} */ (["SIGINT", "SIGTERM"]);
+
+/**
+ * Removes every live temporary folder when Ctrl+C (SIGINT) or SIGTERM interrupts the process, and
+ * then raises the signal again without this handler, so the process still ends as the signal
+ * intends: by Node's default action, or by another handler when the command installed one. The
+ * removal is synchronous, because the process may end as soon as this handler returns. A folder
+ * that cannot be removed stays, as it would without the handler.
+ *
+ * @param {NodeJS.Signals} signal
+ */
+function removeLiveFoldersOnInterrupt(signal) {
+  for (const folder of liveTemporaryFolders) {
+    try {
+      rmSync(folder, { recursive: true, force: true });
+    } catch {
+      // The process is ending, so nothing could report the failure.
+    }
+  }
+  liveTemporaryFolders.clear();
+  detachInterruptHandler();
+  process.kill(process.pid, signal);
+}
+
+function detachInterruptHandler() {
+  for (const signal of INTERRUPT_SIGNALS) process.off(signal, removeLiveFoldersOnInterrupt);
+}
+
+/**
+ * Creates a new, uniquely named folder in the system's temporary folder, whose name starts with
+ * `prefix`, and removes it if Ctrl+C or SIGTERM interrupts the process before
+ * `removeTemporaryFolder` removes it (#1081). The handlers are attached only while such a folder
+ * exists, so a command that has removed its folders handles the signals as it did before.
+ *
+ * @param {string} prefix
+ * @returns {Promise<string>}
+ */
+export async function createTemporaryFolder(prefix) {
+  const folder = await mkdtemp(join(tmpdir(), prefix));
+  if (liveTemporaryFolders.size === 0) {
+    for (const signal of INTERRUPT_SIGNALS) process.on(signal, removeLiveFoldersOnInterrupt);
+  }
+  liveTemporaryFolders.add(folder);
+  return folder;
+}
+
+/**
+ * Removes `folder` and everything in it, if it is there. A folder that `createTemporaryFolder`
+ * made is no longer removed on an interrupt once this succeeds; when this fails, it still is.
  *
  * @param {string} folder
  * @returns {Promise<void>}
@@ -98,6 +156,9 @@ export async function removeTemporaryFolder(folder) {
     await rm(folder, { recursive: true, force: true });
   } catch (error) {
     throw new TemporaryFolderError(folder, error);
+  }
+  if (liveTemporaryFolders.delete(folder) && liveTemporaryFolders.size === 0) {
+    detachInterruptHandler();
   }
 }
 

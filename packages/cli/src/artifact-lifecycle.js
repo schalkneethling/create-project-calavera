@@ -27,7 +27,12 @@ import {
   artifactUpdateCommand,
 } from "./project-local-commands.js";
 import { createEmptyState, normalizeState } from "./state.js";
-import { errorAfterCleanups, removeTemporaryFolder, runCleanups } from "./utils/cleanup.js";
+import {
+  createTemporaryFolder,
+  errorAfterCleanups,
+  removeTemporaryFolder,
+  runCleanups,
+} from "./utils/cleanup.js";
 import { fileExists, isPathInside, parseJSON, readJSON } from "./utils/fs.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { rewriteLossProblem } from "./utils/json-rewrite.js";
@@ -494,7 +499,7 @@ export async function lockedArtifactSources(recipe, dryRun = false, services = {
         continue;
       }
 
-      const temporaryRoot = await mkdtemp(join(tmpdir(), "calavera-locked-artifact-"));
+      const temporaryRoot = await createTemporaryFolder("calavera-locked-artifact-");
       temporaryRoots.push(temporaryRoot);
       const { stage, extracted } = await rebuildLockedPackage(
         entry,
@@ -1042,7 +1047,7 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
   // anything is resolved or staged.
   await loadFormatter();
   const stagingRoot = dryRun
-    ? await mkdtemp(join(tmpdir(), "calavera-artifact-stage-"))
+    ? await createTemporaryFolder("calavera-artifact-stage-")
     : resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
   const dispose = () => removeTemporaryFolder(stagingRoot);
   /** @type {Map<string, string>} */
