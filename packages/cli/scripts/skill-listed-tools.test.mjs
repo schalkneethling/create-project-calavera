@@ -29,7 +29,11 @@ function instructionsIn(text) {
  */
 function onlyInstructionMatching(instructions, pattern, source) {
   const matches = instructions.filter((instruction) => pattern.test(instruction));
-  assert.equal(matches.length, 1, `${source} has ${matches.length} instructions matching ${pattern}`);
+  assert.equal(
+    matches.length,
+    1,
+    `${source} has ${matches.length} instructions matching ${pattern}`,
+  );
   return matches[0];
 }
 
