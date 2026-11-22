@@ -10,7 +10,7 @@ import test from "node:test";
 import { formatErrorChain } from "../src/utils/error-chain.js";
 import { formatGeneratedText } from "../src/utils/generated-text.js";
 import { writeJSON } from "../src/utils/json-rewrite.js";
-import { loadProjectFormatter } from "../src/utils/project-formatter.js";
+import { howItEnded, loadProjectFormatter } from "../src/utils/project-formatter.js";
 import { createTemporaryFixture, writeVitePlusFormatter } from "./vite-plus-fixtures.mjs";
 
 // Not shaped like any token redactSecrets knows, so only the error handling can keep it out.
@@ -40,7 +40,7 @@ test("vp fmt that cannot parse the text: the error names the exit code and the r
     (error) => {
       assert.match(
         assertQuotesNothing(error),
-        /^vp fmt from vite-plus \S+ could not format \.claude\/settings\.json: it exited with code 2\. Calavera does not show vp fmt's output, because it can quote the file\. Run vp fmt --check in the project to see that output, then run Calavera again\.$/,
+        /^vp fmt from vite-plus \S+ could not format \.claude\/settings\.json: it exited with code 2\. Calavera does not show vp fmt's output, because it can quote the file\. Check that vite\.config\.ts loads without errors, which vp fmt --check in the project reports, then run Calavera again\.$/,
       );
       return true;
     },
@@ -116,7 +116,7 @@ test("a formatter that returns only the first line of Markdown is a different fa
     (error) => {
       assert.match(
         assertQuotesNothing(error),
-        /^a test formatter returned text for docs\/notes\.md that ends after the first line, so it lost the rest of what Calavera sent\. /,
+        /^a test formatter returned text for docs\/notes\.md that ends after the first line, so it lost the rest of what Calavera sent\. Calavera writes nothing from it\. /,
       );
       return true;
     },
@@ -146,8 +146,24 @@ test("a formatter that returns other JSON values is a different failure from str
   await assert.rejects(writeJSON({ token: SECRET }, "a.json", formatter), (error) => {
     assert.match(
       assertQuotesNothing(error),
-      /^a test formatter returned text for a\.json that is JSON but holds other values than the ones Calavera sent\. /,
+      /^a test formatter returned text for a\.json that is JSON but holds other values than the ones Calavera sent\. Calavera writes nothing from it\. /,
     );
     return true;
   });
 });
+
+// Each way a run can end reads differently, from fields of the execa result that hold no output.
+for (const [result, ending] of [
+  [{ exitCode: 2 }, "it exited with code 2"],
+  [{ signal: "SIGKILL" }, "it was stopped by the signal SIGKILL"],
+  [
+    { signal: "SIGTERM", isMaxBuffer: true },
+    "its output outgrew the buffer, so Calavera stopped it",
+  ],
+  [{ code: "ENOENT" }, "it did not start (ENOENT)"],
+  [{}, "it did not start"],
+]) {
+  test(`howItEnded reports ${JSON.stringify(result)} as "${ending}"`, () => {
+    assert.equal(howItEnded(result), ending);
+  });
+}

@@ -1,9 +1,13 @@
 // @ts-check
 import { isDeepStrictEqual } from "node:util";
 
-/** The remedy for formatted text that does not hold what Calavera sent. */
+/** The remedy for formatted text that holds something Calavera did not send. */
 export const PRINTS_NOTHING =
   "Make sure vite.config.ts prints nothing when vp fmt loads it, then run Calavera again.";
+
+/** The remedy for formatted text that lost or changed what Calavera sent. */
+export const CHANGED_CONTENT =
+  "Calavera writes nothing from it. Check that vite.config.ts does not change the formatter's input or output, and that vp fmt --check passes in the project, then run Calavera again.";
 
 // Calavera rewrites a whole JSON file when it changes part of it, such as the hook groups in
 // .claude/settings.json. The text it writes comes from the project's formatter (see
@@ -73,7 +77,7 @@ export async function writeJSON(value, path, formatter) {
   // Compared with the JSON Calavera sent, not with `value`: JSON has no -0, so -0 arrives as 0.
   if (!isDeepStrictEqual(parsed, JSON.parse(json))) {
     throw new Error(
-      `${formatter.description} returned text for ${path} that is JSON but holds other values than the ones Calavera sent. ${PRINTS_NOTHING}`,
+      `${formatter.description} returned text for ${path} that is JSON but holds other values than the ones Calavera sent. ${CHANGED_CONTENT}`,
     );
   }
   return text;

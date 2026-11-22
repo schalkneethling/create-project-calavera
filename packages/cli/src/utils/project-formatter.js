@@ -114,7 +114,7 @@ export async function loadProjectFormatter(
       }
       if (result.exitCode !== 0 || result.failed) {
         throw new Error(
-          `${description} could not format ${path}: ${howItEnded(result)}. Calavera does not show vp fmt's output, because it can quote the file. Run vp fmt --check in the project to see that output, then run Calavera again.`,
+          `${description} could not format ${path}: ${howItEnded(result)}. Calavera does not show vp fmt's output, because it can quote the file. Check that vite.config.ts loads without errors, which vp fmt --check in the project reports, then run Calavera again.`,
         );
       }
       return result.stdout;
@@ -123,13 +123,18 @@ export async function loadProjectFormatter(
 }
 
 /**
- * How a vp fmt run that did not succeed ended, from its exit code or signal alone.
+ * How a vp fmt run that did not succeed ended, from the fields of its execa result that hold no
+ * output: whether its output outgrew the buffer, the signal, the exit code, or why it did not
+ * start.
  *
- * @param {{ exitCode?: number, signal?: string }} result
+ * @param {{ exitCode?: number, signal?: string, isMaxBuffer?: boolean, code?: string }} result
  */
-function howItEnded({ exitCode, signal }) {
+export function howItEnded({ exitCode, signal, isMaxBuffer, code }) {
+  // execa stops a process whose output outgrows the buffer itself, with SIGTERM.
+  if (isMaxBuffer) return "its output outgrew the buffer, so Calavera stopped it";
   if (signal) return `it was stopped by the signal ${signal}`;
-  return exitCode === undefined ? "it did not start" : `it exited with code ${exitCode}`;
+  if (exitCode !== undefined) return `it exited with code ${exitCode}`;
+  return code ? `it did not start (${code})` : "it did not start";
 }
 
 /**

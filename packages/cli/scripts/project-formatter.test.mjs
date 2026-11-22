@@ -91,7 +91,7 @@ test("Given text the project's Oxfmt cannot parse, when it is formatted, then th
   const formatter = await loadProjectFormatter(project.root, "managed");
   await assert.rejects(
     formatter.format(".claude/settings.json", '{"a": [1,'),
-    /vp fmt from vite-plus .* could not format \.claude\/settings\.json: it exited with code 2\. .*Run vp fmt --check in the project/,
+    /vp fmt from vite-plus .* could not format \.claude\/settings\.json: it exited with code 2\. .*which vp fmt --check in the project reports/,
   );
 });
 
