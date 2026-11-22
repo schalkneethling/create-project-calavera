@@ -10,6 +10,31 @@ import { writeJSON } from "./json-rewrite.js";
  * @typedef {import("./project-formatter.js").ProjectFormatter} ProjectFormatter
  */
 
+/** @type {ProjectFormatter} */
+const unformatted = {
+  description: "no formatter, because Calavera formats only generated files named .json or .md",
+  format: async (_path, text) => text,
+};
+
+/**
+ * Returns the formatter `formatGeneratedText` formats the JSON file at `path` with: the project's
+ * for a name that ends in .json, and none for any other name, such as a recipe passed as
+ * `--config recipe`. A check that asks how the file would be written, such as
+ * `rewriteLossProblem`, uses this so it judges the text that is written (#1078).
+ *
+ * @param {string} path The file path relative to the project root.
+ * @param {() => Promise<ProjectFormatter>} loadFormatter Called only for a .json name.
+ * @returns {Promise<ProjectFormatter>}
+ */
+export async function generatedJSONFormatter(path, loadFormatter) {
+  return isFormattedJSON(path) ? loadFormatter() : unformatted;
+}
+
+/** @param {string} path */
+function isFormattedJSON(path) {
+  return path.endsWith(".json");
+}
+
 /**
  * Returns the text Calavera writes for a file it generates. A JSON or Markdown file is formatted
  * by the project's formatter; any other file, such as `.editorconfig`, keeps `text`. Nothing is
@@ -23,7 +48,7 @@ import { writeJSON } from "./json-rewrite.js";
  * @throws When the formatted text does not hold what Calavera generated.
  */
 export async function formatGeneratedText(path, text, loadFormatter) {
-  if (path.endsWith(".json")) {
+  if (isFormattedJSON(path)) {
     return writeJSON(JSON.parse(text), path, await loadFormatter());
   }
 
