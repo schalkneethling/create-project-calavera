@@ -107,8 +107,8 @@ function environmentSettings(env) {
     // Nerf-darted keys keep their case and underscores; every other key is kebab-case.
     if (!key.startsWith("//")) key = key.replace(/(?!^)_/g, "-").toLowerCase();
     // npm exports a list setting joined with blank lines (`envVal` in @npmcli/config
-    // set-envs.js), and Yarn 1 as JSON text, but @npmcli/agent splits noProxy on commas only.
-    settings[key] = key === "noproxy" ? noProxyList(value) : value;
+    // set-envs.js), but @npmcli/agent splits noProxy on commas only.
+    settings[key] = key === "noproxy" ? value.split("\n\n").join(",") : value;
   }
   return settings;
 }
@@ -139,7 +139,7 @@ function exportedFrom(entries, key, value, env, otherSpellings = true) {
  * The package manager that started Calavera. npm exports a user-agent set in the project .npmrc
  * as npm_config_user_agent, so when a package manager started Calavera and the user agent equals
  * the project file's value, it came from repository content and says nothing about the launcher.
- * Only npm and Yarn 1 export project settings, and both read .npmrc files, so it counts as npm.
+ * Only npm exports project settings this way, so the launcher counts as npm.
  * @param {NodeJS.ProcessEnv} env
  * @param {string} cwd
  * @returns {Promise<Launcher>}
@@ -156,21 +156,6 @@ async function launcherFor(env, cwd) {
     if (exportedFrom(entries, "user-agent", agent, env) !== undefined) return "npm";
   }
   return launcher;
-}
-
-/** @param {string} value */
-function noProxyList(value) {
-  if (value.startsWith("[")) {
-    try {
-      const list = JSON.parse(value);
-      if (Array.isArray(list) && list.every((host) => typeof host === "string")) {
-        return list.join(",");
-      }
-    } catch {
-      // Not a JSON list, so it is used as written.
-    }
-  }
-  return value.split("\n\n").join(",");
 }
 
 /**
@@ -204,7 +189,8 @@ async function userConfigPath(env, home, launcher) {
  * the registry of `scope`, `proxy`, `httpsProxy`, `noProxy`, and nerf-darted auth keys. Registries
  * of other scopes are not read, so a broken one cannot stop an unrelated install.
  *
- * Under npm, pnpm, and Yarn 1, the settings come from the .npmrc files and npm_config_* variables.
+ * Under npm and pnpm, the settings come from the .npmrc files and npm_config_* variables. Yarn 1
+ * counts as npm here, unchanged by #1064; #1175 removes its support.
  * Under Yarn 2 or later, the registry and proxy come from .yarnrc.yml files and YARN_* variables,
  * and only the auth keys from the .npmrc files, because Yarn does not read them. Under Bun, the
  * bunfig.toml registry and then the first valid of BUN_CONFIG_REGISTRY, NPM_CONFIG_REGISTRY,
@@ -232,9 +218,9 @@ export async function loadNpmRegistryOptions({
   const unsetVariables = new Set();
   const home = env.HOME || homedir();
   const launcher = await launcherFor(env, cwd);
-  // npm and Yarn 1 export the .npmrc settings they resolved as npm_config_* variables, so the
-  // comparison with exported values below applies under them. pnpm counts as npm here, but pnpm 12
-  // exports no settings, so the comparison finds nothing. Bun and Yarn 2 or later also set
+  // npm exports the .npmrc settings it resolved as npm_config_* variables, so the comparison with
+  // exported values below applies under it. pnpm counts as npm here, but pnpm 12 exports no
+  // settings, so the comparison finds nothing. Bun and Yarn 2 or later also set
   // npm_lifecycle_event and similar variables, but read their own settings.
   const npmStarted = launcher === "npm" && startedByNpm(env);
   // npm reads the project .npmrc at its local prefix: the nearest folder above the working
@@ -245,13 +231,13 @@ export async function loadNpmRegistryOptions({
   const projectPath = resolve((npmStarted && env.npm_config_local_prefix) || cwd, ".npmrc");
   const userPath = await userConfigPath(env, home, launcher);
   // A package manager that starts Calavera passes on settings from project files as npm_config_*
-  // variables: npm and Yarn 1 export what they resolved, Yarn 1 includes the .npmrc and .yarnrc
-  // files of parent folders, and a project file can set userconfig, which chooses the file read as
-  // the user .npmrc. No comparison with files can tell all of these apart from the person's own
-  // settings, so a proxy is then trusted only from the default user .npmrc, the file at
-  // ~/.npmrc that no setting can redirect, or from the proxy environment variables that
-  // @npmcli/agent reads. A package manager is recognized by the variables it sets for a script,
-  // not by the user agent, which a .yarnrc can set.
+  // variables: npm exports what it resolved, including values it expands after loading its
+  // config and values an outer run passed down, and a project file can set userconfig, which
+  // chooses the file read as the user .npmrc. No comparison with files can tell all of these
+  // apart from the person's own settings, so a proxy is then trusted only from the default user
+  // .npmrc at ~/.npmrc, or from the proxy environment variables that @npmcli/agent reads. A
+  // package manager is recognized by the variables it sets for a script, not by the user agent,
+  // which a project .npmrc can set.
   const defaultUserPath = join(home, ".npmrc");
   const userProxyTrusted = !npmStarted || userPath === defaultUserPath;
   const scopeKey = scope ? `${scope}:registry` : undefined;
@@ -266,10 +252,6 @@ export async function loadNpmRegistryOptions({
   const accepts = npmKeys[launcher];
 
   const userEntries = await readNpmrc(userPath, warnings);
-  const defaultEntries =
-    !npmStarted || userPath === defaultUserPath
-      ? userEntries
-      : await readNpmrc(defaultUserPath, warnings);
   // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
   const projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
   /** @type {ConfigLayer[]} */
@@ -314,8 +296,8 @@ export async function loadNpmRegistryOptions({
       if (typeof rawValue !== "string") continue;
       const setting = printable(layer.settingNames?.[rawKey] ?? rawKey);
       if (layer.npmEnvironment && npmStarted) {
-        // npm and Yarn 1 export their resolved settings, and for a project .npmrc value they
-        // export the result of their own ${VAR} expansion. Such a value is project content, not
+        // npm exports its resolved settings, and for a project .npmrc value it exports the
+        // result of its own ${VAR} expansion. Such a value is project content, not
         // environment, so it follows the project rules and keeps its label. npm exports a key
         // written in another spelling, such as https_proxy, under the same variable, so the
         // comparison normalizes the file's keys as the variable names are normalized.
@@ -333,17 +315,13 @@ export async function loadNpmRegistryOptions({
           continue;
         }
         if (PROXY_URL_KEYS.has(rawKey) && rawValue.trim()) {
-          // A passed-on proxy is the person's only when it equals the default user .npmrc value.
-          // Yarn 1 reads that file whatever userconfig says, so the value can apply even when
-          // npm_config_userconfig chose another file.
-          if (exportedFrom(defaultEntries, rawKey, rawValue, env, false) === undefined) {
-            if (exportedFrom(userEntries, rawKey, rawValue, env, false) === undefined) {
-              rejectedProxies.push({ key: rawKey, setting, layer: PASSED_ON_SETTINGS });
-            }
-            continue;
+          // A passed-on proxy is the person's only when it equals the value in the user .npmrc and
+          // that file is ~/.npmrc; the user layer applied it then. A value equal to a chosen user
+          // file's proxy was already ignored there with a warning.
+          if (exportedFrom(userEntries, rawKey, rawValue, env, false) === undefined) {
+            rejectedProxies.push({ key: rawKey, setting, layer: PASSED_ON_SETTINGS });
           }
-          // The user layer already applied it when the user file is the default one.
-          if (userProxyTrusted) continue;
+          continue;
         } else if (exportedFrom(userEntries, rawKey, rawValue, env, false) !== undefined) {
           // A value equal to the user .npmrc value under the same key was applied by the user
           // layer, or ignored there with a warning.

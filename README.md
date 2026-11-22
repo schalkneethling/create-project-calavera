@@ -934,7 +934,7 @@ The check asks the registry and sends the credentials that your user and project
 own `npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`. A proxy in a project
 `.npmrc` or `.yarnrc.yml` is ignored with a warning, because it could receive your credentials. That
 includes a proxy that npm passes on from the project `.npmrc` it read, such as the workspace root's
-file when you run `npx` from a workspace member. When a package manager runs Calavera, as `npx`, `npm run`, or `yarn run` do, a proxy is taken only
+file when you run `npx` from a workspace member. When npm runs Calavera, as `npx` and `npm run` do, a proxy is taken only
 from `~/.npmrc` or the `HTTPS_PROXY` and `HTTP_PROXY` variables, and from an `NPM_CONFIG_*` proxy
 only when it equals the `~/.npmrc` value, because a package manager also passes on settings from
 project files. Under Yarn 2 or later, it asks the registry and proxy that your
