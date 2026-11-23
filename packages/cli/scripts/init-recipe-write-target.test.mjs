@@ -1,7 +1,8 @@
 // #1220: init writes the recipe itself, before it applies, so it runs the same #1208 check as
 // apply before that write. A link at the recipe path, or at a folder on the way to it, never makes
-// init or init --apply create or change a file outside the project. Every refusal is a real init,
-// which writes the recipe, and leaves the project and the outside folder byte-identical.
+// init or init --apply create or change a file outside the project. Every refusal runs a real init,
+// which would write the recipe, and its dry run, and leaves the project and the outside folder
+// byte-identical.
 import assert from "node:assert/strict";
 import { mkdir, readFile, symlink } from "node:fs/promises";
 import { join } from "node:path";
@@ -173,6 +174,36 @@ test("init refuses a recipe path that a folder link leads outside the project", 
         message,
       );
     }
+  }
+});
+
+// The same check also stops a plain recipe path outside the project and a path in a folder that
+// does not exist, which init wrote, or failed on with a raw ENOENT, before #1220.
+test("init refuses a recipe path outside the project", async () => {
+  await using fixture = await projectAndElsewhere();
+  const given = join(fixture.elsewhere, "named.json");
+
+  for (const message of await refusals(fixture, given)) {
+    assert.ok(
+      message.includes(
+        `${given} is outside ${fixture.root}, so writing the recipe would create a file outside the project.`,
+      ),
+      message,
+    );
+  }
+});
+
+test("init names the recipe path when its folder does not exist", async () => {
+  await using fixture = await projectAndElsewhere();
+  const given = join(fixture.root, "missing", "recipe.json");
+
+  for (const message of await refusals(fixture, join("missing", "recipe.json"))) {
+    assert.ok(
+      message.startsWith(
+        `Calavera cannot write the recipe at ${given}, because the folder ${join(fixture.root, "missing")} does not exist.`,
+      ),
+      message,
+    );
   }
 });
 
