@@ -908,7 +908,11 @@ approves the proposed recipe and dry-run result.
   profile, package manager, AI artifact, and apply confirmation prompts, as `--new`
   refuses its confirmation, and names `--yes` and the flag that answers each prompt;
   with `eject`, `--yes` removes only the items that match Calavera's records exactly
-- `--json`
+- `--json`; when the arguments themselves are invalid, such as an unknown flag, a flag
+  missing its value, or an unknown command, the run prints `{ command, ok: false, issues }`
+  and exits 1, with `command` set to the command the run would have run, or `null` when that
+  is not a command Calavera has;
+  a `--json` after `--new` belongs to `vp create` and does not count
 
 ## Debugging Errors
 
