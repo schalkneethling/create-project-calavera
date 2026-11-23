@@ -248,8 +248,8 @@ writes only that file, without linking `node_modules`. The development
 dependency install that follows still goes through `vp add -D` when the
 ancestor is managed (ADR-0012, Decision 1). The files Calavera generates
 follow the same verdict: when the ancestor is managed, `apply` formats them with
-the ancestor's `vp fmt` before it writes them, and so does `init --apply` for
-the recipe (#961). When the ancestor is not managed, Calavera writes them
+the ancestor's `vp fmt` before it writes them, and so does `init` for the
+recipe, with or without `--apply` (#961, #1086). When the ancestor is not managed, Calavera writes them
 unformatted. The `package.json` that `init` creates follows the same verdict
 (#1085). The package manager writes its keys in its own order, and a real
 vite-plus 1.7.0 run showed that `vp fmt` sorts them, so the ancestor's

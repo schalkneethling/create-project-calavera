@@ -6199,17 +6199,13 @@ async function promptForAiArtifacts(options) {
  * @returns {Promise<InitResult>}
  */
 export async function initRecipe(options) {
+  // #1086: detected for plain init as well, because the recipe is formatted with this verdict.
+  const detection = await detectVitePlus(process.cwd());
   // #430: init writes the recipe before it applies, so a manifest choice that would not apply here
   // stops before anything is asked or written. That includes a choice where there is no decision,
   // because ignoring abandon would write and apply the recipe.
-  /** @type {ManifestDecision | undefined} */
-  let decision;
-  /** @type {string | undefined} */
-  let installDirectory;
   if (options.apply) {
-    const detection = await detectVitePlus(process.cwd());
-    installDirectory = vitePlusInstallDirectory(detection);
-    decision = manifestDecision(process.cwd(), detection);
+    const decision = manifestDecision(process.cwd(), detection);
     if (!decision && options.manifestChoice !== undefined) {
       throw manifestChoiceNotApplicableError(process.cwd(), detection);
     }
@@ -6268,11 +6264,17 @@ export async function initRecipe(options) {
   const explanation = explainRecipeResponse(recipe);
 
   // #669: formatted as apply formats it, so a Vite+ project's vp check accepts the recipe file.
-  // A decision here means create-here, so the recipe follows the parent's verdict (#961).
+  // A directory without a package.json of its own follows the parent's verdict, as apply does under
+  // create-here (#961), whether or not init also applies (#1086). The text is the recipe init
+  // composed, never a recipe file read from disk, so a person's own file is never reformatted.
   const configText = await formatGeneratedText(
     relative(process.cwd(), resolve(options.config)),
     `${JSON.stringify(recipe, null, 2)}\n`,
-    projectFormatterLoader(process.cwd(), decision?.ancestor.status, { installDirectory }),
+    projectFormatterLoader(
+      process.cwd(),
+      delegatesToVitePlus(detection) ? "managed" : detection.status,
+      { installDirectory: vitePlusInstallDirectory(detection) },
+    ),
   );
   // #1220: the same check apply runs before its recipe write (#1208), so a link at the recipe path
   // never leads init's write outside the project. It runs in the dry run as well, as in apply, and
