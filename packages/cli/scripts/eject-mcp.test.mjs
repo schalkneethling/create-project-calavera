@@ -41,7 +41,7 @@ const loadFormatter = async () => unformatted;
 const guidance = await agentBootstrapTexts(loadFormatter);
 const launches = guidance.mcpLaunchCommands;
 const npmLaunch = /** @type {{ command: string, args: string[] }} */ (launches[0]);
-// #1219: a version the release list names before npm has it, such as 6.3.0 while package.json
+// #1219: a version the release list names before npm has it, such as 7.0.0 while package.json
 // holds 6.2.1. Undefined right after a release, when the list names nothing newer.
 const upcoming = EARLIER_TEMPLATES.mcp
   .flatMap(({ releases }) => releases)
