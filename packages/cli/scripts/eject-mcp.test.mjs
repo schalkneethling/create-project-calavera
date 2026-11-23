@@ -1306,6 +1306,53 @@ for (const [label, mcp, removedLocation, keptLocation] of /** @type {const} */ (
   });
 }
 
+test("opencode: an edited entry is still reported when a rewrite loss keeps Calavera's entry too", async () => {
+  await inProject(async () => {
+    await write(
+      "opencode.json",
+      `{\n  "mcp": {\n    "timeout": 1.50,\n    "calavera": { "type": "local", "command": ["mine"], "enabled": true },\n    "servers": { "calavera": ${JSON.stringify(openCodeEntry(npmLaunch))} }\n  }\n}\n`,
+    );
+    const found = await plan();
+    assert.equal(named(found, "opencode.json"), false);
+    const reasons = found.reported
+      .filter(({ path }) => path === "opencode.json")
+      .map(({ reason }) => reason);
+    assert.equal(reasons.length, 2, JSON.stringify(reasons));
+    assert.match(reasons[0] ?? "", /^The calavera entry under mcp in opencode\.json differs/);
+    assert.match(reasons[1] ?? "", /Calavera would write in another spelling.*under mcp\.servers/);
+  });
+});
+
+// Every OpenCode block the setup notes of a release showed, from 2.2.0 on, is the entry that
+// release wrote, so eject must count each one as Calavera's.
+test("opencode: the entry in every release's setup notes is unedited for eject", async () => {
+  const fixtures = new URL("../fixtures/agent-guidance/", import.meta.url);
+  const { mcp: epochs } = JSON.parse(await readFile(new URL("epochs.json", fixtures), "utf8"));
+  let checked = 0;
+  for (const { id, releases } of epochs) {
+    for (const packageManager of ["npm", "pnpm", "yarn", "bun"]) {
+      const text = await readFile(new URL(`mcp/${id}.${packageManager}.md`, fixtures), "utf8");
+      const section = text.split("### OpenCode")[1];
+      if (section === undefined) continue;
+      const block = /```json\n([\s\S]*?)\n```/.exec(section)?.[1] ?? "";
+      const published = releases.find(
+        (/** @type {string} */ release) => !semver.gt(release, packageJson.version),
+      );
+      if (published === undefined) continue;
+      await inProject(async () => {
+        await write("opencode.json", `${block.replaceAll("{{version}}", published)}\n`);
+        assert.equal(
+          item(await plan(), "opencode.json").edits,
+          "unedited",
+          `${id} ${packageManager}`,
+        );
+      });
+      checked += 1;
+    }
+  }
+  assert.ok(checked >= 12, `checked ${checked} blocks`);
+});
+
 test("opencode: two edited entries are both kept and both reported", async () => {
   await inProject(async () => {
     await write(

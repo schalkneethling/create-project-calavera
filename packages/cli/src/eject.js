@@ -1063,10 +1063,17 @@ async function planJsonMcpEntry(path, locations, loadFormatter, schema) {
   const loss = await rewriteLossProblem(text, path, formatter, { withoutValues: true });
   if (loss !== undefined) {
     const { entries, remedy } = named(unedited);
-    return mcpEntryKept(
-      path,
-      `${path} ${loss}. eject rewrites the whole file to remove ${entries}, so it leaves the file as it is rather than change that. ${remedy}`,
-    );
+    // The edited entries it keeps anyway are still reported (ADR-0017, Decision 4).
+    return {
+      items: [],
+      reported: [
+        ...reported,
+        {
+          path,
+          reason: `${path} ${loss}. eject rewrites the whole file to remove ${entries}, so it leaves the file as it is rather than change that. ${remedy}`,
+        },
+      ],
+    };
   }
 
   // `jsonMcpEntriesIn` found an object in `config`, so `config` is an object too.

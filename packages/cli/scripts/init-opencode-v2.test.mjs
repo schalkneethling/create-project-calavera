@@ -294,10 +294,44 @@ for (const [label, servers, expected] of /** @type {const} */ ([
       // An unedited entry under mcp would otherwise move into `servers`.
       const before = json({ mcp: { calavera: v1Entry("6.2.1"), servers } });
       await writeFile(PATH, before);
-      assert.equal(await assertKept(before), expected);
+      assert.equal(
+        await assertKept(before),
+        `${expected} The calavera entry under mcp is one a Calavera release wrote.`,
+      );
     });
   });
 }
+
+test("an mcp.servers that is not the container beside an edited entry under mcp names both", async () => {
+  await inProject(async () => {
+    const before = json({
+      mcp: {
+        calavera: { type: "local", command: ["mine"] },
+        servers: { type: "remote", url: "u" },
+      },
+    });
+    await writeFile(PATH, before);
+    assert.equal(
+      await assertKept(before),
+      "opencode.json holds a server named servers directly under mcp, a name OpenCode 2 reserves for the object that holds servers, so it was left unchanged. Rename that server, then run --init again. The calavera entry under mcp in opencode.json differs from every entry a Calavera release wrote, so it was left unchanged as a local edit.",
+    );
+  });
+});
+
+test("an edited switch under mcp beside Calavera's entry under mcp.servers gets the remedy for a switch", async () => {
+  await inProject(async () => {
+    const before = json({
+      mcp: { calavera: { enabled: false }, servers: { calavera: v2Entry(current) } },
+    });
+    await writeFile(PATH, before);
+    const reason = await assertKept(before);
+    assert.match(
+      reason,
+      /The file holds two calavera servers, so it was left unchanged\. The entry under mcp holds only enabled, which OpenCode 1\.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on the calavera entry under mcp\.servers, then run --init again\.$/,
+    );
+    assert.doesNotMatch(reason, /replace enabled with disabled/);
+  });
+});
 
 test("an OpenCode 2 container that holds a server named type is still the container", async () => {
   await inProject(async () => {

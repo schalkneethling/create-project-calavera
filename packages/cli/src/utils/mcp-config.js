@@ -756,6 +756,19 @@ const ENABLED_SWITCH_REMEDY =
 const TWO_ENTRIES_REMEDY =
   "Keep the one you mean to use: OpenCode 2 reads servers from mcp.servers, so move yours there and replace enabled with disabled, as OpenCode's migration guide describes, then remove the other, or remove yours to use Calavera's entry. Then run --init again.";
 
+const TWO_ENTRIES_SWITCH_REMEDY =
+  'The entry under mcp holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on the calavera entry under mcp.servers, then run --init again.';
+
+/**
+ * Whether `entry` holds only `enabled`, the OpenCode 1.x way to switch off a server configured
+ * elsewhere.
+ *
+ * @param {unknown} entry
+ */
+function isEnabledSwitch(entry) {
+  return isPlainObject(entry) && Object.keys(entry).join() === "enabled";
+}
+
 /**
  * The kept-file change for an `opencode.json` that holds an edited `calavera` entry: the file stays
  * as it is, because C8 forbids rewriting the edited entry, and a partial write would rewrite the
@@ -774,14 +787,17 @@ function editedOpenCodeChange(path, found) {
     if (location.name === "mcp.servers") {
       return editedEntryChange(path, named(location), unpublished);
     }
-    const enabledSwitch = isPlainObject(entry) && Object.keys(entry).join() === "enabled";
     return editedEntryChange(
       path,
       named(location),
       unpublished,
-      enabledSwitch ? ENABLED_SWITCH_REMEDY : OPENCODE_2_REMEDY,
+      isEnabledSwitch(entry) ? ENABLED_SWITCH_REMEDY : OPENCODE_2_REMEDY,
     );
   }
+  // An edited switch under `mcp` cannot move to `mcp.servers` as it is, so it gets its own remedy.
+  const editedSwitch = found.some(
+    ({ location, entry, edited }) => edited && location.name === "mcp" && isEnabledSwitch(entry),
+  );
   const sentences = found.map(({ location, entry, edited }) =>
     edited
       ? editedEntrySentence(path, named(location), pinsUnpublishedVersion(entry, location.entries))
@@ -793,7 +809,7 @@ function editedOpenCodeChange(path, found) {
     reason: [
       ...sentences,
       `The file holds two calavera servers, so it was left unchanged.`,
-      TWO_ENTRIES_REMEDY,
+      editedSwitch ? TWO_ENTRIES_SWITCH_REMEDY : TWO_ENTRIES_REMEDY,
     ].join(" "),
   };
 }
@@ -910,12 +926,26 @@ export async function writeOpenCodeMcpConfig(
     return "skip";
   }
 
-  if (serversProblem !== undefined) return kept([serversProblem]);
-
   const judged = found.map((each) => ({
     ...each,
     edited: !isCalaveraMcpEntry(each.entry, each.location.entries),
   }));
+  if (serversProblem !== undefined) {
+    // `mcp.servers` is not searched, so only an entry directly under `mcp` can be named; the
+    // person corrects `mcp.servers` before any entry can be placed (ADR-0022, Decision 2).
+    return kept([
+      serversProblem,
+      ...judged.map(({ location, entry, edited }) =>
+        edited
+          ? editedEntrySentence(
+              targetPath,
+              `The calavera entry under ${location.name}`,
+              pinsUnpublishedVersion(entry, location.entries),
+            )
+          : `The calavera entry under ${location.name} is one a Calavera release wrote.`,
+      ),
+    ]);
+  }
   if (judged.some(({ edited }) => edited)) {
     changes.push(editedOpenCodeChange(targetPath, judged));
     return "skip";

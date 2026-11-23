@@ -157,6 +157,22 @@ for (const [label, body, expected] of /** @type {const} */ ([
   });
 }
 
+test("a temporary folder that cannot be created gives failed, never an error", posix, async () => {
+  await withFolders(async ({ bin }) => {
+    await stub(bin, printing("1.19.6\n"));
+    const original = process.env.TMPDIR;
+    process.env.TMPDIR = join(bin, "missing", "folder");
+    try {
+      assert.deepEqual(await checkOpenCodeVersion({ env: { PATH: bin } }), {
+        versionCheck: "failed",
+      });
+    } finally {
+      if (original === undefined) delete process.env.TMPDIR;
+      else process.env.TMPDIR = original;
+    }
+  });
+});
+
 test("PATH with only an empty folder gives missing", posix, async () => {
   await withFolders(async ({ bin }) => {
     assert.deepEqual(await checkOpenCodeVersion({ env: { PATH: bin } }), {

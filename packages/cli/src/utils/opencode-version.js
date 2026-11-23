@@ -86,7 +86,14 @@ export async function checkOpenCodeVersion({
   const executable = await findOpenCode(env.PATH ?? env.Path, platform);
   if (executable === undefined) return { versionCheck: "missing" };
 
-  const folder = await mkdtemp(join(tmpdir(), "calavera-opencode-version-"));
+  /** @type {string} */
+  let folder;
+  try {
+    folder = await mkdtemp(join(tmpdir(), "calavera-opencode-version-"));
+  } catch {
+    // Without a private folder the check does not run, and that is not an error either.
+    return { versionCheck: "failed" };
+  }
   try {
     const outcome = await runVersion(executable, folder, env, timeoutMs);
     if (outcome.versionCheck !== "ran") return { versionCheck: outcome.versionCheck };
@@ -96,7 +103,9 @@ export async function checkOpenCodeVersion({
       ? { versionCheck: "older", version: parsed.version }
       : { versionCheck: "ok", version: parsed.version };
   } finally {
-    await rm(folder, { recursive: true, force: true });
+    // A grandchild that outlives a timeout can still hold the folder on Windows. Removing it is
+    // tidiness, so a failure never turns the check into an error.
+    await rm(folder, { recursive: true, force: true }).catch(() => {});
   }
 }
 
