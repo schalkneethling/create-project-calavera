@@ -288,16 +288,29 @@ test("a marker matches when the prose around it is wrapped differently", () => {
   );
 });
 
-test("the registration parser fails when a registerTool call does not start with its name", () => {
-  assert.deepEqual(registeredToolNamesIn('registerTool({\n  name: "list_profiles",\n});'), [
-    "list_profiles",
-  ]);
+test("the registration parser fails when a registerCheckedTool call does not start with its name", () => {
+  const wrapper = "function registerCheckedTool(tool) {\n  registerTool(tool);\n}\n";
+  assert.deepEqual(
+    registeredToolNamesIn(`${wrapper}registerCheckedTool({\n  name: "list_profiles",\n});`),
+    ["list_profiles"],
+  );
   assert.throws(
     () =>
       registeredToolNamesIn(
-        'registerTool({ name: "list_profiles" });\nregisterTool({ description: "x", name: "new_tool" });',
+        `${wrapper}registerCheckedTool({ name: "list_profiles" });\nregisterCheckedTool({ description: "x", name: "new_tool" });`,
       ),
     /first key is name/,
   );
-  assert.throws(() => registeredToolNamesIn("registerTool(tool);"), /first key is name/);
+  assert.throws(
+    () => registeredToolNamesIn(`${wrapper}registerCheckedTool(tool);`),
+    /first key is name/,
+  );
+});
+
+test("the registration parser fails when a tool is registered without registerCheckedTool", () => {
+  const wrapper = "function registerCheckedTool(tool) {\n  registerTool(tool);\n}\n";
+  assert.throws(
+    () => registeredToolNamesIn(`${wrapper}registerTool({ name: "unchecked_tool" });`),
+    /Only registerCheckedTool may call registerTool/,
+  );
 });

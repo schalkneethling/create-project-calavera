@@ -6,29 +6,36 @@ import { readFile } from "node:fs/promises";
 const composerScriptUrl = new URL("../../../apps/composer/script.js", import.meta.url);
 
 /**
- * The tool names that `script` passes to `registerTool`, in registration order. The names are
- * read only when `name` is the first key of the object literal, so a registration written any
- * other way fails the count check instead of disappearing from the result.
+ * The tool names that `script` passes to `registerCheckedTool`, in registration order. The names
+ * are read only when `name` is the first key of the object literal, so a registration written any
+ * other way fails the count check instead of disappearing from the result. `registerCheckedTool`
+ * checks each tool's input before its handler runs (#1176), so it must be the only code that
+ * calls `registerTool`.
  *
  * @param {string} script
  * @returns {string[]}
  */
 export function registeredToolNamesIn(script) {
-  const names = [...script.matchAll(/registerTool\(\{\s*name: "([^"]+)"/g)].map(
+  const names = [...script.matchAll(/registerCheckedTool\(\{\s*name: "([^"]+)"/g)].map(
     (match) => match[1],
   );
-  const calls = script.match(/registerTool\(/g) ?? [];
+  const calls = script.match(/(?<!function )registerCheckedTool\(/g) ?? [];
   assert.equal(
     names.length,
     calls.length,
-    'Every registerTool call must pass an object literal whose first key is name: "<tool>"',
+    'Every registerCheckedTool call must pass an object literal whose first key is name: "<tool>"',
+  );
+  assert.equal(
+    (script.match(/registerTool\(/g) ?? []).length,
+    1,
+    "Only registerCheckedTool may call registerTool, so every tool checks its input",
   );
   return names;
 }
 
 /**
- * The tool names the Composer passes to `navigator.modelContext.registerTool`, in registration
- * order.
+ * The tool names the Composer registers through `navigator.modelContext.registerTool`, in
+ * registration order.
  *
  * @returns {Promise<string[]>}
  */

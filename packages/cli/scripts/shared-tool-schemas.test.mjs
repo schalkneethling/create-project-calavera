@@ -11,6 +11,7 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import {
   describeBaselineTarget,
   recommendBaselineTarget,
+  searchBaselineFeatures,
 } from "@schalkneethling/calavera-baseline-core";
 import Ajv from "ajv";
 import * as z from "zod";
@@ -21,6 +22,7 @@ import {
   composeRecipeResponse,
   describeIntegrationResponse,
   explainRecipeResponse,
+  listIntegrationsResponse,
   recipeCompositionToolNames,
   validateRecipeResponse,
 } from "../src/recipe.js";
@@ -154,9 +156,11 @@ const coreAcceptedComposeInputs = [
       },
     },
   },
-  // The core reads a falsy tools or aiArtifacts as absent; the schemas accept only null of those.
-  { profile: "default", tools: null },
-  { profile: "default", aiArtifacts: null },
+  // #1176: the core reads a falsy tools or aiArtifacts as absent, so the schemas accept each one.
+  ...[null, false, 0, ""].flatMap((absent) => [
+    { profile: "default", tools: absent },
+    { profile: "default", aiArtifacts: absent },
+  ]),
   // compose_recipe ignores a key it does not read, at the top level and on an artifact.
   { profile: "default", unknown: true },
   { profile: "default", aiArtifacts: [{ id: "skill-calavera", note: "kept out" }] },
@@ -198,7 +202,7 @@ test("MCP and WebMCP declare the same input schema apart from the Node.js-only a
     delete mcpInput.$schema;
     if (name === "compose_recipe") {
       // ADR-0018 Decision 2: the WebMCP adapter leaves the Node.js-only part out, and refuses it.
-      const item = mcpInput.properties.aiArtifacts.anyOf[0].items;
+      const item = mcpInput.properties.aiArtifacts.anyOf[0].anyOf[0].items;
       assert.equal(item.properties.inputs.type, "object");
       delete item.properties.inputs;
       item.propertyNames = { not: { enum: ["inputs"] } };
@@ -340,15 +344,12 @@ const refused = [
   releaseEnvironment({ branches: [] }),
   releaseEnvironment({ branches: [" "] }),
   ["describe_integration", {}],
-  ["describe_integration", { id: 5 }],
   ["describe_baseline_target", {}],
   ["describe_baseline_target", { target: "someday" }],
   ["describe_baseline_target", { target: 5.5 }],
   ["recommend_baseline_target", { features: [] }],
   ["recommend_baseline_target", { features: "grid" }],
   ["recommend_baseline_target", { features: [5] }],
-  ["validate_recipe", {}],
-  ["validate_recipe", { recipe: [] }],
   ["explain_recipe", {}],
   ["explain_recipe", { recipe: "default" }],
 ];
@@ -393,22 +394,147 @@ test("both declared schemas refuse each input the core refuses, and MCP answers 
   }
 });
 
-test("both declared schemas refuse a few inputs the core tolerates, as both surfaces did before", () => {
-  // The core reads any query, falls back to its default limit, and lists no integrations for an
-  // unknown profile, so these refusals have no core message to carry. The schemas the two surfaces
-  // declared before #1051 already refused them.
-  const tolerated = [
-    ["search_baseline_features", { query: "grid", limit: 0 }],
-    ["search_baseline_features", { query: "grid", limit: 101 }],
-    ["search_baseline_features", {}],
-    ["search_baseline_features", { query: 5 }],
-    ["list_integrations", { profile: "not-a-profile" }],
-  ];
+// #1176: the Composer's handlers enforce the declared schemas, so a value the core tolerates must
+// pass both, or the browser would refuse what it accepted before. Each value here was refused by a
+// declared schema until #1176 widened it (ADR-0018 Decision 6); a narrowing fails this test.
+const tolerated = [
+  // The core lists every integration for a falsy profile, and none for any other value that is
+  // not a profile ID; on main the Composer answered each of these with a list.
+  ...[null, "", false, 0, "unknown", "DEFAULT", " default", 5, ["default"], { id: "default" }].map(
+    (profile) => ["list_integrations", { profile }],
+  ),
+  // The core reads String(id), so these describe Stylelint, as the Composer did on main.
+  ["describe_integration", { id: ["stylelint"] }],
+  ["describe_integration", { id: [" Stylelint "] }],
+  // The core reads any query as text and an absent or null one as empty, and reads any limit that
+  // is not a positive integer as its default of 20; it serves a limit above 100.
+  ["search_baseline_features", {}],
+  ["search_baseline_features", { query: null }],
+  ["search_baseline_features", { query: 5 }],
+  ...[null, 0, -1, 1.5, 101, 500, "5"].map((limit) => [
+    "search_baseline_features",
+    { query: "grid", limit },
+  ]),
+  // The core reads a falsy tools or aiArtifacts as absent.
+  ...[false, 0, ""].flatMap((absent) => [
+    ["compose_recipe", { profile: "default", tools: absent }],
+    ["compose_recipe", { profile: "default", aiArtifacts: absent }],
+  ]),
+  // validate_recipe reports a missing or malformed recipe in its { ok: false } result.
+  ["validate_recipe", {}],
+  ...[null, [], "default", 5].map((recipe) => ["validate_recipe", { recipe }]),
+];
 
+// The core call behind each tolerated tool, which must answer instead of throwing.
+const tolerantCoreCalls = {
+  compose_recipe: (input) => composeRecipeResponse(input),
+  describe_integration: ({ id }) => describeIntegrationResponse(id),
+  list_integrations: (input) => listIntegrationsResponse(input),
+  search_baseline_features: ({ query, limit }) => searchBaselineFeatures(query, { limit }),
+  validate_recipe: ({ recipe }) => validateRecipeResponse(recipe),
+};
+
+test("both declared schemas accept each value the core tolerates", () => {
   for (const [tool, input] of tolerated) {
-    assert.equal(mcpAccepts(tool, input), false, `MCP ${tool}: ${JSON.stringify(input)}`);
-    assert.equal(webMcpAccepts(tool, input), false, `WebMCP ${tool}: ${JSON.stringify(input)}`);
+    const label = `${tool}: ${JSON.stringify(input)}`;
+    assert.doesNotThrow(() => tolerantCoreCalls[tool](structuredClone(input)), label);
+    assert.equal(mcpAccepts(tool, input), true, `MCP ${label}`);
+    assert.equal(webMcpAccepts(tool, input), true, `WebMCP ${label}`);
   }
+  assert.equal(validateRecipeResponse([]).ok, false);
+});
+
+test("the MCP server answers each value the core tolerates, and the result fits its output schema", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createMcpServer();
+  const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    for (const [tool, input] of tolerated) {
+      const label = `${tool}: ${JSON.stringify(input)}`;
+      const result = await client.callTool({ name: tool, arguments: input });
+      assert.notEqual(result.isError, true, `${label}\n${result.content?.[0]?.text}`);
+      // The browser does not check results, so check the core's against the declared form too.
+      const outputSchema = webMcpSchemas[tool].outputSchema;
+      if (outputSchema) {
+        const core = tolerantCoreCalls[tool](structuredClone(input));
+        assert.equal(ajv.validate(outputSchema, core), true, `${label} output`);
+      }
+    }
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("validate_recipe answers a malformed recipe with its result on MCP, not an invalid-arguments error", async () => {
+  const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+  const server = createMcpServer();
+  const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+  await server.connect(serverTransport);
+  await client.connect(clientTransport);
+  try {
+    const result = await client.callTool({ name: "validate_recipe", arguments: { recipe: [] } });
+    assert.notEqual(result.isError, true);
+    assert.deepEqual(JSON.parse(result.content[0].text), {
+      ok: false,
+      errors: ["Recipe must be an object."],
+    });
+  } finally {
+    await client.close();
+    await server.close();
+  }
+});
+
+test("list_integrations refuses a removed profile ID in the core, which both schemas pass to it", () => {
+  // ADR-0011: modern and classic are refused with a message naming the replacement. The schemas
+  // accept any profile, so the refusal belongs to the core and both surfaces give it.
+  for (const profile of ["modern", "classic"]) {
+    assert.equal(mcpAccepts("list_integrations", { profile }), true);
+    assert.equal(webMcpAccepts("list_integrations", { profile }), true);
+    assert.throws(
+      () => listIntegrationsResponse({ profile }),
+      new RegExp(`The ${profile} profile was removed; use default instead\\.$`),
+    );
+  }
+  // Only a removed ID is refused; another value that is not a profile ID lists nothing.
+  assert.deepEqual(listIntegrationsResponse({ profile: "Modern" }).integrations, []);
+  assert.deepEqual(listIntegrationsResponse({ profile: ["modern"] }).integrations, []); // The response reports the filter as it was sent, and null when a falsy profile filters nothing.
+  assert.equal(listIntegrationsResponse({ profile: "minimal" }).profile, "minimal");
+  assert.equal(listIntegrationsResponse({ profile: "DEFAULT" }).profile, "DEFAULT");
+  for (const profile of [undefined, null, "", false, 0]) {
+    assert.equal(listIntegrationsResponse({ profile }).profile, null, JSON.stringify(profile));
+  }
+});
+
+test("describe_integration refuses a missing ID with the core's message on MCP", () => {
+  const [issue] = sharedToolSchemas.describe_integration.input.safeParse({}).error.issues;
+  assert.equal(issue.message, "Unknown integration: undefined.");
+  // An ID that resolves to no integration passes both schemas, and the core refuses it.
+  assert.equal(mcpAccepts("describe_integration", { id: 5 }), true);
+  assert.equal(webMcpAccepts("describe_integration", { id: 5 }), true);
+  assert.throws(() => describeIntegrationResponse(5), /^Error: Unknown integration: 5\.$/);
+});
+
+test("a widened field still advertises the value an agent should send first", () => {
+  const search = webMcpSchemas.search_baseline_features.inputSchema.properties;
+  assert.deepEqual(search.query.anyOf, [{ type: "string" }, {}]);
+  assert.equal(search.limit.anyOf[0].type, "integer");
+  assert.equal(search.limit.anyOf[0].minimum, 1);
+  assert.deepEqual(search.limit.anyOf[1], {});
+  const recipe = webMcpSchemas.validate_recipe.inputSchema.properties.recipe;
+  assert.equal(recipe.anyOf[0].type, "object");
+  assert.deepEqual(recipe.anyOf[1], {});
+  const { tools, aiArtifacts } = webMcpSchemas.compose_recipe.inputSchema.properties;
+  assert.deepEqual(tools.anyOf[0].anyOf[0], { type: "array", items: { type: "string" } });
+  assert.equal(aiArtifacts.anyOf[0].anyOf[0].items.required[0], "id");
+  const profile = webMcpSchemas.list_integrations.inputSchema.properties.profile;
+  assert.deepEqual(profile.anyOf[0].enum, ["default", "minimal"]);
+  assert.deepEqual(profile.anyOf[1], {});
+  const { id } = webMcpSchemas.describe_integration.inputSchema.properties;
+  assert.deepEqual(id.anyOf[0], { type: "string" });
+  assert.deepEqual(webMcpSchemas.describe_integration.inputSchema.required, ["id"]);
 });
 
 test("no shared schema holds a check that its JSON Schema form cannot carry", () => {

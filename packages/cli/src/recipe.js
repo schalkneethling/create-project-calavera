@@ -146,7 +146,8 @@ export const mcpComposeRecipeDescription = `${recipeToolDescriptions.compose_rec
 
 export const recipeToolInputDescriptions = Object.freeze({
   profile: "Base Calavera tooling profile.",
-  profileFilter: "Optional profile filter.",
+  profileFilter:
+    "Optional profile filter. Omit it, or pass null or an empty string, to list every integration. A value that is not a profile ID lists no integrations.",
   packageManager: "Package manager used for dependency installation and generated scripts.",
   tools: "Integration IDs or labels. Omit to use the selected profile defaults from list_profiles.",
   integrationId: "Integration ID or label from list_integrations.",
@@ -163,8 +164,10 @@ export const recipeToolInputDescriptions = Object.freeze({
   checkUpdates:
     "Resolve each artifact on its channel in the npm registry to report available updates, as `artifacts status --check-updates` does. The lookup contacts the registry and writes nothing into the project.",
   baselineTarget: "Baseline target: widely, newly, or a supported fixed year.",
-  baselineQuery: "Text used to search the CSS-focused Baseline feature catalog.",
-  baselineLimit: "Maximum number of Baseline feature search results.",
+  baselineQuery:
+    "Text used to search the CSS-focused Baseline feature catalog. Omit it, or pass null or an empty string, to list features without filtering.",
+  baselineLimit:
+    "Maximum number of Baseline feature search results, a positive integer. Any other value, such as null, uses the default of 20.",
   baselineFeatures: "One or more Baseline feature IDs used to calculate a recommendation.",
   recipe: "A Calavera recipe object.",
   packageManagerOverride:
@@ -447,18 +450,28 @@ export function normalizeAiArtifactInputs(artifactInputs = []) {
 }
 
 /**
- * Refuses artifact inputs that are not an object of values keyed by input name. The shared tool
- * schema runs it too, so its refusal names the same fault.
+ * Refuses artifact inputs that are not an object of values keyed by input name.
  *
  * @param {unknown} inputs
  * @param {number} index The artifact's position in aiArtifacts.
  */
-export function assertAiArtifactInputsObject(inputs, index) {
+function assertAiArtifactInputsObject(inputs, index) {
   if (!isPlainObject(inputs)) {
     throw new Error(
       `Invalid aiArtifacts[${index}].inputs: expected an object of input values keyed by input name.`,
     );
   }
+}
+
+/**
+ * The refusal of a tool input part that only the Node.js MCP server can serve, such as the artifact
+ * `inputs` of `compose_recipe` (ADR-0018, Decision 4). The Composer's WebMCP handlers give it,
+ * because the browser cannot check those values.
+ *
+ * @param {string} path Where the input names the part, such as aiArtifacts[0].inputs.
+ */
+export function nodeOnlyInputMessage(path) {
+  return `Invalid ${path}: only the Calavera MCP server accepts this field, because checking it needs Node.js. Leave it out of the Composer's tool call, or call the MCP server's tool of the same name.`;
 }
 
 /**
@@ -798,8 +811,14 @@ export function listProfilesResponse(options = {}) {
 }
 
 export function listIntegrationsResponse({ profile } = {}) {
+  // ADR-0011: a removed profile ID is refused with a message that names its replacement, instead of
+  // being read as a filter that matches no integration.
+  if (typeof profile === "string" && Object.hasOwn(removedProfileReplacements, profile)) {
+    assertKnownProfile(profile);
+  }
   return {
-    profile: profile ?? null,
+    // A falsy profile, such as "" or false, filters nothing, so the response reports no filter.
+    profile: profile || null,
     integrations: listIntegrationOptions(profile),
   };
 }

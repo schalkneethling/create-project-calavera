@@ -8,13 +8,15 @@
 //
 // Each schema refuses no input the core accepts: a declared schema that refuses such an input is a
 // breaking change under ADR-0018 Decision 6. That is why a field the core reads with `??`, such as
-// severity, also accepts null, which selects the default. A few schemas accept less than the core,
-// as they did before they moved here; tightening one to what the core enforces is not breaking.
+// severity, also accepts null, which selects the default, and why a field the core reads as absent
+// when it is falsy also accepts false, 0, and "". The Composer's handlers enforce these schemas
+// (#1176), so a schema narrower than the core would refuse in the browser what the core accepts.
+// Only the browser form of compose_recipe accepts less than the core: it refuses the Node.js-only
+// artifact inputs (ADR-0018, Decision 4). Each input schema is an object, so it refuses arguments
+// that are not one, which the WebMCP specification also refuses before it calls execute.
 //
 // Each schema's error map runs the core's own check on a refused value and returns its message, so
-// an MCP client reads the same explanation, with its remedy, that the core gives. The refusals of
-// search_baseline_features keep Zod's messages, because the core reads any query and falls back to
-// its default limit; both surfaces refused those inputs before #1051.
+// an MCP client reads the same explanation, with its remedy, that the core gives.
 import * as z from "zod";
 import {
   describeBaselineTarget,
@@ -33,10 +35,8 @@ import {
 } from "./github-repository-controls-options.js";
 import {
   STYLELINT_BASELINE_SEVERITIES,
-  assertAiArtifactInputsObject,
   assertKnownProfile,
   describeIntegrationResponse,
-  normalizeAiTarget,
   normalizeIntegrationOptions,
   packageManagerIdsForRecipe,
   profileIdsForRecipe,
@@ -46,7 +46,6 @@ import {
 } from "./recipe.js";
 import { CONFIG_FILE } from "./project-local-commands.js";
 import { STRYKER_ID, strykerTestRunners } from "./stryker-options.js";
-import { assertString } from "./utils/assertions.js";
 
 const nodeOnlyRegistry = z.registry();
 
@@ -94,6 +93,54 @@ function coreMessage(check) {
   };
 }
 
+/**
+ * A field the core reads with `??` or as absent when it is falsy: null, false, 0, and "" each
+ * select the core's default, as an omitted field does. `check` gives the core's message for any
+ * other value `schema` refuses.
+ *
+ * @param {z.ZodType} schema
+ * @param {CoreCheck} check
+ */
+function orFalsy(schema, check) {
+  return z
+    .union([schema, z.literal(false), z.literal(0), z.literal("")], coreMessage(check))
+    .nullable();
+}
+
+/**
+ * A field the core reads whatever its value is. The first branch tells an agent what to send; the
+ * second accepts every other value, as the core does, so the schema refuses nothing the core
+ * accepts (ADR-0018 Decision 6).
+ *
+ * @param {z.ZodType} schema
+ */
+function orAnyValue(schema) {
+  return z.union([schema, z.unknown()]);
+}
+
+/**
+ * A required field the core reads whatever JSON value it is. Like orAnyValue, the first branch
+ * tells an agent what to send, but the others name each JSON type instead of accepting any value,
+ * because Zod refuses a missing key under z.unknown() with its own message, which no error map
+ * replaces. A missing key fails every branch, so `check` gives the core's message for it.
+ *
+ * @param {z.ZodType} schema
+ * @param {CoreCheck} check
+ */
+function orAnyJsonValue(schema, check) {
+  return z.union(
+    [
+      schema,
+      z.number(),
+      z.boolean(),
+      z.null(),
+      z.array(z.unknown()),
+      z.record(z.string(), z.unknown()),
+    ],
+    coreMessage(check),
+  );
+}
+
 /** @param {string} value */
 function escapeRegExp(value) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
@@ -127,13 +174,6 @@ function trimmedEnum(values, check) {
 function nonBlankString(check) {
   return z.string(coreMessage(check)).regex(/\S/);
 }
-
-/**
- * The position of the refused artifact in aiArtifacts, which the core names in its messages.
- *
- * @param {RefusedValue} issue
- */
-const artifactIndex = (issue) => Number(issue.path?.[1]);
 
 /**
  * Runs the core's composition check on a recipe whose only fault is the refused value.
@@ -367,40 +407,20 @@ const integrationOptionsSchema = z.strictObject(
   coreMessage((options) => normalizeIntegrationOptions(options, [])),
 );
 
-const aiArtifactInputSchema = z.object(
-  {
-    id: z
-      .string(
-        coreMessage((id, issue) => assertString(`aiArtifacts[${artifactIndex(issue)}].id`, id)),
-      )
-      .describe(recipeToolInputDescriptions.aiArtifactId),
-    target: z
-      .string(coreMessage((target, issue) => normalizeAiTarget(target, artifactIndex(issue))))
+// An artifact item and the tools and aiArtifacts lists sit inside orFalsy's union, whose error map
+// runs the core's composition check on the whole list, so the core's message names the refused
+// item, such as aiArtifacts[1].id; the item schemas need no error maps of their own.
+const aiArtifactInputSchema = z.object({
+  id: z.string().describe(recipeToolInputDescriptions.aiArtifactId),
+  target: z.string().optional().describe(recipeToolInputDescriptions.aiArtifactTarget),
+  // ADR-0018 Decision 4: only the MCP server reports the inputs an artifact declares.
+  inputs: nodeOnly(
+    z
+      .record(z.string(), z.string())
       .optional()
-      .describe(recipeToolInputDescriptions.aiArtifactTarget),
-    // ADR-0018 Decision 4: only the MCP server reports the inputs an artifact declares.
-    inputs: nodeOnly(
-      z
-        .record(
-          z.string(),
-          z.string(
-            coreMessage((value, issue) =>
-              assertString(
-                `aiArtifacts[${artifactIndex(issue)}].inputs.${String(issue.path?.[3])}`,
-                value,
-              ),
-            ),
-          ),
-          coreMessage((inputs, issue) =>
-            assertAiArtifactInputsObject(inputs, artifactIndex(issue)),
-          ),
-        )
-        .optional()
-        .describe(recipeToolInputDescriptions.aiArtifactInputs),
-    ),
-  },
-  coreMessage(compositionCheck((item) => ({ aiArtifacts: [item] }))),
-);
+      .describe(recipeToolInputDescriptions.aiArtifactInputs),
+  ),
+});
 
 // Shared output schema for a catalog integration as returned by list_integrations and
 // describe_integration. Loose, because some catalog entries carry per-platform config blocks
@@ -471,18 +491,25 @@ export const sharedToolSchemas = Object.freeze({
   list_profiles: { input: z.object({}) },
   list_integrations: {
     input: z.object({
-      profile: profileSchema.optional().describe(recipeToolInputDescriptions.profileFilter),
+      // The core lists every integration for a falsy profile, and no integration for any other
+      // value that is not a profile ID.
+      profile: orAnyValue(profileSchema)
+        .optional()
+        .describe(recipeToolInputDescriptions.profileFilter),
     }),
     output: z.object({
-      profile: z.string().nullable(),
+      // The profile the call filtered by, as it was sent, or null when nothing filtered.
+      profile: orAnyValue(z.string().nullable()),
       integrations: z.array(integrationOutputSchema),
     }),
   },
   describe_integration: {
     input: z.object({
-      id: z
-        .string(coreMessage((value) => describeIntegrationResponse(value)))
-        .describe(recipeToolInputDescriptions.integrationId),
+      // The core reads String(id), so ["stylelint"] describes Stylelint; it refuses an ID that
+      // resolves to no integration.
+      id: orAnyJsonValue(z.string(), (value) => describeIntegrationResponse(value)).describe(
+        recipeToolInputDescriptions.integrationId,
+      ),
     }),
     output: integrationOutputSchema,
   },
@@ -496,15 +523,11 @@ export const sharedToolSchemas = Object.freeze({
     }),
   },
   search_baseline_features: {
-    // The core reads any query and falls back to its default limit, so these refusals, which both
-    // surfaces declared before #1051, have no core message to carry.
+    // The core reads any query as text, an absent or null one as empty, and any limit that is not
+    // a positive integer as its default of 20; it serves a limit of any size.
     input: z.object({
-      query: z.string().describe(recipeToolInputDescriptions.baselineQuery),
-      limit: z
-        .number()
-        .int()
-        .min(1)
-        .max(100)
+      query: orAnyValue(z.string()).optional().describe(recipeToolInputDescriptions.baselineQuery),
+      limit: orAnyValue(z.number().int().min(1))
         .optional()
         .describe(recipeToolInputDescriptions.baselineLimit),
     }),
@@ -528,22 +551,17 @@ export const sharedToolSchemas = Object.freeze({
       packageManager: packageManagerSchema
         .default("npm")
         .describe(recipeToolInputDescriptions.packageManager),
-      tools: z
-        .array(
-          z.string(coreMessage(compositionCheck((tool) => ({ tools: [tool] })))),
-          coreMessage(compositionCheck((tools) => ({ tools }))),
-        )
-        // The core reads any falsy tools as absent, as it does aiArtifacts; the schema widens only
-        // to null, so false, 0, and "" still get the schema's message (they were refused before too).
-        .nullable()
+      // The core reads a falsy tools or aiArtifacts as absent.
+      tools: orFalsy(
+        z.array(z.string()),
+        compositionCheck((tools) => ({ tools })),
+      )
         .optional()
         .describe(recipeToolInputDescriptions.tools),
-      aiArtifacts: z
-        .array(
-          aiArtifactInputSchema,
-          coreMessage(compositionCheck((aiArtifacts) => ({ aiArtifacts }))),
-        )
-        .nullable()
+      aiArtifacts: orFalsy(
+        z.array(aiArtifactInputSchema),
+        compositionCheck((aiArtifacts) => ({ aiArtifacts })),
+      )
         .optional()
         .describe(recipeToolInputDescriptions.aiArtifacts),
       integrationOptions: integrationOptionsSchema
@@ -551,7 +569,13 @@ export const sharedToolSchemas = Object.freeze({
         .describe(recipeToolInputDescriptions.integrationOptions),
     }),
   },
-  validate_recipe: { input: z.object({ recipe: recipeSchema }) },
+  // validate_recipe reports any value that is not a valid recipe, or a missing one, in its
+  // { ok: false, errors } result, so its schema accepts every value; explain_recipe throws for one.
+  validate_recipe: {
+    input: z.object({
+      recipe: orAnyValue(recipeSchema).optional().describe(recipeToolInputDescriptions.recipe),
+    }),
+  },
   explain_recipe: { input: z.object({ recipe: recipeSchema }) },
 });
 
