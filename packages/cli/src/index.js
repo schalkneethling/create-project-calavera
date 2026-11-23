@@ -6207,20 +6207,14 @@ async function doctor(options) {
   }
 
   if (hasConfig) {
-    let recipe;
-    let integrations;
-    let aiArtifacts;
-    let rootOnlyIds;
-    let gitHookIds;
-    let repositoryRoot;
-    let packageManager;
     const projectDirectory = process.cwd();
-    // #1141: a recipe doctor cannot read, parse, or resolve, including its package manager, is an
-    // error issue, so `doctor --json` still prints a result for a CI step to parse. The issue keeps
-    // the issues found before it and the error's causes; a JSONParseError names the file and
-    // position without quoting it (#1157).
+    // #1141 and #1206: a recipe or state file doctor cannot read, parse, or resolve, including the
+    // recipe's package manager, is an error issue that stops doctor before it classifies, so
+    // `doctor --json` still prints a result for a CI step to parse (ADR-0020 Amendment 1). The
+    // issue keeps the issues found before it and the error's causes; a JSONParseError names the
+    // file and position without quoting it (#1157).
     try {
-      recipe = await readRecipe(options.config);
+      const recipe = await readRecipe(options.config);
       const detection = await detectVitePlus(projectDirectory);
       issues.push(
         // apply's validation checks the profile before the integrations, so doctor lists it first.
@@ -6239,100 +6233,102 @@ async function doctor(options) {
       if (legacyRefusal !== undefined) {
         issues.push({ level: "error", message: legacyRefusal });
       }
-      integrations = resolveRecipeIntegrations(recipe);
-      aiArtifacts = resolveAiArtifacts(recipe);
+      const integrations = resolveRecipeIntegrations(recipe);
+      const aiArtifacts = resolveAiArtifacts(recipe);
       // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the
       // repository root, so doctor run from a workspace member checks them there (#925).
-      rootOnlyIds = new Set(
+      const rootOnlyIds = new Set(
         integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
       );
-      gitHookIds = gitHookArtifactIds(recipe);
-      repositoryRoot =
+      const gitHookIds = gitHookArtifactIds(recipe);
+      const repositoryRoot =
         rootOnlyIds.size > 0 || gitHookIds.length > 0
           ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
           : projectDirectory;
       // package.json is read only here, so a recipe that selects neither a root-only integration
       // nor a Git hook artifact is checked as before. resolveApplyPackageManager refuses a recipe
       // packageManager that Calavera does not support, as apply does.
-      if (repositoryRoot !== projectDirectory) {
-        packageManager = resolveApplyPackageManager(
-          recipe,
-          options,
-          await readPackageJSONIfPresent(),
-        );
+      const packageManager =
+        repositoryRoot === projectDirectory
+          ? undefined
+          : resolveApplyPackageManager(recipe, options, await readPackageJSONIfPresent());
+
+      // #997 and #1031: apply refuses a root-only integration and an artifact that writes Git hooks
+      // outside the repository root, so doctor reports apply's own refusals, naming the package
+      // manager apply would name. apply stops at the first; doctor reports both, so one run names
+      // every change the recipe needs.
+      if (packageManager !== undefined) {
+        for (const refusal of [
+          rootOnlyIntegrationRefusal(integrations, projectDirectory, packageManager),
+          gitHookArtifactRefusal(gitHookIds, projectDirectory, packageManager),
+        ]) {
+          if (refusal !== undefined) {
+            issues.push({ level: "error", message: refusal });
+          }
+        }
       }
+
+      for (const { integration, path } of declaredManagedFiles(integrations.map(({ id }) => id))) {
+        const atRepositoryRoot =
+          rootOnlyIds.has(integration) && repositoryRoot !== projectDirectory;
+        const file = atRepositoryRoot
+          ? relative(projectDirectory, join(repositoryRoot, path))
+          : path;
+
+        if (!(await fileExists(file))) {
+          issues.push({
+            level: "warning",
+            message: atRepositoryRoot
+              ? `Missing managed file: ${file}. Run create-project-calavera apply from the repository root, ${repositoryRoot}, to regenerate managed files, adding --config <path> when the recipe is saved elsewhere.`
+              : `Missing managed file: ${file}. Run create-project-calavera apply to regenerate managed files.`,
+          });
+        }
+      }
+
+      if (
+        integrations.some((integration) => integration.id === "varlock") &&
+        !(await fileExists(VARLOCK_SCHEMA_PATH))
+      ) {
+        issues.push({
+          level: "warning",
+          message: `Missing Varlock schema: ${VARLOCK_SCHEMA_PATH}. Run create-project-calavera apply to scaffold it.`,
+        });
+      }
+
+      // #1101: every artifact the recipe selects is a packaged catalog artifact, whether an entry
+      // names it by ID or by its legacy type and src: resolveAiArtifacts throws for a source that
+      // no catalog artifact provides. Its payload comes from the lock and .calavera/packages, not
+      // from the legacy source path, which no project holds, so doctor does not look for that path;
+      // `artifacts status` checks the lock. A legacy entry is named by its catalog ID below, as apply
+      // names it in the lock and in its wiring records.
+      const selectedAiIds = new Set(aiArtifacts.map(({ id }) => id));
+
+      for (const artifact of aiArtifacts) {
+        for (const path of aiArtifactOutputPaths(artifact)) {
+          if (!(await fileExists(path))) {
+            issues.push({
+              level: "warning",
+              message: `Missing managed AI ${artifact.type}: ${path}. Run create-project-calavera apply to regenerate managed AI artifacts.`,
+            });
+          }
+        }
+      }
+
+      // ADR-0015, Decision 5: the hook blocks and Claude Code groups apply recorded.
+      const state = await readStateIfPresent().catch((error) => {
+        throw new Error(`doctor cannot read ${STATE_FILE}.`, { cause: error });
+      });
+      issues.push(
+        ...(await artifactWiringFindings({
+          records: state.aiWiring,
+          selected: selectedAiIds,
+          skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
+        })),
+      );
     } catch (error) {
       issues.push({ level: "error", message: errorText(error) });
       return { command: "doctor", ok: false, issues };
     }
-
-    // #997 and #1031: apply refuses a root-only integration and an artifact that writes Git hooks
-    // outside the repository root, so doctor reports apply's own refusals, naming the package
-    // manager apply would name. apply stops at the first; doctor reports both, so one run names
-    // every change the recipe needs.
-    if (packageManager !== undefined) {
-      for (const refusal of [
-        rootOnlyIntegrationRefusal(integrations, projectDirectory, packageManager),
-        gitHookArtifactRefusal(gitHookIds, projectDirectory, packageManager),
-      ]) {
-        if (refusal !== undefined) {
-          issues.push({ level: "error", message: refusal });
-        }
-      }
-    }
-
-    for (const { integration, path } of declaredManagedFiles(integrations.map(({ id }) => id))) {
-      const atRepositoryRoot = rootOnlyIds.has(integration) && repositoryRoot !== projectDirectory;
-      const file = atRepositoryRoot ? relative(projectDirectory, join(repositoryRoot, path)) : path;
-
-      if (!(await fileExists(file))) {
-        issues.push({
-          level: "warning",
-          message: atRepositoryRoot
-            ? `Missing managed file: ${file}. Run create-project-calavera apply from the repository root, ${repositoryRoot}, to regenerate managed files, adding --config <path> when the recipe is saved elsewhere.`
-            : `Missing managed file: ${file}. Run create-project-calavera apply to regenerate managed files.`,
-        });
-      }
-    }
-
-    if (
-      integrations.some((integration) => integration.id === "varlock") &&
-      !(await fileExists(VARLOCK_SCHEMA_PATH))
-    ) {
-      issues.push({
-        level: "warning",
-        message: `Missing Varlock schema: ${VARLOCK_SCHEMA_PATH}. Run create-project-calavera apply to scaffold it.`,
-      });
-    }
-
-    // #1101: every artifact the recipe selects is a packaged catalog artifact, whether an entry
-    // names it by ID or by its legacy type and src: resolveAiArtifacts throws for a source that
-    // no catalog artifact provides. Its payload comes from the lock and .calavera/packages, not
-    // from the legacy source path, which no project holds, so doctor does not look for that path;
-    // `artifacts status` checks the lock. A legacy entry is named by its catalog ID below, as apply
-    // names it in the lock and in its wiring records.
-    const selectedAiIds = new Set(aiArtifacts.map(({ id }) => id));
-
-    for (const artifact of aiArtifacts) {
-      for (const path of aiArtifactOutputPaths(artifact)) {
-        if (!(await fileExists(path))) {
-          issues.push({
-            level: "warning",
-            message: `Missing managed AI ${artifact.type}: ${path}. Run create-project-calavera apply to regenerate managed AI artifacts.`,
-          });
-        }
-      }
-    }
-
-    // ADR-0015, Decision 5: the hook blocks and Claude Code groups apply recorded.
-    const state = await readStateIfPresent();
-    issues.push(
-      ...(await artifactWiringFindings({
-        records: state.aiWiring,
-        selected: selectedAiIds,
-        skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
-      })),
-    );
   }
 
   return {

@@ -639,8 +639,9 @@ npm create project-calavera doctor
 
 `doctor` exits with status 1 when it reports an error, with or without `--json`,
 so a CI step that runs it fails. Warnings do not change the exit status.
-A recipe that `doctor` cannot read, parse, or resolve is reported as an error,
-so `doctor --json` still prints a result for the step to parse.
+A recipe or `.calavera/state.json` that `doctor` cannot read, parse, or resolve,
+and a wiring file Calavera recorded that it cannot read, are reported as errors,
+so `doctor --json` always prints a result for the step to parse.
 
 Update managed tooling from the recipe:
 
