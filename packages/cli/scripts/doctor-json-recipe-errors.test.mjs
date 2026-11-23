@@ -110,9 +110,10 @@ for (const { label, files, setup, expected, cwd = ".", packageJSON = "package.js
     }, `doctor --json printed no JSON result:\n${stdout}\n${stderr}`);
     assert.equal(report.command, "doctor");
     assert.equal(report.ok, false);
-    const errors = report.issues.filter(({ level }) => level === "error");
-    assert.equal(errors.length, 1, stdout);
-    assert.match(errors[0].message, expected);
+    // The error that stopped doctor is its last issue, whatever doctor reported before it.
+    const last = report.issues.at(-1);
+    assert.equal(last?.level, "error", stdout);
+    assert.match(last.message, expected);
     assert.ok(!`${stdout}${stderr}`.includes(SECRET), `The output quotes the recipe:\n${stdout}`);
   });
 
@@ -146,4 +147,21 @@ test("doctor --json keeps the issues it found before the recipe failed to resolv
     ["warning", "error"],
   );
   assert.match(report.issues[0].message, /Missing package\.json/);
+});
+
+test("doctor prints the warnings it found before the recipe failed to resolve, then the error", async () => {
+  // No package.json: doctor warns about it before it reads the recipe. Warnings and errors both
+  // go to standard error, so their order there is the order doctor reported them.
+  await using fixture = await createTemporaryFixture("doctor-text-recipe-error-warning", {
+    [RECIPE]: json([]),
+  });
+
+  const { code, stdout, stderr } = await runDoctor(fixture.root, []);
+
+  assert.equal(code, 1, `doctor exited ${code}\n${stdout}\n${stderr}`);
+  const warning = stderr.indexOf("Missing package.json");
+  const error = stderr.indexOf("calavera.config.json must contain a JSON object.");
+  assert.ok(warning !== -1, `doctor printed no warning:\n${stderr}`);
+  assert.ok(error !== -1, `doctor printed no error:\n${stderr}`);
+  assert.ok(warning < error, `doctor printed the error before the warning:\n${stderr}`);
 });
