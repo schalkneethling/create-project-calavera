@@ -42,7 +42,7 @@ import {
   parseTree,
   printParseErrorCode,
 } from "jsonc-parser";
-import { TomlError, parse as parseToml } from "smol-toml";
+import { parse as parseToml } from "smol-toml";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { hashArtifactPayload } from "@schalkneethling/calavera-artifact-core/registry";
@@ -84,11 +84,11 @@ import { rewriteLossProblem, toJSONText, writeJSON } from "./utils/json-rewrite.
 import { findBlock, findMarkedBlock } from "./utils/marked-block.js";
 import {
   OPENCODE_CONFIG_SCHEMA,
+  calaveraMcpEntries,
   createCodexMcpTomlBlock,
-  createCursorMcpEntry,
-  createMcpServersJsonConfig,
-  createOpenCodeMcpJsonConfig,
+  isCalaveraMcpEntry,
   projectMcpConfigPath,
+  tomlPosition,
 } from "./utils/mcp-config.js";
 // `STAGING_ROOT` is where `eject` moves a package folder before it deletes it, so a delete that
 // stops part way leaves the folder either whole in `.calavera/packages/` or here, never half
@@ -920,18 +920,6 @@ function mcpEntryKept(path, reason) {
 }
 
 /**
- * The value with the version it pins in `create-project-calavera@<version>` replaced by the
- * placeholder `findEarlierGuidance` uses, or undefined when it already holds the placeholder,
- * which no release wrote.
- *
- * @param {unknown} value A value parsed from JSON.
- */
-function withPinNormalized(value) {
-  const pinned = normalizePinnedVersion(JSON.stringify(value));
-  return pinned === undefined ? undefined : JSON.parse(pinned.normalized);
-}
-
-/**
  * The `key` object of a parsed harness file when it holds a `calavera` entry, or undefined.
  *
  * @param {unknown} config
@@ -1005,9 +993,7 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   if (servers === undefined) return NO_MCP_ENTRY;
   if (!inside) return mcpEntryOutside(path);
   const calavera = servers.calavera;
-  // An entry that holds the placeholder normalizes to undefined, which equals no expected entry.
-  const normalized = withPinNormalized(calavera);
-  if (!expected.some((candidate) => isDeepStrictEqual(normalized, withPinNormalized(candidate)))) {
+  if (!isCalaveraMcpEntry(calavera, expected)) {
     return mcpEntryKept(
       path,
       `The calavera entry under ${key} in ${path} differs from the launch command Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
@@ -1309,17 +1295,6 @@ function tomlNeighborHidden(lines) {
 }
 
 /**
- * Where smol-toml stopped, as "<prefix>line L, column C", or nothing when the error is not
- * smol-toml's and has no position. Never the parser's message, which quotes the file.
- *
- * @param {unknown} error
- * @param {string} prefix
- */
-function tomlPosition(error, prefix) {
-  return error instanceof TomlError ? `${prefix}line ${error.line}, column ${error.column}` : "";
-}
-
-/**
  * Plans the `calavera` entry in each MCP harness file (ADR-0017, Decision 2).
  *
  * @param {AgentGuidanceTexts} guidance
@@ -1336,25 +1311,15 @@ async function planMcpEntries(guidance, loadFormatter) {
   for (const harness of MCP_HARNESSES) {
     const path = /** @type {string} */ (projectMcpConfigPath(harness));
     if (harness === "codex") {
-      parts.push(await planCodexMcpEntry(path, launches.map(createCodexMcpTomlBlock)));
-    } else if (harness === "opencode") {
-      const expected = launches.map(
-        (launch) =>
-          /** @type {{ mcp: Record<string, unknown> }} */ (createOpenCodeMcpJsonConfig(launch)).mcp
-            .calavera,
+      const entries = /** @type {import("./utils/mcp-config.js").McpLaunchCommand[]} */ (
+        calaveraMcpEntries(harness, launches)
       );
-      parts.push(await planJsonMcpEntry(path, "mcp", expected, loadOnce));
+      parts.push(await planCodexMcpEntry(path, entries.map(createCodexMcpTomlBlock)));
     } else {
-      const expected = launches.map(
-        (launch) =>
-          /** @type {{ mcpServers: Record<string, unknown> }} */ (
-            createMcpServersJsonConfig(launch)
-          ).mcpServers.calavera,
+      const key = harness === "opencode" ? "mcp" : "mcpServers";
+      parts.push(
+        await planJsonMcpEntry(path, key, calaveraMcpEntries(harness, launches), loadOnce),
       );
-      // `.cursor/mcp.json` gets `type: "stdio"`, and 6.2.1 and earlier releases wrote the launch
-      // command alone there, so both are Calavera's (#1089).
-      if (harness === "cursor") expected.unshift(...launches.map(createCursorMcpEntry));
-      parts.push(await planJsonMcpEntry(path, "mcpServers", expected, loadOnce));
     }
   }
   return {

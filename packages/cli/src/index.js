@@ -214,6 +214,7 @@ import {
   createMcpServersJsonConfig,
   createOpenCodeMcpJsonConfig,
   projectMcpConfigPath,
+  calaveraMcpEntries,
   writeCodexMcpConfig,
   writeMcpServersJsonConfig,
   writeOpenCodeMcpConfig,
@@ -4428,6 +4429,9 @@ async function writeAgentBootstrapMcpConfig(
   /** @type {"write" | "update" | "skip"} */
   let action;
   const initialChangeCount = changes.length;
+  // An existing `calavera` entry is updated only when a release wrote it, for any package manager;
+  // any other entry is a local edit and is kept (#1205).
+  const launches = supportedPackageManagers.map(createMcpLaunchCommand);
 
   try {
     switch (harness) {
@@ -4436,16 +4440,30 @@ async function writeAgentBootstrapMcpConfig(
         action = await writeMcpServersJsonConfig(
           path,
           harness === "cursor" ? createCursorMcpEntry(launchCommand) : launchCommand,
+          calaveraMcpEntries(harness, launches),
           dryRun,
           changes,
           loadFormatter,
         );
         break;
       case "codex":
-        action = await writeCodexMcpConfig(path, launchCommand, dryRun, changes);
+        action = await writeCodexMcpConfig(
+          path,
+          launchCommand,
+          calaveraMcpEntries(harness, launches),
+          dryRun,
+          changes,
+        );
         break;
       case "opencode":
-        action = await writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes, loadFormatter);
+        action = await writeOpenCodeMcpConfig(
+          path,
+          launchCommand,
+          calaveraMcpEntries(harness, launches),
+          dryRun,
+          changes,
+          loadFormatter,
+        );
         break;
       default:
         action = "skip";

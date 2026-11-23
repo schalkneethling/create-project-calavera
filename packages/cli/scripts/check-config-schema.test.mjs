@@ -2024,13 +2024,14 @@ test("agent bootstrap writes Codex project MCP config", async () => {
   }
 });
 
-test("agent bootstrap updates existing Codex MCP config idempotently", async () => {
+test("agent bootstrap updates an earlier release's Codex MCP entry idempotently and keeps an edited one", async () => {
   const originalDirectory = process.cwd();
   const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-agent-init-codex-idempotent-"));
 
   try {
     process.chdir(projectDirectory);
     await mkdir(".codex", { recursive: true });
+    // #1205: the table an earlier release wrote for pnpm, which `--init` for npm updates.
     await writeFile(
       ".codex/config.toml",
       [
@@ -2038,8 +2039,8 @@ test("agent bootstrap updates existing Codex MCP config idempotently", async () 
         'mode = "manual"',
         "",
         "[mcp_servers.calavera]",
-        'command = "old-command"',
-        'args = ["old-arg"]',
+        'command = "pnpm"',
+        'args = ["dlx", "--package", "create-project-calavera@5.0.0", "create-project-calavera-mcp"]',
         "",
         "[mcp_servers.other]",
         'command = "node"',
@@ -2058,15 +2059,26 @@ test("agent bootstrap updates existing Codex MCP config idempotently", async () 
     assert.equal(result.mcp.action, "update");
     assert.equal(config.match(/\[mcp_servers\.calavera\]/g)?.length, 1);
     assert.match(config, /\[approval\]\nmode = "manual"/);
-    assert.match(config, /\[mcp_servers\.other\]\ncommand = "node"/);
+    assert.match(config, /\n\n\[mcp_servers\.other\]\ncommand = "node"/);
     assert.match(config, /\[mcp_servers\.calavera\]\ncommand = "npx"/);
-    assert.doesNotMatch(config, /old-command|old-arg/);
+    assert.doesNotMatch(config, /pnpm|5\.0\.0/);
     assert.match(
       config,
       new RegExp(
         `args = \\["--package", "create-project-calavera@${escapeRegExp(packageJson.version)}", "create-project-calavera-mcp"\\]`,
       ),
     );
+
+    const again = await agentBootstrap({ json: true, mcpHarness: "codex", packageManager: "npm" });
+    assert.equal(again.mcp.action, "skip");
+    assert.equal(await readFile(".codex/config.toml", "utf8"), config);
+
+    // An edited entry is a local edit: `--init` keeps it (brief C8).
+    const edited = config.replace('command = "npx"', 'command = "old-command"');
+    await writeFile(".codex/config.toml", edited);
+    const kept = await agentBootstrap({ json: true, mcpHarness: "codex", packageManager: "npm" });
+    assert.equal(kept.mcp.action, "skip");
+    assert.equal(await readFile(".codex/config.toml", "utf8"), edited);
   } finally {
     process.chdir(originalDirectory);
   }

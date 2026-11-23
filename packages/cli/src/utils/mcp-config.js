@@ -1,7 +1,11 @@
 // @ts-check
 import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
+import { isDeepStrictEqual } from "node:util";
 
+import { TomlError, parse as parseToml } from "smol-toml";
+
+import { normalizePinnedVersion } from "./earlier-guidance.js";
 import { fileExists, parseJSON } from "./fs.js";
 import { formatGeneratedText } from "./generated-text.js";
 import { isPlainObject } from "./guards.js";
@@ -150,20 +154,120 @@ export function createCursorMcpJsonConfig(launchCommand) {
 }
 
 /**
+ * The value with the version it pins in `create-project-calavera@<version>` replaced by the
+ * placeholder `findEarlierGuidance` uses, or undefined when it already holds the placeholder,
+ * which no release wrote.
+ *
+ * @param {unknown} value A value parsed from JSON or TOML.
+ */
+export function withPinNormalized(value) {
+  const pinned = normalizePinnedVersion(JSON.stringify(value));
+  return pinned === undefined ? undefined : JSON.parse(pinned.normalized);
+}
+
+/**
+ * The `calavera` entries a Calavera release wrote into the harness file, one for each package
+ * manager's launch command, as the file parses. `eject` removes an entry, and `--init` updates
+ * one, only when it equals one of them with the pinned version normalized (ADR-0017, Decision 2;
+ * #1205). An entry shape an earlier release wrote belongs here too, so both keep recognizing it.
+ *
+ * @param {Exclude<McpHarness, "skip">} harness
+ * @param {McpLaunchCommand[]} launches The launch command for each supported package manager.
+ * @returns {unknown[]}
+ */
+export function calaveraMcpEntries(harness, launches) {
+  switch (harness) {
+    case "opencode":
+      return launches.map(
+        (launch) =>
+          /** @type {{ mcp: Record<string, unknown> }} */ (createOpenCodeMcpJsonConfig(launch)).mcp
+            .calavera,
+      );
+    case "codex":
+      // The table `createCodexMcpTomlBlock` writes parses to the launch command.
+      return launches.map(({ command, args }) => ({ command, args }));
+    case "cursor":
+      // 6.2.1 and earlier releases wrote the launch command alone, without `type` (#1089).
+      return [
+        ...launches.map(createCursorMcpEntry),
+        ...launches.map(
+          (launch) =>
+            /** @type {{ mcpServers: Record<string, unknown> }} */ (
+              createMcpServersJsonConfig(launch)
+            ).mcpServers.calavera,
+        ),
+      ];
+    default:
+      return launches.map(
+        (launch) =>
+          /** @type {{ mcpServers: Record<string, unknown> }} */ (
+            createMcpServersJsonConfig(launch)
+          ).mcpServers.calavera,
+      );
+  }
+}
+
+/**
+ * Whether `entry` is one a Calavera release wrote: it equals one of `entries` with the pinned
+ * version normalized. An entry that holds the placeholder normalizes to undefined, which equals
+ * none of them.
+ *
+ * @param {unknown} entry
+ * @param {unknown[]} entries From `calaveraMcpEntries`.
+ */
+export function isCalaveraMcpEntry(entry, entries) {
+  const normalized = withPinNormalized(entry);
+  return entries.some((candidate) => isDeepStrictEqual(normalized, withPinNormalized(candidate)));
+}
+
+/**
+ * The change for a harness file whose `calavera` entry is a local edit, which `--init` keeps
+ * (brief C8), with what to do to get Calavera's entry instead.
+ *
+ * @param {string} path
+ * @param {string} entry How the entry is named in the file, such as "The calavera entry under mcp".
+ * @returns {McpConfigChange}
+ */
+function editedEntryChange(path, entry) {
+  return {
+    type: "skip",
+    path,
+    reason: `${entry} in ${path} differs from every entry a Calavera release wrote, so it was left unchanged as a local edit. To use Calavera's entry instead, remove yours, then run --init again.`,
+  };
+}
+
+/**
  * @param {string} path
  * @param {Record<string, unknown>} entry The `calavera` entry to write.
+ * @param {unknown[]} entries The entries a Calavera release wrote, from `calaveraMcpEntries`.
  * @param {boolean} dryRun
  * @param {McpConfigChange[]} changes
  * @param {LoadFormatter} loadFormatter
  * @returns {Promise<McpConfigAction>}
  */
-export async function writeMcpServersJsonConfig(path, entry, dryRun, changes, loadFormatter) {
+export async function writeMcpServersJsonConfig(
+  path,
+  entry,
+  entries,
+  dryRun,
+  changes,
+  loadFormatter,
+) {
   const targetPath = normalizeConfigPath(path);
   const { currentConfig, currentContents } = await readProjectJsonConfigIfPresent(targetPath);
   const mcpServers = currentConfig.mcpServers;
 
   if (mcpServers !== undefined && !isPlainObject(mcpServers)) {
     throw new Error(`${targetPath} mcpServers must be an object.`);
+  }
+
+  if (
+    isPlainObject(mcpServers) &&
+    Object.hasOwn(mcpServers, "calavera") &&
+    !isCalaveraMcpEntry(mcpServers.calavera, entries)
+  ) {
+    changes.push(editedEntryChange(targetPath, "The calavera entry under mcpServers"));
+    return "skip";
   }
 
   return writeProjectJsonConfig(
@@ -235,13 +339,62 @@ function findTomlTableRange(contents, header) {
 }
 
 /**
+ * Where smol-toml stopped, as "<prefix>line L, column C", or nothing when the error is not
+ * smol-toml's and has no position. Never the parser's message, which quotes the file.
+ *
+ * @param {unknown} error
+ * @param {string} prefix
+ */
+export function tomlPosition(error, prefix) {
+  return error instanceof TomlError ? `${prefix}line ${error.line}, column ${error.column}` : "";
+}
+
+const CODEX_TABLE_HEADER = "[mcp_servers.calavera]";
+
+/**
+ * The lines of the `calavera` entry in a Codex config when it is one a Calavera release wrote, or
+ * undefined when it is a local edit. Calavera's entry starts with exactly the lines
+ * `createCodexMcpTomlBlock` writes for one of `entries`, with the pinned version normalized, and
+ * the parsed entry holds nothing else, such as a key or a subtable added further down. Any other
+ * entry is a local edit, such as one with a comment inside the table, an inline table, or another
+ * header spelling: rewriting Calavera's lines would lose it or leave part of it behind. Blank lines
+ * and comments after Calavera's lines are not part of the entry, so they stay.
+ *
+ * @param {string[]} lines The file's lines.
+ * @param {unknown} entry The parsed `mcp_servers.calavera` value.
+ * @param {unknown[]} entries From `calaveraMcpEntries`.
+ * @returns {{ start: number, end: number } | undefined} `end` is exclusive.
+ */
+function findCalaveraCodexLines(lines, entry, entries) {
+  if (!isCalaveraMcpEntry(entry, entries)) return undefined;
+  const range = findTomlTableRange(lines.join("\n"), CODEX_TABLE_HEADER);
+  if (range === undefined) return undefined;
+  const bare = lines.map((line) => line.replace(/\r$/, ""));
+  for (const candidate of entries) {
+    const written = createCodexMcpTomlBlock(/** @type {McpLaunchCommand} */ (candidate))
+      .trimEnd()
+      .split("\n");
+    const end = range.start + written.length;
+    // Past the table's end the lines hold the next header, which no written line equals.
+    if (
+      normalizePinnedVersion(bare.slice(range.start, end).join("\n"))?.normalized ===
+      normalizePinnedVersion(written.join("\n"))?.normalized
+    ) {
+      return { start: range.start, end };
+    }
+  }
+  return undefined;
+}
+
+/**
  * @param {string} path
  * @param {McpLaunchCommand} launchCommand
+ * @param {unknown[]} entries The entries a Calavera release wrote, from `calaveraMcpEntries`.
  * @param {boolean} dryRun
  * @param {McpConfigChange[]} changes
  * @returns {Promise<McpConfigAction>}
  */
-export async function writeCodexMcpConfig(path, launchCommand, dryRun, changes) {
+export async function writeCodexMcpConfig(path, launchCommand, entries, dryRun, changes) {
   const targetPath = normalizeConfigPath(path);
   const block = createCodexMcpTomlBlock(launchCommand);
 
@@ -260,13 +413,36 @@ export async function writeCodexMcpConfig(path, launchCommand, dryRun, changes) 
   }
 
   const contents = await readFile(targetPath, "utf8");
-  const range = findTomlTableRange(contents, "[mcp_servers.calavera]");
-  const nextContents = range
-    ? [
-        ...contents.split("\n").slice(0, range.start),
-        block.trimEnd(),
-        ...contents.split("\n").slice(range.end),
-      ].join("\n")
+  /** @type {Record<string, unknown>} */
+  let config;
+  try {
+    config = parseToml(contents);
+  } catch (error) {
+    // Never smol-toml's own error: its message carries a code frame of the file's lines, which
+    // can hold a token. Without parsing, an edited entry cannot be told from Calavera's.
+    throw new Error(`${targetPath} cannot be parsed as TOML${tomlPosition(error, " at ")}.`);
+  }
+  const servers = config.mcp_servers;
+
+  if (servers !== undefined && !isPlainObject(servers)) {
+    throw new Error(`${targetPath} mcp_servers must be a table.`);
+  }
+
+  const lines = contents.split("\n");
+  /** @type {{ start: number, end: number } | undefined} */
+  let written;
+
+  if (isPlainObject(servers) && Object.hasOwn(servers, "calavera")) {
+    written = findCalaveraCodexLines(lines, servers.calavera, entries);
+
+    if (written === undefined) {
+      changes.push(editedEntryChange(targetPath, `The ${CODEX_TABLE_HEADER} table`));
+      return "skip";
+    }
+  }
+
+  const nextContents = written
+    ? [...lines.slice(0, written.start), block.trimEnd(), ...lines.slice(written.end)].join("\n")
     : `${contents.trimEnd()}\n\n${block}`;
 
   if (nextContents === contents) {
@@ -309,18 +485,35 @@ export function createOpenCodeMcpJsonConfig(launchCommand) {
 /**
  * @param {string} path
  * @param {McpLaunchCommand} launchCommand
+ * @param {unknown[]} entries The entries a Calavera release wrote, from `calaveraMcpEntries`.
  * @param {boolean} dryRun
  * @param {McpConfigChange[]} changes
  * @param {LoadFormatter} loadFormatter
  * @returns {Promise<McpConfigAction>}
  */
-export async function writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes, loadFormatter) {
+export async function writeOpenCodeMcpConfig(
+  path,
+  launchCommand,
+  entries,
+  dryRun,
+  changes,
+  loadFormatter,
+) {
   const targetPath = normalizeConfigPath(path);
   const { currentConfig, currentContents } = await readProjectJsonConfigIfPresent(targetPath);
   const mcp = currentConfig.mcp;
 
   if (mcp !== undefined && !isPlainObject(mcp)) {
     throw new Error(`${targetPath} mcp must be an object.`);
+  }
+
+  if (
+    isPlainObject(mcp) &&
+    Object.hasOwn(mcp, "calavera") &&
+    !isCalaveraMcpEntry(mcp.calavera, entries)
+  ) {
+    changes.push(editedEntryChange(targetPath, "The calavera entry under mcp"));
+    return "skip";
   }
 
   return writeProjectJsonConfig(

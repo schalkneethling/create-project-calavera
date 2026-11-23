@@ -296,7 +296,9 @@ for (const [write, path] of [
     process.chdir(fixture.path);
     try {
       await assert.rejects(
-        write(path, launchCommand, true, [], () => assert.fail("nothing is formatted")),
+        write(path, launchCommand, [launchCommand], true, [], () =>
+          assert.fail("nothing is formatted"),
+        ),
         (error) => {
           assert.equal(error.cause, undefined);
           assertNamesPositionWithoutText(formatErrorChain(error, { CALAVERA_DEBUG: "1" }), path);
