@@ -4,11 +4,13 @@
 // `--check-updates`, status contacts no registry.
 import assert from "node:assert/strict";
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { createServer } from "node:http";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
+import { resolveArtifactPackage } from "@schalkneethling/calavera-artifact-core/registry";
 
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import {
@@ -399,6 +401,7 @@ test("an artifact locked on a next tag npm does not have is reported alone, besi
         remedy:
           "To follow latest instead, run: npm create project-calavera artifacts update skill-release-with-confidence",
         type: null,
+        origin: null,
         npmDiagnostics: [],
         unsetVariables: [],
       });
@@ -555,12 +558,15 @@ test("a failed lookup names its code, keeps the registry message out, and fits t
     const byId = Object.fromEntries(
       result.artifacts.map(({ id, updateCheckFailure }) => [id, updateCheckFailure]),
     );
+    // An error without the origin, setting, and layer that artifact-core adds still says that
+    // Calavera sends no credentials.
     assert.deepEqual(byId["skill-project-goal"], {
       code: "E401",
       statusCode: 401,
-      reason: `the registry lookup for ${packageName("skill-project-goal")} failed (E401, HTTP 401)`,
-      remedy: `Check the npm credentials for this registry, then run: ${rerun}`,
+      reason: `the registry lookup for ${packageName("skill-project-goal")} failed (E401, HTTP 401), and Calavera sends no credentials to any registry`,
+      remedy: `If this registry requires authentication, point the registry setting at a registry that serves Calavera's packages without authentication, then run: ${rerun}`,
       type: null,
+      origin: null,
       npmDiagnostics: [],
       unsetVariables: [],
     });
@@ -570,6 +576,7 @@ test("a failed lookup names its code, keeps the registry message out, and fits t
       reason: `the registry lookup for ${packageName("skill-code-review")} failed (ENOTFOUND)`,
       remedy: `Check the network connection and the npm registry settings, then run: ${rerun}`,
       type: null,
+      origin: null,
       npmDiagnostics: [],
       unsetVariables: [],
     });
@@ -579,7 +586,7 @@ test("a failed lookup names its code, keeps the registry message out, and fits t
     );
     assert.equal(
       byId["skill-release-with-confidence"]?.remedy,
-      `Check the npm credentials for this registry, then run: ${rerun}`,
+      `If this registry requires authentication, point the registry setting at a registry that serves Calavera's packages without authentication, then run: ${rerun}`,
     );
     const report = JSON.stringify(result) + messages(formatArtifactStatus(result)).join("\n");
     assert.ok(!report.includes(secret), report);
@@ -611,9 +618,12 @@ test("the HTTP status picks the remedy, whatever the code", async () => {
       const [goal, review] = result.artifacts;
       assert.equal(
         goal.updateCheckFailure?.reason,
-        `the registry lookup for ${packageName("skill-project-goal")} failed (EOTP, HTTP 401)`,
+        `the registry lookup for ${packageName("skill-project-goal")} failed (EOTP, HTTP 401), and Calavera sends no credentials to any registry`,
       );
-      assert.match(goal.updateCheckFailure?.remedy ?? "", /^Check the npm credentials/);
+      assert.match(
+        goal.updateCheckFailure?.remedy ?? "",
+        /^If this registry requires authentication, point the registry setting at/,
+      );
       assert.match(review.updateCheckFailure?.remedy ?? "", /^Check the network connection/);
     },
   );
@@ -822,10 +832,10 @@ test("a failed lookup names the npm configuration Calavera ignored", async () =>
         code: "E401",
         statusCode: 401,
         npmDiagnostics: [
-          "Ignored //registry.example/:_authToken in the user .npmrc.",
-          "Ignored //registry.example/:_password in the user .npmrc.",
+          "Ignored https-proxy in the user .npmrc: environment variable PROXY_HOST is not set.",
+          "Ignored proxy in the user .npmrc: environment variable PROXY_PORT is not set.",
         ],
-        unsetVariables: ["NPM_TOKEN", "NPM_PASSWORD"],
+        unsetVariables: ["PROXY_HOST", "PROXY_PORT"],
       });
       const result = await runArtifactCommand(
         statusOptions(),
@@ -833,15 +843,15 @@ test("a failed lookup names the npm configuration Calavera ignored", async () =>
       );
       const [artifact] = result.artifacts;
       assert.deepEqual(artifact.updateCheckFailure?.npmDiagnostics, [
-        "Ignored //registry.example/:_authToken in the user .npmrc.",
-        "Ignored //registry.example/:_password in the user .npmrc.",
+        "Ignored https-proxy in the user .npmrc: environment variable PROXY_HOST is not set.",
+        "Ignored proxy in the user .npmrc: environment variable PROXY_PORT is not set.",
       ]);
-      assert.deepEqual(artifact.updateCheckFailure?.unsetVariables, ["NPM_TOKEN", "NPM_PASSWORD"]);
+      assert.deepEqual(artifact.updateCheckFailure?.unsetVariables, ["PROXY_HOST", "PROXY_PORT"]);
       assert.deepEqual(messages(formatArtifactStatus(result)), [
         "skill-project-goal  0.2.1, update check failed (latest)",
         `  Cause: ${artifact.updateCheckFailure?.reason}.`,
-        "  Calavera ignored npm configuration that may explain this: Ignored //registry.example/:_authToken in the user .npmrc. Ignored //registry.example/:_password in the user .npmrc.",
-        "  Unset variables: NPM_TOKEN, NPM_PASSWORD. MCP clients often pass a minimal environment, so a variable set in your shell may be missing here.",
+        "  Calavera ignored npm configuration that may explain this: Ignored https-proxy in the user .npmrc: environment variable PROXY_HOST is not set. Ignored proxy in the user .npmrc: environment variable PROXY_PORT is not set.",
+        "  Unset variables: PROXY_HOST, PROXY_PORT. MCP clients often pass a minimal environment, so a variable set in your shell may be missing here.",
         `  ${artifact.updateCheckFailure?.remedy}`,
       ]);
     },
@@ -2015,4 +2025,182 @@ test("status without a recipe does not claim the recipe deselected its artifacts
       assert.ok(!printed.some((line) => line.includes("Not selected")), printed.join("\n"));
     },
   );
+});
+
+test("a 401 or 403 names the origin, the setting, and the layer, and says Calavera sends no credentials", async () => {
+  const fields = {
+    setting: "@schalkneethling:registry",
+    layer: "project .npmrc",
+    registryOrigin: "https://npm.example.com",
+  };
+  const failures = {
+    "skill-project-goal": registryError("401 Unauthorized", {
+      code: "E401",
+      statusCode: 401,
+      origin: "https://npm.example.com",
+      ...fields,
+    }),
+    // A redirect can end on another origin, which is then "the host", not the registry.
+    "skill-code-review": registryError("403 Forbidden", {
+      code: "E403",
+      statusCode: 403,
+      origin: "https://cdn.example.com",
+      ...fields,
+    }),
+  };
+  const ids = Object.keys(failures);
+  await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+    const result = await runArtifactCommand(statusOptions(), statusRegistry({}, {}, failures));
+    const rerun = "npm create project-calavera artifacts status -- --check-updates";
+    const byId = Object.fromEntries(
+      result.artifacts.map(({ id, updateCheckFailure }) => [id, updateCheckFailure]),
+    );
+    const remedy = `If this registry requires authentication, point @schalkneethling:registry in the project .npmrc at a registry that serves Calavera's packages without authentication, then run: ${rerun}`;
+    assert.deepEqual(
+      [byId["skill-project-goal"]?.reason, byId["skill-project-goal"]?.remedy],
+      [
+        "the registry https://npm.example.com answered 401 (E401), and Calavera sends no credentials to any registry",
+        remedy,
+      ],
+    );
+    assert.equal(byId["skill-project-goal"]?.origin, "https://npm.example.com");
+    assert.deepEqual(
+      [byId["skill-code-review"]?.reason, byId["skill-code-review"]?.remedy],
+      [
+        "the host https://cdn.example.com answered 403 (E403) for a lookup that started at the registry https://npm.example.com, and Calavera sends no credentials to any registry or host",
+        remedy,
+      ],
+    );
+    assert.equal(byId["skill-code-review"]?.origin, "https://cdn.example.com");
+  });
+});
+
+test("a 401 from a real registry behind a loader diagnostic keeps the origin, setting, and layer in the report and --json", async () => {
+  const token = "fake-update-check-token-0123456789";
+  /** @type {(string | undefined)[]} */
+  const authorizations = [];
+  const server = createServer((request, response) => {
+    authorizations.push(request.headers.authorization);
+    response.writeHead(401, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "registry text" }));
+  });
+  await new Promise((done) => server.listen(0, "127.0.0.1", () => done(undefined)));
+  const { port } = /** @type {import("node:net").AddressInfo} */ (server.address());
+  const origin = `http://127.0.0.1:${port}`;
+  try {
+    await inProject(
+      { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },
+      async () => {
+        const userconfig = join(process.cwd(), "user.npmrc");
+        await writeFile(
+          userconfig,
+          `@schalkneethling:registry=${origin}/\n//127.0.0.1:${port}/:_authToken=${token}\n`,
+        );
+        // A project proxy is ignored with a warning, so the loader has a diagnostic.
+        await writeFile(
+          ".npmrc",
+          `https-proxy=http://proxy.example.com/\n//127.0.0.1:${port}/:_authToken=${token}\n`,
+        );
+        const env = { npm_config_userconfig: userconfig, HOME: process.cwd() };
+        const registry = {
+          resolve: (/** @type {Parameters<typeof resolveArtifactPackage>[0]} */ request) =>
+            resolveArtifactPackage({ ...request, cwd: process.cwd(), env }),
+          extract: async () => {
+            throw new Error("Status never extracts a package.");
+          },
+        };
+        const result = await runArtifactCommand(statusOptions(), registry);
+        const failure = result.artifacts[0]?.updateCheckFailure;
+        assert.equal(
+          failure?.reason,
+          `the registry ${origin} answered 401 (E401), and Calavera sends no credentials to any registry`,
+        );
+        assert.match(
+          failure?.remedy ?? "",
+          /^If this registry requires authentication, point @schalkneethling:registry in the user \.npmrc at a registry/,
+        );
+        assert.equal(failure?.origin, origin);
+        assert.match(
+          failure?.npmDiagnostics.join("\n") ?? "",
+          /^Ignored https-proxy in the project \.npmrc/,
+        );
+        const json = JSON.parse(JSON.stringify(result));
+        assert.equal(json.artifacts[0].updateCheckFailure.origin, origin);
+        const report = JSON.stringify(result) + messages(formatArtifactStatus(result)).join("\n");
+        assert.ok(!report.includes(token), "the report must not contain the planted token");
+        assert.ok(!report.includes("registry text"), "the report must not contain registry text");
+        assert.deepEqual(authorizations, [undefined]);
+      },
+    );
+  } finally {
+    await new Promise((done) => server.close(() => done(undefined)));
+  }
+});
+
+test("the update check keeps only a well-formed origin, and falls back when the registry or layer is missing", async () => {
+  const failures = {
+    // An origin field that is not an origin, such as a URL with a path, is not trusted.
+    "skill-project-goal": registryError("401", {
+      code: "E401",
+      statusCode: 401,
+      origin: "https://npm.example.com/secret-path",
+    }),
+    // Without the configured registry's origin, the failing origin is called the registry.
+    "skill-code-review": registryError("403", {
+      code: "E403",
+      statusCode: 403,
+      origin: "https://npm.example.com",
+      setting: "registry",
+    }),
+    // A failure without an HTTP status has no origin, whatever the error carries.
+    "skill-css-tokens": registryError("offline", {
+      code: "ENOTFOUND",
+      origin: "https://npm.example.com",
+    }),
+  };
+  const ids = Object.keys(failures);
+  await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+    const result = await runArtifactCommand(statusOptions(), statusRegistry({}, {}, failures));
+    const byId = Object.fromEntries(
+      result.artifacts.map(({ id, updateCheckFailure }) => [id, updateCheckFailure]),
+    );
+    assert.equal(byId["skill-project-goal"]?.origin, null);
+    assert.doesNotMatch(JSON.stringify(byId["skill-project-goal"]), /secret-path/);
+    assert.equal(
+      byId["skill-code-review"]?.reason,
+      "the registry https://npm.example.com answered 403 (E403), and Calavera sends no credentials to any registry",
+    );
+    // A setting without its layer is not named.
+    assert.match(
+      byId["skill-code-review"]?.remedy ?? "",
+      /^If this registry requires authentication, point the registry setting at/,
+    );
+    assert.equal(byId["skill-css-tokens"]?.origin, null);
+  });
+});
+
+test("any HTTP failure reports the origin of the URL that failed, never its path", async () => {
+  const failures = {
+    "skill-project-goal": registryError("404 Not Found", {
+      code: "E404",
+      statusCode: 404,
+      uri: "https://npm.example.com/secret-path/pkg",
+    }),
+    // withNpmDiagnostics keeps npm-registry-fetch's error, and its uri, as the cause.
+    "skill-code-review": registryError("500", {
+      code: "E500",
+      statusCode: 500,
+      cause: { uri: "https://mirror.example.com:8443/secret-path" },
+    }),
+  };
+  const ids = Object.keys(failures);
+  await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+    const result = await runArtifactCommand(statusOptions(), statusRegistry({}, {}, failures));
+    const byId = Object.fromEntries(
+      result.artifacts.map(({ id, updateCheckFailure }) => [id, updateCheckFailure]),
+    );
+    assert.equal(byId["skill-project-goal"]?.origin, "https://npm.example.com");
+    assert.equal(byId["skill-code-review"]?.origin, "https://mirror.example.com:8443");
+    assert.doesNotMatch(JSON.stringify(result), /secret-path/);
+  });
 });

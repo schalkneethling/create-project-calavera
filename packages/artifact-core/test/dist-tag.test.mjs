@@ -91,7 +91,7 @@ test("resolves a dist-tag from the configured registry with the abbreviated docu
   assert.deepEqual(await readdir(context.cwd), []);
 });
 
-test("invariant 1: sends no credentials to a plain-http registry", async (t) => {
+test("sends no credentials to a plain-http registry", async (t) => {
   const registry = await startRegistry((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(packument({ latest: "7.1.0" }));
@@ -242,7 +242,7 @@ test("a host in the .npmrc noproxy skips the .npmrc proxy (#1064)", async (t) =>
   assert.equal(registry.requests.length, 1);
 });
 
-test("invariant 1: a committed Yarn 4 .env.yarn that sets an http registry gets no credentials", async (t) => {
+test("a committed Yarn 4 .env.yarn that sets an http registry gets no credentials", async (t) => {
   const registry = await startRegistry((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(packument({ latest: "7.3.0" }));
@@ -252,13 +252,7 @@ test("invariant 1: a committed Yarn 4 .env.yarn that sets an http registry gets 
     await registry.close();
     await rm(cwd, { recursive: true, force: true });
   });
-  const accountHome = join(cwd, "account-home");
-  await mkdir(accountHome);
-  await writeFile(
-    join(accountHome, ".npmrc"),
-    `//${registry.host}/:_authToken=fake-account-token\n`,
-  );
-  // The same token in the HOME-based user file, which a .env.yarn could also point elsewhere.
+  // A token for the registry in the user .npmrc, which Calavera does not read.
   await mkdir(join(cwd, "home"));
   await writeFile(join(cwd, "home", ".npmrc"), `//${registry.host}/:_authToken=fake-home-token\n`);
   // Yarn 4 injects .env.yarn into every process it starts, so these arrive as the environment.
@@ -270,13 +264,13 @@ test("invariant 1: a committed Yarn 4 .env.yarn that sets an http registry gets 
   };
 
   assert.equal(
-    await resolvePackageDistTag({ packageName: NAME, tag: "latest", cwd, env, accountHome }),
+    await resolvePackageDistTag({ packageName: NAME, tag: "latest", cwd, env }),
     "7.3.0",
   );
   assert.equal(registry.requests[0]?.authorization, undefined);
 });
 
-test("invariant 1: a committed Yarn 4 .env.yarn with an http registry and an http proxy gives the proxy no credentials", async (t) => {
+test("a committed Yarn 4 .env.yarn with an http registry and an http proxy gives the proxy no credentials", async (t) => {
   const proxy = await startRegistry((_request, response) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(packument({ latest: "7.4.0" }));
@@ -286,11 +280,10 @@ test("invariant 1: a committed Yarn 4 .env.yarn with an http registry and an htt
     await proxy.close();
     await rm(cwd, { recursive: true, force: true });
   });
-  const accountHome = join(cwd, "account-home");
-  await mkdir(accountHome);
+  await mkdir(join(cwd, "home"));
   await writeFile(
-    join(accountHome, ".npmrc"),
-    "//registry.calavera.invalid/:_authToken=fake-account-token\n",
+    join(cwd, "home", ".npmrc"),
+    "//registry.calavera.invalid/:_authToken=fake-home-token\n",
   );
   // A repository's .env.yarn reaches Calavera as environment: an http registry and a proxy it runs.
   const env = {
@@ -302,10 +295,42 @@ test("invariant 1: a committed Yarn 4 .env.yarn with an http registry and an htt
   };
 
   assert.equal(
-    await resolvePackageDistTag({ packageName: NAME, tag: "latest", cwd, env, accountHome }),
+    await resolvePackageDistTag({ packageName: NAME, tag: "latest", cwd, env }),
     "7.4.0",
   );
   assert.equal(proxy.requests.length, 1);
   assert.equal(proxy.requests[0]?.url, `http://registry.calavera.invalid/${NAME}`);
   assert.equal(proxy.requests[0]?.authorization, undefined);
+});
+
+test("a 401 for the version lookup names the registry and says Calavera sends no credentials", async (t) => {
+  const registry = await startRegistry((_request, response) => {
+    response.writeHead(401, { "content-type": "application/json" });
+    response.end(JSON.stringify({ error: "registry text" }));
+  });
+  const context = await isolatedContext(registry.url);
+  t.after(async () => {
+    await registry.close();
+    await rm(context.cwd, { recursive: true, force: true });
+  });
+
+  const failure = await resolvePackageDistTag({
+    packageName: NAME,
+    tag: "latest",
+    ...context,
+  }).then(
+    () => assert.fail("Expected the lookup to reject."),
+    (error) => error,
+  );
+  assert.match(
+    failure.message,
+    new RegExp(
+      `^The registry http://${registry.host} answered 401 for ${NAME}\\.\nCalavera sends no credentials to any registry\\.`,
+    ),
+  );
+  assert.deepEqual(
+    [failure.code, failure.statusCode, failure.origin],
+    ["E401", 401, `http://${registry.host}`],
+  );
+  assert.doesNotMatch(failure.message, /registry text/);
 });

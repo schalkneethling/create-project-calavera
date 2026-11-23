@@ -584,6 +584,12 @@ const updateCheckFailureSchema = z.looseObject({
   code: z.string().describe("The registry error's code, such as ETARGET for a missing dist-tag."),
   type: z.string().nullable(),
   statusCode: z.number().nullable().describe("The registry's HTTP status, when it answered."),
+  origin: z
+    .string()
+    .nullable()
+    .describe(
+      "The origin (protocol, host, and port) that answered an HTTP failure, or null for a failure without one.",
+    ),
   reason: z.string(),
   remedy: z.string().nullable(),
   npmDiagnostics: z.array(z.string()),

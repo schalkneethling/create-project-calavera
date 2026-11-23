@@ -7,16 +7,16 @@ import pacote from "pacote";
 import semver from "semver";
 
 import { artifactForId } from "./catalog.js";
-import { loadNpmRegistryOptions, pacoteTarballUrl, requestOptions } from "./npm-config.js";
+import { loadNpmRegistryOptions } from "./npm-config.js";
 
 const TAGS = new Set(["latest", "next"]);
 
 /**
- * Registry and auth settings come from the user and project .npmrc files and `npm_config_*`
- * variables; see `loadNpmRegistryOptions`. `cwd` (default: the current directory) holds the
+ * Registry and proxy settings come from the user and project .npmrc files and `npm_config_*`
+ * variables, or the Yarn and Bun settings; see `loadNpmRegistryOptions`. No credential is sent. `cwd` (default: the current directory) holds the
  * project .npmrc, unless npm started Calavera: the project .npmrc is then the one npm read at
  * `npm_config_local_prefix`. `env` (default: the process environment) holds the variables.
- * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv, accountHome?: string }} request
+ * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv }} request
  */
 export async function resolveArtifactPackage(request) {
   const artifact = artifactForId(request.id);
@@ -27,15 +27,21 @@ export async function resolveArtifactPackage(request) {
     throw new Error(`Artifact version must be exact semver: ${request.version}.`);
   }
 
-  const npm = await loadNpmRegistryOptions({ ...request, scope: packageScope(artifact) });
+  const npm = await loadNpmRegistryOptions({
+    cwd: request.cwd,
+    env: request.env,
+    scope: packageScope(artifact),
+  });
   const manifest = await withNpmDiagnostics(npm, () =>
-    withRegistryCode(artifact.packageName, () =>
-      pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
-        ...requestOptions(npm.options, npm.registry.origin),
-        cache: request.cache,
-        offline: request.offline,
-        fullMetadata: true,
-      }),
+    withAuthFailure(npm, { subject: artifact.packageName, download: false }, () =>
+      withRegistryCode(artifact.packageName, () =>
+        pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
+          ...npm.options,
+          cache: request.cache,
+          offline: request.offline,
+          fullMetadata: true,
+        }),
+      ),
     ),
   );
   if (manifest.name !== artifact.packageName || !semver.valid(manifest.version)) {
@@ -64,25 +70,18 @@ export async function resolveArtifactPackage(request) {
 
 /**
  * The version a dist-tag of a package names, asked of the registry the npm configuration selects,
- * with its credentials (ADR-0019 Decision 3). It reads the abbreviated package document, which
+ * without credentials (ADR-0019 Decision 3, ADR-0021). It reads the abbreviated package document, which
  * lists the dist-tags, and passes no `cache`, so it writes nothing. `fetchRetries: 0` and `signal`
  * let the caller hold the request to a deadline: pacote passes both through to npm-registry-fetch.
- * @param {{ packageName: string, tag: string, cwd?: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal, accountHome?: string }} request
+ * @param {{ packageName: string, tag: string, cwd?: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal }} request
  * @returns {Promise<string>}
  */
-export async function resolvePackageDistTag({ packageName, tag, cwd, env, signal, accountHome }) {
-  const npm = await loadNpmRegistryOptions({
-    cwd,
-    env,
-    accountHome,
-    scope: packageScope({ packageName }),
-  });
+export async function resolvePackageDistTag({ packageName, tag, cwd, env, signal }) {
+  const npm = await loadNpmRegistryOptions({ cwd, env, scope: packageScope({ packageName }) });
   const manifest = await withNpmDiagnostics(npm, () =>
-    pacote.manifest(`${packageName}@${tag}`, {
-      ...requestOptions(npm.options, npm.registry.origin),
-      fetchRetries: 0,
-      signal,
-    }),
+    withAuthFailure(npm, { subject: packageName, download: false }, () =>
+      pacote.manifest(`${packageName}@${tag}`, { ...npm.options, fetchRetries: 0, signal }),
+    ),
   );
   if (manifest.name !== packageName || !semver.valid(manifest.version)) {
     throw new Error(`The registry named no valid version for ${packageName}@${tag}.`);
@@ -94,20 +93,30 @@ export async function resolvePackageDistTag({ packageName, tag, cwd, env, signal
  * @param {{ artifact: { id: string, type: string, packageName: string }, packageName: string, version: string, resolved: string, integrity?: string, tag: string, cache: string, offline: boolean }} resolution
  * @param {string} destination
  * @param {string} cliVersion
- * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, accountHome?: string }} [npmContext] Where to read npm configuration; see resolveArtifactPackage.
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv }} [npmContext] Where to read npm configuration; see resolveArtifactPackage.
  */
 export async function extractArtifactPackage(resolution, destination, cliVersion, npmContext) {
   const npm = await loadNpmRegistryOptions({
-    ...npmContext,
+    cwd: npmContext?.cwd,
+    env: npmContext?.env,
     scope: packageScope(resolution.artifact),
   });
+  // pacote moves a registry.npmjs.org tarball onto its `registry` option (see pacoteTarballUrl),
+  // so the artifact scope's registry, which the package document came from, is passed as that
+  // option: the lookup and the download then use the same registry (ADR-0021 Decision 4).
   await withNpmDiagnostics(npm, () =>
-    pacote.extract(resolution.resolved, destination, {
-      ...requestOptions(npm.options, pacoteTarballUrl(resolution.resolved, npm.options)),
-      cache: resolution.cache,
-      integrity: resolution.integrity,
-      offline: resolution.offline,
-    }),
+    withAuthFailure(
+      npm,
+      { subject: `${resolution.packageName}@${resolution.version}`, download: true },
+      () =>
+        pacote.extract(resolution.resolved, destination, {
+          ...npm.options,
+          registry: npm.registryUrl,
+          cache: resolution.cache,
+          integrity: resolution.integrity,
+          offline: resolution.offline,
+        }),
+    ),
   );
 
   const packageJson = JSON.parse(await readFile(join(destination, "package.json"), "utf8"));
@@ -157,9 +166,96 @@ async function withRegistryCode(packageName, run) {
 }
 
 /**
- * Adds what the loader ignored to a registry failure, so a missing token or variable is visible.
- * The original error stays as `cause`, and its `code`, `statusCode`, and minipass-fetch's `type`
- * (the kind of a FETCH_ERROR, such as invalid-json) are kept. The notes are also
+ * @typedef {{ origin: string, source: string, setting: string | null }} RegistryReport
+ */
+
+const AUTH_STATUS = new Set([401, 403]);
+// npm-registry-fetch's HTTP errors carry the request method; only a plain method name is kept.
+const METHOD = /^[A-Za-z]{1,16}$/;
+
+/**
+ * Replaces a 401 or 403 answer with an error that names the origin that answered and says that
+ * Calavera sends no credentials (ADR-0021 Decision 3). npm-registry-fetch sets `uri` to the final
+ * URL after redirects; only its origin is kept, because a path or query can carry a token. The
+ * original error, whose message holds the URL and the registry's own text, is dropped. Its cause
+ * keeps only the method, `code`, `statusCode`, and origin, and is marked `debugOnly`, so the CLI
+ * prints it only with CALAVERA_DEBUG. The error keeps `code` (E401, E403, EOTP, or EAUTHIP) and
+ * `statusCode`, and gains `origin`, and the configured registry's `setting`, `layer`, and
+ * `registryOrigin`, so the update check can tell the registry from a host it redirected to.
+ * @template T
+ * @param {{ registry: RegistryReport }} npm
+ * @param {{ subject: string, download: boolean }} request What was asked for, and whether it was a download.
+ * @param {() => Promise<T>} run
+ * @returns {Promise<T>}
+ */
+async function withAuthFailure({ registry }, { subject, download }, run) {
+  try {
+    return await run();
+  } catch (error) {
+    const fields =
+      /** @type {{ statusCode?: unknown, code?: unknown, uri?: unknown, method?: unknown }} */ (
+        error ?? {}
+      );
+    if (!(error instanceof Error) || !AUTH_STATUS.has(/** @type {number} */ (fields.statusCode))) {
+      throw error;
+    }
+    const statusCode = /** @type {number} */ (fields.statusCode);
+    const code = typeof fields.code === "string" ? fields.code : `E${statusCode}`;
+    const origin = httpOrigin(fields.uri) ?? registry.origin;
+    const configured = registry.setting
+      ? `The registry ${registry.origin}, from ${registry.setting} in the ${registry.source},`
+      : `The default registry ${registry.origin}`;
+    let lines;
+    if (origin === registry.origin) {
+      const remedy = registry.setting
+        ? `point ${registry.setting} in the ${registry.source} at a registry that serves Calavera's packages without authentication, such as https://registry.npmjs.org/`
+        : "configure a registry that serves Calavera's packages without authentication";
+      lines = [
+        `${registry.setting ? "The registry" : "The default registry"} ${origin} answered ${statusCode} for ${subject}.`,
+        `Calavera sends no credentials to any registry. If this registry requires authentication, Calavera cannot use it: ${remedy}.`,
+      ];
+    } else {
+      const host = download ? "tarball host" : "host";
+      const change = registry.setting ? "point that setting at" : "configure";
+      lines = [
+        `The ${host} ${origin} answered ${statusCode} for ${subject}.`,
+        `Calavera sends no credentials to any registry or ${host}. ${configured} ${download ? "named this download" : "sent this request there"}. If the host requires authentication, ${change} a registry ${download ? "whose packages download" : "that serves Calavera's packages"} without authentication.`,
+      ];
+    }
+    const method =
+      typeof fields.method === "string" && METHOD.test(fields.method)
+        ? fields.method.toUpperCase()
+        : undefined;
+    const cause = Object.assign(
+      new Error(`${method ? `${method} ` : ""}${origin} answered ${statusCode} (${code}).`),
+      { code, statusCode, origin, debugOnly: true },
+    );
+    throw Object.assign(new Error(lines.join("\n"), { cause }), {
+      code,
+      statusCode,
+      origin,
+      setting: registry.setting,
+      layer: registry.source,
+      registryOrigin: registry.origin,
+    });
+  }
+}
+
+/**
+ * The origin (protocol, host, and port) of an http or https URL, or undefined.
+ * @param {unknown} url
+ */
+function httpOrigin(url) {
+  if (typeof url !== "string" || !URL.canParse(url)) return undefined;
+  const parsed = new URL(url);
+  return /^https?:$/.test(parsed.protocol) ? parsed.origin : undefined;
+}
+
+/**
+ * Adds what the loader ignored to a registry failure, so an ignored setting or unset variable is
+ * visible. The original error stays as `cause`, and its `code`, `statusCode`, minipass-fetch's
+ * `type` (the kind of a FETCH_ERROR, such as invalid-json), and the `origin`, `setting`, `layer`,
+ * and `registryOrigin` of an authentication failure are kept. The notes are also
  * kept as `npmDiagnostics` and `unsetVariables`, so a caller that withholds the registry's own
  * message can still name them (#993); like the loader's notes, they never contain a value.
  * @template T
@@ -185,6 +281,10 @@ async function withNpmDiagnostics(npm, run) {
         code: /** @type {NodeJS.ErrnoException} */ (error).code,
         statusCode: /** @type {{ statusCode?: number }} */ (error).statusCode,
         type: /** @type {{ type?: unknown }} */ (error).type,
+        origin: /** @type {{ origin?: unknown }} */ (error).origin,
+        setting: /** @type {{ setting?: unknown }} */ (error).setting,
+        layer: /** @type {{ layer?: unknown }} */ (error).layer,
+        registryOrigin: /** @type {{ registryOrigin?: unknown }} */ (error).registryOrigin,
         npmDiagnostics: npm.diagnostics,
         unsetVariables: npm.unsetVariables,
       },

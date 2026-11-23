@@ -128,8 +128,15 @@ test("apply --dry-run reports the registry artifacts resolve from and the npm co
         ["hook-block-dangerous-commands", "0.4.0"],
       ]),
       {
-        registry: { origin: "https://npm.example.com", source: "project .npmrc" },
-        warnings: ["Ignored //npm.example.com/:_authToken in the project .npmrc."],
+        // artifact-core also names the setting, for messages only; the report leaves it out.
+        registry: {
+          origin: "https://npm.example.com",
+          source: "project .npmrc",
+          setting: "@schalkneethling:registry",
+        },
+        warnings: [
+          "Ignored https-proxy in the project .npmrc: Calavera reads proxies only from user configuration files and environment variables. No other proxy setting applies. To use it, set it in your user .npmrc.",
+        ],
       },
     );
     const recipe = recipeWith(["skill-project-goal", "hook-block-dangerous-commands"]);
@@ -139,7 +146,7 @@ test("apply --dry-run reports the registry artifacts resolve from and the npm co
       { origin: "https://npm.example.com", source: "project .npmrc" },
     ]);
     assert.deepEqual(result.artifactWarnings, [
-      "Ignored //npm.example.com/:_authToken in the project .npmrc.",
+      "Ignored https-proxy in the project .npmrc: Calavera reads proxies only from user configuration files and environment variables. No other proxy setting applies. To use it, set it in your user .npmrc.",
     ]);
 
     const preview = await callMcpTool("dry_run_apply", { recipe }, registry);

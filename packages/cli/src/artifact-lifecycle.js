@@ -195,7 +195,14 @@ function registryNotes() {
   const warnings = new Set();
   return {
     add({ registry, warnings: resolutionWarnings = [] }) {
-      if (registry) registries.set(`${registry.origin} ${registry.source}`, registry);
+      // artifact-core's registry also names its `setting`, for messages only (ADR-0021), so the
+      // reported registry keeps only the origin and the source.
+      if (registry) {
+        registries.set(`${registry.origin} ${registry.source}`, {
+          origin: registry.origin,
+          source: registry.source,
+        });
+      }
       for (const warning of resolutionWarnings) warnings.add(warning);
     },
     notes: () => ({ registries: [...registries.values()], warnings: [...warnings] }),
@@ -962,6 +969,31 @@ function notesList(value) {
 }
 
 /**
+ * An origin (protocol, host, and port) as artifact-core reports it, or null for anything else.
+ *
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function originField(value) {
+  return typeof value === "string" && URL.canParse(value) && new URL(value).origin === value
+    ? value
+    : null;
+}
+
+/**
+ * The origin of an http or https URL, or null; the path and query, which can carry a token, are
+ * dropped.
+ *
+ * @param {unknown} value
+ * @returns {string | null}
+ */
+function uriOrigin(value) {
+  if (typeof value !== "string" || !URL.canParse(value)) return null;
+  const url = new URL(value);
+  return /^https?:$/.test(url.protocol) ? url.origin : null;
+}
+
+/**
  * The report of a failed registry lookup, or undefined for an error that is not one.
  *
  * @param {unknown} error
@@ -970,7 +1002,7 @@ function notesList(value) {
  */
 function updateCheckFailure(error, { packageName, tag, followLatestCommand, retryCommand }) {
   const fields =
-    /** @type {{ code?: unknown, statusCode?: unknown, npmDiagnostics?: unknown, unsetVariables?: unknown, distTags?: unknown, type?: unknown, cause?: { distTags?: unknown } }} */ (
+    /** @type {{ code?: unknown, statusCode?: unknown, npmDiagnostics?: unknown, unsetVariables?: unknown, distTags?: unknown, type?: unknown, origin?: unknown, setting?: unknown, layer?: unknown, registryOrigin?: unknown, uri?: unknown, cause?: { distTags?: unknown, uri?: unknown } }} */ (
       error ?? {}
     );
   if (typeof fields.code !== "string" || !REGISTRY_LOOKUP_CODE.test(fields.code)) return undefined;
@@ -978,8 +1010,16 @@ function updateCheckFailure(error, { packageName, tag, followLatestCommand, retr
   const statusCode = typeof fields.statusCode === "number" ? fields.statusCode : null;
   const type =
     typeof fields.type === "string" && FETCH_ERROR_TYPE.test(fields.type) ? fields.type : null;
+  // ADR-0021: the origin that answered an HTTP failure, or null for a failure without one.
+  // artifact-core sets `origin` on a 401 or 403; npm-registry-fetch sets `uri` on every HTTP
+  // error, kept on the cause when the loader's notes wrap it. Only its origin is kept.
+  const origin =
+    statusCode === null
+      ? null
+      : (originField(fields.origin) ?? uriOrigin(fields.uri) ?? uriOrigin(fields.cause?.uri));
   const notes = {
     type,
+    origin,
     npmDiagnostics: notesList(fields.npmDiagnostics),
     unsetVariables: notesList(fields.unsetVariables),
   };
@@ -1011,11 +1051,30 @@ function updateCheckFailure(error, { packageName, tag, followLatestCommand, retr
   const kind = type === null ? code : `${code} ${type}`;
   const details = statusCode === null ? kind : `${kind}, HTTP ${statusCode}`;
   // npm-registry-fetch sets `statusCode` on every HTTP error, while its `code` is EOTP or EAUTHIP
-  // for some 401 answers, so the status picks the remedy.
-  let check = "the network connection and the npm registry settings";
+  // for some 401 answers, so the status picks the remedy. Calavera sends no credentials
+  // (ADR-0021), so a 401 or 403 says so and points at the setting that chose the registry.
   if (statusCode === 401 || statusCode === 403) {
-    check = "the npm credentials for this registry";
-  } else if (statusCode === 404) {
+    const registryOrigin = originField(fields.registryOrigin);
+    let reason = `the registry lookup for ${packageName} failed (${details}), and Calavera sends no credentials to any registry`;
+    if (origin !== null && (registryOrigin === null || origin === registryOrigin)) {
+      reason = `the registry ${origin} answered ${statusCode} (${code}), and Calavera sends no credentials to any registry`;
+    } else if (origin !== null) {
+      reason = `the host ${origin} answered ${statusCode} (${code}) for a lookup that started at the registry ${registryOrigin}, and Calavera sends no credentials to any registry or host`;
+    }
+    const setting =
+      typeof fields.setting === "string" && typeof fields.layer === "string"
+        ? `${fields.setting} in the ${fields.layer}`
+        : "the registry setting";
+    return {
+      code,
+      statusCode,
+      reason,
+      remedy: `If this registry requires authentication, point ${setting} at a registry that serves Calavera's packages without authentication, then run: ${retryCommand}`,
+      ...notes,
+    };
+  }
+  let check = "the network connection and the npm registry settings";
+  if (statusCode === 404) {
     check = `that the npm registry settings point at a registry that publishes ${packageName}`;
   }
   return {
