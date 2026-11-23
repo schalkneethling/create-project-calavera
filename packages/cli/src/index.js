@@ -3377,12 +3377,17 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
         // A given recipe path still stops apply wherever it points, because apply would replace
         // the file. When the file, with every link resolved, is outside the ancestor's directory,
         // it is named as such rather than as the ancestor's recipe (#1142). The ancestor's own
-        // calavera.config.json is the recipe Calavera reads there, so it keeps that message.
-        if (existing === config && existing !== ancestorRecipe) {
+        // calavera.config.json, by any path that resolves to it, is the recipe Calavera reads there,
+        // so it keeps that message.
+        if (existing === config) {
           let outside;
           try {
             const real = await realpath(existing);
-            if (!isPathInside(await realpath(ancestorDirectory), real)) {
+            const ancestorRecipeReal = await realpath(ancestorRecipe).catch(() => undefined);
+            if (
+              real !== ancestorRecipeReal &&
+              !isPathInside(await realpath(ancestorDirectory), real)
+            ) {
               const isLink = (await lstat(existing)).isSymbolicLink();
               outside = recipePathOutsideAncestorError(chosen, existing, real, isLink);
             }
