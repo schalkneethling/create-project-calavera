@@ -171,3 +171,50 @@ for (const link of [".agents", ".calavera"]) {
     });
   });
 }
+
+// A dry run stops where the install would, with the same message, and writes nothing either.
+test("artifacts install --dry-run refuses a linked .agents/skills like the install", async () => {
+  const item = { id: "skill-code-review" };
+  await inProject(item, async ({ project, outside }) => {
+    await mkdir(join(project, ".agents"));
+    await symlink(outside, join(project, ".agents/skills"));
+    const projectBefore = await snapshotDirectory(project);
+    const registry = stubRegistry(new Map([[item.id, "1.0.0"]]));
+
+    await assert.rejects(
+      runArtifactCommand({ ...options("install", item.id), dryRun: true }, registry),
+      { message: refusal(".agents/skills") },
+    );
+
+    assert.deepEqual(registry.requests, []);
+    assert.deepEqual(await snapshotDirectory(project), projectBefore);
+  });
+});
+
+// A link whose target is missing still counts as the person's folder, so apply's cleanup after
+// the refusal leaves it in place instead of removing it as a folder the attempt created.
+for (const link of [".agents", ".calavera"]) {
+  test(`apply keeps a dangling ${link} link after it refuses to install through it`, async () => {
+    const item = { id: "skill-code-review" };
+    await inProject(item, async ({ project, outside }) => {
+      await symlink(join(outside, "missing"), join(project, link));
+      const projectBefore = await snapshotDirectory(project);
+
+      await assert.rejects(
+        prepareArtifactSources(
+          { ...buildRecipe("minimal", [], "npm"), ai: [item] },
+          false,
+          stubRegistry(new Map([[item.id, "1.0.0"]])),
+        ),
+        (error) => {
+          assert.ok(error instanceof Error);
+          assert.ok(error.message.includes(refusal(link)), error.message);
+          assert.doesNotMatch(error.message, /Removing the directories/);
+          return true;
+        },
+      );
+
+      assert.deepEqual(await snapshotDirectory(project), projectBefore);
+    });
+  });
+}

@@ -475,7 +475,14 @@ async function installUnlockedArtifacts(
   }
   const existedBefore = new Set();
   for (const path of [...createdDirectories, ...outputParents]) {
-    if (await fileExists(path)) existedBefore.add(path);
+    // `lstat`, not `fileExists`, so a symbolic link whose target is missing counts as existing,
+    // and the cleanup below never removes a link the person made (#1193).
+    try {
+      await lstat(path);
+      existedBefore.add(path);
+    } catch {
+      // Missing, so this attempt may create it and the cleanup may remove it.
+    }
   }
   let preflightFailed = false;
 
@@ -1522,8 +1529,8 @@ export function isTransactionTarget(projectRoot, target, pathRules = nodePath) {
 }
 
 /**
- * Ends each message that refuses a journal, because every `artifacts` command and `eject` recover
- * the journal first and stay blocked until it is gone.
+ * Ends each message that refuses a journal, because `apply`, every `artifacts` command, and
+ * `eject` recover the journal first and stay blocked until it is gone.
  */
 const JOURNAL_REFUSAL_REMEDY = `Calavera does not roll this journal back. Restore the files it names by hand if needed, using the backups in ${TRANSACTION_ROOT}, then remove ${TRANSACTION_PATH}.`;
 
@@ -1751,10 +1758,12 @@ function linkedFolderRefusal(link) {
 
 /**
  * Refuses, before an install, an update, or a cache block writes anything, when a folder that an
- * artifact transaction stages into, caches into, or targets below is a symbolic link or lies below
- * one. `commitArtifactTransaction` refuses the same links again before it moves anything, so this
- * check only makes the command stop before it writes the cache block, the registry cache, or the
- * staging folder.
+ * artifact transaction stages into or targets below is a symbolic link or lies below one.
+ * `commitArtifactTransaction` refuses the same links again before it moves anything, so this check
+ * only makes the command stop before it writes the cache block, the registry cache, or the staging
+ * folder. The registry cache folder itself is not checked, because no transaction targets it. A
+ * targeted update checks the outputs of every selection it stages again, including those whose
+ * files do not change.
  *
  * @param {string[]} folders Project paths of the folders the command writes into.
  */
@@ -1767,8 +1776,9 @@ async function refuseLinkedArtifactFolders(folders) {
 }
 
 /**
- * The project folders that installing the AI items of `recipe` writes into: the transaction and
- * cache folders, each selection's package folder, and the folder of each AI artifact output.
+ * The project folders an artifact transaction that installs the AI items of `recipe` stages into or
+ * targets below: the transaction folder, each selection's package folder, and the folder of each
+ * AI artifact output.
  *
  * @param {{ ai?: unknown }} recipe
  * @param {{ id: string }[]} selections
@@ -1776,7 +1786,6 @@ async function refuseLinkedArtifactFolders(folders) {
 function artifactInstallFolders(recipe, selections) {
   return [
     TRANSACTION_ROOT,
-    CACHE_PATH,
     ...selections.map(({ id }) => join(PACKAGE_PATH, id)),
     ...resolveAiArtifacts(recipe).flatMap((artifact) =>
       aiArtifactOutputPaths(artifact).map(dirname),
