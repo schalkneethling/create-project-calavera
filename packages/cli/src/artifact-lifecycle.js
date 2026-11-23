@@ -51,6 +51,7 @@ import {
 import { fileExists, isPathInside, parseJSON, readJSON } from "./utils/fs.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { rewriteLossProblem } from "./utils/json-rewrite.js";
+import { withDeadline } from "./utils/deadline.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
 
 export const LOCK_PATH = ".calavera/artifacts.lock.json";
@@ -164,9 +165,11 @@ async function planArtifactCacheBlock(state, declared, command) {
 /**
  * @typedef {{ config: string, dryRun: boolean, artifactAction?: string, artifactId?: string, artifactTag?: "latest" | "next", artifactAll?: boolean, checkUpdates?: boolean }} ArtifactOptions
  * @typedef {{ id: string, type: "skill" | "hook" | "agent", package: string, version: string, resolved: string, integrity: string, tag: "latest" | "next", manifestVersion: number, destination: string, payloadHash: string, target?: string }} ArtifactLockEntry
- * @typedef {{ resolve?: typeof resolveArtifactPackage, extract?: typeof extractArtifactPackage, loadFormatter?: () => Promise<ProjectFormatter> }} ArtifactServices
+ * @typedef {{ resolve?: typeof resolveArtifactPackage, extract?: typeof extractArtifactPackage, loadFormatter?: () => Promise<ProjectFormatter>, updateCheckDeadlineMs?: number }} ArtifactServices
  *   `loadFormatter` loads the formatter for the state and lock an install writes, and for the
  *   recipe a migration writes; without it, the project's own formatter in the working directory.
+ *   `updateCheckDeadlineMs` holds each registry lookup of an update check to that deadline instead
+ *   of UPDATE_CHECK_DEADLINE_MS, so a test can use a short one.
  * @typedef {{ resolve: typeof resolveArtifactPackage, extract: typeof extractArtifactPackage }} ArtifactRegistry
  * @typedef {{ id: string, target?: string }} ArtifactSelection
  * @typedef {import("./ai/artifacts.js").AiChange} AiChange
@@ -178,6 +181,14 @@ async function planArtifactCacheBlock(state, declared, command) {
  * @typedef {{ origin: string, source: string }} ArtifactRegistryReport The registry (protocol, host, and port) an artifact resolves from, and the npm configuration it came from.
  * @typedef {{ registries: ArtifactRegistryReport[], warnings: string[] }} ArtifactRegistryNotes
  */
+
+/**
+ * How long one registry lookup of an update check may take, in milliseconds, before status reports
+ * it for that artifact and moves on (#1138). npm's own timeout is five minutes per attempt, with
+ * retries, which leaves a registry that accepts the connection and never answers holding the
+ * report for many minutes.
+ */
+const UPDATE_CHECK_DEADLINE_MS = 15_000;
 
 /**
  * @param {ArtifactServices} services
@@ -234,7 +245,9 @@ export async function runArtifactCommand(options, services = {}) {
       return migrateRecipe(options, loadFormatter);
     case "status":
     case "doctor":
-      return artifactStatus(options, registry, loadFormatter);
+      return artifactStatus(options, registry, loadFormatter, {
+        updateCheckDeadlineMs: services.updateCheckDeadlineMs,
+      });
     case "install":
       return installArtifacts(options, false, registry, loadFormatter);
     case "update":
@@ -255,7 +268,8 @@ export async function runArtifactCommand(options, services = {}) {
  * formatter, because it formats nothing.
  *
  * @param {{ config: string, checkUpdates?: boolean }} options
- * @param {ArtifactServices} [services] Only `resolve` is read; the formatter is never loaded.
+ * @param {ArtifactServices} [services] Only `resolve` and `updateCheckDeadlineMs` are read; the
+ *   formatter is never loaded.
  */
 export async function readArtifactStatus(options, services = {}) {
   if (await fileExists(TRANSACTION_PATH)) return pendingTransactionReport(options.config);
@@ -270,7 +284,7 @@ export async function readArtifactStatus(options, services = {}) {
     async () => {
       throw new Error("The read-only artifact status report never loads the formatter.");
     },
-    { readOnly: true },
+    { readOnly: true, updateCheckDeadlineMs: services.updateCheckDeadlineMs },
   );
 }
 
@@ -740,10 +754,16 @@ async function migrateRecipe(options, loadFormatter) {
  * @param {ArtifactOptions} options
  * @param {{ resolve: typeof resolveArtifactPackage }} registry
  * @param {() => Promise<ProjectFormatter>} loadFormatter Formats the state when the cache block is recorded.
- * @param {{ readOnly?: boolean }} [mode] With `readOnly`, as `readArtifactStatus` runs it, the
- *   report plans no cache block and resolves through a temporary cache, so it writes nothing.
+ * @param {{ readOnly?: boolean, updateCheckDeadlineMs?: number }} [mode] With `readOnly`, as
+ *   `readArtifactStatus` runs it, the report plans no cache block and resolves through a temporary
+ *   cache, so it writes nothing. `updateCheckDeadlineMs` bounds each registry lookup (#1138).
  */
-async function artifactStatus(options, registry, loadFormatter, { readOnly = false } = {}) {
+async function artifactStatus(
+  options,
+  registry,
+  loadFormatter,
+  { readOnly = false, updateCheckDeadlineMs = UPDATE_CHECK_DEADLINE_MS } = {},
+) {
   const recipeFound = await fileExists(options.config);
   const recipe = recipeFound ? await readJson(options.config) : {};
   const selections = normalizePackageSelections(recipe.ai);
@@ -814,7 +834,7 @@ async function artifactStatus(options, registry, loadFormatter, { readOnly = fal
       );
       const { latest, updateCheckFailure } = await checkForUpdate(
         options.checkUpdates,
-        () => registry.resolve({ id: entry.id, tag: entry.tag, cache }),
+        (signal) => registry.resolve({ id: entry.id, tag: entry.tag, cache, signal }),
         {
           packageName: entry.package,
           tag: entry.tag,
@@ -824,6 +844,7 @@ async function artifactStatus(options, registry, loadFormatter, { readOnly = fal
               ? artifactUpdateCommand(recipe, options.config, entry.id, "latest")
               : null,
           retryCommand,
+          deadlineMs: updateCheckDeadlineMs,
         },
       );
       const updateAvailable = Boolean(latest && latest.version !== entry.version);
@@ -859,12 +880,13 @@ async function artifactStatus(options, registry, loadFormatter, { readOnly = fal
       if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
       const { latest, updateCheckFailure } = await checkForUpdate(
         options.checkUpdates,
-        () => registry.resolve({ id: selection.id, tag: "latest", cache }),
+        (signal) => registry.resolve({ id: selection.id, tag: "latest", cache, signal }),
         {
           packageName: artifact.packageName,
           tag: "latest",
           followLatestCommand: null,
           retryCommand,
+          deadlineMs: updateCheckDeadlineMs,
         },
       );
       artifacts.push({
@@ -930,8 +952,25 @@ async function artifactStatus(options, registry, loadFormatter, { readOnly = fal
 }
 
 /**
+ * A registry lookup that missed its deadline (#1138). Status creates it, so the report can tell it
+ * apart from a registry error that merely carries the same code.
+ */
+class UpdateCheckTimeout extends Error {
+  /** @param {number} deadlineMs */
+  constructor(deadlineMs) {
+    super(`The registry did not answer within ${deadlineMs} ms.`);
+    this.name = "UpdateCheckTimeout";
+    this.code = "ELOOKUPTIMEOUT";
+    this.deadlineMs = deadlineMs;
+  }
+}
+
+/**
  * Asks the registry for the release on an artifact's channel when update checks are on. A failed
  * registry lookup is reported for that artifact alone, so the others still get a status (#993).
+ * Each lookup is held to `context.deadlineMs` with the version notice's deadline and abort
+ * (ADR-0019 Decision 2): at the deadline the lookup's signal is aborted, which ends pacote's
+ * request, and the artifact is reported as ELOOKUPTIMEOUT, even if the lookup ignores the abort.
  * Only an error whose `code` names a registry, network, timeout, or TLS failure is reported this
  * way (see REGISTRY_LOOKUP_CODE). Every other error stops the report as before: Calavera's own,
  * which carry no code and say what to fix (an invalid npm configuration, a package whose identity
@@ -943,14 +982,19 @@ async function artifactStatus(options, registry, loadFormatter, { readOnly = fal
  *
  * @template {{ version: string }} T
  * @param {boolean | undefined} checkUpdates
- * @param {() => Promise<T>} lookup
- * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string }} context
+ * @param {(signal: AbortSignal) => Promise<T>} lookup
+ * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string, deadlineMs: number }} context
  * @returns {Promise<{ latest: T | null, updateCheckFailure: import("./artifact-status-report.js").UpdateCheckFailure | null }>}
  */
 async function checkForUpdate(checkUpdates, lookup, context) {
   if (!checkUpdates) return { latest: null, updateCheckFailure: null };
   try {
-    return { latest: await lookup(), updateCheckFailure: null };
+    const latest = await withDeadline(
+      context.deadlineMs,
+      () => new UpdateCheckTimeout(context.deadlineMs),
+      lookup,
+    );
+    return { latest, updateCheckFailure: null };
   } catch (error) {
     const failure = updateCheckFailure(error, context);
     if (!failure) throw error;
@@ -1020,6 +1064,18 @@ function uriOrigin(value) {
  * @returns {import("./artifact-status-report.js").UpdateCheckFailure | undefined}
  */
 function updateCheckFailure(error, { packageName, tag, followLatestCommand, retryCommand }) {
+  if (error instanceof UpdateCheckTimeout) {
+    return {
+      code: error.code,
+      statusCode: null,
+      reason: `the registry did not answer the lookup for ${packageName} within ${error.deadlineMs} ms`,
+      remedy: `Check the network connection and the npm registry settings, then run: ${retryCommand}`,
+      type: null,
+      origin: null,
+      npmDiagnostics: [],
+      unsetVariables: [],
+    };
+  }
   const fields =
     /** @type {{ code?: unknown, statusCode?: unknown, npmDiagnostics?: unknown, unsetVariables?: unknown, distTags?: unknown, type?: unknown, origin?: unknown, setting?: unknown, layer?: unknown, registryOrigin?: unknown, uri?: unknown, cause?: { distTags?: unknown, uri?: unknown } }} */ (
       error ?? {}

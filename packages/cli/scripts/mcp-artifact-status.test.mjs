@@ -23,6 +23,7 @@ import { buildRecipe } from "../src/recipe.js";
 import { mcpOnlyToolSchemas, sharedToolSchemas } from "../src/tool-schemas.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
+import { silentRegistry } from "./silent-registry.mjs";
 
 const ARTIFACT_ID = "skill-project-goal";
 const LOCKED_VERSION = "0.1.0";
@@ -535,3 +536,51 @@ for (const [name, targets] of [
     });
   });
 }
+
+// Issue #1138: the MCP tool shares the update check of `artifacts status --check-updates`, so a
+// registry that never answers is reported per artifact at the lookup deadline there too, instead
+// of holding the tool call open.
+test(
+  "artifact_status with checkUpdates reports a registry that never answers at the lookup deadline",
+  { timeout: 60_000 },
+  async () => {
+    const deadline = 200;
+    await using registry = await silentRegistry();
+    await inProject("calavera-mcp-status-silent-", async (directory) => {
+      await lockedProject();
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const server = createMcpServer({
+        ...localResolver(directory, registry.url),
+        ...forbiddenFormatter,
+        updateCheckDeadlineMs: deadline,
+      });
+      const client = new Client({ name: "calavera-artifact-status-test", version: "1.0.0" });
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        await client.listTools();
+        const result = await client.callTool({
+          name: "artifact_status",
+          arguments: { checkUpdates: true },
+        });
+
+        assert.equal(result.isError, undefined, JSON.stringify(result.content));
+        const [artifact] =
+          /** @type {{ artifacts: { updateCheckFailure: { code: string, reason: string, remedy: string } | null }[] }} */ (
+            result.structuredContent
+          ).artifacts;
+        assert.equal(artifact?.updateCheckFailure?.code, "ELOOKUPTIMEOUT");
+        assert.match(
+          artifact?.updateCheckFailure?.reason ?? "",
+          new RegExp(`did not answer the lookup for .+ within ${deadline} ms$`),
+        );
+        assert.match(artifact?.updateCheckFailure?.remedy ?? "", /^Check the network connection/);
+        assert.equal(registry.requests.length, 1);
+        await registry.closed();
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    });
+  },
+);

@@ -28,6 +28,7 @@ import {
 } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
+import { silentRegistry } from "./silent-registry.mjs";
 
 const REPOSITORY = {
   type: "git",
@@ -2203,4 +2204,141 @@ test("any HTTP failure reports the origin of the URL that failed, never its path
     assert.equal(byId["skill-code-review"]?.origin, "https://mirror.example.com:8443");
     assert.doesNotMatch(JSON.stringify(result), /secret-path/);
   });
+});
+
+// Issue #1138: a registry that accepts the connection and never answers held
+// `artifacts status --check-updates` until npm's own five-minute timeout, retried twice. Each
+// lookup now has a deadline, and a lookup that misses it is reported for that artifact alone.
+// The tests use a short deadline, and assert the order of events and a generous upper bound,
+// so a loaded machine does not make them fail.
+const TEST_LOOKUP_DEADLINE_MS = 200;
+// Far below npm's five-minute timeout, and far above the deadline, so a slow machine still passes.
+const LOOKUP_MARGIN_MS = 10_000;
+
+test(
+  "a registry that never answers is reported per artifact at the lookup deadline, with a remedy",
+  { timeout: 60_000 },
+  async () => {
+    const ids = ["skill-project-goal", "skill-code-review"];
+    await using registry = await silentRegistry();
+    await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+      const env = {
+        npm_config_userconfig: join(process.cwd(), "missing.npmrc"),
+        npm_config_registry: registry.url,
+      };
+      const services = {
+        resolve: (/** @type {Parameters<typeof resolveArtifactPackage>[0]} */ request) =>
+          resolveArtifactPackage({ ...request, cwd: process.cwd(), env }),
+        extract: async () => {
+          throw new Error("Status never extracts a package.");
+        },
+        updateCheckDeadlineMs: TEST_LOOKUP_DEADLINE_MS,
+      };
+
+      const started = performance.now();
+      const result = await runArtifactCommand(statusOptions(), services);
+      const elapsed = performance.now() - started;
+
+      // Each lookup reached the registry, so the deadline ended it, not a refused connection.
+      assert.deepEqual(
+        registry.requests.map((path) => decodeURIComponent(path)),
+        ids.map((id) => `/${packageName(id)}`),
+      );
+      const rerun = "npm create project-calavera artifacts status -- --check-updates";
+      assert.deepEqual(
+        result.artifacts.map(({ updateCheckFailure }) => updateCheckFailure),
+        ids.map((id) => ({
+          code: "ELOOKUPTIMEOUT",
+          statusCode: null,
+          reason: `the registry did not answer the lookup for ${packageName(id)} within ${TEST_LOOKUP_DEADLINE_MS} ms`,
+          remedy: `Check the network connection and the npm registry settings, then run: ${rerun}`,
+          type: null,
+          origin: null,
+          npmDiagnostics: [],
+          unsetVariables: [],
+        })),
+      );
+      assert.deepEqual(
+        result.artifacts.map(({ latestVersion }) => latestVersion),
+        [null, null],
+      );
+      assert.ok(
+        elapsed >= ids.length * TEST_LOOKUP_DEADLINE_MS,
+        `status finished after ${elapsed} ms, before each lookup's deadline`,
+      );
+      assert.ok(
+        elapsed < ids.length * TEST_LOOKUP_DEADLINE_MS + LOOKUP_MARGIN_MS,
+        `status took ${elapsed} ms`,
+      );
+      // The abort ended each request: the client closed every connection it opened.
+      await registry.closed();
+      assert.equal(registry.connections(), ids.length);
+      assert.deepEqual(
+        messages(formatArtifactStatus(result)).filter((message) => message.startsWith("  Cause:")),
+        ids.map(
+          (id) =>
+            `  Cause: the registry did not answer the lookup for ${packageName(id)} within ${TEST_LOOKUP_DEADLINE_MS} ms.`,
+        ),
+      );
+    });
+  },
+);
+
+test(
+  "a lookup that ignores the abort is still reported at its deadline, and the next artifact gets its status",
+  { timeout: 60_000 },
+  async () => {
+    const ids = ["skill-project-goal", "skill-code-review"];
+    await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+      const answering = statusRegistry({ "skill-code-review": { latest: "0.3.0" } });
+      /** @type {AbortSignal[]} */
+      const signals = [];
+      const services = {
+        ...answering,
+        resolve: (
+          /** @type {{ id: string, tag?: string, cache: string, signal?: AbortSignal }} */ request,
+        ) => {
+          assert.ok(request.signal, "the lookup receives no abort signal");
+          signals.push(request.signal);
+          // A lookup that never settles and never reads its signal.
+          return request.id === "skill-project-goal"
+            ? new Promise(() => {})
+            : answering.resolve(request);
+        },
+        updateCheckDeadlineMs: TEST_LOOKUP_DEADLINE_MS,
+      };
+
+      const result = await runArtifactCommand(statusOptions(), services);
+
+      const [goal, review] = result.artifacts;
+      assert.equal(goal?.updateCheckFailure?.code, "ELOOKUPTIMEOUT");
+      assert.equal(review?.updateCheckFailure, null);
+      assert.equal(review?.latestVersion, "0.3.0");
+      // The deadline aborted the lookup that missed it, and only that one.
+      assert.deepEqual(
+        signals.map(({ aborted }) => aborted),
+        [true, false],
+      );
+      const reason = /** @type {Error} */ (signals[0]?.reason);
+      assert.equal(reason.name, "UpdateCheckTimeout");
+      assert.equal(
+        reason.message,
+        `The registry did not answer within ${TEST_LOOKUP_DEADLINE_MS} ms.`,
+      );
+    });
+  },
+);
+
+test("a registry error that only carries the timeout code is not reported as a missed deadline", async () => {
+  await inProject(
+    { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },
+    async () => {
+      const registry = statusRegistry(
+        {},
+        {},
+        { "skill-project-goal": registryError("failed", { code: "ELOOKUPTIMEOUT" }) },
+      );
+      await assert.rejects(runArtifactCommand(statusOptions(), registry), /^Error: failed$/);
+    },
+  );
 });

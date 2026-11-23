@@ -17,7 +17,9 @@ const TAGS = new Set(["latest", "next"]);
  * variables, or the Yarn and Bun settings; see `loadNpmRegistryOptions`. No credential is sent. `cwd` (default: the current directory) holds the
  * project .npmrc, unless npm started Calavera: the project .npmrc is then the one npm read at
  * `npm_config_local_prefix`. `env` (default: the process environment) holds the variables.
- * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv }} request
+ * `signal` lets the caller hold the lookup to a deadline (#1138): pacote passes it through to
+ * npm-registry-fetch, and aborting it ends the request with a FETCH_ABORTED error.
+ * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal }} request
  */
 export async function resolveArtifactPackage(request) {
   const artifact = artifactForId(request.id);
@@ -41,6 +43,7 @@ export async function resolveArtifactPackage(request) {
           cache: request.cache,
           offline: request.offline,
           fullMetadata: true,
+          signal: request.signal,
         }),
       ),
     ),

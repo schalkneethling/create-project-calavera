@@ -1234,3 +1234,42 @@ test("#1194: an http tarball URL on localhost is fetched", async () => {
     await registry.close();
   }
 });
+
+test(
+  "aborting the signal ends a lookup the registry never answers (#1138)",
+  { timeout: 30_000 },
+  async () => {
+    const directory = await mkdtemp(join(tmpdir(), "calavera-registry-abort-"));
+    const controller = new AbortController();
+    /** @type {string[]} */
+    const requests = [];
+    // Accepts the request, never answers, and aborts the lookup once the request has arrived, so
+    // the test depends on the order of events rather than on a timer.
+    const server = createServer((request) => {
+      requests.push(request.url ?? "");
+      controller.abort(new Error("deadline"));
+    });
+    await new Promise((done) => server.listen(0, "127.0.0.1", () => done(undefined)));
+    const { port } = /** @type {import("node:net").AddressInfo} */ (server.address());
+    try {
+      await assert.rejects(
+        resolveArtifactPackage({
+          id: "skill-project-goal",
+          cache: join(directory, "cache"),
+          cwd: directory,
+          env: {
+            npm_config_userconfig: join(directory, "missing.npmrc"),
+            npm_config_registry: `http://127.0.0.1:${port}/`,
+          },
+          signal: controller.signal,
+        }),
+        { code: "FETCH_ABORTED" },
+      );
+      assert.equal(requests.length, 1);
+    } finally {
+      server.closeAllConnections();
+      await new Promise((done) => server.close(() => done(undefined)));
+      await rm(directory, { recursive: true, force: true });
+    }
+  },
+);
