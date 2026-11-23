@@ -321,7 +321,9 @@ test("a registry.npmjs.org tarball downloads from the artifact scope's registry,
     assert.equal(result.manifest.id, "skill-project-goal");
     assert.deepEqual(
       scope.requests.map(({ url }) => url),
-      [`/${artifact.packageName.replace("/", "%2f")}`, "/-/artifact.tgz"],
+      // pacote requests the package document at npm-package-arg's escapedName: the slash after
+      // the scope becomes %2f (npm-package-arg/lib/npa.js).
+      [`/${artifact.packageName.replace(/^(@[^/]+)\//, "$1%2f")}`, "/-/artifact.tgz"],
     );
     assert.equal(locked.requests.length, 0);
   } finally {
