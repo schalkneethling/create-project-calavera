@@ -1106,6 +1106,8 @@ test(
       "custom.json",
       join(elsewhere.root, "rootlink", "calavera.config.json"),
     ]) {
+      const recipeBefore = await snapshotDirectory(fixture.root);
+      const recipeElsewhereBefore = await snapshotDirectory(elsewhere.root);
       const recipeStop = (await applyAtAncestorRefusal(fixture, config)).message;
       assert.ok(
         recipeStop.includes(
@@ -1113,6 +1115,8 @@ test(
         ),
         recipeStop,
       );
+      assert.deepEqual(await snapshotDirectory(fixture.root), recipeBefore, config);
+      assert.deepEqual(await snapshotDirectory(elsewhere.root), recipeElsewhereBefore, config);
     }
 
     await rm(ancestorRecipe);
