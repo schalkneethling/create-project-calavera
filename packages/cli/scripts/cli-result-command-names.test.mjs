@@ -229,3 +229,8 @@ test("an artifacts action Calavera does not have names no command", async () => 
   assert.equal(await resultCommand(failing, ["artifacts", "--json"]), null);
   assert.equal(await resultCommand(failing, ["artifacts", "bogus", "--json", "--bogus"]), null);
 });
+
+test("help names no command in an error result, because it prints no result", async () => {
+  assert.equal(await resultCommand(failing, ["help", "--json", "--bogus"]), null);
+  assert.equal(await resultCommand(failing, ["--help", "--json", "--bogus"]), null);
+});

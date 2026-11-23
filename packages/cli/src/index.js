@@ -7806,16 +7806,23 @@ function isKnownCommand(command) {
  * @returns {string | null}
  */
 function resultCommandFor(command, artifactAction) {
-  if (!isKnownCommand(command)) return null;
-  const { result } = commandRunners[command];
+  const result = commandRunnerFor(command)?.result ?? null;
   return typeof result === "function" ? result(artifactAction) : result;
+}
+
+/**
+ * @param {string} command
+ * @returns {CommandRunner | undefined}
+ */
+function commandRunnerFor(command) {
+  return isKnownCommand(command) ? commandRunners[command] : undefined;
 }
 
 /**
  * @param {CliOptions} options
  */
 async function main(options) {
-  const run = isKnownCommand(options.command) ? commandRunners[options.command].run : undefined;
+  const run = commandRunnerFor(options.command)?.run;
 
   if (run === undefined) {
     printStop(options.json, null, `Unknown command: ${options.command}`);
