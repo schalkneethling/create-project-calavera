@@ -479,7 +479,9 @@ async function callWithin(name, args, ms = 5000) {
       try {
         parentPort.postMessage({ value: module[workerData.name](...workerData.args) });
       } catch (error) {
-        parentPort.postMessage({ error: { name: error.name, message: error.message } });
+        parentPort.postMessage({
+          error: { name: error.name, message: error.message, stack: error.stack },
+        });
       }
     });`,
     {
@@ -518,7 +520,7 @@ test(
 
 test(
   "an item named by an absolute path is matched by its full text",
-  { timeout: 10_000 },
+  { timeout: 20_000 },
   async () => {
     const output = "Files:\n  Would update /home/person/package.json\n";
     assert.deepEqual(

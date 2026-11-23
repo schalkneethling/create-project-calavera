@@ -425,12 +425,14 @@ const NAME_CHARACTER = /[\w./@-]/;
  * How many times `name` appears in `text` as a whole word: not as part of a longer path or name.
  *
  * @param {string} text
- * @param {string} name A non-empty name. An empty name matches at every position without moving
- *   forward, so it throws a RangeError instead of looping forever (#1226).
+ * @param {string} name A non-empty name. An empty name matches at the same position forever, so
+ *   the search would never end; it throws a RangeError instead (#1226).
  */
 export function countMentions(text, name) {
   if (name === "") {
-    throw new RangeError("countMentions needs a non-empty name, because an empty one never ends.");
+    throw new RangeError(
+      "countMentions needs a non-empty name, because the search for an empty one never ends.",
+    );
   }
   let count = 0;
   let from = 0;
