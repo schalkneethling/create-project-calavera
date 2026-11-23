@@ -772,7 +772,7 @@ word in the MCP `command` field and the remaining words in `args`:
 - Yarn: `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`
 - Bun: `bunx --package create-project-calavera@<version> create-project-calavera-mcp`
 
-JSON-based MCP hosts use this shape:
+Claude Code (`.mcp.json`) uses this shape:
 
 ```json
 {
