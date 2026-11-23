@@ -169,8 +169,9 @@ function withPinNormalized(value) {
 /**
  * The `calavera` entries a Calavera release wrote into the harness file, one for each package
  * manager's launch command, as the file parses. `eject` removes an entry, and `--init` updates
- * one, only when it equals one of them with the pinned version normalized and that version is
- * one Calavera released (ADR-0017, Decision 2 and Amendment 6; #1205, #1219). An entry shape an earlier release wrote belongs here too, so both keep recognizing it.
+ * one, only when `isCalaveraMcpEntry` finds it among them (ADR-0017, Decision 2 and Amendment 6;
+ * #1205, #1219). An entry shape an earlier release wrote belongs here too, so both keep
+ * recognizing it.
  *
  * @param {Exclude<McpHarness, "skip">} harness
  * @param {McpLaunchCommand[]} launches The launch command for each supported package manager.
@@ -236,8 +237,8 @@ export function isCalaveraMcpEntry(entry, entries) {
 }
 
 /**
- * Whether `entry` would be one a Calavera release wrote but for its pinned version, which npm does
- * not have (#1219). `--init` and `eject` then name the pin as the reason they keep the entry,
+ * Whether `entry` would be one a Calavera release wrote but for its pinned version, which this
+ * CLI does not know as published (#1219). `--init` and `eject` then name the pin as the reason they keep the entry,
  * without quoting it, because it is text from the person's file.
  *
  * @param {unknown} entry
@@ -250,9 +251,12 @@ export function pinsUnpublishedVersion(entry, entries) {
   return entries.some((candidate) => isDeepStrictEqual(normalized, withPinNormalized(candidate)));
 }
 
-/** How `--init` and `eject` say that an entry pins a version npm does not have. */
+/**
+ * How `--init` and `eject` say that an entry pins a version this CLI does not know as published:
+ * one npm does not have, or one published after this CLI, which its release list cannot name.
+ */
 export const UNPUBLISHED_PIN =
-  "pins a version of create-project-calavera that Calavera has not published";
+  "pins a version of create-project-calavera that this release of Calavera does not know as published";
 
 /**
  * The change for a harness file whose `calavera` entry is a local edit, which `--init` keeps

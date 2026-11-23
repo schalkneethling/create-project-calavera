@@ -1,6 +1,6 @@
 // Issue #1205: rerunning `--init` updates the `calavera` MCP entry only when it holds what a
-// Calavera release wrote for that harness, with the pinned version normalized and released, as `eject` decides
-// (ADR-0017, Decision 2). Any other entry is a local edit (brief C8): the bootstrap keeps it,
+// Calavera release wrote for that harness, with the pinned version normalized and published on
+// npm (#1219), as `eject` decides (ADR-0017, Decision 2). Any other entry is a local edit (brief C8): the bootstrap keeps it,
 // lists the file as skipped with a remedy, and leaves the file byte for byte as it was.
 //
 // The entries are spelled out here, not built from the current writers, so a change to the
@@ -195,9 +195,15 @@ for (const { harness, path, file } of harnesses) {
     });
   });
 
-  test(`${harness}: an entry pinned to a version Calavera has not published is kept`, async () => {
+  test(`${harness}: an entry pinned to a version npm does not have is kept`, async () => {
     // #1219: only a version npm has counts as Calavera's, not one the list names ahead of time.
-    for (const version of ["99.0.0", "99.0.0-local.1", ...(upcoming ? [upcoming] : [])]) {
+    for (const version of [
+      "99.0.0",
+      "99.0.0-local.1",
+      // Older than this checkout's version but in no release list, such as a local build of it.
+      `${packageJson.version}-local.1`,
+      ...(upcoming ? [upcoming] : []),
+    ]) {
       await inProject(async () => {
         const before = file(npmLaunch(version));
         await write(path, before);
@@ -207,7 +213,7 @@ for (const { harness, path, file } of harnesses) {
         const reason = result.changes.find((change) => change.path === path)?.reason ?? "";
         assert.match(
           reason,
-          /pins a version of create-project-calavera that Calavera has not published/,
+          /pins a version of create-project-calavera that this release of Calavera does not know as published/,
         );
         assert.ok(!reason.includes(version), reason);
         assert.equal(await readFile(path, "utf8"), before, `${path} ${version}`);

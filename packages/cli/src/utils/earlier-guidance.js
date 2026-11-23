@@ -239,8 +239,11 @@ export function normalizePinnedVersion(text) {
  *   release before it is published, because a new template text lists the release that will
  *   publish it, as 6.3.0 is listed while package.json holds 6.2.1.
  * - `written`, the version this checkout writes, which Changesets sets in package.json. A listed
- *   version older than it was published before it, and a listed version newer than it is the
- *   next release, which npm does not have yet.
+ *   version newer than it is the next release, which npm does not have yet. A listed version
+ *   older than it is taken as published. That holds while every version listed is also
+ *   published, which the table test cannot check offline: 2.0.3, 2.0.5, and 2.1.1 reached
+ *   package.json without being published, and the list rightly names none of them. A listed
+ *   version whose publish never happens must leave the list.
  *
  * `written` itself always counts, listed or not, so the entries this checkout writes stay
  * Calavera's. A published CLI always runs a version npm has. A checkout whose version npm does not

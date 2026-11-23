@@ -200,10 +200,16 @@ for (const { harness, path, written } of HARNESSES) {
     }
   });
 
-  test(`${harness}: an entry pinned to a version Calavera has not published is kept and reported`, async () => {
+  test(`${harness}: an entry pinned to a version npm does not have is kept and reported`, async () => {
     // #1219: an unpublished version, an unpublished prerelease, and a listed version npm does not
     // have yet are local edits.
-    for (const version of ["99.0.0", "99.0.0-local.1", ...(upcoming ? [upcoming] : [])]) {
+    for (const version of [
+      "99.0.0",
+      "99.0.0-local.1",
+      // Older than this checkout's version but in no release list, such as a local build of it.
+      `${packageJson.version}-local.1`,
+      ...(upcoming ? [upcoming] : []),
+    ]) {
       await inProject(async () => {
         await write(path, written(repinned(npmLaunch, version)));
         // The reason names the pin, never the version text from the file.
@@ -211,7 +217,7 @@ for (const { harness, path, written } of HARNESSES) {
         const reason = report(await plan(), path).reason;
         assert.match(
           reason,
-          /pins a version of create-project-calavera that Calavera has not published/,
+          /pins a version of create-project-calavera that this release of Calavera does not know as published/,
         );
         assert.ok(!reason.includes(version), reason);
       });

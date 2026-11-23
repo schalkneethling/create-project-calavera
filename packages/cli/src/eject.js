@@ -942,8 +942,8 @@ function serversWithEntry(config, key) {
  * Plans the `calavera` entry in a JSON harness file: `.mcp.json` and `.cursor/mcp.json` under
  * `mcpServers`, and `opencode.json` under `mcp`. The entry is unedited when it equals the entry
  * Calavera writes for some package manager, with the pinned version normalized (owner decision of
- * 2026-11-17), and it pins a version npm has (ADR-0017, Amendment 6). Any other entry is kept and reported as edited. Removing it empties the `mcpServers`
- * or `mcp` object, which then goes too, and in `opencode.json` the `$schema` Calavera writes goes
+ * 2026-11-17), and it pins a version published on npm (ADR-0017, Amendment 6). Any other entry is
+ * kept and reported as edited. Removing it empties the `mcpServers` or `mcp` object, which then goes too, and in `opencode.json` the `$schema` Calavera writes goes
  * once nothing else remains. The file stays, even when it is left empty. JSON has no comments, and
  * `eject` rewrites the whole file through the project's formatter, as the bootstrap writes it, so
  * the note says when that changes the layout of the rest of the file. A rewrite that would lose
@@ -1113,8 +1113,8 @@ function removesOnlyTheEntry(text, contents) {
  * parser stopped, and never its message, which quotes the file's lines, as the cause
  * (ADR-0017, Decision 7). The entry is unedited when the file holds the table Calavera writes
  * for some package manager, with the pinned version normalized (owner decision of 2026-11-17)
- * and published on npm (ADR-0017, Amendment 6), and removing that text removes the whole entry and nothing else, which parsing the result
- * shows. Any other entry is kept and reported as edited, such as one with another key, a
+ * and published on npm (ADR-0017, Amendment 6), and removing that text removes the whole entry
+ * and nothing else, which parsing the result shows. Any other entry is kept and reported as edited, such as one with another key, a
  * subtable, a comment inside the table, or another layout or header spelling: removing Calavera's
  * lines would then leave part of the entry behind, or the lines are not there to remove. Text that
  * only looks like the table, such as lines inside a multi-line string, is never removed either.
