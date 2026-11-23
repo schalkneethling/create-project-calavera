@@ -485,6 +485,40 @@ test("dry_run_apply and apply --dry-run --json say which artifacts they would lo
   });
 });
 
+test("dry_run_apply through the MCP server resolves artifacts from the registry it was given and passes output validation (#1147)", async () => {
+  await inProject(async () => {
+    const registry = stubRegistry(new Map([["skill-project-goal", "0.1.0"]]));
+    const recipe = recipeWith(["skill-project-goal"]);
+    const before = await snapshot();
+
+    const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+    const server = createMcpServer(registry);
+    const client = new Client({ name: "calavera-test-client", version: "1.0.0" });
+    await server.connect(serverTransport);
+    await client.connect(clientTransport);
+    try {
+      // Listing the tools first makes the client validate the result against the output schema
+      // too, in addition to the server's own validation before it sends the result.
+      await client.listTools();
+      const response = await client.callTool({ name: "dry_run_apply", arguments: { recipe } });
+
+      assert.equal(response.isError, undefined, JSON.stringify(response.content));
+      const preview =
+        /** @type {{ result: { autoInstalledArtifacts: { id: string, version: string }[] } }} */ (
+          response.structuredContent
+        );
+      assert.deepEqual(idsAndVersions(preview.result.autoInstalledArtifacts), [
+        { id: "skill-project-goal", version: "0.1.0" },
+      ]);
+      assert.deepEqual(registry.requests, [{ id: "skill-project-goal", version: undefined }]);
+    } finally {
+      await client.close();
+      await server.close();
+    }
+    assert.deepEqual(await snapshot(), before);
+  });
+});
+
 test("an artifact apply locks with only some of its files matching does not report them as matching (#1021)", async () => {
   await inProject(async () => {
     const registry = stubRegistry(new Map([["hook-block-dangerous-commands", "0.4.0"]]));

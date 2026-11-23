@@ -532,7 +532,13 @@ export async function callMcpTool(name, input = {}, artifactServices = {}) {
   }
 }
 
-export function createMcpServer() {
+/**
+ * @param {ArtifactServices} [artifactServices] Registry access for artifacts that are not yet locked,
+ *   as `callMcpTool` takes it, so tests can run tools through the server without the network
+ *   (#1147). No MCP tool input, CLI flag, or environment variable reaches it: `startMcpServer`
+ *   never passes it.
+ */
+export function createMcpServer(artifactServices = {}) {
   const server = new McpServer(
     {
       name: SERVER_NAME,
@@ -553,7 +559,7 @@ export function createMcpServer() {
     server.registerTool(name, config, (input) => {
       const call = previousCall.then(async () => {
         try {
-          return toolResult(await callMcpTool(name, input));
+          return toolResult(await callMcpTool(name, input, artifactServices));
         } catch (error) {
           return toolErrorResult(error);
         }
