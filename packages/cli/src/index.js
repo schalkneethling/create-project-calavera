@@ -67,6 +67,7 @@ import {
   artifactDoctorVerdict,
   formatArtifactStatus,
   formatRemovedLockEntries,
+  formatTemporaryFolderLeftovers,
 } from "./artifact-status-report.js";
 import {
   AGENT_BOOTSTRAP_FALLBACK_GUIDANCE_FILE,
@@ -7312,6 +7313,14 @@ function printResult(result, asJSON = false, { dryRun: commandDryRun = false, no
 
     for (const warning of formatRemovedLockEntries(
       /** @type {Parameters<typeof formatRemovedLockEntries>[0]} */ (
+        /** @type {unknown} */ (result)
+      ),
+    )) {
+      logger.warn(warning);
+    }
+
+    for (const warning of formatTemporaryFolderLeftovers(
+      /** @type {Parameters<typeof formatTemporaryFolderLeftovers>[0]} */ (
         /** @type {unknown} */ (result)
       ),
     )) {

@@ -28,10 +28,13 @@ import {
 } from "./project-local-commands.js";
 import { createEmptyState, normalizeState } from "./state.js";
 import {
+  cleanupFailures,
   createTemporaryFolder,
   errorAfterCleanups,
+  errorWithLeftovers,
   removeTemporaryFolder,
   runCleanups,
+  temporaryFolderLeftovers,
 } from "./utils/cleanup.js";
 import { fileExists, isPathInside, parseJSON, readJSON } from "./utils/fs.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
@@ -743,7 +746,20 @@ async function artifactStatus(options, registry, loadFormatter, { readOnly = fal
         )
       : undefined;
   if (cacheBlock) {
-    await commitArtifactCacheBlock(cacheBlock, state, loadFormatter, options.dryRun);
+    // The status report has no field for a folder left behind (#1172), so a staging folder that
+    // stays still stops the report, now with the folder and its remedy (#1136).
+    const leftoverFailures = await commitArtifactCacheBlock(
+      cacheBlock,
+      state,
+      loadFormatter,
+      options.dryRun,
+    );
+    if (leftoverFailures.length > 0) {
+      throw errorWithLeftovers(
+        new Error("Calavera could not remove the staging folder of the artifact cache block."),
+        leftoverFailures,
+      );
+    }
   }
   const temporaryCache =
     resolvesPackages && (options.dryRun || readOnly)
@@ -1023,18 +1039,21 @@ function updateCheckFailure(error, { packageName, tag, followLatestCommand, retr
  * @param {ReturnType<typeof createEmptyState>} state
  * @param {() => Promise<ProjectFormatter>} loadFormatter
  * @param {boolean} dryRun
+ * @returns {Promise<unknown[]>} Each failure to remove the transaction's staging folder after the
+ *   block committed, for `temporaryFolderLeftovers`.
  */
 async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun) {
-  if (!cacheBlock.writesState) return;
+  if (!cacheBlock.writesState) return [];
   const stateText = await formatRecordText(
     STATE_PATH,
     { ...state, gitignoreBlocks: cacheBlock.gitignoreBlocks },
     loadFormatter,
   );
-  if (dryRun) return;
+  if (dryRun) return [];
   const stagingRoot = resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
   const stagedState = join(stagingRoot, "records", "state.json");
   const stagedGitignore = join(stagingRoot, "records", "gitignore");
+  const removeStaging = () => removeTemporaryFolder(stagingRoot);
   let commitStarted = false;
   try {
     await mkdir(dirname(stagedState), { recursive: true });
@@ -1049,12 +1068,17 @@ async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun
         : []),
       { staged: stagedState, target: resolve(STATE_PATH) },
     ]);
-  } finally {
-    // A commit that failed part way leaves its journal and staging for recovery.
+  } catch (error) {
+    // A commit that failed part way leaves its journal and staging for recovery. Otherwise the
+    // staging folder is removed, and a folder that stays is named after the failure that stopped
+    // the command, with its remedy (#1136).
     if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) {
-      await rm(stagingRoot, { recursive: true, force: true });
+      throw errorWithLeftovers(error, await cleanupFailures([removeStaging]));
     }
+    throw error;
   }
+  // #1136: the block has committed, so a staging folder that stays is reported, not an error.
+  return cleanupFailures([removeStaging]);
 }
 
 /**
@@ -1097,7 +1121,12 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     await artifactCacheIgnoreLines(recipe),
     command,
   );
-  await commitArtifactCacheBlock(cacheBlock, state, loadFormatter, options.dryRun);
+  const leftoverFailures = await commitArtifactCacheBlock(
+    cacheBlock,
+    state,
+    loadFormatter,
+    options.dryRun,
+  );
   const result = await stageArtifactInstall(
     Array.isArray(recipe.ai)
       ? {
@@ -1117,8 +1146,15 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
       loadFormatter,
     },
     registry,
-  );
-  await result.dispose();
+  ).catch((error) => {
+    // #1136: a staging folder the cache block left is named after the failure, with its remedy.
+    throw errorWithLeftovers(error, leftoverFailures);
+  });
+  // #1136: the install has committed, or the dry run has finished, here, so a staging folder the
+  // command cannot remove is reported with its remedy, as apply reports it (#1033), and the
+  // command still finishes.
+  leftoverFailures.push(...(await cleanupFailures([result.dispose])));
+  const leftoverFolders = temporaryFolderLeftovers(leftoverFailures);
   return {
     command,
     dryRun: options.dryRun,
@@ -1133,6 +1169,7 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     pointers: artifactCachePointers(cacheBlock.changes),
     registries: result.registries,
     warnings: result.warnings,
+    temporaryFolderLeftovers: leftoverFolders,
   };
 }
 
@@ -1274,7 +1311,8 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
   } catch (error) {
     // A commit that failed part way leaves its journal and staging for recovery.
     if (!commitStarted || !(await fileExists(TRANSACTION_PATH))) {
-      throw await errorAfterCleanups(error, [dispose]);
+      // #1136: a folder that stays is named after the failure, with its remedy, as apply does.
+      throw errorWithLeftovers(error, await cleanupFailures([dispose]));
     }
     throw error;
   }
