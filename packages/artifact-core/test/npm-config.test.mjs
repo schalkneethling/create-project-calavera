@@ -58,7 +58,7 @@ const NPM_EXEC_KEYS = [
 
 /**
  * The loader's variables from the environment that a real `npm exec --offline` creates in `cwd`,
- * started from an environment without npm_* variables and with an isolated home folder, so the
+ * started from an environment without npm_* variables or INIT_CWD and with an isolated home folder, so the
  * developer's own settings do not leak in. `variables` are passed to npm and reported back.
  * Skips the test only when npm is not installed.
  * @param {import("node:test").TestContext} t
@@ -68,8 +68,10 @@ const NPM_EXEC_KEYS = [
  * @returns {Promise<Record<string, string> | undefined>}
  */
 async function npmExecEnvironmentIn(t, cwd, home, variables) {
+  // A package manager that runs this test, such as pnpm, also sets INIT_CWD, which npm would
+  // then see while it loads the project file.
   const clean = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !/^npm_/i.test(name)),
+    Object.entries(process.env).filter(([name]) => !/^(npm_|INIT_CWD$)/i.test(name)),
   );
   const keys = [...NPM_EXEC_KEYS, ...Object.keys(variables)];
   const script = join(home, "report-npm-environment.cjs");
@@ -1485,16 +1487,16 @@ test("a real npm exec with a project globalconfig outside the project does not c
   assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
 });
 
-test("under npm exec, a variable left in an exported value is not expanded, because npm expands what it exports", async () => {
+test("under npm exec, a caller's own npm_config_https_proxy with a variable is expanded, because npm passes it on unchanged", async () => {
   const context = await fixture({});
   const result = await loadNpmRegistryOptions(
-    npmExecContext(context, { npm_config_https_proxy: "http://${CI_SECRET}.evil.invalid:1/" }),
+    npmExecContext(context, {
+      CORP_HOST: "corp.example.com",
+      npm_config_https_proxy: "http://${CORP_HOST}:3128/",
+    }),
   );
-  assert.equal(result.options.httpsProxy, undefined);
-  assert.deepEqual(result.warnings, [
-    "Ignored https-proxy in the environment: npm expands the variables it exports, so a variable left in this value comes from a file that npm did not expand, and Calavera does not expand it either.",
-  ]);
-  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+  assert.equal(result.options.httpsProxy, "http://corp.example.com:3128/");
+  assert.deepEqual(result.warnings, []);
 });
 
 test("under npm exec, a global npmrc proxy whose expansion changes after npm loads it is not trusted as environment", async () => {
@@ -1516,7 +1518,7 @@ test("the installation's global npmrc warning about a variable names that file, 
   });
   const { warnings } = await loadNpmRegistryOptions(context);
   assert.deepEqual(warnings, [
-    "Ignored https-proxy in the global npmrc: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, not in npm's global configuration file. Write the proxy URL without a variable, or set it in your own .npmrc or an environment variable.",
+    "Ignored https-proxy in the global npmrc: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, not in npm's global configuration file. Write the proxy URL without a variable, or remove the entry and set the proxy in your own .npmrc or an environment variable; while the entry is there, an npm_config_https_proxy variable does not replace it when npm starts Calavera.",
   ]);
 });
 
@@ -1582,4 +1584,132 @@ test("under npm exec, a project proxy list that npm exported is the project's, a
   );
   assert.equal(options.httpsProxy, undefined);
   assert.match(warnings.join("\n"), /^Ignored https-proxy in the project \.npmrc/m);
+});
+
+// #1186, fourth review: npm expands a key with the environment it had when it loaded the file, and
+// variables such as INIT_CWD and the npm_config_* exports are set only afterwards. In a file that
+// Calavera does not expand, each variable in a key may therefore stand for any text.
+
+test("under npm exec, a project proxy key whose variable npm expanded differently is still the project's", async () => {
+  for (const projectKey of [
+    "https-proxy${INIT_CWD?}",
+    "HTTPS_PROXY${INIT_CWD?}",
+    "proxy${npm_command?}",
+  ]) {
+    const key = projectKey.startsWith("proxy") ? "npm_config_proxy" : "npm_config_https_proxy";
+    const context = await fixture({
+      project: `${projectKey}=http://\${CI_SECRET}.evil.example/\n`,
+    });
+    const result = await loadNpmRegistryOptions(
+      npmExecContext(context, {
+        INIT_CWD: context.cwd,
+        [key]: `http://${SECRET_PROXY}.evil.example/`,
+      }),
+    );
+    assert.equal(result.options.httpsProxy, undefined, projectKey);
+    assert.equal(result.options.proxy, undefined, projectKey);
+    assert.match(result.warnings.join("\n"), /in the project \.npmrc/, projectKey);
+    assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+  }
+});
+
+test("under npm exec, a project registry key whose variable npm expanded differently follows the project rules", async () => {
+  const context = await fixture({ project: "registry${INIT_CWD?}=http://evil.example/\n" });
+  await assert.rejects(
+    loadNpmRegistryOptions(
+      npmExecContext(context, {
+        INIT_CWD: context.cwd,
+        npm_config_registry: "http://evil.example/",
+      }),
+    ),
+    /in the project \.npmrc must be an https URL/,
+  );
+});
+
+test("a real npm exec with a project proxy key that holds INIT_CWD does not carry the proxy into the options", async (t) => {
+  const context = await fixture({
+    project: "https-proxy${INIT_CWD?}=http://${CI_SECRET}.evil.example/\n",
+  });
+  await writeFile(join(context.cwd, "package.json"), JSON.stringify({ name: "probe" }));
+  const home = join(context.directory, "home");
+  await mkdir(home);
+  const captured = await npmExecEnvironmentIn(t, context.cwd, home, { CI_SECRET: SECRET_PROXY });
+  if (!captured) return;
+  assert.equal(captured.npm_config_https_proxy, `http://${SECRET_PROXY}.evil.example/`);
+  const result = await loadNpmRegistryOptions({
+    ...context,
+    env: { ...captured, INIT_CWD: context.cwd },
+  });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+});
+
+test("under npm exec, a chooser key whose variable npm expanded differently still chooses the global npmrc", async () => {
+  const context = await globalConfigContext({
+    project: "globalconfig${INIT_CWD?}=../elsewhere/g.npmrc\n",
+    globalPath: "elsewhere/g.npmrc",
+    content: "registry=http://insecure.example.com/\n",
+    exported: { npm_config_registry: "http://insecure.example.com/" },
+  });
+  context.env.INIT_CWD = context.cwd;
+  await assert.rejects(
+    loadNpmRegistryOptions(context),
+    /registry in the global npmrc must be an https URL/,
+  );
+});
+
+test("under npm exec, your own ~/.npmrc is not a chooser even when the project .npmrc names a userconfig", async () => {
+  // The caller's npm_config_userconfig wins over the project's userconfig in npm, and here it
+  // names the account's own ~/.npmrc, which sets prefix as a ~/.npm-global setup does.
+  const context = await globalConfigContext({
+    project: "userconfig=./evil.npmrc\n",
+    globalPath: "npm-global/etc/npmrc",
+    content: "registry=http://mirror.example.com/\n",
+    exported: { npm_config_registry: "http://mirror.example.com/" },
+  });
+  await writeFile(context.env.npm_config_userconfig, "prefix=../npm-global\n");
+  assert.equal((await loadNpmRegistryOptions(context)).registry.source, "global npmrc");
+});
+
+test("under npm exec, a file entry that cannot be read as the key leaves the caller's proxy alone", async () => {
+  /** @type {[string, string][]} */
+  const cases = [
+    // A project key with a variable that cannot stand for https-proxy.
+    ["project", "unrelated${NOPE?}=${CI_SECRET}\n"],
+    // A list and a boolean in your own ~/.npmrc, which Calavera does not read as a proxy.
+    ["user", "https-proxy[]=http://list.example.com/\n"],
+    ["user", "https-proxy=true\n"],
+  ];
+  for (const [file, content] of cases) {
+    const context = await fixture(file === "project" ? { project: content } : { user: content });
+    const { options } = await loadNpmRegistryOptions(
+      npmExecContext(context, { npm_config_https_proxy: "http://caller.example.com:3128/" }),
+    );
+    assert.equal(options.httpsProxy, "http://caller.example.com:3128/", content);
+  }
+});
+
+test("under npm exec, a variable in the middle of a project key may stand for the text between its parts", async () => {
+  // npm expanded DASH to "-" when it loaded the file; Calavera's environment does not have it.
+  const context = await fixture({ project: "https${DASH}proxy=http://evil.example/\n" });
+  const { options, warnings } = await loadNpmRegistryOptions(
+    npmExecContext(context, { npm_config_https_proxy: "http://evil.example/" }),
+  );
+  assert.equal(options.httpsProxy, undefined);
+  assert.match(warnings.join("\n"), /^Ignored https\$\{DASH\}proxy in the project \.npmrc/m);
+});
+
+test("under npm exec, a key in your own ~/.npmrc is expanded, not read as a pattern", async () => {
+  // The key expands to https-proxy-other, which is not https-proxy, so the caller's equal value
+  // is not this file's.
+  const context = await fixture({
+    user: "https-proxy${SUFFIX}=http://caller.example.com:3128/\n",
+  });
+  const { options } = await loadNpmRegistryOptions(
+    npmExecContext(context, {
+      SUFFIX: "-other",
+      npm_config_https_proxy: "http://caller.example.com:3128/",
+    }),
+  );
+  assert.equal(options.httpsProxy, "http://caller.example.com:3128/");
 });

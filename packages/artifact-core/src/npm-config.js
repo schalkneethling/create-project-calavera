@@ -120,12 +120,14 @@ function environmentSettings(env) {
  * A variable name keeps only letters, digits, and underscores, so other spellings of a key, such
  * as https_proxy or HTTPS-PROXY, export under the same name.
  *
- * npm expands a value with the environment it had when it loaded the file, before it exports its
- * settings and INIT_CWD, so a value such as `http://evil.example/${npm_config_https_proxy?}`
- * expands differently here. A file that Calavera does not expand therefore holds the exported
- * value whenever its entry for the key contains a variable (#1186). npm exports a list as its
- * entries joined with blank lines, without expanding them (`envVal` in @npmcli/config
- * set-envs.js); the environment layer joins a noproxy list with commas instead.
+ * npm expands keys and values with the environment it had when it loaded the file, before it
+ * exports its settings and INIT_CWD, so a value such as
+ * `http://evil.example/${npm_config_https_proxy?}` or a key such as `https-proxy${INIT_CWD?}`
+ * expands differently here. In a file that Calavera does not expand, each variable in a key
+ * therefore may stand for any text (keyMatches), and the file holds the exported value whenever
+ * its entry for the key contains a variable (#1186). npm exports a list as its entries joined with
+ * blank lines (`envVal` in @npmcli/config set-envs.js), and leaves the entries of a list under a
+ * key that is not a list setting, such as `https-proxy[]`, as written.
  * @param {Record<string, unknown>} entries
  * @param {string} key
  * @param {string} value
@@ -134,17 +136,38 @@ function environmentSettings(env) {
  */
 function exportedFrom(entries, key, value, env, expands) {
   return Object.keys(entries).find((fileKey) => {
-    // npm expands ${VAR} in keys too (`envReplace(key, this.env)` in @npmcli/config
-    // lib/index.js), so `https-proxy${UNSET?}` exports as npm_config_https_proxy (#1186).
-    if (normalizedKey(expandEnvironment(fileKey, env).text) !== key) return false;
+    if (!keyMatches(fileKey, key, env, expands)) return false;
     const fileValue = entries[fileKey];
-    if (Array.isArray(fileValue)) {
-      return fileValue.map(String).join(key === "noproxy" ? "," : "\n\n") === value;
-    }
+    // A noproxy list is not compared: a project file may set noproxy, and the environment
+    // layer applies the same value.
+    if (Array.isArray(fileValue)) return fileValue.map(String).join("\n\n") === value;
     if (typeof fileValue !== "string") return false;
     if (!expands && fileValue.includes("${")) return true;
     return expandEnvironment(fileValue.trim(), env).text === value.trim();
   });
+}
+
+/**
+ * Whether npm reads the .npmrc key `fileKey` as the setting `key`. npm expands ${VAR} in keys
+ * (`envReplace(key, this.env)` in @npmcli/config lib/index.js), so `https-proxy${UNSET?}` is
+ * https-proxy, and exports another spelling, such as https_proxy, under the same variable. In a
+ * file that Calavera does not expand, npm's expansion cannot be reproduced, because npm ran it
+ * before setting INIT_CWD and its npm_config_* exports, so each variable may stand for any text.
+ * @param {string} fileKey
+ * @param {string} key
+ * @param {NodeJS.ProcessEnv} env
+ * @param {boolean} expands Whether Calavera expands variables in this file.
+ */
+function keyMatches(fileKey, key, env, expands) {
+  if (expands || !fileKey.includes("${")) {
+    return normalizedKey(expandEnvironment(fileKey, env).text) === key;
+  }
+  const pattern = fileKey
+    .split(/\$\{[^}]*\}/)
+    // normalizedKey leaves only letters, digits, and hyphens, which need no escaping.
+    .map((piece) => normalizedKey(piece))
+    .join(".*");
+  return new RegExp(`^${pattern}$`).test(key);
 }
 
 /**
@@ -267,7 +290,7 @@ export async function loadNpmRegistryOptions({
       /** @param {Record<string, unknown>} entries @param {Set<string>} names */
       const setsOneOf = (entries, names) =>
         Object.keys(entries).some((key) =>
-          names.has(normalizedKey(expandEnvironment(key, env).text)),
+          [...names].some((name) => keyMatches(key, name, env, false)),
         );
       const userChosenByProject =
         !userIsAccountFile && setsOneOf(projectEntries, new Set(["userconfig"]));
@@ -343,7 +366,7 @@ export async function loadNpmRegistryOptions({
     if (rawValue.includes("${") && !(layer.expandsVariables ?? trusted)) {
       warnings.push(
         trusted && name === GLOBAL_LAYER
-          ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, not in npm's global configuration file. Write the proxy URL without a variable, or set it in your own .npmrc or an environment variable.`
+          ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, not in npm's global configuration file. Write the proxy URL without a variable, or remove the entry and set the proxy in your own .npmrc or an environment variable; while the entry is there, an npm_config_${key.replace(/-/g, "_")} variable does not replace it when npm starts Calavera.`
           : trusted
             ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own ${layer.tool === "Yarn" ? ".yarnrc.yml" : ".npmrc"} in your account's home folder and in environment variables, never in a file that a variable or a project file names.`
             : `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`,
@@ -400,7 +423,10 @@ export async function loadNpmRegistryOptions({
   const applyExportedCopy = (layer, key, fileKey) => {
     const fileValue = entryValue(key, layer.entries[fileKey]);
     if (fileValue !== undefined && fileKey === key) return;
-    if (fileValue !== undefined && expandEnvironment(fileKey, env).text === key) {
+    // A key with a variable that this layer does not expand matched as a pattern, so npm may
+    // read it as `key`.
+    const patternKey = !(layer.expandsVariables ?? layer.trusted) && fileKey.includes("${");
+    if (fileValue !== undefined && (patternKey || expandEnvironment(fileKey, env).text === key)) {
       applyEntry(layer, key, printable(fileKey), fileValue);
       return;
     }
@@ -447,15 +473,6 @@ export async function loadNpmRegistryOptions({
           .find(({ fileKey }) => fileKey !== undefined);
         if (match?.fileKey !== undefined) {
           applyExportedCopy(match.fileLayer, key, match.fileKey);
-          continue;
-        }
-        // npm expands every value it exports, so a variable left in one came from a list or
-        // another value that npm did not expand. A registry value with a variable stops the
-        // command in applyEntry.
-        if (!isRegistryKey(key) && rawValue.includes("${")) {
-          warnings.push(
-            `Ignored ${printable(key)} in the environment: npm expands the variables it exports, so a variable left in this value comes from a file that npm did not expand, and Calavera does not expand it either.`,
-          );
           continue;
         }
       }
