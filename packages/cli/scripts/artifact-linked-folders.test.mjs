@@ -23,6 +23,7 @@ import { aiArtifactOutputPaths } from "../src/ai/artifacts.js";
 import {
   PACKAGE_PATH,
   prepareArtifactSources,
+  readArtifactStatus,
   runArtifactCommand,
 } from "../src/artifact-lifecycle.js";
 import { applyRecipeObject } from "../src/index.js";
@@ -396,3 +397,55 @@ test("artifacts status --check-updates refuses to record the cache block through
     await chmod(outside, 0o755);
   });
 });
+
+// #1209: a recipe without AI items writes no artifact, so apply does not check the artifact
+// folders, and a linked `.calavera/.transactions`, which such an apply never writes into, stays
+// as it is.
+test("apply of a recipe without AI items does not refuse a linked .calavera/.transactions", async () => {
+  await inProject({ id: "skill-code-review" }, async ({ project, outside }) => {
+    await writeFile("package.json", `${JSON.stringify({ name: "linked", private: true })}\n`);
+    await mkdir(join(project, ".calavera"));
+    await symlink(outside, join(project, ".calavera/.transactions"));
+    const outsideBefore = await snapshotDirectory(outside);
+
+    await applyRecipeObject({ ...buildRecipe("minimal", [], "npm"), ai: [] }, applyOptions, {});
+
+    assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+  });
+});
+
+// #1209: the read-only report (#1052) and a report without `--check-updates` write no cache, so a
+// linked `.calavera` does not stop them.
+for (const { name, run } of [
+  {
+    name: "the read-only artifacts status --check-updates",
+    run: (/** @type {ReturnType<typeof stubRegistry>} */ registry) =>
+      readArtifactStatus({ config: "calavera.config.json", checkUpdates: true }, registry),
+  },
+  {
+    name: "artifacts status without --check-updates",
+    run: (/** @type {ReturnType<typeof stubRegistry>} */ registry) =>
+      runArtifactCommand(
+        { config: "calavera.config.json", dryRun: false, artifactAction: "status" },
+        registry,
+      ),
+  },
+]) {
+  test(`${name} does not refuse a linked .calavera`, async () => {
+    const item = { id: "skill-code-review" };
+    await inProject(item, async ({ project, outside }) => {
+      const registry = stubRegistry(new Map([[item.id, "1.0.0"]]));
+      await runArtifactCommand(options("install", item.id), registry);
+      await cp(join(project, ".calavera"), outside, { recursive: true, verbatimSymlinks: true });
+      await rm(join(project, ".calavera"), { recursive: true });
+      await symlink(outside, join(project, ".calavera"));
+      const projectBefore = await snapshotDirectory(project);
+      const outsideBefore = await snapshotDirectory(outside);
+
+      await run(registry);
+
+      assert.deepEqual(await snapshotDirectory(project), projectBefore);
+      assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+    });
+  });
+}
