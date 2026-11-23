@@ -78,7 +78,11 @@ import { CONFIG_FILE } from "./project-local-commands.js";
 import { assertWorkspacePath } from "./utils/fs.js";
 import { positionOf } from "./utils/parse-position.js";
 import { isCodeRabbitTextCalaveraWrote } from "./utils/earlier-coderabbit.js";
-import { findEarlierGuidance, normalizePinnedVersion } from "./utils/earlier-guidance.js";
+import {
+  findEarlierGuidance,
+  normalizePinnedVersion,
+  normalizeReleasedPin,
+} from "./utils/earlier-guidance.js";
 import { isPlainObject } from "./utils/guards.js";
 import { rewriteLossProblem, toJSONText, writeJSON } from "./utils/json-rewrite.js";
 import { findBlock, findMarkedBlock } from "./utils/marked-block.js";
@@ -935,7 +939,7 @@ function serversWithEntry(config, key) {
  * Plans the `calavera` entry in a JSON harness file: `.mcp.json` and `.cursor/mcp.json` under
  * `mcpServers`, and `opencode.json` under `mcp`. The entry is unedited when it equals the entry
  * Calavera writes for some package manager, with the pinned version normalized (owner decision of
- * 2026-11-17). Any other entry is kept and reported as edited. Removing it empties the `mcpServers`
+ * 2026-11-17), and it pins a version Calavera released (ADR-0017, Amendment 6). Any other entry is kept and reported as edited. Removing it empties the `mcpServers`
  * or `mcp` object, which then goes too, and in `opencode.json` the `$schema` Calavera writes goes
  * once nothing else remains. The file stays, even when it is left empty. JSON has no comments, and
  * `eject` rewrites the whole file through the project's formatter, as the bootstrap writes it, so
@@ -1105,8 +1109,8 @@ function removesOnlyTheEntry(text, contents) {
  * `smol-toml`, and a file that is not TOML is a hard stop, with the line and column where the
  * parser stopped, and never its message, which quotes the file's lines, as the cause
  * (ADR-0017, Decision 7). The entry is unedited when the file holds the table Calavera writes
- * for some package manager, with the pinned version normalized (owner decision of 2026-11-17),
- * and removing that text removes the whole entry and nothing else, which parsing the result
+ * for some package manager, with the pinned version normalized (owner decision of 2026-11-17)
+ * and released (ADR-0017, Amendment 6), and removing that text removes the whole entry and nothing else, which parsing the result
  * shows. Any other entry is kept and reported as edited, such as one with another key, a
  * subtable, a comment inside the table, or another layout or header spelling: removing Calavera's
  * lines would then leave part of the entry behind, or the lines are not there to remove. Text that
@@ -1151,9 +1155,10 @@ async function planCodexMcpEntry(path, expected) {
       const written = block.trimEnd().split("\n");
       const end = start + written.length - 1;
       const table = bare.slice(start, end + 1);
-      // A table that holds the placeholder normalizes to undefined, which equals no written table.
+      // A table that pins a version Calavera never released, or holds the placeholder, normalizes
+      // to undefined, which equals no written table (#1219).
       if (
-        normalizePinnedVersion(table.join("\n"))?.normalized !==
+        normalizeReleasedPin(table.join("\n")) !==
         normalizePinnedVersion(written.join("\n"))?.normalized
       ) {
         continue;

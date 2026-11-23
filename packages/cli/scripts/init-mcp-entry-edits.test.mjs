@@ -1,5 +1,5 @@
 // Issue #1205: rerunning `--init` updates the `calavera` MCP entry only when it holds what a
-// Calavera release wrote for that harness, with the pinned version normalized, as `eject` decides
+// Calavera release wrote for that harness, with the pinned version normalized and released, as `eject` decides
 // (ADR-0017, Decision 2). Any other entry is a local edit (brief C8): the bootstrap keeps it,
 // lists the file as skipped with a remedy, and leaves the file byte for byte as it was.
 //
@@ -174,6 +174,29 @@ for (const { harness, path, file } of harnesses) {
       assertKeptAsEdit(await init(harness), path);
       assert.equal(await readFile(path, "utf8"), before);
     });
+  });
+
+  test(`${harness}: an entry pinned to a released prerelease is updated`, async () => {
+    await inProject(async () => {
+      await write(path, file(pnpmLaunch("2.3.0-next.2")));
+
+      const result = await init(harness);
+
+      assert.equal(result.mcp.action, "update");
+      assert.ok((await readFile(path, "utf8")).includes(`create-project-calavera@${current}`));
+    });
+  });
+
+  test(`${harness}: an entry pinned to a version Calavera never released is kept`, async () => {
+    // #1219: only the versions the release list names count as Calavera's.
+    for (const version of ["99.0.0", "99.0.0-local.1"]) {
+      await inProject(async () => {
+        const before = file(npmLaunch(version));
+        await write(path, before);
+        assertKeptAsEdit(await init(harness), path);
+        assert.equal(await readFile(path, "utf8"), before, `${path} ${version}`);
+      });
+    }
   });
 
   test(`${harness}: an entry that holds the version placeholder is kept`, async () => {

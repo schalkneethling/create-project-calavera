@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { TomlError, parse as parseToml } from "smol-toml";
 
-import { normalizePinnedVersion } from "./earlier-guidance.js";
+import { normalizePinnedVersion, normalizeReleasedPin } from "./earlier-guidance.js";
 import { fileExists, parseJSON } from "./fs.js";
 import { formatGeneratedText } from "./generated-text.js";
 import { repeatedKeyProblem } from "./json-rewrite.js";
@@ -161,7 +161,7 @@ export function createCursorMcpJsonConfig(launchCommand) {
  *
  * @param {unknown} value A value parsed from JSON or TOML.
  */
-export function withPinNormalized(value) {
+function withPinNormalized(value) {
   const pinned = normalizePinnedVersion(JSON.stringify(value));
   return pinned === undefined ? undefined : JSON.parse(pinned.normalized);
 }
@@ -169,8 +169,8 @@ export function withPinNormalized(value) {
 /**
  * The `calavera` entries a Calavera release wrote into the harness file, one for each package
  * manager's launch command, as the file parses. `eject` removes an entry, and `--init` updates
- * one, only when it equals one of them with the pinned version normalized (ADR-0017, Decision 2;
- * #1205). An entry shape an earlier release wrote belongs here too, so both keep recognizing it.
+ * one, only when it equals one of them with the pinned version normalized and that version is
+ * one Calavera released (ADR-0017, Decision 2 and Amendment 6; #1205, #1219). An entry shape an earlier release wrote belongs here too, so both keep recognizing it.
  *
  * @param {Exclude<McpHarness, "skip">} harness
  * @param {McpLaunchCommand[]} launches The launch command for each supported package manager.
@@ -209,15 +209,18 @@ export function calaveraMcpEntries(harness, launches) {
 }
 
 /**
- * Whether `entry` is one a Calavera release wrote: it equals one of `entries` with the pinned
- * version normalized. An entry that holds the placeholder normalizes to undefined, which equals
- * none of them.
+ * Whether `entry` is one a Calavera release wrote: it pins a version Calavera released (#1219),
+ * and it equals one of `entries` with the pinned version normalized. Any other entry is a local
+ * edit, such as one pinned to an unpublished version, one without a pin, or one that holds the
+ * placeholder.
  *
  * @param {unknown} entry
  * @param {unknown[]} entries From `calaveraMcpEntries`.
  */
 export function isCalaveraMcpEntry(entry, entries) {
-  const normalized = withPinNormalized(entry);
+  const released = normalizeReleasedPin(JSON.stringify(entry));
+  if (released === undefined) return false;
+  const normalized = JSON.parse(released);
   return entries.some((candidate) => isDeepStrictEqual(normalized, withPinNormalized(candidate)));
 }
 

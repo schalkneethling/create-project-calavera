@@ -8,7 +8,11 @@ import { createHash } from "node:crypto";
 import test from "node:test";
 
 import packageJson from "../package.json" with { type: "json" };
-import { EARLIER_TEMPLATES, findEarlierGuidance } from "../src/utils/earlier-guidance.js";
+import {
+  EARLIER_TEMPLATES,
+  findEarlierGuidance,
+  normalizeReleasedPin,
+} from "../src/utils/earlier-guidance.js";
 import {
   currentText,
   epochs,
@@ -195,4 +199,18 @@ test("Given an earlier release's text, then the description names one release, a
     findEarlierGuidance("mcp", await mcpText(unpinned.id, "npm", ""))?.description,
     `${unpinned.releases[0]} to ${unpinned.releases[unpinned.releases.length - 1]}`,
   );
+});
+
+test("Given a pinned version, then normalizeReleasedPin normalizes it only when a release lists it", () => {
+  const pin = (/** @type {string} */ value) => `npx --package create-project-calavera@${value} mcp`;
+  const normalized = "npx --package create-project-calavera@{{version}} mcp";
+  // A release, a released prerelease, and the version this checkout writes (#1219).
+  for (const released of ["5.0.0", "2.3.0-next.2", version]) {
+    assert.equal(normalizeReleasedPin(pin(released)), normalized, released);
+  }
+  // An unpublished version, an unpublished prerelease, no pin, and the placeholder.
+  for (const text of [pin("99.0.0"), pin("6.3.0-next.0"), "npx create-project-calavera mcp"]) {
+    assert.equal(normalizeReleasedPin(text), undefined, text);
+  }
+  assert.equal(normalizeReleasedPin(normalized), undefined);
 });

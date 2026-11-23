@@ -181,15 +181,26 @@ for (const { harness, path, written } of HARNESSES) {
     });
   });
 
-  test(`${harness}: an entry for any package manager and any pinned version is unedited`, async () => {
+  test(`${harness}: an entry for any package manager pinned to a released version is unedited`, async () => {
     for (const launch of launches) {
-      for (const version of ["5.0.0", "7.0.0-beta.1"]) {
+      // A release, a released prerelease, and this checkout's version (#1219).
+      for (const version of ["5.0.0", "2.3.0-next.2", packageJson.version]) {
         await inProject(async () => {
           await write(path, written(repinned(launch, version)));
           const entry = item(await plan(), path);
           assert.equal(entry.edits, "unedited", `${launch.command} ${version}`);
         });
       }
+    }
+  });
+
+  test(`${harness}: an entry pinned to a version Calavera never released is kept and reported`, async () => {
+    // #1219: an unpublished version and an unpublished prerelease are local edits.
+    for (const version of ["99.0.0", "99.0.0-local.1"]) {
+      await inProject(async () => {
+        await write(path, written(repinned(npmLaunch, version)));
+        await assertKeptAndReported(path, /edited/);
+      });
     }
   });
 
