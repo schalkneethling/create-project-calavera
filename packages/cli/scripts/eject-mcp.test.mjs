@@ -26,6 +26,7 @@ import { agentBootstrap, agentBootstrapTexts } from "../src/index.js";
 import { normalizePinnedVersion } from "../src/utils/earlier-guidance.js";
 import {
   createCodexMcpTomlBlock,
+  createCursorMcpJsonConfig,
   createMcpServersJsonConfig,
   createOpenCodeMcpJsonConfig,
 } from "../src/utils/mcp-config.js";
@@ -131,7 +132,7 @@ const HARNESSES = [
   {
     harness: /** @type {const} */ ("cursor"),
     path: ".cursor/mcp.json",
-    written: (/** @type {typeof npmLaunch} */ launch) => json(createMcpServersJsonConfig(launch)),
+    written: (/** @type {typeof npmLaunch} */ launch) => json(createCursorMcpJsonConfig(launch)),
   },
   {
     harness: /** @type {const} */ ("opencode"),
@@ -479,6 +480,44 @@ test("opencode: a $schema with another value stays, even when nothing else remai
     assert.deepEqual(JSON.parse(await readFile("opencode.json", "utf8")), {
       $schema: "https://example.com/mine.json",
     });
+  });
+});
+
+// Issue #1089: 6.2.1 and earlier releases wrote the Cursor entry without `type`, as the fixtures
+// in fixtures/agent-guidance/mcp show. The entry is spelled out here, not built from the current
+// writers, so a change to the writers cannot also change what counts as an earlier release's entry.
+/** @param {{ command: string, args: string[] }} launch */
+const earlierCursor = (launch) => ({
+  mcpServers: { calavera: { command: launch.command, args: launch.args } },
+});
+
+test("cursor: the entry an earlier release wrote without type is unedited for any package manager", async () => {
+  for (const launch of launches) {
+    await inProject(async () => {
+      await write(".cursor/mcp.json", json(earlierCursor(repinned(launch, "6.2.1"))));
+      assert.equal(item(await plan(), ".cursor/mcp.json").edits, "unedited", launch.command);
+    });
+  }
+  await inProject(async () => {
+    await write(".cursor/mcp.json", json(earlierCursor(npmLaunch)));
+    await ejectApproved();
+    assert.equal(await readFile(".cursor/mcp.json", "utf8"), "{}\n");
+  });
+});
+
+test("cursor: an entry with another type is kept and reported as edited", async () => {
+  await inProject(async () => {
+    const config = createCursorMcpJsonConfig(npmLaunch);
+    /** @type {any} */ (config.mcpServers).calavera.type = "http";
+    await write(".cursor/mcp.json", json(config));
+    await assertKeptAndReported(".cursor/mcp.json", /differs from the launch command/);
+  });
+});
+
+test(".mcp.json: Cursor's type is not an entry Calavera writes for Claude Code", async () => {
+  await inProject(async () => {
+    await write(".mcp.json", json(createCursorMcpJsonConfig(npmLaunch)));
+    await assertKeptAndReported(".mcp.json", /differs from the launch command/);
   });
 });
 

@@ -772,12 +772,27 @@ word in the MCP `command` field and the remaining words in `args`:
 - Yarn: `yarn dlx --package create-project-calavera@<version> create-project-calavera-mcp`
 - Bun: `bunx --package create-project-calavera@<version> create-project-calavera-mcp`
 
-JSON-based MCP hosts use this shape:
+Claude Code (`.mcp.json`) uses this shape:
 
 ```json
 {
   "mcpServers": {
     "calavera": {
+      "command": "npx",
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
+    }
+  }
+}
+```
+
+Cursor lists `type` as required for a local server, so `.cursor/mcp.json` adds
+`"type": "stdio"` to the entry:
+
+```json
+{
+  "mcpServers": {
+    "calavera": {
+      "type": "stdio",
       "command": "npx",
       "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
     }

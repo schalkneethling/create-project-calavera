@@ -1970,7 +1970,9 @@ test("agent bootstrap writes Cursor project MCP config", async () => {
     assert.equal(result.mcp.harness, "cursor");
     assert.equal(result.mcp.action, "write");
     assert.equal(result.mcp.path, ".cursor/mcp.json");
+    // Cursor lists `type` as required for a local server (#1089).
     assert.deepEqual(config.mcpServers.calavera, {
+      type: "stdio",
       command: "npx",
       args: [
         "--package",

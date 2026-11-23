@@ -72,6 +72,21 @@ shape:
 }
 ```
 
+Cursor lists `type` as required for a local server, so `.cursor/mcp.json` adds
+`"type": "stdio"` to the entry:
+
+```json
+{
+  "mcpServers": {
+    "calavera": {
+      "type": "stdio",
+      "command": "npx",
+      "args": ["--package", "create-project-calavera@<version>", "create-project-calavera-mcp"]
+    }
+  }
+}
+```
+
 Codex uses TOML:
 
 ```toml

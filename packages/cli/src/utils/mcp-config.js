@@ -125,20 +125,39 @@ export function createMcpServersJsonConfig(launchCommand) {
 }
 
 /**
- * @param {string} path
+ * The `calavera` entry in `.cursor/mcp.json`. Cursor's documentation lists `type` as required for
+ * a local server, with the value `"stdio"` (https://cursor.com/docs/context/mcp, "STDIO server
+ * configuration"). 6.2.1 and earlier releases wrote the launch command alone, which
+ * `createMcpServersJsonConfig` still writes for Claude Code (#1089).
+ *
  * @param {McpLaunchCommand} launchCommand
+ * @returns {Record<string, unknown>}
+ */
+export function createCursorMcpEntry(launchCommand) {
+  return { type: "stdio", ...launchCommand };
+}
+
+/**
+ * @param {McpLaunchCommand} launchCommand
+ * @returns {Record<string, unknown>}
+ */
+export function createCursorMcpJsonConfig(launchCommand) {
+  return {
+    mcpServers: {
+      calavera: createCursorMcpEntry(launchCommand),
+    },
+  };
+}
+
+/**
+ * @param {string} path
+ * @param {Record<string, unknown>} entry The `calavera` entry to write.
  * @param {boolean} dryRun
  * @param {McpConfigChange[]} changes
  * @param {LoadFormatter} loadFormatter
  * @returns {Promise<McpConfigAction>}
  */
-export async function writeMcpServersJsonConfig(
-  path,
-  launchCommand,
-  dryRun,
-  changes,
-  loadFormatter,
-) {
+export async function writeMcpServersJsonConfig(path, entry, dryRun, changes, loadFormatter) {
   const targetPath = normalizeConfigPath(path);
   const { currentConfig, currentContents } = await readProjectJsonConfigIfPresent(targetPath);
   const mcpServers = currentConfig.mcpServers;
@@ -153,7 +172,7 @@ export async function writeMcpServersJsonConfig(
       ...currentConfig,
       mcpServers: {
         ...(isPlainObject(mcpServers) ? mcpServers : {}),
-        calavera: launchCommand,
+        calavera: entry,
       },
     },
     dryRun,

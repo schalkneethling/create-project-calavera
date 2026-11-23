@@ -73,7 +73,7 @@ const GUIDANCE = [
     sha256: ["f198c16e05ee0c587754f173d612b9de266751f845c4ce1914a1857d6d29dcb5"],
   },
   {
-    releases: ["6.1.0", "6.2.0", "6.2.1"],
+    releases: ["6.1.0", "6.2.0", "6.2.1", "6.3.0"],
     sha256: ["c0c6c875f0eb05cbf1dfbce2793a317900407966a65eaf8838e1af4f87d67e00"],
   },
 ];
@@ -167,6 +167,17 @@ const MCP = [
       "283a830ce25ddaed625310d0040d7d5e68bdd43d338ecc177d0b2f8d45f4053c",
       "80f80a09f6be029303e16fd42691be1f98c01489ff4212aeff2fcc31d3305c7b",
       "8c993d8952d9724aa1c33f5efa2a0a758aeb4ae316bd5dffa2c7f6d9d46e5c37",
+    ],
+  },
+  {
+    // #1089: the Cursor entry gains `type: "stdio"`.
+    releases: ["6.3.0"],
+    pinned: true,
+    sha256: [
+      "3f991036fbd0a03cd7c94f5d74d664b5a5585ea74123b26c0053d0b7c33f375a",
+      "df9374e482c6fde8be3b06e796fe496e6b0204329cfb122343ceba38bfd038e8",
+      "a1ff4d71c11729e02caa4c894c6798f55a9837dfb868d3b4954b5814730f64d2",
+      "6dab409502700cbd1fc33dd4ce32441aa1e75f4b914a5fc559982b23e445b5a0",
     ],
   },
 ];
