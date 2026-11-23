@@ -4,6 +4,7 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
 import { spawnSync } from "node:child_process";
+import { once } from "node:events";
 import {
   chmod,
   mkdir,
@@ -20,6 +21,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
+import { Worker } from "node:worker_threads";
 
 import {
   buildEnvironment,
@@ -458,6 +460,89 @@ test("a listing violation names an item printed twice, missing, or above every h
     ]),
     [],
   );
+});
+
+/**
+ * Calls an export of rehearsal-checks.mjs in a worker thread and returns its result, or throws
+ * when it does not finish within `ms`. A loop that never ends blocks its own thread, so neither
+ * the test's own timeout nor a timer in this thread could stop it; terminating the worker can
+ * (#1226).
+ *
+ * @param {string} name
+ * @param {unknown[]} args
+ * @param {number} [ms]
+ */
+async function callWithin(name, args, ms = 5000) {
+  const worker = new Worker(
+    `const { parentPort, workerData } = require("node:worker_threads");
+    import(workerData.module).then((module) => {
+      try {
+        parentPort.postMessage({ value: module[workerData.name](...workerData.args) });
+      } catch (error) {
+        parentPort.postMessage({ error: { name: error.name, message: error.message } });
+      }
+    });`,
+    {
+      eval: true,
+      workerData: { module: new URL("./rehearsal-checks.mjs", import.meta.url).href, name, args },
+    },
+  );
+  /** @type {NodeJS.Timeout | undefined} */
+  let timer;
+  try {
+    const message = await Promise.race([
+      once(worker, "message").then(([data]) => data),
+      once(worker, "error").then(([error]) => Promise.reject(error)),
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`${name} did not finish within ${ms} ms`)), ms);
+      }),
+    ]);
+    if (message.error) throw Object.assign(new Error(message.error.message), message.error);
+    return message.value;
+  } finally {
+    clearTimeout(timer);
+    await worker.terminate();
+  }
+}
+
+test(
+  "countMentions refuses an empty name, which would match forever",
+  { timeout: 10_000 },
+  async () => {
+    await assert.rejects(callWithin("countMentions", ["Files:\n- x.json\n", ""]), {
+      name: "RangeError",
+      message: /non-empty name/,
+    });
+  },
+);
+
+test(
+  "an item named by an absolute path is matched by its full text",
+  { timeout: 10_000 },
+  async () => {
+    const output = "Files:\n  Would update /home/person/package.json\n";
+    assert.deepEqual(
+      await callWithin("listingViolations", [output, ["/home/person/package.json"]]),
+      [],
+    );
+    // Printed twice, or not at all: the check reports it instead of trying the empty root as a name.
+    assert.deepEqual(
+      await callWithin("listingViolations", [
+        `${output}  /home/person/package.json\n`,
+        ["/home/person/package.json"],
+      ]),
+      ["/home/person/package.json is printed 2 times"],
+    );
+    assert.deepEqual(await callWithin("listingViolations", [output, ["/home/person/other.json"]]), [
+      "/home/person/other.json is printed 0 times",
+    ]);
+  },
+);
+
+test("an empty item is reported, not looked for", { timeout: 10_000 }, async () => {
+  assert.deepEqual(await callWithin("listingViolations", ["Files:\n- x.json\n", ["", "x.json"]]), [
+    "an item has an empty name, so the check cannot look for it",
+  ]);
 });
 
 test("next-step commands are every line that starts with a command, without markers", () => {
