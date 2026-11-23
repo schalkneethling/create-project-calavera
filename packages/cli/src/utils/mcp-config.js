@@ -8,6 +8,7 @@ import { TomlError, parse as parseToml } from "smol-toml";
 import { normalizePinnedVersion } from "./earlier-guidance.js";
 import { fileExists, parseJSON } from "./fs.js";
 import { formatGeneratedText } from "./generated-text.js";
+import { repeatedKeyProblem } from "./json-rewrite.js";
 import { isPlainObject } from "./guards.js";
 
 /**
@@ -237,6 +238,26 @@ function editedEntryChange(path, entry) {
 }
 
 /**
+ * The change for a JSON harness file that repeats a key in one object, such as a second `calavera`
+ * entry: JSON.parse keeps only the last value, so a rewrite would drop the person's entry. The file
+ * is kept as a local edit, as `eject` keeps it (`rewriteLossProblem`).
+ *
+ * @param {string} path
+ * @param {string | undefined} currentContents
+ * @returns {McpConfigChange | undefined}
+ */
+function repeatedKeyChange(path, currentContents) {
+  const problem = currentContents === undefined ? undefined : repeatedKeyProblem(currentContents);
+  return problem === undefined
+    ? undefined
+    : {
+        type: "skip",
+        path,
+        reason: `${path} ${problem}, so it was left unchanged as a local edit. Remove the repeated key, then run --init again.`,
+      };
+}
+
+/**
  * @param {string} path
  * @param {Record<string, unknown>} entry The `calavera` entry to write.
  * @param {unknown[]} entries The entries a Calavera release wrote, from `calaveraMcpEntries`.
@@ -259,6 +280,12 @@ export async function writeMcpServersJsonConfig(
 
   if (mcpServers !== undefined && !isPlainObject(mcpServers)) {
     throw new Error(`${targetPath} mcpServers must be an object.`);
+  }
+
+  const repeated = repeatedKeyChange(targetPath, currentContents);
+  if (repeated) {
+    changes.push(repeated);
+    return "skip";
   }
 
   if (
@@ -369,7 +396,10 @@ function findCalaveraCodexLines(lines, entry, entries) {
   if (!isCalaveraMcpEntry(entry, entries)) return undefined;
   const range = findTomlTableRange(lines.join("\n"), CODEX_TABLE_HEADER);
   if (range === undefined) return undefined;
-  const bare = lines.map((line) => line.replace(/\r$/, ""));
+  // `findTomlTableRange` trims each line, which drops a byte order mark, so it goes here too.
+  const bare = lines.map((line, index) =>
+    (index === 0 ? line.replace(/^\uFEFF/, "") : line).replace(/\r$/, ""),
+  );
   for (const candidate of entries) {
     const written = createCodexMcpTomlBlock(/** @type {McpLaunchCommand} */ (candidate))
       .trimEnd()
@@ -474,14 +504,30 @@ export async function writeCodexMcpConfig(path, launchCommand, entries, dryRun, 
     }
   }
 
-  // Calavera's lines keep the file's line endings: a file with Windows line endings keeps them.
-  const blockLines = block
-    .trimEnd()
-    .split("\n")
-    .map((line) => (written && lines[written.start]?.endsWith("\r") ? `${line}\r` : line));
-  const nextContents = written
-    ? [...lines.slice(0, written.start), ...blockLines, ...lines.slice(written.end)].join("\n")
-    : `${contents.trimEnd()}\n\n${block}`;
+  // Calavera's lines keep the file's line endings, so a file with Windows line endings keeps them,
+  // and a byte order mark before them stays.
+  const crlf = written ? lines[written.start]?.endsWith("\r") : contents.includes("\r\n");
+  const eol = crlf ? "\r\n" : "\n";
+  const blockLines = block.trimEnd().split("\n");
+  /** @type {string} */
+  let nextContents;
+  if (written) {
+    const bom = written.start === 0 && contents.startsWith("\uFEFF") ? "\uFEFF" : "";
+    nextContents = [
+      ...lines.slice(0, written.start),
+      ...blockLines.map((line, index) => `${index === 0 ? bom : ""}${line}${crlf ? "\r" : ""}`),
+      ...lines.slice(written.end),
+    ].join("\n");
+  } else {
+    // The table goes after one blank line, and the file's own trailing blank lines stay.
+    const separator =
+      contents === "" || contents.endsWith(`${eol}${eol}`)
+        ? ""
+        : contents.endsWith(eol)
+          ? eol
+          : `${eol}${eol}`;
+    nextContents = `${contents}${separator}${blockLines.join(eol)}${eol}`;
+  }
 
   // The result must hold the same settings with Calavera's entry set, and nothing else changed.
   // Text that only looks like the table, such as lines inside a multi-line string, or a
@@ -552,6 +598,12 @@ export async function writeOpenCodeMcpConfig(
 
   if (mcp !== undefined && !isPlainObject(mcp)) {
     throw new Error(`${targetPath} mcp must be an object.`);
+  }
+
+  const repeated = repeatedKeyChange(targetPath, currentContents);
+  if (repeated) {
+    changes.push(repeated);
+    return "skip";
   }
 
   if (

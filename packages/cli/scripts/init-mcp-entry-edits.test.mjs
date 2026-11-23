@@ -148,6 +148,7 @@ for (const { harness, path, file } of harnesses) {
       assert.ok(text.includes(`create-project-calavera@${current}`));
       assert.match(text, /"npx"/);
       assert.match(text, /other/, "the other server stays");
+      assert.ok(!text.includes("\uFEFF"), "no byte order mark appears");
     });
   });
 
@@ -380,5 +381,105 @@ test("codex: an inline mcp_servers table is never extended into a file that does
 
     assert.equal(result.mcp.action, "manual");
     assert.equal(await readFile(".codex/config.toml", "utf8"), before);
+  });
+});
+
+test("codex: a byte order mark before Calavera's table is kept, and the table is still Calavera's", async () => {
+  await inProject(async () => {
+    const before = `﻿${harnesses[3]?.file(pnpmLaunch("5.0.0"))}`;
+    await write(".codex/config.toml", before);
+
+    const result = await init("codex");
+    const text = await readFile(".codex/config.toml", "utf8");
+
+    assert.equal(result.mcp.action, "update");
+    assert.ok(text.startsWith("﻿[mcp_servers.calavera]\n"), JSON.stringify(text.slice(0, 30)));
+    assert.equal(text.match(/\[mcp_servers\.calavera\]/g)?.length, 1);
+    assert.ok(text.includes(`create-project-calavera@${current}`));
+
+    assert.equal((await init("codex")).mcp.action, "skip");
+    assert.equal(await readFile(".codex/config.toml", "utf8"), text);
+  });
+});
+
+test("codex: appending to a file with Windows line endings keeps them and its trailing blank lines", async () => {
+  await inProject(async () => {
+    const before = '[approval]\r\nmode = "manual"\r\n\r\n\r\n';
+    await write(".codex/config.toml", before);
+
+    const result = await init("codex");
+    const text = await readFile(".codex/config.toml", "utf8");
+
+    assert.equal(result.mcp.action, "update");
+    assert.ok(text.startsWith(`${before}[mcp_servers.calavera]\r\n`), JSON.stringify(text));
+    assert.doesNotMatch(text, /[^\r]\n/, "every line ends with CRLF");
+    assert.ok(text.endsWith("\r\n"));
+  });
+});
+
+test("codex: appending to a file without a final newline adds one blank line before the table", async () => {
+  await inProject(async () => {
+    const before = '[approval]\nmode = "manual"';
+    await write(".codex/config.toml", before);
+
+    await init("codex");
+
+    assert.ok(
+      (await readFile(".codex/config.toml", "utf8")).startsWith(
+        `${before}\n\n[mcp_servers.calavera]\n`,
+      ),
+    );
+  });
+});
+
+for (const { harness, path, file } of harnesses.filter(({ harness: name }) => name !== "codex")) {
+  test(`${harness}: a calavera key repeated in the MCP container is kept and reported`, async () => {
+    for (const dryRun of [true, false]) {
+      await inProject(async () => {
+        // The person's entry comes first; JSON.parse keeps only the last, Calavera's own.
+        const calaveras = file(npmLaunch(current));
+        const mine = calaveras.replace(
+          '"calavera": {',
+          '"calavera": { "mine": true },\n    "calavera": {',
+        );
+        assert.notEqual(mine, calaveras);
+        await write(path, mine);
+
+        const result = await init(harness, dryRun);
+
+        assert.equal(await readFile(path, "utf8"), mine, `${path} is unchanged`);
+        assert.equal(result.mcp.action, "skip");
+        const listed = result.changes.filter((change) => change.path === path);
+        assert.equal(listed.length, 1);
+        assert.equal(listed[0]?.type, "skip");
+        assert.match(listed[0]?.reason ?? "", /"calavera" more than once/);
+        assert.match(listed[0]?.reason ?? "", /then run --init again/);
+      });
+    }
+  });
+}
+
+test("codex: a byte order mark stays at the start when Calavera's table comes later", async () => {
+  await inProject(async () => {
+    const table = harnesses[3]?.file(pnpmLaunch("5.0.0"));
+    await write(".codex/config.toml", `\uFEFF[approval]\nmode = "manual"\n\n${table}`);
+
+    assert.equal((await init("codex")).mcp.action, "update");
+    const text = await readFile(".codex/config.toml", "utf8");
+
+    assert.ok(text.startsWith('\uFEFF[approval]\nmode = "manual"\n\n[mcp_servers.calavera]\n'));
+    assert.equal(text.match(/\uFEFF/g)?.length, 1);
+  });
+});
+
+test("codex: an empty file gets Calavera's table alone", async () => {
+  await inProject(async () => {
+    await write(".codex/config.toml", "");
+
+    await init("codex");
+
+    assert.ok(
+      (await readFile(".codex/config.toml", "utf8")).startsWith("[mcp_servers.calavera]\n"),
+    );
   });
 });

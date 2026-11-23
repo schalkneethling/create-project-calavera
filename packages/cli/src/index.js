@@ -2141,6 +2141,17 @@ function createMcpLaunchCommand(packageManager) {
 }
 
 /**
+ * The MCP launch command for each supported package manager, in the order of
+ * `supportedPackageManagers`. `--init` checks an existing `calavera` entry against them, and
+ * `eject` reads them through `agentBootstrapTexts` (#1205).
+ *
+ * @returns {{ command: string, args: string[] }[]}
+ */
+function mcpLaunchCommands() {
+  return supportedPackageManagers.map(createMcpLaunchCommand);
+}
+
+/**
  * The command `--new` spawns, per ADR-0010 Decision 1 and its amendments:
  * every runner starts Vite+'s `create-vite-plus` entry point.
  *
@@ -4431,7 +4442,7 @@ async function writeAgentBootstrapMcpConfig(
   const initialChangeCount = changes.length;
   // An existing `calavera` entry is updated only when a release wrote it, for any package manager;
   // any other entry is a local edit and is kept (#1205).
-  const launches = supportedPackageManagers.map(createMcpLaunchCommand);
+  const launches = mcpLaunchCommands();
 
   try {
     switch (harness) {
@@ -4572,7 +4583,7 @@ export async function agentBootstrapTexts(loadFormatter) {
   return {
     ...guidance,
     mcp,
-    mcpLaunchCommands: supportedPackageManagers.map(createMcpLaunchCommand),
+    mcpLaunchCommands: mcpLaunchCommands(),
   };
 }
 
