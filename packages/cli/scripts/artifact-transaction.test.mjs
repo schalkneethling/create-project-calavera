@@ -1114,8 +1114,6 @@ test("after the edited path is moved out of the project, the rollback restores t
   });
 });
 
-// #1174: a file the person created at a target the stopped operation had not created yet is a
-// change too, because the rollback would remove it.
 // #1174: a journaled target replaced with a link to a missing file is a change too. The check looks
 // at the link itself, not at what it points to, so a link that follows to nothing still stops the
 // rollback, which would otherwise remove it.
@@ -1138,6 +1136,8 @@ test("the rollback stops over a journaled target replaced with a dangling link, 
   });
 });
 
+// #1174: a file the person created at a target the stopped operation had not created yet is a
+// change too, because the rollback would remove it.
 test("the rollback stops over a file created at a target the stopped operation never wrote", async () => {
   await inTransactionProject(async (paths) => {
     await interruptedCommit(paths);
