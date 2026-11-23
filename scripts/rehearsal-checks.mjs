@@ -425,9 +425,15 @@ const NAME_CHARACTER = /[\w./@-]/;
  * How many times `name` appears in `text` as a whole word: not as part of a longer path or name.
  *
  * @param {string} text
- * @param {string} name
+ * @param {string} name A non-empty name. An empty name matches at the same position forever, so
+ *   the search would never end; it throws a RangeError instead (#1226).
  */
 export function countMentions(text, name) {
+  if (name === "") {
+    throw new RangeError(
+      "countMentions needs a non-empty name, because the search for an empty one never ends.",
+    );
+  }
   let count = 0;
   let from = 0;
   for (;;) {
@@ -464,7 +470,9 @@ export function isHeading(line) {
 /**
  * The name an item is printed under: the item itself, or the nearest directory above it that the
  * output names, because a command may report a directory it wrote, such as a skill folder, as one
- * line. Undefined when the output names neither.
+ * line. Undefined when the output names neither. An absolute path splits into an empty first part,
+ * so the empty root is never tried as a name: the path is matched by its full text, or by a
+ * directory above it that the output names (#1226).
  *
  * @param {string} output
  * @param {string} item
@@ -473,7 +481,7 @@ function printedName(output, item) {
   const parts = item.split("/");
   for (let length = parts.length; length > 0; length -= 1) {
     const candidate = parts.slice(0, length).join("/");
-    if (countMentions(output, candidate) > 0) return candidate;
+    if (candidate !== "" && countMentions(output, candidate) > 0) return candidate;
   }
   return undefined;
 }
@@ -505,7 +513,10 @@ export function listingViolations(output, items, statements = []) {
     );
   output = lines.join("\n");
   const firstHeading = lines.findIndex(isHeading);
-  const names = new Map(items.map((item) => [item, printedName(output, item)]));
+  // An empty item names nothing the output could print, so it is reported, not looked for (#1226).
+  const names = new Map(
+    items.filter((item) => item !== "").map((item) => [item, printedName(output, item)]),
+  );
   return [...new Set(names.values())]
     .flatMap((name) => {
       if (name === undefined) return [];
@@ -519,6 +530,9 @@ export function listingViolations(output, items, statements = []) {
       [...names]
         .filter(([, name]) => name === undefined)
         .map(([item]) => `${item} is printed 0 times`),
+    )
+    .concat(
+      items.includes("") ? ["an item has an empty name, so the check cannot look for it"] : [],
     );
 }
 
