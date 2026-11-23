@@ -48,8 +48,10 @@ const NPM_OR_PNPM_EXECPATH = /^(npm-cli\.js|pnpm(\.exe|\.cjs|\.mjs|\.js)?)$/i;
  * npm exports a project .npmrc `user-agent`, and pnpm its `userAgent` setting, as the user agent,
  * so repository content can make it name Yarn or Bun (#1186). Both also set npm_execpath to their
  * own binary, which no project setting changes, so a npm_execpath that names npm or pnpm wins over
- * the user agent. Yarn 4 and Bun set both variables themselves, after a Yarn `.env.yarn` is applied,
- * so their user agent can be trusted.
+ * the user agent. Yarn 4 and `bun run` set both variables themselves, after a Yarn `.env.yarn` or
+ * a Bun `.env` is applied, so their user agent can be trusted. A direct Bun run (`bun file.js`)
+ * sets neither, so loadNpmRegistryOptions first removes launcher variables that came from a .env
+ * file Bun loaded.
  * @param {NodeJS.ProcessEnv} env
  * @returns {Launcher}
  */

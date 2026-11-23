@@ -10,6 +10,7 @@ import { decode } from "ini";
 import { printable, readConfigText } from "./config-files.js";
 import {
   bunEnvironmentFileChains,
+  environmentFileValues,
   hasBunReference,
   hasYarnReference,
   variablesFromReferences,
@@ -56,6 +57,8 @@ const PROXY_PROTOCOLS = new Set([
 // etc/npmrc is the default).
 const GLOBAL_CONFIG_CHOOSERS = new Set(["globalconfig", "prefix"]);
 const GLOBAL_LAYER = "global npmrc";
+// The variables from which Calavera recognizes the package manager that started it.
+const LAUNCHER_VARIABLES = ["npm_execpath", "npm_config_user_agent"];
 // The folder Calavera started in, before the CLI changes into a new or ancestor project. Yarn and
 // Bun loaded their environment files relative to it (#1186).
 const STARTING_CWD = process.cwd();
@@ -277,7 +280,31 @@ export async function loadNpmRegistryOptions({
   /** @type {Set<string>} */
   const unsetVariables = new Set();
   const home = env.HOME || homedir();
-  const launcher = detectLauncher(env);
+  // Under a direct Bun run (`bun file.js`), Bun sets neither npm_execpath nor
+  // npm_config_user_agent, so a project .env that Bun loaded could set both and switch Calavera to
+  // another package manager's settings. A launcher variable that equals the value a loaded .env
+  // file gives it, or that the file sets from a variable, is repository content and is not read;
+  // Calavera then reads the Bun settings, as Bun runs it. `bun run` sets both itself after it
+  // loads .env, so their values are Bun's own (#1186).
+  const bunChains =
+    runtime === "bun" ? await bunEnvironmentFileChains(startingCwd, env, warnings) : [];
+  /** @type {Set<string>} */
+  const launcherFromFile = new Set();
+  for (const chain of bunChains) {
+    const values = await environmentFileValues(chain);
+    for (const name of LAUNCHER_VARIABLES) {
+      const value = values.get(name);
+      if (value !== undefined && (value === env[name] || hasBunReference(value))) {
+        launcherFromFile.add(name);
+      }
+    }
+  }
+  const launcher = launcherFromFile.size > 0 ? "bun" : detectLauncher(env);
+  if (launcherFromFile.size > 0) {
+    warnings.push(
+      `Ignored ${[...launcherFromFile].join(" and ")}, which .env sets: Calavera reads the package manager that started it only from variables the package manager sets, so it reads the Bun settings, as Bun runs it.`,
+    );
+  }
   // npm exports the .npmrc settings it resolved as npm_config_* variables, so the comparison with
   // exported values below applies under it. pnpm counts as npm here, but pnpm 12 exports no
   // settings, so the comparison finds nothing. Bun and Yarn 2 or later also set
@@ -379,7 +406,8 @@ export async function loadNpmRegistryOptions({
         name: userChosenByProject ? "user .npmrc that the project .npmrc chose" : "user .npmrc",
         entries: userEntries,
         trusted: !userChosenByProject,
-        expandsVariables: userIsAccountFile && !userChosenByProject,
+        // userChosenByProject is never true for your own ~/.npmrc.
+        expandsVariables: userIsAccountFile,
         accepts,
       },
       { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
@@ -480,10 +508,26 @@ export async function loadNpmRegistryOptions({
    * a project file must use https. Another spelling, such as https_proxy, and a list that is
    * not noproxy, the layer did not apply; a proxy under it from a project file is reported as
    * ignored.
+   *
+   * A file entry with a variable claims the exported value whatever it is, because npm's
+   * expansion cannot be reproduced. npm passes a value that the caller set for the same variable
+   * on unchanged, so that value is dropped with it, and a note says so, never with the value.
    * @param {ConfigLayer} layer @param {string} key @param {string} fileKey
+   * @param {string} rawValue The exported value. @param {string | undefined} variable Its name.
    */
-  const applyExportedCopy = (layer, key, fileKey) => {
+  const applyExportedCopy = (layer, key, fileKey, rawValue, variable) => {
     const fileValue = entryValue(key, layer.entries[fileKey]);
+    if (
+      fileValue?.includes("${") &&
+      !(layer.expandsVariables ?? layer.trusted) &&
+      fileValue.trim() !== rawValue.trim()
+    ) {
+      const name = printable(variable ?? key);
+      const setting = printable(fileKey);
+      warnings.push(
+        `Also ignored ${name} in the environment: the ${layer.name} sets ${setting} with a variable, and npm passes on its own expansion under the same variable, so Calavera cannot tell a value you set from the one in that file. If you set ${name} yourself, remove ${setting} from the ${layer.name}.`,
+      );
+    }
     if (fileValue !== undefined && fileKey === key) return;
     // A key with a variable that this layer does not expand matched as a pattern, so npm may
     // read it as `key`.
@@ -524,7 +568,7 @@ export async function loadNpmRegistryOptions({
     }
   }
   if (runtime === "bun") {
-    for (const chain of await bunEnvironmentFileChains(startingCwd, env, warnings)) {
+    for (const chain of bunChains) {
       addClaims(await variablesFromReferences(chain, hasBunReference, warnings), "Bun");
     }
   }
@@ -587,7 +631,7 @@ export async function loadNpmRegistryOptions({
           }))
           .find(({ fileKey }) => fileKey !== undefined);
         if (match?.fileKey !== undefined) {
-          applyExportedCopy(match.fileLayer, key, match.fileKey);
+          applyExportedCopy(match.fileLayer, key, match.fileKey, rawValue, variable);
           continue;
         }
       }

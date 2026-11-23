@@ -1801,3 +1801,83 @@ test("under Yarn, a .yarnrc.yml that the caller's YARN_RC_FILENAME names, and th
   });
   assert.equal((await loadNpmRegistryOptions(home)).options.proxy, undefined);
 });
+
+// Third independent review of #1225, finding 1: under a direct Bun run, Bun sets neither
+// npm_execpath nor npm_config_user_agent, so a project .env could set both and switch Calavera to
+// the npm settings. A launcher variable from a .env file Bun loaded is repository content.
+test("when Bun runs Calavera, launcher variables from a .env file do not switch Calavera to the npm settings", async () => {
+  const context = await fixture({
+    files: {
+      "workspace/project/.env":
+        "npm_execpath=/x/npm-cli.js\nnpm_config_user_agent=npm/1\nnpm_config_https_proxy=http://dotenv-evil.example:3\n",
+    },
+    env: {
+      npm_execpath: "/x/npm-cli.js",
+      npm_config_user_agent: "npm/1",
+      npm_config_https_proxy: "http://dotenv-evil.example:3",
+    },
+  });
+  const result = await loadNpmRegistryOptions({ ...context, runtime: "bun" });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.match(
+    result.warnings.join("\n"),
+    /^Ignored npm_execpath and npm_config_user_agent, which \.env sets: Calavera reads the package manager that started it only from variables the package manager sets/m,
+  );
+  // `bun run` sets both variables itself after it loads .env, so the values differ from the
+  // file's and are Bun's own.
+  const bunRun = await fixture({
+    files: {
+      "workspace/project/.env": "npm_execpath=/x/npm-cli.js\nnpm_config_user_agent=npm/1\n",
+    },
+    env: { npm_execpath: "/Users/probe/.bun/bin/bun", npm_config_user_agent: BUN },
+  });
+  const ownValues = await loadNpmRegistryOptions({ ...bunRun, runtime: "bun" });
+  assert.deepEqual(ownValues.warnings, []);
+  // Under Node, Bun loaded no .env, so the variables are the caller's.
+  const node = await loadNpmRegistryOptions({ ...context, runtime: "node" });
+  assert.equal(node.options.httpsProxy, "http://dotenv-evil.example:3");
+});
+
+test("a real direct Bun run with launcher variables in .env keeps the Bun settings", async (t) => {
+  const context = await fixture({
+    files: {
+      "workspace/project/.env":
+        "npm_execpath=/x/npm-cli.js\nnpm_config_user_agent=npm/1\nnpm_config_https_proxy=http://dotenv-evil.example:3\n",
+    },
+  });
+  const script = join(context.cwd, "..", "probe-launcher.mjs");
+  const loader = new URL("../src/npm-config.js", import.meta.url).href;
+  await writeFile(
+    script,
+    `import { loadNpmRegistryOptions } from ${JSON.stringify(loader)};
+const { options } = await loadNpmRegistryOptions({ cwd: process.cwd(), env: process.env });
+console.log(JSON.stringify({ loaded: process.env.npm_config_user_agent === "npm/1", proxy: options.httpsProxy !== undefined }));
+`,
+  );
+  let stdout;
+  try {
+    ({ stdout } = await promisify(execFile)("bun", [script], {
+      cwd: context.cwd,
+      env: { PATH: process.env.PATH, HOME: context.env.HOME },
+    }));
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code !== "ENOENT") throw error;
+    t.skip("Bun is not installed");
+    return;
+  }
+  assert.deepEqual(JSON.parse(stdout), { loaded: true, proxy: false });
+});
+
+test("when Bun runs Calavera, a quoted or padded launcher variable in .env is recognized as the file's", async () => {
+  const context = await fixture({
+    files: {
+      "workspace/project/.env": "npm_execpath = '/x/npm-cli.js'\nnpm_config_user_agent=\"npm/1\"\n",
+    },
+    env: { npm_execpath: "/x/npm-cli.js", npm_config_user_agent: "npm/1" },
+  });
+  const result = await loadNpmRegistryOptions({ ...context, runtime: "bun" });
+  assert.match(
+    result.warnings.join("\n"),
+    /^Ignored npm_execpath and npm_config_user_agent, which \.env sets/m,
+  );
+});

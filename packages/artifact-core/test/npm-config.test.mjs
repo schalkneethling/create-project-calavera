@@ -1523,6 +1523,7 @@ test("the installation's global npmrc warning about a variable names that file, 
   const { warnings } = await loadNpmRegistryOptions(context);
   assert.deepEqual(warnings, [
     "Ignored https-proxy in the global npmrc: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, not in npm's global configuration file. Write the proxy URL without a variable, or remove the entry and set the proxy in your own .npmrc or an environment variable; while the entry is there, an npm_config_https_proxy variable does not replace it when npm starts Calavera.",
+    "Also ignored npm_config_https_proxy in the environment: the global npmrc sets https-proxy with a variable, and npm passes on its own expansion under the same variable, so Calavera cannot tell a value you set from the one in that file. If you set npm_config_https_proxy yourself, remove https-proxy from the global npmrc.",
   ]);
 });
 
@@ -1832,4 +1833,70 @@ test("under npm run from a subfolder, a project userconfig resolves from INIT_CW
     ),
     /registry in the user \.npmrc that the project \.npmrc chose must be an https URL\. A project file wins over your own configuration, so to use an http registry, remove this setting there and set the registry in your own ~\/\.npmrc or in an environment variable\./,
   );
+});
+
+// Third independent review of #1225, finding 3: a respelled USERCONFIG that names the account's
+// own ~/.npmrc keeps user trust (owner decision 1 of 2026-11-24), so its ${...} proxy expands.
+test("under npm exec, a respelled project USERCONFIG that names your own ~/.npmrc keeps its variable expansion", async () => {
+  const context = await fixture({
+    project: "USERCONFIG=~/.npmrc\n",
+    user: "https-proxy=http://${PROXY_HOST}:8080/\n",
+  });
+  const { options, warnings } = await loadNpmRegistryOptions(
+    npmExecContext(context, {
+      HOME: context.accountHome,
+      PROXY_HOST: "proxy.example.com",
+      npm_config_https_proxy: "http://proxy.example.com:8080/",
+    }),
+  );
+  assert.equal(options.httpsProxy, "http://proxy.example.com:8080/");
+  assert.deepEqual(warnings, []);
+});
+
+// Finding 2: a project entry with a variable claims npm's exported value, and the caller's own
+// npm_config_https_proxy, which npm passes on unchanged, is dropped with it; a note says so.
+test("under npm exec, a caller's proxy dropped because a project entry holds a variable is named in a note, without its value", async () => {
+  const context = await fixture({ project: "https-proxy=${NOPE?}\n" });
+  const { options, warnings } = await loadNpmRegistryOptions(
+    npmExecContext(context, { npm_config_https_proxy: "http://corp.example.com:1/" }),
+  );
+  assert.equal(options.httpsProxy, undefined);
+  assert.deepEqual(warnings.slice(1), [
+    "Also ignored npm_config_https_proxy in the environment: the project .npmrc sets https-proxy with a variable, and npm passes on its own expansion under the same variable, so Calavera cannot tell a value you set from the one in that file. If you set npm_config_https_proxy yourself, remove https-proxy from the project .npmrc.",
+  ]);
+  assert.doesNotMatch(inspect(warnings), /corp\.example/);
+});
+
+test("a real npm exec with a project proxy holding a variable names the caller's dropped proxy in a note", async (t) => {
+  const context = await fixture({ project: "https-proxy=${NOPE?}\n" });
+  await writeFile(join(context.cwd, "package.json"), JSON.stringify({ name: "probe" }));
+  const home = join(context.directory, "home");
+  await mkdir(home);
+  const captured = await npmExecEnvironmentIn(t, context.cwd, home, {
+    npm_config_https_proxy: "http://corp.example.com:1/",
+  });
+  if (!captured) return;
+  const result = await loadNpmRegistryOptions({ ...context, env: captured });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.match(
+    result.warnings.join("\n"),
+    /^Also ignored npm_config_https_proxy in the environment/m,
+  );
+});
+
+test("under npm exec, a literal project proxy that npm exported gets no note about a dropped caller value", async () => {
+  const context = await fixture({ project: "https-proxy=http://attacker.example:8080/\n" });
+  const { warnings } = await loadNpmRegistryOptions(
+    npmExecContext(context, { npm_config_https_proxy: "http://attacker.example:8080/" }),
+  );
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^Ignored https-proxy in the project \.npmrc/);
+});
+
+test("under npm exec, a key in your own ~/.npmrc that npm expands to https-proxy is applied as npm applies it", async () => {
+  const context = await fixture({ user: "https-proxy${NOPE?}=http://own.example.com:1/\n" });
+  const { options } = await loadNpmRegistryOptions(
+    npmExecContext(context, { npm_config_https_proxy: "http://own.example.com:1/" }),
+  );
+  assert.equal(options.httpsProxy, "http://own.example.com:1/");
 });

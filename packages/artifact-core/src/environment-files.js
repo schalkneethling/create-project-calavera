@@ -73,6 +73,25 @@ export async function variablesFromReferences(paths, hasReference, warnings) {
 }
 
 /**
+ * The value each variable has after `paths` are read in order, so a later file replaces an earlier
+ * one, without surrounding quotes. A file that does not exist or cannot be read is skipped;
+ * variablesFromReferences warns about the second.
+ * @param {string[]} paths Lowest precedence first.
+ */
+export async function environmentFileValues(paths) {
+  /** @type {Map<string, string>} */
+  const values = new Map();
+  for (const path of paths) {
+    const text = await readConfigText(path, "environment file", []);
+    if (text === undefined) continue;
+    for (const [name, value] of parseEnvironmentFile(text)) {
+      values.set(name, value.trim().replace(/^(['"`])([\s\S]*)\1$/, "$2"));
+    }
+  }
+  return values;
+}
+
+/**
  * The chains of `.env` files that Bun 1.3.9 may have loaded from `cwd`, each lowest precedence
  * first: `.env`, `.env.<mode>`, `.env.local` (not under `NODE_ENV=test`), and `.env.<mode>.local`.
  * Bun chooses the mode from the caller's NODE_ENV before it loads the files: `production` or
