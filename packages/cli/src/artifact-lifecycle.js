@@ -1788,14 +1788,17 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
       target,
       backup: join(normalizedRoot, "backups", String(index)),
       hadTarget: await fileExists(target),
-      // #1174: what the move puts at the target, so the rollback can tell an edit made since.
-      writtenHash: await writtenFingerprint(staged),
     });
   }
 
   const linked = await linkedJournalPath(projectRoot, normalizedRoot, journalOperations);
   if (linked?.error) throw linked.error;
   if (linked?.link) throw new Error(linkedFolderRefusal(linked.link));
+  // #1174: what each move puts at its target, so the rollback can tell an edit made since. It is
+  // read after the link check, so it never reads through a refused link.
+  for (const operation of journalOperations) {
+    Object.assign(operation, { writtenHash: await writtenFingerprint(operation.staged) });
+  }
 
   await writeAtomicJson(TRANSACTION_PATH, {
     schemaVersion: 1,
@@ -2054,7 +2057,8 @@ async function readTransactionJournal() {
       typeof operation.target !== "string" ||
       typeof operation.backup !== "string" ||
       typeof operation.hadTarget !== "boolean" ||
-      ("writtenHash" in operation && !SHA256_DIGEST.test(operation.writtenHash))
+      ("writtenHash" in operation &&
+        (typeof operation.writtenHash !== "string" || !SHA256_DIGEST.test(operation.writtenHash)))
     ) {
       throw new Error("Invalid artifact transaction journal operation.");
     }

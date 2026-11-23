@@ -1170,7 +1170,7 @@ test("a journal without the recorded fingerprints stops before it replaces or re
 
 test("recovery refuses a journal whose recorded fingerprint is not a SHA-256 digest", async () => {
   await inTransactionProject(async ({ project, root, staged }) => {
-    for (const writtenHash of [7, "abc", "A".repeat(64), null]) {
+    for (const writtenHash of [7, "abc", "A".repeat(64), null, ["a".repeat(64)]]) {
       const journal = `${JSON.stringify({
         schemaVersion: 1,
         transactionRoot: root,
