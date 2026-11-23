@@ -47,8 +47,9 @@ async function nearestExistingRealPath(path) {
  *
  * @param {string} path
  * @param {NodeJS.ErrnoException} error
+ * @param {string} command The command the remedy tells the person to run again.
  */
-async function missingFolderError(path, error) {
+async function missingFolderError(path, error, command) {
   const folder = dirname(path);
   const folderStats = await lstat(folder).catch(() => undefined);
   const problem =
@@ -64,7 +65,7 @@ async function missingFolderError(path, error) {
       : `the folder ${folder} ${problem}`;
   return Object.assign(
     new Error(
-      `Calavera cannot write the recipe at ${path}, because ${why}. Create the folder, or give a recipe path in a folder that exists and can be opened, then run apply again. ${STOPPED}`,
+      `Calavera cannot write the recipe at ${path}, because ${why}. Create the folder, or give a recipe path in a folder that exists and can be opened, then run ${command} again. ${STOPPED}`,
       { cause: error },
     ),
     { code: error.code },
@@ -88,10 +89,12 @@ async function missingFolderError(path, error) {
  * project looks like any other file, and apply writes it as one.
  *
  * @param {string} path Absolute recipe path.
- * @param {string} projectDirectory The directory apply runs in.
+ * @param {string} projectDirectory The directory apply or init runs in.
+ * @param {string} [command] The command that writes the recipe, which each message tells the person
+ *   to run again: init writes the recipe itself before it applies, so it passes "init" (#1220).
  * @returns {Promise<void>}
  */
-export async function assertRecipeWriteTarget(path, projectDirectory) {
+export async function assertRecipeWriteTarget(path, projectDirectory, command = "apply") {
   const project = await realpath(projectDirectory);
 
   let folder;
@@ -104,7 +107,7 @@ export async function assertRecipeWriteTarget(path, projectDirectory) {
     }
     await access(folder, constants.X_OK);
   } catch (error) {
-    throw await missingFolderError(path, /** @type {NodeJS.ErrnoException} */ (error));
+    throw await missingFolderError(path, /** @type {NodeJS.ErrnoException} */ (error), command);
   }
   // lstat does not follow a link at `path`. Any failure reads as nothing there, because the folder
   // was opened above, so the write reports anything else itself.
@@ -123,7 +126,7 @@ export async function assertRecipeWriteTarget(path, projectDirectory) {
         // one.
         throw Object.assign(
           new Error(
-            `Calavera refused to write the recipe: ${path} is a link to ${target}, which does not lead to a file (${failure.code}), so Calavera cannot tell where writing the recipe would land. Replace the link with the recipe file itself, then run apply again. ${STOPPED}`,
+            `Calavera refused to write the recipe: ${path} is a link to ${target}, which does not lead to a file (${failure.code}), so Calavera cannot tell where writing the recipe would land. Replace the link with the recipe file itself, then run ${command} again. ${STOPPED}`,
             { cause: failure },
           ),
           { code: failure.code },
@@ -131,16 +134,16 @@ export async function assertRecipeWriteTarget(path, projectDirectory) {
       }
       const outside = !isPathInside(project, await nearestExistingRealPath(target));
       throw new Error(
-        `Calavera refused to write the recipe: ${path} is a link to ${target}, which does not exist${outside ? ` and is outside ${project}` : ""}, so writing the recipe would create ${target} instead. Remove the link, or point it at an existing file inside ${project}, then run apply again. ${STOPPED}`,
+        `Calavera refused to write the recipe: ${path} is a link to ${target}, which does not exist${outside ? ` and is outside ${project}` : ""}, so writing the recipe would create ${target} instead. Remove the link, or point it at an existing file inside ${project}, then run ${command} again. ${STOPPED}`,
       );
     }
     const { real } = resolved;
     if (!isPathInside(project, real)) {
       throw new Error(
-        `Calavera refused to write the recipe: ${path} is a link to ${real === target ? target : `${target}, at the real path ${real}`}, which is outside ${project}, so writing the recipe would change a file outside the project. Replace the link with the recipe file itself, or give a recipe path inside ${project}, then run apply again. ${STOPPED}`,
+        `Calavera refused to write the recipe: ${path} is a link to ${real === target ? target : `${target}, at the real path ${real}`}, which is outside ${project}, so writing the recipe would change a file outside the project. Replace the link with the recipe file itself, or give a recipe path inside ${project}, then run ${command} again. ${STOPPED}`,
       );
     }
-    await assertNotFolder(path, real);
+    await assertNotFolder(path, real, command);
     return;
   }
 
@@ -150,11 +153,11 @@ export async function assertRecipeWriteTarget(path, projectDirectory) {
   if (!isPathInside(project, real)) {
     const where = real === path ? `${path} is` : `${path} resolves to ${real}, which is`;
     throw new Error(
-      `Calavera refused to write the recipe: ${where} outside ${project}, so writing the recipe would ${stats === undefined ? "create" : "change"} a file outside the project. Give a recipe path inside ${project}, then run apply again. ${STOPPED}`,
+      `Calavera refused to write the recipe: ${where} outside ${project}, so writing the recipe would ${stats === undefined ? "create" : "change"} a file outside the project. Give a recipe path inside ${project}, then run ${command} again. ${STOPPED}`,
     );
   }
   if (stats?.isDirectory()) {
-    await assertNotFolder(path, real);
+    await assertNotFolder(path, real, command);
   }
 }
 
@@ -164,12 +167,13 @@ export async function assertRecipeWriteTarget(path, projectDirectory) {
  *
  * @param {string} path
  * @param {string} real
+ * @param {string} command The command the remedy tells the person to run again.
  */
-async function assertNotFolder(path, real) {
+async function assertNotFolder(path, real, command) {
   if ((await lstat(real)).isDirectory()) {
     throw Object.assign(
       new Error(
-        `Calavera cannot write the recipe at ${path}, because ${real === path ? path : `it leads to ${real}, which`} is a folder. Give a recipe path that names a file, then run apply again. ${STOPPED}`,
+        `Calavera cannot write the recipe at ${path}, because ${real === path ? path : `it leads to ${real}, which`} is a folder. Give a recipe path that names a file, then run ${command} again. ${STOPPED}`,
       ),
       { code: "EISDIR" },
     );
