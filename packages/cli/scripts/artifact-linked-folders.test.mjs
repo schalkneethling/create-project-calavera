@@ -4,7 +4,17 @@
 // the project through a link. The message names the link and tells the person to replace it with
 // a real folder.
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -355,3 +365,34 @@ for (const dryRun of [false, true]) {
     });
   });
 }
+
+// #1193: when the cache block is not recorded yet, `artifacts status --check-updates` stages the
+// state it records in `.calavera/.transactions`, so a link there stops the report before it stages
+// anything, although `.calavera` itself is a real folder. The link target is read-only, so a
+// staging write that the transaction refused and cleaned up afterward fails with a different error.
+test("artifacts status --check-updates refuses to record the cache block through a linked .calavera/.transactions", async () => {
+  await inProject({ id: "skill-code-review" }, async ({ project, outside }) => {
+    await mkdir(join(project, ".calavera"));
+    await symlink(outside, join(project, ".calavera/.transactions"));
+    await chmod(outside, 0o555);
+    const projectBefore = await snapshotDirectory(project);
+    const outsideBefore = await snapshotDirectory(outside);
+
+    await assert.rejects(
+      runArtifactCommand(
+        {
+          config: "calavera.config.json",
+          dryRun: false,
+          artifactAction: "status",
+          checkUpdates: true,
+        },
+        stubRegistry(new Map([["skill-code-review", "1.0.0"]])),
+      ),
+      { message: refusal(".calavera/.transactions") },
+    );
+
+    assert.deepEqual(await snapshotDirectory(project), projectBefore);
+    assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+    await chmod(outside, 0o755);
+  });
+});
