@@ -6,7 +6,7 @@
 // before this change.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, realpath, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
@@ -115,6 +115,52 @@ for (const { label, plain, json, command, message } of cases) {
     });
   });
 }
+
+// A name that every plain object inherits is not a command, so it must not reach an inherited
+// method such as Object.prototype.toString, which would exit 0 with no output.
+for (const name of ["toString", "constructor", "__proto__"]) {
+  test(`${name} is an unknown command without --json`, async () => {
+    await inEmptyDirectory(async (directory) => {
+      const result = await runCli(directory, [name]);
+
+      assert.equal(result.code, 1);
+      assert.equal(result.stdout, "");
+      assert.equal(result.stderr, `Unknown command: ${name}\n`);
+    });
+  });
+
+  test(`${name} is an unknown command with --json`, async () => {
+    await inEmptyDirectory(async (directory) => {
+      const result = await runCli(directory, [name, "--json"]);
+
+      assert.equal(result.code, 1);
+      assert.equal(result.stderr, "");
+      assert.deepEqual(JSON.parse(result.stdout), {
+        command: null,
+        ok: false,
+        issues: [{ level: "error", message: `Unknown command: ${name}` }],
+      });
+    });
+  });
+}
+
+test("bootstrap runs the same bootstrap as agent-init", async () => {
+  /** @type {string[]} */
+  const outputs = [];
+
+  for (const command of ["bootstrap", "agent-init"]) {
+    await inEmptyDirectory(async (directory) => {
+      const result = await runCli(directory, [command, "--json"]);
+
+      assert.equal(result.code, 0, result.stderr);
+      // Each run has its own directory, which the result names.
+      outputs.push(result.stdout.replaceAll(await realpath(directory), "<directory>"));
+    });
+  }
+
+  assert.equal(outputs[0], outputs[1]);
+  assert.equal(JSON.parse(outputs[0]).command, "agent-init");
+});
 
 test("a parse failure names no command that the arguments only appear to name", async () => {
   // A lenient reading takes the value of `--bogus` for a positional, but it may be a secret the

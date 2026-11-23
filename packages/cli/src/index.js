@@ -7465,65 +7465,75 @@ function formatAgentBootstrapChange(change, dryRun) {
 }
 
 /**
- * What each command runs, keyed by the command name `parseArgs` returns. A name missing here is
- * an unknown command.
+ * `--init`, `agent-init`, and `bootstrap` run the same bootstrap.
  *
- * @type {Record<string, (options: CliOptions) => Promise<void>>}
+ * @param {CliOptions} options
  */
-const commandRunners = {
-  help: async () => {
-    printHelp();
-  },
-  init: async (options) => {
-    printResult(await initRecipe(options), options.json);
-  },
-  "agent-init": async (options) => {
-    printResult(await agentBootstrap(options), options.json);
-  },
-  bootstrap: async (options) => {
-    printResult(await agentBootstrap(options), options.json);
-  },
-  new: async (options) => {
-    printResult(await newProject(options));
-  },
-  apply: async (options) => {
-    printResult(await applyRecipe(options), options.json, { noInstall: options.noInstall });
-  },
-  doctor: async (options) => {
-    const result = await doctor(options);
-    printResult(result, options.json);
-    // #1030: `ok` is false only when an issue has the level "error", so warnings stay advisory
-    // and a CI step that runs doctor fails only on an error.
-    if (!result.ok) {
-      process.exitCode = 1;
-    }
-  },
-  update: async (options) => {
-    printResult(await applyRecipe(options), options.json, { noInstall: options.noInstall });
-  },
-  clean: async (options) => {
-    printResult(await clean(options), options.json, { dryRun: options.dryRun });
-  },
-  eject: async (options) => {
-    const result = await ejectProject(options);
-    printResult(result, options.json);
-    // A refused run changed nothing, and a failed one left items, so neither succeeded.
-    if (result.status === "refused" || result.status === "failed") {
-      process.exitCode = 1;
-    }
-  },
-  artifacts: async (options) => {
-    const result = /** @type {ArtifactCommandResult} */ (await runArtifactCommand(options));
-    printResult(result, options.json);
-    // #994: doctor fails the run when an installed artifact's files are missing, are not managed,
-    // or carry a local edit, as `doctor` does for an error (#1030). A selection that is not
-    // installed yet does not fail it. `artifacts status` reports the same problems and stays
-    // informational.
-    if (options.artifactAction === "doctor" && result.ok !== true) {
-      process.exitCode = 1;
-    }
-  },
-};
+async function runAgentBootstrap(options) {
+  printResult(await agentBootstrap(options), options.json);
+}
+
+/**
+ * What each command runs, keyed by the command name `parseArgs` returns. A name missing here is
+ * an unknown command. The map has no prototype, so a name such as `toString` or `__proto__`
+ * cannot reach an inherited property and run it as a command.
+ *
+ * @typedef {Record<string, (options: CliOptions) => Promise<void>>} CommandRunners
+ * @type {CommandRunners}
+ */
+const commandRunners = Object.assign(
+  Object.create(null),
+  /** @type {CommandRunners} */ ({
+    help: async () => {
+      printHelp();
+    },
+    init: async (options) => {
+      printResult(await initRecipe(options), options.json);
+    },
+    "agent-init": runAgentBootstrap,
+    bootstrap: runAgentBootstrap,
+    new: async (options) => {
+      printResult(await newProject(options));
+    },
+    apply: async (options) => {
+      printResult(await applyRecipe(options), options.json, { noInstall: options.noInstall });
+    },
+    doctor: async (options) => {
+      const result = await doctor(options);
+      printResult(result, options.json);
+      // #1030: `ok` is false only when an issue has the level "error", so warnings stay advisory
+      // and a CI step that runs doctor fails only on an error.
+      if (!result.ok) {
+        process.exitCode = 1;
+      }
+    },
+    update: async (options) => {
+      printResult(await applyRecipe(options), options.json, { noInstall: options.noInstall });
+    },
+    clean: async (options) => {
+      printResult(await clean(options), options.json, { dryRun: options.dryRun });
+    },
+    eject: async (options) => {
+      const result = await ejectProject(options);
+      printResult(result, options.json);
+      // A refused run changed nothing, and a failed one left items, so neither succeeded.
+      if (result.status === "refused" || result.status === "failed") {
+        process.exitCode = 1;
+      }
+    },
+    artifacts: async (options) => {
+      const result = /** @type {ArtifactCommandResult} */ (await runArtifactCommand(options));
+      printResult(result, options.json);
+      // #994: doctor fails the run when an installed artifact's files are missing, are not managed,
+      // or carry a local edit, as `doctor` does for an error (#1030). A selection that is not
+      // installed yet does not fail it. `artifacts status` reports the same problems and stays
+      // informational.
+      if (options.artifactAction === "doctor" && result.ok !== true) {
+        process.exitCode = 1;
+      }
+    },
+  }),
+);
 
 /**
  * @param {string} command
@@ -7615,7 +7625,10 @@ export async function runCli() {
   try {
     options = parseArgs(args);
   } catch (error) {
-    // `--json` is read from the arguments themselves, because their parse failed (#1218).
+    // `--json` is read from the arguments themselves, because their parse failed (#1218). A
+    // `--json` that Node's parser took as another option's missing value, as in
+    // `doctor --config --json`, which it refuses as ambiguous, still counts on purpose: the person
+    // typed `--json`, so the error they get back is JSON.
     const asJSON = calaveraArgs(args).args.includes("--json");
     printStop(asJSON, asJSON ? commandNamedIn(args) : null, errorText(error));
     process.exitCode = 1;
