@@ -90,7 +90,9 @@ import {
   OPENCODE_CONFIG_SCHEMA,
   calaveraMcpEntries,
   createCodexMcpTomlBlock,
+  UNRELEASED_PIN,
   isCalaveraMcpEntry,
+  pinsUnreleasedVersion,
   projectMcpConfigPath,
   tomlPosition,
 } from "./utils/mcp-config.js";
@@ -1000,7 +1002,7 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   if (!isCalaveraMcpEntry(calavera, expected)) {
     return mcpEntryKept(
       path,
-      `The calavera entry under ${key} in ${path} differs from the launch command Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
+      `The calavera entry under ${key} in ${path} ${pinsUnreleasedVersion(calavera, expected) ? UNRELEASED_PIN : "differs from the launch command Calavera writes for every package manager"}, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
     );
   }
   const formatter = await loadFormatter();
@@ -1120,10 +1122,11 @@ function removesOnlyTheEntry(text, contents) {
  * line, comments included, stays.
  *
  * @param {string} path
- * @param {string[]} expected The table Calavera writes, for each package manager.
+ * @param {import("./utils/mcp-config.js").McpLaunchCommand[]} entries The launch command for
+ *   each package manager, from `calaveraMcpEntries`.
  * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
  */
-async function planCodexMcpEntry(path, expected) {
+async function planCodexMcpEntry(path, entries) {
   const entry = await readTextEntry(path);
   if (entry?.text === undefined) return NO_MCP_ENTRY;
   const { identity, text } = entry;
@@ -1142,12 +1145,17 @@ async function planCodexMcpEntry(path, expected) {
       { cause: new Error(`TOML parse error${tomlPosition(error, " at ")}`) },
     );
   }
-  if (serversWithEntry(config, "mcp_servers") === undefined) return NO_MCP_ENTRY;
+  const servers = serversWithEntry(config, "mcp_servers");
+  if (servers === undefined) return NO_MCP_ENTRY;
   if (!inside) return mcpEntryOutside(path);
+  const why = pinsUnreleasedVersion(servers.calavera, entries)
+    ? UNRELEASED_PIN
+    : "differs from the table Calavera writes for every package manager";
   const edited = mcpEntryKept(
     path,
-    `The ${CODEX_TABLE_HEADER} table in ${path} differs from the table Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
+    `The ${CODEX_TABLE_HEADER} table in ${path} ${why}, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
   );
+  const expected = entries.map(createCodexMcpTomlBlock);
   const lines = text.split("\n");
   const bare = lines.map((line) => line.replace(/\r$/, ""));
   for (const start of bare.keys()) {
@@ -1319,7 +1327,7 @@ async function planMcpEntries(guidance, loadFormatter) {
       const entries = /** @type {import("./utils/mcp-config.js").McpLaunchCommand[]} */ (
         calaveraMcpEntries(harness, launches)
       );
-      parts.push(await planCodexMcpEntry(path, entries.map(createCodexMcpTomlBlock)));
+      parts.push(await planCodexMcpEntry(path, entries));
     } else {
       const key = harness === "opencode" ? "mcp" : "mcpServers";
       parts.push(

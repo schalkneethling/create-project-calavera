@@ -199,7 +199,14 @@ for (const { harness, path, written } of HARNESSES) {
     for (const version of ["99.0.0", "99.0.0-local.1"]) {
       await inProject(async () => {
         await write(path, written(repinned(npmLaunch, version)));
+        // The reason names the pin, never the version text from the file.
         await assertKeptAndReported(path, /edited/);
+        const reason = report(await plan(), path).reason;
+        assert.match(
+          reason,
+          /pins a version of create-project-calavera that Calavera never released/,
+        );
+        assert.ok(!reason.includes(version), reason);
       });
     }
   });

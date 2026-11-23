@@ -193,7 +193,15 @@ for (const { harness, path, file } of harnesses) {
       await inProject(async () => {
         const before = file(npmLaunch(version));
         await write(path, before);
-        assertKeptAsEdit(await init(harness), path);
+        const result = await init(harness);
+        assertKeptAsEdit(result, path);
+        // The reason names the pin, never the version text from the file.
+        const reason = result.changes.find((change) => change.path === path)?.reason ?? "";
+        assert.match(
+          reason,
+          /pins a version of create-project-calavera that Calavera never released/,
+        );
+        assert.ok(!reason.includes(version), reason);
         assert.equal(await readFile(path, "utf8"), before, `${path} ${version}`);
       });
     }

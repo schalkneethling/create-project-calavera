@@ -227,8 +227,9 @@ export function normalizePinnedVersion(text) {
 
 /**
  * The text with its pinned version replaced, as `normalizePinnedVersion` gives it, only when that
- * version is one Calavera released: one the `releases` of a setup-notes template lists, the list
- * `findEarlierGuidance` checks for `.agents/calavera/mcp.md`. `--init` and `eject` call it on the
+ * version is one the `releases` of a setup-notes template list, the list `findEarlierGuidance`
+ * checks for `.agents/calavera/mcp.md`. That list holds every published release, plus the
+ * release about to be published once its template text exists. `--init` and `eject` call it on the
  * `calavera` MCP entry in a harness file, so an entry pinned to any other version, such as a local
  * build's `7.0.0-local.1`, is a local edit (owner decision of 2026-11-23, #1219). The version this
  * checkout writes is always listed, because earlier-guidance-table.test.mjs fails until it is.
