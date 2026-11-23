@@ -1580,11 +1580,12 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
         `Artifact transaction operations ${earlier} and ${index} both target ${target}.`,
       );
     }
-    // Recovery refuses nested targets, so a commit that wrote them could never be rolled back.
+    // Recovery refuses nested targets, and targets that differ only in letter case or Unicode
+    // normalization, so a commit that wrote them could never be rolled back.
     for (const [other, otherIndex] of seenTargets) {
-      if (isPathInside(other, target) || isPathInside(target, other)) {
+      if (pathsOverlap(other, target)) {
         throw new Error(
-          `Artifact transaction operations ${otherIndex} and ${index} target ${other} and ${target}, one inside the other.`,
+          `Artifact transaction operations ${otherIndex} and ${index} target ${other} and ${target}, the same path or one inside the other.`,
         );
       }
     }
@@ -1633,8 +1634,27 @@ export async function recoverArtifactTransaction(options = {}) {
     throw new Error("A pending artifact transaction requires recovery before a dry run.");
   }
   const { transactionRoot, operations } = await readTransactionJournal();
+  await rollBackArtifactOperations(resolve("."), operations);
+  await rm(TRANSACTION_PATH, { force: true });
+  await rm(transactionRoot, { recursive: true, force: true });
+}
 
-  for (const operation of operations.reverse()) {
+/**
+ * Rolls back the operations of a journal that `readTransactionJournal` accepted, last first: each
+ * target with a backup gets its backup back, and each target that did not exist before is
+ * removed. Before each step, it stops when a folder above the target is a symbolic link (#1193).
+ *
+ * @param {string} projectRoot
+ * @param {{ target: string, backup: string, hadTarget: boolean }[]} operations
+ */
+export async function rollBackArtifactOperations(projectRoot, operations) {
+  for (const operation of [...operations].reverse()) {
+    // An earlier step may have moved a backup that is a symbolic link into place, for example on
+    // a file system that ignores letter case, so the folders are checked again before each step.
+    const link = await linkedFolder(projectRoot, dirname(operation.target));
+    if (link !== null) {
+      throw new Error(journalLinkRefusal(projectRoot, operation.target, link));
+    }
     if (await fileExists(operation.backup)) {
       await rm(operation.target, { recursive: true, force: true });
       await mkdir(dirname(operation.target), { recursive: true });
@@ -1643,8 +1663,6 @@ export async function recoverArtifactTransaction(options = {}) {
       await rm(operation.target, { recursive: true, force: true });
     }
   }
-  await rm(TRANSACTION_PATH, { force: true });
-  await rm(transactionRoot, { recursive: true, force: true });
 }
 
 /**
@@ -1706,7 +1724,7 @@ async function readTransactionJournal() {
   // backup, which may be a symbolic link, into a folder that a later step removes files through.
   for (const [index, { target }] of operations.entries()) {
     for (const [earlier, other] of operations.slice(0, index).entries()) {
-      if (isPathInside(other.target, target) || isPathInside(target, other.target)) {
+      if (pathsOverlap(other.target, target)) {
         throw new Error(
           `Artifact transaction journal operations ${earlier} and ${index} target ${relative(projectRoot, other.target)} and ${relative(projectRoot, target)}, the same path or one inside the other. ${JOURNAL_REFUSAL_REMEDY}`,
         );
@@ -1715,11 +1733,35 @@ async function readTransactionJournal() {
   }
   const linked = await linkedJournalPath(projectRoot, transactionRoot, operations);
   if (linked !== null) {
-    throw new Error(
-      `Artifact transaction journal path ${relative(projectRoot, linked.path)} lies below the symbolic link ${relative(projectRoot, linked.link)}. ${JOURNAL_REFUSAL_REMEDY}`,
-    );
+    throw new Error(journalLinkRefusal(projectRoot, linked.path, linked.link));
   }
   return { transactionRoot, operations };
+}
+
+/**
+ * The message that refuses a journal whose `path` lies below the symbolic link `link`.
+ *
+ * @param {string} projectRoot
+ * @param {string} path
+ * @param {string} link
+ */
+function journalLinkRefusal(projectRoot, path, link) {
+  return `Artifact transaction journal path ${relative(projectRoot, path)} lies below the symbolic link ${relative(projectRoot, link)}. ${JOURNAL_REFUSAL_REMEDY}`;
+}
+
+/**
+ * Whether `a` and `b` are the same path or one lies inside the other on a file system that
+ * ignores letter case and Unicode normalization, such as the default APFS on macOS. Both paths
+ * are compared in NFC and lower case on every platform, so a journal is refused the same way
+ * wherever it is read (#1193).
+ *
+ * @param {string} a
+ * @param {string} b
+ */
+function pathsOverlap(a, b) {
+  const foldedA = a.normalize("NFC").toLowerCase();
+  const foldedB = b.normalize("NFC").toLowerCase();
+  return isPathInside(foldedA, foldedB) || isPathInside(foldedB, foldedA);
 }
 
 /**

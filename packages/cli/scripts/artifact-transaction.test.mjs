@@ -21,6 +21,7 @@ import {
   commitArtifactTransaction,
   isTransactionTarget,
   recoverArtifactTransaction,
+  rollBackArtifactOperations,
 } from "../src/artifact-lifecycle.js";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 
@@ -88,7 +89,15 @@ test("an artifact transaction refuses each invalid operation with its own messag
           { staged, target: join(project, ".agents/skills/b") },
           { staged, target: skill },
         ],
-        message: `Artifact transaction operations 0 and 2 target ${join(project, ".agents/skills/a/inner")} and ${skill}, one inside the other.`,
+        message: `Artifact transaction operations 0 and 2 target ${join(project, ".agents/skills/a/inner")} and ${skill}, the same path or one inside the other.`,
+      },
+      {
+        root,
+        operations: [
+          { staged, target: skill },
+          { staged, target: join(project, ".agents/skills/A") },
+        ],
+        message: `Artifact transaction operations 0 and 1 target ${skill} and ${join(project, ".agents/skills/A")}, the same path or one inside the other.`,
       },
       {
         root,
@@ -549,3 +558,130 @@ for (const { name, link, target } of [
     });
   });
 }
+
+// #1193: on a file system that ignores letter case or Unicode normalization, such as the default
+// APFS on macOS, `FOO` and `foo`, or `é` and `e` with a combining accent, name the same folder.
+// Rolled back in reverse, the second operation would move its linked backup into that folder, and
+// removing the first target would then follow the link outside the project. The nested-target
+// check compares folded spellings on every platform, so recovery refuses the journal up front.
+for (const { name, folder, nested } of [
+  { name: "letter case", folder: "FOO", nested: "foo/bar" },
+  { name: "Unicode normalization", folder: "é", nested: "é/bar" },
+]) {
+  test(`recovery refuses targets that nest only when ${name} is ignored, and changes nothing`, async () => {
+    await inTransactionProject(async ({ project, root, staged }) => {
+      const outside = await realpath(await mkdtemp(join(tmpdir(), "calavera-transaction-fold-")));
+      try {
+        await mkdir(join(outside, "bar"));
+        await writeFile(join(outside, "bar/keep.txt"), "keep\n");
+        await mkdir(join(root, "backups"), { recursive: true });
+        await symlink(outside, join(root, "backups/1"));
+        await mkdir(join(project, ".agents/skills"), { recursive: true });
+        const journal = await writeJournal(root, [
+          {
+            staged,
+            target: join(project, ".agents/skills", nested),
+            backup: join(root, "backups/0"),
+            hadTarget: false,
+          },
+          {
+            staged,
+            target: join(project, ".agents/skills", folder),
+            backup: join(root, "backups/1"),
+            hadTarget: true,
+          },
+        ]);
+        const projectBefore = await snapshotDirectory(project);
+        const outsideBefore = await snapshotDirectory(outside);
+
+        await assert.rejects(recoverArtifactTransaction(), {
+          message: `Artifact transaction journal operations 0 and 1 target ${join(".agents/skills", nested)} and ${join(".agents/skills", folder)}, the same path or one inside the other. ${REMEDY}`,
+        });
+
+        assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+        assert.deepEqual(await snapshotDirectory(project), projectBefore);
+        assert.equal(await readFile(TRANSACTION_PATH, "utf8"), journal);
+      } finally {
+        await rm(outside, { force: true, recursive: true });
+      }
+    });
+  });
+}
+
+// #1193: the rollback checks a target's folders for a symbolic link again right before each step,
+// so a link that an earlier step moved into place stops it, however the journal spells the path.
+// The operations go to the loop directly, past the journal checks that would refuse them first.
+test("the rollback stops before a step whose folder an earlier step replaced with a link", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "calavera-transaction-step-")));
+    try {
+      await mkdir(join(outside, "bar"));
+      await writeFile(join(outside, "bar/keep.txt"), "keep\n");
+      await mkdir(join(root, "backups"), { recursive: true });
+      await symlink(outside, join(root, "backups/1"));
+      await mkdir(join(project, ".agents/skills"), { recursive: true });
+      const outsideBefore = await snapshotDirectory(outside);
+
+      await assert.rejects(
+        rollBackArtifactOperations(project, [
+          {
+            staged,
+            target: join(project, ".agents/skills/foo/bar"),
+            backup: join(root, "backups/0"),
+            hadTarget: false,
+          },
+          {
+            staged,
+            target: join(project, ".agents/skills/foo"),
+            backup: join(root, "backups/1"),
+            hadTarget: true,
+          },
+        ]),
+        {
+          message: `Artifact transaction journal path ${join(".agents/skills/foo/bar")} lies below the symbolic link ${join(".agents/skills/foo")}. ${REMEDY}`,
+        },
+      );
+
+      assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+    } finally {
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+});
+
+// The rollback removes a folder that the stopped operation created, with its files, restores a
+// folder from its backup, and leaves alone a target that existed before but was never backed up,
+// because the stopped operation had not moved it yet.
+test("the rollback removes created folders, restores backed-up folders, and keeps targets it never moved", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    const skills = join(project, ".agents/skills");
+    await mkdir(join(skills, "created"), { recursive: true });
+    await writeFile(join(skills, "created/SKILL.md"), "# Created\n");
+    await mkdir(join(skills, "restored"), { recursive: true });
+    await writeFile(join(skills, "restored/SKILL.md"), "# New\n");
+    await mkdir(join(root, "backups/1"), { recursive: true });
+    await writeFile(join(root, "backups/1/SKILL.md"), "# Before\n");
+    await mkdir(join(skills, "kept"));
+    await writeFile(join(skills, "kept/SKILL.md"), "# Edited by the person\n");
+
+    await rollBackArtifactOperations(project, [
+      {
+        staged,
+        target: join(skills, "created"),
+        backup: join(root, "backups/0"),
+        hadTarget: false,
+      },
+      {
+        staged,
+        target: join(skills, "restored"),
+        backup: join(root, "backups/1"),
+        hadTarget: true,
+      },
+      { staged, target: join(skills, "kept"), backup: join(root, "backups/2"), hadTarget: true },
+    ]);
+
+    assert.deepEqual((await readdir(skills)).sort(), ["kept", "restored"]);
+    assert.equal(await readFile(join(skills, "restored/SKILL.md"), "utf8"), "# Before\n");
+    assert.equal(await readFile(join(skills, "kept/SKILL.md"), "utf8"), "# Edited by the person\n");
+  });
+});
