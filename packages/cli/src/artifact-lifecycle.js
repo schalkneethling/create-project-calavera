@@ -1648,12 +1648,19 @@ export async function recoverArtifactTransaction(options = {}) {
  * @param {{ target: string, backup: string, hadTarget: boolean }[]} operations
  */
 export async function rollBackArtifactOperations(projectRoot, operations) {
-  for (const operation of [...operations].reverse()) {
+  for (const [index, operation] of [...operations.entries()].reverse()) {
     // An earlier step may have moved a backup that is a symbolic link into place, for example on
-    // a file system that ignores letter case, so the folders are checked again before each step.
+    // a file system that treats two spellings the journal checks cannot tell apart as one name,
+    // so the folders are checked again before each step.
     const link = await linkedFolder(projectRoot, dirname(operation.target));
     if (link !== null) {
-      throw new Error(journalLinkRefusal(projectRoot, operation.target, link));
+      const rolledBack =
+        index === operations.length - 1
+          ? "It rolled back no operation yet."
+          : `It already rolled back operations ${index + 1} to ${operations.length - 1}, so their backups are gone.`;
+      throw new Error(
+        `The artifact transaction rollback stopped before operation ${index}, because ${relative(projectRoot, operation.target)} lies below the symbolic link ${relative(projectRoot, link)}. ${rolledBack} Calavera does not roll the rest of this journal back. Restore the files of operations 0 to ${index} by hand if needed, using the backups in ${TRANSACTION_ROOT}, then remove ${TRANSACTION_PATH}.`,
+      );
     }
     if (await fileExists(operation.backup)) {
       await rm(operation.target, { recursive: true, force: true });
@@ -1673,9 +1680,10 @@ export async function rollBackArtifactOperations(projectRoot, operations) {
  * and the transaction root, a backup, or a target may be a symbolic link, because the rollback
  * would then remove or move files outside the project, and no target may equal or lie inside
  * another. Throws on a journal that fails a check; a message names operations by their index and
- * paths by their project path, and quotes nothing else from the journal. The checks run once,
- * before the rollback moves anything, so a process that replaces a folder with a symbolic link
- * while the rollback runs is not detected.
+ * paths by their project path, and quotes nothing else from the journal. The checks run before the
+ * rollback moves anything, and `rollBackArtifactOperations` checks for a symbolic link again before
+ * each step; a process that replaces a folder with a link between that check and the step's `rm`
+ * or `rename` is not detected.
  */
 async function readTransactionJournal() {
   const journal = await readJson(TRANSACTION_PATH);
@@ -1752,15 +1760,20 @@ function journalLinkRefusal(projectRoot, path, link) {
 /**
  * Whether `a` and `b` are the same path or one lies inside the other on a file system that
  * ignores letter case and Unicode normalization, such as the default APFS on macOS. Both paths
- * are compared in NFC and lower case on every platform, so a journal is refused the same way
- * wherever it is read (#1193).
+ * are compared folded on every platform, so a journal is refused the same way wherever it is
+ * read (#1193): decomposed, upper-cased and then lower-cased, which applies full case folding
+ * (`ß` and `ss`, final and other sigma, ligatures) that lower-casing alone misses, and composed
+ * again. A fold can still miss aliases, such as Windows short names, so the rollback also checks
+ * for a symbolic link before each step.
  *
  * @param {string} a
  * @param {string} b
  */
 function pathsOverlap(a, b) {
-  const foldedA = a.normalize("NFC").toLowerCase();
-  const foldedB = b.normalize("NFC").toLowerCase();
+  const fold = (/** @type {string} */ path) =>
+    path.normalize("NFD").toUpperCase().toLowerCase().normalize("NFC");
+  const foldedA = fold(a);
+  const foldedB = fold(b);
   return isPathInside(foldedA, foldedB) || isPathInside(foldedB, foldedA);
 }
 

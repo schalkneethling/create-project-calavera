@@ -3,10 +3,12 @@
 import assert from "node:assert/strict";
 import {
   chmod,
+  lstat,
   mkdir,
   mkdtemp,
   readFile,
   readdir,
+  readlink,
   realpath,
   rm,
   symlink,
@@ -566,7 +568,21 @@ for (const { name, link, target } of [
 // check compares folded spellings on every platform, so recovery refuses the journal up front.
 for (const { name, folder, nested } of [
   { name: "letter case", folder: "FOO", nested: "foo/bar" },
-  { name: "Unicode normalization", folder: "é", nested: "é/bar" },
+  // Precomposed é against e with a combining acute accent.
+  {
+    name: "Unicode normalization",
+    folder: String.fromCodePoint(0xe9),
+    nested: `e${String.fromCodePoint(0x301)}/bar`,
+  },
+  // Full case folding, which APFS applies and lower-casing alone does not: ß against ss, final
+  // sigma against sigma, and the ff ligature against ff.
+  { name: "full case folding (sharp s)", folder: String.fromCodePoint(0xdf), nested: "ss/bar" },
+  {
+    name: "full case folding (final sigma)",
+    folder: String.fromCodePoint(0x3c2),
+    nested: `${String.fromCodePoint(0x3c3)}/bar`,
+  },
+  { name: "full case folding (ligature)", folder: String.fromCodePoint(0xfb00), nested: "ff/bar" },
 ]) {
   test(`recovery refuses targets that nest only when ${name} is ignored, and changes nothing`, async () => {
     await inTransactionProject(async ({ project, root, staged }) => {
@@ -638,7 +654,7 @@ test("the rollback stops before a step whose folder an earlier step replaced wit
           },
         ]),
         {
-          message: `Artifact transaction journal path ${join(".agents/skills/foo/bar")} lies below the symbolic link ${join(".agents/skills/foo")}. ${REMEDY}`,
+          message: `The artifact transaction rollback stopped before operation 0, because ${join(".agents/skills/foo/bar")} lies below the symbolic link ${join(".agents/skills/foo")}. It already rolled back operations 1 to 1, so their backups are gone. Calavera does not roll the rest of this journal back. Restore the files of operations 0 to 0 by hand if needed, using the backups in .calavera/.transactions, then remove .calavera/artifact-transaction.json.`,
         },
       );
 
@@ -683,5 +699,62 @@ test("the rollback removes created folders, restores backed-up folders, and keep
     assert.deepEqual((await readdir(skills)).sort(), ["kept", "restored"]);
     assert.equal(await readFile(join(skills, "restored/SKILL.md"), "utf8"), "# Before\n");
     assert.equal(await readFile(join(skills, "kept/SKILL.md"), "utf8"), "# Edited by the person\n");
+  });
+});
+
+// #1193: a link the person made at a target, such as a skill folder linked from elsewhere, is not
+// refused. The commit backs the link up as a link, and the rollback puts the same link back
+// without touching the folder it points to.
+test("a target that is itself a symbolic link is committed and rolled back as a link", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "calavera-transaction-own-")));
+    try {
+      await writeFile(join(outside, "SKILL.md"), "# Mine\n");
+      const target = join(project, ".agents/skills/mine");
+      await mkdir(join(project, ".agents/skills"), { recursive: true });
+      await symlink(outside, target);
+      const outsideBefore = await snapshotDirectory(outside);
+
+      await commitArtifactTransaction(root, [{ staged, target }]);
+      assert.equal((await lstat(target)).isSymbolicLink(), false);
+      assert.equal((await lstat(join(root, "backups/0"))).isSymbolicLink(), true);
+
+      // The journal the commit wrote, as an interrupted commit would leave it.
+      await writeJournal(root, [
+        { staged, target, backup: join(root, "backups/0"), hadTarget: true },
+      ]);
+      await recoverArtifactTransaction();
+
+      assert.equal(await readlink(target), outside);
+      assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+    } finally {
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+});
+
+// When the first step already meets a link, the message says that nothing was rolled back.
+test("the rollback names that it rolled back nothing when the first step meets a link", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "calavera-transaction-first-")));
+    try {
+      await mkdir(join(project, ".agents"));
+      await symlink(outside, join(project, ".agents/skills"));
+      await assert.rejects(
+        rollBackArtifactOperations(project, [
+          {
+            staged,
+            target: join(project, ".agents/skills/a"),
+            backup: join(root, "backups/0"),
+            hadTarget: false,
+          },
+        ]),
+        {
+          message: `The artifact transaction rollback stopped before operation 0, because ${join(".agents/skills/a")} lies below the symbolic link ${join(".agents/skills")}. It rolled back no operation yet. Calavera does not roll the rest of this journal back. Restore the files of operations 0 to 0 by hand if needed, using the backups in .calavera/.transactions, then remove .calavera/artifact-transaction.json.`,
+        },
+      );
+    } finally {
+      await rm(outside, { force: true, recursive: true });
+    }
   });
 });
