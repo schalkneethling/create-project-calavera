@@ -350,7 +350,7 @@ for (const [label, text, sentences] of [
   [
     "an entry under mcp",
     `{\n  // mine\n  "mcp": { "calavera": ${JSON.stringify(v1Entry("6.2.1"))} }\n}\n`,
-    ["Move the calavera entry under mcp.servers yourself and remove enabled."],
+    ["Move the calavera entry from mcp to mcp.servers yourself and remove enabled."],
   ],
   [
     "an entry under mcp.servers",
@@ -364,7 +364,9 @@ for (const [label, text, sentences] of [
     `{\n  /* both */\n  "mcp": {\n    "servers": { "calavera": ${JSON.stringify(v2Entry("6.2.0"))} },\n    "calavera": ${JSON.stringify(v1Entry("6.2.1"))}\n  }\n}\n`,
     [
       "Calavera does not update the version its calavera entry pins in a file with comments.",
-      "Move the calavera entry under mcp.servers yourself and remove enabled.",
+      // Moving it would put a second calavera under mcp.servers, so only the keep-one remedy follows.
+      "The calavera entry under mcp is one a Calavera release wrote.",
+      "The file holds two calavera servers: keep the one you mean to use and remove the other.",
     ],
   ],
 ]) {
@@ -415,14 +417,32 @@ for (const [label, mcp, expected, absent] of /** @type {const} */ ([
   [
     "the current entry under mcp.servers",
     `{ "servers": { "calavera": ${JSON.stringify(v2Entry(current))} } }`,
-    "The calavera entry under mcp.servers is already the one this release writes.",
+    "The calavera entry under mcp.servers already pins this release of Calavera.",
     /Calavera does not update the version its calavera entry pins/,
+  ],
+  [
+    "the current release's entry for another package manager under mcp.servers",
+    `{ "servers": { "calavera": ${JSON.stringify(v2Entry(current, "pnpm"))} } }`,
+    "The calavera entry under mcp.servers already pins this release of Calavera.",
+    /Calavera does not update the version its calavera entry pins/,
+  ],
+  [
+    "an entry under mcp.servers pinned to a version npm does not have",
+    `{ "servers": { "calavera": ${JSON.stringify(v2Entry("99.0.0"))} } }`,
+    "The calavera entry under mcp.servers in opencode.json pins a version of create-project-calavera that this release of Calavera does not know as published, so it was left unchanged as a local edit.",
+    /99\.0\.0|Calavera does not update the version/,
   ],
   [
     "two entries",
     `{ "calavera": ${JSON.stringify(v1Entry("6.2.1"))}, "servers": { "calavera": ${JSON.stringify(v2Entry(current))} } }`,
     "The file holds two calavera servers: keep the one you mean to use and remove the other.",
-    /^$/,
+    /Move the calavera entry/,
+  ],
+  [
+    "an edited switch under mcp beside an entry under mcp.servers",
+    `{ "calavera": { "enabled": false }, "servers": { "calavera": ${JSON.stringify(v2Entry(current))} } }`,
+    'The calavera entry under mcp holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on the calavera entry under mcp.servers.',
+    /two calavera servers/,
   ],
 ])) {
   test(`a file with comments and ${label} gets that entry's own remedy`, async () => {

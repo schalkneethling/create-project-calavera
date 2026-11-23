@@ -1,9 +1,12 @@
 // @ts-check
 import { spawn } from "node:child_process";
 import { constants } from "node:fs";
-import { access, mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, stat } from "node:fs/promises";
 import { delimiter, isAbsolute, join } from "node:path";
+
+import { onExit } from "signal-exit";
+
+import { createTemporaryFolder, removeTemporaryFolder } from "./cleanup.js";
 
 /**
  * @typedef {"skipped" | "missing" | "timeout" | "failed" | "unparsed" | "older" | "ok"} OpenCodeVersionCheck
@@ -100,7 +103,8 @@ export async function checkOpenCodeVersion({
   /** @type {string} */
   let folder;
   try {
-    folder = await mkdtemp(join(tmpdir(), "calavera-opencode-version-"));
+    // Removed as the process exits too, such as on Ctrl+C before the check ends (#1081).
+    folder = await createTemporaryFolder("calavera-opencode-version-");
   } catch {
     // Without a private folder the check does not run, and that is not an error either.
     return { versionCheck: "failed" };
@@ -116,7 +120,7 @@ export async function checkOpenCodeVersion({
   } finally {
     // A grandchild that outlives a timeout can still hold the folder on Windows. Removing it is
     // tidiness, so a failure never turns the check into an error.
-    await rm(folder, { recursive: true, force: true }).catch(() => {});
+    await removeTemporaryFolder(folder).catch(() => {});
   }
 }
 
@@ -141,11 +145,14 @@ function runVersion(executable, folder, env, timeoutMs, platform) {
     const chunks = [];
     let bytes = 0;
     let settled = false;
+    /** @type {(() => void) | undefined} */
+    let removeExitKill;
     /** @param {{ versionCheck: "ran", stdout: string } | { versionCheck: "timeout" | "failed" }} outcome */
     const settle = (outcome) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
+      removeExitKill?.();
       resolve(outcome);
     };
     // A grandchild can hold the pipe open after the child is killed, and then the child never
@@ -174,6 +181,9 @@ function runVersion(executable, folder, env, timeoutMs, platform) {
       settle({ versionCheck: "failed" });
       return;
     }
+    // A child in a group of its own does not get the terminal's Ctrl+C, so when Calavera exits or is
+    // interrupted before the check ends, it kills the child and its group itself.
+    removeExitKill = onExit(() => killChild(child, group));
     child.stdout?.on("data", (/** @type {Buffer} */ chunk) => {
       bytes += chunk.length;
       if (bytes > MAX_OUTPUT_BYTES) {

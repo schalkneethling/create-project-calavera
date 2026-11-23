@@ -5,7 +5,7 @@
 // new folder on PATH, as check-config-schema.test.mjs does for `npm`. The stub tests run on POSIX
 // systems only, because on Windows the check looks for `opencode.exe`, which a script cannot be.
 import assert from "node:assert/strict";
-import { execFile } from "node:child_process";
+import { execFile, spawn as spawnProcess } from "node:child_process";
 import {
   access,
   chmod,
@@ -339,8 +339,8 @@ test(
   async () => {
     await withFolders(async ({ bin }) => {
       const pidFile = join(bin, "pids");
-      // The grandchild stays in the stub's process group and traps SIGTERM; its pipes are its own, so
-      // only the group kill reaches it.
+      // The grandchild stays in the stub's process group, traps SIGTERM, and has no pipes of its
+      // own, so only the group kill reaches it.
       await stub(
         bin,
         [
@@ -376,13 +376,103 @@ test("the stub that ignores SIGTERM ends as timeout within the bound", posix, as
   });
 });
 
+/**
+ * Starts a Node process that runs the check against `bin` and prints the outcome.
+ *
+ * @param {string} project
+ * @param {string} bin
+ * @param {number} timeoutMs
+ */
+async function runnerScript(project, bin, timeoutMs) {
+  const moduleUrl = new URL("../src/utils/opencode-version.js", import.meta.url).href;
+  const script = join(project, `run-check-${timeoutMs}.mjs`);
+  await writeFile(
+    script,
+    `const { checkOpenCodeVersion } = await import(${JSON.stringify(moduleUrl)});\nconsole.log(JSON.stringify(await checkOpenCodeVersion({ env: { PATH: ${JSON.stringify(bin)} }, timeoutMs: ${timeoutMs} })));\n`,
+  );
+  return script;
+}
+
+test(
+  "Ctrl+C during the check ends opencode and its group, and removes the private folder",
+  posix,
+  async () => {
+    await withFolders(async ({ project, bin }) => {
+      const pidFile = join(bin, "pids");
+      await stub(
+        bin,
+        [
+          `const { spawn } = require("node:child_process");`,
+          `const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setTimeout(() => {}, 60000)"], { stdio: "ignore" });`,
+          `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, process.pid + " " + child.pid + " " + process.cwd());`,
+          `process.on("SIGTERM", () => {});`,
+          `setTimeout(() => {}, 60_000);`,
+        ].join("\n"),
+      );
+      const script = await runnerScript(project, bin, 30_000);
+      const runner = spawnProcess(process.execPath, [script], { stdio: "ignore" });
+      try {
+        for (let attempt = 0; attempt < 100; attempt += 1) {
+          if ((await readFile(pidFile, "utf8").catch(() => "")).split(" ").length === 3) break;
+          await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+        }
+        const [stubPid, grandchildPid, folder] = (await readFile(pidFile, "utf8")).split(" ");
+        // What a terminal sends for Ctrl+C reaches Calavera, not the group opencode leads.
+        runner.kill("SIGINT");
+        await new Promise((resolvePromise) => runner.once("exit", resolvePromise));
+        assert.ok(await gone(Number(stubPid)), "the stub still runs");
+        assert.ok(await gone(Number(grandchildPid)), "the grandchild still runs");
+        await assert.rejects(access(/** @type {string} */ (folder)), /ENOENT/);
+      } finally {
+        runner.kill("SIGKILL");
+        await killIfAlive(pidFile);
+      }
+    });
+  },
+);
+
+test(
+  "a process whose check succeeds exits at once, not when the bound would have ended it",
+  posix,
+  async () => {
+    await withFolders(async ({ project, bin }) => {
+      await stub(bin, printing("1.19.6\n"));
+      const script = await runnerScript(project, bin, 20_000);
+      const started = Date.now();
+      const stdout = await new Promise((resolvePromise, reject) => {
+        execFile(process.execPath, [script], { timeout: 30_000 }, (error, out) =>
+          error ? reject(error) : resolvePromise(out),
+        );
+      });
+      assert.deepEqual(JSON.parse(String(stdout)), { versionCheck: "older", version: "1.19.6" });
+      assert.ok(Date.now() - started < 10_000, `took ${Date.now() - started} ms`);
+    });
+  },
+);
+
+test(
+  "an opencode that cannot start, such as a script whose interpreter is missing, gives failed",
+  posix,
+  async () => {
+    await withFolders(async ({ bin }) => {
+      const path = join(bin, "opencode");
+      await writeFile(path, `#!${join(bin, "no-such-interpreter")}\n`);
+      await chmod(path, 0o755);
+      assert.deepEqual(await checkOpenCodeVersion({ env: { PATH: bin } }), {
+        versionCheck: "failed",
+      });
+    });
+  },
+);
+
 test(
   "a process that runs the check exits within the bound while a grandchild holds the pipes",
   posix,
   async () => {
     await withFolders(async ({ project, bin }) => {
       const pidFile = join(bin, "grandchild.pid");
-      // The grandchild inherits the stub's standard output and error and sleeps far past the bound.
+      // The grandchild inherits the stub's standard output, the one pipe the check reads, and sleeps
+      // far past the bound.
       await stub(
         bin,
         [
@@ -401,7 +491,7 @@ test(
       );
       const started = Date.now();
       try {
-        // Without destroying the pipes, the grandchild keeps that process alive for 60 seconds.
+        // The process must exit, not only the check settle, while the grandchild holds the pipe.
         const stdout = await new Promise((resolvePromise, reject) => {
           execFile(process.execPath, [script], { timeout: 20_000 }, (error, out) =>
             error ? reject(error) : resolvePromise(out),

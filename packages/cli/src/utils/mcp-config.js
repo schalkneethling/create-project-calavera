@@ -824,20 +824,25 @@ const COMMENTS = "has comments or trailing commas, which Calavera would lose by 
  *
  * @param {string} path
  * @param {{ location: OpenCodeMcpLocation, entry: unknown }} found
- * @param {McpLaunchCommand} launchCommand
+ * @param {boolean} alone Whether it is the only `calavera` entry in the file.
  */
-function commentedEntrySentence(path, { location, entry }, launchCommand) {
+function commentedEntrySentence(path, { location, entry }, alone) {
   const named = `The calavera entry under ${location.name}`;
   if (isCalaveraMcpEntry(entry, location.entries)) {
     if (location.name === "mcp") {
-      return "Move the calavera entry under mcp.servers yourself and remove enabled.";
+      // Beside an entry under `mcp.servers`, a move would make two there, so only the remedy for
+      // two servers applies.
+      return alone
+        ? "Move the calavera entry from mcp to mcp.servers yourself and remove enabled."
+        : `${named} is one a Calavera release wrote.`;
     }
-    return isDeepStrictEqual(entry, createOpenCodeMcpEntry(launchCommand))
-      ? `${named} is already the one this release writes.`
+    // Any package manager's launch command counts, so only the pinned version can be out of date.
+    return normalizePinnedVersion(JSON.stringify(entry))?.pin === writtenVersion(location.entries)
+      ? `${named} already pins this release of Calavera.`
       : "Calavera does not update the version its calavera entry pins in a file with comments. To update it, change the create-project-calavera@<version> in the entry's command to the version of Calavera you run --init with.";
   }
   if (location.name === "mcp" && isEnabledSwitch(entry)) {
-    return `${named} holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on a full calavera entry under mcp.servers.`;
+    return `${named} holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on ${alone ? "a full calavera entry" : "the calavera entry"} under mcp.servers.`;
   }
   const edited = editedEntrySentence(path, named, pinsUnpublishedVersion(entry, location.entries));
   return location.name === "mcp"
@@ -941,8 +946,10 @@ export async function writeOpenCodeMcpConfig(
     }
     return kept([
       `${targetPath} ${COMMENTS} it was left unchanged.`,
-      ...found.map((each) => commentedEntrySentence(targetPath, each, launchCommand)),
-      ...(found.length > 1
+      ...found.map((each) => commentedEntrySentence(targetPath, each, found.length === 1)),
+      // A switch that holds only `enabled` is not a second server.
+      ...(found.length > 1 &&
+      !found.some(({ location, entry }) => location.name === "mcp" && isEnabledSwitch(entry))
         ? [
             "The file holds two calavera servers: keep the one you mean to use and remove the other.",
           ]
