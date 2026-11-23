@@ -1,6 +1,6 @@
 // @ts-check
 import { access } from "node:fs/promises";
-import { homedir } from "node:os";
+import { homedir, userInfo } from "node:os";
 import { join, resolve } from "node:path";
 
 import { decode } from "ini";
@@ -11,6 +11,7 @@ import {
   bunEnvironmentLayer,
   bunfigLayers,
   detectLauncher,
+  isAccountFile,
   yarnLayers,
 } from "./launcher-config.js";
 
@@ -172,19 +173,24 @@ async function userConfigPath(env, home, launcher) {
  *
  * A registry value is never expanded: one that holds a variable reference stops the command, and
  * a username and password in a registry URL are removed with a warning. `${VAR}` is expanded in
- * proxy values of user files and the environment only. A project file is repository content and
- * must not read the caller's environment, so a proxy value of it that contains `${` is ignored,
- * and so is a proxy it sets.
+ * proxy values of the environment and of the user's own ~/.npmrc or ~/.yarnrc.yml only, in the
+ * operating system account's home folder (#1186). A project file is repository content and must
+ * not read the caller's environment, so a proxy value of it that contains `${` is ignored, and so
+ * is a proxy it sets. A user file that HOME or npm_config_userconfig names elsewhere can be chosen
+ * by a project file, such as a project .npmrc `userconfig` or a Yarn 4 `.env.yarn`, so a proxy
+ * value of it that contains `${` is ignored too.
  * `warnings` are for the user. `diagnostics` hold every ignored entry and unset variable, for
  * failure messages. `unsetVariables` lists variable names. None of them ever contains a value.
  * `registryUrl` is the URL of the registry that serves `scope`, without user information.
- * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string }} [context]
+ * `accountHome` replaces the operating system account's home folder, for tests only.
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string, accountHome?: string }} [context]
  * @returns {Promise<{ options: Record<string, string>, registry: EffectiveRegistry, registryUrl: string, warnings: string[], diagnostics: string[], unsetVariables: string[] }>}
  */
 export async function loadNpmRegistryOptions({
   cwd = process.cwd(),
   env = process.env,
   scope,
+  accountHome = accountHomeFolder(),
 } = {}) {
   /** @type {string[]} */
   const warnings = [];
@@ -214,7 +220,7 @@ export async function loadNpmRegistryOptions({
   let userEntries = {};
   /** @type {Record<string, unknown>} */
   let projectEntries = {};
-  const launcherContext = { cwd, env, home, scope, warnings };
+  const launcherContext = { cwd, env, home, accountHome, scope, warnings };
   /** @type {ConfigLayer[]} */
   let layers;
   if (launcher === "yarn") {
@@ -232,7 +238,13 @@ export async function loadNpmRegistryOptions({
     projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
     /** @type {ConfigLayer[]} */
     const npmFiles = [
-      { name: "user .npmrc", entries: userEntries, trusted: true, accepts },
+      {
+        name: "user .npmrc",
+        entries: userEntries,
+        trusted: true,
+        expandsVariables: isAccountFile(userPath, accountHome, ".npmrc"),
+        accepts,
+      },
       { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
     ];
     /** @type {ConfigLayer} */
@@ -298,13 +310,15 @@ export async function loadNpmRegistryOptions({
         sources[key] = layer;
         continue;
       }
+      if (rawValue.includes("${") && !(layer.expandsVariables ?? trusted)) {
+        warnings.push(
+          trusted
+            ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own ${layer.tool === "Yarn" ? ".yarnrc.yml" : ".npmrc"} in your account's home folder and in environment variables, never in a file that a variable or a project file names.`
+            : `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`,
+        );
+        continue;
+      }
       if (!trusted) {
-        if (rawValue.includes("${")) {
-          warnings.push(
-            `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`,
-          );
-          continue;
-        }
         // A project file could name a proxy it controls, which would see which packages Calavera
         // fetches and, for an http registry, could replace the package documents and tarballs
         // together. The entry is skipped here, so it never replaces a proxy from a user file. An
@@ -470,6 +484,18 @@ export function pacoteTarballUrl(resolved, registry) {
   const url = new URL(resolved);
   if (url.host !== "registry.npmjs.org") return resolved;
   return new URL(url.pathname, registry).href;
+}
+
+/**
+ * The operating system account's home folder, which HOME does not change, or undefined when the
+ * account has none (`userInfo` throws for a user without a password database entry).
+ */
+function accountHomeFolder() {
+  try {
+    return userInfo().homedir || undefined;
+  } catch {
+    return undefined;
+  }
 }
 
 /** @param {string} value */

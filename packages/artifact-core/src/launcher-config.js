@@ -27,21 +27,34 @@ const YARN_VARIABLES = new Map([
  *   name: string,
  *   entries: Record<string, unknown>,
  *   trusted: boolean,
+ *   expandsVariables?: boolean,
  *   tool?: "Yarn" | "Bun",
  *   settingNames?: Record<string, string>,
  *   expand?: (value: string, env: NodeJS.ProcessEnv) => Expansion,
  * }} LauncherLayer
  */
 
+// The file names npm and pnpm give npm_execpath: npm's bin/npm-cli.js (also under npx), and pnpm's
+// executable or bin/pnpm.cjs.
+const NPM_OR_PNPM_EXECPATH = /^(npm-cli\.js|pnpm(\.exe|\.cjs|\.mjs|\.js)?)$/i;
+
 /**
  * The package manager that started Calavera, from the user agent it exports. Yarn sets
  * `npm_config_user_agent` to `yarn/<version> npm/? node/...` for scripts and binaries
  * (`makeScriptEnv` in @yarnpkg/core scriptUtils.ts), and Bun to `bun/<version> npm/? node/...`.
  * Yarn 1 reads .npmrc files, so it counts as npm here.
+ *
+ * npm exports a project .npmrc `user-agent`, and pnpm its `userAgent` setting, as the user agent,
+ * so repository content can make it name Yarn or Bun (#1186). Both also set npm_execpath to their
+ * own binary, which no project setting changes, so a npm_execpath that names npm or pnpm wins over
+ * the user agent. Yarn 4 and Bun set both variables themselves, after a Yarn `.env.yarn` is applied,
+ * so their user agent can be trusted.
  * @param {NodeJS.ProcessEnv} env
  * @returns {Launcher}
  */
 export function detectLauncher(env) {
+  const execFile = env.npm_execpath?.split(/[\\/]/).pop() ?? "";
+  if (NPM_OR_PNPM_EXECPATH.test(execFile)) return "npm";
   const agent = env.npm_config_user_agent ?? "";
   const yarn = /^yarn\/(\d+)\./.exec(agent);
   if (yarn && Number(yarn[1]) >= 2) return "yarn";
@@ -113,6 +126,17 @@ function yarnEntries(settings, scope) {
 }
 
 /**
+ * Whether `path` is the file `name` in the operating system account's home folder: the user's own
+ * file, not one that HOME, npm_config_userconfig, or a project file chose (#1186).
+ * @param {string} path
+ * @param {string | undefined} accountHome
+ * @param {string} name
+ */
+export function isAccountFile(path, accountHome, name) {
+  return accountHome !== undefined && resolve(path) === resolve(accountHome, name);
+}
+
+/**
  * @param {string} path
  * @param {string[]} warnings
  * @returns {Promise<Record<string, unknown>>}
@@ -143,11 +167,12 @@ async function readYarnrc(path, warnings) {
  * file system root down to `cwd`, so the nearest file wins, then `YARN_*` variables, which
  * override every file (`Configuration.find` in @yarnpkg/core). `YARN_RC_FILENAME` renames the
  * files Yarn searches, but not the home file. The home file is the user's own; every other file
- * can be repository content, so it is not trusted.
- * @param {{ cwd: string, env: NodeJS.ProcessEnv, home: string, scope?: string, warnings: string[] }} context
+ * can be repository content, so it is not trusted. A Yarn 4 `.env.yarn` can set HOME, so the home
+ * file expands variables only when it is in `accountHome`, the operating system account's home.
+ * @param {{ cwd: string, env: NodeJS.ProcessEnv, home: string, accountHome: string | undefined, scope?: string, warnings: string[] }} context
  * @returns {Promise<LauncherLayer[]>}
  */
-export async function yarnLayers({ cwd, env, home, scope, warnings }) {
+export async function yarnLayers({ cwd, env, home, accountHome, scope, warnings }) {
   const rcFilename =
     Object.entries(env).find(([name]) => name.toLowerCase() === "yarn_rc_filename")?.[1] ||
     ".yarnrc.yml";
@@ -170,6 +195,7 @@ export async function yarnLayers({ cwd, env, home, scope, warnings }) {
       entries,
       settingNames,
       trusted,
+      expandsVariables: trusted && isAccountFile(path, accountHome, ".yarnrc.yml"),
       tool: "Yarn",
       expand: expandYarn,
     });

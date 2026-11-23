@@ -494,8 +494,11 @@ test("a 401 behind a loader diagnostic keeps the message, the notes, and the ori
   try {
     const fixture = await npmConfigFixture(
       "",
-      `@schalkneethling:registry=http://${registry.host}/\nhttps-proxy=http://\${CALAVERA_UNSET_PROXY}/\n`,
+      `@schalkneethling:registry=http://${registry.host}/\n`,
     );
+    // The environment expands variables in a proxy value; a temporary user .npmrc is not the
+    // account's own ~/.npmrc, so it would not (#1186).
+    fixture.env.npm_config_https_proxy = "http://${CALAVERA_UNSET_PROXY}/";
     const failure = await resolveArtifactPackage({
       id: "skill-project-goal",
       cache: fixture.cache,
@@ -519,7 +522,7 @@ test("a 401 behind a loader diagnostic keeps the message, the notes, and the ori
     assert.equal(failure.registryOrigin, `http://${registry.host}`);
     assert.equal(failure.cause.code, "E401");
     assert.deepEqual(failure.unsetVariables, ["CALAVERA_UNSET_PROXY"]);
-    assert.match(failure.npmDiagnostics.join("\n"), /^Ignored https-proxy in the user \.npmrc/m);
+    assert.match(failure.npmDiagnostics.join("\n"), /^Ignored https-proxy in the environment/m);
   } finally {
     await registry.close();
   }
@@ -618,8 +621,11 @@ test("a missing dist-tag behind npm configuration notes keeps the tags on its ca
   try {
     const fixture = await npmConfigFixture(
       "",
-      `@schalkneethling:registry=http://${registry.host}/\nhttps-proxy=http://\${CALAVERA_UNSET_PROXY}/\n`,
+      `@schalkneethling:registry=http://${registry.host}/\n`,
     );
+    // The environment expands variables in a proxy value; a temporary user .npmrc is not the
+    // account's own ~/.npmrc, so it would not (#1186).
+    fixture.env.npm_config_https_proxy = "http://${CALAVERA_UNSET_PROXY}/";
     const failure = await resolveArtifactPackage({
       id: "skill-project-goal",
       tag: "next",

