@@ -913,9 +913,11 @@ approves the proposed recipe and dry-run result.
   runs, the run prints `{ command, ok: false, issues }` and exits 1, with the error as an issue
   with the level `error`, in the same redacted text the run prints without `--json`; `command`
   is the name the command's success result uses, such as `apply` for `update`, `agent-init` for
-  `bootstrap`, and `artifacts status` for `artifacts status`, or `null` when Calavera has no such
-  command or `artifacts` action; a `--json` after `--new` belongs to `vp create` and does not
-  count
+  `bootstrap`, and `artifacts status` for `artifacts status`, or `null` for `help` and when
+  Calavera has no such command or `artifacts` action; because an error result shares its
+  command's name and some success results, such as `init`'s, have no `ok` field, check for
+  `ok: false` to tell an error result apart; a `--json` after `--new` belongs to `vp create` and
+  does not count
 
 ## Debugging Errors
 

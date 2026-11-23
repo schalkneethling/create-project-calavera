@@ -232,10 +232,31 @@ function registryNotes() {
 }
 
 /**
- * The actions `artifacts` runs. Each one's result names it `artifacts <action>`, so an error
- * result for that action names it the same way (#1227).
+ * What each `artifacts` action runs, in the order the error for an unknown action lists them.
+ * Each action's result names it `artifacts <action>`, so an error result for that action names it
+ * the same way (#1227). The list of actions comes from this table, so an action cannot run without
+ * also being named.
+ *
+ * @type {Readonly<Record<string, (options: ArtifactOptions, registry: ReturnType<typeof artifactRegistry>, loadFormatter: ReturnType<typeof artifactFormatterLoader>, services: ArtifactServices) => Promise<unknown>>>}
  */
-export const ARTIFACT_ACTIONS = ["install", "status", "doctor", "migrate", "update"];
+const ARTIFACT_ACTION_RUNNERS = Object.freeze({
+  install: (options, registry, loadFormatter) =>
+    installArtifacts(options, false, registry, loadFormatter),
+  status: (options, registry, loadFormatter, services) =>
+    artifactStatus(options, registry, loadFormatter, {
+      updateCheckDeadlineMs: services.updateCheckDeadlineMs,
+    }),
+  doctor: (options, registry, loadFormatter, services) =>
+    artifactStatus(options, registry, loadFormatter, {
+      updateCheckDeadlineMs: services.updateCheckDeadlineMs,
+    }),
+  migrate: (options, _registry, loadFormatter) => migrateRecipe(options, loadFormatter),
+  update: (options, registry, loadFormatter) =>
+    installArtifacts(options, true, registry, loadFormatter),
+});
+
+/** The actions `artifacts` runs. */
+export const ARTIFACT_ACTIONS = Object.freeze(Object.keys(ARTIFACT_ACTION_RUNNERS));
 
 /**
  * @param {ArtifactOptions} options
@@ -243,25 +264,17 @@ export const ARTIFACT_ACTIONS = ["install", "status", "doctor", "migrate", "upda
  */
 export async function runArtifactCommand(options, services = {}) {
   await recoverArtifactTransaction();
-  const registry = artifactRegistry(services);
-  const loadFormatter = artifactFormatterLoader(services);
-  switch (options.artifactAction) {
-    case "migrate":
-      return migrateRecipe(options, loadFormatter);
-    case "status":
-    case "doctor":
-      return artifactStatus(options, registry, loadFormatter, {
-        updateCheckDeadlineMs: services.updateCheckDeadlineMs,
-      });
-    case "install":
-      return installArtifacts(options, false, registry, loadFormatter);
-    case "update":
-      return installArtifacts(options, true, registry, loadFormatter);
-    default:
-      throw new Error(
-        `Artifacts command must be ${new Intl.ListFormat("en", { type: "disjunction" }).format(ARTIFACT_ACTIONS)}.`,
-      );
+  const action = options.artifactAction ?? "";
+  // Object.hasOwn, so a name such as "constructor" is not an action.
+  const run = Object.hasOwn(ARTIFACT_ACTION_RUNNERS, action)
+    ? ARTIFACT_ACTION_RUNNERS[action]
+    : undefined;
+  if (!run) {
+    throw new Error(
+      `Artifacts command must be ${new Intl.ListFormat("en", { type: "disjunction" }).format(ARTIFACT_ACTIONS)}.`,
+    );
   }
+  return run(options, artifactRegistry(services), artifactFormatterLoader(services), services);
 }
 
 /**
