@@ -78,7 +78,11 @@ import { CONFIG_FILE } from "./project-local-commands.js";
 import { assertWorkspacePath } from "./utils/fs.js";
 import { positionOf } from "./utils/parse-position.js";
 import { isCodeRabbitTextCalaveraWrote } from "./utils/earlier-coderabbit.js";
-import { findEarlierGuidance, normalizePinnedVersion } from "./utils/earlier-guidance.js";
+import {
+  findEarlierGuidance,
+  normalizePinnedVersion,
+  normalizePublishedPin,
+} from "./utils/earlier-guidance.js";
 import { isPlainObject } from "./utils/guards.js";
 import { rewriteLossProblem, toJSONText, writeJSON } from "./utils/json-rewrite.js";
 import { findBlock, findMarkedBlock } from "./utils/marked-block.js";
@@ -86,9 +90,12 @@ import {
   OPENCODE_CONFIG_SCHEMA,
   calaveraMcpEntries,
   createCodexMcpTomlBlock,
+  UNPUBLISHED_PIN,
   isCalaveraMcpEntry,
+  pinsUnpublishedVersion,
   projectMcpConfigPath,
   tomlPosition,
+  writtenVersion,
 } from "./utils/mcp-config.js";
 // `STAGING_ROOT` is where `eject` moves a package folder before it deletes it, so a delete that
 // stops part way leaves the folder either whole in `.calavera/packages/` or here, never half
@@ -935,8 +942,8 @@ function serversWithEntry(config, key) {
  * Plans the `calavera` entry in a JSON harness file: `.mcp.json` and `.cursor/mcp.json` under
  * `mcpServers`, and `opencode.json` under `mcp`. The entry is unedited when it equals the entry
  * Calavera writes for some package manager, with the pinned version normalized (owner decision of
- * 2026-11-17). Any other entry is kept and reported as edited. Removing it empties the `mcpServers`
- * or `mcp` object, which then goes too, and in `opencode.json` the `$schema` Calavera writes goes
+ * 2026-11-17), and it pins a version published on npm (ADR-0017, Amendment 6). Any other entry is
+ * kept and reported as edited. Removing it empties the `mcpServers` or `mcp` object, which then goes too, and in `opencode.json` the `$schema` Calavera writes goes
  * once nothing else remains. The file stays, even when it is left empty. JSON has no comments, and
  * `eject` rewrites the whole file through the project's formatter, as the bootstrap writes it, so
  * the note says when that changes the layout of the rest of the file. A rewrite that would lose
@@ -996,7 +1003,7 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
   if (!isCalaveraMcpEntry(calavera, expected)) {
     return mcpEntryKept(
       path,
-      `The calavera entry under ${key} in ${path} differs from the launch command Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
+      `The calavera entry under ${key} in ${path} ${pinsUnpublishedVersion(calavera, expected) ? UNPUBLISHED_PIN : "differs from the launch command Calavera writes for every package manager"}, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
     );
   }
   const formatter = await loadFormatter();
@@ -1105,9 +1112,9 @@ function removesOnlyTheEntry(text, contents) {
  * `smol-toml`, and a file that is not TOML is a hard stop, with the line and column where the
  * parser stopped, and never its message, which quotes the file's lines, as the cause
  * (ADR-0017, Decision 7). The entry is unedited when the file holds the table Calavera writes
- * for some package manager, with the pinned version normalized (owner decision of 2026-11-17),
- * and removing that text removes the whole entry and nothing else, which parsing the result
- * shows. Any other entry is kept and reported as edited, such as one with another key, a
+ * for some package manager, with the pinned version normalized (owner decision of 2026-11-17)
+ * and published on npm (ADR-0017, Amendment 6), and removing that text removes the whole entry
+ * and nothing else, which parsing the result shows. Any other entry is kept and reported as edited, such as one with another key, a
  * subtable, a comment inside the table, or another layout or header spelling: removing Calavera's
  * lines would then leave part of the entry behind, or the lines are not there to remove. Text that
  * only looks like the table, such as lines inside a multi-line string, is never removed either.
@@ -1116,10 +1123,11 @@ function removesOnlyTheEntry(text, contents) {
  * line, comments included, stays.
  *
  * @param {string} path
- * @param {string[]} expected The table Calavera writes, for each package manager.
+ * @param {import("./utils/mcp-config.js").McpLaunchCommand[]} entries The launch command for
+ *   each package manager, from `calaveraMcpEntries`.
  * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
  */
-async function planCodexMcpEntry(path, expected) {
+async function planCodexMcpEntry(path, entries) {
   const entry = await readTextEntry(path);
   if (entry?.text === undefined) return NO_MCP_ENTRY;
   const { identity, text } = entry;
@@ -1138,12 +1146,18 @@ async function planCodexMcpEntry(path, expected) {
       { cause: new Error(`TOML parse error${tomlPosition(error, " at ")}`) },
     );
   }
-  if (serversWithEntry(config, "mcp_servers") === undefined) return NO_MCP_ENTRY;
+  const servers = serversWithEntry(config, "mcp_servers");
+  if (servers === undefined) return NO_MCP_ENTRY;
   if (!inside) return mcpEntryOutside(path);
+  const why = pinsUnpublishedVersion(servers.calavera, entries)
+    ? UNPUBLISHED_PIN
+    : "differs from the table Calavera writes for every package manager";
   const edited = mcpEntryKept(
     path,
-    `The ${CODEX_TABLE_HEADER} table in ${path} differs from the table Calavera writes for every package manager, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
+    `The ${CODEX_TABLE_HEADER} table in ${path} ${why}, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
   );
+  const expected = entries.map(createCodexMcpTomlBlock);
+  const writtenPin = writtenVersion(entries);
   const lines = text.split("\n");
   const bare = lines.map((line) => line.replace(/\r$/, ""));
   for (const start of bare.keys()) {
@@ -1151,9 +1165,10 @@ async function planCodexMcpEntry(path, expected) {
       const written = block.trimEnd().split("\n");
       const end = start + written.length - 1;
       const table = bare.slice(start, end + 1);
-      // A table that holds the placeholder normalizes to undefined, which equals no written table.
+      // A table that pins a version npm does not have, or holds the placeholder, normalizes to
+      // undefined, which equals no written table (#1219).
       if (
-        normalizePinnedVersion(table.join("\n"))?.normalized !==
+        normalizePublishedPin(table.join("\n"), writtenPin) !==
         normalizePinnedVersion(written.join("\n"))?.normalized
       ) {
         continue;
@@ -1314,7 +1329,7 @@ async function planMcpEntries(guidance, loadFormatter) {
       const entries = /** @type {import("./utils/mcp-config.js").McpLaunchCommand[]} */ (
         calaveraMcpEntries(harness, launches)
       );
-      parts.push(await planCodexMcpEntry(path, entries.map(createCodexMcpTomlBlock)));
+      parts.push(await planCodexMcpEntry(path, entries));
     } else {
       const key = harness === "opencode" ? "mcp" : "mcpServers";
       parts.push(

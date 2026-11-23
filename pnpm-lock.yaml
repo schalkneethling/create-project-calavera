@@ -8,9 +8,24 @@ importers:
 
   .:
     devDependencies:
+      '@changesets/assemble-release-plan':
+        specifier: ^7.0.0
+        version: 7.0.0
       '@changesets/cli':
         specifier: ^3.0.3
         version: 3.0.3
+      '@changesets/config':
+        specifier: ^4.0.1
+        version: 4.0.1
+      '@changesets/pre':
+        specifier: ^3.0.0
+        version: 3.0.0
+      '@changesets/read':
+        specifier: ^1.0.1
+        version: 1.0.1
+      '@manypkg/get-packages':
+        specifier: ^3.1.0
+        version: 3.1.0
       '@schalkneethling/stylelint-plugin-css-property-type-validator':
         specifier: 0.1.0-beta.1
         version: 0.1.0-beta.1(stylelint@17.16.0(supports-color@10.2.2)(typescript@7.0.2))

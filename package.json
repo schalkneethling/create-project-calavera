@@ -39,7 +39,12 @@
     "workflow:check": "uvx zizmor@1.25.2 --offline .github/workflows"
   },
   "devDependencies": {
+    "@changesets/assemble-release-plan": "^7.0.0",
     "@changesets/cli": "^3.0.3",
+    "@changesets/config": "^4.0.1",
+    "@changesets/pre": "^3.0.0",
+    "@changesets/read": "^1.0.1",
+    "@manypkg/get-packages": "^3.1.0",
     "@schalkneethling/stylelint-plugin-css-property-type-validator": "0.1.0-beta.1",
     "@stryker-mutator/api": "10.1.1",
     "@stryker-mutator/core": "10.1.1",

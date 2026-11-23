@@ -1,6 +1,6 @@
 // Issue #1205: rerunning `--init` updates the `calavera` MCP entry only when it holds what a
-// Calavera release wrote for that harness, with the pinned version normalized, as `eject` decides
-// (ADR-0017, Decision 2). Any other entry is a local edit (brief C8): the bootstrap keeps it,
+// Calavera release wrote for that harness, with the pinned version normalized and published on
+// npm (#1219), as `eject` decides (ADR-0017, Decision 2). Any other entry is a local edit (brief C8): the bootstrap keeps it,
 // lists the file as skipped with a remedy, and leaves the file byte for byte as it was.
 //
 // The entries are spelled out here, not built from the current writers, so a change to the
@@ -11,10 +11,18 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import semver from "semver";
+
 import { agentBootstrap } from "../src/index.js";
+import { EARLIER_TEMPLATES } from "../src/utils/earlier-guidance.js";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const current = packageJson.version;
+// #1219: a version the release list names before npm has it, such as 7.0.0 while package.json
+// holds 6.2.1. Undefined right after a release, when the list names nothing newer.
+const upcoming = EARLIER_TEMPLATES.mcp
+  .flatMap(({ releases }) => releases)
+  .find((release) => semver.gt(release, current));
 
 /** @param {string} version */
 const pnpmLaunch = (version) => ({
@@ -174,6 +182,43 @@ for (const { harness, path, file } of harnesses) {
       assertKeptAsEdit(await init(harness), path);
       assert.equal(await readFile(path, "utf8"), before);
     });
+  });
+
+  test(`${harness}: an entry pinned to a released prerelease is updated`, async () => {
+    await inProject(async () => {
+      await write(path, file(pnpmLaunch("2.3.0-next.2")));
+
+      const result = await init(harness);
+
+      assert.equal(result.mcp.action, "update");
+      assert.ok((await readFile(path, "utf8")).includes(`create-project-calavera@${current}`));
+    });
+  });
+
+  test(`${harness}: an entry pinned to a version npm does not have is kept`, async () => {
+    // #1219: only a version npm has counts as Calavera's, not one the list names ahead of time.
+    for (const version of [
+      "99.0.0",
+      "99.0.0-local.1",
+      // Older than this checkout's version but in no release list, such as a local build of it.
+      `${packageJson.version}-local.1`,
+      ...(upcoming ? [upcoming] : []),
+    ]) {
+      await inProject(async () => {
+        const before = file(npmLaunch(version));
+        await write(path, before);
+        const result = await init(harness);
+        assertKeptAsEdit(result, path);
+        // The reason names the pin, never the version text from the file.
+        const reason = result.changes.find((change) => change.path === path)?.reason ?? "";
+        assert.match(
+          reason,
+          /pins a version of create-project-calavera that this release of Calavera does not know as published/,
+        );
+        assert.ok(!reason.includes(version), reason);
+        assert.equal(await readFile(path, "utf8"), before, `${path} ${version}`);
+      });
+    }
   });
 
   test(`${harness}: an entry that holds the version placeholder is kept`, async () => {

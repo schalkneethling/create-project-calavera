@@ -19,11 +19,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import semver from "semver";
 import { TomlError } from "smol-toml";
 
 import { executeEject, planEject, selectEjectItems } from "../src/eject.js";
 import { agentBootstrap, agentBootstrapTexts } from "../src/index.js";
-import { normalizePinnedVersion } from "../src/utils/earlier-guidance.js";
+import { EARLIER_TEMPLATES, normalizePinnedVersion } from "../src/utils/earlier-guidance.js";
 import {
   createCodexMcpTomlBlock,
   createCursorMcpJsonConfig,
@@ -40,6 +41,11 @@ const loadFormatter = async () => unformatted;
 const guidance = await agentBootstrapTexts(loadFormatter);
 const launches = guidance.mcpLaunchCommands;
 const npmLaunch = /** @type {{ command: string, args: string[] }} */ (launches[0]);
+// #1219: a version the release list names before npm has it, such as 7.0.0 while package.json
+// holds 6.2.1. Undefined right after a release, when the list names nothing newer.
+const upcoming = EARLIER_TEMPLATES.mcp
+  .flatMap(({ releases }) => releases)
+  .find((release) => semver.gt(release, packageJson.version));
 const SCHEMA = "https://opencode.ai/config.json";
 const CACHE_BLOCK =
   "# calavera:artifact-cache:start\n.calavera/cache/\n# calavera:artifact-cache:end\n";
@@ -181,15 +187,40 @@ for (const { harness, path, written } of HARNESSES) {
     });
   });
 
-  test(`${harness}: an entry for any package manager and any pinned version is unedited`, async () => {
+  test(`${harness}: an entry for any package manager pinned to a released version is unedited`, async () => {
     for (const launch of launches) {
-      for (const version of ["5.0.0", "7.0.0-beta.1"]) {
+      // A release, a released prerelease, and this checkout's version (#1219).
+      for (const version of ["5.0.0", "2.3.0-next.2", packageJson.version]) {
         await inProject(async () => {
           await write(path, written(repinned(launch, version)));
           const entry = item(await plan(), path);
           assert.equal(entry.edits, "unedited", `${launch.command} ${version}`);
         });
       }
+    }
+  });
+
+  test(`${harness}: an entry pinned to a version npm does not have is kept and reported`, async () => {
+    // #1219: an unpublished version, an unpublished prerelease, and a listed version npm does not
+    // have yet are local edits.
+    for (const version of [
+      "99.0.0",
+      "99.0.0-local.1",
+      // Older than this checkout's version but in no release list, such as a local build of it.
+      `${packageJson.version}-local.1`,
+      ...(upcoming ? [upcoming] : []),
+    ]) {
+      await inProject(async () => {
+        await write(path, written(repinned(npmLaunch, version)));
+        // The reason names the pin, never the version text from the file.
+        await assertKeptAndReported(path, /edited/);
+        const reason = report(await plan(), path).reason;
+        assert.match(
+          reason,
+          /pins a version of create-project-calavera that this release of Calavera does not know as published/,
+        );
+        assert.ok(!reason.includes(version), reason);
+      });
     }
   });
 
