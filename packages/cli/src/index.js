@@ -7777,9 +7777,10 @@ async function main(options) {
 }
 
 /**
- * Prints the error that stopped a run before its command produced a result: as plain text on
- * standard error, or, with `--json`, as `{ command, ok: false, issues }` on standard output
- * (ADR-0020 Amendment 1), because `--json` always prints JSON (#1218).
+ * Prints the error that stopped a run before its command produced a result, whether its arguments
+ * were invalid (#1218) or its command threw while it ran (#1227): as plain text on standard error,
+ * or, with `--json`, as `{ command, ok: false, issues }` on standard output (ADR-0020
+ * Amendment 1), because `--json` always prints JSON.
  *
  * @param {boolean} asJSON
  * @param {string | null} command
@@ -7858,7 +7859,9 @@ export async function runCli() {
     versionNotice = startVersionCheck(options, args);
     await main(options);
   } catch (error) {
-    logger.error(errorText(error));
+    // A command that throws while it runs prints the same redacted text as plain output, or, with
+    // `--json`, as a JSON result, because `--json` always prints JSON (#1227).
+    printStop(options.json, options.command, errorText(error));
     process.exitCode = 1;
   }
 

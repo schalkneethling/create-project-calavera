@@ -123,8 +123,10 @@ for (const args of [
         0,
         `the command exited 0, so it did not refuse the legacy entry\n${result.stdout}`,
       );
-      assert.match(result.stderr, REFUSAL);
-      assert.match(result.stderr, /stopped before writing anything/);
+      // With --json, the refusal is a JSON result (#1227).
+      const { message } = JSON.parse(result.stdout).issues[0];
+      assert.match(message, REFUSAL);
+      assert.match(message, /stopped before writing anything/);
       assert.deepEqual(await snapshot(), before);
     });
   });

@@ -99,6 +99,18 @@ async function directoryUnderUnmanagedProject() {
 }
 
 /**
+ * The error that stopped a run: the issue of its JSON result with `--json`, because `--json`
+ * always prints JSON (#1227), or its standard error without.
+ *
+ * @param {string[]} args
+ * @param {{ stdout: string, stderr: string }} result
+ * @returns {string}
+ */
+function stopText(args, result) {
+  return args.includes("--json") ? JSON.parse(result.stdout).issues[0].message : result.stderr;
+}
+
+/**
  * Runs the CLI in `workspace.project` with the stand-ins first on PATH.
  *
  * @param {{ project: string, bin: string, packageManagerLog: string }} workspace
@@ -235,12 +247,13 @@ test("a non-interactive apply without a choice reports the three choices and sto
   ]) {
     const result = await runCli(workspace, args);
     assert.equal(result.code, 1, `${args.join(" ")} did not stop`);
-    assert.ok(result.stderr.includes(join(workspace.root, "package.json")), result.stderr);
+    const stop = stopText(args, result);
+    assert.ok(stop.includes(join(workspace.root, "package.json")), stop);
     for (const choice of CHOICES) {
-      assert.match(result.stderr, new RegExp(`^- ${choice}: `, "m"));
+      assert.match(stop, new RegExp(`^- ${choice}: `, "m"));
     }
-    assert.match(result.stderr, /--manifest-choice/);
-    assert.match(result.stderr, /Calavera stopped before writing anything\./);
+    assert.match(stop, /--manifest-choice/);
+    assert.match(stop, /Calavera stopped before writing anything\./);
   }
 
   assert.deepEqual(await snapshotDirectory(workspace.root), before);
@@ -678,8 +691,9 @@ async function assertEachRunStopsWith(workspace, remedy) {
     const before = await snapshotDirectory(workspace.project);
     const result = await runCli(workspace, args);
     assert.equal(result.code, 1, `${name}: ${result.stderr}`);
-    assert.ok(result.stderr.includes(remedy), `${name}: ${result.stderr}`);
-    assert.doesNotMatch(result.stderr, /Run vp install, then/, name);
+    const stop = stopText(args, result);
+    assert.ok(stop.includes(remedy), `${name}: ${stop}`);
+    assert.doesNotMatch(stop, /Run vp install, then/, name);
     assert.deepEqual(await snapshotDirectory(workspace.project), before, name);
   }
 }

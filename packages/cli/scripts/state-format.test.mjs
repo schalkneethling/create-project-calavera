@@ -344,7 +344,8 @@ test("Given a Vite+ project inside a folder whose .editorconfig sets four-space 
   for (const args of [["--dry-run"], []]) {
     const clean = runClean(args);
     assert.notEqual(clean.status, 0, clean.stdout);
-    assert.match(clean.stderr, stop);
+    // With --json, the stop is a JSON result (#1227).
+    assert.match(JSON.parse(clean.stdout).issues[0].message, stop);
   }
   assert.deepEqual(
     await inDirectory(root, () => snapshotDirectory()),

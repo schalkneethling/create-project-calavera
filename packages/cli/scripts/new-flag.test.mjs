@@ -514,7 +514,11 @@ test("--new refuses an unreadable package.json before anything else", async () =
 
   await chmod(manifestPath, 0o644);
   assert.equal(result.code, 1);
-  assert.match(result.stderr, /npm create project-calavera -- --init/);
+  // `--json` before `--new` is Calavera's own, so the refusal is a JSON result (#1227).
+  assert.match(
+    JSON.parse(result.stdout).issues[0].message,
+    /npm create project-calavera -- --init/,
+  );
   assert.deepEqual(await readInvocations(workspace.log), []);
 });
 
@@ -527,7 +531,11 @@ test("--new refuses --init and --json", async () => {
   assert.equal(withInit.code, 1);
   assert.match(withInit.stderr, /--new and --init cannot be combined/);
   assert.equal(withJson.code, 1);
-  assert.match(withJson.stderr, /--new cannot be combined with --json/);
+  // The refusal is a JSON result, because `--json` always prints JSON (#1227).
+  assert.match(
+    JSON.parse(withJson.stdout).issues[0].message,
+    /--new cannot be combined with --json/,
+  );
   assert.deepEqual(await readInvocations(workspace.log), []);
 });
 

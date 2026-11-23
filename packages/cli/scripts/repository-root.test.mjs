@@ -209,10 +209,12 @@ test("CLI apply and apply --dry-run from a workspace member refuse github-reposi
   ]) {
     await assert.rejects(
       execFileAsync(process.execPath, [cliPath, ...args], { cwd: repository.member }),
-      (/** @type {{ code: number, stderr: string }} */ error) => {
+      (/** @type {{ code: number, stdout: string }} */ error) => {
         assert.equal(error.code, 1, args.join(" "));
-        assert.match(error.stderr, /github-repository-controls applies at the repository root/);
-        assert.ok(error.stderr.includes(`the repository root is ${repository.root}.`));
+        // With --json, the refusal is a JSON result (#1227).
+        const { message } = JSON.parse(error.stdout).issues[0];
+        assert.match(message, /github-repository-controls applies at the repository root/);
+        assert.ok(message.includes(`the repository root is ${repository.root}.`));
         return true;
       },
     );

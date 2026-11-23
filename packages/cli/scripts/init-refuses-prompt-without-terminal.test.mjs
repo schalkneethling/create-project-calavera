@@ -65,12 +65,21 @@ test("init --json without --yes refuses and keeps the prompt out of standard out
   const result = runWithoutTerminal(fixture.root, ["init", "--json"]);
 
   assert.equal(result.status, 1, `init did not fail:\n${result.stdout}\n${result.stderr}`);
-  assert.match(result.stderr, /init refused: .*--json/);
-  assert.match(result.stderr, /--yes/);
-  assert.match(result.stderr, /--profile/);
-  // The error goes to standard error, as for every other --json failure, so standard output holds
-  // no prompt text that would corrupt a JSON reader.
-  assert.equal(result.stdout, "");
+  // Standard output holds only the JSON result, because --json always prints JSON (#1227), so no
+  // prompt text corrupts a JSON reader.
+  const { command, ok, issues } = JSON.parse(result.stdout);
+  assert.deepEqual(
+    { command, ok, levels: issues.map(({ level }) => level) },
+    {
+      command: "init",
+      ok: false,
+      levels: ["error"],
+    },
+  );
+  assert.match(issues[0].message, /init refused: .*--json/);
+  assert.match(issues[0].message, /--yes/);
+  assert.match(issues[0].message, /--profile/);
+  assert.equal(result.stderr, "");
   assert.equal(await exists(join(fixture.root, "calavera.config.json")), false);
 });
 
@@ -94,9 +103,11 @@ test("init --apply --json without --yes refuses the apply confirmation before it
   ]);
 
   assert.equal(result.status, 1, `init did not fail:\n${result.stdout}\n${result.stderr}`);
-  assert.match(result.stderr, /cannot ask "Apply these Calavera-managed changes now\?"/);
-  assert.match(result.stderr, /Pass --yes to apply after the dry run without asking/);
-  assert.equal(result.stdout, "");
+  // Standard output holds only the JSON result (#1227).
+  const { message } = JSON.parse(result.stdout).issues[0];
+  assert.match(message, /cannot ask "Apply these Calavera-managed changes now\?"/);
+  assert.match(message, /Pass --yes to apply after the dry run without asking/);
+  assert.equal(result.stderr, "");
   assert.equal(await exists(join(fixture.root, "calavera.config.json")), false);
 });
 
