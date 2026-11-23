@@ -6316,7 +6316,7 @@ async function doctor(options) {
 
       // ADR-0015, Decision 5: the hook blocks and Claude Code groups apply recorded.
       const state = await readStateIfPresent().catch((error) => {
-        throw new Error(`doctor cannot read ${STATE_FILE}.`, { cause: error });
+        throw new Error(`doctor cannot use ${STATE_FILE}.`, { cause: error });
       });
       issues.push(
         ...(await artifactWiringFindings({

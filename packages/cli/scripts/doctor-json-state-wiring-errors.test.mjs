@@ -51,26 +51,30 @@ function runDoctor(cwd, args) {
 const cases = [
   {
     label: "a state file that is not valid JSON",
+    stops: true,
     files: { [STATE]: `{\n  "version": 1,\n  "profile": ${SECRET}\n}\n` },
-    expected: /doctor cannot read \.calavera\/state\.json\.[\s\S]*state\.json.*line 3, column 14/,
+    expected: /doctor cannot use \.calavera\/state\.json\.[\s\S]*state\.json.*line 3, column 14/,
   },
   {
     label: "a state file that is not a JSON object",
+    stops: true,
     files: { [STATE]: json([SECRET]) },
     expected:
-      /doctor cannot read \.calavera\/state\.json\.[\s\S]*Calavera state file must contain a JSON object\./,
+      /doctor cannot use \.calavera\/state\.json\.[\s\S]*Calavera state file must contain a JSON object\./,
   },
   {
     label: "a state file whose wiring records are invalid",
+    stops: true,
     files: { [STATE]: json({ version: 1, aiWiring: [{ artifact: SECRET, viteHooks: [] }] }) },
     expected:
-      /doctor cannot read \.calavera\/state\.json\.[\s\S]*Calavera state contains invalid aiWiring entries\./,
+      /doctor cannot use \.calavera\/state\.json\.[\s\S]*Calavera state contains invalid aiWiring entries\./,
   },
   {
     label: "a state file that is a directory",
+    stops: true,
     files: {},
     setup: (root) => mkdir(join(root, STATE), { recursive: true }),
-    expected: /doctor cannot read \.calavera\/state\.json\.[\s\S]*EISDIR/,
+    expected: /doctor cannot use \.calavera\/state\.json\.[\s\S]*EISDIR/,
   },
   {
     label: "a recorded Vite+ hook file that is a directory",
@@ -98,7 +102,7 @@ const cases = [
   },
 ];
 
-for (const { label, files, setup, expected } of cases) {
+for (const { label, files, setup, expected, stops = false } of cases) {
   test(`doctor --json prints a JSON result with the error as an issue for ${label}`, async () => {
     await using fixture = await createTemporaryFixture("doctor-json-state-error", {
       "package.json": json({ name: "doctor-json-state-error", private: true }),
@@ -116,8 +120,11 @@ for (const { label, files, setup, expected } of cases) {
     }, `doctor --json printed no JSON result:\n${stdout}\n${stderr}`);
     assert.equal(report.command, "doctor");
     assert.equal(report.ok, false);
-    // ADR-0020 Amendment 1: a run that stops before it classifies derives no phase.
-    assert.ok(!("phase" in report), stdout);
+    // ADR-0020 Amendment 1: a run that stops before it classifies derives no phase. An unreadable
+    // wiring file does not stop doctor, so that run classifies.
+    if (stops) {
+      assert.ok(!("phase" in report), stdout);
+    }
     const last = report.issues.at(-1);
     assert.equal(last?.level, "error", stdout);
     assert.match(last.message, expected);
@@ -168,7 +175,7 @@ test("doctor prints the warnings it found before the state file failed to read, 
 
   assert.equal(code, 1, `doctor exited ${code}\n${stdout}\n${stderr}`);
   const warning = stderr.indexOf("Missing package.json");
-  const error = stderr.indexOf("doctor cannot read .calavera/state.json.");
+  const error = stderr.indexOf("doctor cannot use .calavera/state.json.");
   assert.ok(warning !== -1, `doctor printed no warning:\n${stderr}`);
   assert.ok(error !== -1, `doctor printed no error:\n${stderr}`);
   assert.ok(warning < error, `doctor printed the error before the warning:\n${stderr}`);
