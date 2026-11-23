@@ -4,7 +4,8 @@
 // a real apply, with writeConfig true, and leaves the project and every outside folder unchanged.
 import assert from "node:assert/strict";
 import { chmod, mkdir, readFile, readdir, rm, symlink, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { existsSync } from "node:fs";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 
 import { applyRecipeObject } from "../src/index.js";
@@ -180,7 +181,7 @@ test("apply refuses a recipe path that a folder link leads outside the project",
     const { message } = await unchanged(fixture, () => refusal(fixture.root, join("via", name)));
     assert.ok(
       message.includes(
-        `${join(fixture.root, "via", name)} reaches ${join(fixture.elsewhere, name)} through a folder link, which is outside ${fixture.root}, so writing the recipe would ${verb} a file outside the project.`,
+        `${join(fixture.root, "via", name)} resolves to ${join(fixture.elsewhere, name)}, which is outside ${fixture.root}, so writing the recipe would ${verb} a file outside the project.`,
       ),
       message,
     );
@@ -325,6 +326,10 @@ test("apply names the recipe path when a folder on the way is a file", async () 
     error.message,
   );
   assert.equal(/** @type {NodeJS.ErrnoException} */ (error).code, "ENOTDIR");
+  assert.equal(
+    /** @type {Error} */ (error.cause).message,
+    `${join(fixture.root, "package.json")} is not a directory`,
+  );
 });
 
 test(
@@ -353,13 +358,118 @@ test(
   },
 );
 
-test("apply writes a recipe path outside the project that no link redirects as given", async () => {
+test("apply refuses a recipe path outside the project", async () => {
   await using fixture = await projectAndElsewhere();
   const given = join(fixture.elsewhere, "named.json");
 
-  await applyIn(fixture.root, { config: given });
-  assert.deepEqual(JSON.parse(await readFile(given, "utf8")).integrations, recipe.integrations);
+  const { message } = await unchanged(fixture, () => refusal(fixture.root, given));
+  assert.ok(
+    message.includes(
+      `${given} is outside ${fixture.root}, so writing the recipe would create a file outside the project.`,
+    ),
+    message,
+  );
 });
+
+test("apply refuses a recipe path that names the project by an alias and leaves it through a folder link", async () => {
+  await using fixture = await projectAndElsewhere();
+  await using outside = await createTemporaryFixture("recipe-write-outside", {
+    "keep.txt": "keep\n",
+  });
+  await symlink(outside.root, join(fixture.root, "d"), "junction");
+  await symlink(fixture.root, join(fixture.elsewhere, "project-alias"), "junction");
+
+  // Each alias names the project by a path other than its real one, so only a real-path
+  // comparison sees that the folder link leads out of it.
+  const aliases = [join(fixture.elsewhere, "project-alias")];
+  if (fixture.root.startsWith("/private/")) {
+    // macOS: /var and /tmp are links to /private/var and /private/tmp.
+    aliases.push(fixture.root.slice("/private".length));
+  }
+  const caseVariant = join(dirname(fixture.root), basename(fixture.root).toUpperCase());
+  if (caseVariant !== fixture.root && existsSync(caseVariant)) {
+    // A file system that ignores case, such as the macOS default.
+    aliases.push(caseVariant);
+  }
+  assert.ok(aliases.length >= 1);
+
+  for (const alias of aliases) {
+    const given = join(alias, "d", "new.json");
+    const outsideBefore = await snapshotDirectory(outside.root);
+    const { message } = await unchanged(fixture, () => refusal(fixture.root, given));
+    assert.ok(
+      message.includes(
+        `${given} resolves to ${join(outside.root, "new.json")}, which is outside ${fixture.root}, so writing the recipe would create a file outside the project.`,
+      ),
+      `${alias}: ${message}`,
+    );
+    assert.deepEqual(await snapshotDirectory(outside.root), outsideBefore, alias);
+  }
+});
+
+test(
+  "apply names what is wrong with a folder link on the way to the recipe path",
+  fileLinkSkip,
+  async () => {
+    await using fixture = await projectAndElsewhere();
+    const file = join(fixture.elsewhere, "shared.json");
+    await symlink(file, join(fixture.root, "notdir"));
+
+    const error = await unchanged(fixture, () =>
+      refusal(fixture.root, join("notdir", "recipe.json")),
+    );
+    assert.ok(
+      error.message.startsWith(
+        `Calavera cannot write the recipe at ${join(fixture.root, "notdir", "recipe.json")}, because ${join(fixture.root, "notdir")} is a link to ${file}, which is not a folder.`,
+      ),
+      error.message,
+    );
+    assert.equal(/** @type {NodeJS.ErrnoException} */ (error).code, "ENOTDIR");
+  },
+);
+
+test(
+  "apply names a folder link to a folder that cannot be entered",
+  { skip: process.platform === "win32" || process.getuid?.() === 0 },
+  async () => {
+    await using fixture = await projectAndElsewhere();
+    const locked = join(fixture.elsewhere, "locked");
+    await mkdir(locked, { mode: 0o000 });
+    await symlink(locked, join(fixture.root, "to-locked"), "junction");
+    try {
+      const error = await refusal(fixture.root, join("to-locked", "recipe.json"));
+      assert.ok(
+        error.message.startsWith(
+          `Calavera cannot write the recipe at ${join(fixture.root, "to-locked", "recipe.json")}, because ${join(fixture.root, "to-locked")} is a link to ${locked}, which cannot be opened (EACCES).`,
+        ),
+        error.message,
+      );
+      assert.equal(/** @type {NodeJS.ErrnoException} */ (error).code, "EACCES");
+    } finally {
+      await chmod(locked, 0o755);
+    }
+    assert.deepEqual(await readdir(locked), []);
+  },
+);
+
+test(
+  "apply writes the recipe in a folder it may write and enter but not list",
+  { skip: process.platform === "win32" || process.getuid?.() === 0 },
+  async () => {
+    await using fixture = await projectAndElsewhere();
+    const folder = join(fixture.root, "write-only");
+    await mkdir(folder, { mode: 0o300 });
+    try {
+      await applyIn(fixture.root, { config: join("write-only", "recipe.json") });
+    } finally {
+      await chmod(folder, 0o755);
+    }
+    assert.deepEqual(
+      JSON.parse(await readFile(join(folder, "recipe.json"), "utf8")).integrations,
+      recipe.integrations,
+    );
+  },
+);
 
 test(
   "apply refuses a recipe link outside the project when the path names the project by another route",

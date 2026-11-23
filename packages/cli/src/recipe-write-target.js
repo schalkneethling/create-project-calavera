@@ -1,5 +1,6 @@
 // @ts-check
-import { lstat, opendir, readlink, realpath } from "node:fs/promises";
+import { constants } from "node:fs";
+import { access, lstat, readlink, realpath, stat } from "node:fs/promises";
 import { basename, dirname, join, resolve } from "node:path";
 
 import { isPathInside } from "./utils/fs.js";
@@ -40,8 +41,9 @@ async function nearestExistingRealPath(path) {
 }
 
 /**
- * The error for a recipe path in a folder that does not exist, or that cannot be used. It keeps the file system's code and
- * error, which name only the path, so the failure stays diagnosable (#1208).
+ * The error for a recipe path in a folder that does not exist, is not a folder, or cannot be
+ * entered, named by `error.code`, whether the folder is a link or not. It keeps the file system's
+ * code and error, which name only the path, so the failure stays diagnosable (#1208).
  *
  * @param {string} path
  * @param {NodeJS.ErrnoException} error
@@ -49,13 +51,17 @@ async function nearestExistingRealPath(path) {
 async function missingFolderError(path, error) {
   const folder = dirname(path);
   const folderStats = await lstat(folder).catch(() => undefined);
+  const problem =
+    error.code === "ENOENT"
+      ? "does not exist"
+      : error.code === "ENOTDIR"
+        ? "is not a folder"
+        : `cannot be opened (${error.code})`;
   const why = folderStats?.isSymbolicLink()
-    ? `${folder} is a link to ${await linkTarget(folder)}, which does not exist`
-    : folderStats === undefined
-      ? `the folder ${folder} does not exist`
-      : folderStats.isDirectory()
-        ? `the folder ${folder} cannot be opened (${error.code})`
-        : `${folder} is not a folder`;
+    ? `${folder} is a link to ${await linkTarget(folder)}, which ${problem}`
+    : error.code === "ENOTDIR"
+      ? `${folder} ${problem}`
+      : `the folder ${folder} ${problem}`;
   return Object.assign(
     new Error(
       `Calavera cannot write the recipe at ${path}, because ${why}. Create the folder, or give a recipe path in a folder that exists and can be opened, then run apply again. ${STOPPED}`,
@@ -70,9 +76,11 @@ async function missingFolderError(path, error) {
  * a file somewhere other than `path` names. A link at `path` that does not reach an existing file
  * always stops apply, because writing through it would create its target, wherever that is. A link,
  * at `path` or at a folder on the way to it, that reaches a file outside the project stops apply,
- * because apply would change that file. A path the caller gave outside the project, by its own
- * name and its folder's real path, is written as given, because no link leads it there. A path in
- * a folder that does not exist, or cannot be opened, and a path that is or reaches a folder, stop
+ * because apply would change that file. Any other path whose real destination is outside the
+ * project stops apply too, whatever route names it: the comparison is between real paths, so an
+ * alias of the project, such as /var for /private/var on macOS or a case variant on a file system
+ * that ignores case, cannot carry a write out through a folder link. A path in a folder that does
+ * not exist, is not a folder, or cannot be entered, and a path that is or reaches a folder, stop
  * with a Calavera error that names the path, instead of the raw error the write would throw.
  *
  * The check covers symbolic links and junctions only, not hard links (owner decision on #1208). A
@@ -89,14 +97,15 @@ export async function assertRecipeWriteTarget(path, projectDirectory) {
   let folder;
   try {
     folder = await realpath(dirname(path));
-    // A file where the folder should be resolves too; opening it as a folder fails with ENOTDIR.
-    await (await opendir(folder)).close();
+    // A file where the folder should be resolves too, so it is checked as a folder. Creating a file
+    // needs the folder to be entered, not listed, so only search permission is checked.
+    if (!(await stat(folder)).isDirectory()) {
+      throw Object.assign(new Error(`${folder} is not a directory`), { code: "ENOTDIR" });
+    }
+    await access(folder, constants.X_OK);
   } catch (error) {
     throw await missingFolderError(path, /** @type {NodeJS.ErrnoException} */ (error));
   }
-  // A path that names the project, by any route, is held to it; only a path outside it both as
-  // given and as resolved is the caller's own choice.
-  const namedInside = isPathInside(project, path) || isPathInside(project, folder);
   // lstat does not follow a link at `path`. Any failure reads as nothing there, because the folder
   // was opened above, so the write reports anything else itself.
   const stats = await lstat(path).catch(() => undefined);
@@ -126,7 +135,7 @@ export async function assertRecipeWriteTarget(path, projectDirectory) {
       );
     }
     const { real } = resolved;
-    if (namedInside && !isPathInside(project, real)) {
+    if (!isPathInside(project, real)) {
       throw new Error(
         `Calavera refused to write the recipe: ${path} is a link to ${real === target ? target : `${target}, at the real path ${real}`}, which is outside ${project}, so writing the recipe would change a file outside the project. Replace the link with the recipe file itself, or give a recipe path inside ${project}, then run apply again. ${STOPPED}`,
       );
@@ -138,9 +147,10 @@ export async function assertRecipeWriteTarget(path, projectDirectory) {
   // The entry at `path` is not a link, so its real path is its folder's real path joined with its
   // name, whether it exists or not.
   const real = join(folder, basename(path));
-  if (namedInside && !isPathInside(project, real)) {
+  if (!isPathInside(project, real)) {
+    const where = real === path ? `${path} is` : `${path} resolves to ${real}, which is`;
     throw new Error(
-      `Calavera refused to write the recipe: ${path} reaches ${real} through a folder link, which is outside ${project}, so writing the recipe would ${stats === undefined ? "create" : "change"} a file outside the project. Give a recipe path inside ${project} that no folder link leads out of, then run apply again. ${STOPPED}`,
+      `Calavera refused to write the recipe: ${where} outside ${project}, so writing the recipe would ${stats === undefined ? "create" : "change"} a file outside the project. Give a recipe path inside ${project}, then run apply again. ${STOPPED}`,
     );
   }
   if (stats?.isDirectory()) {
