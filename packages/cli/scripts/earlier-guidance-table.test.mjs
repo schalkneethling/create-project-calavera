@@ -243,6 +243,12 @@ async function previousRelease() {
 test("Given the pending changesets, then the table names no unpublished version they will not produce", async () => {
   const previous = await previousRelease();
   assert.ok(previous, "CHANGELOG.md names a release before package.json's version");
+  // The boundary is strictly older than package.json's version, so on the Version Packages commit a
+  // guess listed between the last release and the new version is still flagged.
+  assert.ok(
+    semver.lt(previous, version),
+    `the release before ${version} is older than ${version}, not ${previous}`,
+  );
   const next = await nextVersion();
   for (const [file, kindEpochs] of [
     ["AGENTS.md", epochs.guidance],
