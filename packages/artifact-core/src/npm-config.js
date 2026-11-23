@@ -7,11 +7,18 @@ import { decode } from "ini";
 
 import { printable, readConfigText } from "./config-files.js";
 import {
+  bunEnvironmentFiles,
+  hasBunReference,
+  hasYarnReference,
+  variablesFromReferences,
+} from "./environment-files.js";
+import {
   YARN_DEFAULT_REGISTRY,
   bunEnvironmentLayer,
   bunfigLayers,
   detectLauncher,
   isAccountFile,
+  yarnEnvironmentFiles,
   yarnLayers,
 } from "./launcher-config.js";
 
@@ -102,6 +109,8 @@ async function readNpmrc(path, warnings) {
 function environmentSettings(env) {
   /** @type {Record<string, unknown>} */
   const settings = {};
+  /** @type {Record<string, string>} */
+  const variables = {};
   for (const [name, value] of Object.entries(env)) {
     if (!/^npm_config_/i.test(name) || !value) continue;
     const key = name
@@ -111,8 +120,9 @@ function environmentSettings(env) {
     // npm exports a list setting joined with blank lines (`envVal` in @npmcli/config
     // set-envs.js), but @npmcli/agent splits noProxy on commas only.
     settings[key] = key === "noproxy" ? value.split("\n\n").join(",") : value;
+    variables[key] = name;
   }
-  return settings;
+  return { settings, variables };
 }
 
 /**
@@ -172,16 +182,24 @@ function keyMatches(fileKey, key, env, expands) {
 }
 
 /**
+ * A userconfig path as npm resolves it: `~/` from the home folder, anything else from the working
+ * folder (`parseField` in @npmcli/config).
+ * @param {string} value @param {string} home @param {string} cwd
+ */
+function resolveUserconfig(value, home, cwd) {
+  const homePattern = process.platform === "win32" ? /^~(\/|\\)/ : /^~\//;
+  return homePattern.test(value) ? resolve(home, value.slice(2)) : resolve(cwd, value);
+}
+
+/**
  * The user .npmrc. Bun also reads `$XDG_CONFIG_HOME/.npmrc` when it exists and no userconfig is
  * set (https://bun.com/docs/install/npmrc).
  * @param {NodeJS.ProcessEnv} env @param {string} home @param {Launcher} launcher
  */
 async function userConfigPath(env, home, launcher) {
-  const configured = environmentSettings(env).userconfig;
+  const configured = environmentSettings(env).settings.userconfig;
   if (typeof configured === "string") {
-    const { text } = expandEnvironment(configured, env);
-    const homePattern = process.platform === "win32" ? /^~(\/|\\)/ : /^~\//;
-    return homePattern.test(text) ? resolve(home, text.slice(2)) : resolve(text);
+    return resolveUserconfig(expandEnvironment(configured, env).text, home, process.cwd());
   }
   if (launcher === "bun" && env.XDG_CONFIG_HOME) {
     const xdgPath = resolve(env.XDG_CONFIG_HOME, ".npmrc");
@@ -222,15 +240,24 @@ async function userConfigPath(env, home, launcher) {
  * `warnings` are for the user. `diagnostics` hold every ignored entry and unset variable, for
  * failure messages. `unsetVariables` lists variable names. None of them ever contains a value.
  * `registryUrl` is the URL of the registry that serves `scope`, without user information.
- * `accountHome` replaces the operating system account's home folder, for tests only.
- * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string, accountHome?: string }} [context]
- * @returns {Promise<{ options: Record<string, string>, registry: EffectiveRegistry, registryUrl: string, warnings: string[], diagnostics: string[], unsetVariables: string[] }>}
+ *
+ * A Yarn 4 `.env.yarn`, and the `.env` files Bun loads when Bun runs Calavera, put their values
+ * into the environment with variables already expanded. A registry or proxy variable whose value
+ * came from a variable in such a file is ignored with a warning (#1186, owner decisions 2 and 3
+ * of 2026-11-24); one that the file sets literally follows the environment rules. When that
+ * variable is a proxy variable that @npmcli/agent falls back to, such as HTTPS_PROXY,
+ * `requestOptions(url)` excludes the request's host from proxies.
+ * `accountHome` replaces the operating system account's home folder, and `runtime` the runtime
+ * that runs Calavera, for tests only.
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string, accountHome?: string, runtime?: "bun" | "node" }} [context]
+ * @returns {Promise<{ options: Record<string, string>, requestOptions: (url: string) => Record<string, string>, registry: EffectiveRegistry, registryUrl: string, warnings: string[], diagnostics: string[], unsetVariables: string[] }>}
  */
 export async function loadNpmRegistryOptions({
   cwd = process.cwd(),
   env = process.env,
   scope,
   accountHome = accountHomeFolder(),
+  runtime = process.versions.bun ? "bun" : "node",
 } = {}) {
   /** @type {string[]} */
   const warnings = [];
@@ -279,11 +306,26 @@ export async function loadNpmRegistryOptions({
     // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
     projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
     const userIsAccountFile = isAccountFile(userPath, accountHome, ".npmrc");
-    const userconfigRespelled =
+    // Owner decision 1 on #1186 (2026-11-24): a user file that the project .npmrc chose with
+    // `userconfig` follows the project rules, unless it is your own ~/.npmrc. npm resolves the
+    // project's value as it resolves npm_config_userconfig, and lets a caller's
+    // npm_config_userconfig win, so the file is the project's only when the two agree. npm
+    // honors only the exact key, but exports every spelling of it in lowercase, so a project
+    // `USERCONFIG=./evil.npmrc` replaces the caller's npm_config_userconfig although npm read the
+    // caller's file; Calavera cannot find that file, so the one it reads follows the project
+    // rules too, as does one whose path holds a variable that Calavera cannot reproduce.
+    const projectUserconfig = projectEntries.userconfig;
+    const userconfigRespelled = Object.keys(projectEntries).some(
+      (key) => key !== "userconfig" && keyMatches(key, "userconfig", env, false),
+    );
+    const userChosenByProject =
       npmStarted &&
-      Object.keys(projectEntries).some(
-        (key) => key !== "userconfig" && keyMatches(key, "userconfig", env, false),
-      );
+      !userIsAccountFile &&
+      (userconfigRespelled ||
+        (typeof projectUserconfig === "string" &&
+          (projectUserconfig.includes("${") ||
+            (await realPath(resolveUserconfig(projectUserconfig, home, cwd))) ===
+              (await realPath(userPath)))));
     const globalPath = npmStarted ? globalConfigPath(env, dirname(projectPath)) : undefined;
     if (globalPath !== undefined && globalPath !== userPath && globalPath !== projectPath) {
       // npm reads a global config file below the user .npmrc, expands variables in it, and
@@ -298,10 +340,10 @@ export async function loadNpmRegistryOptions({
         Object.keys(entries).some((key) =>
           [...names].some((name) => keyMatches(key, name, env, false)),
         );
-      const userChosenByProject =
+      const userEntriesChoose =
         !userIsAccountFile && setsOneOf(projectEntries, new Set(["userconfig"]));
-      const chosen = [projectEntries, ...(userChosenByProject ? [userEntries] : [])].some(
-        (entries) => setsOneOf(entries, GLOBAL_CONFIG_CHOOSERS),
+      const chosen = [projectEntries, ...(userEntriesChoose ? [userEntries] : [])].some((entries) =>
+        setsOneOf(entries, GLOBAL_CONFIG_CHOOSERS),
       );
       // Real paths, so a symbolic link to the project, or /var and /private/var on macOS, cannot
       // place a project file outside it.
@@ -322,22 +364,20 @@ export async function loadNpmRegistryOptions({
     const npmFiles = [
       ...(globalLayer ? [globalLayer] : []),
       {
-        name: "user .npmrc",
+        name: userChosenByProject ? "user .npmrc that the project .npmrc chose" : "user .npmrc",
         entries: userEntries,
-        // npm honors only the exact key `userconfig`, but exports every spelling of it in
-        // lowercase, so a project `USERCONFIG=./evil.npmrc` replaces the caller's
-        // npm_config_userconfig although npm read the caller's file (#1186). Calavera cannot
-        // find the file npm read, so the file it reads then follows the project rules.
-        trusted: !userconfigRespelled,
-        expandsVariables: userIsAccountFile && !userconfigRespelled,
+        trusted: !userChosenByProject,
+        expandsVariables: userIsAccountFile && !userChosenByProject,
         accepts,
       },
       { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
     ];
+    const { settings: environmentEntries, variables } = environmentSettings(env);
     /** @type {ConfigLayer} */
     const npmEnvironment = {
       name: "environment",
-      entries: environmentSettings(env),
+      entries: environmentEntries,
+      variables,
       trusted: true,
       // Under Bun, bunEnvironmentLayer reads the registry variables in Bun's own order.
       accepts: launcher === "bun" ? (key) => key !== "registry" && accepts(key) : accepts,
@@ -447,6 +487,33 @@ export async function loadNpmRegistryOptions({
 
   // The .npmrc layers whose values npm exports, the project file first, because its rules are
   // the strictest when two files hold the same value.
+  // The variables that a Yarn 4 `.env.yarn` or a Bun `.env` file set from a variable (#1186).
+  /** @type {Map<string, { path: string, tool: string }>} */
+  const fromEnvironmentFiles = new Map();
+  /** @param {Map<string, string>} claimed @param {string} tool */
+  const addClaims = (claimed, tool) => {
+    for (const [name, path] of claimed) fromEnvironmentFiles.set(name, { path, tool });
+  };
+  if (launcher === "yarn") {
+    const paths = await yarnEnvironmentFiles(layers, cwd);
+    addClaims(await variablesFromReferences(paths, hasYarnReference, warnings), "Yarn");
+  }
+  if (runtime === "bun") {
+    const paths = bunEnvironmentFiles(cwd, env);
+    addClaims(await variablesFromReferences(paths, hasBunReference, warnings), "Bun");
+  }
+  /** @param {string} name */
+  const ignoreFromEnvironmentFile = (name) => {
+    const claim = fromEnvironmentFiles.get(name);
+    if (!claim) return false;
+    const file = printable(relative(cwd, claim.path) || claim.path);
+    const variable = printable(name);
+    warnings.push(
+      `Ignored ${variable}, which ${file} sets from a variable: ${claim.tool} expanded the variable before Calavera started, and Calavera does not take a variable's value from a project file. Write the value without a variable in ${file}, or remove it from ${file} and set ${variable} in your own environment.`,
+    );
+    return true;
+  };
+
   const fileLayers = layers.filter((candidate) => !candidate.npmEnvironment);
   const exportingLayers = [
     ...fileLayers.filter((candidate) => !candidate.trusted),
@@ -459,6 +526,8 @@ export async function loadNpmRegistryOptions({
       if (layer.accepts && !layer.accepts(key)) continue;
       const rawValue = entryValue(key, entry);
       if (rawValue === undefined) continue;
+      const variable = layer.variables?.[key];
+      if (variable !== undefined && ignoreFromEnvironmentFile(variable)) continue;
       if (layer.npmEnvironment && npmStarted) {
         // npm exports its resolved settings, and for a .npmrc value it exports the result of its
         // own ${VAR} expansion. Such a value is the file's content, not environment, so it
@@ -523,11 +592,26 @@ export async function loadNpmRegistryOptions({
   // Without one, @npmcli/agent falls back to the proxy environment variables, in either letter
   // case: https_proxy for an https registry, and https_proxy, http_proxy, or proxy for http
   // (`getProxy` in @npmcli/agent/lib/proxy.js).
-  const environmentProxy = (
-    registryUrl.protocol === "https:" ? ["https_proxy"] : ["https_proxy", "http_proxy", "proxy"]
-  )
-    .map((wanted) => Object.keys(env).find((name) => name.toLowerCase() === wanted && env[name]))
-    .find(Boolean);
+  // A proxy variable that an environment file set from a variable is not used: requestOptions
+  // excludes each request's host from proxies, which is the only way to stop @npmcli/agent from
+  // falling back to it.
+  const ignoredProxyVariables = Object.keys(env).filter(
+    (name) =>
+      ["https_proxy", "http_proxy", "proxy"].includes(name.toLowerCase()) &&
+      env[name] &&
+      ignoreFromEnvironmentFile(name),
+  );
+  const environmentProxy =
+    ignoredProxyVariables.length > 0
+      ? undefined
+      : (registryUrl.protocol === "https:"
+          ? ["https_proxy"]
+          : ["https_proxy", "http_proxy", "proxy"]
+        )
+          .map((wanted) =>
+            Object.keys(env).find((name) => name.toLowerCase() === wanted && env[name]),
+          )
+          .find(Boolean);
   const usedProxy = registryBypassesProxy(registryUrl, options.noProxy, env)
     ? "direct"
     : (proxyOrigins[options.httpsProxy ? "httpsProxy" : "proxy"] ??
@@ -555,8 +639,17 @@ export async function loadNpmRegistryOptions({
     warnings.push(message);
     notes.push(message);
   }
+  const bypassEnvironmentProxy =
+    ignoredProxyVariables.length > 0 && !options.proxy && !options.httpsProxy;
   return {
     options,
+    requestOptions: (url) =>
+      bypassEnvironmentProxy
+        ? {
+            ...options,
+            noProxy: [options.noProxy, new URL(url).hostname].filter(Boolean).join(","),
+          }
+        : options,
     registry: {
       origin: registryUrl.origin,
       source: sources[registryKey]?.name ?? "default",

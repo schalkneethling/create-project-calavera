@@ -44,7 +44,7 @@ export async function resolveArtifactPackage(request) {
     withAuthFailure(npm, { subject: artifact.packageName, download: false }, () =>
       withRegistryCode(artifact.packageName, () =>
         pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
-          ...npm.options,
+          ...npm.requestOptions(npm.registryUrl),
           cache: request.cache,
           offline: request.offline,
           fullMetadata: true,
@@ -89,7 +89,11 @@ export async function resolvePackageDistTag({ packageName, tag, cwd, env, signal
   const npm = await loadNpmRegistryOptions({ cwd, env, scope: packageScope({ packageName }) });
   const manifest = await withNpmDiagnostics(npm, () =>
     withAuthFailure(npm, { subject: packageName, download: false }, () =>
-      pacote.manifest(`${packageName}@${tag}`, { ...npm.options, fetchRetries: 0, signal }),
+      pacote.manifest(`${packageName}@${tag}`, {
+        ...npm.requestOptions(npm.registryUrl),
+        fetchRetries: 0,
+        signal,
+      }),
     ),
   );
   if (manifest.name !== packageName || !semver.valid(manifest.version)) {
@@ -114,11 +118,8 @@ export async function extractArtifactPackage(resolution, destination, cliVersion
   // so the artifact scope's registry, which the package document came from, is passed as that
   // option: the lookup and the download then use the same registry (ADR-0021 Decision 4). The
   // tarball URL check judges that same rewritten URL (#1194).
-  assertTarballUrl(
-    resolution.packageName,
-    resolution.resolved,
-    pacoteTarballUrl(resolution.resolved, npm.registryUrl),
-  );
+  const tarballUrl = pacoteTarballUrl(resolution.resolved, npm.registryUrl);
+  assertTarballUrl(resolution.packageName, resolution.resolved, tarballUrl);
   await withTarballRefusal(resolution.packageName, resolution.resolved, () =>
     withNpmDiagnostics(npm, () =>
       withAuthFailure(
@@ -126,7 +127,7 @@ export async function extractArtifactPackage(resolution, destination, cliVersion
         { subject: `${resolution.packageName}@${resolution.version}`, download: true },
         () =>
           pacote.extract(resolution.resolved, destination, {
-            ...npm.options,
+            ...npm.requestOptions(tarballUrl),
             registry: npm.registryUrl,
             cache: resolution.cache,
             integrity: resolution.integrity,

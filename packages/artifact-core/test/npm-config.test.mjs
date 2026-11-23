@@ -999,7 +999,7 @@ test("under npm exec, the expanded copy npm exports from a chosen user .npmrc pr
   assert.equal(result.options.httpsProxy, undefined);
   assert.match(
     result.warnings.join("\n"),
-    /^Ignored https-proxy in the user \.npmrc: Calavera expands variables only in your own/m,
+    /^Ignored https-proxy in the user \.npmrc that the project \.npmrc chose: Calavera expands variables only in user configuration files/m,
   );
   assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
 });
@@ -1111,8 +1111,12 @@ test("under npm exec, a proxy that a chosen user .npmrc spells differently is no
       }),
     );
     assert.equal(result.options.httpsProxy, undefined, spelling);
-    // npm does not use the key, and the file is not repository content to Calavera's warning.
-    assert.deepEqual(result.warnings, [], spelling);
+    // The project chose the file, so its proxy, under any spelling, is ignored with a warning.
+    assert.match(
+      result.warnings.join("\n"),
+      /in the user \.npmrc that the project \.npmrc chose: Calavera (reads proxies only|expands variables only)/,
+      spelling,
+    );
     assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
   }
 });
@@ -1736,7 +1740,7 @@ test("under npm exec, a project userconfig in another spelling makes the user .n
           npm_config_registry: "http://insecure.invalid/",
         }),
       ),
-      /registry in the user \.npmrc must be an https URL/,
+      /registry in the user \.npmrc that the project \.npmrc chose must be an https URL/,
       projectKey,
     );
     await writeFile(chosen, "https-proxy=http://attacker.invalid:1/\n");
@@ -1748,19 +1752,64 @@ test("under npm exec, a project userconfig in another spelling makes the user .n
       }),
     );
     assert.equal(options.httpsProxy, undefined, projectKey);
-    assert.match(warnings.join("\n"), /^Ignored https-proxy in the user \.npmrc/m, projectKey);
+    assert.match(
+      warnings.join("\n"),
+      /^Ignored https-proxy in the user \.npmrc that the project \.npmrc chose/m,
+      projectKey,
+    );
   }
 });
 
-test("under npm exec, the exact project userconfig key keeps the chosen user .npmrc's registry and literal proxy, as decided", async () => {
+// Owner decision 1 on #1186 (2026-11-24): a user file that the project chose with `userconfig`
+// follows the project rules; your own ~/.npmrc keeps user trust.
+
+test("under npm exec, a user .npmrc that the project chose with userconfig follows the project rules", async () => {
   const context = await fixture({ project: "userconfig=./evil.npmrc\n" });
   const chosen = join(context.cwd, "evil.npmrc");
   await writeFile(chosen, "https-proxy=http://chosen.example.com:1/\n");
-  const { options } = await loadNpmRegistryOptions(
+  const proxy = await loadNpmRegistryOptions(
     npmExecContext(context, {
       npm_config_userconfig: chosen,
       npm_config_https_proxy: "http://chosen.example.com:1/",
     }),
   );
-  assert.equal(options.httpsProxy, "http://chosen.example.com:1/");
+  assert.equal(proxy.options.httpsProxy, undefined);
+  assert.match(
+    proxy.warnings.join("\n"),
+    /^Ignored https-proxy in the user \.npmrc that the project \.npmrc chose: Calavera reads proxies only/m,
+  );
+  await writeFile(chosen, "registry=http://insecure.example.com/\n");
+  await assert.rejects(
+    loadNpmRegistryOptions(
+      npmExecContext(context, {
+        npm_config_userconfig: chosen,
+        npm_config_registry: "http://insecure.example.com/",
+      }),
+    ),
+    /registry in the user \.npmrc that the project \.npmrc chose must be an https URL/,
+  );
+});
+
+test("under npm exec, your own ~/.npmrc keeps user trust when the project's userconfig names it", async () => {
+  const context = await fixture({ user: "registry=http://mirror.example.com/\n" });
+  await writeFile(join(context.cwd, ".npmrc"), `userconfig=${context.env.npm_config_userconfig}\n`);
+  const { options } = await loadNpmRegistryOptions(
+    npmExecContext(context, { npm_config_registry: "http://mirror.example.com/" }),
+  );
+  assert.equal(options.registry, "http://mirror.example.com/");
+});
+
+test("under npm exec, a user .npmrc the caller chose keeps user trust although the project names another", async () => {
+  // npm lets the caller's npm_config_userconfig win over the project's userconfig, and passes it
+  // on unchanged.
+  const context = await fixture({ project: "userconfig=./evil.npmrc\n" });
+  const ci = join(context.directory, "ci.npmrc");
+  await writeFile(ci, "https-proxy=http://corp.example.com:3128/\n");
+  const { options } = await loadNpmRegistryOptions(
+    npmExecContext(context, {
+      npm_config_userconfig: ci,
+      npm_config_https_proxy: "http://corp.example.com:3128/",
+    }),
+  );
+  assert.equal(options.httpsProxy, "http://corp.example.com:3128/");
 });

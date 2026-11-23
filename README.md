@@ -986,7 +986,11 @@ own `npm_config_*` variables set, and skips the proxy for the hosts in `noproxy`
 support these `.npmrc` settings, they do not apply. A proxy in a project
 `.npmrc` or `.yarnrc.yml` is ignored with a warning. That
 includes a proxy that npm passes on from the project `.npmrc` it read, such as the workspace root's
-file when you run `npx` from a workspace member. Calavera reads and sends no registry credential, so
+file when you run `npx` from a workspace member. A user `.npmrc` that a project `.npmrc` chose with
+`userconfig` counts as a project file too, unless it is your own `~/.npmrc`. A registry or proxy
+variable that a project's Yarn 4 `.env.yarn` sets from a variable, such as `${CI_TOKEN}`, is ignored
+with a warning, and so is one that a project's `.env` file sets that way when Bun runs Calavera; a
+value those files set without a variable applies. Calavera reads and sends no registry credential, so
 a registry that requires authentication cannot answer the check, and the notice stays quiet. Under Yarn 2 or later, it asks the registry and proxy that your
 `.yarnrc.yml` files and `YARN_*` variables name, and under Bun, the registry that your `.npmrc` files, `bunfig.toml`, or a Bun registry variable
 such as `BUN_CONFIG_REGISTRY` names. When no proxy is configured, it follows the

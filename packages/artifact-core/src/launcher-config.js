@@ -1,4 +1,5 @@
 // @ts-check
+import { access } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { TomlError, parse as parseToml } from "smol-toml";
@@ -28,6 +29,8 @@ const YARN_VARIABLES = new Map([
  *   entries: Record<string, unknown>,
  *   trusted: boolean,
  *   expandsVariables?: boolean,
+ *   variables?: Record<string, string>,
+ *   environmentFiles?: string[],
  *   tool?: "Yarn" | "Bun",
  *   settingNames?: Record<string, string>,
  *   expand?: (value: string, env: NodeJS.ProcessEnv) => Expansion,
@@ -189,13 +192,24 @@ export async function yarnLayers({ cwd, env, home, accountHome, scope, warnings 
   const layers = [];
   for (const path of paths) {
     const trusted = path === homePath;
-    const { entries, settingNames } = yarnEntries(await readYarnrc(path, warnings), scope);
+    const settings = await readYarnrc(path, warnings);
+    const { entries, settingNames } = yarnEntries(settings, scope);
+    // `injectEnvironmentFiles` is an ABSOLUTE_PATH setting, resolved from the folder of the file
+    // that sets it; a trailing `?` makes a file optional.
+    const files = settings.injectEnvironmentFiles;
     layers.push({
       name: trusted ? "user .yarnrc.yml" : "project .yarnrc.yml",
       entries,
       settingNames,
       trusted,
       expandsVariables: trusted && isAccountFile(path, accountHome, ".yarnrc.yml"),
+      ...(Array.isArray(files)
+        ? {
+            environmentFiles: files
+              .filter((file) => typeof file === "string")
+              .map((file) => resolve(dirname(path), file.replace(/\?$/, ""))),
+          }
+        : {}),
       tool: "Yarn",
       expand: expandYarn,
     });
@@ -218,11 +232,48 @@ export async function yarnLayers({ cwd, env, home, accountHome, scope, warnings 
     name: "environment",
     entries,
     settingNames,
+    variables: settingNames,
     trusted: true,
     tool: "Yarn",
     expand: expandYarn,
   });
   return layers;
+}
+
+/**
+ * The environment files Yarn 4 loads into the binaries it runs: every file that an
+ * `injectEnvironmentFiles` setting of the `.yarnrc.yml` layers names, or by default `.env.yarn`
+ * in the project folder (`Configuration.find` in @yarnpkg/core). Files of every layer count, so a
+ * file that only a farther `.yarnrc.yml` names is still judged. Lowest precedence first.
+ * @param {LauncherLayer[]} layers
+ * @param {string} cwd
+ */
+export async function yarnEnvironmentFiles(layers, cwd) {
+  const configured = layers.flatMap((layer) => layer.environmentFiles ?? []);
+  if (layers.some((layer) => layer.environmentFiles)) return configured;
+  const projectCwd = await yarnProjectCwd(cwd);
+  return projectCwd === undefined ? [] : [join(projectCwd, ".env.yarn")];
+}
+
+/**
+ * Yarn's project folder: the nearest folder with a yarn.lock, or else the topmost folder with a
+ * package.json (`findProjectCwd` in @yarnpkg/core).
+ * @param {string} cwd
+ */
+async function yarnProjectCwd(cwd) {
+  /** @param {string} path */
+  const exists = (path) =>
+    access(path).then(
+      () => true,
+      () => false,
+    );
+  /** @type {string | undefined} */
+  let topmost;
+  for (let directory = resolve(cwd); ; directory = dirname(directory)) {
+    if (await exists(join(directory, "yarn.lock"))) return directory;
+    if (await exists(join(directory, "package.json"))) topmost = directory;
+    if (dirname(directory) === directory) return topmost;
+  }
 }
 
 /**
@@ -317,6 +368,7 @@ export function bunEnvironmentLayer(env) {
     name: "environment",
     entries: name ? { registry: env[name] } : {},
     settingNames: name ? { registry: name } : {},
+    variables: name ? { registry: name } : {},
     trusted: true,
     tool: "Bun",
   };

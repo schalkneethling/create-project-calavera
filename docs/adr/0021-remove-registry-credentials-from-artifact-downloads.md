@@ -206,3 +206,22 @@ The owner answered the five open questions of the first draft on 2026-11-22 in h
 - **Read credentials through Varlock or a platform secret store.** Rejected: Calavera's artifacts are public, so no Calavera feature needs a secret, and adding a secret source would make Calavera hold one.
 - **Fall back to the public registry after a 401 or 403.** Rejected: a silent switch would hide which registry served an artifact, and a person who configured a mirror on purpose, for example to block the public registry, would get packages from a source they did not choose.
 - **Refuse a registry URL that contains a username or password.** Rejected by owner decision 1: it is stricter, but it breaks a working anonymous mirror because of a line the person may not control, and removing the user information already keeps the credential out of every request.
+
+## Amendment: Values a Repository Supplies Through Files a Package Manager Expands
+
+**Status:** Accepted (decided by the project owner on 2026-11-24 on #1186, implemented in #1225). It amends Decision 2 ("No variables in registry values") and its rule that npm's exported copy is recognized. It extends the same rule to proxy values, and to the files that a package manager or runtime expands before Calavera starts. Decisions 1 and 3 to 5, and the owner decisions above, are unchanged.
+
+### Why Decision 2 is extended
+
+Decision 2 stops Calavera from expanding a variable in a registry value. #1186 showed that a repository can still have a variable expanded into a registry or proxy URL: it names a file that npm, Yarn 4, or Bun expands before Calavera starts, and Calavera then receives the expanded value as an environment variable. Examples are a project `.npmrc` `userconfig`, `globalconfig`, or `prefix`, a Yarn 4 `.env.yarn`, and a Bun `.env`. A registry or proxy chosen this way, with an environment secret in its URL, sends that secret to a host the repository chose. An earlier owner decision on #1186 (2026-11-23) accepted `.env.yarn` values as a repository's choice. The owner reversed that acceptance for values that came from a variable, because it did not account for a repository carrying a caller's variable to a host the repository chose.
+
+### Decision
+
+1. **A user file that the project chose follows the project rules.** When npm starts Calavera and the project `.npmrc` chose the user `.npmrc` with `userconfig`, that file follows the project rules: it cannot set a proxy or a plain-`http` registry, and its variables are not expanded. This also applies when the key is spelled another way, which npm ignores but exports over the caller's `npm_config_userconfig`. The account's own `~/.npmrc` keeps user trust.
+2. **A Yarn 4 `.env.yarn` value that came from a variable is ignored.** Under Yarn 2 or later, a registry or proxy variable is ignored, with a warning and a remedy, when the environment file that last set it gave it a variable reference. The environment files are the files that `injectEnvironmentFiles` names, or `.env.yarn` in the project folder by default. A value that such a file sets literally, and a variable that only the caller set, follow the environment rules.
+3. **A Bun `.env` value that came from a variable is ignored the same way.** When Bun runs Calavera, the same rule applies to the `.env` files that Bun loads from the working folder.
+4. **A proxy variable that the agent falls back to is bypassed.** When the ignored variable is `HTTPS_PROXY`, `HTTP_PROXY`, or `PROXY`, which @npmcli/agent reads from the environment, Calavera excludes the host of each lookup and download from proxies.
+
+### Consequences
+
+A repository can no longer get a caller's variable expanded into the registry or proxy that Calavera uses, through any file that npm, Yarn 4, or Bun expands for it. Calavera cannot tell a value the caller set from one such a file set, so the rule errs toward ignoring. While an environment file or a non-expanding `.npmrc` sets a key with a variable, a value that the caller sets for the same key is ignored too. The warning tells the person to remove the entry. A CI job that names its own user `.npmrc` with `npm_config_userconfig` keeps user trust for that file, but variables in it are not expanded, as before this amendment.
