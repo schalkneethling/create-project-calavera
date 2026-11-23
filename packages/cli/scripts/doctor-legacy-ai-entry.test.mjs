@@ -118,7 +118,9 @@ test("Given a legacy entry that names a source no catalog provides, doctor repor
 
     const { status, stdout, stderr } = runDoctor();
     assert.equal(status, 1, `doctor exited ${status}\n${stdout}\n${stderr}`);
-    assert.match(`${stdout}${stderr}`, /skills\/not-in-catalog/);
+    // #1137: the entry is named by its position, not by its src, which is text from the file.
+    assert.match(`${stdout}${stderr}`, /ai\[0\]\) names a legacy src that Calavera does not know/);
+    assert.doesNotMatch(`${stdout}${stderr}`, /not-in-catalog/);
   });
 });
 
