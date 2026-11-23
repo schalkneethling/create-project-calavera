@@ -10,7 +10,7 @@ import { decode } from "ini";
 import { printable, readConfigText } from "./config-files.js";
 import {
   bunEnvironmentFileChains,
-  environmentFileValues,
+  environmentFileSources,
   hasBunReference,
   hasYarnReference,
   variablesFromReferences,
@@ -280,30 +280,34 @@ export async function loadNpmRegistryOptions({
   /** @type {Set<string>} */
   const unsetVariables = new Set();
   const home = env.HOME || homedir();
-  // Under a direct Bun run (`bun file.js`), Bun sets neither npm_execpath nor
-  // npm_config_user_agent, so a project .env that Bun loaded could set both and switch Calavera to
-  // another package manager's settings. A launcher variable that equals the value a loaded .env
-  // file gives it, or that the file sets from a variable, is repository content and is not read;
-  // Calavera then reads the Bun settings, as Bun runs it. `bun run` sets both itself after it
-  // loads .env, so their values are Bun's own (#1186).
+  // When Bun runs Calavera, Bun's settings apply unless a package manager that started Bun set
+  // npm_execpath or npm_config_user_agent. A direct Bun run (`bun file.js`) sets neither, so the
+  // variables are then absent, or come from a project .env file that Bun loaded. A launcher
+  // variable that a loaded .env file defines is repository content, whatever value Bun made of
+  // it (Bun unescapes \n in double quotes, for example), so Calavera reads the Bun settings and
+  // says so. `bun run` and `bunx --bun` set both variables to Bun's own values (#1186).
   const bunChains =
     runtime === "bun" ? await bunEnvironmentFileChains(startingCwd, env, warnings) : [];
-  /** @type {Set<string>} */
-  const launcherFromFile = new Set();
-  for (const chain of bunChains) {
-    const values = await environmentFileValues(chain);
-    for (const name of LAUNCHER_VARIABLES) {
-      const value = values.get(name);
-      if (value !== undefined && (value === env[name] || hasBunReference(value))) {
-        launcherFromFile.add(name);
+  let launcher = detectLauncher(env);
+  if (runtime === "bun" && launcher !== "bun") {
+    /** @type {Map<string, string>} */
+    const launcherFromFile = new Map();
+    for (const chain of bunChains) {
+      for (const [name, path] of await environmentFileSources(chain)) {
+        if (LAUNCHER_VARIABLES.includes(name)) launcherFromFile.set(name, path);
       }
     }
-  }
-  const launcher = launcherFromFile.size > 0 ? "bun" : detectLauncher(env);
-  if (launcherFromFile.size > 0) {
-    warnings.push(
-      `Ignored ${[...launcherFromFile].join(" and ")}, which .env sets: Calavera reads the package manager that started it only from variables the package manager sets, so it reads the Bun settings, as Bun runs it.`,
-    );
+    if (launcherFromFile.size > 0 || LAUNCHER_VARIABLES.every((name) => !env[name])) {
+      launcher = "bun";
+    }
+    for (const name of LAUNCHER_VARIABLES) {
+      const path = launcherFromFile.get(name);
+      if (path === undefined) continue;
+      const file = printable(relative(cwd, path) || path);
+      warnings.push(
+        `Ignored ${name}, which ${file} sets: Calavera recognizes the package manager that started it only from variables a package manager sets, so it reads the Bun settings, as Bun runs it. Remove ${name} from ${file}.`,
+      );
+    }
   }
   // npm exports the .npmrc settings it resolved as npm_config_* variables, so the comparison with
   // exported values below applies under it. pnpm counts as npm here, but pnpm 12 exports no
@@ -406,8 +410,9 @@ export async function loadNpmRegistryOptions({
         name: userChosenByProject ? "user .npmrc that the project .npmrc chose" : "user .npmrc",
         entries: userEntries,
         trusted: !userChosenByProject,
-        // userChosenByProject is never true for your own ~/.npmrc.
-        expandsVariables: userIsAccountFile,
+        // userChosenByProject is never true for your own ~/.npmrc; the second condition keeps a
+        // file that follows the project rules from expanding variables if that ever changes.
+        expandsVariables: userIsAccountFile && !userChosenByProject,
         accepts,
       },
       { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
@@ -510,8 +515,9 @@ export async function loadNpmRegistryOptions({
    * ignored.
    *
    * A file entry with a variable claims the exported value whatever it is, because npm's
-   * expansion cannot be reproduced. npm passes a value that the caller set for the same variable
-   * on unchanged, so that value is dropped with it, and a note says so, never with the value.
+   * expansion cannot always be reproduced. npm passes a value that the caller set for the same
+   * variable on unchanged, so that value is dropped with it. When the exported value is not the
+   * reproduced expansion, a note says so, never with the value.
    * @param {ConfigLayer} layer @param {string} key @param {string} fileKey
    * @param {string} rawValue The exported value. @param {string | undefined} variable Its name.
    */
@@ -520,7 +526,9 @@ export async function loadNpmRegistryOptions({
     if (
       fileValue?.includes("${") &&
       !(layer.expandsVariables ?? layer.trusted) &&
-      fileValue.trim() !== rawValue.trim()
+      // When npm's expansion, reproduced here, gives the exported value, the caller most likely
+      // set nothing, so there is no value of theirs to mention.
+      expandEnvironment(fileValue.trim(), env).text !== rawValue.trim()
     ) {
       const name = printable(variable ?? key);
       const setting = printable(fileKey);

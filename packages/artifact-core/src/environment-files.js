@@ -73,22 +73,20 @@ export async function variablesFromReferences(paths, hasReference, warnings) {
 }
 
 /**
- * The value each variable has after `paths` are read in order, so a later file replaces an earlier
- * one, without surrounding quotes. A file that does not exist or cannot be read is skipped;
- * variablesFromReferences warns about the second.
+ * The file of `paths` that defines each variable last, so a later file replaces an earlier one. A
+ * file that does not exist or cannot be read is skipped; variablesFromReferences warns about the
+ * second.
  * @param {string[]} paths Lowest precedence first.
  */
-export async function environmentFileValues(paths) {
+export async function environmentFileSources(paths) {
   /** @type {Map<string, string>} */
-  const values = new Map();
+  const sources = new Map();
   for (const path of paths) {
     const text = await readConfigText(path, "environment file", []);
     if (text === undefined) continue;
-    for (const [name, value] of parseEnvironmentFile(text)) {
-      values.set(name, value.trim().replace(/^(['"`])([\s\S]*)\1$/, "$2"));
-    }
+    for (const name of parseEnvironmentFile(text).keys()) sources.set(name, path);
   }
-  return values;
+  return sources;
 }
 
 /**

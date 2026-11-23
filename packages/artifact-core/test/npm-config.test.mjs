@@ -1523,7 +1523,6 @@ test("the installation's global npmrc warning about a variable names that file, 
   const { warnings } = await loadNpmRegistryOptions(context);
   assert.deepEqual(warnings, [
     "Ignored https-proxy in the global npmrc: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, not in npm's global configuration file. Write the proxy URL without a variable, or remove the entry and set the proxy in your own .npmrc or an environment variable; while the entry is there, an npm_config_https_proxy variable does not replace it when npm starts Calavera.",
-    "Also ignored npm_config_https_proxy in the environment: the global npmrc sets https-proxy with a variable, and npm passes on its own expansion under the same variable, so Calavera cannot tell a value you set from the one in that file. If you set npm_config_https_proxy yourself, remove https-proxy from the global npmrc.",
   ]);
 });
 
@@ -1899,4 +1898,16 @@ test("under npm exec, a key in your own ~/.npmrc that npm expands to https-proxy
     npmExecContext(context, { npm_config_https_proxy: "http://own.example.com:1/" }),
   );
   assert.equal(options.httpsProxy, "http://own.example.com:1/");
+});
+
+test("under npm exec, no note about a caller's value when the exported value is npm's own expansion", async () => {
+  const context = await fixture({ project: "https-proxy=http://${PHOST}:1/\n" });
+  const { warnings } = await loadNpmRegistryOptions(
+    npmExecContext(context, {
+      PHOST: "project-proxy.example.com",
+      npm_config_https_proxy: "http://project-proxy.example.com:1/",
+    }),
+  );
+  assert.equal(warnings.length, 1);
+  assert.match(warnings[0], /^Ignored https-proxy in the project \.npmrc/);
 });

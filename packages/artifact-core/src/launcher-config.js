@@ -50,8 +50,8 @@ const NPM_OR_PNPM_EXECPATH = /^(npm-cli\.js|pnpm(\.exe|\.cjs|\.mjs|\.js)?)$/i;
  * own binary, which no project setting changes, so a npm_execpath that names npm or pnpm wins over
  * the user agent. Yarn 4 and `bun run` set both variables themselves, after a Yarn `.env.yarn` or
  * a Bun `.env` is applied, so their user agent can be trusted. A direct Bun run (`bun file.js`)
- * sets neither, so loadNpmRegistryOptions first removes launcher variables that came from a .env
- * file Bun loaded.
+ * sets neither; when Bun runs Calavera and the variables are absent, or a .env file Bun loaded
+ * defines them, loadNpmRegistryOptions reads the Bun settings instead of this result.
  * @param {NodeJS.ProcessEnv} env
  * @returns {Launcher}
  */
