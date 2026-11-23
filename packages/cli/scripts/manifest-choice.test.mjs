@@ -1059,7 +1059,7 @@ test("apply-at-ancestor leaves a file behind a folder link in the inspected dire
   const elsewhereBefore = await snapshotDirectory(elsewhere.root);
 
   // The path is inside the inspected directory, so it moves to the ancestor's directory, where
-  // there is no linkout folder. Apply stops when it writes the recipe there, before any other write.
+  // there is no linkout folder. Apply stops before it writes the recipe there, and before any other write.
   const stopped = await applyAtAncestorRefusal(fixture, join("linkout", "recipe.json"));
   assert.equal(/** @type {NodeJS.ErrnoException} */ (stopped).code, "ENOENT");
   assert.ok(
