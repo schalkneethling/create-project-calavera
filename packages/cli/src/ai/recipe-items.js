@@ -128,8 +128,12 @@ function normalizeAiTarget(type, item, index) {
 function validateAiSource(src, index, type) {
   const artifact = aiArtifactCatalog.find((candidate) => candidate.src === src);
 
+  // #1137: the src is text from the person's file, so the message names the entry by its position
+  // instead of repeating it. A src outside the catalog, inside src/ai/ or not, is unknown.
   if (!artifact) {
-    throw new Error(`AI item at index ${index} source must stay within src/ai/: ${src}.`);
+    throw new Error(
+      `AI item at index ${index} (ai[${index}]) names a legacy src that Calavera does not know. Remove the item from ai, or replace it with an id entry that the list_ai_artifacts MCP tool lists.`,
+    );
   }
 
   if (artifact.type !== type) {
@@ -179,9 +183,10 @@ export function assertFirstSelection(firstIndexById, id, index) {
  * #1125, owner decision of 2026-11-21: apply refuses a legacy entry, such as
  * `{ "type": "skill", "src": "skills/protected-branch-guard" }`, that selects an artifact that
  * declares wiring or inputs, because a legacy entry cannot record the inputs and Calavera does not
- * guess them. `artifacts migrate` rewrites each legacy entry as an ID entry. Apply, update, their
- * dry runs, and the MCP apply tools call this before they plan or write anything. Clean still
- * reads a legacy entry; doctor reports the refusal with `legacyEntryWiringRefusal` (#1140).
+ * guess them. `artifacts migrate` rewrites each legacy entry as an ID entry. Apply, update,
+ * `artifacts install` and `artifacts update` (#1137), their dry runs, and the MCP apply tools call
+ * this before they plan or write anything. Clean still reads a legacy entry; doctor reports the
+ * refusal with `legacyEntryWiringRefusal` (#1140).
  *
  * @param {unknown} aiConfig
  */
@@ -248,7 +253,13 @@ export function normalizeAiItems(aiConfig) {
 
     if (entry.id) {
       const artifact = aiArtifactCatalog.find(({ id }) => id === entry.id);
-      if (!artifact) throw new Error(`AI item at index ${index} has unknown id "${entry.id}".`);
+      // #1137: the id is text from the person's file, so the message names the entry by its
+      // position instead of repeating it.
+      if (!artifact) {
+        throw new Error(
+          `AI item at index ${index} (ai[${index}]) names an artifact ID that Calavera does not know. Remove the item from ai, or replace its id with an artifact ID that the list_ai_artifacts MCP tool lists.`,
+        );
+      }
       item = {
         id: artifact.id,
         type: artifact.type,

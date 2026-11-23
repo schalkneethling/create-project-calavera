@@ -18,8 +18,9 @@ import {
   hashAiInstall,
   resolveAiArtifacts,
 } from "./ai/artifacts.js";
-import { assertFirstSelection } from "./ai/recipe-items.js";
+import { assertFirstSelection, assertNoLegacyEntryNeedsWiring } from "./ai/recipe-items.js";
 import { GITIGNORE_PATH, planGitignoreBlocks } from "./ignore-lines.js";
+import { validateRecipe } from "./recipe.js";
 import { artifactReleaseNotesUrl, isArtifactHealthy } from "./artifact-status-report.js";
 import {
   artifactCommand,
@@ -1148,6 +1149,12 @@ async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun
  */
 async function installArtifacts(options, updating, registry, loadFormatter) {
   const recipe = await readJson(options.config);
+  // #1137: validated first, as apply validates it, so the command refuses every recipe apply
+  // refuses, with apply's message, before anything is written or resolved. That includes an
+  // unknown id or legacy src, which the message names by its position, and a legacy entry that
+  // selects an artifact needing wiring or inputs (#1125).
+  validateRecipe(recipe);
+  assertNoLegacyEntryNeedsWiring(recipe.ai);
   const selections = normalizeSelections(recipe.ai);
   const currentLock = await readLock();
   const lockedById = new Map(currentLock.artifacts.map((entry) => [entry.id, entry]));

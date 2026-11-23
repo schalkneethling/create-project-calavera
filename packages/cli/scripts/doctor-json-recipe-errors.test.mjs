@@ -60,7 +60,7 @@ const cases = [
     expected: /calavera\.config\.json must contain a JSON object\./,
   },
   {
-    label: "a recipe whose legacy AI entry has a source outside src/ai/",
+    label: "a recipe whose legacy AI entry has a source the catalog does not hold",
     files: {
       [RECIPE]: json({
         version: 1,
@@ -69,7 +69,8 @@ const cases = [
         ai: [{ type: "skill", src: "skills/outside-src-ai" }],
       }),
     },
-    expected: /AI item at index 0 source must stay within src\/ai\//,
+    // #1137: named by its position, not by its src, which is text from the file.
+    expected: /AI item at index 0 \(ai\[0\]\) names a legacy src that Calavera does not know\./,
   },
   {
     label: "a recipe whose package manager Calavera does not support",
