@@ -2131,16 +2131,20 @@ test("agent bootstrap writes and merges OpenCode project MCP config", async () =
       command: ["node", "server.js"],
       enabled: true,
     });
-    assert.deepEqual(config.mcp.calavera, {
-      type: "local",
-      command: [
-        "bunx",
-        "--package",
-        `create-project-calavera@${packageJson.version}`,
-        "create-project-calavera-mcp",
-      ],
-      enabled: true,
+    // OpenCode 2 reads servers from `mcp.servers` and connects them unless `disabled` is set, so
+    // the entry carries no `enabled` (ADR-0022, #1204). The person's server stays where it was.
+    assert.deepEqual(config.mcp.servers, {
+      calavera: {
+        type: "local",
+        command: [
+          "bunx",
+          "--package",
+          `create-project-calavera@${packageJson.version}`,
+          "create-project-calavera-mcp",
+        ],
+      },
     });
+    assert.equal(Object.hasOwn(config.mcp, "calavera"), false);
     await assert.rejects(() => stat(".agents/calavera/mcp.md"), /ENOENT/);
   } finally {
     process.chdir(originalDirectory);

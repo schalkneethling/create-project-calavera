@@ -303,15 +303,20 @@ for (const { harness, path, written } of HARNESSES) {
 const JSON_HARNESSES = HARNESSES.filter(({ harness }) => harness !== "codex");
 
 for (const { harness, path, written } of JSON_HARNESSES) {
-  const key = harness === "opencode" ? "mcp" : "mcpServers";
+  // OpenCode 2 reads servers from `mcp.servers` (ADR-0022, #1204).
+  const keys = harness === "opencode" ? ["mcp", "servers"] : ["mcpServers"];
+  const key = /** @type {string} */ (keys.at(-1));
+  /** @param {any} config @returns {any} The object that holds the servers. */
+  const holderOf = (config) => keys.reduce((value, name) => value[name], config);
+  /** @param {any} config @returns {any} The object that holds `holderOf(config)`. */
+  const parentOf = (config) => keys.slice(0, -1).reduce((value, name) => value[name], config);
   const entryOf = (/** @type {typeof npmLaunch} */ launch) =>
-    /** @type {Record<string, Record<string, unknown>>} */ (JSON.parse(written(launch)))[key]
-      ?.calavera;
+    holderOf(JSON.parse(written(launch)))?.calavera;
 
   test(`${harness}: an entry with a key Calavera does not write is kept and reported as edited`, async () => {
     await inProject(async () => {
       const config = JSON.parse(written(npmLaunch));
-      config[key].calavera.env = { DEBUG: "1" };
+      holderOf(config).calavera.env = { DEBUG: "1" };
       await write(path, json(config));
       await assertKeptAndReported(path, /differs from the launch command/);
     });
@@ -327,12 +332,12 @@ for (const { harness, path, written } of JSON_HARNESSES) {
   test(`${harness}: other servers and keys stay, and only the calavera entry goes`, async () => {
     await inProject(async () => {
       const config = JSON.parse(written(npmLaunch));
-      config[key] = { other: { command: "other" }, ...config[key] };
+      parentOf(config)[key] = { other: { command: "other" }, ...holderOf(config) };
       config.theirs = true;
       await write(path, json(config));
       const { found } = await ejectApproved();
       const after = JSON.parse(await readFile(path, "utf8"));
-      delete config[key].calavera;
+      delete holderOf(config).calavera;
       assert.deepEqual(after, config);
       assert.deepEqual(
         item(found, path).removedLines,
@@ -458,7 +463,7 @@ for (const { harness, path, written } of JSON_HARNESSES) {
 
   test(`${harness}: a file with a comment and no calavera entry is neither a stop nor reported`, async () => {
     await inProject(async () => {
-      await write(path, `{\n  // my servers\n  "${key}": {}\n}\n`);
+      await write(path, `{\n  // my servers\n  "${keys[0]}": {}\n}\n`);
       const found = await plan();
       assert.equal(found.nothingToDo, true);
       assert.deepEqual(found.reported, []);
@@ -1171,3 +1176,202 @@ for (const { harness, path } of HARNESSES) {
     });
   }
 }
+
+// Issue #1204 (ADR-0022, Decision 4): `eject` looks for `calavera` under `mcp.servers`, where
+// 7.0.0 onward writes it, and directly under `mcp`, where 2.2.0 through 6.2.1 wrote it with
+// `enabled: true`. The earlier entry is spelled out here, not built from the current writers.
+/** @param {{ command: string, args: string[] }} launch */
+const earlierOpenCodeEntry = (launch) => ({
+  type: "local",
+  command: [launch.command, ...launch.args],
+  enabled: true,
+});
+const pnpm621 = repinned(/** @type {{ command: string, args: string[] }} */ (launches[1]), "6.2.1");
+const openCodeEntry = (/** @type {{ command: string, args: string[] }} */ launch) => ({
+  type: "local",
+  command: [launch.command, ...launch.args],
+});
+
+test("opencode: the entry an earlier release wrote directly under mcp is unedited and goes", async () => {
+  await inProject(async () => {
+    await write(
+      "opencode.json",
+      json({
+        $schema: SCHEMA,
+        mcp: { other: { type: "remote", url: "u" }, calavera: earlierOpenCodeEntry(pnpm621) },
+      }),
+    );
+    const found = await plan();
+    assert.equal(item(found, "opencode.json").edits, "unedited");
+    await ejectApproved();
+    assert.deepEqual(JSON.parse(await readFile("opencode.json", "utf8")), {
+      $schema: SCHEMA,
+      mcp: { other: { type: "remote", url: "u" } },
+    });
+  });
+});
+
+test("opencode: unedited entries in both places go in one item, and an emptied mcp is listed once", async () => {
+  await inProject(async () => {
+    await write(
+      "opencode.json",
+      json({
+        $schema: SCHEMA,
+        theme: "x",
+        mcp: {
+          servers: { calavera: openCodeEntry(npmLaunch) },
+          calavera: earlierOpenCodeEntry(pnpm621),
+        },
+      }),
+    );
+    const found = await plan();
+    assert.equal(found.items.filter(({ path }) => path === "opencode.json").length, 1);
+    const entry = item(found, "opencode.json");
+    const { mcp } = JSON.parse(await readFile("opencode.json", "utf8"));
+    // The saved patch listed the emptied `mcp` once for each entry inside it.
+    assert.deepEqual(entry.removedLines, `"mcp": ${JSON.stringify(mcp, null, 2)}`.split("\n"));
+    assert.deepEqual(found.reported, []);
+    await ejectApproved();
+    assert.deepEqual(JSON.parse(await readFile("opencode.json", "utf8")), {
+      $schema: SCHEMA,
+      theme: "x",
+    });
+  });
+});
+
+test("opencode: unedited entries in both places beside other servers each go, in file order", async () => {
+  await inProject(async () => {
+    const config = {
+      mcp: {
+        calavera: earlierOpenCodeEntry(pnpm621),
+        theirs: { type: "remote", url: "u" },
+        servers: { calavera: openCodeEntry(npmLaunch), mine: { type: "remote", url: "m" } },
+      },
+    };
+    await write("opencode.json", json(config));
+    const entry = item(await plan(), "opencode.json");
+    assert.deepEqual(entry.removedLines, [
+      ...`"calavera": ${JSON.stringify(config.mcp.calavera, null, 2)}`.split("\n"),
+      ...`"calavera": ${JSON.stringify(config.mcp.servers.calavera, null, 2)}`.split("\n"),
+    ]);
+    await ejectApproved();
+    assert.deepEqual(JSON.parse(await readFile("opencode.json", "utf8")), {
+      mcp: {
+        theirs: { type: "remote", url: "u" },
+        servers: { mine: { type: "remote", url: "m" } },
+      },
+    });
+  });
+});
+
+for (const [label, mcp, removedLocation, keptLocation] of /** @type {const} */ ([
+  [
+    "an edited entry under mcp.servers and Calavera's under mcp",
+    {
+      servers: { calavera: { ...openCodeEntry(npmLaunch), cwd: "tools" } },
+      calavera: earlierOpenCodeEntry(pnpm621),
+    },
+    "mcp",
+    "mcp.servers",
+  ],
+  [
+    "an edited entry under mcp and Calavera's under mcp.servers",
+    {
+      calavera: { ...earlierOpenCodeEntry(pnpm621), environment: { A: "1" } },
+      servers: { calavera: openCodeEntry(npmLaunch) },
+    },
+    "mcp.servers",
+    "mcp",
+  ],
+])) {
+  test(`opencode: with ${label}, eject removes Calavera's and keeps and reports the edited one`, async () => {
+    await inProject(async () => {
+      await write("opencode.json", json({ mcp }));
+      const found = await plan();
+      const entry = item(found, "opencode.json");
+      assert.equal(entry.edits, "unedited");
+      assert.match(
+        report(found, "opencode.json").reason,
+        new RegExp(
+          `^The calavera entry under ${keptLocation.replace(".", "\\.")} in opencode\\.json differs from the launch command`,
+        ),
+      );
+      await ejectApproved();
+      const after = JSON.parse(await readFile("opencode.json", "utf8"));
+      const kept = keptLocation === "mcp" ? after.mcp?.calavera : after.mcp?.servers?.calavera;
+      const gone = removedLocation === "mcp" ? after.mcp?.calavera : after.mcp?.servers?.calavera;
+      assert.ok(kept, JSON.stringify(after));
+      assert.equal(gone, undefined, JSON.stringify(after));
+    });
+  });
+}
+
+test("opencode: two edited entries are both kept and both reported", async () => {
+  await inProject(async () => {
+    await write(
+      "opencode.json",
+      json({
+        mcp: {
+          calavera: { type: "local", command: ["mine"], enabled: true },
+          servers: { calavera: { type: "local", command: ["mine"] } },
+        },
+      }),
+    );
+    const before = await readFile("opencode.json", "utf8");
+    const found = await plan();
+    assert.equal(named(found, "opencode.json"), false);
+    assert.deepEqual(
+      found.reported
+        .filter(({ path }) => path === "opencode.json")
+        .map(({ reason }) => reason.match(/^The calavera entry under (\S+)/)?.[1]),
+      ["mcp", "mcp.servers"],
+    );
+    await executeEject(selectEjectItems(found, { assumeYes: false }).remove);
+    assert.equal(await readFile("opencode.json", "utf8"), before);
+  });
+});
+
+test("opencode: an mcp.servers that is an OpenCode 1.x server named servers is never searched for calavera", async () => {
+  await inProject(async () => {
+    // Not OpenCode 2's object of servers, because `type` is a string (ADR-0022, Decision 3).
+    await write(
+      "opencode.json",
+      json({
+        mcp: { servers: { type: "local", command: ["x"], calavera: openCodeEntry(npmLaunch) } },
+      }),
+    );
+    const found = await plan();
+    assert.equal(named(found, "opencode.json"), false);
+    assert.equal(
+      found.reported.some(({ path }) => path === "opencode.json"),
+      false,
+    );
+  });
+});
+
+test("opencode: an entry under mcp.servers that the 1.x shape matches is edited there", async () => {
+  await inProject(async () => {
+    // `enabled` belongs to the earlier layout; under `mcp.servers` no release wrote it.
+    await write(
+      "opencode.json",
+      json({ mcp: { servers: { calavera: earlierOpenCodeEntry(npmLaunch) } } }),
+    );
+    await assertKeptAndReported(
+      "opencode.json",
+      /^The calavera entry under mcp\.servers in opencode\.json differs/,
+    );
+  });
+});
+
+test("opencode: a JSONC file with entries in both places reports both and is never rewritten", async () => {
+  await inProject(async () => {
+    await write(
+      "opencode.json",
+      `{\n  // mine\n  "mcp": { "calavera": ${JSON.stringify(earlierOpenCodeEntry(pnpm621))}, "servers": { "calavera": ${JSON.stringify(openCodeEntry(npmLaunch))} } }\n}\n`,
+    );
+    await assertKeptAndReported(
+      "opencode.json",
+      /JSON with comments \(JSONC\).*the calavera MCP entries under mcp and mcp\.servers/,
+    );
+  });
+});

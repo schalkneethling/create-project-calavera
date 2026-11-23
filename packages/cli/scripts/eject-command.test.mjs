@@ -1397,12 +1397,13 @@ const NEIGHBOR_SHAPES = {
   ],
 };
 
-/** The four harness files, with the key their servers sit under. */
+/** The four harness files, with the keys that lead to the object their servers sit in. */
 const HARNESSES = /** @type {const} */ ([
-  { harness: "claude-code", path: ".mcp.json", key: "mcpServers", format: "json" },
-  { harness: "cursor", path: ".cursor/mcp.json", key: "mcpServers", format: "json" },
-  { harness: "opencode", path: "opencode.json", key: "mcp", format: "json" },
-  { harness: "codex", path: ".codex/config.toml", key: "mcp_servers", format: "toml" },
+  { harness: "claude-code", path: ".mcp.json", keys: ["mcpServers"], format: "json" },
+  { harness: "cursor", path: ".cursor/mcp.json", keys: ["mcpServers"], format: "json" },
+  // OpenCode 2 reads servers from `mcp.servers` (ADR-0022, #1204).
+  { harness: "opencode", path: "opencode.json", keys: ["mcp", "servers"], format: "json" },
+  { harness: "codex", path: ".codex/config.toml", keys: ["mcp_servers"], format: "toml" },
 ]);
 
 /**
@@ -1413,7 +1414,7 @@ const HARNESSES = /** @type {const} */ ([
  * @param {string | undefined} before
  * @param {string | undefined} after
  */
-async function writeHarnessAround({ harness, path, key, format }, before, after) {
+async function writeHarnessAround({ harness, path, keys, format }, before, after) {
   await agentBootstrap({ mcpHarness: harness, packageManager: "npm" });
   const written = await readFile(path, "utf8");
   if (format === "toml") {
@@ -1423,14 +1424,21 @@ async function writeHarnessAround({ harness, path, key, format }, before, after)
   const config = JSON.parse(written);
   const schema =
     config.$schema === undefined ? "" : `  "$schema": ${JSON.stringify(config.$schema)},\n`;
+  const calavera = keys.reduce((value, key) => value[key], config).calavera;
+  // The neighbors sit next to the entry, inside every object that leads to it.
+  const open = keys.map((key) => `"${key}": {`).join(" ");
+  const close = keys.map(() => "}").join(" ");
   await writeFile(
     path,
-    `{\n${schema}  "${key}": {\n${before === undefined ? "" : `${before}\n`}    "calavera": ${JSON.stringify(config[key].calavera)}${after === undefined ? "" : `,\n${after}`}\n  }\n}\n`,
+    `{\n${schema}  ${open}\n${before === undefined ? "" : `${before}\n`}    "calavera": ${JSON.stringify(calavera)}${after === undefined ? "" : `,\n${after}`}\n  ${close}\n}\n`,
   );
 }
 
 for (const harness of HARNESSES) {
   for (const { shape, before, after } of NEIGHBOR_SHAPES[harness.format]) {
+    // A string member makes `mcp.servers` something other than OpenCode 2's object of servers, so
+    // eject does not search it for an entry at all (ADR-0022, Decision 3; eject-mcp.test.mjs).
+    if (harness.harness === "opencode" && shape === "a string value that ends the line") continue;
     test(`no secret leaks from ${harness.path} with ${shape}`, async () => {
       const secret = `SECRET-${harness.harness}-${shape.replace(/\W+/g, "-")}-7531`;
       await inProject(async () => {

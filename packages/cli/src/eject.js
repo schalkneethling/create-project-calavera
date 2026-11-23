@@ -92,6 +92,8 @@ import {
   createCodexMcpTomlBlock,
   UNPUBLISHED_PIN,
   isCalaveraMcpEntry,
+  openCodeEntriesIn,
+  openCodeMcpLocations,
   pinsUnpublishedVersion,
   projectMcpConfigPath,
   tomlPosition,
@@ -939,32 +941,77 @@ function serversWithEntry(config, key) {
 }
 
 /**
+ * Where a JSON harness file can hold the `calavera` entry, as `openCodeMcpLocations` lists them for
+ * `opencode.json`.
+ *
+ * @typedef {import("./utils/mcp-config.js").OpenCodeMcpLocation | { name: "mcpServers", keys: string[], entries: unknown[] }} JsonMcpLocation
+ */
+
+/**
+ * The `calavera` entries a parsed JSON harness file holds, in the order of the file, each with its
+ * location. In `opencode.json`, `mcp.servers` counts only when it is OpenCode 2's object of servers,
+ * so a server named `servers` is never read as one (ADR-0022, Decision 3).
+ *
+ * @param {unknown} config
+ * @param {JsonMcpLocation[]} locations
+ * @returns {{ location: JsonMcpLocation, entry: unknown }[]}
+ */
+function jsonMcpEntriesIn(config, locations) {
+  const [first] = locations;
+  if (first?.name !== "mcpServers") {
+    return openCodeEntriesIn(
+      config,
+      /** @type {import("./utils/mcp-config.js").OpenCodeMcpLocation[]} */ (locations),
+    );
+  }
+  const servers = serversWithEntry(config, "mcpServers");
+  return servers === undefined ? [] : [{ location: first, entry: servers.calavera }];
+}
+
+/**
  * Plans the `calavera` entry in a JSON harness file: `.mcp.json` and `.cursor/mcp.json` under
- * `mcpServers`, and `opencode.json` under `mcp`. The entry is unedited when it equals the entry
- * Calavera writes for some package manager, with the pinned version normalized (owner decision of
- * 2026-11-17), and it pins a version published on npm (ADR-0017, Amendment 6). Any other entry is
- * kept and reported as edited. Removing it empties the `mcpServers` or `mcp` object, which then goes too, and in `opencode.json` the `$schema` Calavera writes goes
- * once nothing else remains. The file stays, even when it is left empty. JSON has no comments, and
- * `eject` rewrites the whole file through the project's formatter, as the bootstrap writes it, so
- * the note says when that changes the layout of the rest of the file. A rewrite that would lose
- * what the person wrote, as `rewriteLossProblem` finds it, keeps the entry and reports it.
+ * `mcpServers`, and `opencode.json` under `mcp.servers`, or directly under `mcp`, where 2.2.0
+ * through 6.2.1 wrote it (ADR-0022, Decision 4). An entry is unedited when it equals an entry a
+ * release wrote at its location for some package manager, with the pinned version normalized
+ * (owner decision of 2026-11-17), and it pins a version published on npm (ADR-0017, Amendment 6).
+ * Each entry is judged on its own: an unedited one is removed, and an edited one is kept and
+ * reported, naming its location. Removing an entry can empty the object that holds it, which then
+ * goes too, and so on up to the top of the file, and in `opencode.json` the `$schema` Calavera
+ * writes goes once nothing else remains. The file stays, even when it is left empty. JSON has no
+ * comments, and `eject` rewrites the whole file through the project's formatter, as the bootstrap
+ * writes it, so the note says when that changes the layout of the rest of the file. A rewrite that
+ * would lose what the person wrote, as `rewriteLossProblem` finds it, keeps every entry and reports
+ * it.
  *
  * A file that is not plain JSON is read as JSON with comments (JSONC), which OpenCode documents
- * for `opencode.json`. Its `calavera` entry is kept and reported, because a rewrite would lose the
- * comments, so `eject` never rewrites such a file. Only a file that is neither JSON nor JSONC is a
- * hard stop (ADR-0017, Decision 7; owner decision of 2026-11-19 on #678).
+ * for `opencode.json`. Its `calavera` entries are kept and reported, because a rewrite would lose
+ * the comments, so `eject` never rewrites such a file. Only a file that is neither JSON nor JSONC
+ * is a hard stop (ADR-0017, Decision 7; owner decision of 2026-11-19 on #678).
  *
  * @param {string} path
- * @param {"mcpServers" | "mcp"} key
- * @param {unknown[]} expected The entry Calavera writes, for each package manager.
+ * @param {JsonMcpLocation[]} locations
  * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ * @param {string} [schema] The `$schema` Calavera writes into this file, if any.
  * @returns {Promise<{ items: EjectItem[], reported: EjectReport[] }>}
  */
-async function planJsonMcpEntry(path, key, expected, loadFormatter) {
+async function planJsonMcpEntry(path, locations, loadFormatter, schema) {
   const entry = await readTextEntry(path);
   if (entry?.text === undefined) return NO_MCP_ENTRY;
   const { identity, text } = entry;
   const inside = await insideProject(path);
+  /**
+   * The entries, named by location, and what to do about them.
+   *
+   * @param {{ location: JsonMcpLocation }[]} found
+   */
+  const named = (found) => {
+    const names = found.map(({ location }) => location.name).join(" and ");
+    const [entries, them] = found.length === 1 ? ["entry", "it"] : ["entries", "them"];
+    return {
+      entries: `the calavera MCP ${entries} under ${names}`,
+      remedy: `Remove ${them} yourself if you no longer want ${them}.`,
+    };
+  };
   /** @type {unknown} */
   let config;
   try {
@@ -990,70 +1037,88 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
         },
       );
     }
-    if (serversWithEntry(jsonc, key) === undefined) return NO_MCP_ENTRY;
+    const found = jsonMcpEntriesIn(jsonc, locations);
+    if (found.length === 0) return NO_MCP_ENTRY;
+    const { entries, remedy } = named(found);
     return mcpEntryKept(
       path,
-      `${path} is JSON with comments (JSONC), not plain JSON. eject would rewrite the whole file to remove the calavera MCP entry and lose the comments, so it never rewrites this file and leaves the entry. Remove it yourself if you no longer want it.`,
+      `${path} is JSON with comments (JSONC), not plain JSON. eject would rewrite the whole file to remove ${entries} and lose the comments, so it never rewrites this file. ${remedy}`,
     );
   }
-  const servers = serversWithEntry(config, key);
-  if (servers === undefined) return NO_MCP_ENTRY;
+  const found = jsonMcpEntriesIn(config, locations);
+  if (found.length === 0) return NO_MCP_ENTRY;
   if (!inside) return mcpEntryOutside(path);
-  const calavera = servers.calavera;
-  if (!isCalaveraMcpEntry(calavera, expected)) {
-    return mcpEntryKept(
-      path,
-      `The calavera entry under ${key} in ${path} ${pinsUnpublishedVersion(calavera, expected) ? UNPUBLISHED_PIN : "differs from the launch command Calavera writes for every package manager"}, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
-    );
-  }
+  const edited = found.filter(
+    ({ location, entry: calavera }) => !isCalaveraMcpEntry(calavera, location.entries),
+  );
+  const unedited = found.filter((each) => !edited.includes(each));
+  /** @type {EjectReport[]} */
+  const reported = edited.map(({ location, entry: calavera }) => ({
+    path,
+    reason: `The calavera entry under ${location.name} in ${path} ${pinsUnpublishedVersion(calavera, location.entries) ? UNPUBLISHED_PIN : "differs from the launch command Calavera writes for every package manager"}, so eject treats it as edited and leaves it. Remove it yourself if you no longer want it.`,
+  }));
+  if (unedited.length === 0) return { items: [], reported };
   const formatter = await loadFormatter();
   // A harness file can hold tokens, so the problem names the line of a number, not the number.
   const loss = await rewriteLossProblem(text, path, formatter, { withoutValues: true });
   if (loss !== undefined) {
+    const { entries, remedy } = named(unedited);
     return mcpEntryKept(
       path,
-      `${path} ${loss}. eject rewrites the whole file to remove the calavera MCP entry, so it leaves the entry rather than change that. Remove the entry yourself if you no longer want it.`,
+      `${path} ${loss}. eject rewrites the whole file to remove ${entries}, so it leaves the file as it is rather than change that. ${remedy}`,
     );
   }
 
-  const others = Object.fromEntries(
-    Object.entries(servers).filter(([name]) => name !== "calavera"),
-  );
-  const emptied = Object.keys(others).length === 0;
-  /** @type {Record<string, unknown>} */
-  // `serversWithEntry` found the object in `config`, so `config` is an object too.
-  const file = /** @type {Record<string, unknown>} */ (config);
-  const next = emptied
-    ? Object.fromEntries(Object.entries(file).filter(([name]) => name !== key))
-    : { ...file, [key]: others };
-  /** @type {[string, unknown][]} */
-  const removed = [];
+  // `jsonMcpEntriesIn` found an object in `config`, so `config` is an object too.
+  const next = structuredClone(/** @type {Record<string, unknown>} */ (config));
+  /** @param {unknown} root @param {string[]} keys @returns {unknown} */
+  const valueAt = (root, keys) =>
+    keys.reduce((value, key) => (isPlainObject(value) ? value[key] : undefined), root);
+  /** @param {string[]} keys */
+  const objectAt = (keys) => {
+    const value = valueAt(next, keys);
+    return isPlainObject(value) ? value : undefined;
+  };
+  for (const { location } of unedited) delete objectAt(location.keys)?.calavera;
+  // The keys of each member that goes: the entry, or the outermost object its removal emptied. An
+  // object already gone was emptied by the removal of another entry inside it.
+  const removedPaths = unedited.map(({ location }) => {
+    let removedKeys = [...location.keys, "calavera"];
+    for (let keys = location.keys; keys.length > 0; keys = keys.slice(0, -1)) {
+      const object = objectAt(keys);
+      if (object !== undefined && Object.keys(object).length > 0) break;
+      delete objectAt(keys.slice(0, -1))?.[/** @type {string} */ (keys.at(-1))];
+      removedKeys = keys;
+    }
+    return removedKeys;
+  });
+  // Every entry is deleted before any object is checked for emptiness, so two entries whose
+  // removal empties the same object both end at it, and it is listed once. The saved patch for
+  // #1204 listed it once for each entry.
+  const removed = [...new Map(removedPaths.map((keys) => [JSON.stringify(keys), keys])).values()];
   // Calavera keeps no record of adding `$schema`, so a `$schema` with the value it writes, in a
   // file that holds nothing else, counts as Calavera's (ADR-0017, Decision 2).
-  if (key === "mcp" && Object.keys(next).length === 1 && next.$schema === OPENCODE_CONFIG_SCHEMA) {
+  if (schema !== undefined && Object.keys(next).length === 1 && next.$schema === schema) {
     delete next.$schema;
-    removed.push(["$schema", OPENCODE_CONFIG_SCHEMA]);
+    removed.push(["$schema"]);
   }
-  removed.push(emptied ? [key, servers] : ["calavera", calavera]);
   const contents = await writeJSON(next, path, formatter);
-  const tree = parseTree(text);
-  // `JSON.parse` read the file, so the tree has every removed member.
-  const members = removed.map(
-    ([name]) =>
-      /** @type {import("jsonc-parser").Node} */ (
-        /** @type {import("jsonc-parser").Node} */ (
-          findNodeAtLocation(
-            /** @type {import("jsonc-parser").Node} */ (tree),
-            name === key || name === "$schema" ? [name] : [key, name],
-          )
-        ).parent
+  const tree = /** @type {import("jsonc-parser").Node} */ (parseTree(text));
+  // `JSON.parse` read the file, so the tree has every removed member. They are listed in the order
+  // the file holds them.
+  const members = removed
+    .map((keys) => ({
+      keys,
+      node: /** @type {import("jsonc-parser").Node} */ (
+        /** @type {import("jsonc-parser").Node} */ (findNodeAtLocation(tree, keys)).parent
       ),
-  );
+    }))
+    .toSorted((a, b) => a.node.offset - b.node.offset);
   const lineAt = (/** @type {number} */ offset) => text.slice(0, offset).split("\n").length - 1;
   const around = aroundLines(
     text.split("\n"),
-    lineAt(Math.min(...members.map(({ offset }) => offset))),
-    lineAt(Math.max(...members.map(({ offset, length }) => offset + length))),
+    lineAt(Math.min(...members.map(({ node }) => node.offset))),
+    lineAt(Math.max(...members.map(({ node }) => node.offset + node.length))),
     jsonValuesHidden,
   );
   /** @type {EjectItem} */
@@ -1063,8 +1128,8 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
     action: "edit",
     edits: "unedited",
     matchesRecords: true,
-    removedLines: removed.flatMap(([name, value]) =>
-      `${JSON.stringify(name)}: ${toJSONText(value)}`.split("\n"),
+    removedLines: members.flatMap(({ keys }) =>
+      `${JSON.stringify(keys.at(-1))}: ${toJSONText(valueAt(config, keys))}`.split("\n"),
     ),
     contents,
     around,
@@ -1076,7 +1141,7 @@ async function planJsonMcpEntry(path, key, expected, loadFormatter) {
     item.matchesRecords = false;
     item.note = `eject rewrites the whole of ${path} through the project's formatter (${formatter.description}), which also changes the layout of the rest of the file. eject does not print the rest of the file, because it can hold other servers' settings and tokens; review it with git diff after eject.`;
   }
-  return { items: [item], reported: [] };
+  return { items: [item], reported };
 }
 
 /**
@@ -1330,11 +1395,23 @@ async function planMcpEntries(guidance, loadFormatter) {
         calaveraMcpEntries(harness, launches)
       );
       parts.push(await planCodexMcpEntry(path, entries));
-    } else {
-      const key = harness === "opencode" ? "mcp" : "mcpServers";
+    } else if (harness === "opencode") {
       parts.push(
-        await planJsonMcpEntry(path, key, calaveraMcpEntries(harness, launches), loadOnce),
+        await planJsonMcpEntry(
+          path,
+          openCodeMcpLocations(launches),
+          loadOnce,
+          OPENCODE_CONFIG_SCHEMA,
+        ),
       );
+    } else {
+      /** @type {JsonMcpLocation} */
+      const location = {
+        name: "mcpServers",
+        keys: ["mcpServers"],
+        entries: calaveraMcpEntries(harness, launches),
+      };
+      parts.push(await planJsonMcpEntry(path, [location], loadOnce));
     }
   }
   return {

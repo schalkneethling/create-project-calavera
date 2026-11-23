@@ -41,7 +41,7 @@ const otherServer = { command: "node", args: ["server.js"] };
 
 /**
  * @typedef {{ command: string, args: string[] }} Launch
- * @typedef {{ harness: "claude-code" | "cursor" | "opencode" | "codex", path: string, file: (calavera: Launch, extra?: Record<string, unknown>) => string }} Harness
+ * @typedef {{ harness: "claude-code" | "cursor" | "opencode" | "codex", label?: string, path: string, file: (calavera: Launch, extra?: Record<string, unknown>) => string }} Harness
  */
 
 /** @type {Harness[]} */
@@ -59,7 +59,25 @@ const harnesses = [
       json({ mcpServers: { calavera: { ...launch, ...extra }, other: otherServer } }),
   },
   {
+    // OpenCode 2's layout, which Calavera writes from 7.0.0 on (ADR-0022, #1204).
     harness: "opencode",
+    label: "opencode (mcp.servers)",
+    path: "opencode.json",
+    file: (launch, extra = {}) =>
+      json({
+        $schema: "https://opencode.ai/config.json",
+        mcp: {
+          servers: {
+            calavera: { type: "local", command: [launch.command, ...launch.args], ...extra },
+            other: { type: "local", command: ["node", "server.js"] },
+          },
+        },
+      }),
+  },
+  {
+    // The layout 2.2.0 through 6.2.1 wrote, directly under `mcp`, which `--init` moves.
+    harness: "opencode",
+    label: "opencode (mcp)",
     path: "opencode.json",
     file: (launch, extra = {}) =>
       json({
@@ -91,6 +109,8 @@ const harnesses = [
       ].join("\n"),
   },
 ];
+
+const codexHarness = /** @type {Harness} */ (harnesses.find(({ harness }) => harness === "codex"));
 
 /**
  * Runs `callback` inside a new temporary project.
@@ -133,7 +153,7 @@ function assertKeptAsEdit(result, path) {
   // The reason names the entry first: "The calavera entry under …" or "The [mcp_servers.calavera] table".
   assert.match(
     change?.reason ?? "",
-    /^The (calavera entry under mcp(Servers)? |\[mcp_servers\.calavera\] table )in /,
+    /^The (calavera entry under mcp(Servers|\.servers)? |\[mcp_servers\.calavera\] table )in /,
     path,
   );
   assert.match(change?.reason ?? "", /local edit/, path);
@@ -143,8 +163,8 @@ function assertKeptAsEdit(result, path) {
   assert.ok(!result.pointers.some((pointer) => pointer.includes(path)), "named once");
 }
 
-for (const { harness, path, file } of harnesses) {
-  test(`${harness}: an entry an earlier release wrote for another package manager is updated`, async () => {
+for (const { harness, path, file, label = harness } of harnesses) {
+  test(`${label}: an entry an earlier release wrote for another package manager is updated`, async () => {
     await inProject(async () => {
       await write(path, file(pnpmLaunch("5.0.0")));
 
@@ -160,7 +180,7 @@ for (const { harness, path, file } of harnesses) {
     });
   });
 
-  test(`${harness}: an edited entry is kept as a local edit and reported with a remedy`, async () => {
+  test(`${label}: an edited entry is kept as a local edit and reported with a remedy`, async () => {
     for (const dryRun of [true, false]) {
       await inProject(async () => {
         const before = file(npmLaunch(current), { env_note: "edited" });
@@ -174,7 +194,7 @@ for (const { harness, path, file } of harnesses) {
     }
   });
 
-  test(`${harness}: an entry with an edited launch command is kept`, async () => {
+  test(`${label}: an entry with an edited launch command is kept`, async () => {
     await inProject(async () => {
       const before = file({ command: "old-command", args: ["old-arg"] });
       await write(path, before);
@@ -184,7 +204,7 @@ for (const { harness, path, file } of harnesses) {
     });
   });
 
-  test(`${harness}: an entry pinned to a released prerelease is updated`, async () => {
+  test(`${label}: an entry pinned to a released prerelease is updated`, async () => {
     await inProject(async () => {
       await write(path, file(pnpmLaunch("2.3.0-next.2")));
 
@@ -195,7 +215,7 @@ for (const { harness, path, file } of harnesses) {
     });
   });
 
-  test(`${harness}: an entry pinned to a version npm does not have is kept`, async () => {
+  test(`${label}: an entry pinned to a version npm does not have is kept`, async () => {
     // #1219: only a version npm has counts as Calavera's, not one the list names ahead of time.
     for (const version of [
       "99.0.0",
@@ -221,7 +241,7 @@ for (const { harness, path, file } of harnesses) {
     }
   });
 
-  test(`${harness}: an entry that holds the version placeholder is kept`, async () => {
+  test(`${label}: an entry that holds the version placeholder is kept`, async () => {
     // No release wrote the placeholder, so the entry was edited (see normalizePinnedVersion).
     await inProject(async () => {
       const before = file(npmLaunch("{{version}}"));
@@ -248,7 +268,7 @@ test("codex: a calavera entry written as an inline table is kept, never duplicat
 
 test("codex: a subtable added under the calavera table makes the entry edited", async () => {
   await inProject(async () => {
-    const before = `${harnesses[3]?.file(pnpmLaunch("5.0.0"))}\n[mcp_servers.calavera.env]\nNOTE = "kept"\n`;
+    const before = `${codexHarness.file(pnpmLaunch("5.0.0"))}\n[mcp_servers.calavera.env]\nNOTE = "kept"\n`;
     await write(".codex/config.toml", before);
 
     assertKeptAsEdit(await init("codex"), ".codex/config.toml");
@@ -431,7 +451,7 @@ test("codex: an inline mcp_servers table is never extended into a file that does
 
 test("codex: a byte order mark before Calavera's table is kept, and the table is still Calavera's", async () => {
   await inProject(async () => {
-    const before = `﻿${harnesses[3]?.file(pnpmLaunch("5.0.0"))}`;
+    const before = `﻿${codexHarness.file(pnpmLaunch("5.0.0"))}`;
     await write(".codex/config.toml", before);
 
     const result = await init("codex");
@@ -477,8 +497,10 @@ test("codex: appending to a file without a final newline adds one blank line bef
   });
 });
 
-for (const { harness, path, file } of harnesses.filter(({ harness: name }) => name !== "codex")) {
-  test(`${harness}: a calavera key repeated in the MCP container is kept and reported`, async () => {
+for (const { harness, path, file, label = harness } of harnesses.filter(
+  ({ harness: name }) => name !== "codex",
+)) {
+  test(`${label}: a calavera key repeated in the MCP container is kept and reported`, async () => {
     for (const dryRun of [true, false]) {
       await inProject(async () => {
         // The person's entry comes first; JSON.parse keeps only the last, Calavera's own.
@@ -506,7 +528,7 @@ for (const { harness, path, file } of harnesses.filter(({ harness: name }) => na
 
 test("codex: a byte order mark stays at the start when Calavera's table comes later", async () => {
   await inProject(async () => {
-    const table = harnesses[3]?.file(pnpmLaunch("5.0.0"));
+    const table = codexHarness.file(pnpmLaunch("5.0.0"));
     await write(".codex/config.toml", `\uFEFF[approval]\nmode = "manual"\n\n${table}`);
 
     assert.equal((await init("codex")).mcp.action, "update");
