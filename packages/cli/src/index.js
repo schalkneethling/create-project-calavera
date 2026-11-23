@@ -6181,49 +6181,70 @@ async function doctor(options) {
   }
 
   if (hasConfig) {
-    const recipe = await readRecipe(options.config);
-    const detection = await detectVitePlus(process.cwd());
-    issues.push(
-      // apply's validation checks the profile before the integrations, so doctor lists it first.
-      ...removedProfileWarnings(recipe, options.config),
-      ...removedToolchainWarnings(recipe, detection, options.config),
-      ...unknownIntegrationWarnings(recipe, detection, options.config),
-    );
-    // #1140: right after validating the recipe, apply refuses a legacy entry that selects an
-    // artifact with wiring or inputs (#1125), so doctor reports that refusal, with apply's entries
-    // and its `artifacts migrate` remedy, before the findings whose remedy is to run apply.
-    const legacyRefusal = legacyEntryWiringRefusal(
-      recipe.ai,
-      "apply stops before writing anything",
-    );
-    if (legacyRefusal !== undefined) {
-      issues.push({ level: "error", message: legacyRefusal });
-    }
-    const integrations = resolveRecipeIntegrations(recipe);
-    const aiArtifacts = resolveAiArtifacts(recipe);
-    // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the
-    // repository root, so doctor run from a workspace member checks them there (#925).
-    const rootOnlyIds = new Set(
-      integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
-    );
-    const gitHookIds = gitHookArtifactIds(recipe);
+    let recipe;
+    let integrations;
+    let aiArtifacts;
+    let rootOnlyIds;
+    let gitHookIds;
+    let repositoryRoot;
+    let packageManager;
     const projectDirectory = process.cwd();
-    const repositoryRoot =
-      rootOnlyIds.size > 0 || gitHookIds.length > 0
-        ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
-        : projectDirectory;
+    // #1141: a recipe doctor cannot read, parse, or resolve, including its package manager, is an
+    // error issue, so `doctor --json` still prints a result for a CI step to parse. The issue keeps
+    // the issues found before it and the error's causes; a JSONParseError names the file and
+    // position without quoting it (#1157).
+    try {
+      recipe = await readRecipe(options.config);
+      const detection = await detectVitePlus(projectDirectory);
+      issues.push(
+        // apply's validation checks the profile before the integrations, so doctor lists it first.
+        ...removedProfileWarnings(recipe, options.config),
+        ...removedToolchainWarnings(recipe, detection, options.config),
+        ...unknownIntegrationWarnings(recipe, detection, options.config),
+      );
+      // #1140: right after validating the recipe, apply refuses a legacy entry that selects an
+      // artifact with wiring or inputs (#1125), so doctor reports that refusal, with apply's
+      // entries and its `artifacts migrate` remedy, before the findings whose remedy is to run
+      // apply.
+      const legacyRefusal = legacyEntryWiringRefusal(
+        recipe.ai,
+        "apply stops before writing anything",
+      );
+      if (legacyRefusal !== undefined) {
+        issues.push({ level: "error", message: legacyRefusal });
+      }
+      integrations = resolveRecipeIntegrations(recipe);
+      aiArtifacts = resolveAiArtifacts(recipe);
+      // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the
+      // repository root, so doctor run from a workspace member checks them there (#925).
+      rootOnlyIds = new Set(
+        integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
+      );
+      gitHookIds = gitHookArtifactIds(recipe);
+      repositoryRoot =
+        rootOnlyIds.size > 0 || gitHookIds.length > 0
+          ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
+          : projectDirectory;
+      // package.json is read only here, so a recipe that selects neither a root-only integration
+      // nor a Git hook artifact is checked as before. resolveApplyPackageManager refuses a recipe
+      // packageManager that Calavera does not support, as apply does.
+      if (repositoryRoot !== projectDirectory) {
+        packageManager = resolveApplyPackageManager(
+          recipe,
+          options,
+          await readPackageJSONIfPresent(),
+        );
+      }
+    } catch (error) {
+      issues.push({ level: "error", message: errorText(error) });
+      return { command: "doctor", ok: false, issues };
+    }
 
     // #997 and #1031: apply refuses a root-only integration and an artifact that writes Git hooks
     // outside the repository root, so doctor reports apply's own refusals, naming the package
     // manager apply would name. apply stops at the first; doctor reports both, so one run names
-    // every change the recipe needs. package.json is read only here, so a recipe that selects
-    // neither is checked as before.
-    if (repositoryRoot !== projectDirectory) {
-      const packageManager = resolveApplyPackageManager(
-        recipe,
-        options,
-        await readPackageJSONIfPresent(),
-      );
+    // every change the recipe needs.
+    if (packageManager !== undefined) {
       for (const refusal of [
         rootOnlyIntegrationRefusal(integrations, projectDirectory, packageManager),
         gitHookArtifactRefusal(gitHookIds, projectDirectory, packageManager),
@@ -7446,6 +7467,21 @@ async function main(options) {
 }
 
 /**
+ * The error and its causes as text, redacted, as the CLI prints an error that stops a command.
+ *
+ * @param {unknown} error
+ * @returns {string}
+ */
+function errorText(error) {
+  try {
+    return formatErrorChain(error);
+  } catch {
+    // A failure to format the error must not hide the error itself.
+    return fallbackErrorText(error);
+  }
+}
+
+/**
  * Runs the CLI with the process arguments. `bin/create-project-calavera.js`
  * calls it once the Node.js version check passes.
  */
@@ -7457,14 +7493,7 @@ export async function runCli() {
     versionNotice = startVersionCheck(options, args);
     await main(options);
   } catch (error) {
-    let text;
-    try {
-      text = formatErrorChain(error);
-    } catch {
-      // A failure to format the error must not hide the error itself.
-      text = fallbackErrorText(error);
-    }
-    logger.error(text);
+    logger.error(errorText(error));
     process.exitCode = 1;
   }
 

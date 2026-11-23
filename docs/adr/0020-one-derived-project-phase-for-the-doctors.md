@@ -401,3 +401,20 @@ The decisions on the third independent review, also of 2026-11-22 (https://githu
 **Make the phase alone decide the exit status.** For example, `drifted` fails and every other phase passes. This was rejected because the owner's decisions are per item: a deselected lock entry whose files were deleted passes (#1111), while an edited selected artifact fails, and both can occur in the same `drifted` project. The phase sets the wording and the expected items; each item's condition sets its level.
 
 **Require equal exit statuses from the two doctors.** This would make `artifacts doctor` report managed files, wiring, and the recipe refusals, so it would become a second `doctor`. The owner chose agreement per artifact and per phase instead, with each exit-code difference named (owner decision 10).
+
+## Amendment 1: A Doctor Run That Stops Before It Classifies Prints a Result Without `phase`
+
+- **Date:** 2026-11-23
+- **Pull request:** https://github.com/schalkneethling/create-project-calavera/pull/1197 (#1141)
+
+Decision 8 says that a run that stops before it returns a result, on an unreadable record (Decision 7) or a cache-block step that fails to plan or record, "prints an error and no result, so it carries no `phase`". With `--json`, that leaves a CI step or an agent with nothing to parse on standard output. #1141 reported this for `doctor` when it cannot read, parse, or resolve the recipe.
+
+The owner decided on 2026-11-23 that `--json` always prints JSON (https://github.com/schalkneethling/create-project-calavera/issues/1112#issuecomment-7095375277, https://github.com/schalkneethling/create-project-calavera/issues/1141#issuecomment-7095375796). Decision 8 changes as follows:
+
+- A doctor run that stops before it can classify, because a recipe or a record cannot be read, parsed, or resolved, prints `{ command, ok: false, issues }` and exits 1. The error that stopped it is an issue with the level `error`, after any issue the run found before it, and its message is the same error that Decision 7 describes, naming the file and quoting none of its text.
+- That result has no `phase` field, because no phase was derived.
+- `phase` is a string in every result that classifies. The sentence "`phase` is always a string in every result" in Decision 8 is narrowed to those results.
+
+The text output reports the same error, after the issues found before it, and the exit status is 1, as Decision 7 already requires.
+
+PR #1197 implements this amendment for `doctor` when the recipe cannot be read, parsed, or resolved, including a recipe `packageManager` that Calavera does not support. The other paths that stop `doctor` before it can classify, such as an unreadable state file or unreadable wiring files, are tracked in #1206.
