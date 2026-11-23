@@ -1,6 +1,8 @@
 // @ts-check
 import { createHash } from "node:crypto";
 
+import semver from "semver";
+
 // Issue #830: an agent guidance file that an earlier release wrote is an older template, not a
 // local edit, only when its text equals what some release wrote. `--init` cannot ask
 // .calavera/state.json, because Calavera records none of these files there, so this module holds
@@ -226,27 +228,42 @@ export function normalizePinnedVersion(text) {
 }
 
 /**
- * The text with its pinned version replaced, as `normalizePinnedVersion` gives it, only when that
- * version is one the `releases` of a setup-notes template list, the list `findEarlierGuidance`
- * checks for `.agents/calavera/mcp.md`. That list holds every published release, plus the
- * release about to be published once its template text exists. `--init` and `eject` call it on the
+ * The text with its pinned version replaced, as `normalizePinnedVersion` gives it, only when npm
+ * has that version (owner decision of 2026-11-23 on #1219). `--init` and `eject` call it on the
  * `calavera` MCP entry in a harness file, so an entry pinned to any other version, such as a local
- * build's `7.0.0-local.1`, is a local edit (owner decision of 2026-11-23, #1219). The version this
- * checkout writes is always listed, because earlier-guidance-table.test.mjs fails until it is.
+ * build's `7.0.0-local.1`, is a local edit. Neither command asks npm; the answer comes from two
+ * records the repository already keeps:
+ *
+ * - The `releases` of the setup-notes templates, the list `findEarlierGuidance` checks for
+ *   `.agents/calavera/mcp.md`. It names every published release, but it also names the next
+ *   release before it is published, because a new template text lists the release that will
+ *   publish it, as 6.3.0 is listed while package.json holds 6.2.1.
+ * - `written`, the version this checkout writes, which Changesets sets in package.json. A listed
+ *   version older than it was published before it, and a listed version newer than it is the
+ *   next release, which npm does not have yet.
+ *
+ * `written` itself always counts, listed or not, so the entries this checkout writes stay
+ * Calavera's. A published CLI always runs a version npm has. A checkout whose version npm does not
+ * have yet, such as `main` between the Version Packages merge and the GitHub release that
+ * publishes it, also counts an entry pinned to its version that it finds in a project, because
+ * that entry is exactly what it writes.
  *
  * Call it on the text found in the project, never on the text Calavera writes: when both sides
  * normalize to undefined they would compare equal.
  *
  * @param {string} text
- * @returns {string | undefined} Undefined when the text pins no version, pins one Calavera never
- *   released, or holds the placeholder.
+ * @param {string | undefined} written The version this checkout pins in the entries it writes.
+ * @returns {string | undefined} Undefined when the text pins no version, pins one npm does not
+ *   have, or holds the placeholder, and when `written` is undefined.
  */
-export function normalizeReleasedPin(text) {
+export function normalizePublishedPin(text, written) {
   const pinned = normalizePinnedVersion(text);
-  if (pinned === undefined) return undefined;
+  if (pinned === undefined || written === undefined) return undefined;
   const { normalized, pin } = pinned;
   if (pin === undefined) return undefined;
-  return MCP.some(({ releases }) => releases.includes(pin)) ? normalized : undefined;
+  if (pin === written) return normalized;
+  const listed = MCP.some(({ releases }) => releases.includes(pin));
+  return listed && semver.lt(pin, written) ? normalized : undefined;
 }
 
 /**

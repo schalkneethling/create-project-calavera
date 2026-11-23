@@ -19,11 +19,12 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import semver from "semver";
 import { TomlError } from "smol-toml";
 
 import { executeEject, planEject, selectEjectItems } from "../src/eject.js";
 import { agentBootstrap, agentBootstrapTexts } from "../src/index.js";
-import { normalizePinnedVersion } from "../src/utils/earlier-guidance.js";
+import { EARLIER_TEMPLATES, normalizePinnedVersion } from "../src/utils/earlier-guidance.js";
 import {
   createCodexMcpTomlBlock,
   createCursorMcpJsonConfig,
@@ -40,6 +41,11 @@ const loadFormatter = async () => unformatted;
 const guidance = await agentBootstrapTexts(loadFormatter);
 const launches = guidance.mcpLaunchCommands;
 const npmLaunch = /** @type {{ command: string, args: string[] }} */ (launches[0]);
+// #1219: a version the release list names before npm has it, such as 6.3.0 while package.json
+// holds 6.2.1. Undefined right after a release, when the list names nothing newer.
+const upcoming = EARLIER_TEMPLATES.mcp
+  .flatMap(({ releases }) => releases)
+  .find((release) => semver.gt(release, packageJson.version));
 const SCHEMA = "https://opencode.ai/config.json";
 const CACHE_BLOCK =
   "# calavera:artifact-cache:start\n.calavera/cache/\n# calavera:artifact-cache:end\n";
@@ -194,9 +200,10 @@ for (const { harness, path, written } of HARNESSES) {
     }
   });
 
-  test(`${harness}: an entry pinned to a version Calavera never released is kept and reported`, async () => {
-    // #1219: an unpublished version and an unpublished prerelease are local edits.
-    for (const version of ["99.0.0", "99.0.0-local.1"]) {
+  test(`${harness}: an entry pinned to a version Calavera has not published is kept and reported`, async () => {
+    // #1219: an unpublished version, an unpublished prerelease, and a listed version npm does not
+    // have yet are local edits.
+    for (const version of ["99.0.0", "99.0.0-local.1", ...(upcoming ? [upcoming] : [])]) {
       await inProject(async () => {
         await write(path, written(repinned(npmLaunch, version)));
         // The reason names the pin, never the version text from the file.
@@ -204,7 +211,7 @@ for (const { harness, path, written } of HARNESSES) {
         const reason = report(await plan(), path).reason;
         assert.match(
           reason,
-          /pins a version of create-project-calavera that Calavera never released/,
+          /pins a version of create-project-calavera that Calavera has not published/,
         );
         assert.ok(!reason.includes(version), reason);
       });

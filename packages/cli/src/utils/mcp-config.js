@@ -5,7 +5,7 @@ import { isDeepStrictEqual } from "node:util";
 
 import { TomlError, parse as parseToml } from "smol-toml";
 
-import { normalizePinnedVersion, normalizeReleasedPin } from "./earlier-guidance.js";
+import { normalizePinnedVersion, normalizePublishedPin } from "./earlier-guidance.js";
 import { fileExists, parseJSON } from "./fs.js";
 import { formatGeneratedText } from "./generated-text.js";
 import { repeatedKeyProblem } from "./json-rewrite.js";
@@ -209,40 +209,50 @@ export function calaveraMcpEntries(harness, launches) {
 }
 
 /**
- * Whether `entry` is one a Calavera release wrote: it pins a version the release table lists
- * (`normalizeReleasedPin`, #1219),
- * and it equals one of `entries` with the pinned version normalized. Any other entry is a local
- * edit, such as one pinned to an unpublished version, one without a pin, or one that holds the
- * placeholder.
+ * The version `entries` pin, which is the version this checkout writes: every launch command
+ * `calaveraMcpEntries` lists pins the same one.
+ *
+ * @param {unknown[]} entries From `calaveraMcpEntries`.
+ * @returns {string | undefined}
+ */
+export function writtenVersion(entries) {
+  return normalizePinnedVersion(JSON.stringify(entries[0]))?.pin;
+}
+
+/**
+ * Whether `entry` is one a Calavera release wrote: it pins a version npm has
+ * (`normalizePublishedPin`, #1219), and it equals one of `entries` with the pinned version
+ * normalized. Any other entry is a local edit, such as one pinned to an unpublished version, one
+ * without a pin, or one that holds the placeholder.
  *
  * @param {unknown} entry
  * @param {unknown[]} entries From `calaveraMcpEntries`.
  */
 export function isCalaveraMcpEntry(entry, entries) {
-  const released = normalizeReleasedPin(JSON.stringify(entry));
-  if (released === undefined) return false;
-  const normalized = JSON.parse(released);
+  const published = normalizePublishedPin(JSON.stringify(entry), writtenVersion(entries));
+  if (published === undefined) return false;
+  const normalized = JSON.parse(published);
   return entries.some((candidate) => isDeepStrictEqual(normalized, withPinNormalized(candidate)));
 }
 
 /**
- * Whether `entry` would be one a Calavera release wrote but for its pinned version, which is not
- * one Calavera released (#1219). `--init` and `eject` then name the pin as the reason they keep
- * the entry, without quoting it, because it is text from the person's file.
+ * Whether `entry` would be one a Calavera release wrote but for its pinned version, which npm does
+ * not have (#1219). `--init` and `eject` then name the pin as the reason they keep the entry,
+ * without quoting it, because it is text from the person's file.
  *
  * @param {unknown} entry
  * @param {unknown[]} entries From `calaveraMcpEntries`.
  */
-export function pinsUnreleasedVersion(entry, entries) {
+export function pinsUnpublishedVersion(entry, entries) {
   if (isCalaveraMcpEntry(entry, entries)) return false;
   // An entry that holds the placeholder normalizes to undefined, which equals no candidate.
   const normalized = withPinNormalized(entry);
   return entries.some((candidate) => isDeepStrictEqual(normalized, withPinNormalized(candidate)));
 }
 
-/** How `--init` and `eject` say that an entry pins a version Calavera never released. */
-export const UNRELEASED_PIN =
-  "pins a version of create-project-calavera that Calavera never released";
+/** How `--init` and `eject` say that an entry pins a version npm does not have. */
+export const UNPUBLISHED_PIN =
+  "pins a version of create-project-calavera that Calavera has not published";
 
 /**
  * The change for a harness file whose `calavera` entry is a local edit, which `--init` keeps
@@ -250,11 +260,11 @@ export const UNRELEASED_PIN =
  *
  * @param {string} path
  * @param {string} entry How the entry is named in the file, such as "The calavera entry under mcp".
- * @param {boolean} unreleased Whether the entry differs only in pinning an unreleased version.
+ * @param {boolean} unpublished Whether the entry differs only in pinning an unpublished version.
  * @returns {McpConfigChange}
  */
-function editedEntryChange(path, entry, unreleased) {
-  const why = unreleased ? UNRELEASED_PIN : "differs from every entry a Calavera release wrote";
+function editedEntryChange(path, entry, unpublished) {
+  const why = unpublished ? UNPUBLISHED_PIN : "differs from every entry a Calavera release wrote";
   return {
     type: "skip",
     path,
@@ -322,7 +332,7 @@ export async function writeMcpServersJsonConfig(
       editedEntryChange(
         targetPath,
         "The calavera entry under mcpServers",
-        pinsUnreleasedVersion(mcpServers.calavera, entries),
+        pinsUnpublishedVersion(mcpServers.calavera, entries),
       ),
     );
     return "skip";
@@ -534,7 +544,7 @@ export async function writeCodexMcpConfig(path, launchCommand, entries, dryRun, 
         editedEntryChange(
           targetPath,
           `The ${CODEX_TABLE_HEADER} table`,
-          pinsUnreleasedVersion(servers.calavera, entries),
+          pinsUnpublishedVersion(servers.calavera, entries),
         ),
       );
       return "skip";
@@ -652,7 +662,7 @@ export async function writeOpenCodeMcpConfig(
       editedEntryChange(
         targetPath,
         "The calavera entry under mcp",
-        pinsUnreleasedVersion(mcp.calavera, entries),
+        pinsUnpublishedVersion(mcp.calavera, entries),
       ),
     );
     return "skip";

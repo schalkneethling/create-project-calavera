@@ -11,7 +11,7 @@ import packageJson from "../package.json" with { type: "json" };
 import {
   EARLIER_TEMPLATES,
   findEarlierGuidance,
-  normalizeReleasedPin,
+  normalizePublishedPin,
 } from "../src/utils/earlier-guidance.js";
 import {
   currentText,
@@ -201,16 +201,23 @@ test("Given an earlier release's text, then the description names one release, a
   );
 });
 
-test("Given a pinned version, then normalizeReleasedPin normalizes it only when a release lists it", () => {
+test("Given a pinned version, then normalizePublishedPin normalizes it only when npm has it", () => {
   const pin = (/** @type {string} */ value) => `npx --package create-project-calavera@${value} mcp`;
   const normalized = "npx --package create-project-calavera@{{version}} mcp";
-  // A release, a released prerelease, and the version this checkout writes (#1219).
-  for (const released of ["5.0.0", "2.3.0-next.2", version]) {
-    assert.equal(normalizeReleasedPin(pin(released)), normalized, released);
+  // #1219: a listed version older than the one this checkout writes was published before it.
+  for (const published of ["5.0.0", "2.3.0-next.2", "6.2.0"]) {
+    assert.equal(normalizePublishedPin(pin(published), "6.2.1"), normalized, published);
   }
-  // An unpublished version, an unpublished prerelease, no pin, and the placeholder.
-  for (const text of [pin("99.0.0"), pin("6.3.0-next.0"), "npx create-project-calavera mcp"]) {
-    assert.equal(normalizeReleasedPin(text), undefined, text);
+  // The version this checkout writes counts, listed or not, so its own entries stay Calavera's.
+  assert.equal(normalizePublishedPin(pin("6.2.1"), "6.2.1"), normalized);
+  assert.equal(normalizePublishedPin(pin("99.0.0"), "99.0.0"), normalized);
+  // A listed version newer than this checkout's, such as the upcoming 6.3.0, is not published yet.
+  assert.equal(normalizePublishedPin(pin("6.3.0"), "6.2.1"), undefined);
+  assert.equal(normalizePublishedPin(pin("5.0.0"), "4.1.0"), undefined);
+  // An unlisted version, an unlisted prerelease, no pin, the placeholder, and no written version.
+  for (const text of [pin("99.0.0"), pin("6.2.1-next.0"), "npx create-project-calavera mcp"]) {
+    assert.equal(normalizePublishedPin(text, "6.2.1"), undefined, text);
   }
-  assert.equal(normalizeReleasedPin(normalized), undefined);
+  assert.equal(normalizePublishedPin(normalized, "6.2.1"), undefined);
+  assert.equal(normalizePublishedPin(pin("5.0.0"), undefined), undefined);
 });

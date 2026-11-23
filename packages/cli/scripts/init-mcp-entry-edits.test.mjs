@@ -11,10 +11,18 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
+import semver from "semver";
+
 import { agentBootstrap } from "../src/index.js";
+import { EARLIER_TEMPLATES } from "../src/utils/earlier-guidance.js";
 
 const packageJson = JSON.parse(await readFile(new URL("../package.json", import.meta.url), "utf8"));
 const current = packageJson.version;
+// #1219: a version the release list names before npm has it, such as 6.3.0 while package.json
+// holds 6.2.1. Undefined right after a release, when the list names nothing newer.
+const upcoming = EARLIER_TEMPLATES.mcp
+  .flatMap(({ releases }) => releases)
+  .find((release) => semver.gt(release, current));
 
 /** @param {string} version */
 const pnpmLaunch = (version) => ({
@@ -187,9 +195,9 @@ for (const { harness, path, file } of harnesses) {
     });
   });
 
-  test(`${harness}: an entry pinned to a version Calavera never released is kept`, async () => {
-    // #1219: only the versions the release list names count as Calavera's.
-    for (const version of ["99.0.0", "99.0.0-local.1"]) {
+  test(`${harness}: an entry pinned to a version Calavera has not published is kept`, async () => {
+    // #1219: only a version npm has counts as Calavera's, not one the list names ahead of time.
+    for (const version of ["99.0.0", "99.0.0-local.1", ...(upcoming ? [upcoming] : [])]) {
       await inProject(async () => {
         const before = file(npmLaunch(version));
         await write(path, before);
@@ -199,7 +207,7 @@ for (const { harness, path, file } of harnesses) {
         const reason = result.changes.find((change) => change.path === path)?.reason ?? "";
         assert.match(
           reason,
-          /pins a version of create-project-calavera that Calavera never released/,
+          /pins a version of create-project-calavera that Calavera has not published/,
         );
         assert.ok(!reason.includes(version), reason);
         assert.equal(await readFile(path, "utf8"), before, `${path} ${version}`);
