@@ -1080,11 +1080,15 @@ The current bundled hooks and agents come from `claude-toolkit` and default to
 
 `.agents/`, the folders under it, `.codex/`, and `.calavera/` must be real
 folders, not symbolic links. `artifacts install` and `artifacts update` stop
-before they write anything, and `apply` stops before it installs artifacts, when
-one of these folders, or another folder on the path of an artifact output they
-stage, is a symbolic link, because Calavera cannot roll an interrupted install
-back through a link. A targeted update checks every artifact it stages again,
-including artifacts whose files do not change. The message names the link;
+before they write anything, and `apply` stops before it installs, rebuilds, or
+writes any artifact, when one of these folders, or another folder on the path of
+an artifact output they write, is a symbolic link, because Calavera cannot roll
+an interrupted install back through a link. `apply` checks every artifact its
+recipe selects, including artifacts that are already locked. A targeted update
+checks every artifact it stages again, including artifacts whose files do not
+change. `artifacts status --check-updates` stops when `.calavera` is a symbolic
+link, because the update check fills the registry cache in `.calavera/cache`.
+The message names the link;
 replace it with a real folder and run the command again. A link that points from
 another tool's folder to a folder under `.agents/` is fine.
 

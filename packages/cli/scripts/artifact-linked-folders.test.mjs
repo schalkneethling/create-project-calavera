@@ -4,12 +4,29 @@
 // the project through a link. The message names the link and tells the person to replace it with
 // a real folder.
 import assert from "node:assert/strict";
-import { cp, mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import {
+  chmod,
+  cp,
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
 
-import { prepareArtifactSources, runArtifactCommand } from "../src/artifact-lifecycle.js";
+import { aiArtifactOutputPaths } from "../src/ai/artifacts.js";
+import {
+  PACKAGE_PATH,
+  prepareArtifactSources,
+  readArtifactStatus,
+  runArtifactCommand,
+} from "../src/artifact-lifecycle.js";
+import { applyRecipeObject } from "../src/index.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
@@ -218,6 +235,217 @@ for (const link of [".agents", ".calavera"]) {
       );
 
       assert.deepEqual(await snapshotDirectory(project), projectBefore);
+    });
+  });
+}
+
+const applyOptions = {
+  json: true,
+  noInstall: true,
+  assumeYes: true,
+  writeConfig: true,
+  config: "calavera.config.json",
+};
+
+/**
+ * Applies `recipe` once, so every selection is locked, then moves the project folder `link` to
+ * `outside` and puts a symbolic link to it in its place. The locked packages and the artifact
+ * outputs are removed, so the next apply rebuilds each package and writes each output again.
+ *
+ * @param {string} project
+ * @param {string} outside
+ * @param {string} link
+ * @param {{ ai: unknown[] }} recipe
+ * @param {ReturnType<typeof stubRegistry>} registry
+ */
+async function lockThenLink(project, outside, link, recipe, registry) {
+  await writeFile("package.json", `${JSON.stringify({ name: "linked", private: true })}\n`);
+  await applyRecipeObject(recipe, applyOptions, registry);
+  const lock = JSON.parse(await readFile(".calavera/artifacts.lock.json", "utf8"));
+  for (const entry of lock.artifacts) {
+    await rm(join(PACKAGE_PATH, entry.id), { recursive: true, force: true });
+    for (const path of aiArtifactOutputPaths({ type: entry.type, path: entry.destination })) {
+      await rm(path, { recursive: true, force: true });
+    }
+  }
+  await mkdir(join(project, link), { recursive: true });
+  await cp(join(project, link), outside, { recursive: true, verbatimSymlinks: true });
+  await rm(join(project, link), { recursive: true });
+  await symlink(outside, join(project, link));
+}
+
+// #1209: when every selection is locked, apply rebuilds a missing package into
+// `.calavera/packages` and writes the outputs itself, without an artifact transaction, so it
+// refuses the same links before it writes anything. Its dry run stops with the same message.
+for (const { link, item } of CASES) {
+  for (const dryRun of [false, true]) {
+    test(`apply${dryRun ? " --dry-run" : ""} with every artifact locked refuses to write through a linked ${link} and changes nothing`, async () => {
+      await inProject(item, async ({ project, outside }) => {
+        const recipe = { ...buildRecipe("minimal", [], "npm"), ai: [item] };
+        const registry = stubRegistry(new Map([[item.id, "1.0.0"]]));
+        await lockThenLink(project, outside, link, recipe, registry);
+        const projectBefore = await snapshotDirectory(project);
+        const outsideBefore = await snapshotDirectory(outside);
+
+        await assert.rejects(applyRecipeObject(recipe, { ...applyOptions, dryRun }, registry), {
+          message: refusal(link),
+        });
+
+        assert.deepEqual(await snapshotDirectory(project), projectBefore);
+        assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+      });
+    });
+  }
+}
+
+// #1209: apply that installs an unlocked selection also writes the outputs of the locked ones
+// itself, so a link below only a locked selection's output stops it before the install commits.
+test("apply refuses a linked folder that only a locked selection writes into before it installs the unlocked one", async () => {
+  const locked = { id: "hook-block-dangerous-commands", target: "claude-code" };
+  const unlocked = { id: "skill-code-review" };
+  await inProject(locked, async ({ project, outside }) => {
+    const registry = stubRegistry(
+      new Map([
+        [locked.id, "1.0.0"],
+        [unlocked.id, "1.0.0"],
+      ]),
+    );
+    await lockThenLink(
+      project,
+      outside,
+      ".agents/hooks",
+      { ...buildRecipe("minimal", [], "npm"), ai: [locked] },
+      registry,
+    );
+    const projectBefore = await snapshotDirectory(project);
+    const outsideBefore = await snapshotDirectory(outside);
+
+    await assert.rejects(
+      applyRecipeObject(
+        { ...buildRecipe("minimal", [], "npm"), ai: [locked, unlocked] },
+        applyOptions,
+        registry,
+      ),
+      { message: refusal(".agents/hooks") },
+    );
+
+    assert.deepEqual(await snapshotDirectory(project), projectBefore);
+    assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+  });
+});
+
+// #1209: `artifacts status --check-updates` fills the registry cache in `.calavera/cache` even when
+// the cache block is already recorded and no record changes, so a linked `.calavera` stops it too.
+for (const dryRun of [false, true]) {
+  test(`artifacts status --check-updates${dryRun ? " --dry-run" : ""} refuses a linked .calavera when the cache block is already recorded`, async () => {
+    const item = { id: "skill-code-review" };
+    await inProject(item, async ({ project, outside }) => {
+      const registry = stubRegistry(new Map([[item.id, "1.0.0"]]));
+      await runArtifactCommand(options("install", item.id), registry);
+      await cp(join(project, ".calavera"), outside, { recursive: true, verbatimSymlinks: true });
+      await rm(join(project, ".calavera"), { recursive: true });
+      await symlink(outside, join(project, ".calavera"));
+      const projectBefore = await snapshotDirectory(project);
+      const outsideBefore = await snapshotDirectory(outside);
+
+      await assert.rejects(
+        runArtifactCommand(
+          {
+            config: "calavera.config.json",
+            dryRun,
+            artifactAction: "status",
+            checkUpdates: true,
+          },
+          registry,
+        ),
+        { message: refusal(".calavera") },
+      );
+
+      assert.deepEqual(await snapshotDirectory(project), projectBefore);
+      assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+    });
+  });
+}
+
+// #1193: when the cache block is not recorded yet, `artifacts status --check-updates` stages the
+// state it records in `.calavera/.transactions`, so a link there stops the report before it stages
+// anything, although `.calavera` itself is a real folder. The link target is read-only, so a
+// staging write that the transaction refused and cleaned up afterward fails with a different error.
+test("artifacts status --check-updates refuses to record the cache block through a linked .calavera/.transactions", async () => {
+  await inProject({ id: "skill-code-review" }, async ({ project, outside }) => {
+    await mkdir(join(project, ".calavera"));
+    await symlink(outside, join(project, ".calavera/.transactions"));
+    await chmod(outside, 0o555);
+    const projectBefore = await snapshotDirectory(project);
+    const outsideBefore = await snapshotDirectory(outside);
+
+    await assert.rejects(
+      runArtifactCommand(
+        {
+          config: "calavera.config.json",
+          dryRun: false,
+          artifactAction: "status",
+          checkUpdates: true,
+        },
+        stubRegistry(new Map([["skill-code-review", "1.0.0"]])),
+      ),
+      { message: refusal(".calavera/.transactions") },
+    );
+
+    assert.deepEqual(await snapshotDirectory(project), projectBefore);
+    assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+    await chmod(outside, 0o755);
+  });
+});
+
+// #1209: a recipe without AI items writes no artifact, so apply does not check the artifact
+// folders, and a linked `.calavera/.transactions`, which such an apply never writes into, stays
+// as it is.
+test("apply of a recipe without AI items does not refuse a linked .calavera/.transactions", async () => {
+  await inProject({ id: "skill-code-review" }, async ({ project, outside }) => {
+    await writeFile("package.json", `${JSON.stringify({ name: "linked", private: true })}\n`);
+    await mkdir(join(project, ".calavera"));
+    await symlink(outside, join(project, ".calavera/.transactions"));
+    const outsideBefore = await snapshotDirectory(outside);
+
+    await applyRecipeObject({ ...buildRecipe("minimal", [], "npm"), ai: [] }, applyOptions, {});
+
+    assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+  });
+});
+
+// #1209: the read-only report (#1052) and a report without `--check-updates` write no cache, so a
+// linked `.calavera` does not stop them.
+for (const { name, run } of [
+  {
+    name: "the read-only artifacts status --check-updates",
+    run: (/** @type {ReturnType<typeof stubRegistry>} */ registry) =>
+      readArtifactStatus({ config: "calavera.config.json", checkUpdates: true }, registry),
+  },
+  {
+    name: "artifacts status without --check-updates",
+    run: (/** @type {ReturnType<typeof stubRegistry>} */ registry) =>
+      runArtifactCommand(
+        { config: "calavera.config.json", dryRun: false, artifactAction: "status" },
+        registry,
+      ),
+  },
+]) {
+  test(`${name} does not refuse a linked .calavera`, async () => {
+    const item = { id: "skill-code-review" };
+    await inProject(item, async ({ project, outside }) => {
+      const registry = stubRegistry(new Map([[item.id, "1.0.0"]]));
+      await runArtifactCommand(options("install", item.id), registry);
+      await cp(join(project, ".calavera"), outside, { recursive: true, verbatimSymlinks: true });
+      await rm(join(project, ".calavera"), { recursive: true });
+      await symlink(outside, join(project, ".calavera"));
+      const projectBefore = await snapshotDirectory(project);
+      const outsideBefore = await snapshotDirectory(outside);
+
+      await run(registry);
+
+      assert.deepEqual(await snapshotDirectory(project), projectBefore);
+      assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
     });
   });
 }

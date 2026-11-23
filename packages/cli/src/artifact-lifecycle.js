@@ -389,6 +389,14 @@ export async function prepareArtifactSources(
 ) {
   await recoverArtifactTransaction({ readOnly: dryRun });
   const selections = normalizePackageSelections(recipe.ai);
+  // #1209: apply rebuilds a missing locked package into `.calavera/packages` (`restore`) and writes
+  // the outputs of every selection itself, without an artifact transaction, so a linked folder on
+  // any of those paths stops apply and its dry run before anything is rebuilt, installed, or
+  // written. The install of the unlocked selections checks only its own folders. A recipe without
+  // AI items writes no artifact, so it is not checked.
+  if (resolveAiArtifacts(recipe).length > 0) {
+    await refuseLinkedArtifactFolders(artifactInstallFolders(recipe, selections));
+  }
   const lock = await readLock();
   const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
   const unlocked = selections.filter(({ id }) => !lockedIds.has(id));
@@ -782,6 +790,10 @@ async function artifactStatus(
   const resolvesPackages = Boolean(
     options.checkUpdates && lock.artifacts.length + unlockedSelections.length > 0,
   );
+  // #1209: the update check fills the registry cache in `.calavera/cache` even when the cache block
+  // is already recorded and `commitArtifactCacheBlock` writes nothing, so a linked `.calavera` stops
+  // the report and its dry run here, as it stops an install.
+  if (resolvesPackages && !readOnly) await refuseLinkedArtifactFolders([dirname(CACHE_ROOT)]);
   const cacheBlock =
     resolvesPackages && !readOnly
       ? await planArtifactCacheBlock(
