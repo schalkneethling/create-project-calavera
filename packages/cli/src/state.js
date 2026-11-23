@@ -272,3 +272,19 @@ export function managedFilesFromState(state) {
 
   return state.managedFiles;
 }
+
+/**
+ * The `aiArtifacts` records after a command installs `installed`: the installed records first, in
+ * the order the command installed them, then every earlier record of another path, in its earlier
+ * order. #829: a deselected artifact keeps the record of what was installed, so clean can remove
+ * its unedited output and report an edited one. Apply and `artifacts install` and `update` share
+ * this order, so a run that installs the same records again writes the same state (#1139).
+ *
+ * @param {AiArtifactState[]} previous
+ * @param {AiArtifactState[]} installed
+ * @returns {AiArtifactState[]}
+ */
+export function mergeInstalledAiArtifacts(previous, installed) {
+  const installedPaths = new Set(installed.map(({ path }) => path));
+  return [...installed, ...previous.filter(({ path }) => !installedPaths.has(path))];
+}
