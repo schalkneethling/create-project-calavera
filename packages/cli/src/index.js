@@ -214,6 +214,7 @@ import {
   createMcpServersJsonConfig,
   createOpenCodeMcpJsonConfig,
   projectMcpConfigPath,
+  calaveraMcpEntries,
   writeCodexMcpConfig,
   writeMcpServersJsonConfig,
   writeOpenCodeMcpConfig,
@@ -2137,6 +2138,17 @@ function createMcpLaunchCommand(packageManager) {
     `create-project-calavera@${packageJson.version}`,
     "create-project-calavera-mcp",
   );
+}
+
+/**
+ * The MCP launch command for each supported package manager, in the order of
+ * `supportedPackageManagers`. `--init` checks an existing `calavera` entry against them, and
+ * `eject` reads them through `agentBootstrapTexts` (#1205).
+ *
+ * @returns {{ command: string, args: string[] }[]}
+ */
+function mcpLaunchCommands() {
+  return supportedPackageManagers.map(createMcpLaunchCommand);
 }
 
 /**
@@ -4428,6 +4440,9 @@ async function writeAgentBootstrapMcpConfig(
   /** @type {"write" | "update" | "skip"} */
   let action;
   const initialChangeCount = changes.length;
+  // An existing `calavera` entry is updated only when a release wrote it, for any package manager;
+  // any other entry is a local edit and is kept (#1205).
+  const launches = mcpLaunchCommands();
 
   try {
     switch (harness) {
@@ -4436,16 +4451,30 @@ async function writeAgentBootstrapMcpConfig(
         action = await writeMcpServersJsonConfig(
           path,
           harness === "cursor" ? createCursorMcpEntry(launchCommand) : launchCommand,
+          calaveraMcpEntries(harness, launches),
           dryRun,
           changes,
           loadFormatter,
         );
         break;
       case "codex":
-        action = await writeCodexMcpConfig(path, launchCommand, dryRun, changes);
+        action = await writeCodexMcpConfig(
+          path,
+          launchCommand,
+          calaveraMcpEntries(harness, launches),
+          dryRun,
+          changes,
+        );
         break;
       case "opencode":
-        action = await writeOpenCodeMcpConfig(path, launchCommand, dryRun, changes, loadFormatter);
+        action = await writeOpenCodeMcpConfig(
+          path,
+          launchCommand,
+          calaveraMcpEntries(harness, launches),
+          dryRun,
+          changes,
+          loadFormatter,
+        );
         break;
       default:
         action = "skip";
@@ -4554,7 +4583,7 @@ export async function agentBootstrapTexts(loadFormatter) {
   return {
     ...guidance,
     mcp,
-    mcpLaunchCommands: supportedPackageManagers.map(createMcpLaunchCommand),
+    mcpLaunchCommands: mcpLaunchCommands(),
   };
 }
 

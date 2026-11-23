@@ -253,8 +253,13 @@ async function runFlow({ directory, integrations, quality, guard }, root) {
   // claude-code` calls and the project's own vp fmt it formats with, so the flow
   // starts from the file the bootstrap wrote. copyReleaseFixture installs that vp.
   await inDirectory(project, () =>
-    writeMcpServersJsonConfig(".mcp.json", bootstrapLaunchCommand, false, [], () =>
-      loadProjectFormatter(project, "managed"),
+    writeMcpServersJsonConfig(
+      ".mcp.json",
+      bootstrapLaunchCommand,
+      [bootstrapLaunchCommand],
+      false,
+      [],
+      () => loadProjectFormatter(project, "managed"),
     ),
   );
   const before = await snapshotTree(root);

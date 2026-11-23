@@ -84,22 +84,15 @@ export async function writeJSON(value, path, formatter) {
 }
 
 /**
- * Returns what a rewrite of `text` would lose, or undefined when it loses nothing. JSON.parse keeps
- * only the last of two equal keys in one object, and a number comes back in the spelling Calavera
- * writes, which can differ from the person's (1.50 becomes 1.5) or lose digits past what a double
- * holds. `text` must already parse as JSON.
+ * Reads `text` token by token for what a rewrite through JSON.parse would lose: a key repeated in
+ * one object, and, unless `keysOnly`, a number too large to write. It stops at the first problem.
+ * Otherwise it gives each number as spelled, and with `withoutValues` the line of each.
  *
- * @param {string} text
- * @param {string} path The file path relative to the project root, which picks the formatter's language.
- * @param {ProjectFormatter} formatter
- * @param {{ withoutValues?: boolean }} [options] `withoutValues` names the line of a number instead
- *   of the number, for a file that can hold tokens, such as an MCP harness file `eject` reports on
- *   or a recipe `artifacts migrate` rewrites. A repeated key is named either way, and with
- *   `withoutValues` its line too, so the person can find it (#1078). Apply's messages for Claude
- *   Code settings keep naming the number.
- * @returns {Promise<string | undefined>}
+ * @param {string} text JSON text.
+ * @param {{ withoutValues?: boolean, keysOnly?: boolean }} options
+ * @returns {{ problem: string } | { numbers: string[], lines: number[] }}
  */
-export async function rewriteLossProblem(text, path, formatter, { withoutValues = false } = {}) {
+function scanJsonText(text, { withoutValues = false, keysOnly = false }) {
   const token = /\s*(?:([{}[\],:])|("(?:[^"\\]|\\.)*")|(-?\d[\d.eE+-]*)|(true|false|null))/y;
   /** @type {(Set<string> | null)[]} One entry per open object (its keys) or array (null). */
   const open = [];
@@ -129,14 +122,18 @@ export async function rewriteLossProblem(text, path, formatter, { withoutValues 
       const keys = /** @type {Set<string>} */ (open.at(-1));
       if (keys.has(key)) {
         // A line number exposes no value, so every caller names it.
-        return `holds the key ${string} more than once in one object, again on line ${lineOf(match, string)}, and only the last value would be kept`;
+        return {
+          problem: `holds the key ${string} more than once in one object, again on line ${lineOf(match, string)}, and only the last value would be kept`,
+        };
       }
       keys.add(key);
-    } else if (number !== undefined) {
+    } else if (number !== undefined && !keysOnly) {
       if (!Number.isFinite(Number(number))) {
-        return withoutValues
-          ? `holds a number on line ${lineOf(match, number)} that is too large for Calavera to write`
-          : `holds the number ${number}, which is too large for Calavera to write`;
+        return {
+          problem: withoutValues
+            ? `holds a number on line ${lineOf(match, number)} that is too large for Calavera to write`
+            : `holds the number ${number}, which is too large for Calavera to write`,
+        };
       }
       numbers.push(number);
       // Only callers that pass withoutValues (eject and artifacts migrate) name a number's line,
@@ -144,6 +141,41 @@ export async function rewriteLossProblem(text, path, formatter, { withoutValues 
       if (withoutValues) lines.push(lineOf(match, number));
     }
   }
+  return { numbers, lines };
+}
+
+/**
+ * Says where `text` repeats a key in one object, of which JSON.parse keeps only the last value,
+ * or undefined when no key repeats. The problem names the key and its line, never a value.
+ *
+ * @param {string} text JSON text.
+ * @returns {string | undefined}
+ */
+export function repeatedKeyProblem(text) {
+  const scan = scanJsonText(text, { keysOnly: true });
+  return "problem" in scan ? scan.problem : undefined;
+}
+
+/**
+ * Returns what a rewrite of `text` would lose, or undefined when it loses nothing. JSON.parse keeps
+ * only the last of two equal keys in one object, and a number comes back in the spelling Calavera
+ * writes, which can differ from the person's (1.50 becomes 1.5) or lose digits past what a double
+ * holds. `text` must already parse as JSON.
+ *
+ * @param {string} text
+ * @param {string} path The file path relative to the project root, which picks the formatter's language.
+ * @param {ProjectFormatter} formatter
+ * @param {{ withoutValues?: boolean }} [options] `withoutValues` names the line of a number instead
+ *   of the number, for a file that can hold tokens, such as an MCP harness file `eject` reports on
+ *   or a recipe `artifacts migrate` rewrites. A repeated key is named either way, and with
+ *   `withoutValues` its line too, so the person can find it (#1078). Apply's messages for Claude
+ *   Code settings keep naming the number.
+ * @returns {Promise<string | undefined>}
+ */
+export async function rewriteLossProblem(text, path, formatter, { withoutValues = false } = {}) {
+  const scan = scanJsonText(text, { withoutValues });
+  if ("problem" in scan) return scan.problem;
+  const { numbers, lines } = scan;
   if (numbers.length === 0) return undefined;
 
   // The formatter decides the spelling: Oxfmt writes 1e21 where JSON.stringify writes 1e+21. All
