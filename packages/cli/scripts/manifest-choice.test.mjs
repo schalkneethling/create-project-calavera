@@ -1084,6 +1084,24 @@ test("init --apply under an ancestor manifest stops before writing anything unle
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
 });
 
+// #1086: init loads its formatter before the wizard, but the #430 checks come first, so below a
+// Vite+ workspace whose vite-plus is not installed, a choice other than create-here still gets the
+// create-here message, not the vp install remedy.
+test("init --apply below a Vite+ workspace without vite-plus installed stops with the create-here message unless the choice is create-here", async () => {
+  await using workspace = await directoryUnderManagedWorkspace({ installed: false });
+  const before = await snapshotDirectory(workspace.root);
+  const options = parseArgs(["init", "--apply", "--yes", "--json", "--profile", "minimal"]);
+
+  for (const manifestChoice of [undefined, "apply-at-ancestor", "abandon"]) {
+    await assert.rejects(
+      inDirectory(workspace.project, false, () => initRecipe({ ...options, manifestChoice })),
+      /init --apply writes calavera\.config\.json in .+ before it applies, so it runs only with --manifest-choice create-here\./,
+      String(manifestChoice),
+    );
+  }
+  assert.deepEqual(await snapshotDirectory(workspace.root), before);
+});
+
 test("apply-at-ancestor stops before writing anything when the ancestor already has a Calavera recipe", async () => {
   await using fixture = await directoryUnderUnmanagedProject();
   await writeFile(join(fixture.root, "calavera.config.json"), json(recipe));

@@ -6211,16 +6211,6 @@ async function promptForAiArtifacts(options) {
  */
 export async function initRecipe(options) {
   const detection = await detectVitePlus(process.cwd());
-  // #669: the recipe is formatted as apply formats it, so a Vite+ project's vp check accepts it. A
-  // directory without a package.json of its own follows the parent's verdict, as apply does under
-  // create-here (#961), whether or not init also applies (#1086).
-  const configPath = relative(process.cwd(), resolve(options.config));
-  const loadFormatter = projectFormatterLoader(process.cwd(), formatterVitePlusStatus(detection), {
-    installDirectory: vitePlusInstallDirectory(detection),
-  });
-  // A formatter that cannot load, such as a parent whose vite-plus is not installed, stops init
-  // here, before the wizard asks anything (#1086).
-  await generatedJSONFormatter(configPath, loadFormatter);
   // #430: init writes the recipe before it applies, so a manifest choice that would not apply here
   // stops before anything is asked or written. That includes a choice where there is no decision,
   // because ignoring abandon would write and apply the recipe.
@@ -6233,6 +6223,17 @@ export async function initRecipe(options) {
       throw initApplyManifestChoiceError(decision);
     }
   }
+  // #669: the recipe is formatted as apply formats it, so a Vite+ project's vp check accepts it. A
+  // directory without a package.json of its own follows the parent's verdict, as apply does under
+  // create-here (#961), whether or not init also applies (#1086).
+  const configPath = relative(process.cwd(), resolve(options.config));
+  const loadFormatter = projectFormatterLoader(process.cwd(), formatterVitePlusStatus(detection), {
+    installDirectory: vitePlusInstallDirectory(detection),
+  });
+  // A formatter that cannot load, such as a parent whose vite-plus is not installed, stops init
+  // here, before the wizard asks anything, but after the manifest-choice checks above, so a choice
+  // init --apply refuses gets that refusal, not the vp install remedy (#1086).
+  await generatedJSONFormatter(configPath, loadFormatter);
 
   if (!options.json) {
     console.clear();

@@ -250,9 +250,10 @@ ancestor is managed (ADR-0012, Decision 1). The files Calavera generates
 follow the same verdict: when the ancestor is managed, `apply` formats them with
 the ancestor's `vp fmt` before it writes them, and so does Calavera's own
 `init` command for the recipe, with or without `--apply` (#961, #1086). When
-the ancestor is not managed, Calavera writes them unformatted. The `package.json` that `init` creates follows the same verdict
-(#1085). The package manager writes its keys in its own order, and a real
-vite-plus 1.7.0 run showed that `vp fmt` sorts them, so the ancestor's
+the ancestor is not managed, Calavera writes them unformatted. The
+`package.json` that the package manager's `init` creates follows the same
+verdict (#1085). The package manager writes its keys in its own order, and a
+real vite-plus 1.7.0 run showed that `vp fmt` sorts them, so the ancestor's
 `vp check` failed on the file. When the ancestor is managed, `apply` formats
 `package.json` with the ancestor's `vp fmt` three times: as soon as `init`
 writes it, after adding its scripts, and after the development dependency
