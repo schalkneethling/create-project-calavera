@@ -963,3 +963,43 @@ test("wiringFilesThatMention reports a link through a regular file as unresolved
     unreadable: [],
   });
 });
+
+// #1206: a recorded file that exists but cannot be read is an error finding that names the file
+// and the error code, and doctor goes on to check the other records.
+test("Given a recorded wiring file that cannot be read, doctor reports an error for it and checks the rest", async () => {
+  await using project = await createTemporaryFixture("wiring-doctor-unreadable", {
+    ".vite-hooks/pre-push": "vp test\n",
+  });
+  await mkdir(join(project.root, ".vite-hooks/pre-commit"));
+  await mkdir(join(project.root, ".claude/settings.json"), { recursive: true });
+
+  const findings = await artifactWiringFindings({
+    records: [
+      {
+        artifact: id,
+        viteHooks: { "pre-commit": line("pre-commit"), "pre-push": line("pre-push") },
+        claudeCode: { SessionStart: [{ hooks: [] }] },
+      },
+    ],
+    selected: new Set([id]),
+    skillDirectoryFor: () => skillDirectory,
+    cwd: project.root,
+  });
+
+  assert.deepEqual(
+    findings.map(({ level, message }) => [level, message.split(/[ :]/)[0]]),
+    [
+      ["error", ".vite-hooks/pre-commit"],
+      ["warning", ".vite-hooks/pre-push"],
+      ["error", ".claude/settings.json"],
+    ],
+  );
+  assert.equal(
+    findings[0]?.message,
+    `.vite-hooks/pre-commit cannot be read (EISDIR), so doctor cannot check the ${id} block Calavera recorded there, and the next apply stops. Make .vite-hooks/pre-commit a readable file and run doctor again.`,
+  );
+  assert.equal(
+    findings[2]?.message,
+    `.claude/settings.json cannot be read (EISDIR), so doctor cannot check the ${id} groups Calavera recorded there, and the next apply stops. Make .claude/settings.json a readable file and run doctor again.`,
+  );
+});

@@ -580,6 +580,27 @@ export async function artifactWiringFindings({
   const findings = [];
   /** @param {string} message */
   const warn = (message) => findings.push({ level: "warning", message });
+  const unreadable = Symbol("unreadable");
+  /**
+   * #1206: a recorded file that exists but cannot be read, such as a directory, is an error
+   * finding, because the next apply stops on it too, and doctor goes on to check the other files.
+   * The finding names the error code, never the error's message or the file's text (#1157).
+   *
+   * @param {string} path The file, relative to the project root.
+   * @param {string} what What Calavera recorded in it.
+   */
+  const readRecorded = async (path, what) => {
+    try {
+      return await readIfPresent(resolve(cwd, path));
+    } catch (error) {
+      const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? "unknown error";
+      findings.push({
+        level: "error",
+        message: `${path} cannot be read (${code}), so doctor cannot check ${what} Calavera recorded there, and the next apply stops. Make ${path} a readable file and run doctor again.`,
+      });
+      return unreadable;
+    }
+  };
 
   for (const { artifact: id, viteHooks, claudeCode } of records) {
     const isSelected = selected.has(id);
@@ -588,7 +609,8 @@ export async function artifactWiringFindings({
 
     for (const [hook, recorded] of Object.entries(viteHooks ?? {})) {
       const path = `.vite-hooks/${hook}`;
-      const contents = await readIfPresent(resolve(cwd, path));
+      const contents = await readRecorded(path, `the ${id} block`);
+      if (contents === unreadable) continue;
       const block =
         contents === undefined
           ? /** @type {const} */ ({ found: false })
@@ -630,7 +652,8 @@ export async function artifactWiringFindings({
 
     if (!claudeCode) continue;
     const path = CLAUDE_SETTINGS_PATH;
-    const contents = await readIfPresent(resolve(cwd, path));
+    const contents = await readRecorded(path, `the ${id} groups`);
+    if (contents === unreadable) continue;
     /** @type {Record<string, unknown>} */
     let hooks = {};
     if (contents !== undefined) {

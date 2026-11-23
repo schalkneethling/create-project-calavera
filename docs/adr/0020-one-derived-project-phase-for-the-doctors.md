@@ -417,4 +417,6 @@ The owner decided on 2026-11-23 that `--json` always prints JSON (https://github
 
 The text output reports the same error, after the issues found before it, and the exit status is 1, as Decision 7 already requires.
 
-PR #1197 implements this amendment for `doctor` when the recipe cannot be read, parsed, or resolved, including a recipe `packageManager` that Calavera does not support. The other paths that stop `doctor` before it can classify, such as an unreadable state file or unreadable wiring files, are tracked in #1206.
+PR #1197 implements this amendment for `doctor` when the recipe cannot be read, parsed, or resolved, including a recipe `packageManager` that Calavera does not support. Only the records that Decision 7 names, the recipe, the state, and the lock, stop `doctor` before it can classify. PR #1213 (#1206) implements this amendment for the state file.
+
+**Correction, 2026-11-23:** An earlier version of this paragraph also listed unreadable wiring files among the paths that stop `doctor` before it can classify. The owner decided that a recorded wiring file that cannot be read, such as a `.vite-hooks/pre-commit` or `.claude/settings.json` that is a directory, is an error finding instead: `doctor` still classifies, reports every other file, and exits 1 (https://github.com/schalkneethling/create-project-calavera/issues/1112#issuecomment-7099959255).
