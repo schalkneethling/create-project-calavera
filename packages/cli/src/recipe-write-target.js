@@ -73,8 +73,11 @@ async function missingFolderError(path, error) {
  * because apply would change that file. A path the caller gave outside the project, by its own
  * name and its folder's real path, is written as given, because no link leads it there. A path in
  * a folder that does not exist, or cannot be opened, and a path that is or reaches a folder, stop
- * with a Calavera error that names the path, instead of the raw error the write would throw. A
- * hard link is not a link here: it has no direction, so it cannot be told apart from a file.
+ * with a Calavera error that names the path, instead of the raw error the write would throw.
+ *
+ * The check covers symbolic links and junctions only, not hard links (owner decision on #1208). A
+ * hard link has no direction, so a recipe file that shares its contents with a file outside the
+ * project looks like any other file, and apply writes it as one.
  *
  * @param {string} path Absolute recipe path.
  * @param {string} projectDirectory The directory apply runs in.
