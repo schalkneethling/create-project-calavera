@@ -143,6 +143,29 @@ export function initApplyManifestChoiceError(decision) {
 }
 
 /**
+ * The error apply-at-ancestor stops with when something already exists at the given recipe path,
+ * but it is outside the ancestor's directory once every link is resolved. Apply would replace it,
+ * so it stops, but it is not the ancestor's recipe, so the message does not call it that (#1142).
+ *
+ * @param {ManifestDecision} decision
+ * @param {string} existing The given recipe path, as apply would use it in the ancestor's
+ *   directory.
+ * @param {string} real The real path of `existing`, with every link resolved.
+ * @param {boolean} isLink Whether `existing` is itself a symbolic link.
+ */
+export function recipePathOutsideAncestorError(decision, existing, real, isLink) {
+  const ancestorDirectory = dirname(decision.ancestor.manifestPath);
+  const found = isLink
+    ? `${existing} is a link to ${real}`
+    : real === existing
+      ? `${existing} already exists`
+      : `${existing} already exists, at the real path ${real}`;
+  return new Error(
+    `apply-at-ancestor would apply this recipe in ${ancestorDirectory} with its recipe at ${existing}, but ${found}, which is outside ${ancestorDirectory}, and Calavera does not replace it. Choose a recipe path that does not exist yet, or choose create-here. Calavera stopped before writing anything.`,
+  );
+}
+
+/**
  * The error apply-at-ancestor stops with when the ancestor's directory already has a Calavera
  * recipe or state, because applying this recipe there would replace another project's recipe or
  * state. The message names what was found: the bootstrap that `--init` runs writes the state
