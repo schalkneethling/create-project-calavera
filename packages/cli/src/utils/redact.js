@@ -31,6 +31,14 @@ const SECRET_NAME = new RegExp(
 // The working directory variables hold paths, never secrets.
 const NEVER_SECRET_NAME = /^(?:OLD)?PWD$/i;
 
+// Environment variables known to name a session and grant no access, as `PWD`
+// names a folder, so their values are shown. Each is listed by its exact name,
+// because another name ending in `_SESSION_ID`, such as `APP_SESSION_ID`, can
+// hold a web session cookie that grants access. Only environment values use
+// this list; the same name as a key in text, such as
+// `CLAUDE_CODE_SESSION_ID=value`, still has its value hidden.
+const NON_SECRET_ENV_NAMES = new Set(["CLAUDE_CODE_SESSION_ID"]);
+
 // A shorter value, such as `true` or `1`, is a setting, not a secret, and
 // redacting it everywhere it appears would hide ordinary text.
 const MINIMUM_SECRET_VALUE_LENGTH = 8;
@@ -178,6 +186,7 @@ export function redactSecrets(text, env) {
   const secretValues = Object.entries(env)
     .filter(
       ([name, value]) =>
+        !NON_SECRET_ENV_NAMES.has(name) &&
         isSecretName(name) &&
         typeof value === "string" &&
         value.length >= MINIMUM_SECRET_VALUE_LENGTH,

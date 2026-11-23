@@ -10,11 +10,32 @@ const githubToken = `ghp_${"Z9y8X7w6V5".repeat(4).slice(0, 36)}`;
 const fineGrainedToken = `github_pat_${"11ABCDEFG0".repeat(3)}_${"q".repeat(40)}`;
 const basicCredential = Buffer.from("someone:hunter2-password").toString("base64");
 const value = "s3cr3tValue42";
+// Issue #1191: `CLAUDE_CODE_SESSION_ID` names a session and grants no access,
+// as `PWD` names a folder, so its value is not a secret.
+const sessionId = "0f6c2a3e-5b7d-4e19-9a8c-1d2e3f4a5b6c";
 
 test("redactSecrets redacts each secret shape and keeps the text around it", () => {
   const cases = [
     // Environment values, by the variable's name.
     [`fetching with ${value}`, "fetching with [redacted]", { NPM_TOKEN: value }],
+    [`sent ${value}`, "sent [redacted]", { SESSION_TOKEN: value }],
+    [`sent ${value}`, "sent [redacted]", { SESSION_SECRET: value }],
+    [`sent ${value}`, "sent [redacted]", { SESSION_COOKIE: value }],
+    [`sent ${value}`, "sent [redacted]", { AWS_SESSION_TOKEN: value }],
+    [`sent ${value}`, "sent [redacted]", { APP_SESSION: value }],
+    // Only a session identifier known not to be secret is shown, by its exact
+    // name, because another `*_SESSION_ID` can hold a web session cookie.
+    [`sent ${value}`, "sent [redacted]", { APP_SESSION_ID: value }],
+    [`sent ${value}`, "sent [redacted]", { SESSION_ID: value }],
+    [`sent ${value}`, "sent [redacted]", { GITHUB_TOKEN_SESSION_ID: value }],
+    [`sent ${value}`, "sent [redacted]", { OLD_CLAUDE_CODE_SESSION_ID: value }],
+    [`sent ${value}`, "sent [redacted]", { claude_code_session_id: value }],
+    // Only an environment variable's name is set aside, because a session ID
+    // in a request can be the credential for a web session.
+    [`GET /?app_session_id=${value}`, "GET /?app_session_id=[redacted]"],
+    [`"x_session_id": "${value}"`, `"x_session_id": "[redacted]"`],
+    [`--app_session_id ${value}`, "--app_session_id [redacted]"],
+    [`CLAUDE_CODE_SESSION_ID=${value}`, "CLAUDE_CODE_SESSION_ID=[redacted]"],
     // Headers, whose value runs to the end of the line.
     [`Authorization: Bearer ${value}`, "Authorization: [redacted]"],
     [`authorization: Basic ${basicCredential}`, "authorization: [redacted]"],
@@ -72,6 +93,7 @@ test("redactSecrets keeps prose, paths, and values that are not secret", () => {
     NPM_CONFIG_AUTH: "true",
     GITHUB_TOKEN: "",
     MY_VALUE: value,
+    CLAUDE_CODE_SESSION_ID: sessionId,
   };
   const kept = [
     "Basic configuration options failed",
@@ -88,6 +110,7 @@ test("redactSecrets keeps prose, paths, and values that are not secret", () => {
     "the token was rejected",
     "--token=",
     "true",
+    `wrote /var/folders/ab/T/claude-501/project/${sessionId}/scratchpad/out.txt`,
     // A secret in a variable with an innocent name cannot be redacted by name.
     `value ${value}`,
   ];
