@@ -1,10 +1,13 @@
 // @ts-check
+import { createHash } from "node:crypto";
 import {
   cp,
   lstat,
   mkdir,
   mkdtemp,
   readFile,
+  readdir,
+  readlink,
   rename,
   rm,
   rmdir,
@@ -1785,6 +1788,8 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
       target,
       backup: join(normalizedRoot, "backups", String(index)),
       hadTarget: await fileExists(target),
+      // #1174: what the move puts at the target, so the rollback can tell an edit made since.
+      writtenHash: await writtenFingerprint(staged),
     });
   }
 
@@ -1820,9 +1825,134 @@ export async function recoverArtifactTransaction(options = {}) {
     throw new Error("A pending artifact transaction requires recovery before a dry run.");
   }
   const { transactionRoot, operations } = await readTransactionJournal();
+  await refuseEditedRollbackTargets(resolve("."), operations);
   await rollBackArtifactOperations(resolve("."), operations);
   await rm(TRANSACTION_PATH, { force: true });
   await rm(transactionRoot, { recursive: true, force: true });
+}
+
+/** A SHA-256 digest as `writtenFingerprint` writes it: 64 lowercase hexadecimal digits. */
+const SHA256_DIGEST = /^[0-9a-f]{64}$/;
+
+/**
+ * A SHA-256 digest of everything at `path`, which it never follows when it is a symbolic link:
+ * the kind of each entry, its path below `path`, a file's bytes, and a link's target, so an edited,
+ * added, removed, or retyped entry, even an empty folder, gives another digest. File modes are not
+ * part of it, so a permission change alone is not an edit. The commit records it for each staged
+ * path, which the move then puts at the target unchanged (#1174).
+ *
+ * @param {string} path
+ */
+export async function writtenFingerprint(path) {
+  const hash = createHash("sha256");
+  // One JSON line per entry, so each entry's path alone places it in the tree.
+  const record = (/** @type {string[]} */ entry) => hash.update(`${JSON.stringify(entry)}\n`);
+  /** @param {string} current @param {string} name */
+  const add = async (current, name) => {
+    const stats = await lstat(current);
+    if (stats.isSymbolicLink()) {
+      record(["link", name, await readlink(current)]);
+    } else if (stats.isDirectory()) {
+      record(["folder", name]);
+      for (const child of (await readdir(current)).sort()) {
+        await add(join(current, child), name === "" ? child : `${name}/${child}`);
+      }
+    } else if (stats.isFile()) {
+      const bytes = createHash("sha256")
+        .update(await readFile(current))
+        .digest("hex");
+      record(["file", name, bytes]);
+    } else {
+      record(["other", name]);
+    }
+  };
+  await add(path, "");
+  return hash.digest("hex");
+}
+
+/**
+ * The remedy that ends the message of a rollback that refuses to replace or remove edited paths.
+ * Moving a path out of the project keeps its edits, and the rollback then has nothing there to
+ * replace or remove, so it can run; deleting the path discards the edits the same way.
+ */
+const EDITED_ROLLBACK_REMEDY =
+  "To keep the edits, move each of these paths out of the project, then run the Calavera command again: the rollback then restores or removes the rest, and you can copy the edits back. To discard the edits, delete each of these paths instead, then run the Calavera command again.";
+
+/**
+ * Refuses, before the rollback changes anything, when it would replace or remove a target that is
+ * not exactly what the stopped operation wrote there (#1174; brief C8: local edits are preserved).
+ * The rollback replaces or removes a target that has a backup or did not exist before; such a
+ * target that is gone is fine, and one that exists must match the operation's `writtenHash`. A
+ * journal from a Calavera version that did not record `writtenHash` cannot show that a target is
+ * unchanged, so every such target that exists stops the rollback, named apart from the edited ones.
+ * A target the check cannot read stops it too, with the error code, and the error is the cause.
+ * The message names project paths only, never text from a file. A process that edits a target
+ * between this check and the rollback's step is not detected.
+ *
+ * @param {string} projectRoot
+ * @param {{ target: string, backup: string, hadTarget: boolean, writtenHash?: string }[]} operations
+ */
+async function refuseEditedRollbackTargets(projectRoot, operations) {
+  const changed = [];
+  const unrecorded = [];
+  /** @type {{ path: string, error: unknown }[]} */
+  const unreadable = [];
+  for (const operation of operations) {
+    // The same test the rollback's step makes before it replaces or removes the target.
+    if (operation.hadTarget && !(await fileExists(operation.backup))) continue;
+    const path = relative(projectRoot, operation.target);
+    try {
+      if (!(await pathExists(operation.target))) continue;
+      if (operation.writtenHash === undefined) {
+        unrecorded.push(path);
+      } else if ((await writtenFingerprint(operation.target)) !== operation.writtenHash) {
+        changed.push(path);
+      }
+    } catch (error) {
+      unreadable.push({ path, error });
+    }
+  }
+  const reasons = [];
+  if (changed.length > 0) {
+    reasons.push(
+      `it would replace or remove paths that changed after the stopped operation wrote them: ${changed.join(", ")}`,
+    );
+  }
+  if (unrecorded.length > 0) {
+    reasons.push(
+      `the journal does not record what the stopped operation wrote, so Calavera cannot tell whether these paths changed since: ${unrecorded.join(", ")}`,
+    );
+  }
+  for (const { path, error } of unreadable) {
+    const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? "an error";
+    reasons.push(
+      `reading ${path} to compare it with what the stopped operation wrote failed with ${code}`,
+    );
+  }
+  if (reasons.length === 0) return;
+  const errors = unreadable.map(({ error }) => error);
+  throw new Error(
+    `The artifact transaction rollback stopped before changing anything, because ${reasons.join(", and ")}. ${EDITED_ROLLBACK_REMEDY}`,
+    errors.length === 0
+      ? undefined
+      : { cause: errors.length === 1 ? errors[0] : new AggregateError(errors) },
+  );
+}
+
+/**
+ * Whether anything, a symbolic link included, is at `path`. Unlike `fileExists`, a link whose
+ * target is missing counts, because the rollback would remove it.
+ *
+ * @param {string} path
+ */
+async function pathExists(path) {
+  try {
+    await lstat(path);
+    return true;
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return false;
+    throw error;
+  }
 }
 
 /**
@@ -1923,7 +2053,8 @@ async function readTransactionJournal() {
       typeof operation.staged !== "string" ||
       typeof operation.target !== "string" ||
       typeof operation.backup !== "string" ||
-      typeof operation.hadTarget !== "boolean"
+      typeof operation.hadTarget !== "boolean" ||
+      ("writtenHash" in operation && !SHA256_DIGEST.test(operation.writtenHash))
     ) {
       throw new Error("Invalid artifact transaction journal operation.");
     }
@@ -1943,7 +2074,9 @@ async function readTransactionJournal() {
         `Artifact transaction journal operation ${index} targets ${path === "" ? "the project root" : path}, which is not a path an artifact transaction writes. ${JOURNAL_REFUSAL_REMEDY}`,
       );
     }
-    return { staged, target, backup, hadTarget: operation.hadTarget };
+    /** @type {string | undefined} */
+    const writtenHash = operation.writtenHash;
+    return { staged, target, backup, hadTarget: operation.hadTarget, writtenHash };
   });
   // A target equal to or inside another one is refused: the rollback could otherwise move a
   // backup, which may be a symbolic link, into a folder that a later step removes files through.

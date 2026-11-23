@@ -10,6 +10,7 @@ import {
   readdir,
   readlink,
   realpath,
+  rename,
   rm,
   symlink,
   writeFile,
@@ -24,6 +25,7 @@ import {
   isTransactionTarget,
   recoverArtifactTransaction,
   rollBackArtifactOperations,
+  writtenFingerprint,
 } from "../src/artifact-lifecycle.js";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 
@@ -206,7 +208,15 @@ for (const names of [
         JSON.stringify({
           schemaVersion: 1,
           transactionRoot: root,
-          operations: [{ staged, target, backup: join(root, names.backup), hadTarget: false }],
+          operations: [
+            {
+              staged,
+              target,
+              backup: join(root, names.backup),
+              hadTarget: false,
+              writtenHash: await writtenFingerprint(target),
+            },
+          ],
         }),
       );
 
@@ -245,6 +255,12 @@ test("a commit that fails part way leaves a journal of every operation, and reco
       { staged, target: join(skills, "never") },
     ];
 
+    const writtenHashes = [
+      await writtenFingerprint(staged),
+      await writtenFingerprint(created),
+      await writtenFingerprint(staged),
+    ];
+
     await assert.rejects(commitArtifactTransaction(root, operations), { code: "ENOENT" });
 
     assert.deepEqual(JSON.parse(await readFile(TRANSACTION_PATH, "utf8")), {
@@ -254,6 +270,7 @@ test("a commit that fails part way leaves a journal of every operation, and reco
         ...operation,
         backup: join(root, "backups", String(index)),
         hadTarget: index === 0,
+        writtenHash: writtenHashes[index],
       })),
     });
     assert.equal(await readFile(replaced, "utf8"), "staged\n");
@@ -279,7 +296,7 @@ const REMEDY =
  * paths, and returns the journal text.
  *
  * @param {string} transactionRoot
- * @param {{ staged: string, target: string, backup: string, hadTarget: boolean }[]} operations
+ * @param {{ staged: string, target: string, backup: string, hadTarget: boolean, writtenHash?: string }[]} operations
  */
 async function writeJournal(transactionRoot, operations) {
   const journal = `${JSON.stringify({ schemaVersion: 1, transactionRoot, operations })}\n`;
@@ -440,6 +457,7 @@ test("recovery rolls back each path an artifact transaction writes", async () =>
       await mkdir(join(target, ".."), { recursive: true });
       await writeFile(target, "new\n");
     }
+    const writtenHash = await writtenFingerprint(targets[0]);
     await writeJournal(
       root,
       targets.map((target, index) => ({
@@ -447,6 +465,7 @@ test("recovery rolls back each path an artifact transaction writes", async () =>
         target,
         backup: join(root, "backups", String(index)),
         hadTarget: false,
+        writtenHash,
       })),
     );
 
@@ -755,7 +774,13 @@ test("a target that is itself a symbolic link is committed and rolled back as a 
 
       // The journal the commit wrote, as an interrupted commit would leave it.
       await writeJournal(root, [
-        { staged, target, backup: join(root, "backups/0"), hadTarget: true },
+        {
+          staged,
+          target,
+          backup: join(root, "backups/0"),
+          hadTarget: true,
+          writtenHash: await writtenFingerprint(target),
+        },
       ]);
       await recoverArtifactTransaction();
 
@@ -923,3 +948,400 @@ test("the rollback stops part way when it cannot check a target's folders", asyn
     );
   });
 });
+
+// #1174: a rollback that would replace or remove a journaled file changed since the stopped
+// operation wrote it stops before it changes anything, names each changed file, and gives the
+// remedy. The journal comes from a real commit that fails part way, as in the #1092 test above:
+// the third operation stages the file the first one moves, so its move fails after the first two
+// moved `.gitignore` and the skill folder into place.
+
+/** The remedy that ends each message that refuses to roll back over edited files. */
+const EDITED_REMEDY =
+  "To keep the edits, move each of these paths out of the project, then run the Calavera command again: the rollback then restores or removes the rest, and you can copy the edits back. To discard the edits, delete each of these paths instead, then run the Calavera command again.";
+
+/**
+ * The snapshot of `project` without the `.calavera` folder, where the transaction keeps its
+ * journal and staging.
+ *
+ * @param {string} project
+ */
+async function projectFiles(project) {
+  return Object.fromEntries(
+    Object.entries(await snapshotDirectory(project)).filter(
+      ([path]) => !path.startsWith(join(project, ".calavera")),
+    ),
+  );
+}
+
+/**
+ * Commits `.gitignore` and the skill folder `.agents/skills/a` over earlier versions, through a
+ * commit that fails part way, so its journal stays pending.
+ *
+ * @param {{ project: string, root: string, staged: string }} paths
+ */
+async function interruptedCommit({ project, root, staged }) {
+  await writeFile(join(project, ".gitignore"), "before\n");
+  await mkdir(join(project, ".agents/skills/a"), { recursive: true });
+  await writeFile(join(project, ".agents/skills/a/SKILL.md"), "# Before\n");
+  const before = await projectFiles(project);
+  const stagedSkill = join(root, "skill");
+  await mkdir(join(stagedSkill, "references"), { recursive: true });
+  await writeFile(join(stagedSkill, "SKILL.md"), "# New\n");
+  await writeFile(join(stagedSkill, "references/guide.md"), "guide\n");
+  await assert.rejects(
+    commitArtifactTransaction(root, [
+      { staged, target: join(project, ".gitignore") },
+      { staged: stagedSkill, target: join(project, ".agents/skills/a") },
+      { staged, target: join(project, ".agents/skills/never") },
+    ]),
+    { code: "ENOENT" },
+  );
+  assert.equal(await readFile(join(project, ".gitignore"), "utf8"), "staged\n");
+  return before;
+}
+
+test("a rollback over the files a stopped commit wrote, unchanged, restores the project byte for byte", async () => {
+  await inTransactionProject(async (paths) => {
+    const before = await interruptedCommit(paths);
+
+    await recoverArtifactTransaction();
+
+    assert.deepEqual(await projectFiles(paths.project), before);
+    await assert.rejects(readFile(TRANSACTION_PATH), { code: "ENOENT" });
+  });
+});
+
+for (const { name, edit, changed } of [
+  {
+    name: "an edited .gitignore",
+    edit: (/** @type {string} */ project) =>
+      writeFile(join(project, ".gitignore"), "staged\nmy-secret-line\n"),
+    changed: [".gitignore"],
+  },
+  {
+    name: "an edited file in an artifact folder",
+    edit: (/** @type {string} */ project) =>
+      writeFile(join(project, ".agents/skills/a/references/guide.md"), "my-secret-line\n"),
+    changed: [".agents/skills/a"],
+  },
+  {
+    name: "a file added to an artifact folder",
+    edit: (/** @type {string} */ project) =>
+      writeFile(join(project, ".agents/skills/a/notes.md"), "my-secret-line\n"),
+    changed: [".agents/skills/a"],
+  },
+  {
+    name: "an empty folder added to an artifact folder",
+    edit: (/** @type {string} */ project) => mkdir(join(project, ".agents/skills/a/empty")),
+    changed: [".agents/skills/a"],
+  },
+  {
+    name: "a file in an artifact folder replaced with a symbolic link",
+    edit: async (/** @type {string} */ project) => {
+      await rm(join(project, ".agents/skills/a/SKILL.md"));
+      await symlink("references/guide.md", join(project, ".agents/skills/a/SKILL.md"));
+    },
+    changed: [".agents/skills/a"],
+  },
+  {
+    name: "an edited .gitignore and an edited artifact folder",
+    edit: async (/** @type {string} */ project) => {
+      await writeFile(join(project, ".gitignore"), "my-secret-line\n");
+      await writeFile(join(project, ".agents/skills/a/SKILL.md"), "my-secret-line\n");
+    },
+    changed: [".gitignore", ".agents/skills/a"],
+  },
+]) {
+  test(`the rollback stops and changes nothing over ${name}`, async () => {
+    await inTransactionProject(async (paths) => {
+      await interruptedCommit(paths);
+      await edit(paths.project);
+      const journal = await readFile(TRANSACTION_PATH, "utf8");
+      const edited = await snapshotDirectory(paths.project);
+
+      await assert.rejects(recoverArtifactTransaction(), (error) => {
+        assert.ok(error instanceof Error);
+        assert.equal(
+          error.message,
+          `The artifact transaction rollback stopped before changing anything, because it would replace or remove paths that changed after the stopped operation wrote them: ${changed.map((path) => join(path)).join(", ")}. ${EDITED_REMEDY}`,
+        );
+        assert.doesNotMatch(error.message, /my-secret-line/);
+        assert.equal("cause" in error, false);
+        return true;
+      });
+
+      assert.deepEqual(await snapshotDirectory(paths.project), edited);
+      assert.equal(await readFile(TRANSACTION_PATH, "utf8"), journal);
+    });
+  });
+}
+
+// #1174: the remedy works: a person who moves the edited path out of the project and runs the
+// command again gets the rollback, and the edits they moved stay byte for byte.
+test("after the edited path is moved out of the project, the rollback restores the rest", async () => {
+  await inTransactionProject(async (paths) => {
+    await interruptedCommit(paths);
+    await writeFile(join(paths.project, ".gitignore"), "mine\n");
+    await assert.rejects(recoverArtifactTransaction(), /changed after the stopped operation/);
+
+    await rename(join(paths.project, ".gitignore"), join(paths.root, "..", "kept-gitignore"));
+    await recoverArtifactTransaction();
+
+    assert.equal(await readFile(join(paths.project, ".gitignore"), "utf8"), "before\n");
+    assert.equal(
+      await readFile(join(paths.project, ".agents/skills/a/SKILL.md"), "utf8"),
+      "# Before\n",
+    );
+    assert.deepEqual(await readdir(join(paths.project, ".agents/skills/a")), ["SKILL.md"]);
+    assert.equal(await readFile(join(paths.root, "..", "kept-gitignore"), "utf8"), "mine\n");
+    await assert.rejects(readFile(TRANSACTION_PATH), { code: "ENOENT" });
+  });
+});
+
+// #1174: a file the person created at a target the stopped operation had not created yet is a
+// change too, because the rollback would remove it.
+test("the rollback stops over a file created at a target the stopped operation never wrote", async () => {
+  await inTransactionProject(async (paths) => {
+    await interruptedCommit(paths);
+    await writeFile(join(paths.project, ".agents/skills/never"), "mine\n");
+    const edited = await snapshotDirectory(paths.project);
+
+    await assert.rejects(recoverArtifactTransaction(), {
+      message: `The artifact transaction rollback stopped before changing anything, because it would replace or remove paths that changed after the stopped operation wrote them: ${join(".agents/skills/never")}. ${EDITED_REMEDY}`,
+    });
+    assert.deepEqual(await snapshotDirectory(paths.project), edited);
+  });
+});
+
+// #1174: a journal from a Calavera version that did not record what each operation wrote cannot
+// show that a path is unchanged, so the rollback stops before it replaces or removes any path that
+// exists, and names those paths separately. A target the rollback would not touch, or one that is
+// gone, does not stop it.
+test("a journal without the recorded fingerprints stops before it replaces or removes an existing path", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    await mkdir(join(project, ".agents/skills"), { recursive: true });
+    await writeFile(join(project, ".gitignore"), "written or edited\n");
+    await mkdir(join(root, "backups"), { recursive: true });
+    await writeFile(join(root, "backups/0"), "before\n");
+    await writeFile(join(project, ".agents/skills/kept"), "kept\n");
+    await writeFile(join(project, ".agents/skills/created"), "created or edited\n");
+    const journal = await writeJournal(root, [
+      {
+        staged,
+        target: join(project, ".gitignore"),
+        backup: join(root, "backups/0"),
+        hadTarget: true,
+      },
+      {
+        staged,
+        target: join(project, ".agents/skills/kept"),
+        backup: join(root, "backups/1"),
+        hadTarget: true,
+      },
+      {
+        staged,
+        target: join(project, ".agents/skills/gone"),
+        backup: join(root, "backups/2"),
+        hadTarget: false,
+      },
+      {
+        staged,
+        target: join(project, ".agents/skills/created"),
+        backup: join(root, "backups/3"),
+        hadTarget: false,
+      },
+    ]);
+    const before = await snapshotDirectory(project);
+
+    await assert.rejects(recoverArtifactTransaction(), {
+      message: `The artifact transaction rollback stopped before changing anything, because the journal does not record what the stopped operation wrote, so Calavera cannot tell whether these paths changed since: .gitignore, ${join(".agents/skills/created")}. ${EDITED_REMEDY}`,
+    });
+    assert.deepEqual(await snapshotDirectory(project), before);
+    assert.equal(await readFile(TRANSACTION_PATH, "utf8"), journal);
+
+    await rm(join(project, ".gitignore"));
+    await rm(join(project, ".agents/skills/created"));
+    await recoverArtifactTransaction();
+    assert.equal(await readFile(join(project, ".gitignore"), "utf8"), "before\n");
+    assert.equal(await readFile(join(project, ".agents/skills/kept"), "utf8"), "kept\n");
+    await assert.rejects(readFile(TRANSACTION_PATH), { code: "ENOENT" });
+  });
+});
+
+test("recovery refuses a journal whose recorded fingerprint is not a SHA-256 digest", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    for (const writtenHash of [7, "abc", "A".repeat(64), null]) {
+      const journal = `${JSON.stringify({
+        schemaVersion: 1,
+        transactionRoot: root,
+        operations: [
+          {
+            staged,
+            target: join(project, ".gitignore"),
+            backup: join(root, "backups/0"),
+            hadTarget: false,
+            writtenHash,
+          },
+        ],
+      })}\n`;
+      await writeFile(TRANSACTION_PATH, journal);
+      await assert.rejects(recoverArtifactTransaction(), {
+        message: "Invalid artifact transaction journal operation.",
+      });
+      assert.equal(await readFile(TRANSACTION_PATH, "utf8"), journal);
+    }
+  });
+});
+
+// #1174: a path the check cannot read stops the rollback too, with the error code and the cause.
+test(
+  "the rollback stops and keeps the cause when it cannot read a path to compare it",
+  { skip: process.getuid?.() === 0 },
+  async () => {
+    await inTransactionProject(async (paths) => {
+      await interruptedCommit(paths);
+      await chmod(join(paths.project, ".agents/skills/a/references"), 0o000);
+      try {
+        await assert.rejects(recoverArtifactTransaction(), (error) => {
+          assert.ok(error instanceof Error);
+          assert.equal(
+            error.message,
+            `The artifact transaction rollback stopped before changing anything, because reading ${join(".agents/skills/a")} to compare it with what the stopped operation wrote failed with EACCES. ${EDITED_REMEDY}`,
+          );
+          assert.equal(/** @type {NodeJS.ErrnoException} */ (error.cause).code, "EACCES");
+          return true;
+        });
+      } finally {
+        await chmod(join(paths.project, ".agents/skills/a/references"), 0o755);
+      }
+      assert.equal(await readFile(join(paths.project, ".gitignore"), "utf8"), "staged\n");
+    });
+  },
+);
+
+// #1174: the fingerprint tells apart each change the rollback must not overwrite, including a
+// change only to where a file sits in the folder, or to where a symbolic link points.
+test("the written fingerprint changes with each entry's path, kind, bytes, and link target", async () => {
+  await inTransactionProject(async ({ root }) => {
+    /** @param {Record<string, string | null | { link: string }>} entries */
+    const fingerprintOf = async (entries) => {
+      const folder = await mkdtemp(join(root, "tree-"));
+      for (const [path, value] of Object.entries(entries)) {
+        const full = join(folder, path);
+        await mkdir(join(full, ".."), { recursive: true });
+        if (value === null) await mkdir(full);
+        else if (typeof value === "string") await writeFile(full, value);
+        else await symlink(value.link, full);
+      }
+      return writtenFingerprint(folder);
+    };
+    const digests = [
+      await fingerprintOf({ "a/b": "x" }),
+      await fingerprintOf({ a: null, b: "x" }),
+      await fingerprintOf({ "a/c": "x" }),
+      await fingerprintOf({ "a/b": "y" }),
+      await fingerprintOf({ "a/b": { link: "one" } }),
+      await fingerprintOf({ "a/b": { link: "two" } }),
+      await fingerprintOf({ "a/b/c": "x" }),
+      await fingerprintOf({ "a/b": null, "a/c": "x" }),
+      await fingerprintOf({ d: null, e: "x" }),
+      await fingerprintOf({ f: null, e: "x" }),
+    ];
+    assert.equal(new Set(digests).size, digests.length);
+    assert.equal(await fingerprintOf({ "a/b": "x" }), digests[0]);
+    for (const digest of digests) assert.match(digest, /^[0-9a-f]{64}$/);
+  });
+});
+
+// #1174: an entry that is neither a file, a folder, nor a link, such as a named pipe, is part of the
+// fingerprint by its kind only, so the check never reads from it and cannot wait on it.
+test(
+  "the written fingerprint reads no named pipe",
+  { skip: process.platform === "win32" },
+  async () => {
+    await inTransactionProject(async ({ root }) => {
+      const { execFileSync } = await import("node:child_process");
+      const folder = join(root, "with-pipe");
+      await mkdir(folder);
+      execFileSync("mkfifo", [join(folder, "pipe")]);
+      const withPipe = await writtenFingerprint(folder);
+      await rm(join(folder, "pipe"));
+      const without = await writtenFingerprint(folder);
+      await writeFile(join(folder, "pipe"), "");
+      const withFile = await writtenFingerprint(folder);
+      assert.equal(new Set([withPipe, without, withFile]).size, 3);
+    });
+  },
+);
+
+test("recovery refuses a recorded fingerprint with extra text before or after the digest", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    for (const writtenHash of [`${"a".repeat(64)}x`, `x${"a".repeat(64)}`]) {
+      await writeJournal(root, [
+        {
+          staged,
+          target: join(project, ".gitignore"),
+          backup: join(root, "backups/0"),
+          hadTarget: false,
+          writtenHash,
+        },
+      ]);
+      await assert.rejects(recoverArtifactTransaction(), {
+        message: "Invalid artifact transaction journal operation.",
+      });
+    }
+  });
+});
+
+// #1174: each reason is named, joined, and every path the check cannot read keeps its error.
+test(
+  "the rollback names every reason it stops for and keeps each read error",
+  { skip: process.getuid?.() === 0 },
+  async () => {
+    await inTransactionProject(async (paths) => {
+      await interruptedCommit(paths);
+      await chmod(join(paths.project, ".gitignore"), 0o000);
+      await chmod(join(paths.project, ".agents/skills/a/references"), 0o000);
+      try {
+        await assert.rejects(recoverArtifactTransaction(), (error) => {
+          assert.ok(error instanceof Error);
+          assert.equal(
+            error.message,
+            `The artifact transaction rollback stopped before changing anything, because reading .gitignore to compare it with what the stopped operation wrote failed with EACCES, and reading ${join(".agents/skills/a")} to compare it with what the stopped operation wrote failed with EACCES. ${EDITED_REMEDY}`,
+          );
+          assert.ok(error.cause instanceof AggregateError);
+          assert.deepEqual(
+            error.cause.errors.map((/** @type {NodeJS.ErrnoException} */ cause) => cause.code),
+            ["EACCES", "EACCES"],
+          );
+          return true;
+        });
+      } finally {
+        await chmod(join(paths.project, ".gitignore"), 0o644);
+        await chmod(join(paths.project, ".agents/skills/a/references"), 0o755);
+      }
+    });
+  },
+);
+
+// #1174: a target the check cannot even look up, because its folder cannot be searched, stops the
+// rollback with the error code, as a target it cannot read does.
+test(
+  "the rollback stops when it cannot look up a target in its folder",
+  { skip: process.getuid?.() === 0 },
+  async () => {
+    await inTransactionProject(async (paths) => {
+      await interruptedCommit(paths);
+      const skills = join(paths.project, ".agents/skills");
+      await chmod(skills, 0o000);
+      try {
+        await assert.rejects(recoverArtifactTransaction(), {
+          message: `The artifact transaction rollback stopped before changing anything, because reading ${join(".agents/skills/a")} to compare it with what the stopped operation wrote failed with EACCES, and reading ${join(".agents/skills/never")} to compare it with what the stopped operation wrote failed with EACCES. ${EDITED_REMEDY}`,
+        });
+      } finally {
+        await chmod(skills, 0o755);
+      }
+      assert.equal(await readFile(join(paths.project, ".gitignore"), "utf8"), "staged\n");
+    });
+  },
+);

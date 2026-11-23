@@ -80,7 +80,11 @@ import {
   resolveAiArtifacts,
 } from "../src/ai/artifacts.js";
 import { aiArtifactCatalog, DEFAULT_AI_TARGET } from "../src/ai/catalog.js";
-import { lockedArtifactSources, runArtifactCommand } from "../src/artifact-lifecycle.js";
+import {
+  lockedArtifactSources,
+  runArtifactCommand,
+  writtenFingerprint,
+} from "../src/artifact-lifecycle.js";
 import { integrationCatalog } from "../src/catalog.js";
 import {
   agentBootstrap,
@@ -1271,6 +1275,7 @@ test("artifact commands roll back an interrupted lifecycle transaction", async (
             target,
             backup,
             hadTarget: true,
+            writtenHash: await writtenFingerprint(target),
           },
         ],
       })}\n`,
