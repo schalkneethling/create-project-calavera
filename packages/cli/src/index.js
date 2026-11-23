@@ -6060,6 +6060,10 @@ export async function initRecipe(options) {
     `${JSON.stringify(recipe, null, 2)}\n`,
     projectFormatterLoader(process.cwd(), decision?.ancestor.status, { installDirectory }),
   );
+  // #1220: the same check apply runs before its recipe write (#1208), so a link at the recipe path
+  // never leads init's write outside the project. It runs in the dry run as well, as in apply, and
+  // before init --apply reaches apply, so nothing is written.
+  await assertRecipeWriteTarget(resolve(options.config), process.cwd());
   if (!options.dryRun) {
     await writeFile(options.config, configText);
   }
