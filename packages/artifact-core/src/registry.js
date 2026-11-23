@@ -7,7 +7,8 @@ import pacote from "pacote";
 import semver from "semver";
 
 import { artifactForId } from "./catalog.js";
-import { loadNpmRegistryOptions } from "./npm-config.js";
+import { loadNpmRegistryOptions, pacoteTarballUrl } from "./npm-config.js";
+import { assertTarballUrl, withTarballRefusal } from "./tarball-url.js";
 
 const TAGS = new Set(["latest", "next"]);
 
@@ -103,19 +104,30 @@ export async function extractArtifactPackage(resolution, destination, cliVersion
   });
   // pacote moves a registry.npmjs.org tarball onto its `registry` option (see pacoteTarballUrl),
   // so the artifact scope's registry, which the package document came from, is passed as that
-  // option: the lookup and the download then use the same registry (ADR-0021 Decision 4).
-  await withNpmDiagnostics(npm, () =>
-    withAuthFailure(
-      npm,
-      { subject: `${resolution.packageName}@${resolution.version}`, download: true },
-      () =>
-        pacote.extract(resolution.resolved, destination, {
-          ...npm.options,
-          registry: npm.registryUrl,
-          cache: resolution.cache,
-          integrity: resolution.integrity,
-          offline: resolution.offline,
-        }),
+  // option: the lookup and the download then use the same registry (ADR-0021 Decision 4). The
+  // tarball URL check judges that same rewritten URL (#1194).
+  assertTarballUrl(
+    resolution.packageName,
+    resolution.resolved,
+    pacoteTarballUrl(resolution.resolved, npm.registryUrl),
+  );
+  await withTarballRefusal(resolution.packageName, resolution.resolved, () =>
+    withNpmDiagnostics(npm, () =>
+      withAuthFailure(
+        npm,
+        { subject: `${resolution.packageName}@${resolution.version}`, download: true },
+        () =>
+          pacote.extract(resolution.resolved, destination, {
+            ...npm.options,
+            registry: npm.registryUrl,
+            cache: resolution.cache,
+            integrity: resolution.integrity,
+            offline: resolution.offline,
+            // An https URL on a git host, such as https://github.com/owner/repo, passes
+            // assertTarballUrl, but npm-package-arg reads it as a git repository.
+            allowGit: "none",
+          }),
+      ),
     ),
   );
 

@@ -49,15 +49,28 @@ async function packFixture(directory, packageRoot = projectGoalPackageRoot) {
   };
 }
 
-test("verified extraction checks package identity, manifest compatibility, and payload hash", async () => {
+/**
+ * The tarball URL of `packed` on a loopback registry that closes when test `t` ends. Calavera
+ * fetches a tarball only from an https URL or a loopback http one, never from a local path (#1194).
+ * @param {{ tarball: Buffer, version: string, integrity: string }} packed
+ * @param {import("node:test").TestContext} t
+ */
+async function servedTarballUrl(packed, t) {
+  const registry = await startRegistry(packed);
+  t.after(registry.close);
+  return `http://${registry.host}/-/artifact.tgz`;
+}
+
+test("verified extraction checks package identity, manifest compatibility, and payload hash", async (t) => {
   const destination = await mkdtemp(join(tmpdir(), "calavera-registry-extract-"));
   const packed = await packFixture(destination);
+  const resolved = await servedTarballUrl(packed, t);
   const result = await extractArtifactPackage(
     {
       artifact,
       packageName: artifact.packageName,
       version: packed.version,
-      resolved: packed.path,
+      resolved,
       integrity: packed.integrity,
       tag: "latest",
       cache: join(destination, "cache"),
@@ -77,7 +90,7 @@ test("verified extraction checks package identity, manifest compatibility, and p
           artifact,
           packageName: artifact.packageName,
           version: packed.version,
-          resolved: packed.path,
+          resolved,
           integrity: packed.integrity,
           tag: "latest",
           cache: join(destination, "cache"),
@@ -91,11 +104,10 @@ test("verified extraction checks package identity, manifest compatibility, and p
   );
 });
 
-test("verified extraction rejects a tarball that fails npm integrity", async () => {
+test("verified extraction rejects a tarball that fails npm integrity", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "calavera-registry-integrity-"));
   const packed = await packFixture(directory);
-  const tarballPath = join(directory, "corrupted.tgz");
-  await writeFile(tarballPath, packed.tarball);
+  const resolved = await servedTarballUrl(packed, t);
 
   await assert.rejects(
     () =>
@@ -104,7 +116,7 @@ test("verified extraction rejects a tarball that fails npm integrity", async () 
           artifact,
           packageName: artifact.packageName,
           version: packed.version,
-          resolved: tarballPath,
+          resolved,
           integrity: `sha512-${Buffer.alloc(64).toString("base64")}`,
           tag: "latest",
           cache: join(directory, "cache"),
@@ -118,7 +130,7 @@ test("verified extraction rejects a tarball that fails npm integrity", async () 
   );
 });
 
-test("prerelease CLIs accept compatible stable-line and prerelease artifacts", async () => {
+test("prerelease CLIs accept compatible stable-line and prerelease artifacts", async (t) => {
   for (const [id, packageRoot] of [
     ["skill-project-goal", projectGoalPackageRoot],
     ["skill-release-with-confidence", releasePackageRoot],
@@ -126,12 +138,13 @@ test("prerelease CLIs accept compatible stable-line and prerelease artifacts", a
     const directory = await mkdtemp(join(tmpdir(), `calavera-registry-${id}-`));
     const packed = await packFixture(directory, packageRoot);
     const selectedArtifact = artifactForId(id);
+    const resolved = await servedTarballUrl(packed, t);
     const result = await extractArtifactPackage(
       {
         artifact: selectedArtifact,
         packageName: selectedArtifact.packageName,
         version: packed.version,
-        resolved: packed.path,
+        resolved,
         integrity: packed.integrity,
         tag: "next",
         cache: join(directory, "cache"),
@@ -146,9 +159,10 @@ test("prerelease CLIs accept compatible stable-line and prerelease artifacts", a
   }
 });
 
-test("prerelease CLIs below an artifact minimum remain incompatible", async () => {
+test("prerelease CLIs below an artifact minimum remain incompatible", async (t) => {
   const directory = await mkdtemp(join(tmpdir(), "calavera-registry-prerelease-minimum-"));
   const packed = await packFixture(directory, releasePackageRoot);
+  const resolved = await servedTarballUrl(packed, t);
   const selectedArtifact = artifactForId("skill-release-with-confidence");
 
   await assert.rejects(
@@ -158,7 +172,7 @@ test("prerelease CLIs below an artifact minimum remain incompatible", async () =
           artifact: selectedArtifact,
           packageName: selectedArtifact.packageName,
           version: packed.version,
-          resolved: packed.path,
+          resolved,
           integrity: packed.integrity,
           tag: "next",
           cache: join(directory, "cache"),
@@ -190,11 +204,11 @@ const TOKEN = "npm_0123456789abcdefSECRETTOKEN";
 /**
  * Serves one packument and its tarball like an npm registry would, recording each request.
  * @param {{ tarball: Buffer, version: string, integrity: string }} packed
- * @param {{ status?: number, repository?: unknown, packument?: string, tarball?: string, redirectTo?: string }} [options] `packument` replaces the package document with this raw text. `tarball` replaces the tarball URL the package document names. `redirectTo` answers every request with a redirect to that origin.
+ * @param {{ status?: number, repository?: unknown, packument?: string, tarballUrl?: (port: number) => string, redirectTo?: string, listenHost?: string }} [options] `packument` replaces the package document with this raw text. `tarballUrl` replaces the package document's `dist.tarball`. `redirectTo` answers every request with a redirect to that origin. `listenHost` replaces 127.0.0.1 as the address the server listens on.
  */
 async function startRegistry(
   packed,
-  { status = 200, repository, packument, tarball, redirectTo } = {},
+  { status = 200, repository, packument, tarballUrl, redirectTo, listenHost = "127.0.0.1" } = {},
 ) {
   const requests = [];
   const server = createServer((req, res) => {
@@ -212,7 +226,7 @@ async function startRegistry(
       res.writeHead(200, { "content-type": "application/octet-stream" });
       res.end(packed.tarball);
     } else {
-      const origin = `http://127.0.0.1:${server.address().port}`;
+      const { port } = server.address();
       res.writeHead(200, { "content-type": "application/json" });
       res.end(
         JSON.stringify({
@@ -223,14 +237,17 @@ async function startRegistry(
               name: artifact.packageName,
               version: packed.version,
               ...(repository ? { repository } : {}),
-              dist: { tarball: tarball ?? `${origin}/-/artifact.tgz`, integrity: packed.integrity },
+              dist: {
+                tarball: tarballUrl?.(port) ?? `http://127.0.0.1:${port}/-/artifact.tgz`,
+                integrity: packed.integrity,
+              },
             },
           },
         }),
       );
     }
   });
-  await new Promise((done) => server.listen(0, "127.0.0.1", done));
+  await new Promise((done) => server.listen(0, listenHost, done));
   const { port } = server.address();
   return {
     requests,
@@ -298,7 +315,7 @@ test("a registry.npmjs.org tarball downloads from the artifact scope's registry,
   // a registry.npmjs.org tarball, as a mirror of the public registry does.
   const locked = await startRegistry(packed, { status: 401 });
   const scope = await startRegistry(packed, {
-    tarball: "https://registry.npmjs.org/-/artifact.tgz",
+    tarballUrl: () => "https://registry.npmjs.org/-/artifact.tgz",
   });
   try {
     const fixture = await npmConfigFixture(
@@ -336,7 +353,7 @@ test("without a scope registry, a registry.npmjs.org tarball downloads from the 
   const directory = await mkdtemp(join(tmpdir(), "calavera-registry-default-download-"));
   const packed = await packFixture(directory);
   const mirror = await startRegistry(packed, {
-    tarball: "https://registry.npmjs.org/-/artifact.tgz",
+    tarballUrl: () => "https://registry.npmjs.org/-/artifact.tgz",
   });
   try {
     const fixture = await npmConfigFixture("", `registry=http://${mirror.host}/\n`);
@@ -627,7 +644,7 @@ test("a scope registry with a username and password is used without them, so no 
   // The package document names a registry.npmjs.org tarball, so pacote rewrites it onto the
   // scope registry: the rewritten URL must not carry the user information either.
   const registry = await startRegistry(packed, {
-    tarball: "https://registry.npmjs.org/-/artifact.tgz",
+    tarballUrl: () => "https://registry.npmjs.org/-/artifact.tgz",
   });
   try {
     const fixture = await npmConfigFixture(
@@ -978,6 +995,241 @@ test("a user .npmrc registry with a variable stops resolution before any request
       },
     );
     assert.equal(registry.requests.length, 0);
+  } finally {
+    await registry.close();
+  }
+});
+
+/** @type {ReturnType<typeof packFixture> | undefined} */
+let tarballUrlPack;
+
+/** One packed fixture for every #1194 test, which reads it without changing it. */
+function packedOnce() {
+  tarballUrlPack ??= mkdtemp(join(tmpdir(), "calavera-registry-tarball-url-")).then((directory) =>
+    packFixture(directory),
+  );
+  return tarballUrlPack;
+}
+
+/**
+ * Resolves the artifact from a loopback registry whose package document names `tarballUrl`, then
+ * extracts it with `npmrc` as the user .npmrc. Returns the extraction failure, the registry's
+ * requests, and whether anything was written to the destination.
+ * @param {{ tarballUrl: (port: number) => string, npmrc?: (host: string) => string }} options
+ */
+async function extractionFailure({
+  tarballUrl,
+  npmrc = (host) => `@schalkneethling:registry=http://${host}/\n`,
+}) {
+  const registry = await startRegistry(await packedOnce(), { tarballUrl });
+  try {
+    const fixture = await npmConfigFixture("", npmrc(registry.host));
+    const options = { cwd: fixture.cwd, env: fixture.env };
+    const resolution = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      cache: fixture.cache,
+      ...options,
+    });
+    const destination = join(fixture.directory, "package");
+    const failure = await extractArtifactPackage(resolution, destination, "2.2.0", options).then(
+      () => assert.fail("Expected the tarball URL to be refused."),
+      (error) => error,
+    );
+    const written = await readdir(destination).then(
+      () => true,
+      () => false,
+    );
+    return { failure, requests: registry.requests, written };
+  } finally {
+    await registry.close();
+  }
+}
+
+// #1194: pacote picks a fetcher from the text of the tarball spec (FetcherBase.get in
+// pacote/lib/fetcher.js, through npm-package-arg). A git URL runs git with the person's SSH agent
+// and credential helpers, a file URL or path reads this machine, and plain http can be changed on
+// the way. Calavera fetches a tarball only from an https URL, or an http URL on a loopback host.
+const refusalPrefix = `Calavera did not fetch ${artifact.packageName}:`;
+const TARBALL_RULE =
+  "Calavera fetches artifact tarballs only from https URLs, or from http URLs on localhost, 127.0.0.1, or ::1.";
+const REFUSED_TARBALL_URLS = [
+  {
+    form: "a git+ssh URL",
+    url: "git+ssh://git@github.com/calavera-fixture/artifact.git",
+    protocol: "git+ssh:",
+    reason: "uses the protocol git+ssh:",
+  },
+  {
+    form: "a git+https URL",
+    url: "git+https://github.com/calavera-fixture/artifact.git",
+    protocol: "git+https:",
+    reason: "uses the protocol git+https:",
+  },
+  {
+    form: "a git URL",
+    url: "git://github.com/calavera-fixture/artifact.git",
+    protocol: "git:",
+    reason: "uses the protocol git:",
+  },
+  {
+    form: "a file URL",
+    url: "file:///calavera-fixture/artifact.tgz",
+    protocol: "file:",
+    reason: "uses the protocol file:",
+  },
+  {
+    form: "an http URL on a non-loopback host",
+    url: "http://registry.example.test/calavera-fixture/artifact.tgz",
+    protocol: "http:",
+    reason: "uses http: on a host that is not loopback",
+  },
+  {
+    form: "an http URL on a host that only starts like a loopback address",
+    url: "http://127.0.0.1.example.test/calavera-fixture/artifact.tgz",
+    protocol: "http:",
+    reason: "uses http: on a host that is not loopback",
+  },
+  {
+    form: "a relative path",
+    url: "-/calavera-fixture/artifact.tgz",
+    protocol: null,
+    reason: "is not an absolute URL",
+  },
+  {
+    form: "an scp-style git address",
+    url: "git@github.com:calavera-fixture/artifact.git",
+    protocol: null,
+    reason: "is an scp-style git address",
+  },
+  // The WHATWG URL parser drops a leading space, but npm-package-arg then reads a local path.
+  {
+    form: "an https URL after a leading space",
+    url: " https://registry.example.test/calavera-fixture/artifact.tgz",
+    protocol: null,
+    reason: "does not start with its protocol",
+  },
+];
+
+for (const { form, url, protocol, reason } of REFUSED_TARBALL_URLS) {
+  test(`#1194: ${form} as the tarball URL is refused before pacote fetches it`, async () => {
+    const { failure, requests, written } = await extractionFailure({ tarballUrl: () => url });
+    assert.equal(failure.code, "EBADTARBALLURL");
+    assert.equal(failure.packageName, artifact.packageName);
+    assert.equal(failure.protocol, protocol);
+    assert.equal(failure.message, `${refusalPrefix} its tarball URL ${reason}. ${TARBALL_RULE}`);
+    // The error quotes no other packument text, and only the package document was requested.
+    assert.doesNotMatch(inspect(failure, { depth: 10 }), /calavera-fixture|example\.test/);
+    assert.equal(requests.length, 1);
+    assert.equal(written, false);
+  });
+}
+
+test("#1194: an https URL that npm-package-arg reads as a git repository is refused, not cloned", async () => {
+  const { failure, requests, written } = await extractionFailure({
+    tarballUrl: () => "https://github.com/calavera-fixture/artifact",
+  });
+  assert.equal(failure.code, "EBADTARBALLURL");
+  assert.equal(failure.protocol, "https:");
+  assert.equal(
+    failure.message,
+    `${refusalPrefix} its tarball URL names a git repository, which Calavera does not fetch. ${TARBALL_RULE}`,
+  );
+  assert.doesNotMatch(inspect(failure, { depth: 10 }), /calavera-fixture|github\.com/);
+  assert.equal(requests.length, 1);
+  assert.equal(written, false);
+});
+
+/**
+ * Extracts a registry.npmjs.org tarball with `userNpmrc` as the user .npmrc, while pacote.extract
+ * is mocked to record its options and stop, so nothing is fetched or looked up.
+ * @param {import("node:test").TestContext} t
+ * @param {string} userNpmrc
+ */
+async function extractNpmjsTarball(t, userNpmrc) {
+  const fixture = await npmConfigFixture("", userNpmrc);
+  /** @type {Record<string, unknown>[]} */
+  const calls = [];
+  t.mock.method(pacote, "extract", async (_spec, _destination, options) => {
+    calls.push(options);
+    throw Object.assign(new Error("stop"), { code: "ESTOP" });
+  });
+  const failure = await extractArtifactPackage(
+    {
+      artifact,
+      packageName: artifact.packageName,
+      version: "1.0.0",
+      resolved: "https://registry.npmjs.org/calavera-fixture/-/artifact.tgz",
+      integrity: "sha512-AAAA",
+      tag: "latest",
+      cache: fixture.cache,
+      offline: false,
+    },
+    join(fixture.directory, "package"),
+    "2.2.0",
+    { cwd: fixture.cwd, env: fixture.env },
+  ).then(
+    () => assert.fail("Expected the extraction to stop."),
+    (error) => error,
+  );
+  return { failure, calls };
+}
+
+// pacote moves a registry.npmjs.org tarball onto the artifact scope's registry, which
+// extractArtifactPackage passes as `registry` (ADR-0021 Decision 4), so the check must judge the
+// URL on that registry, not on the default registry.
+test("#1194: a registry.npmjs.org tarball rewritten onto a non-loopback http scope registry is refused", async (t) => {
+  const { failure, calls } = await extractNpmjsTarball(
+    t,
+    "@schalkneethling:registry=http://registry.example.test/\nregistry=http://127.0.0.1:9/\n",
+  );
+  assert.equal(failure.code, "EBADTARBALLURL");
+  assert.equal(failure.protocol, "http:");
+  assert.equal(
+    failure.message,
+    `${refusalPrefix} its tarball URL uses http: on a host that is not loopback after pacote moves it onto the configured registry. ${TARBALL_RULE}`,
+  );
+  assert.doesNotMatch(inspect(failure, { depth: 10 }), /calavera-fixture|example\.test/);
+  assert.equal(calls.length, 0);
+});
+
+test("#1194: a registry.npmjs.org tarball rewritten onto a loopback http scope registry is accepted", async (t) => {
+  const { failure, calls } = await extractNpmjsTarball(
+    t,
+    "@schalkneethling:registry=http://127.0.0.1:9/\nregistry=http://registry.example.test/\n",
+  );
+  assert.equal(failure.code, "ESTOP");
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.registry, "http://127.0.0.1:9/");
+});
+
+test("#1194: an http tarball URL on localhost is fetched", async () => {
+  // Listening on :: also accepts IPv4, so localhost reaches it whichever address it names first.
+  const registry = await startRegistry(await packedOnce(), {
+    listenHost: "::",
+    tarballUrl: (port) => `http://localhost:${port}/-/artifact.tgz`,
+  });
+  try {
+    const fixture = await npmConfigFixture(
+      "",
+      `@schalkneethling:registry=http://${registry.host}/\n`,
+    );
+    const options = { cwd: fixture.cwd, env: fixture.env };
+    const resolution = await resolveArtifactPackage({
+      id: "skill-project-goal",
+      cache: fixture.cache,
+      ...options,
+    });
+    const result = await extractArtifactPackage(
+      resolution,
+      join(fixture.directory, "package"),
+      "2.2.0",
+      options,
+    );
+    assert.equal(result.manifest.id, "skill-project-goal");
+    assert.deepEqual(
+      registry.requests.map(({ url }) => url?.endsWith(".tgz")),
+      [false, true],
+    );
   } finally {
     await registry.close();
   }
