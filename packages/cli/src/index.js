@@ -118,7 +118,7 @@ import {
 } from "./utils/cleanup.js";
 import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
 import { findEarlierGuidance } from "./utils/earlier-guidance.js";
-import { formatGeneratedText } from "./utils/generated-text.js";
+import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { withDeadline } from "./utils/deadline.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
@@ -564,6 +564,17 @@ function delegatesToVitePlus(detection) {
     detection.status === "managed" ||
     (detection.status === "unknown" && detection.ancestor?.status === "managed")
   );
+}
+
+/**
+ * The Vite+ verdict the formatter for Calavera's generated files follows: "managed" whenever apply
+ * delegates to Vite+, so under create-here the parent's vp check accepts those files (#961), and
+ * the detected status otherwise. Apply and init both load their formatter with it (#1086).
+ *
+ * @param {VitePlusDetection} detection
+ */
+function formatterVitePlusStatus(detection) {
+  return delegatesToVitePlus(detection) ? "managed" : detection.status;
 }
 
 /**
@@ -3710,7 +3721,7 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
   // script do (#961), so the parent's vp check accepts the files apply writes.
   const loadFormatter = projectFormatterLoader(
     process.cwd(),
-    delegatesToVitePlus(vitePlusDetection) ? "managed" : vitePlusDetection.status,
+    formatterVitePlusStatus(vitePlusDetection),
     {
       editorConfig: integrations.some(({ id }) => id === "editorconfig")
         ? CALAVERA_EDITORCONFIG
@@ -6199,8 +6210,17 @@ async function promptForAiArtifacts(options) {
  * @returns {Promise<InitResult>}
  */
 export async function initRecipe(options) {
-  // #1086: detected for plain init as well, because the recipe is formatted with this verdict.
   const detection = await detectVitePlus(process.cwd());
+  // #669: the recipe is formatted as apply formats it, so a Vite+ project's vp check accepts it. A
+  // directory without a package.json of its own follows the parent's verdict, as apply does under
+  // create-here (#961), whether or not init also applies (#1086).
+  const configPath = relative(process.cwd(), resolve(options.config));
+  const loadFormatter = projectFormatterLoader(process.cwd(), formatterVitePlusStatus(detection), {
+    installDirectory: vitePlusInstallDirectory(detection),
+  });
+  // A formatter that cannot load, such as a parent whose vite-plus is not installed, stops init
+  // here, before the wizard asks anything (#1086).
+  await generatedJSONFormatter(configPath, loadFormatter);
   // #430: init writes the recipe before it applies, so a manifest choice that would not apply here
   // stops before anything is asked or written. That includes a choice where there is no decision,
   // because ignoring abandon would write and apply the recipe.
@@ -6263,18 +6283,12 @@ export async function initRecipe(options) {
   // before the write below (#1077).
   const explanation = explainRecipeResponse(recipe);
 
-  // #669: formatted as apply formats it, so a Vite+ project's vp check accepts the recipe file.
-  // A directory without a package.json of its own follows the parent's verdict, as apply does under
-  // create-here (#961), whether or not init also applies (#1086). The text is the recipe init
-  // composed, never a recipe file read from disk, so a person's own file is never reformatted.
+  // The text is the recipe init composed, never a recipe file read from disk, so a person's own
+  // file is never reformatted.
   const configText = await formatGeneratedText(
-    relative(process.cwd(), resolve(options.config)),
+    configPath,
     `${JSON.stringify(recipe, null, 2)}\n`,
-    projectFormatterLoader(
-      process.cwd(),
-      delegatesToVitePlus(detection) ? "managed" : detection.status,
-      { installDirectory: vitePlusInstallDirectory(detection) },
-    ),
+    loadFormatter,
   );
   // #1220: the same check apply runs before its recipe write (#1208), so a link at the recipe path
   // never leads init's write outside the project. It runs in the dry run as well, as in apply, and

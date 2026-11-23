@@ -802,8 +802,8 @@ const plainInit = ["init", "--yes", "--json", "--profile", "minimal"];
 
 // #1086: plain init has no manifest decision, so it used to detect "unknown" and write the recipe
 // unformatted, which the workspace root's vp check rejects. It now formats with the parent's
-// verdict, as init --apply with create-here does (#961). The recipe this test removes first stands
-// for none, so the file init writes is the one it composed.
+// verdict, as init --apply with create-here does (#961). The fixture writes a recipe; the test
+// removes it first, so the file after init is the one init composed.
 test("plain init below a Vite+ workspace formats the recipe so vp fmt --check from the workspace root accepts it", async () => {
   await using workspace = await directoryUnderManagedWorkspace();
   await rm(join(workspace.project, "calavera.config.json"));
@@ -827,19 +827,30 @@ test("plain init below a Vite+ workspace formats the recipe so vp fmt --check fr
   ]);
 });
 
-// #1086, with #1084's remedy: the formatter loads before init writes, so a missing vite-plus stops
-// plain init with nothing written, and the remedy names the parent, where vp install installs it.
-// This test runs init in this process, so mutation testing sees which lines it covers.
-test("plain init below a Vite+ workspace without vite-plus installed stops before writing and says to run vp install in the parent", async () => {
+// #1086, with #1084's remedy: the formatter loads before the wizard asks anything, so a missing
+// vite-plus stops plain init before its first prompt, with nothing written, and the remedy names
+// the parent, where vp install installs it. This test runs init in this process, so mutation
+// testing sees which lines it covers.
+test("plain init below a Vite+ workspace without vite-plus installed stops before its first prompt and says to run vp install in the parent", async () => {
   await using workspace = await directoryUnderManagedWorkspace({ installed: false });
   await rm(join(workspace.project, "calavera.config.json"));
+  /** @type {string[]} */
+  const asked = [];
+  const record = async (/** @type {{ message: string }} */ { message }) => {
+    asked.push(message);
+    throw new Error(`init asked: ${message}`);
+  };
+  const initPrompts = { select: record, groupMultiselect: record, confirm: record };
 
   await assert.rejects(
-    inDirectory(workspace.project, false, () => initRecipe(parseArgs(plainInit))),
+    inDirectory(workspace.project, true, () =>
+      initRecipe({ ...parseArgs(["init", "--json"]), initPrompts }),
+    ),
     (error) =>
       error instanceof Error &&
       error.message.includes(`Run vp install in ${workspace.root}, then run Calavera again.`),
   );
+  assert.deepEqual(asked, []);
   assert.deepEqual(await snapshotDirectory(workspace.project), {});
 });
 
