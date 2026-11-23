@@ -1,13 +1,20 @@
 // @ts-check
-import { execFile } from "node:child_process";
+import { spawn } from "node:child_process";
 import { constants } from "node:fs";
 import { access, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { delimiter, isAbsolute, join } from "node:path";
 
 /**
- * @typedef {"missing" | "timeout" | "failed" | "unparsed" | "older" | "ok"} OpenCodeVersionCheck
+ * @typedef {"skipped" | "missing" | "timeout" | "failed" | "unparsed" | "older" | "ok"} OpenCodeVersionCheck
  */
+
+/**
+ * The environment variable that turns the check off when it is `1` or `true`, in any letter case,
+ * as `CALAVERA_NO_VERSION_CHECK` parses. The test preload sets it, so no test runs an `opencode`
+ * a developer installed, and the tests of the check opt in by removing it.
+ */
+export const OPENCODE_VERSION_CHECK_SWITCH = "CALAVERA_NO_OPENCODE_VERSION_CHECK";
 
 /** How long `opencode --version` may run before the check ends as `timeout` (ADR-0022, Decision 6). */
 export const OPENCODE_VERSION_TIMEOUT_MS = 5000;
@@ -73,7 +80,8 @@ export async function findOpenCode(searchPath, platform) {
  * Runs `opencode --version` once and says how old the OpenCode on `PATH` is. The check only
  * informs: no outcome is an error, and none changes what `--init` writes (ADR-0022, Decision 6).
  * It runs an absolute path it found itself, with one fixed argument and no shell, in a private,
- * empty folder it removes afterward, and it ends within `timeoutMs` whatever the child does.
+ * empty folder it removes afterward, and it ends within `timeoutMs` whatever the child does. With
+ * `OPENCODE_VERSION_CHECK_SWITCH` on, it runs nothing and ends as `skipped`.
  *
  * @param {{ env?: NodeJS.ProcessEnv, platform?: NodeJS.Platform, timeoutMs?: number }} [options]
  * @returns {Promise<{ versionCheck: OpenCodeVersionCheck, version?: string }>}
@@ -83,6 +91,9 @@ export async function checkOpenCodeVersion({
   platform = process.platform,
   timeoutMs = OPENCODE_VERSION_TIMEOUT_MS,
 } = {}) {
+  if (/^(?:1|true)$/i.test(env[OPENCODE_VERSION_CHECK_SWITCH] ?? "")) {
+    return { versionCheck: "skipped" };
+  }
   const executable = await findOpenCode(env.PATH ?? env.Path, platform);
   if (executable === undefined) return { versionCheck: "missing" };
 
@@ -95,7 +106,7 @@ export async function checkOpenCodeVersion({
     return { versionCheck: "failed" };
   }
   try {
-    const outcome = await runVersion(executable, folder, env, timeoutMs);
+    const outcome = await runVersion(executable, folder, env, timeoutMs, platform);
     if (outcome.versionCheck !== "ran") return { versionCheck: outcome.versionCheck };
     const parsed = parseOpenCodeVersion(outcome.stdout);
     if (parsed === undefined) return { versionCheck: "unparsed" };
@@ -114,50 +125,91 @@ export async function checkOpenCodeVersion({
  * @param {string} folder
  * @param {NodeJS.ProcessEnv} env
  * @param {number} timeoutMs
+ * @param {NodeJS.Platform} platform
  * @returns {Promise<{ versionCheck: "ran", stdout: string } | { versionCheck: "timeout" | "failed" }>}
  */
-function runVersion(executable, folder, env, timeoutMs) {
+function runVersion(executable, folder, env, timeoutMs, platform) {
+  // On macOS and Linux the child leads a process group of its own, so a timeout ends everything it
+  // started too, such as the native binary npm's `opencode` launcher runs. On Windows, where a
+  // detached child gets a console of its own, only the one `opencode.exe` is killed (owner decision
+  // of 2026-11-24 on #1204). This uses `spawn`, because `execFile` does not pass `detached` on.
+  const group = platform !== "win32";
   return new Promise((resolve) => {
     /** @type {import("node:child_process").ChildProcess} */
     let child;
-    // Started before `execFile`'s own timeout of the same length, so it always fires first and the
-    // check ends here. A grandchild can hold the pipes open after the child is killed, and then
-    // `execFile` never calls back, so the check also lets go of the child and both pipes.
-    const timer = setTimeout(() => {
-      resolve({ versionCheck: "timeout" });
-      child.kill("SIGKILL");
-      child.stdout?.destroy();
-      child.stderr?.destroy();
-      child.unref();
-    }, timeoutMs);
-    try {
-      child = execFile(
-        executable,
-        ["--version"],
-        {
-          cwd: folder,
-          // Effect, which OpenCode 2 prints its version through, turns color off for NO_COLOR.
-          env: { ...env, NO_COLOR: "1" },
-          timeout: timeoutMs,
-          killSignal: "SIGTERM",
-          maxBuffer: MAX_OUTPUT_BYTES,
-          windowsHide: true,
-          encoding: "utf8",
-        },
-        (error, stdout) => {
-          clearTimeout(timer);
-          // A nonzero exit, a failed start, or more output than `maxBuffer` allows. Standard error
-          // is never read, so nothing the child wrote there can reach the output.
-          resolve(error === null ? { versionCheck: "ran", stdout } : { versionCheck: "failed" });
-        },
-      );
-    } catch {
-      // `execFile` reports a failed start through the callback; this covers a synchronous throw,
-      // so that no outcome of the check is an error.
+    /** @type {Buffer[]} */
+    const chunks = [];
+    let bytes = 0;
+    let settled = false;
+    /** @param {{ versionCheck: "ran", stdout: string } | { versionCheck: "timeout" | "failed" }} outcome */
+    const settle = (outcome) => {
+      if (settled) return;
+      settled = true;
       clearTimeout(timer);
-      resolve({ versionCheck: "failed" });
+      resolve(outcome);
+    };
+    // A grandchild can hold the pipe open after the child is killed, and then the child never
+    // closes, so the check ends here and lets go of the child and its pipe.
+    /** @param {"timeout" | "failed"} versionCheck */
+    const abandon = (versionCheck) => {
+      settle({ versionCheck });
+      killChild(child, group);
+      child.stdout?.destroy();
+      child.unref();
+    };
+    const timer = setTimeout(() => abandon("timeout"), timeoutMs);
+    try {
+      child = spawn(executable, ["--version"], {
+        cwd: folder,
+        // Effect, which OpenCode 2 prints its version through, turns color off for NO_COLOR.
+        env: { ...env, NO_COLOR: "1" },
+        // Standard error is never read, so nothing the child writes there can reach the output.
+        stdio: ["ignore", "pipe", "ignore"],
+        windowsHide: true,
+        detached: group,
+      });
+    } catch {
+      // `spawn` reports a failed start through its `error` event; this covers a synchronous throw,
+      // so that no outcome of the check is an error.
+      settle({ versionCheck: "failed" });
+      return;
     }
+    child.stdout?.on("data", (/** @type {Buffer} */ chunk) => {
+      bytes += chunk.length;
+      if (bytes > MAX_OUTPUT_BYTES) {
+        abandon("failed");
+        return;
+      }
+      chunks.push(chunk);
+    });
+    child.on("error", () => settle({ versionCheck: "failed" }));
+    child.on("close", (code) => {
+      settle(
+        code === 0
+          ? { versionCheck: "ran", stdout: Buffer.concat(chunks).toString("utf8") }
+          : { versionCheck: "failed" },
+      );
+    });
   });
+}
+
+/**
+ * Kills the child, and on macOS and Linux every process in its group, with `SIGKILL`.
+ *
+ * @param {import("node:child_process").ChildProcess} child
+ * @param {boolean} group
+ */
+function killChild(child, group) {
+  if (group && child.pid !== undefined) {
+    try {
+      // A negative process ID names the group the child leads.
+      process.kill(-child.pid, "SIGKILL");
+      return;
+    } catch {
+      // The group is gone already, or never formed: the child itself is killed below.
+    }
+  }
+  child.kill("SIGKILL");
 }
 
 /**

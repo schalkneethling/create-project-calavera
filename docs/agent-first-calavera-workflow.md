@@ -123,6 +123,7 @@ earlier Calavera release wrote directly under `mcp`, `--init` moves it to
 `mcp.servers`; an entry you edited stays as it is, and `--init` says how to move
 it yourself. When the `opencode` on your `PATH` reports a version older than 2,
 `--init` warns before it writes, but it writes the OpenCode 2 layout either way.
+To skip that check, set `CALAVERA_NO_OPENCODE_VERSION_CHECK` to `1` or `true`.
 
 Use the package manager declared by the target project's `package.json` when
 creating the MCP registration. The generated notes choose the matching command,

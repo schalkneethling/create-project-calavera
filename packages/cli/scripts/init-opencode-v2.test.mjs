@@ -354,14 +354,14 @@ for (const [label, text, sentences] of [
   ],
   [
     "an entry under mcp.servers",
-    `{ "mcp": { "servers": { "calavera": ${JSON.stringify(v2Entry("6.2.1"))}, }, }, }\n`,
+    `{ "mcp": { "servers": { "calavera": ${JSON.stringify(v2Entry("6.2.0"))}, }, }, }\n`,
     [
       "Calavera does not update the version its calavera entry pins in a file with comments. To update it, change the create-project-calavera@<version> in the entry's command to the version of Calavera you run --init with.",
     ],
   ],
   [
     "entries in both places",
-    `{\n  /* both */\n  "mcp": {\n    "servers": { "calavera": ${JSON.stringify(v2Entry("6.2.1"))} },\n    "calavera": ${JSON.stringify(v1Entry("6.2.1"))}\n  }\n}\n`,
+    `{\n  /* both */\n  "mcp": {\n    "servers": { "calavera": ${JSON.stringify(v2Entry("6.2.0"))} },\n    "calavera": ${JSON.stringify(v1Entry("6.2.1"))}\n  }\n}\n`,
     [
       "Calavera does not update the version its calavera entry pins in a file with comments.",
       "Move the calavera entry under mcp.servers yourself and remove enabled.",
@@ -387,6 +387,52 @@ for (const [label, text, sentences] of [
       assert.ok(reason.endsWith(` ${README_POINTER}`), reason);
       assert.equal(reason.split(README_POINTER).length, 2, reason);
       assert.doesNotMatch(reason, /\.agents\/calavera\/mcp\.md/);
+    });
+  });
+}
+
+// The comment path judges each entry as the plain JSON path does, so an edited entry is never
+// treated as Calavera's and a switch is never told to become an empty entry (#1204 review).
+for (const [label, mcp, expected, absent] of /** @type {const} */ ([
+  [
+    "an edited switch under mcp",
+    `{ "calavera": { "enabled": false } }`,
+    'The calavera entry under mcp holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on a full calavera entry under mcp.servers.',
+    /remove enabled/,
+  ],
+  [
+    "an edited entry under mcp",
+    `{ "calavera": { "type": "local", "command": ["mine"], "enabled": true } }`,
+    "The calavera entry under mcp in opencode.json differs from every entry a Calavera release wrote, so it was left unchanged as a local edit. OpenCode 2 reads servers from mcp.servers: move the entry there and replace enabled with disabled, as OpenCode's migration guide describes, or remove it.",
+    /Move the calavera entry under mcp\.servers yourself/,
+  ],
+  [
+    "an edited entry under mcp.servers",
+    `{ "servers": { "calavera": { "type": "local", "command": ["mine"] } } }`,
+    "The calavera entry under mcp.servers in opencode.json differs from every entry a Calavera release wrote, so it was left unchanged as a local edit. To use Calavera's entry instead, replace yours with it.",
+    /Calavera does not update the version its calavera entry pins/,
+  ],
+  [
+    "the current entry under mcp.servers",
+    `{ "servers": { "calavera": ${JSON.stringify(v2Entry(current))} } }`,
+    "The calavera entry under mcp.servers is already the one this release writes.",
+    /Calavera does not update the version its calavera entry pins/,
+  ],
+  [
+    "two entries",
+    `{ "calavera": ${JSON.stringify(v1Entry("6.2.1"))}, "servers": { "calavera": ${JSON.stringify(v2Entry(current))} } }`,
+    "The file holds two calavera servers: keep the one you mean to use and remove the other.",
+    /^$/,
+  ],
+])) {
+  test(`a file with comments and ${label} gets that entry's own remedy`, async () => {
+    await inProject(async () => {
+      const text = `{\n  // mine\n  "mcp": ${mcp}\n}\n`;
+      await writeFile(PATH, text);
+      const reason = await assertKept(text);
+      assert.ok(reason.includes(expected), reason);
+      assert.doesNotMatch(reason, absent);
+      assert.ok(reason.endsWith(` ${README_POINTER}`), reason);
     });
   });
 }

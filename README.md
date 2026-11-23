@@ -841,6 +841,7 @@ it yourself. `--init` never rewrites an `opencode.json` with comments or
 trailing commas: move or update its `calavera` entry yourself to match the
 example above. When the `opencode` on your `PATH` reports a version older than 2,
 `--init` warns before it writes, but it writes the OpenCode 2 layout either way.
+To skip that check, set `CALAVERA_NO_OPENCODE_VERSION_CHECK` to `1` or `true`.
 
 Project-local MCP servers run from the project root. Matching the project
 package manager prevents package-manager preflight failures before Calavera can

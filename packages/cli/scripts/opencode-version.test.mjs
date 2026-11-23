@@ -71,6 +71,43 @@ async function stub(folder, body, name = "opencode") {
 /** @param {string} text */
 const printing = (text) => `process.stdout.write(${JSON.stringify(text)});`;
 
+/** The switch the test preload sets, which turns the OpenCode version check off. */
+const SWITCH = "CALAVERA_NO_OPENCODE_VERSION_CHECK";
+/** @param {NodeJS.ProcessEnv} env */
+const withoutSwitch = (env) =>
+  Object.fromEntries(Object.entries(env).filter(([name]) => name !== SWITCH));
+
+/**
+ * Whether the process `pid` is gone. A killed process can take a moment to be reaped, so this
+ * waits up to two seconds.
+ *
+ * @param {number} pid
+ */
+async function gone(pid) {
+  for (let attempt = 0; attempt < 40; attempt += 1) {
+    try {
+      process.kill(pid, 0);
+    } catch {
+      return true;
+    }
+    await new Promise((resolvePromise) => setTimeout(resolvePromise, 50));
+  }
+  return false;
+}
+
+/** @param {string} pidFile */
+async function killIfAlive(pidFile) {
+  for (const pid of (await readFile(pidFile, "utf8").catch(() => "")).split(/\s+/).map(Number)) {
+    if (pid > 0) {
+      try {
+        process.kill(pid, "SIGKILL");
+      } catch {
+        // Already gone.
+      }
+    }
+  }
+}
+
 test("parseOpenCodeVersion reads both release lines and nothing else", () => {
   assert.deepEqual(parseOpenCodeVersion("1.19.6\n"), { major: 1, version: "1.19.6" });
   assert.deepEqual(parseOpenCodeVersion("opencode v2.4.0\n"), { major: 2, version: "2.4.0" });
@@ -214,6 +251,120 @@ test(
   },
 );
 
+test(
+  "the test preload turns the check off, so an ordinary --init test never starts opencode",
+  posix,
+  async () => {
+    assert.equal(process.env[SWITCH], "1", "scripts/no-version-check.mjs sets the switch");
+    await withFolders(async ({ project, bin }) => {
+      const marker = join(bin, "ran");
+      await stub(
+        bin,
+        `require("node:fs").writeFileSync(${JSON.stringify(marker)}, "ran"); ${printing("1.19.6\n")}`,
+      );
+      // In this process, as the in-process tests run `--init`.
+      process.env.PATH = `${bin}${delimiter}${process.env.PATH ?? ""}`;
+      const result = await agentBootstrap({
+        json: true,
+        mcpHarness: "opencode",
+        packageManager: "npm",
+      });
+      assert.equal(result.mcp.versionCheck, "skipped");
+      assert.ok(result.changes.every((change) => change.warning === undefined));
+      // In a child process with the inherited environment, as the CLI tests run it.
+      const child = await new Promise((resolvePromise) => {
+        execFile(
+          process.execPath,
+          [binPath, "--init", "--yes", "--json", "--dry-run", "--mcp-harness", "opencode"],
+          { cwd: project, env: { ...process.env, PATH: bin } },
+          (error, stdout) => resolvePromise({ error, stdout }),
+        );
+      });
+      assert.equal(
+        JSON.parse(String(/** @type {any} */ (child).stdout)).mcp.versionCheck,
+        "skipped",
+      );
+      await assert.rejects(access(marker), /ENOENT/);
+    });
+  },
+);
+
+test(
+  "the check runs when the switch is off, and skips for 1 or true in any letter case",
+  posix,
+  async () => {
+    await withFolders(async ({ bin }) => {
+      await stub(bin, printing("1.19.6\n"));
+      for (const value of ["1", "true", "TRUE"]) {
+        assert.deepEqual(await checkOpenCodeVersion({ env: { PATH: bin, [SWITCH]: value } }), {
+          versionCheck: "skipped",
+        });
+      }
+      for (const value of ["0", "", "no"]) {
+        assert.equal(
+          (await checkOpenCodeVersion({ env: { PATH: bin, [SWITCH]: value } })).versionCheck,
+          "older",
+          value,
+        );
+      }
+    });
+  },
+);
+
+test(
+  "a stub that traps SIGTERM is gone after a timeout, because the check kills it",
+  posix,
+  async () => {
+    await withFolders(async ({ bin }) => {
+      const pidFile = join(bin, "stub.pid");
+      await stub(
+        bin,
+        `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, String(process.pid)); process.on("SIGTERM", () => {}); setTimeout(() => {}, 60_000);`,
+      );
+      try {
+        assert.deepEqual(await checkOpenCodeVersion({ env: { PATH: bin }, timeoutMs: 2000 }), {
+          versionCheck: "timeout",
+        });
+        assert.ok(await gone(Number(await readFile(pidFile, "utf8"))), "the stub still runs");
+      } finally {
+        await killIfAlive(pidFile);
+      }
+    });
+  },
+);
+
+test(
+  "a grandchild the stub started, as npm's opencode launcher starts the native binary, is gone after a timeout",
+  posix,
+  async () => {
+    await withFolders(async ({ bin }) => {
+      const pidFile = join(bin, "pids");
+      // The grandchild stays in the stub's process group and traps SIGTERM; its pipes are its own, so
+      // only the group kill reaches it.
+      await stub(
+        bin,
+        [
+          `const { spawn } = require("node:child_process");`,
+          `const child = spawn(process.execPath, ["-e", "process.on('SIGTERM', () => {}); setTimeout(() => {}, 60000)"], { stdio: "ignore" });`,
+          `require("node:fs").writeFileSync(${JSON.stringify(pidFile)}, process.pid + " " + child.pid);`,
+          `process.on("SIGTERM", () => {});`,
+          `setTimeout(() => {}, 60_000);`,
+        ].join("\n"),
+      );
+      try {
+        assert.deepEqual(await checkOpenCodeVersion({ env: { PATH: bin }, timeoutMs: 2000 }), {
+          versionCheck: "timeout",
+        });
+        const [stubPid, grandchildPid] = (await readFile(pidFile, "utf8")).split(" ").map(Number);
+        assert.ok(await gone(/** @type {number} */ (stubPid)), "the stub still runs");
+        assert.ok(await gone(/** @type {number} */ (grandchildPid)), "the grandchild still runs");
+      } finally {
+        await killIfAlive(pidFile);
+      }
+    });
+  },
+);
+
 test("the stub that ignores SIGTERM ends as timeout within the bound", posix, async () => {
   await withFolders(async ({ bin }) => {
     await stub(bin, `process.on("SIGTERM", () => {}); setTimeout(() => {}, 60_000);`);
@@ -315,7 +466,7 @@ function runInit(cwd, bin, extra = []) {
     execFile(
       process.execPath,
       [binPath, "--init", "--yes", "--mcp-harness", "opencode", ...extra],
-      { cwd, env: { ...process.env, PATH: bin, NO_COLOR: "1" } },
+      { cwd, env: { ...withoutSwitch(process.env), PATH: bin, NO_COLOR: "1" } },
       (error, stdout, stderr) => {
         resolvePromise({
           code: error ? (typeof error.code === "number" ? error.code : 1) : 0,
@@ -365,7 +516,15 @@ test(
 /** @param {() => Promise<void>} callback @param {string} bin */
 async function withPath(bin, callback) {
   process.env.PATH = bin;
-  await callback();
+  // These tests exercise the check, so they opt in: the test preload turns it off for every
+  // other test (scripts/no-version-check.mjs).
+  const switchValue = process.env[SWITCH];
+  delete process.env[SWITCH];
+  try {
+    await callback();
+  } finally {
+    if (switchValue !== undefined) process.env[SWITCH] = switchValue;
+  }
 }
 
 for (const [label, body, versionCheck] of /** @type {const} */ ([

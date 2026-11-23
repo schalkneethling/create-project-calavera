@@ -817,15 +817,32 @@ function editedOpenCodeChange(path, found) {
 const COMMENTS = "has comments or trailing commas, which Calavera would lose by rewriting it, so";
 
 /**
- * What to do about each `calavera` entry in an `opencode.json` with comments, which `--init` never
- * rewrites (ADR-0022, Decision 2).
+ * What to do about one `calavera` entry in an `opencode.json` with comments, which `--init` never
+ * rewrites (ADR-0022, Decision 2). Each entry is judged as in a plain JSON file, so an edited entry
+ * is never treated as Calavera's, and a switch is never told to become an empty entry. No sentence
+ * asks for another run of `--init`, because the run would keep the file again.
  *
- * @param {OpenCodeMcpLocation} location
+ * @param {string} path
+ * @param {{ location: OpenCodeMcpLocation, entry: unknown }} found
+ * @param {McpLaunchCommand} launchCommand
  */
-function commentedEntrySentence(location) {
+function commentedEntrySentence(path, { location, entry }, launchCommand) {
+  const named = `The calavera entry under ${location.name}`;
+  if (isCalaveraMcpEntry(entry, location.entries)) {
+    if (location.name === "mcp") {
+      return "Move the calavera entry under mcp.servers yourself and remove enabled.";
+    }
+    return isDeepStrictEqual(entry, createOpenCodeMcpEntry(launchCommand))
+      ? `${named} is already the one this release writes.`
+      : "Calavera does not update the version its calavera entry pins in a file with comments. To update it, change the create-project-calavera@<version> in the entry's command to the version of Calavera you run --init with.";
+  }
+  if (location.name === "mcp" && isEnabledSwitch(entry)) {
+    return `${named} holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on a full calavera entry under mcp.servers.`;
+  }
+  const edited = editedEntrySentence(path, named, pinsUnpublishedVersion(entry, location.entries));
   return location.name === "mcp"
-    ? "Move the calavera entry under mcp.servers yourself and remove enabled."
-    : "Calavera does not update the version its calavera entry pins in a file with comments. To update it, change the create-project-calavera@<version> in the entry's command to the version of Calavera you run --init with.";
+    ? `${edited} OpenCode 2 reads servers from mcp.servers: move the entry there and replace enabled with disabled, as OpenCode's migration guide describes, or remove it.`
+    : `${edited} To use Calavera's entry instead, replace yours with it.`;
 }
 
 /**
@@ -924,7 +941,12 @@ export async function writeOpenCodeMcpConfig(
     }
     return kept([
       `${targetPath} ${COMMENTS} it was left unchanged.`,
-      ...found.map(({ location }) => commentedEntrySentence(location)),
+      ...found.map((each) => commentedEntrySentence(targetPath, each, launchCommand)),
+      ...(found.length > 1
+        ? [
+            "The file holds two calavera servers: keep the one you mean to use and remove the other.",
+          ]
+        : []),
       README_OPENCODE_POINTER,
     ]);
   }
