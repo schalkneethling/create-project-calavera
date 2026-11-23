@@ -139,6 +139,7 @@ import {
   pathAtAncestor,
   recipePathOutsideAncestorError,
 } from "./manifest-decision.js";
+import { assertRecipeWriteTarget } from "./recipe-write-target.js";
 import {
   integrationDependencies,
   resolveStrykerTestRunner,
@@ -3726,6 +3727,16 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
           loadFormatter,
         )
       : undefined;
+  const configUnchanged =
+    configText !== undefined &&
+    previouslyApplied &&
+    (await fileExists(configPath)) &&
+    (await readFile(configPath, "utf8")) === configText;
+  // #1208: a link at the recipe path, or a missing folder, stops apply here, in the dry run as
+  // well, before package.json or anything else is written.
+  if (configText !== undefined && !configUnchanged) {
+    await assertRecipeWriteTarget(configPath, process.cwd());
+  }
 
   const packageJSON = await ensurePackageJSON(
     packageManager,
@@ -3901,10 +3912,6 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
   }
 
   if (configText !== undefined) {
-    const configUnchanged =
-      previouslyApplied &&
-      (await fileExists(configPath)) &&
-      (await readFile(configPath, "utf8")) === configText;
     changes.push({
       type: configUnchanged ? "unchanged" : "write",
       path: relative(process.cwd(), configPath),

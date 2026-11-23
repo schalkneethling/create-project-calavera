@@ -1066,6 +1066,69 @@ test("apply-at-ancestor leaves a file behind a folder link in the inspected dire
     stopped.message.includes(join(fixture.root, "linkout", "recipe.json")),
     stopped.message,
   );
+  // #1208: a Calavera error that names the path, not the raw ENOENT of the write.
+  assert.ok(
+    stopped.message.startsWith(
+      `Calavera cannot write the recipe at ${join(fixture.root, "linkout", "recipe.json")}, because the folder ${join(fixture.root, "linkout")} does not exist.`,
+    ),
+    stopped.message,
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+  assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+});
+
+// #1208: a dangling link reads as missing to the existence checks above, so apply-at-ancestor
+// reaches the recipe write, which refuses to create the link's target, inside the ancestor's
+// directory or outside it, before anything is written.
+test(
+  "apply-at-ancestor refuses a recipe path that is a dangling link, wherever it points",
+  fileLinkSkip,
+  async () => {
+    await using fixture = await directoryUnderUnmanagedProject();
+    await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+      "keep.txt": "keep\n",
+    });
+    const link = join(fixture.root, "dangling.json");
+
+    for (const [target, where] of [
+      [join(elsewhere.root, "created.json"), ` and is outside ${fixture.root}`],
+      [join(fixture.root, "created.json"), ""],
+    ]) {
+      await rm(link, { force: true });
+      await symlink(target, link);
+      const before = await snapshotDirectory(fixture.root);
+      const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+
+      const stopped = (await applyAtAncestorRefusal(fixture, join("..", "dangling.json"))).message;
+      assert.ok(
+        stopped.includes(
+          `${link} is a link to ${target}, which does not exist${where}, so writing the recipe would create ${target} instead.`,
+        ),
+        stopped,
+      );
+      assert.deepEqual(await snapshotDirectory(fixture.root), before);
+      assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+    }
+  },
+);
+
+test("apply-at-ancestor names the recipe path when its folder is a link to a missing folder", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+    "keep.txt": "keep\n",
+  });
+  const missing = join(elsewhere.root, "gone");
+  await symlink(missing, join(fixture.root, "gone"), "junction");
+  const before = await snapshotDirectory(fixture.root);
+  const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+
+  const stopped = await applyAtAncestorRefusal(fixture, join("..", "gone", "recipe.json"));
+  assert.ok(
+    stopped.message.startsWith(
+      `Calavera cannot write the recipe at ${join(fixture.root, "gone", "recipe.json")}, because ${join(fixture.root, "gone")} is a link to ${missing}, which does not exist.`,
+    ),
+    stopped.message,
+  );
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
   assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
 });
