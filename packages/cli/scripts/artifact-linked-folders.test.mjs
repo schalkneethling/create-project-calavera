@@ -31,6 +31,7 @@ const CASES = [
   { link: ".codex", item: { id: "agent-technical-devils-advocate", target: "codex" } },
   { link: ".calavera/packages", item: { id: "skill-code-review" } },
   { link: ".calavera", item: { id: "skill-code-review" } },
+  { link: ".calavera/.transactions", item: { id: "skill-code-review" } },
 ];
 
 /**
@@ -95,8 +96,9 @@ for (const { link, item } of CASES) {
         options("install", item.id),
         stubRegistry(new Map([[item.id, "1.0.0"]])),
       );
-      // The installed folder moves outside the project, and a link takes its place.
-      await mkdir(dirname(join(project, link)), { recursive: true });
+      // The installed folder moves outside the project, and a link takes its place. An install
+      // that finished leaves no staging, so the transaction folder may not exist yet.
+      await mkdir(join(project, link), { recursive: true });
       await cp(join(project, link), outside, { recursive: true, verbatimSymlinks: true });
       await rm(join(project, link), { recursive: true });
       await symlink(outside, join(project, link));
@@ -143,10 +145,11 @@ test("artifacts status --check-updates refuses to record the cache block through
 
 // Apply installs the artifacts its recipe selects that are not locked yet through the same staging
 // and commit, so a linked folder stops it before it resolves, caches, or stages any package.
-for (const link of [".agents", ".calavera"]) {
+for (const link of [".agents", ".calavera", ".calavera/.transactions"]) {
   test(`apply refuses to install an unlocked artifact through a linked ${link} before it resolves anything`, async () => {
     const item = { id: "skill-code-review" };
     await inProject(item, async ({ project, outside }) => {
+      await mkdir(dirname(join(project, link)), { recursive: true });
       await symlink(outside, join(project, link));
       const projectBefore = await snapshotDirectory(project);
       const outsideBefore = await snapshotDirectory(outside);

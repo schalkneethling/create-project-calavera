@@ -460,13 +460,21 @@ test("recovery rolls back each path an artifact transaction writes", async () =>
 });
 
 // #1193: when recovery cannot tell whether a folder above a journal path is a symbolic link, it
-// stops before it changes anything, even for an operation it could otherwise roll back.
+// stops before it changes anything, even for an operation it could otherwise roll back, with a
+// message that names the operation and the remedy and keeps the cause.
 // A process that runs as root reads any folder, so the unreadable-folder case cannot fail there.
-for (const { name, code, plant, skip = false } of [
+for (const { name, code, plant, target = ".agents/skills/x", skip = false } of [
   {
     name: "a file stands where a folder would be",
     code: "ENOTDIR",
     plant: async (/** @type {string} */ project) => writeFile(join(project, ".agents"), "file\n"),
+  },
+  {
+    name: "a folder name is too long to check",
+    code: "ENAMETOOLONG",
+    target: `.agents/skills/${"a".repeat(300)}/x`,
+    plant: async (/** @type {string} */ project) =>
+      mkdir(join(project, ".agents/skills"), { recursive: true }),
   },
   {
     name: "a folder cannot be read",
@@ -486,7 +494,7 @@ for (const { name, code, plant, skip = false } of [
       const journal = await writeJournal(root, [
         {
           staged,
-          target: join(project, ".agents/skills/x"),
+          target: join(project, target),
           backup: join(root, "backups/0"),
           hadTarget: false,
         },
@@ -495,7 +503,15 @@ for (const { name, code, plant, skip = false } of [
       const before = await snapshotDirectory(project);
       await plant(project);
       try {
-        await assert.rejects(recoverArtifactTransaction(), { code });
+        await assert.rejects(recoverArtifactTransaction(), (error) => {
+          assert.ok(error instanceof Error);
+          assert.equal(
+            error.message,
+            `Calavera cannot check artifact transaction journal operation 0, because checking the folders above ${join(target)} for a symbolic link failed with ${code}. ${REMEDY}`,
+          );
+          assert.equal(/** @type {NodeJS.ErrnoException} */ (error.cause).code, code);
+          return true;
+        });
       } finally {
         await chmod(join(project, ".agents"), 0o755);
       }
@@ -578,6 +594,14 @@ for (const { name, folder, nested } of [
     name: "Unicode normalization",
     folder: String.fromCodePoint(0xe9),
     nested: `e${String.fromCodePoint(0x301)}/bar`,
+  },
+  // Greek alpha with psili and an iota subscript, then an acute accent, against the precomposed
+  // letter with all three: canonically equivalent, but the iota subscript folds to a separate ι,
+  // so only folding the decomposed form puts the accent in the same place in both.
+  {
+    name: "Unicode normalization of an iota subscript",
+    folder: String.fromCodePoint(0x1f84),
+    nested: `${String.fromCodePoint(0x1f80, 0x301)}/bar`,
   },
   // Case folding that APFS applies and lower-casing alone does not: ß against ss, capital sharp s
   // against ss, final sigma against sigma, and the ff ligature against ff.
@@ -840,5 +864,62 @@ test("the rollback names the range of operations it rolled back before it stoppe
     } finally {
       await rm(outside, { force: true, recursive: true });
     }
+  });
+});
+
+// #1193: Windows strips a trailing space or dot from a path segment, so `.agents/skills/ ` or
+// `.agents/skills/x.` would name `.agents/skills` or `.agents/skills/x` there, and removing it
+// would remove more than the transaction wrote. Such a target is refused on every platform.
+test("a target with a segment that ends in a space or a dot is refused by the commit and by recovery", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    await mkdir(join(project, ".agents/skills/x"), { recursive: true });
+    for (const path of [
+      ".agents/skills/ ",
+      ".agents/skills/x.",
+      ".agents/skills/x /y",
+      ".calavera/packages/a./1.0.0",
+    ]) {
+      const target = join(project, path);
+      await assert.rejects(commitArtifactTransaction(root, [{ staged, target }]), {
+        message: `Artifact transaction operation 0 targets ${target}, which is not a path an artifact transaction writes.`,
+      });
+      await writeJournal(root, [
+        { staged, target, backup: join(root, "backups/0"), hadTarget: false },
+      ]);
+      const before = await snapshotDirectory(project);
+      await assert.rejects(recoverArtifactTransaction(), {
+        message: `Artifact transaction journal operation 0 targets ${join(path)}, which is not a path an artifact transaction writes. ${REMEDY}`,
+      });
+      assert.deepEqual(await snapshotDirectory(project), before);
+      await rm(TRANSACTION_PATH);
+    }
+    assert.equal(isTransactionTarget("C:\\proj", "C:\\proj\\.agents\\skills\\x.", win32), false);
+    assert.equal(isTransactionTarget("C:\\proj", "C:\\proj\\.agents\\skills\\..a", win32), true);
+  });
+});
+
+// The per-step check also stops part way, with the same remedy, when it cannot check a folder.
+test("the rollback stops part way when it cannot check a target's folders", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    await writeFile(join(project, ".agents"), "file\n");
+    await assert.rejects(
+      rollBackArtifactOperations(project, [
+        {
+          staged,
+          target: join(project, ".agents/skills/a"),
+          backup: join(root, "backups/0"),
+          hadTarget: false,
+        },
+      ]),
+      (error) => {
+        assert.ok(error instanceof Error);
+        assert.equal(
+          error.message,
+          `The artifact transaction rollback stopped before operation 0, because checking the folders above ${join(".agents/skills/a")} for a symbolic link failed with ENOTDIR. It rolled back no operation yet. ${STOPPED_REMEDY}`,
+        );
+        assert.equal(/** @type {NodeJS.ErrnoException} */ (error.cause).code, "ENOTDIR");
+        return true;
+      },
+    );
   });
 });

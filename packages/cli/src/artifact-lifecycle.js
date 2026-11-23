@@ -1509,8 +1509,9 @@ const TRANSACTION_TARGET_FOLDERS = Object.freeze([PACKAGE_PATH, ...AI_ARTIFACT_O
  * Whether an artifact transaction may target the absolute path `target` in the project at
  * `projectRoot`: one of `TRANSACTION_TARGET_FILES`, or a path strictly below one of
  * `TRANSACTION_TARGET_FOLDERS`. The project root, its parent folders, and the target folders
- * themselves are never targets. Paths are compared with `relative`, as `isPathInside` does, so a
- * path that differs only in letter case on Windows counts as the same path.
+ * themselves are never targets, and neither is a path with a segment that ends in a space or a
+ * dot. Paths are compared with `relative`, as `isPathInside` does, so a path that differs only in
+ * letter case on Windows counts as the same path.
  *
  * @param {string} projectRoot
  * @param {string} target
@@ -1519,6 +1520,11 @@ const TRANSACTION_TARGET_FOLDERS = Object.freeze([PACKAGE_PATH, ...AI_ARTIFACT_O
  */
 export function isTransactionTarget(projectRoot, target, pathRules = nodePath) {
   const samePath = (/** @type {string} */ path) => pathRules.relative(path, target) === "";
+  // Windows strips a trailing space or dot from each path segment, so such a segment would name
+  // another path there; it is refused on every platform, so a journal is read the same way
+  // everywhere. No catalog path ends a segment that way.
+  const segments = pathRules.relative(projectRoot, target).split(pathRules.sep);
+  if (segments.some((segment) => segment.endsWith(" ") || segment.endsWith("."))) return false;
   return (
     TRANSACTION_TARGET_FILES.some((file) => samePath(pathRules.join(projectRoot, file))) ||
     TRANSACTION_TARGET_FOLDERS.some((folder) => {
@@ -1604,7 +1610,8 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
   }
 
   const linked = await linkedJournalPath(projectRoot, normalizedRoot, journalOperations);
-  if (linked !== null) throw new Error(linkedFolderRefusal(linked.link));
+  if (linked?.error) throw linked.error;
+  if (linked?.link) throw new Error(linkedFolderRefusal(linked.link));
 
   await writeAtomicJson(TRANSACTION_PATH, {
     schemaVersion: 1,
@@ -1653,7 +1660,19 @@ export async function rollBackArtifactOperations(projectRoot, operations) {
     // An earlier step may have moved a backup that is a symbolic link into place, for example on
     // a file system that treats two spellings the journal checks cannot tell apart as one name,
     // so the folders are checked again before each step.
-    const link = await linkedFolder(projectRoot, dirname(operation.target));
+    let link;
+    try {
+      link = await linkedFolder(projectRoot, dirname(operation.target));
+    } catch (error) {
+      throw new Error(
+        rollbackStoppedMessage(
+          index,
+          operations.length,
+          uncheckedFolders(projectRoot, operation.target, error),
+        ),
+        { cause: error },
+      );
+    }
     if (link !== null) {
       throw new Error(
         rollbackStoppedMessage(
@@ -1759,10 +1778,33 @@ async function readTransactionJournal() {
     }
   }
   const linked = await linkedJournalPath(projectRoot, transactionRoot, operations);
-  if (linked !== null) {
+  if (linked?.error) {
+    const subject =
+      linked.index === null
+        ? "the artifact transaction root"
+        : `artifact transaction journal operation ${linked.index}`;
+    throw new Error(
+      `Calavera cannot check ${subject}, because ${uncheckedFolders(projectRoot, linked.path, linked.error)}. ${JOURNAL_REFUSAL_REMEDY}`,
+      { cause: linked.error },
+    );
+  }
+  if (linked?.link) {
     throw new Error(journalLinkRefusal(projectRoot, linked.path, linked.link));
   }
   return { transactionRoot, operations };
+}
+
+/**
+ * Why the folders above `path` could not be checked for a symbolic link, naming the error code
+ * only, so no text from the file system or the journal beyond the path reaches the message.
+ *
+ * @param {string} projectRoot
+ * @param {string} path
+ * @param {unknown} error
+ */
+function uncheckedFolders(projectRoot, path, error) {
+  const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? "an error";
+  return `checking the folders above ${relative(projectRoot, path)} for a symbolic link failed with ${code}`;
 }
 
 /**
@@ -1799,7 +1841,8 @@ function pathsOverlap(a, b) {
 
 /**
  * The first path of an artifact transaction that lies below a symbolic link, with that link, or
- * null when none does. The paths are the transaction root, each target, and each backup; the path
+ * whose folders cannot be checked, with that error, together with the index of its operation
+ * (null for the transaction root), or null when every path is fine. The paths are the transaction root, each target, and each backup; the path
  * itself is not checked, because removing or replacing a symbolic link changes only the link. The
  * commit and the rollback both call it, so the commit never writes a journal the rollback refuses
  * (#1193, owner decision of 2026-11-23).
@@ -1807,15 +1850,23 @@ function pathsOverlap(a, b) {
  * @param {string} projectRoot
  * @param {string} transactionRoot
  * @param {{ target: string, backup: string }[]} operations
- * @returns {Promise<{ path: string, link: string } | null>}
+ * @returns {Promise<{ path: string, index: number | null, link: string | null, error: unknown } | null>}
  */
 async function linkedJournalPath(projectRoot, transactionRoot, operations) {
-  for (const path of [
-    transactionRoot,
-    ...operations.flatMap(({ target, backup }) => [target, backup]),
+  for (const { path, index } of [
+    { path: transactionRoot, index: null },
+    ...operations.flatMap(({ target, backup }, index) => [
+      { path: target, index },
+      { path: backup, index },
+    ]),
   ]) {
-    const link = await linkedFolder(projectRoot, dirname(path));
-    if (link !== null) return { path, link };
+    let link;
+    try {
+      link = await linkedFolder(projectRoot, dirname(path));
+    } catch (error) {
+      return { path, index, link: null, error };
+    }
+    if (link !== null) return { path, index, link, error: null };
   }
   return null;
 }
