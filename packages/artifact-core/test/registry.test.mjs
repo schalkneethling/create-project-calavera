@@ -1299,13 +1299,15 @@ test("beforeLookup receives the registry before any request, and an error it thr
           npm_config_registry: `http://127.0.0.1:${port}/`,
         },
         beforeLookup: (registry) => {
-          seen.push({ origin: registry.origin, requests: requests.length });
+          seen.push({ origin: registry.origin, url: registry.url, requests: requests.length });
           throw skip;
         },
       }),
       (error) => error === skip,
     );
-    assert.deepEqual(seen, [{ origin: `http://127.0.0.1:${port}`, requests: 0 }]);
+    assert.deepEqual(seen, [
+      { origin: `http://127.0.0.1:${port}`, url: `http://127.0.0.1:${port}/`, requests: 0 },
+    ]);
     assert.deepEqual(requests, []);
   } finally {
     server.closeAllConnections();

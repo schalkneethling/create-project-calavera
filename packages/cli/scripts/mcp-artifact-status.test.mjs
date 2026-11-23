@@ -562,6 +562,8 @@ test(
         { config: "calavera.config.json", dryRun: false, artifactAction: "install" },
         stubRegistry(new Map(ids.map((id) => [id, LOCKED_VERSION]))),
       );
+      // The tool is read-only, so the project must be byte-for-byte the same afterward.
+      const before = await snapshotDirectory();
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
       const server = createMcpServer({
         // Each artifact's registry comes from npm_config_registry, so the two registries serve
@@ -578,12 +580,10 @@ test(
       await client.connect(clientTransport);
       try {
         await client.listTools();
-        const started = performance.now();
         const result = await client.callTool({
           name: "artifact_status",
           arguments: { checkUpdates: true },
         });
-        const elapsed = performance.now() - started;
 
         assert.equal(result.isError, undefined, JSON.stringify(result.content));
         const { artifacts } =
@@ -597,13 +597,16 @@ test(
         const checked = artifacts.find(({ id }) => id === healthyId);
         assert.equal(checked?.updateCheckFailure, null);
         assert.equal(checked?.latestVersion, NEWER_VERSION);
+        // Each reason names the deadline the server was given, so a deadline the tool does not
+        // pass on fails here, not on a time bound.
         for (const { updateCheckFailure } of artifacts.filter(({ id }) => silentIds.includes(id))) {
+          assert.match(updateCheckFailure?.reason ?? "", new RegExp(`within ${deadline} ms$`));
           assert.match(updateCheckFailure?.remedy ?? "", /^Check the network connection/);
         }
+        // The request count shows that the skipped lookups sent nothing.
         assert.equal(silent.requests.length, 1);
-        assert.ok(elapsed >= deadline, `the tool answered after ${elapsed} ms`);
-        assert.ok(elapsed < silentIds.length * deadline, `the tool took ${elapsed} ms`);
         await silent.closed();
+        assert.deepEqual(await snapshotDirectory(), before);
       } finally {
         await client.close();
         await server.close();

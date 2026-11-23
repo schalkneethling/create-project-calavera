@@ -19,10 +19,11 @@ const TAGS = new Set(["latest", "next"]);
  * `npm_config_local_prefix`. `env` (default: the process environment) holds the variables.
  * `signal` lets the caller hold the lookup to a deadline (#1138): pacote passes it through to
  * npm-registry-fetch, and aborting it ends the request with a FETCH_ABORTED error.
- * `beforeLookup` receives the registry the lookup will ask, after the npm configuration is read
- * and before any request is sent. An error it throws ends the lookup with that error, unchanged,
+ * `beforeLookup` receives the registry the lookup will ask, with its `url` (the registry URL,
+ * path included, without user information), after the npm configuration is read and before any
+ * request is sent. An error it throws ends the lookup with that error, unchanged,
  * and no request is sent, so a caller can skip a registry it already knows does not answer.
- * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal, beforeLookup?: (registry: import("./npm-config.js").EffectiveRegistry) => void }} request
+ * @param {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean, cwd?: string, env?: NodeJS.ProcessEnv, signal?: AbortSignal, beforeLookup?: (registry: import("./npm-config.js").EffectiveRegistry & { url: string }) => void }} request
  */
 export async function resolveArtifactPackage(request) {
   const artifact = artifactForId(request.id);
@@ -38,7 +39,7 @@ export async function resolveArtifactPackage(request) {
     env: request.env,
     scope: packageScope(artifact),
   });
-  request.beforeLookup?.(npm.registry);
+  request.beforeLookup?.({ ...npm.registry, url: npm.registryUrl });
   const manifest = await withNpmDiagnostics(npm, () =>
     withAuthFailure(npm, { subject: artifact.packageName, download: false }, () =>
       withRegistryCode(artifact.packageName, () =>

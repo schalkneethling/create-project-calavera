@@ -813,8 +813,9 @@ async function artifactStatus(
   const cache = temporaryCache ?? resolve(CACHE_PATH);
   // A failed update check names this command, so a person can retry the same report (#993).
   const retryCommand = command([options.artifactAction ?? "status"], ["--check-updates"]);
-  // The origins of the registries that missed a lookup's deadline in this report. The lookups
-  // after that one to the same registry are skipped instead of each waiting (#1138).
+  // The URLs of the registries that missed a lookup's deadline in this report. The lookups after
+  // that one to the same registry are skipped instead of each waiting (#1138). The URL, path
+  // included, is the key, so two registries on one host are told apart.
   /** @type {Set<string>} */
   const silentRegistries = new Set();
   try {
@@ -1019,9 +1020,10 @@ async function abortedLookupNotes(pending) {
  * (ADR-0019 Decision 2): at the deadline the lookup's signal is aborted, which ends pacote's
  * request, and the artifact is reported as ELOOKUPTIMEOUT, even if the lookup ignores the abort.
  * The lookup names its registry through `beforeLookup` before it sends a request. Once a lookup to
- * a registry times out, its origin joins `context.silentRegistries`, and each later lookup to that
- * registry is stopped there and reported as ELOOKUPSKIPPED, with the same remedy, so the report
- * waits for one deadline per silent registry instead of one per artifact. A lookup that never
+ * a registry times out, the registry's URL joins `context.silentRegistries`, and each later lookup
+ * to that URL is stopped there and reported as ELOOKUPSKIPPED, with the same remedy, so the report
+ * waits for one deadline per silent registry instead of one per artifact. The URL includes the
+ * path, so a registry on the same host under another path is still checked. A lookup that never
  * names its registry, such as a test stand-in, is never skipped.
  * Only an error whose `code` names a registry, network, timeout, or TLS failure is reported this
  * way (see REGISTRY_LOOKUP_CODE). Every other error stops the report as before: Calavera's own,
@@ -1034,7 +1036,7 @@ async function abortedLookupNotes(pending) {
  *
  * @template {{ version: string }} T
  * @param {boolean | undefined} checkUpdates
- * @param {(signal: AbortSignal, beforeLookup: (registry: { origin: string }) => void) => Promise<T>} lookup
+ * @param {(signal: AbortSignal, beforeLookup: (registry: { origin: string, url: string }) => void) => Promise<T>} lookup
  * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string, deadlineMs: number, silentRegistries: Set<string> }} context
  * @returns {Promise<{ latest: T | null, updateCheckFailure: import("./artifact-status-report.js").UpdateCheckFailure | null }>}
  */
@@ -1042,12 +1044,12 @@ async function checkForUpdate(checkUpdates, lookup, context) {
   if (!checkUpdates) return { latest: null, updateCheckFailure: null };
   /** @type {Promise<T> | undefined} */
   let pending;
-  /** @type {{ origin: string } | undefined} */
+  /** @type {{ origin: string, url: string } | undefined} */
   let lookupRegistry;
-  /** @param {{ origin: string }} registry */
+  /** @param {{ origin: string, url: string }} registry */
   const beforeLookup = (registry) => {
     lookupRegistry = registry;
-    if (context.silentRegistries.has(registry.origin)) {
+    if (context.silentRegistries.has(registry.url)) {
       throw new UpdateCheckSkipped(registry.origin, context.deadlineMs);
     }
   };
@@ -1063,7 +1065,7 @@ async function checkForUpdate(checkUpdates, lookup, context) {
       return { latest: null, updateCheckFailure: lookupSkippedFailure(error, context) };
     }
     if (error instanceof UpdateCheckTimeout) {
-      if (lookupRegistry) context.silentRegistries.add(lookupRegistry.origin);
+      if (lookupRegistry) context.silentRegistries.add(lookupRegistry.url);
       // withDeadline calls the lookup before its deadline can pass, so `pending` is set.
       const notes = await abortedLookupNotes(/** @type {Promise<T>} */ (pending));
       return { latest: null, updateCheckFailure: lookupTimeoutFailure(error, notes, context) };
