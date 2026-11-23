@@ -67,8 +67,8 @@ async function initIn(directory, config, { apply, dryRun = false }) {
 
 /**
  * Runs a real init and init --apply that write the recipe at `config`, and the same two as dry
- * runs, which run the check too, as apply's dry run does. Asserts that each stops and leaves both
- * folders byte-identical, and returns each message.
+ * runs, which run the check too, as apply's dry run does. Asserts that each stops, leaves both
+ * folders byte-identical, and tells the person to run init again, and returns each message.
  *
  * @param {{ root: string, elsewhere: string }} fixture
  * @param {string} config
@@ -92,7 +92,12 @@ async function refusals(fixture, config) {
     assert.ok(error instanceof Error);
     assert.deepEqual(await snapshotDirectory(fixture.root), before, mode);
     assert.deepEqual(await snapshotDirectory(fixture.elsewhere), elsewhereBefore, mode);
-    assert.match(error.message, /Calavera stopped before writing anything\.$/);
+    // Init stopped before it wrote the recipe, so the remedy names init, not apply.
+    assert.match(
+      error.message,
+      / then run init again\. Calavera stopped before writing anything\.$/,
+    );
+    assert.doesNotMatch(error.message, /run apply/);
     messages.push(error.message);
   }
   return messages;
@@ -204,6 +209,26 @@ test("init names the recipe path when its folder does not exist", async () => {
       ),
       message,
     );
+  }
+});
+
+test("init names the recipe path when it is a folder or links to one", fileLinkSkip, async () => {
+  await using fixture = await projectAndElsewhere();
+  const folder = join(fixture.root, "configs");
+  await symlink(folder, join(fixture.root, "folder-link.json"));
+
+  for (const [config, why] of [
+    ["configs", `${folder} is a folder.`],
+    ["folder-link.json", `it leads to ${folder}, which is a folder.`],
+  ]) {
+    for (const message of await refusals(fixture, config)) {
+      assert.ok(
+        message.startsWith(
+          `Calavera cannot write the recipe at ${join(fixture.root, config)}, because ${why}`,
+        ),
+        message,
+      );
+    }
   }
 });
 
