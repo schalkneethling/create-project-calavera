@@ -3373,10 +3373,10 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
       [join(ancestorDirectory, STATE_FILE), "state"],
     ])) {
       if (await fileExists(existing)) {
-        // The recipe path still stops apply wherever it points, because apply would replace the
-        // file. A file outside the ancestor's directory, once links are resolved, is named as such
-        // rather than as the ancestor's recipe (#1142).
-        if (existing === config) {
+        // A recipe path still stops apply wherever it points, because apply would replace the
+        // file. A recipe file outside the ancestor's directory, once links are resolved, is named
+        // as such rather than as the ancestor's recipe (#1142). State keeps its own message.
+        if (kind === "recipe") {
           const real = await realpath(existing);
           if (!isPathInside(await realpath(ancestorDirectory), real)) {
             throw recipePathOutsideAncestorError(chosen, existing, real);

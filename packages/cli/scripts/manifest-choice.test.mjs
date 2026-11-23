@@ -8,7 +8,7 @@
 // PATH record what apply ran.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdir, readFile, symlink, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { delimiter, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -1037,4 +1037,40 @@ test("apply-at-ancestor stops on a recipe path that reaches the inspected direct
     /calavera\.config\.json already exists there, so the directory has a Calavera recipe/,
   );
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+test("apply-at-ancestor names an ancestor recipe that links outside it as an outside file, and keeps the state message", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+    "recipe.json": json(recipe),
+    "state.json": json(createEmptyState()),
+  });
+  const ancestorRecipe = join(fixture.root, "calavera.config.json");
+  await symlink(join(elsewhere.root, "recipe.json"), ancestorRecipe);
+
+  // The ancestor's default recipe is checked even with a custom recipe path.
+  const recipeStop = (await applyAtAncestorRefusal(fixture, "custom.json")).message;
+  assert.ok(
+    recipeStop.includes(
+      `but ${ancestorRecipe} links to an existing file at ${join(elsewhere.root, "recipe.json")}, outside ${fixture.root}`,
+    ),
+    recipeStop,
+  );
+
+  await rm(ancestorRecipe);
+  await mkdir(join(fixture.root, ".calavera"));
+  const statePath = join(fixture.root, ".calavera", "state.json");
+  await symlink(join(elsewhere.root, "state.json"), statePath);
+  const before = await snapshotDirectory(fixture.root);
+  const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+
+  const stateStop = (await applyAtAncestorRefusal(fixture, "custom.json")).message;
+  assert.ok(
+    stateStop.includes(
+      `but ${statePath} already exists there, so Calavera has already recorded state for that directory.`,
+    ),
+    stateStop,
+  );
+  assert.deepEqual(await snapshotDirectory(fixture.root), before);
+  assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
 });
