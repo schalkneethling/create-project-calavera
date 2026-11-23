@@ -1118,6 +1118,8 @@ async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun
     loadFormatter,
   );
   if (dryRun) return [];
+  // #1193: the state, the journal, and the staging folder all lie in `.calavera`.
+  await refuseLinkedArtifactFolders([TRANSACTION_ROOT]);
   const stagingRoot = resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
   const stagedState = join(stagingRoot, "records", "state.json");
   const stagedGitignore = join(stagingRoot, "records", "gitignore");
@@ -1179,6 +1181,17 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
   // `normalizeSelections` maps the recipe's `ai` items one to one, so an index marks both.
   const staged = selections.map(({ id }) => requestedIds.has(id) || lockedById.has(id));
   const command = updating ? "artifacts update" : "artifacts install";
+  const stagedRecipe = Array.isArray(recipe.ai)
+    ? {
+        ...recipe,
+        ai: recipe.ai.filter(
+          (/** @type {unknown} */ _item, /** @type {number} */ index) => staged[index],
+        ),
+      }
+    : recipe;
+  const stagedSelections = selections.filter((_selection, index) => staged[index]);
+  // #1193: a linked folder stops the command before the cache block below writes anything.
+  await refuseLinkedArtifactFolders(artifactInstallFolders(stagedRecipe, stagedSelections));
   // #960: the cache block is planned and committed before anything resolves, so an edited block
   // stops the command before the registry fills the cache, and a cache the registry fills is
   // ignored even when the install fails afterwards. The install then reads the recorded block
@@ -1196,15 +1209,8 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     options.dryRun,
   );
   const result = await stageArtifactInstall(
-    Array.isArray(recipe.ai)
-      ? {
-          ...recipe,
-          ai: recipe.ai.filter(
-            (/** @type {unknown} */ _item, /** @type {number} */ index) => staged[index],
-          ),
-        }
-      : recipe,
-    selections.filter((_selection, index) => staged[index]),
+    stagedRecipe,
+    stagedSelections,
     {
       lockedById,
       advanceIds: updating ? requestedIds : new Set(),
@@ -1258,9 +1264,10 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
  */
 async function stageArtifactInstall(recipe, selections, plan, registry) {
   const { lockedById, advanceIds, artifactTag, dryRun, loadFormatter } = plan;
-  // A project whose formatter cannot load stops the dry run and the install alike, before
-  // anything is resolved or staged.
+  // A project whose formatter cannot load, or that links a folder the install writes into
+  // (#1193), stops the dry run and the install alike, before anything is resolved or staged.
   await loadFormatter();
+  await refuseLinkedArtifactFolders(artifactInstallFolders(recipe, selections));
   const stagingRoot = dryRun
     ? await createTemporaryFolder("calavera-artifact-stage-")
     : resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
@@ -1588,6 +1595,9 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
     });
   }
 
+  const linked = await linkedJournalPath(projectRoot, normalizedRoot, journalOperations);
+  if (linked !== null) throw new Error(linkedFolderRefusal(linked.link));
+
   await writeAtomicJson(TRANSACTION_PATH, {
     schemaVersion: 1,
     transactionRoot: normalizedRoot,
@@ -1696,43 +1706,106 @@ async function readTransactionJournal() {
       }
     }
   }
-  for (const path of [
-    transactionRoot,
-    ...operations.flatMap(({ target, backup }) => [target, backup]),
-  ]) {
-    const link = await linkedFolder(projectRoot, path);
-    if (link !== null) {
-      throw new Error(
-        `Artifact transaction journal path ${relative(projectRoot, path)} lies below the symbolic link ${relative(projectRoot, link)}. ${JOURNAL_REFUSAL_REMEDY}`,
-      );
-    }
+  const linked = await linkedJournalPath(projectRoot, transactionRoot, operations);
+  if (linked !== null) {
+    throw new Error(
+      `Artifact transaction journal path ${relative(projectRoot, linked.path)} lies below the symbolic link ${relative(projectRoot, linked.link)}. ${JOURNAL_REFUSAL_REMEDY}`,
+    );
   }
   return { transactionRoot, operations };
 }
 
 /**
- * The first folder strictly between `projectRoot` and `path` that is a symbolic link, or null when
- * none is. Stops at the first folder that does not exist, because nothing below it exists either.
- * Throws when it cannot check a folder, for example because a file stands where a folder would be
- * or a folder cannot be read, so the rollback stops before it changes anything. `path` itself is
- * not checked: removing or replacing a symbolic link changes only the link.
+ * The first path of an artifact transaction that lies below a symbolic link, with that link, or
+ * null when none does. The paths are the transaction root, each target, and each backup; the path
+ * itself is not checked, because removing or replacing a symbolic link changes only the link. The
+ * commit and the rollback both call it, so the commit never writes a journal the rollback refuses
+ * (#1193, owner decision of 2026-11-23).
  *
  * @param {string} projectRoot
- * @param {string} path An absolute path inside `projectRoot`.
+ * @param {string} transactionRoot
+ * @param {{ target: string, backup: string }[]} operations
+ * @returns {Promise<{ path: string, link: string } | null>}
+ */
+async function linkedJournalPath(projectRoot, transactionRoot, operations) {
+  for (const path of [
+    transactionRoot,
+    ...operations.flatMap(({ target, backup }) => [target, backup]),
+  ]) {
+    const link = await linkedFolder(projectRoot, dirname(path));
+    if (link !== null) return { path, link };
+  }
+  return null;
+}
+
+/**
+ * The message that refuses to write artifacts through the symbolic link at the absolute path
+ * `link` (#1193, owner decision of 2026-11-23).
+ *
+ * @param {string} link
+ */
+function linkedFolderRefusal(link) {
+  const path = relative(resolve("."), link);
+  return `Calavera does not write artifacts through the symbolic link ${path}. Replace ${path} with a real folder, then run the command again.`;
+}
+
+/**
+ * Refuses, before an install, an update, or a cache block writes anything, when a folder that an
+ * artifact transaction stages into, caches into, or targets below is a symbolic link or lies below
+ * one. `commitArtifactTransaction` refuses the same links again before it moves anything, so this
+ * check only makes the command stop before it writes the cache block, the registry cache, or the
+ * staging folder.
+ *
+ * @param {string[]} folders Project paths of the folders the command writes into.
+ */
+async function refuseLinkedArtifactFolders(folders) {
+  const projectRoot = resolve(".");
+  for (const folder of folders) {
+    const link = await linkedFolder(projectRoot, resolve(folder));
+    if (link !== null) throw new Error(linkedFolderRefusal(link));
+  }
+}
+
+/**
+ * The project folders that installing the AI items of `recipe` writes into: the transaction and
+ * cache folders, each selection's package folder, and the folder of each AI artifact output.
+ *
+ * @param {{ ai?: unknown }} recipe
+ * @param {{ id: string }[]} selections
+ */
+function artifactInstallFolders(recipe, selections) {
+  return [
+    TRANSACTION_ROOT,
+    CACHE_PATH,
+    ...selections.map(({ id }) => join(PACKAGE_PATH, id)),
+    ...resolveAiArtifacts(recipe).flatMap((artifact) =>
+      aiArtifactOutputPaths(artifact).map(dirname),
+    ),
+  ];
+}
+
+/**
+ * The first folder from below `projectRoot` down to `folder`, both included, that is a symbolic
+ * link, or null when none is. Stops at the first folder that does not exist, because nothing below
+ * it exists either. Throws when it cannot check a folder, for example because a file stands where
+ * a folder would be or a folder cannot be read, so the caller stops before it changes anything.
+ *
+ * @param {string} projectRoot
+ * @param {string} folder An absolute path inside `projectRoot`.
  * @returns {Promise<string | null>}
  */
-async function linkedFolder(projectRoot, path) {
-  let folder = projectRoot;
-  for (const name of relative(projectRoot, dirname(path)).split(sep).filter(Boolean)) {
-    folder = join(folder, name);
+async function linkedFolder(projectRoot, folder) {
+  let current = projectRoot;
+  for (const name of relative(projectRoot, folder).split(sep).filter(Boolean)) {
+    current = join(current, name);
     let stats;
     try {
-      stats = await lstat(folder);
+      stats = await lstat(current);
     } catch (error) {
       if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return null;
       throw error;
     }
-    if (stats.isSymbolicLink()) return folder;
+    if (stats.isSymbolicLink()) return current;
   }
   return null;
 }

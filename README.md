@@ -1074,6 +1074,14 @@ choose their `.agents/hooks/<target>/` or `.agents/agents/<target>/` directory.
 The current bundled hooks and agents come from `claude-toolkit` and default to
 `claude-code`.
 
+These folders, `.codex/`, and `.calavera/` must be real folders, not symbolic
+links. `artifacts install` and `artifacts update` stop before they write
+anything, and `apply` stops before it installs artifacts, when one of these
+folders, or a folder above an artifact they install, is a symbolic link, because
+Calavera cannot roll an interrupted install back through a link. The message names the link; replace it with a real folder and
+run the command again. A link that points from another tool's folder to a
+folder under `.agents/` is fine.
+
 When a recipe installs a skill, Calavera also creates or updates
 `.coderabbit.yaml` so CodeRabbit excludes `.claude/skills/**`,
 `.agents/skills/**`, and `pnpm-lock.yaml`. This avoids spending downstream

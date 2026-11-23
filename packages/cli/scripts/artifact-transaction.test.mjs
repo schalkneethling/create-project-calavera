@@ -501,3 +501,51 @@ test("the allowed targets compare Windows paths without letter case", () => {
   assert.equal(isTransactionTarget(root, "c:\\PROJ\\.gitignore", win32), true);
   assert.equal(isTransactionTarget(root, "c:\\PROJ\\.agents\\skills\\a", win32), true);
 });
+
+// #1193 (owner decision of 2026-11-23): the commit and the rollback share one symbolic-link check,
+// so the commit refuses, before it writes the journal or moves anything, every layout whose
+// journal the rollback would refuse.
+for (const { name, link, target } of [
+  { name: "a target", link: ".agents", target: ".agents/skills/a" },
+  { name: "a target's own folder", link: ".agents/skills", target: ".agents/skills/a" },
+  {
+    name: "the backups",
+    link: ".calavera/.transactions/t/backups",
+    target: ".codex/agents/a.toml",
+  },
+]) {
+  test(`the commit and the rollback both refuse a symbolic link above ${name}`, async () => {
+    await inTransactionProject(async ({ project, root, staged }) => {
+      const outside = await realpath(await mkdtemp(join(tmpdir(), "calavera-transaction-link-")));
+      try {
+        await mkdir(join(project, link, ".."), { recursive: true });
+        await symlink(outside, join(project, link));
+        const before = await snapshotDirectory(project);
+
+        await assert.rejects(
+          commitArtifactTransaction(root, [{ staged, target: join(project, target) }]),
+          {
+            message: `Calavera does not write artifacts through the symbolic link ${link}. Replace ${link} with a real folder, then run the command again.`,
+          },
+        );
+        assert.deepEqual(await snapshotDirectory(project), before);
+        assert.deepEqual(await readdir(outside), []);
+
+        // The journal the commit would have written.
+        await writeJournal(root, [
+          {
+            staged,
+            target: join(project, target),
+            backup: join(root, "backups/0"),
+            hadTarget: false,
+          },
+        ]);
+        await assert.rejects(recoverArtifactTransaction(), {
+          message: new RegExp(`lies below the symbolic link ${link.replaceAll(".", "\\.")}\\. `),
+        });
+      } finally {
+        await rm(outside, { force: true, recursive: true });
+      }
+    });
+  });
+}
