@@ -218,6 +218,11 @@ function fileLines(result) {
     if (line === undefined) continue;
     lines.push(info(`${ITEM}${line}`));
     listed.add(change.path);
+    // #1085: apply formats a package.json Calavera wrote, which can reorder its keys. The detail
+    // says "it", so the file is named once.
+    if (change.formatting !== undefined) {
+      lines.push(info(`${DETAIL}${change.formatting}`));
+    }
     for (const ignoreChange of ignoreChangesByPath.get(change.path) ?? []) {
       lines.push(info(`${DETAIL}${ignoreChangeLine(ignoreChange, dryRun)}`));
     }

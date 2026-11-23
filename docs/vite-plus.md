@@ -250,8 +250,41 @@ ancestor is managed (ADR-0012, Decision 1). The files Calavera generates
 follow the same verdict: when the ancestor is managed, `apply` formats them with
 the ancestor's `vp fmt` before it writes them, and so does `init --apply` for
 the recipe (#961). When the ancestor is not managed, Calavera writes them
-unformatted. The `package.json` that `init` creates is not one of them, because
-the package manager writes it and Calavera only adds its scripts.
+unformatted. The `package.json` that `init` creates follows the same verdict
+(#1085). The package manager writes its keys in its own order, and a real
+vite-plus 1.7.0 run showed that `vp fmt` sorts them, so the ancestor's
+`vp check` failed on the file. When the ancestor is managed, `apply` formats
+`package.json` with the ancestor's `vp fmt` three times: as soon as `init`
+writes it, after adding its scripts, and after the development dependency
+install, because `vp add -D` adds `devDependencies` as the last key. The dry
+run cannot show that file's text, because the package manager writes it only
+when `apply` runs.
+
+Every `apply` that creates `package.json` with `init` keeps a record of it in
+`.calavera/state.json`, whether or not the ancestor is managed. As soon as
+`init` has written the file, and before formatting it, `apply` records
+`createdPackageJSON` with the hash of the text it last wrote to
+`package.json`, and it updates the hash each time it or its install writes the
+file. If anything stops that `apply`, including a format or an install that
+fails, the next `apply` formats `package.json` the same way, although the file
+now exists, as long as the file still has the recorded text.
+
+The dry run reports `package.json` as unchanged only when the formatted text is
+the file's bytes, so `apply` writes nothing. When the format changes more than
+the scripts, the dry run says so under the `package.json` line, for example
+`Would format it with vp fmt from vite-plus 1.7.0, which reorders its keys;
+Calavera or its install wrote its current text`, and `--json` reports the same
+sentence as the `formatting` field of the `package.json` change.
+
+A `package.json` with any other text is yours: it keeps the order you give its
+keys, and `apply` drops the record. `apply --no-install` keeps the record, so
+the `apply` that runs the development dependency install formats the file
+afterward and drops the record. When an install fails, the error says to run
+`apply` again, which installs and formats `package.json`. If you run the
+install command yourself instead, it changes the text, so Calavera leaves the
+file as the install wrote it, and `vp check --fix` in the ancestor formats it.
+A stopped `apply` leaves `.calavera/state.json` next to the new
+`package.json`.
 
 Calavera runs that `vp fmt` in the new project's directory, not in the
 ancestor's. Runs against vite-plus 1.7.0, under a single ancestor project and

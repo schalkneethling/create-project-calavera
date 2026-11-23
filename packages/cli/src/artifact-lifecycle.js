@@ -516,7 +516,9 @@ async function installUnlockedArtifacts(
     const stopped = preflightFailed
       ? `Apply stopped before installing the unlocked artifacts this recipe selects (${ids}) because the recipe's artifacts cannot be applied`
       : `Could not ${dryRun ? "preview installing" : "install"} the unlocked artifacts this recipe selects (${ids})`;
-    const message = `${stopped}, so the artifact lock, artifact outputs, and Calavera state were not changed. ${reason} Review the install with create-project-calavera artifacts install --dry-run.`;
+    // Not "were not changed": under create-here, apply has already recorded the package.json it
+    // created in the state before this step (#1085).
+    const message = `${stopped}, so this step did not change the artifact lock, artifact outputs, or Calavera state. ${reason} Review the install with create-project-calavera artifacts install --dry-run.`;
     if (!dryRun) {
       try {
         if (await fileExists(TRANSACTION_PATH)) await recoverArtifactTransaction();

@@ -305,7 +305,7 @@ test("an untracked file at an artifact destination stops apply and dry run witho
           assert.match(error.message, /skill-project-goal/);
           assert.match(
             error.message,
-            /the artifact lock, artifact outputs, and Calavera state were not changed/,
+            /this step did not change the artifact lock, artifact outputs, or Calavera state/,
           );
           assert.ok(error.cause instanceof Error);
           assert.match(
@@ -1093,7 +1093,7 @@ test("a directory cleanup failure after a rollback is reported with the install 
           ["ENOSPC", "EACCES"],
         );
         assert.equal(error.cause, error.errors[0]);
-        assert.match(error.message, /the artifact lock, artifact outputs, and Calavera state/);
+        assert.match(error.message, /the artifact lock, artifact outputs, or Calavera state/);
         assert.match(error.message, /empty directories may remain: EACCES/);
         return true;
       },
