@@ -311,6 +311,7 @@ test("codex: an earlier release's table in a file with Windows line endings is u
     assert.equal(result.mcp.action, "update");
     assert.doesNotMatch(text, /5\.0\.0|pnpm/);
     assert.equal(text.match(/\[mcp_servers\.calavera\]/g)?.length, 1);
+    assert.doesNotMatch(text, /[^\r]\n/, "every line still ends with CRLF");
   });
 });
 
@@ -349,5 +350,35 @@ test("cursor: an entry with type stdio from an earlier release is updated, and a
     await write(".cursor/mcp.json", before);
     assertKeptAsEdit(await init("cursor"), ".cursor/mcp.json");
     assert.equal(await readFile(".cursor/mcp.json", "utf8"), before);
+  });
+});
+
+test("codex: lines inside a multi-line string that look like the table are never rewritten", async () => {
+  await inProject(async () => {
+    const table = [
+      "[mcp_servers.calavera]",
+      'command = "pnpm"',
+      'args = ["dlx", "--package", "create-project-calavera@5.0.0", "create-project-calavera-mcp"]',
+    ].join("\n");
+    const before = `note = """\n${table}\n"""\n\n${table}\n`;
+    await write(".codex/config.toml", before);
+
+    const result = await init("codex");
+
+    assert.equal(result.mcp.action, "manual");
+    assert.match(result.mcp.reason ?? "", /without changing other settings/);
+    assert.equal(await readFile(".codex/config.toml", "utf8"), before);
+  });
+});
+
+test("codex: an inline mcp_servers table is never extended into a file that does not parse", async () => {
+  await inProject(async () => {
+    const before = 'mcp_servers = { other = { command = "node" } }\n';
+    await write(".codex/config.toml", before);
+
+    const result = await init("codex");
+
+    assert.equal(result.mcp.action, "manual");
+    assert.equal(await readFile(".codex/config.toml", "utf8"), before);
   });
 });

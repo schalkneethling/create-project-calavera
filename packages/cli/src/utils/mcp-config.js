@@ -387,6 +387,39 @@ function findCalaveraCodexLines(lines, entry, entries) {
 }
 
 /**
+ * Whether `nextContents` parses to `config` with only `mcp_servers.calavera` set to the launch
+ * command.
+ *
+ * @param {string} nextContents
+ * @param {Record<string, unknown>} config The file's settings before the change.
+ * @param {McpLaunchCommand} launchCommand
+ */
+function isCalaveraEntrySetIn(nextContents, config, launchCommand) {
+  /** @type {Record<string, unknown>} */
+  let next;
+  try {
+    next = parseToml(nextContents);
+  } catch {
+    return false;
+  }
+  const servers = isPlainObject(config.mcp_servers) ? config.mcp_servers : {};
+  // smol-toml builds tables without a prototype, which `isDeepStrictEqual` tells apart from a
+  // literal, so both sides are compared as JSON. Dates compare by their text.
+  /** @param {unknown} value */
+  const plain = (value) => JSON.parse(JSON.stringify(value));
+  return isDeepStrictEqual(
+    plain(next),
+    plain({
+      ...config,
+      mcp_servers: {
+        ...servers,
+        calavera: { command: launchCommand.command, args: launchCommand.args },
+      },
+    }),
+  );
+}
+
+/**
  * @param {string} path
  * @param {McpLaunchCommand} launchCommand
  * @param {unknown[]} entries The entries a Calavera release wrote, from `calaveraMcpEntries`.
@@ -441,9 +474,23 @@ export async function writeCodexMcpConfig(path, launchCommand, entries, dryRun, 
     }
   }
 
+  // Calavera's lines keep the file's line endings: a file with Windows line endings keeps them.
+  const blockLines = block
+    .trimEnd()
+    .split("\n")
+    .map((line) => (written && lines[written.start]?.endsWith("\r") ? `${line}\r` : line));
   const nextContents = written
-    ? [...lines.slice(0, written.start), block.trimEnd(), ...lines.slice(written.end)].join("\n")
+    ? [...lines.slice(0, written.start), ...blockLines, ...lines.slice(written.end)].join("\n")
     : `${contents.trimEnd()}\n\n${block}`;
+
+  // The result must hold the same settings with Calavera's entry set, and nothing else changed.
+  // Text that only looks like the table, such as lines inside a multi-line string, or a
+  // `mcp_servers` inline table that a new table header cannot extend, fails this check.
+  if (!isCalaveraEntrySetIn(nextContents, config, launchCommand)) {
+    throw new Error(
+      `${targetPath} cannot take Calavera's ${CODEX_TABLE_HEADER} table without changing other settings in the file, so it was left unchanged.`,
+    );
+  }
 
   if (nextContents === contents) {
     changes.push({ type: "skip", path: targetPath, reason: "Already up to date." });
