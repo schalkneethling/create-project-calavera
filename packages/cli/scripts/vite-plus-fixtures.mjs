@@ -101,10 +101,60 @@ if (argv[0] === "add" && !argv.includes("-w") && !argv.includes("--workspace-roo
 `;
 
 /**
+ * The package.json that each package manager's `init` command writes, recorded from real runs on
+ * 2026-11-23 in a directory named `fresh`: `npm init -y` from npm 11.20.0, `pnpm init` from
+ * pnpm 12.21.0, `yarn init -y` from Yarn 1.22.22, and `bun init -y` from Bun 1.3.9. None orders
+ * its keys the way Oxfmt sorts a package.json, so a test can show whether apply formats the file
+ * it creates (#1085). Bun's writes no `scripts` key, so apply adds that key last. `bun init -y`
+ * also writes index.ts, tsconfig.json, and other files, which the stand-in leaves out, and Yarn 2
+ * or later writes a different manifest, which is not recorded here.
+ *
+ * @type {Record<string, object>}
+ */
+const initManifests = {
+  npm: {
+    name: "fresh",
+    version: "1.0.0",
+    description: "",
+    main: "index.js",
+    scripts: { test: 'echo "Error: no test specified" && exit 1' },
+    keywords: [],
+    author: "",
+    license: "ISC",
+    type: "commonjs",
+  },
+  pnpm: {
+    name: "fresh",
+    version: "1.0.0",
+    description: "",
+    main: "index.js",
+    scripts: { test: 'echo "Error: no test specified" && exit 1' },
+    keywords: [],
+    author: "",
+    license: "ISC",
+    devEngines: {
+      packageManager: { name: "pnpm", version: "12.21.0", onFail: "download" },
+    },
+    packageManager: "pnpm@12.21.0",
+    type: "module",
+  },
+  yarn: { name: "fresh", version: "1.0.0", main: "index.js", license: "MIT" },
+  bun: {
+    name: "fresh",
+    module: "index.ts",
+    type: "module",
+    private: true,
+    devDependencies: { "@types/bun": "latest" },
+    peerDependencies: { typescript: "^5" },
+  },
+};
+
+/**
  * A package-manager stand-in. It records its argv and working directory, then
  * exits with STUB_EXIT, which defaults to zero. A successful `init` writes a
- * package.json, as the real command does. The pnpm stand-in also refuses a
- * root install without `-w`, as pnpm does.
+ * package.json, as the real command does, in the shape that command writes
+ * (`initManifests`). The pnpm stand-in also refuses a root install without
+ * `-w`, as pnpm does.
  *
  * @param {string} name
  */
@@ -118,7 +168,7 @@ if (exitCode !== 0) {
   console.log("package manager stub: ERR_STUB_COMMAND the command failed");
   console.error("package manager stub: the command failed");
 } else if (argv[0] === "init") {
-  writeFileSync("package.json", JSON.stringify({ name: "stub-init" }) + "\\n");
+  writeFileSync("package.json", ${JSON.stringify(json(initManifests[name]))});
 }
 process.exit(exitCode);
 `;
@@ -152,6 +202,16 @@ export async function writePackageManagerStubs(bin) {
  * argv and working directory the same way (#961). Like `vp add` in a pnpm
  * workspace, it refuses a root install without `-w` (`pnpmAddingToRootCheck`).
  * A failing bin also writes a line to standard output, which apply captures.
+ * A successful `vp add -D` adds each package to the package.json in its working
+ * directory the way pnpm 12.21.0 does: in an existing `devDependencies` object,
+ * or in a new one appended as the last key, with the packages in alphabetical
+ * order (#1085). When the environment sets
+ * `VP_STUB_FMT_FAIL_FOR` to a path, `vp fmt --stdin-filepath=<that path>` exits
+ * with an error, as a formatter that cannot parse one file does; with
+ * `VP_STUB_ADD_MARKER` set to a path as well, only once `vp add` has run, which
+ * writes that file. `VP_STUB_ADD_FAILS_AFTER_WRITE=1` makes `vp add` change
+ * package.json and then fail, as an install can that stops after the package
+ * manager has written the manifest.
  * `manifest` replaces the manifest's text, to give it a shape apply has to
  * refuse.
  *
@@ -177,9 +237,17 @@ export async function writeVitePlusStub(
   await writeFile(
     join(packageDirectory, "bin/vp"),
     `#!/usr/bin/env node
-const { appendFileSync } = require("node:fs");
+const { appendFileSync, existsSync, readFileSync, writeFileSync } = require("node:fs");
 const argv = process.argv.slice(2);
 if (argv[0] === "fmt") {
+  if (
+    process.env.VP_STUB_FMT_FAIL_FOR &&
+    argv.includes("--stdin-filepath=" + process.env.VP_STUB_FMT_FAIL_FOR) &&
+    (!process.env.VP_STUB_ADD_MARKER || existsSync(process.env.VP_STUB_ADD_MARKER))
+  ) {
+    console.error("vp stub: cannot format " + process.env.VP_STUB_FMT_FAIL_FOR);
+    process.exit(2);
+  }
 ${fmtLogPath === undefined ? "" : `  appendFileSync(${JSON.stringify(fmtLogPath)}, JSON.stringify({ argv, cwd: process.cwd() }) + "\\n");\n`}  const result = require("node:child_process").spawnSync(process.execPath, [${JSON.stringify(oxfmtBin)}, ...argv.slice(1)], { stdio: "inherit" });
   process.exit(result.status ?? 1);
 }
@@ -188,6 +256,20 @@ ${pnpmAddingToRootCheck}
 if (${exitCode} !== 0) {
   console.log("vp stub: ERR_STUB_INSTALL the install failed");
   console.error("vp stub: the install failed");
+} else if (argv[0] === "add" && argv.includes("-D") && existsSync("package.json")) {
+  const manifest = JSON.parse(readFileSync("package.json", "utf8"));
+  manifest.devDependencies ??= {};
+  for (const name of argv.slice(1).filter((arg) => !arg.startsWith("-"))) {
+    manifest.devDependencies[name] = "^1.0.0";
+  }
+  // pnpm writes the dependencies in alphabetical order.
+  manifest.devDependencies = Object.fromEntries(Object.entries(manifest.devDependencies).sort(([a], [b]) => a.localeCompare(b)));
+  writeFileSync("package.json", JSON.stringify(manifest, null, 2) + "\\n");
+  if (process.env.VP_STUB_ADD_MARKER) writeFileSync(process.env.VP_STUB_ADD_MARKER, "");
+  if (process.env.VP_STUB_ADD_FAILS_AFTER_WRITE === "1") {
+    console.log("vp stub: ERR_STUB_INSTALL the install failed after writing package.json");
+    process.exit(1);
+  }
 }
 process.exit(${exitCode});
 `,

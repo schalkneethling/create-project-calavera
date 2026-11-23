@@ -9,7 +9,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { mkdir, readFile, rm, symlink, writeFile } from "node:fs/promises";
-import { delimiter, join } from "node:path";
+import { delimiter, isAbsolute, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -19,7 +19,8 @@ import { InMemoryTransport } from "@modelcontextprotocol/sdk/inMemory.js";
 import { applyRecipeObject, initRecipe, parseArgs } from "../src/index.js";
 import { callMcpTool, createMcpServer } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
-import { createEmptyState } from "../src/state.js";
+import { createEmptyState, normalizeState } from "../src/state.js";
+import { listingViolations, namedItems } from "../../../scripts/rehearsal-checks.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 import {
   copyReleaseFixture,
@@ -29,6 +30,7 @@ import {
   plainViteManifest,
   readStubInvocations,
   writePackageManagerStubs,
+  vitePlusFixtureRelease,
   writeVitePlusStub,
 } from "./vite-plus-fixtures.mjs";
 
@@ -43,9 +45,10 @@ const CHOICES = ["create-here", "apply-at-ancestor", "abandon"];
  * and, unless `installed` is false, has a stand-in vite-plus installed; the package-manager
  * stand-ins and the logs live outside the workspace.
  *
- * @param {{ installed?: boolean }} [options]
+ * @param {{ installed?: boolean, packageManager?: "npm" | "pnpm" | "yarn" | "bun" }} [options]
+ *   `packageManager` is the recipe's, which runs the init command under create-here.
  */
-async function directoryUnderManagedWorkspace({ installed = true } = {}) {
+async function directoryUnderManagedWorkspace({ installed = true, packageManager = "pnpm" } = {}) {
   const workspace = await copyReleaseFixture("monorepo", { vitePlus: installed });
   const tools = await createTemporaryFixture("manifest-choice-tools", {});
   const project = join(workspace.root, "packages/fresh");
@@ -54,7 +57,10 @@ async function directoryUnderManagedWorkspace({ installed = true } = {}) {
 
   await mkdir(join(workspace.root, ".git"));
   await mkdir(project);
-  await writeFile(join(project, "calavera.config.json"), json(recipe));
+  await writeFile(
+    join(project, "calavera.config.json"),
+    json(packageManager === "pnpm" ? recipe : { ...recipe, packageManager }),
+  );
   await writePackageManagerStubs(join(tools.root, "bin"));
   if (installed) {
     await writeVitePlusStub(workspace.root, { logPath: vpLog, fmtLogPath: fmtLog });
@@ -97,9 +103,10 @@ async function directoryUnderUnmanagedProject() {
  *
  * @param {{ project: string, bin: string, packageManagerLog: string }} workspace
  * @param {string[]} args
+ * @param {Record<string, string>} [env] More environment variables, such as VP_STUB_FMT_FAIL_FOR.
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
-function runCli(workspace, args) {
+function runCli(workspace, args, env = {}) {
   return new Promise((resolvePromise) => {
     execFile(
       process.execPath,
@@ -112,6 +119,7 @@ function runCli(workspace, args) {
           NO_COLOR: "1",
           PATH: `${workspace.bin}${delimiter}${process.env.PATH ?? ""}`,
           STUB_LOG: workspace.packageManagerLog,
+          ...env,
         },
       },
       (error, stdout, stderr) => {
@@ -311,6 +319,331 @@ test("create-here formats the files apply writes with vp fmt when the parent is 
     `apply did not format its state file with vp fmt: ${JSON.stringify(runs)}`,
   );
   assert.ok(runs.every(({ cwd }) => cwd === workspace.project));
+});
+
+/**
+ * Runs `vp fmt --check` on the created package.json from the workspace root, through the stand-in
+ * vp, which hands it to this repository's Oxfmt.
+ *
+ * @param {string} root
+ * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
+ */
+function checkPackageJSONFromRoot(root) {
+  return new Promise((resolvePromise) => {
+    execFile(
+      process.execPath,
+      [
+        join(root, "node_modules/vite-plus/bin/vp"),
+        "fmt",
+        "--check",
+        "packages/fresh/package.json",
+      ],
+      { cwd: root, timeout: CLI_TIMEOUT_MS },
+      (error, stdout, stderr) => resolvePromise({ code: error ? 1 : 0, stdout, stderr }),
+    );
+  });
+}
+
+// #1085: the package manager's init command writes package.json in its own key order, which Oxfmt
+// sorts, so apply formats the created file with the parent's vp fmt. The check runs vp fmt --check
+// from the workspace root, through the stand-in vp, which runs this repository's Oxfmt, because the
+// owner decided on #1182 that the root's vp check is the reference.
+// The default apply installs with vp add -D, which appends devDependencies as the last key, so
+// apply formats the file again after the install. Once that apply has finished, the state no
+// longer records that Calavera created the file, so a later apply leaves the person's edits alone.
+test("create-here formats the package.json it creates, so vp fmt --check from the workspace root accepts it", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+
+  const applied = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
+  assert.equal(applied.code, 0, applied.stderr);
+
+  const check = await checkPackageJSONFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+
+  const packageJSONPath = join(workspace.project, "package.json");
+  const manifest = JSON.parse(await readFile(packageJSONPath, "utf8"));
+  assert.equal(manifest.packageManager, "pnpm@12.21.0", "init's own fields were lost");
+  assert.equal(typeof manifest.scripts?.quality, "string", "apply did not add its scripts");
+  assert.equal(typeof manifest.devDependencies?.knip, "string", "apply did not install knip");
+  const state = JSON.parse(await readFile(join(workspace.project, ".calavera/state.json"), "utf8"));
+  assert.equal(state.createdPackageJSON, undefined, "the finished apply kept its record");
+
+  // The person moves main to the end; the next apply keeps their order.
+  const { main, ...rest } = manifest;
+  const edited = { ...rest, main };
+  await writeFile(packageJSONPath, json(edited));
+  const again = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(again.code, 0, again.stderr);
+  const after = JSON.parse(await readFile(packageJSONPath, "utf8"));
+  assert.deepEqual(Object.keys(after), Object.keys(edited));
+});
+
+// #1085: a check that stops apply after init has written package.json leaves the file formatted,
+// so the run that follows, which finds a package.json and needs no manifest choice, still writes a
+// file the workspace root's vp fmt --check accepts.
+test("create-here formats the package.json it creates even when a later check stops apply", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  await writeFile(join(workspace.project, "knip.json"), "{}\n");
+
+  const stopped = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
+  assert.notEqual(stopped.code, 0, "apply did not stop at the existing knip.json");
+  assert.match(stopped.stderr, /knip\.json/);
+
+  await rm(join(workspace.project, "knip.json"));
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+
+  const check = await checkPackageJSONFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+// #1085: only a package.json apply creates is formatted. One the person already has keeps its key
+// order, because the dry run does not show that file's text.
+test("apply keeps the key order of a package.json that already exists below a Vite+ workspace", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  // Oxfmt would move keywords, author, and license above main.
+  const existing = { name: "fresh", main: "index.js", keywords: [], author: "", license: "ISC" };
+  await writeFile(join(workspace.project, "package.json"), json(existing));
+
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+
+  const manifest = JSON.parse(await readFile(join(workspace.project, "package.json"), "utf8"));
+  assert.deepEqual(Object.keys(manifest), [...Object.keys(existing), "scripts", "devDependencies"]);
+});
+
+// #1085: bun init writes no scripts key, so apply adds it last. A run that stops after init and
+// the run that follows still leave a file the root accepts, because the state records that
+// Calavera created package.json as soon as init has written it.
+test("create-here with Bun keeps the created package.json formatted across a stop and a retry", async () => {
+  await using workspace = await directoryUnderManagedWorkspace({ packageManager: "bun" });
+  await writeFile(join(workspace.project, "knip.json"), "{}\n");
+
+  const stopped = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
+  assert.notEqual(stopped.code, 0, "apply did not stop at the existing knip.json");
+  const state = JSON.parse(await readFile(join(workspace.project, ".calavera/state.json"), "utf8"));
+  assert.equal(
+    typeof state.createdPackageJSON?.hash,
+    "string",
+    "the stopped apply did not record the created file",
+  );
+
+  await rm(join(workspace.project, "knip.json"));
+
+  // C8: the dry run is the approval boundary, so it says that apply reorders the keys of the
+  // existing package.json, and why, in the human output and in --json.
+  const reorder = `format it with vp fmt from vite-plus ${vitePlusFixtureRelease}, which reorders its keys; Calavera or its install wrote its current text`;
+  const dryRun = await runCli(workspace, ["apply", "--dry-run"]);
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  // Under the line that names package.json, so the file is named once.
+  const lines = dryRun.stdout.split("\n").map((line) => line.trim());
+  const fileLine = lines.indexOf("Would update package.json");
+  assert.ok(fileLine >= 0, dryRun.stdout);
+  assert.equal(lines[fileLine + 1], `Would ${reorder}`, dryRun.stdout);
+  const dryRunJSON = await runCli(workspace, ["apply", "--dry-run", "--json"]);
+  assert.equal(dryRunJSON.code, 0, dryRunJSON.stderr);
+  const change = JSON.parse(dryRunJSON.stdout).changes.find(
+    (/** @type {{ path: string }} */ { path }) => path === "package.json",
+  );
+  assert.equal(change.formatting, `Would ${reorder}`);
+  assert.equal(change.type, "update");
+  // The line names package.json, so the summary must still name it once, under a heading.
+  const planned = JSON.parse(dryRunJSON.stdout);
+  assert.deepEqual(
+    // The Vite+ report names the parent's manifest by its absolute path in a fixed statement, and
+    // listingViolations loops forever on an absolute path, so only project paths are checked.
+    listingViolations(
+      dryRun.stdout,
+      namedItems(planned).filter((item) => !isAbsolute(item)),
+      planned.vitePlus.lines,
+    ),
+    [],
+    dryRun.stdout,
+  );
+
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+  assert.ok(
+    applied.stdout.includes(
+      `Formatted it with vp fmt from vite-plus ${vitePlusFixtureRelease}, which reordered its keys; Calavera or its install wrote the text it had before`,
+    ),
+    applied.stdout,
+  );
+
+  const check = await checkPackageJSONFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+// #1085: the record survives every command that reads and writes the state, and a damaged value
+// stops instead of being read as a record.
+test("the state keeps the record that Calavera created package.json, and refuses any other value", () => {
+  assert.deepEqual(normalizeState({ createdPackageJSON: { hash: "abc" } }).createdPackageJSON, {
+    hash: "abc",
+  });
+  assert.equal(Object.hasOwn(normalizeState({}), "createdPackageJSON"), false);
+  assert.equal(Object.hasOwn(createEmptyState(), "createdPackageJSON"), false);
+  for (const value of [true, "abc", null, {}, { hash: "" }, { hash: 1 }]) {
+    assert.throws(
+      () => normalizeState({ createdPackageJSON: value }),
+      /Calavera state createdPackageJSON must be an object with a hash string\./,
+    );
+  }
+});
+
+// #1085: apply --no-install plans an install it does not run, so the record stays, and the apply
+// that runs the install formats the file again after vp add -D appends devDependencies.
+test("create-here with --no-install, then apply with the install, leaves a package.json the root accepts", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+
+  const skipped = await runCli(workspace, [
+    "apply",
+    "--yes",
+    "--no-install",
+    "--manifest-choice",
+    "create-here",
+  ]);
+  assert.equal(skipped.code, 0, skipped.stderr);
+  const installed = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(installed.code, 0, installed.stderr);
+
+  const check = await checkPackageJSONFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+// #1085: the record holds the hash of the text Calavera last wrote to package.json, so a file the
+// person puts in its place after a stopped apply keeps their key order.
+test("a package.json the person puts in place after a stopped create-here apply keeps its key order", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  await writeFile(join(workspace.project, "knip.json"), "{}\n");
+  const stopped = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
+  assert.notEqual(stopped.code, 0, "apply did not stop at the existing knip.json");
+
+  const theirs = { version: "2.0.0", name: "fresh", type: "module", private: true };
+  await writeFile(join(workspace.project, "package.json"), json(theirs));
+  await rm(join(workspace.project, "knip.json"));
+  // The dry run names no formatting, because apply leaves the person's file as it is.
+  const dryRunJSON = await runCli(workspace, ["apply", "--dry-run", "--json"]);
+  assert.equal(dryRunJSON.code, 0, dryRunJSON.stderr);
+  const change = JSON.parse(dryRunJSON.stdout).changes.find(
+    (/** @type {{ path: string }} */ { path }) => path === "package.json",
+  );
+  assert.equal(change.formatting, undefined);
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+
+  const manifest = JSON.parse(await readFile(join(workspace.project, "package.json"), "utf8"));
+  assert.deepEqual(Object.keys(manifest), [...Object.keys(theirs), "scripts", "devDependencies"]);
+  const state = JSON.parse(await readFile(join(workspace.project, ".calavera/state.json"), "utf8"));
+  assert.equal(state.createdPackageJSON, undefined, "the record of Calavera's text was kept");
+});
+
+// #1085: a format that fails after the install leaves the record of the installed text, so the
+// next apply formats the file.
+test("create-here formats the created package.json on the next apply when the format after the install fails", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  const marker = join(workspace.bin, "..", "vp-add-ran");
+
+  const failed = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"], {
+    VP_STUB_FMT_FAIL_FOR: "package.json",
+    VP_STUB_ADD_MARKER: marker,
+  });
+  assert.notEqual(failed.code, 0, "apply did not stop when vp fmt failed after the install");
+  assert.match(
+    failed.stderr,
+    /installed the recipe's development dependencies, but could not format package\.json/,
+  );
+  assert.notEqual((await checkPackageJSONFromRoot(workspace.root)).code, 0);
+
+  // The scripts are already set, so only the format changes package.json, and the dry run says
+  // that apply updates the file, not that it is unchanged.
+  const formatting = `Would format it with vp fmt from vite-plus ${vitePlusFixtureRelease}, which reorders its keys; Calavera or its install wrote its current text`;
+  const dryRunJSON = await runCli(workspace, ["apply", "--dry-run", "--json"]);
+  assert.equal(dryRunJSON.code, 0, dryRunJSON.stderr);
+  const change = JSON.parse(dryRunJSON.stdout).changes.find(
+    (/** @type {{ path: string }} */ { path }) => path === "package.json",
+  );
+  assert.equal(change.type, "update");
+  assert.equal(change.formatting, formatting);
+  const dryRun = await runCli(workspace, ["apply", "--dry-run"]);
+  assert.equal(dryRun.code, 0, dryRun.stderr);
+  const lines = dryRun.stdout.split("\n").map((line) => line.trim());
+  const fileLine = lines.indexOf("Would update package.json");
+  assert.ok(fileLine >= 0, dryRun.stdout);
+  assert.equal(lines[fileLine + 1], formatting, dryRun.stdout);
+
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+  const check = await checkPackageJSONFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+// #1085: "unchanged" means apply writes nothing, so the dry run compares the formatted text with
+// the file's bytes, not with a plain write. Here the project's formatter indents with tabs, which
+// a plain write never does.
+test("the dry run reports a created package.json the formatter would leave as it is as unchanged", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  await writeFile(join(workspace.project, ".oxfmtrc.json"), json({ useTabs: true }));
+
+  const applied = await runCli(workspace, [
+    "apply",
+    "--yes",
+    "--no-install",
+    "--manifest-choice",
+    "create-here",
+  ]);
+  assert.equal(applied.code, 0, applied.stderr);
+  const packageJSONPath = join(workspace.project, "package.json");
+  const before = await readFile(packageJSONPath, "utf8");
+  assert.match(before, /\n\t"name"/, "the formatter did not indent with tabs");
+
+  const dryRunJSON = await runCli(workspace, ["apply", "--dry-run", "--json", "--no-install"]);
+  assert.equal(dryRunJSON.code, 0, dryRunJSON.stderr);
+  const change = JSON.parse(dryRunJSON.stdout).changes.find(
+    (/** @type {{ path: string }} */ { path }) => path === "package.json",
+  );
+  assert.equal(change.type, "unchanged");
+  assert.equal(change.formatting, undefined);
+});
+
+// #1085: an install that changes package.json and then fails leaves the record of the file's new
+// text, so the apply that runs the install again formats it.
+test("create-here formats the created package.json on the next apply when the install fails after changing it", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+
+  const failed = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"], {
+    VP_STUB_ADD_FAILS_AFTER_WRITE: "1",
+  });
+  assert.notEqual(failed.code, 0, "apply did not report the failed install");
+  // Running the install command by hand would change the text, so Calavera would leave the file
+  // unformatted; apply comes first in the remedy.
+  assert.match(
+    failed.stderr,
+    /To finish the install, run apply again, which installs and formats package\.json, or run the install command in /,
+  );
+  assert.notEqual((await checkPackageJSONFromRoot(workspace.root)).code, 0);
+
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+  const check = await checkPackageJSONFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+});
+
+// #1085: when formatting the created package.json fails, the file stays as init wrote it, and the
+// next apply, with a formatter that works, formats it.
+test("create-here formats the created package.json on the next apply when the first format fails", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+
+  const stopped = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"], {
+    VP_STUB_FMT_FAIL_FOR: "package.json",
+  });
+  assert.notEqual(stopped.code, 0, "apply did not stop when vp fmt failed");
+  assert.notEqual((await checkPackageJSONFromRoot(workspace.root)).code, 0);
+
+  const applied = await runCli(workspace, ["apply", "--yes"]);
+  assert.equal(applied.code, 0, applied.stderr);
+
+  const check = await checkPackageJSONFromRoot(workspace.root);
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
 });
 
 /**

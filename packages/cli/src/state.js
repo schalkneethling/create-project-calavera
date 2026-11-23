@@ -30,6 +30,7 @@ const VITE_HOOK_NAMES = new Set(
  * @property {AiArtifactState[]} aiArtifacts
  * @property {WiringRecord[]} aiWiring The hook lines and settings groups apply wrote for each artifact (ADR-0015, Decision 5).
  * @property {IgnoreLines[]} gitignoreBlocks The lines apply wrote in each integration's .gitignore block, and in the block that keeps the artifact cache out of Git (ADR-0016).
+ * @property {{ hash: string }} [createdPackageJSON] Present while an apply that created package.json with the package manager's init command has not finished its install (#1085): the hash of the package.json text Calavera last wrote. While package.json still has that text, apply formats it with the project's formatter, so a run that stopped after init leaves a file the next run formats. A file with other text is the person's, and keeps its key order. The apply that runs the install drops the record.
  * @property {string | null} [qualityScript] The value apply last wrote to the package.json `quality` script, kept while the recipe does not request quality and the project still has that value (#968), or null otherwise, so a later apply removes only a value it can show it wrote (#230). A state file from a release before #230 does not have it.
  */
 
@@ -233,11 +234,26 @@ export function normalizeState(rawState) {
     aiArtifacts: normalizeAiArtifacts(rawState.aiArtifacts),
     aiWiring: normalizeAiWiring(rawState.aiWiring),
     gitignoreBlocks: normalizeGitignoreBlocks(rawState.gitignoreBlocks),
+    ...(rawState.createdPackageJSON === undefined
+      ? {}
+      : { createdPackageJSON: normalizeCreatedPackageJSON(rawState.createdPackageJSON) }),
     // Absent stays absent: it marks a state file from a release before #230.
     ...(rawState.qualityScript === undefined
       ? {}
       : { qualityScript: normalizeQualityScript(rawState.qualityScript) }),
   };
+}
+
+/**
+ * @param {unknown} value
+ * @returns {{ hash: string }}
+ */
+function normalizeCreatedPackageJSON(value) {
+  if (!isPlainObject(value) || !isNotEmptyString(value.hash)) {
+    throw new Error("Calavera state createdPackageJSON must be an object with a hash string.");
+  }
+
+  return { hash: value.hash };
 }
 
 /**

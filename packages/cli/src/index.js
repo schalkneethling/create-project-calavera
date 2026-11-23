@@ -321,7 +321,7 @@ import { VARLOCK_POINTER, VARLOCK_SCHEMA_PATH } from "./varlock.js";
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[], packageTestFindings?: ProjectInspectionFinding[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter. `packageTestFindings` holds the findings apply already planned with the package manager it resolved, so inspection reports them instead of planning them again.
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], earlierQualityValues: string[] }} ScriptPlan earlierQualityValues are the values a release before #230 wrote for a recipe whose quality the plan now omits, which the dry run names when the project's value matches one and the state file predates the qualityScript record (#230, #937)
- * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", from?: string, category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[] }} Change
+ * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", from?: string, category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[], formatting?: string }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
  *
@@ -3773,6 +3773,23 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
     await assertRecipeWriteTarget(configPath, process.cwd());
   }
 
+  // #1085: the package manager's init command writes package.json in its own key order, so a
+  // package.json apply creates is written through the formatter as well, and so is one an earlier
+  // apply created and did not finish, while the file still has the text that apply wrote, which
+  // the state records as a hash. A package.json the person had, or put in place, keeps its key
+  // order, because the dry run does not show that file's text.
+  const createsPackageJSON = !(await fileExists("package.json"));
+  // The bytes of package.json on disk once this run's init and first format are done, so the dry
+  // run reports the file as unchanged only when apply writes nothing.
+  /** @type {string | undefined} */
+  let packageJSONTextOnDisk = createsPackageJSON
+    ? undefined
+    : await readFile("package.json", "utf8");
+  const formatsPackageJSON =
+    createsPackageJSON ||
+    (previousState.createdPackageJSON !== undefined &&
+      textHash(/** @type {string} */ (packageJSONTextOnDisk)) ===
+        previousState.createdPackageJSON.hash);
   const packageJSON = await ensurePackageJSON(
     packageManager,
     applyOptions.dryRun,
@@ -3780,6 +3797,25 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
     applyOptions.assumeYes || manifestOutcome.decision?.choice === "create-here",
     applyOptions.json,
   );
+  // A check later in this run can stop apply, and the next run then finds a package.json that
+  // already exists. So the state records the text init wrote as soon as init has written it, which
+  // covers a format that fails, and then the formatted text.
+  if (createsPackageJSON && !applyOptions.dryRun) {
+    await mkdir(".calavera", { recursive: true });
+    await recordCreatedPackageJSON(
+      previousState,
+      await readFile("package.json", "utf8"),
+      loadFormatter,
+    );
+    const formatted = await formatGeneratedText(
+      "package.json",
+      `${JSON.stringify(packageJSON)}\n`,
+      loadFormatter,
+    );
+    await writeFile("package.json", formatted);
+    await recordCreatedPackageJSON(previousState, formatted, loadFormatter);
+    packageJSONTextOnDisk = formatted;
+  }
   const projectInspection = await inspectProject(recipe, {
     reownManagedFiles: applyOptions.reownManagedFiles,
     managedFilePlans,
@@ -3870,26 +3906,130 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
   });
   let stagingLeftovers = stagingPlan.items;
   // #838: the state is formatted after the last planning step and before apply writes any project
-  // file or artifact output. One write comes earlier: the auto-install transaction, which formats
-  // and commits its own records atomically. The state is formatted in the dry run as well, so the
+  // file or artifact output. Two writes come earlier: the auto-install transaction, which formats
+  // and commits its own records atomically, and, when init has just created package.json, the
+  // state record of that file (#1085). The state is formatted in the dry run as well, so the
   // dry run stops where apply would and a formatter that fails leaves the project unchanged. A
   // managed file's record is its path and the hash of the text apply writes, as writeManagedFile
   // writes it below. The quality script is final here, because no script rename targets it.
-  let stateText;
-  try {
-    stateText = await formatStateText(
-      mergeRecipeIntoState(
-        previousState,
-        recipe.profile,
-        integrations.map((integration) => integration.id),
-        managedFilePlans.map(({ path, contents }) => ({ path, hash: textHash(contents) })),
-        aiResult.artifacts,
-        wiringPlan.records,
-        gitignorePlan.records,
-        qualityScriptRecord(scripts, previousState, packageJSON.scripts?.quality),
-      ),
-      loadFormatter,
+  // ADR-0013, Decision 6: only after an earlier apply is a script under its
+  // old name Calavera's to rename. A rename that would overwrite the user's
+  // script under the new name does not happen, and that script is not written.
+  const { renamed: renamedScripts, blocked: blockedRenames } = previouslyApplied
+    ? planScriptRenames(packageJSON.scripts ?? {}, scripts)
+    : { renamed: [], blocked: [] };
+  for (const { from, to } of blockedRenames) {
+    delete scripts[to];
+    omittedScripts.push({
+      script: to,
+      reason: `package.json defines ${to} with a value of your own, and ${from} still has the value Calavera wrote, so Calavera keeps both instead of renaming ${from}${
+        typeof scripts.quality === "string" ? `; the generated quality script runs your ${to}` : ""
+      }.`,
+    });
+  }
+  // The values apply writes, against the scripts as they are now. A renamed
+  // script is compared with the value under its old name.
+  const renamedFrom = new Map(renamedScripts.map(({ from, to }) => [to, from]));
+  /** @type {ScriptChange[]} */
+  const scriptChanges = [];
+  for (const [script, value] of Object.entries(scripts)) {
+    const from = renamedFrom.get(script);
+    if (from !== undefined) {
+      scriptChanges.push({
+        script,
+        value,
+        previous: packageJSON.scripts?.[from],
+        renamedFrom: from,
+      });
+    } else if (!Object.hasOwn(packageJSON.scripts ?? {}, script)) {
+      scriptChanges.push({ script, value });
+    } else if (packageJSON.scripts?.[script] !== value) {
+      scriptChanges.push({ script, value, previous: packageJSON.scripts?.[script] });
+    }
+  }
+  if (renamedScripts.length > 0) {
+    // The renamed script keeps the position the old name had.
+    const newNames = new Map(renamedScripts.map(({ from, to }) => [from, to]));
+    packageJSON.scripts = Object.fromEntries(
+      Object.entries(packageJSON.scripts ?? {}).map(([name, value]) => {
+        const newName = newNames.get(name);
+        return newName ? [newName, scripts[newName] ?? value] : [name, value];
+      }),
     );
+  }
+  const packageJSONUnchanged =
+    previouslyApplied &&
+    !removedDefaultTestScript &&
+    removedQualityScript === undefined &&
+    renamedScripts.length === 0 &&
+    Object.entries(scripts).every(([name, script]) => packageJSON.scripts?.[name] === script);
+  packageJSON.scripts = {
+    ...packageJSON.scripts,
+    ...scripts,
+  };
+  /** @type {CalaveraState} */
+  let nextState;
+  let stateText;
+  /** @type {string} */
+  let finalStateText;
+  /** @type {string | undefined} */
+  let createdPackageJSONText;
+  // C8: what the dry run says about formatting an existing package.json, when apply changes more
+  // than its scripts (#1085).
+  /** @type {string | undefined} */
+  let packageJSONFormatting;
+  /** @type {string | undefined} */
+  let formattedPackageJSONText;
+  try {
+    // #1085: formatted again with the scripts apply adds, because an init that writes no scripts
+    // key leaves apply to add it last, where Oxfmt would not keep it. Formatted with the state,
+    // before apply writes anything below, and inside this block, so a format that fails still
+    // disposes of the artifact sources.
+    // The dry run formats an existing package.json too, so the approval boundary can say what
+    // apply changes. A dry run of create-here has no package.json text to format yet.
+    formattedPackageJSONText =
+      formatsPackageJSON && !(applyOptions.dryRun && createsPackageJSON)
+        ? await formatGeneratedText(
+            "package.json",
+            `${JSON.stringify(packageJSON)}\n`,
+            loadFormatter,
+          )
+        : undefined;
+    createdPackageJSONText = applyOptions.dryRun ? undefined : formattedPackageJSONText;
+    packageJSONFormatting =
+      formattedPackageJSONText === undefined || createsPackageJSON
+        ? undefined
+        : await describePackageJSONFormatting(
+            packageJSON,
+            formattedPackageJSONText,
+            /** @type {string} */ (packageJSONTextOnDisk),
+            packageJSONUnchanged,
+            applyOptions.dryRun,
+            loadFormatter,
+          );
+    nextState = mergeRecipeIntoState(
+      previousState,
+      recipe.profile,
+      integrations.map((integration) => integration.id),
+      managedFilePlans.map(({ path, contents }) => ({ path, hash: textHash(contents) })),
+      aiResult.artifacts,
+      wiringPlan.records,
+      gitignorePlan.records,
+      qualityScriptRecord(scripts, previousState, packageJSON.scripts?.quality),
+    );
+    stateText = await formatStateText(withCreatedPackageJSON(nextState, undefined), loadFormatter);
+    // #1085: the install that follows can change package.json, so the record that Calavera
+    // created it stays, with the hash of the text apply writes, until the install has finished
+    // and apply has formatted the file again. An apply that skips the install keeps it for the
+    // apply that runs the install. Any other apply drops it, including one that finds a
+    // package.json whose text is no longer Calavera's.
+    finalStateText =
+      createdPackageJSONText !== undefined && installPlan?.spawn !== undefined
+        ? await formatStateText(
+            withCreatedPackageJSON(nextState, createdPackageJSONText),
+            loadFormatter,
+          )
+        : stateText;
     if (!applyOptions.dryRun) {
       // #988: a locked package that is missing from .calavera/packages/ was rebuilt outside the
       // project during planning, and is copied into place only now, after the last planning step,
@@ -3958,63 +4098,13 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
     }
   }
 
-  // ADR-0013, Decision 6: only after an earlier apply is a script under its
-  // old name Calavera's to rename. A rename that would overwrite the user's
-  // script under the new name does not happen, and that script is not written.
-  const { renamed: renamedScripts, blocked: blockedRenames } = previouslyApplied
-    ? planScriptRenames(packageJSON.scripts ?? {}, scripts)
-    : { renamed: [], blocked: [] };
-  for (const { from, to } of blockedRenames) {
-    delete scripts[to];
-    omittedScripts.push({
-      script: to,
-      reason: `package.json defines ${to} with a value of your own, and ${from} still has the value Calavera wrote, so Calavera keeps both instead of renaming ${from}${
-        typeof scripts.quality === "string" ? `; the generated quality script runs your ${to}` : ""
-      }.`,
-    });
-  }
-  // The values apply writes, against the scripts as they are now. A renamed
-  // script is compared with the value under its old name.
-  const renamedFrom = new Map(renamedScripts.map(({ from, to }) => [to, from]));
-  /** @type {ScriptChange[]} */
-  const scriptChanges = [];
-  for (const [script, value] of Object.entries(scripts)) {
-    const from = renamedFrom.get(script);
-    if (from !== undefined) {
-      scriptChanges.push({
-        script,
-        value,
-        previous: packageJSON.scripts?.[from],
-        renamedFrom: from,
-      });
-    } else if (!Object.hasOwn(packageJSON.scripts ?? {}, script)) {
-      scriptChanges.push({ script, value });
-    } else if (packageJSON.scripts?.[script] !== value) {
-      scriptChanges.push({ script, value, previous: packageJSON.scripts?.[script] });
-    }
-  }
-  if (renamedScripts.length > 0) {
-    // The renamed script keeps the position the old name had.
-    const newNames = new Map(renamedScripts.map(({ from, to }) => [from, to]));
-    packageJSON.scripts = Object.fromEntries(
-      Object.entries(packageJSON.scripts ?? {}).map(([name, value]) => {
-        const newName = newNames.get(name);
-        return newName ? [newName, scripts[newName] ?? value] : [name, value];
-      }),
-    );
-  }
-  const packageJSONUnchanged =
-    previouslyApplied &&
-    !removedDefaultTestScript &&
-    removedQualityScript === undefined &&
-    renamedScripts.length === 0 &&
-    Object.entries(scripts).every(([name, script]) => packageJSON.scripts?.[name] === script);
-  packageJSON.scripts = {
-    ...packageJSON.scripts,
-    ...scripts,
-  };
+  // A package.json apply formats is unchanged only when the formatted text is the file's bytes.
+  const packageJSONWrites =
+    formattedPackageJSONText !== undefined && packageJSONTextOnDisk !== undefined
+      ? formattedPackageJSONText !== packageJSONTextOnDisk
+      : !packageJSONUnchanged;
   changes.push({
-    type: packageJSONUnchanged ? "unchanged" : "update",
+    type: packageJSONWrites ? "update" : "unchanged",
     path: "package.json",
     action: "update",
     ownership: "project",
@@ -4024,6 +4114,7 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
     ...(removedQualityScript !== undefined ? { removedQualityScript } : {}),
     ...(renamedScripts.length > 0 ? { renamedScripts } : {}),
     ...(omittedQualitySteps.length > 0 ? { omittedQualitySteps } : {}),
+    ...(packageJSONFormatting === undefined ? {} : { formatting: packageJSONFormatting }),
   });
 
   // managedFileDeclarations in project-inspection.js sets which managed files apply writes, in order.
@@ -4052,18 +4143,23 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
 
   await applyVarlockProjectFiles(varlockFilePlans, applyOptions.dryRun, changes);
 
-  if (!applyOptions.dryRun && !packageJSONUnchanged) {
-    await writeJSON("package.json", packageJSON, false);
-  }
-
   if (!applyOptions.dryRun) {
     // The wiring is written before the state record. If a write fails part way, the next apply
     // still plans correctly: a block or group that already holds what apply would write is
     // unchanged whatever the record says, and the old record still names a block to remove.
     // Writing the record first would instead record text the files never received.
     await writeArtifactWiring(wiringPlan.files);
+    // #1085: package.json is written right before the state, whose record of a package.json
+    // Calavera created holds the hash of this text, so no other write can fail between the two.
+    // That file is written when its formatted text differs from its bytes, even when its scripts
+    // are unchanged, so it has the recorded text.
+    if (createdPackageJSONText !== undefined) {
+      if (packageJSONWrites) await writeFile("package.json", createdPackageJSONText);
+    } else if (!packageJSONUnchanged) {
+      await writeJSON("package.json", packageJSON, false);
+    }
     await mkdir(".calavera", { recursive: true });
-    await writeFile(STATE_FILE, stateText);
+    await writeFile(STATE_FILE, finalStateText);
     // Independent of every other write: a folder apply cannot remove is reported, not an error.
     stagingLeftovers = await removeStagingLeftovers(stagingPlan);
   }
@@ -4078,10 +4174,23 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
     } catch (error) {
       // A spinner left running keeps its timer alive, and the process never exits.
       spin?.error("Could not install development dependencies");
+      // #1085: the install may have changed a package.json Calavera created, so the record takes
+      // the file's text now, and the apply that runs the install again formats it.
+      const recordProblem =
+        createdPackageJSONText === undefined
+          ? undefined
+          : await readFile("package.json", "utf8")
+              .then((text) => recordCreatedPackageJSON(nextState, text, loadFormatter))
+              .then(
+                () => undefined,
+                (/** @type {unknown} */ recordError) => recordError,
+              );
       const written = unique([
         ...[...changes, ...aiChanges]
           .filter(({ type }) => type !== "unchanged")
           .map(({ path }) => path),
+        // Written even when its scripts are unchanged (#1085).
+        ...(createdPackageJSONText === undefined ? [] : ["package.json"]),
         STATE_FILE,
       ]);
       throw new Error(
@@ -4090,13 +4199,52 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
           `Already written: ${written.join(", ")}.`,
           `Install command: ${formatCommand(runPlan.spawn)}`,
           describeCommandFailure(error),
-          `To finish the install, run the install command in ${process.cwd()}.`,
+          // #1085: an install run by hand changes the text the state records for a package.json
+          // Calavera created, so apply would then leave the file unformatted.
+          createdPackageJSONText === undefined
+            ? `To finish the install, run the install command in ${process.cwd()}.`
+            : `To finish the install, run apply again, which installs and formats package.json, or run the install command in ${process.cwd()}.`,
+          ...(recordProblem === undefined
+            ? []
+            : [
+                "Calavera also could not record the text of package.json in .calavera/state.json, so the next apply may leave package.json unformatted.",
+              ]),
         ].join("\n"),
-        { cause: error },
+        {
+          cause:
+            recordProblem === undefined
+              ? error
+              : new AggregateError(
+                  [error, recordProblem],
+                  "The install failed, and recording package.json in .calavera/state.json failed too.",
+                ),
+        },
       );
     }
 
     spin?.stop("Dependencies installed");
+
+    // #1085: vp add appends devDependencies as the last key of package.json, where Oxfmt would not
+    // keep it, so a package.json Calavera created is formatted again, and the record dropped. The
+    // record takes the installed text first, as after init, so a format that fails leaves a file
+    // the next apply formats.
+    if (createdPackageJSONText !== undefined) {
+      const installed = await readFile("package.json", "utf8");
+      await recordCreatedPackageJSON(nextState, installed, loadFormatter);
+      let formatted;
+      try {
+        // Parsed first, because a parser's own error quotes the file's text (#1157).
+        parseJSON(installed, "package.json");
+        formatted = await formatGeneratedText("package.json", installed, loadFormatter);
+      } catch (error) {
+        throw new Error(
+          "Calavera installed the recipe's development dependencies, but could not format package.json after the install. Fix the cause below, then run apply again, which formats package.json.",
+          { cause: error },
+        );
+      }
+      await writeFile("package.json", formatted);
+      await writeFile(STATE_FILE, stateText);
+    }
   }
 
   /** @type {ApplyResult} */
@@ -4141,6 +4289,71 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
     ...(manifestOutcome.decision ? { manifestDecision: manifestOutcome.decision } : {}),
   };
   return result;
+}
+
+/**
+ * Says how formatting changes an existing package.json beyond the scripts apply writes, for the
+ * dry run and the apply summary (#1085), or returns undefined when the formatted text is the
+ * file's bytes, so apply writes nothing, or when apply changes only its scripts. Apply formats such a file only while it has the text
+ * Calavera or its install wrote.
+ *
+ * @param {PackageJSON} packageJSON The package.json apply writes, scripts included.
+ * @param {string} formatted That package.json as the formatter returns it.
+ * @param {string} current The bytes of package.json on disk now.
+ * @param {boolean} scriptsUnchanged Whether apply leaves the scripts as they are.
+ * @param {boolean} dryRun
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ * @returns {Promise<string | undefined>}
+ */
+async function describePackageJSONFormatting(
+  packageJSON,
+  formatted,
+  current,
+  scriptsUnchanged,
+  dryRun,
+  loadFormatter,
+) {
+  // Apply writes nothing then.
+  if (formatted === current) return undefined;
+  const plain = `${JSON.stringify(packageJSON, null, 2)}\n`;
+  // The formatter keeps the values, so text that differs only in layout keeps the key order.
+  const reorders = `${JSON.stringify(JSON.parse(formatted), null, 2)}\n` !== plain;
+  // Only the scripts change, which the Scripts heading lists.
+  if (!reorders && formatted === plain && !scriptsUnchanged) return undefined;
+  const { description } = await loadFormatter();
+  // "it" is package.json: the summary prints this under the line that names the file, so the file
+  // is named once, and --json keeps it on the package.json change.
+  return dryRun
+    ? `Would format it with ${description}, which ${reorders ? "reorders its keys" : "changes its layout"}; Calavera or its install wrote its current text`
+    : `Formatted it with ${description}, which ${reorders ? "reordered its keys" : "changed its layout"}; Calavera or its install wrote the text it had before`;
+}
+
+/**
+ * Returns `state` with the record that Calavera created package.json and has not finished the
+ * apply that created it (#1085), holding the hash of `text`, the package.json text Calavera last
+ * wrote, or without that record when `text` is undefined.
+ *
+ * @param {CalaveraState} state
+ * @param {string | undefined} text
+ * @returns {CalaveraState}
+ */
+function withCreatedPackageJSON(state, text) {
+  const { createdPackageJSON: _recorded, ...rest } = state;
+  return text === undefined ? rest : { ...rest, createdPackageJSON: { hash: textHash(text) } };
+}
+
+/**
+ * Writes the state file with the record that Calavera created package.json with `text` (#1085).
+ *
+ * @param {CalaveraState} state
+ * @param {string} text
+ * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
+ */
+async function recordCreatedPackageJSON(state, text, loadFormatter) {
+  await writeFile(
+    STATE_FILE,
+    await formatStateText(withCreatedPackageJSON(state, text), loadFormatter),
+  );
 }
 
 /**
