@@ -335,22 +335,19 @@ test("create-here formats the files apply writes with vp fmt when the parent is 
 });
 
 /**
- * Runs `vp fmt --check` on the created package.json from the workspace root, through the stand-in
- * vp, which hands it to this repository's Oxfmt.
+ * Runs `vp fmt --check` on a file in the new member from the workspace root, through the stand-in
+ * vp, which hands it to this repository's Oxfmt. The owner decided on #1182 that the root's vp
+ * check is the reference; for a JSON file, the part of vp check that can fail is vp fmt --check.
  *
  * @param {string} root
+ * @param {string} [file] The file's name in packages/fresh.
  * @returns {Promise<{ code: number, stdout: string, stderr: string }>}
  */
-function checkPackageJSONFromRoot(root) {
+function checkFromRoot(root, file = "package.json") {
   return new Promise((resolvePromise) => {
     execFile(
       process.execPath,
-      [
-        join(root, "node_modules/vite-plus/bin/vp"),
-        "fmt",
-        "--check",
-        "packages/fresh/package.json",
-      ],
+      [join(root, "node_modules/vite-plus/bin/vp"), "fmt", "--check", `packages/fresh/${file}`],
       { cwd: root, timeout: CLI_TIMEOUT_MS },
       (error, stdout, stderr) => resolvePromise({ code: error ? 1 : 0, stdout, stderr }),
     );
@@ -370,7 +367,7 @@ test("create-here formats the package.json it creates, so vp fmt --check from th
   const applied = await runCli(workspace, ["apply", "--yes", "--manifest-choice", "create-here"]);
   assert.equal(applied.code, 0, applied.stderr);
 
-  const check = await checkPackageJSONFromRoot(workspace.root);
+  const check = await checkFromRoot(workspace.root);
   assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
 
   const packageJSONPath = join(workspace.project, "package.json");
@@ -406,7 +403,7 @@ test("create-here formats the package.json it creates even when a later check st
   const applied = await runCli(workspace, ["apply", "--yes"]);
   assert.equal(applied.code, 0, applied.stderr);
 
-  const check = await checkPackageJSONFromRoot(workspace.root);
+  const check = await checkFromRoot(workspace.root);
   assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
 });
 
@@ -483,7 +480,7 @@ test("create-here with Bun keeps the created package.json formatted across a sto
     applied.stdout,
   );
 
-  const check = await checkPackageJSONFromRoot(workspace.root);
+  const check = await checkFromRoot(workspace.root);
   assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
 });
 
@@ -519,7 +516,7 @@ test("create-here with --no-install, then apply with the install, leaves a packa
   const installed = await runCli(workspace, ["apply", "--yes"]);
   assert.equal(installed.code, 0, installed.stderr);
 
-  const check = await checkPackageJSONFromRoot(workspace.root);
+  const check = await checkFromRoot(workspace.root);
   assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
 });
 
@@ -565,7 +562,7 @@ test("create-here formats the created package.json on the next apply when the fo
     failed.stderr,
     /installed the recipe's development dependencies, but could not format package\.json/,
   );
-  assert.notEqual((await checkPackageJSONFromRoot(workspace.root)).code, 0);
+  assert.notEqual((await checkFromRoot(workspace.root)).code, 0);
 
   // The scripts are already set, so only the format changes package.json, and the dry run says
   // that apply updates the file, not that it is unchanged.
@@ -586,7 +583,7 @@ test("create-here formats the created package.json on the next apply when the fo
 
   const applied = await runCli(workspace, ["apply", "--yes"]);
   assert.equal(applied.code, 0, applied.stderr);
-  const check = await checkPackageJSONFromRoot(workspace.root);
+  const check = await checkFromRoot(workspace.root);
   assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
 });
 
@@ -633,11 +630,11 @@ test("create-here formats the created package.json on the next apply when the in
     failed.stderr,
     /To finish the install, run apply again, which installs and formats package\.json, or run the install command in /,
   );
-  assert.notEqual((await checkPackageJSONFromRoot(workspace.root)).code, 0);
+  assert.notEqual((await checkFromRoot(workspace.root)).code, 0);
 
   const applied = await runCli(workspace, ["apply", "--yes"]);
   assert.equal(applied.code, 0, applied.stderr);
-  const check = await checkPackageJSONFromRoot(workspace.root);
+  const check = await checkFromRoot(workspace.root);
   assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
 });
 
@@ -650,12 +647,12 @@ test("create-here formats the created package.json on the next apply when the fi
     VP_STUB_FMT_FAIL_FOR: "package.json",
   });
   assert.notEqual(stopped.code, 0, "apply did not stop when vp fmt failed");
-  assert.notEqual((await checkPackageJSONFromRoot(workspace.root)).code, 0);
+  assert.notEqual((await checkFromRoot(workspace.root)).code, 0);
 
   const applied = await runCli(workspace, ["apply", "--yes"]);
   assert.equal(applied.code, 0, applied.stderr);
 
-  const check = await checkPackageJSONFromRoot(workspace.root);
+  const check = await checkFromRoot(workspace.root);
   assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
 });
 
@@ -810,6 +807,94 @@ test("init --apply with create-here does not run vp fmt when the parent is not m
   assert.ok(
     JSON.parse(result.stdout).applyResult,
     "init --apply did not apply, so the test shows nothing",
+  );
+  assert.deepEqual(await readStubInvocations(fmtLog), []);
+});
+
+/** The plain init run: no --apply, so there is no manifest decision. */
+const plainInit = ["init", "--yes", "--json", "--profile", "minimal"];
+
+// #1086: plain init has no manifest decision, so it used to detect "unknown" and write the recipe
+// unformatted, which the workspace root's vp check rejects. It now formats with the parent's
+// verdict, as init --apply with create-here does (#961). The fixture writes a recipe; the test
+// removes it first, so the file after init is the one init composed.
+test("plain init below a Vite+ workspace formats the recipe so vp fmt --check from the workspace root accepts it", async () => {
+  await using workspace = await directoryUnderManagedWorkspace();
+  await rm(join(workspace.project, "calavera.config.json"));
+
+  const result = await runCli(workspace, plainInit);
+  assert.equal(result.code, 0, result.stderr);
+
+  const check = await checkFromRoot(workspace.root, "calavera.config.json");
+  assert.equal(check.code, 0, `${check.stdout}${check.stderr}`);
+  const runs = await readStubInvocations(workspace.fmtLog);
+  assert.ok(
+    runs.some(
+      ({ argv, cwd }) =>
+        argv.includes("--stdin-filepath=calavera.config.json") && cwd === workspace.project,
+    ),
+    `init did not format calavera.config.json with vp fmt: ${JSON.stringify(runs)}`,
+  );
+  // Plain init writes only the recipe; package.json is apply's to create.
+  assert.deepEqual(Object.keys(await snapshotDirectory(workspace.project)), [
+    join(workspace.project, "calavera.config.json"),
+  ]);
+});
+
+// #1086, with #1084's remedy: the formatter loads before the wizard asks anything, so a missing
+// vite-plus stops plain init before its first prompt, with nothing written, and the remedy names
+// the parent, where vp install installs it. This test runs init in this process, so mutation
+// testing sees which lines it covers.
+test("plain init below a Vite+ workspace without vite-plus installed stops before its first prompt and says to run vp install in the parent", async () => {
+  await using workspace = await directoryUnderManagedWorkspace({ installed: false });
+  await rm(join(workspace.project, "calavera.config.json"));
+  /** @type {string[]} */
+  const asked = [];
+  const record = async (/** @type {{ message: string }} */ { message }) => {
+    asked.push(message);
+    throw new Error(`init asked: ${message}`);
+  };
+  const initPrompts = { select: record, groupMultiselect: record, confirm: record };
+
+  await assert.rejects(
+    inDirectory(workspace.project, true, () =>
+      initRecipe({ ...parseArgs(["init", "--json"]), initPrompts }),
+    ),
+    (error) =>
+      error instanceof Error &&
+      error.message.includes(`Run vp install in ${workspace.root}, then run Calavera again.`),
+  );
+  assert.deepEqual(asked, []);
+  assert.deepEqual(await snapshotDirectory(workspace.project), {});
+});
+
+test("plain init does not run vp fmt when the parent is not managed by Vite+", async () => {
+  await using fixture = await directoryUnderUnmanagedProject();
+  await using tools = await createTemporaryFixture(
+    "manifest-choice-plain-init-unmanaged-tools",
+    {},
+  );
+  // vite-plus is installed above the inspected directory but declared nowhere, so only the
+  // verdict, not a missing package, keeps vp fmt from running.
+  const fmtLog = join(tools.root, "vp-fmt.log");
+  await writeVitePlusStub(fixture.root, {
+    logPath: join(tools.root, "vp.log"),
+    fmtLogPath: fmtLog,
+  });
+  await rm(join(fixture.project, "calavera.config.json"));
+
+  const result = await runCli(
+    {
+      project: fixture.project,
+      bin: join(tools.root, "bin"),
+      packageManagerLog: join(tools.root, "package-manager.log"),
+    },
+    plainInit,
+  );
+  assert.equal(result.code, 0, result.stderr);
+  assert.ok(
+    await readFile(join(fixture.project, "calavera.config.json"), "utf8"),
+    "init did not write the recipe, so the test shows nothing",
   );
   assert.deepEqual(await readStubInvocations(fmtLog), []);
 });
@@ -1011,6 +1096,24 @@ test("init --apply under an ancestor manifest stops before writing anything unle
     );
   }
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
+});
+
+// #1086: init loads its formatter before the wizard, but the #430 checks come first, so below a
+// Vite+ workspace whose vite-plus is not installed, a choice other than create-here still gets the
+// create-here message, not the vp install remedy.
+test("init --apply below a Vite+ workspace without vite-plus installed stops with the create-here message unless the choice is create-here", async () => {
+  await using workspace = await directoryUnderManagedWorkspace({ installed: false });
+  const before = await snapshotDirectory(workspace.root);
+  const options = parseArgs(["init", "--apply", "--yes", "--json", "--profile", "minimal"]);
+
+  for (const manifestChoice of [undefined, "apply-at-ancestor", "abandon"]) {
+    await assert.rejects(
+      inDirectory(workspace.project, false, () => initRecipe({ ...options, manifestChoice })),
+      /init --apply writes calavera\.config\.json in .+ before it applies, so it runs only with --manifest-choice create-here\./,
+      String(manifestChoice),
+    );
+  }
+  assert.deepEqual(await snapshotDirectory(workspace.root), before);
 });
 
 test("apply-at-ancestor stops before writing anything when the ancestor already has a Calavera recipe", async () => {
