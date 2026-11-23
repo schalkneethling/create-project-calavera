@@ -37,6 +37,64 @@ async function fixture({ project, user, env = {} }) {
   };
 }
 
+// The variables the loader reads from an environment npm creates. A real npm exec reports only
+// these, never its whole environment, which can hold the developer's own settings.
+const NPM_EXEC_KEYS = [
+  "HOME",
+  "npm_command",
+  "npm_lifecycle_event",
+  "npm_execpath",
+  "npm_config_local_prefix",
+  "npm_config_global_prefix",
+  "npm_config_globalconfig",
+  "npm_config_userconfig",
+  "npm_config_user_agent",
+  "npm_config_registry",
+  `npm_config_${SCOPE}:registry`,
+  "npm_config_proxy",
+  "npm_config_https_proxy",
+  "npm_config_noproxy",
+];
+
+/**
+ * The loader's variables from the environment that a real `npm exec --offline` creates in `cwd`,
+ * started from an environment without npm_* variables and with an isolated home folder, so the
+ * developer's own settings do not leak in. `variables` are passed to npm and reported back.
+ * Skips the test only when npm is not installed.
+ * @param {import("node:test").TestContext} t
+ * @param {string} cwd
+ * @param {string} home
+ * @param {Record<string, string>} variables
+ * @returns {Promise<Record<string, string> | undefined>}
+ */
+async function npmExecEnvironmentIn(t, cwd, home, variables) {
+  const clean = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !/^npm_/i.test(name)),
+  );
+  const keys = [...NPM_EXEC_KEYS, ...Object.keys(variables)];
+  const script = join(home, "report-npm-environment.cjs");
+  await writeFile(
+    script,
+    `const keys = ${JSON.stringify(keys)};
+process.stdout.write(JSON.stringify(Object.fromEntries(keys.filter((key) => process.env[key] !== undefined).map((key) => [key, process.env[key]]))));
+`,
+  );
+  try {
+    // -c runs the command through a shell, so npm does not look up `node` as a package, which
+    // a project prefix would otherwise make it fetch.
+    const { stdout } = await promisify(execFile)(
+      "npm",
+      ["exec", "--offline", "-c", `node "${script}"`],
+      { cwd, env: { ...clean, HOME: home, ...variables } },
+    );
+    return JSON.parse(stdout);
+  } catch (error) {
+    if (/** @type {NodeJS.ErrnoException} */ (error).code !== "ENOENT") throw error;
+    t.skip("npm is not installed");
+    return undefined;
+  }
+}
+
 test("a project .npmrc proxy value with a variable reference is ignored with a warning that names the key", async () => {
   const context = await fixture({
     project: `https-proxy=http://\${PROXY_HOST}:8080/\n`,
@@ -399,27 +457,14 @@ test("the project file is not consulted for the environment when npm did not sta
 });
 
 test("the environment npm creates for a real npm exec stops the command and does not reach a request", async (t) => {
-  const execFileAsync = promisify(execFile);
   const context = await fixture({ project: "registry=https://evil.example/${SECRET_X}/\n" });
-  // Start from an environment without npm_config_* so the developer's own settings do not leak in.
-  const clean = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !/^npm_/i.test(name)),
-  );
-  let output;
-  try {
-    ({ stdout: output } = await execFileAsync(
-      "npm",
-      ["exec", "--", "node", "-p", "JSON.stringify(process.env)"],
-      {
-        cwd: context.cwd,
-        env: { ...clean, SECRET_X, npm_config_userconfig: context.env.npm_config_userconfig },
-      },
-    ));
-  } catch (error) {
-    t.skip(`npm exec is not available: ${error.code ?? error.message}`);
-    return;
-  }
-  const captured = JSON.parse(output);
+  const home = join(context.directory, "home");
+  await mkdir(home);
+  const captured = await npmExecEnvironmentIn(t, context.cwd, home, {
+    SECRET_X,
+    npm_config_userconfig: context.env.npm_config_userconfig,
+  });
+  if (!captured) return;
   assert.equal(captured.npm_config_registry, `https://evil.example/${SECRET_X}/`);
   await assert.rejects(loadNpmRegistryOptions({ ...context, env: captured }), (error) => {
     assert.match(error.message, /registry in the project \.npmrc contains a variable reference/);
@@ -958,7 +1003,6 @@ test("under npm exec, the expanded copy npm exports from a chosen user .npmrc pr
 });
 
 test("the environment a real npm exec creates for a project userconfig does not carry the expanded proxy into the options", async (t) => {
-  const execFileAsync = promisify(execFile);
   const context = await fixture({ project: "userconfig=./evil.npmrc\n" });
   await writeFile(join(context.cwd, "package.json"), JSON.stringify({ name: "probe" }));
   await writeFile(
@@ -967,23 +1011,8 @@ test("the environment a real npm exec creates for a project userconfig does not 
   );
   const home = join(context.directory, "home");
   await mkdir(home);
-  // Start from an environment without npm_config_* and with an isolated home, so the developer's
-  // own settings do not leak in.
-  const clean = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !/^npm_/i.test(name)),
-  );
-  let output;
-  try {
-    ({ stdout: output } = await execFileAsync(
-      "npm",
-      ["exec", "--offline", "--", "node", "-p", "JSON.stringify(process.env)"],
-      { cwd: context.cwd, env: { ...clean, HOME: home, CI_SECRET: SECRET_PROXY } },
-    ));
-  } catch (error) {
-    t.skip(`npm exec is not available: ${error.code ?? error.message}`);
-    return;
-  }
-  const captured = JSON.parse(output);
+  const captured = await npmExecEnvironmentIn(t, context.cwd, home, { CI_SECRET: SECRET_PROXY });
+  if (!captured) return;
   // npm resolves the temporary folder's symbolic links, such as /var to /private/var on macOS.
   assert.match(captured.npm_config_userconfig, /[\\/]project[\\/]evil\.npmrc$/);
   assert.equal(captured.npm_config_https_proxy, `http://${SECRET_PROXY}.evil.example:8080/`);
@@ -1080,6 +1109,8 @@ test("under npm exec, a proxy that a chosen user .npmrc spells differently is no
       }),
     );
     assert.equal(result.options.httpsProxy, undefined, spelling);
+    // npm does not use the key, and the file is not repository content to Calavera's warning.
+    assert.deepEqual(result.warnings, [], spelling);
     assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
   }
 });
@@ -1136,31 +1167,31 @@ test("under npm exec, a project registry key with a variable in it follows the p
     npmExecContext(unused, { npm_config_registry: "https://mirror.example.com/" }),
   );
   assert.equal(dropped.options.registry, undefined);
+  assert.deepEqual(dropped.warnings, []);
+});
+
+test("under npm exec, a value in both the project and the user .npmrc follows the project rules", async () => {
+  const context = await fixture({
+    project: "registry${NOPE?}=http://shared.example.com/\n",
+    user: "registry=http://shared.example.com/\n",
+  });
+  await assert.rejects(
+    loadNpmRegistryOptions(
+      npmExecContext(context, { npm_config_registry: "http://shared.example.com/" }),
+    ),
+    /in the project \.npmrc must be an https URL/,
+  );
 });
 
 test("a real npm exec exports a project proxy key with a variable in it, and Calavera does not trust the copy", async (t) => {
-  const execFileAsync = promisify(execFile);
   const context = await fixture({
     project: "https-proxy${NOPE?}=http://${CI_SECRET}.evil.example:8080/\n",
   });
   await writeFile(join(context.cwd, "package.json"), JSON.stringify({ name: "probe" }));
   const home = join(context.directory, "home");
   await mkdir(home);
-  const clean = Object.fromEntries(
-    Object.entries(process.env).filter(([name]) => !/^npm_/i.test(name)),
-  );
-  let output;
-  try {
-    ({ stdout: output } = await execFileAsync(
-      "npm",
-      ["exec", "--offline", "--", "node", "-p", "JSON.stringify(process.env)"],
-      { cwd: context.cwd, env: { ...clean, HOME: home, CI_SECRET: SECRET_PROXY } },
-    ));
-  } catch (error) {
-    t.skip(`npm exec is not available: ${error.code ?? error.message}`);
-    return;
-  }
-  const captured = JSON.parse(output);
+  const captured = await npmExecEnvironmentIn(t, context.cwd, home, { CI_SECRET: SECRET_PROXY });
+  if (!captured) return;
   assert.equal(captured.npm_config_https_proxy, `http://${SECRET_PROXY}.evil.example:8080/`);
   const result = await loadNpmRegistryOptions({ ...context, env: captured });
   assert.equal(result.options.httpsProxy, undefined);
@@ -1177,4 +1208,222 @@ test("under npm exec, a caller's https-proxy equal to a project proxy under anot
   );
   assert.equal(options.httpsProxy, "http://shared-proxy.example.com:8080/");
   assert.equal(options.proxy, undefined);
+});
+
+// npm reads a global config file too: the file `globalconfig` names, or `<prefix>/etc/npmrc`
+// (`loadGlobalConfig` and the `globalconfig` default in @npmcli/config lib/index.js). A project
+// .npmrc can choose it with `globalconfig=./g.npmrc`, or with `prefix=./pfx`, which npm reports as
+// an error but still applies. npm expands variables in that file and exports its values (#1186).
+const GLOBAL_PROXY = "https-proxy=http://${CI_SECRET}.proxy.invalid:1/\n";
+
+test("a real npm exec with a project globalconfig does not carry the global file's expanded proxy into the options", async (t) => {
+  const context = await fixture({ project: "globalconfig=./g.npmrc\n" });
+  await writeFile(join(context.cwd, "package.json"), JSON.stringify({ name: "probe" }));
+  await writeFile(join(context.cwd, "g.npmrc"), GLOBAL_PROXY);
+  const home = join(context.directory, "home");
+  await mkdir(home);
+  const captured = await npmExecEnvironmentIn(t, context.cwd, home, { CI_SECRET: SECRET_PROXY });
+  if (!captured) return;
+  assert.equal(captured.npm_config_https_proxy, `http://${SECRET_PROXY}.proxy.invalid:1/`);
+  const result = await loadNpmRegistryOptions({ ...context, env: captured });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.match(result.warnings.join("\n"), /^Ignored https-proxy in the global npmrc/m);
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+});
+
+test("a real npm exec with a project globalconfig stops on a registry with a variable in the global file", async (t) => {
+  const context = await fixture({ project: "globalconfig=./g.npmrc\n" });
+  await writeFile(join(context.cwd, "package.json"), JSON.stringify({ name: "probe" }));
+  await writeFile(
+    join(context.cwd, "g.npmrc"),
+    "registry=https://reg.example.invalid/${CI_SECRET}/\n",
+  );
+  const home = join(context.directory, "home");
+  await mkdir(home);
+  const captured = await npmExecEnvironmentIn(t, context.cwd, home, { CI_SECRET: SECRET_PROXY });
+  if (!captured) return;
+  assert.equal(captured.npm_config_registry, `https://reg.example.invalid/${SECRET_PROXY}/`);
+  await assert.rejects(loadNpmRegistryOptions({ ...context, env: captured }), (error) => {
+    assert.match(error.message, /registry in the global npmrc contains a variable reference/);
+    assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(`${SECRET_PROXY}|invalid`));
+    return true;
+  });
+});
+
+test("a real npm exec with a project prefix does not carry <prefix>/etc/npmrc's expanded proxy into the options", async (t) => {
+  const context = await fixture({ project: "prefix=./pfx\n" });
+  await writeFile(join(context.cwd, "package.json"), JSON.stringify({ name: "probe" }));
+  await mkdir(join(context.cwd, "pfx", "etc"), { recursive: true });
+  await writeFile(join(context.cwd, "pfx", "etc", "npmrc"), GLOBAL_PROXY);
+  const home = join(context.directory, "home");
+  await mkdir(home);
+  const captured = await npmExecEnvironmentIn(t, context.cwd, home, { CI_SECRET: SECRET_PROXY });
+  if (!captured) return;
+  assert.equal(captured.npm_config_https_proxy, `http://${SECRET_PROXY}.proxy.invalid:1/`);
+  const result = await loadNpmRegistryOptions({ ...context, env: captured });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+});
+
+/**
+ * A fixture whose npm exec environment names a global config file at `globalPath`, relative to
+ * the fixture directory, with `content`, and exports `exported`.
+ * @param {{ project?: string, globalPath: string, content: string, exported: Record<string, string>, globalconfigVariable?: boolean }} setup
+ */
+async function globalConfigContext({
+  project,
+  globalPath,
+  content,
+  exported,
+  globalconfigVariable = true,
+}) {
+  const context = await fixture({ project });
+  const path = join(context.directory, globalPath);
+  await mkdir(join(path, ".."), { recursive: true });
+  await writeFile(path, content);
+  return npmExecContext(context, {
+    npm_config_global_prefix: join(context.directory, "node"),
+    ...(globalconfigVariable ? { npm_config_globalconfig: path } : {}),
+    ...exported,
+  });
+}
+
+test("under npm exec, the default global npmrc outside the project keeps user trust, without expansion", async () => {
+  const literal = await globalConfigContext({
+    globalPath: "node/etc/npmrc",
+    content: "registry=http://mirror.example.com/\nhttps-proxy=http://admin-proxy.example.com:1/\n",
+    exported: {
+      npm_config_registry: "http://mirror.example.com/",
+      npm_config_https_proxy: "http://admin-proxy.example.com:1/",
+    },
+  });
+  const { options, registry, warnings } = await loadNpmRegistryOptions(literal);
+  assert.equal(options.registry, "http://mirror.example.com/");
+  assert.equal(options.httpsProxy, "http://admin-proxy.example.com:1/");
+  assert.equal(registry.source, "global npmrc");
+  assert.deepEqual(warnings, []);
+
+  const withVariable = await globalConfigContext({
+    globalPath: "node/etc/npmrc",
+    content: GLOBAL_PROXY,
+    exported: { npm_config_https_proxy: `http://${SECRET_PROXY}.proxy.invalid:1/` },
+  });
+  const result = await loadNpmRegistryOptions(withVariable);
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.match(
+    result.warnings.join("\n"),
+    /^Ignored https-proxy in the global npmrc: Calavera expands variables only in your own \.npmrc/m,
+  );
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+});
+
+test("under npm exec without npm_config_globalconfig, the global npmrc is <global prefix>/etc/npmrc", async () => {
+  const context = await globalConfigContext({
+    globalPath: "node/etc/npmrc",
+    content: "registry=https://mirror.example.com/\n",
+    exported: { npm_config_registry: "https://mirror.example.com/" },
+    globalconfigVariable: false,
+  });
+  assert.equal((await loadNpmRegistryOptions(context)).registry.source, "global npmrc");
+});
+
+test("under npm exec, a global npmrc that a project file chooses or that lies in the project follows the project rules", async () => {
+  /** @type {[string | undefined, string][]} */
+  const cases = [
+    ["globalconfig=../elsewhere/g.npmrc\n", "elsewhere/g.npmrc"],
+    ["prefix=../elsewhere\n", "elsewhere/etc/npmrc"],
+    // The caller's npm_config_globalconfig names a file inside the project.
+    [undefined, "project/g.npmrc"],
+  ];
+  for (const [project, globalPath] of cases) {
+    const context = await globalConfigContext({
+      project,
+      globalPath,
+      content: "registry=http://insecure.example.com/\n",
+      exported: { npm_config_registry: "http://insecure.example.com/" },
+    });
+    await assert.rejects(
+      loadNpmRegistryOptions(context),
+      /registry in the global npmrc must be an https URL/,
+      globalPath,
+    );
+  }
+});
+
+test("without a start by npm, no global npmrc is read", async () => {
+  const context = await fixture({});
+  const path = join(context.directory, "g.npmrc");
+  await writeFile(path, "registry=https://mirror.example.com/\n");
+  const { registry } = await loadNpmRegistryOptions({
+    ...context,
+    env: { ...context.env, npm_config_globalconfig: path },
+  });
+  assert.equal(registry.source, "default");
+});
+
+test("under npm exec, a global npmrc that is the user or the project .npmrc is not read twice", async () => {
+  const user = await fixture({
+    user: "https-proxy=http://${PROXY_HOST}:8080/\n",
+    env: { PROXY_HOST: "proxy.example.com" },
+  });
+  const asUser = await loadNpmRegistryOptions(
+    npmExecContext(user, {
+      PROXY_HOST: "proxy.example.com",
+      npm_config_globalconfig: user.env.npm_config_userconfig,
+      npm_config_https_proxy: "http://proxy.example.com:8080/",
+    }),
+  );
+  assert.equal(asUser.options.httpsProxy, "http://proxy.example.com:8080/");
+  assert.deepEqual(asUser.warnings, []);
+
+  const project = await fixture({ project: "https-proxy=http://attacker.example:8080/\n" });
+  const asProject = await loadNpmRegistryOptions(
+    npmExecContext(project, {
+      npm_config_globalconfig: join(project.cwd, ".npmrc"),
+      npm_config_https_proxy: "http://attacker.example:8080/",
+    }),
+  );
+  assert.equal(asProject.warnings.length, 1);
+});
+
+test("under npm exec, a global npmrc that a chosen user .npmrc names, among other keys, follows the project rules", async () => {
+  const context = await fixture({});
+  const chosen = join(context.cwd, "evil.npmrc");
+  await writeFile(
+    chosen,
+    "registry=https://user.example.com/\nglobalconfig=../elsewhere/g.npmrc\n",
+  );
+  const global = join(context.directory, "elsewhere", "g.npmrc");
+  await mkdir(join(global, ".."), { recursive: true });
+  await writeFile(global, "@schalkneethling:registry=http://insecure.example.com/\n");
+  await assert.rejects(
+    loadNpmRegistryOptions(
+      npmExecContext(context, {
+        npm_config_userconfig: chosen,
+        npm_config_globalconfig: global,
+        npm_config_registry: "https://user.example.com/",
+        [`npm_config_${SCOPE}:registry`]: "http://insecure.example.com/",
+      }),
+    ),
+    /registry in the global npmrc must be an https URL/,
+  );
+  // A project .npmrc with other keys besides globalconfig chooses the file just the same.
+  const project = await globalConfigContext({
+    project: "registry=https://project.example.com/\nglobalconfig=../elsewhere/g.npmrc\n",
+    globalPath: "elsewhere/g.npmrc",
+    content: `${SCOPE}:registry=http://insecure.example.com/\n`,
+    exported: { [`npm_config_${SCOPE}:registry`]: "http://insecure.example.com/" },
+  });
+  await assert.rejects(
+    loadNpmRegistryOptions(project),
+    /registry in the global npmrc must be an https URL/,
+  );
+});
+
+test("a list or a boolean under a proxy key is not a proxy, and does not stop the loader", async () => {
+  const context = await fixture({
+    user: "https-proxy[]=http://list-proxy.example.com/\nproxy=true\nnoproxy[]=a.example.com\nnoproxy[]=b.example.com\n",
+  });
+  const { options } = await loadNpmRegistryOptions(context);
+  assert.deepEqual(options, { noProxy: "a.example.com,b.example.com" });
 });

@@ -1,7 +1,7 @@
 // @ts-check
 import { access } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
-import { join, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { decode } from "ini";
 
@@ -19,9 +19,10 @@ import {
 
 // pacote and npm-registry-fetch do not read .npmrc files. The npm CLI loads them with
 // @npmcli/config and passes the result as options. This loader reproduces only the part that
-// decides where a request goes and through which proxy, with npm's precedence for those keys: user .npmrc, then project .npmrc, then npm_config_* environment
-// variables. Global and built-in npmrc files, command-line flags, and other settings (CA) are not
-// read. The project .npmrc is the one in `cwd`, or, when npm started Calavera, the one at npm's
+// decides where a request goes and through which proxy, with npm's precedence for those keys: the
+// global npmrc (only when npm started Calavera), then the user .npmrc, then the project .npmrc,
+// then npm_config_* environment variables. The built-in npmrc, command-line flags, and other
+// settings (CA) are not read. The project .npmrc is the one in `cwd`, or, when npm started Calavera, the one at npm's
 // local prefix, which is the file npm itself read.
 // Under Yarn 2 or later and Bun, the registry comes from their own settings; see
 // launcher-config.js.
@@ -42,6 +43,9 @@ const PROXY_PROTOCOLS = new Set([
   "socks5:",
   "socks5h:",
 ]);
+// The npm settings that choose the global config file (`globalconfig`, and `prefix`, whose
+// etc/npmrc is the default).
+const GLOBAL_CONFIG_CHOOSERS = new Set(["globalconfig", "prefix"]);
 // Same expression as @npmcli/config: ${VAR}, ${VAR?} for an empty fallback, and backslash escapes.
 const ENV_EXPRESSION = /(?<!\\)(\\*)\$\{([^${}?]+)(\?)?\}/g;
 
@@ -221,6 +225,8 @@ export async function loadNpmRegistryOptions({
   let userEntries = {};
   /** @type {Record<string, unknown>} */
   let projectEntries = {};
+  /** @type {ConfigLayer | undefined} */
+  let globalLayer;
   const launcherContext = { cwd, env, home, accountHome, scope, warnings };
   /** @type {ConfigLayer[]} */
   let layers;
@@ -237,13 +243,39 @@ export async function loadNpmRegistryOptions({
     userEntries = await readNpmrc(userPath, warnings);
     // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
     projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
+    const userIsAccountFile = isAccountFile(userPath, accountHome, ".npmrc");
+    const globalPath = npmStarted ? globalConfigPath(env, dirname(projectPath)) : undefined;
+    if (globalPath !== undefined && globalPath !== userPath && globalPath !== projectPath) {
+      // npm reads a global config file below the user .npmrc, expands variables in it, and
+      // exports its values (#1186). A project file can choose it with `globalconfig` or with
+      // `prefix` (npm logs an error for a project prefix but still applies it), and a user file
+      // that a project file chose can do the same. Such a file, or one inside the project, is
+      // repository content and follows the project rules. Otherwise it is the global file of
+      // the npm installation and keeps user trust, without variable expansion.
+      const choosers = userIsAccountFile ? [projectEntries] : [projectEntries, userEntries];
+      const chosen = choosers.some((entries) =>
+        Object.keys(entries).some((key) =>
+          GLOBAL_CONFIG_CHOOSERS.has(normalizedKey(expandEnvironment(key, env).text)),
+        ),
+      );
+      const fromProject = relative(dirname(projectPath), globalPath);
+      const inProject = !fromProject.startsWith("..") && !isAbsolute(fromProject);
+      globalLayer = {
+        name: "global npmrc",
+        entries: await readNpmrc(globalPath, warnings),
+        trusted: !chosen && !inProject,
+        expandsVariables: false,
+        accepts,
+      };
+    }
     /** @type {ConfigLayer[]} */
     const npmFiles = [
+      ...(globalLayer ? [globalLayer] : []),
       {
         name: "user .npmrc",
         entries: userEntries,
         trusted: true,
-        expandsVariables: isAccountFile(userPath, accountHome, ".npmrc"),
+        expandsVariables: userIsAccountFile,
         accepts,
       },
       { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
@@ -274,105 +306,119 @@ export async function loadNpmRegistryOptions({
   const sources = {};
   /** @type {{ key: string, setting: string, layer: string }[]} */
   const rejectedProxies = [];
+  /**
+   * Applies one entry of `layer` under that layer's rules.
+   * @param {ConfigLayer} layer @param {string} key @param {string} setting @param {string} rawValue
+   */
+  const applyEntry = (layer, key, setting, rawValue) => {
+    const { name, trusted } = layer;
+    if (isRegistryKey(key)) {
+      const value = registryValue(setting, rawValue.trim(), layer, warnings);
+      if (value === undefined) return;
+      options[key] = value;
+      sources[key] = layer;
+      return;
+    }
+    if (rawValue.includes("${") && !(layer.expandsVariables ?? trusted)) {
+      warnings.push(
+        trusted
+          ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own ${layer.tool === "Yarn" ? ".yarnrc.yml" : ".npmrc"} in your account's home folder and in environment variables, never in a file that a variable or a project file names.`
+          : `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`,
+      );
+      return;
+    }
+    if (!trusted) {
+      // A project file could name a proxy it controls, which would see which packages Calavera
+      // fetches and, for an http registry, could replace the package documents and tarballs
+      // together. The entry is skipped here, so it never replaces a proxy from a user file. An
+      // empty value and a noproxy entry only remove the proxy, so a project file may still set
+      // them. The warning is written after every layer is read, so it names the proxy that
+      // applies.
+      if (PROXY_URL_KEYS.has(key) && rawValue.trim()) {
+        rejectedProxies.push({ key, setting, layer: name });
+        return;
+      }
+    }
+    /** @type {import("./launcher-config.js").Expansion} */
+    const expanded = layer.expand
+      ? layer.expand(rawValue.trim(), env)
+      : expandEnvironment(rawValue.trim(), env);
+    if (expanded.unset.length > 0) {
+      // An entry that references an unset variable is absent, rather than sent with the
+      // placeholder text.
+      for (const variable of expanded.unset) unsetVariables.add(variable);
+      notes.push(
+        `Ignored ${setting} in the ${name}: environment variable ${[...new Set(expanded.unset)].join(", ")} is not set.`,
+      );
+      return;
+    }
+    const value = expanded.text;
+    if (PROXY_URL_KEYS.has(key) && value && !isProxyUrl(value)) {
+      // The value is never echoed: a proxy URL can carry credentials.
+      warnings.push(
+        `Ignored ${setting} in the ${name}: it must be an http, https, or socks proxy URL.`,
+      );
+      return;
+    }
+    options[key] = value;
+    sources[key] = layer;
+  };
+
+  /**
+   * Whether npm exported the value of `key` from `layer`'s file, where the file holds it under
+   * `fileKey`. The layer applied a value under the same key itself. A key that npm expands to
+   * `key`, such as `registry${UNSET?}`, is one npm uses but the layer did not read, so it is
+   * applied here under the layer's rules: a variable in a registry value stops the command, and
+   * a project file must use https. Another spelling, such as https_proxy, npm does not use; a
+   * proxy under it from a project file is reported as ignored.
+   * @param {ConfigLayer} layer @param {string} key @param {string} fileKey
+   */
+  const applyExportedCopy = (layer, key, fileKey) => {
+    if (fileKey === key) return;
+    if (expandEnvironment(fileKey, env).text === key) {
+      const fileValue = entryValue(key, layer.entries[fileKey]);
+      if (fileValue !== undefined) applyEntry(layer, key, printable(fileKey), fileValue);
+      return;
+    }
+    if (!layer.trusted && PROXY_URL_KEYS.has(key)) {
+      rejectedProxies.push({ key, setting: printable(fileKey), layer: layer.name });
+    }
+  };
+
+  // The .npmrc layers whose values npm exports, the project file first, because its rules are
+  // the strictest when two files hold the same value.
+  const fileLayers = layers.filter((candidate) => !candidate.npmEnvironment);
+  const exportingLayers = [
+    ...fileLayers.filter((candidate) => !candidate.trusted),
+    ...fileLayers.filter((candidate) => candidate.trusted),
+  ];
   for (const layer of layers) {
-    const { name, entries, trusted } = layer;
-    for (const [key, entry] of Object.entries(entries)) {
+    for (const [key, entry] of Object.entries(layer.entries)) {
       // The allowlist comes first, so the value of any other key, such as a credential, is never
       // looked at. Launcher layers hold only the keys Calavera reads.
       if (layer.accepts && !layer.accepts(key)) continue;
-      // npm accepts noproxy as a list (noproxy[]=host) and joins it with commas.
-      const rawValue = key === "noproxy" && Array.isArray(entry) ? entry.join(",") : entry;
-      if (typeof rawValue !== "string") continue;
-      const setting = printable(layer.settingNames?.[key] ?? key);
+      const rawValue = entryValue(key, entry);
+      if (rawValue === undefined) continue;
       if (layer.npmEnvironment && npmStarted) {
-        // npm exports its resolved settings, and for a project .npmrc value it exports the
-        // result of its own ${VAR} expansion. Such a value is project content, not
-        // environment, so it follows the project rules and keeps its label. npm exports a key
-        // written in another spelling, such as https_proxy, under the same variable, so the
-        // comparison normalizes the file's keys as the variable names are normalized. The
-        // file's value is expanded only for this comparison, never used as a registry.
-        const projectKey = exportedFrom(projectEntries, key, rawValue, env);
-        if (projectKey !== undefined) {
-          // The project layer already applied it, ignored it with a warning, or stopped,
-          // unless the file spells the key differently.
-          if (projectKey !== key && PROXY_URL_KEYS.has(key)) {
-            rejectedProxies.push({ key, setting: printable(projectKey), layer: "project .npmrc" });
-          }
-          // A registry key that npm expands to the registry key, such as `registry${UNSET?}`, is
-          // one npm uses, but the project layer did not read it. It follows the project rules
-          // here: a variable in its value stops the command, and it must use https. A key npm
-          // does not use, such as REGISTRY, stays dropped.
-          const projectLayer = layers.find((candidate) => candidate.name === "project .npmrc");
-          if (
-            projectKey !== key &&
-            isRegistryKey(key) &&
-            expandEnvironment(projectKey, env).text === key &&
-            projectLayer
-          ) {
-            const fileValue = String(projectEntries[projectKey]).trim();
-            const value = registryValue(printable(projectKey), fileValue, projectLayer, warnings);
-            if (value !== undefined) {
-              options[key] = value;
-              sources[key] = projectLayer;
-            }
-          }
-          continue;
-        }
-        // A value equal to the user .npmrc value under the same key was applied by the user
-        // layer, or ignored or stopped there. Under another spelling, such as https_proxy, npm
-        // does not use it, but still exports it, so it is not the caller's either (#1186).
-        if (exportedFrom(userEntries, key, rawValue, env) !== undefined) continue;
-      }
-      if (isRegistryKey(key)) {
-        const value = registryValue(setting, rawValue.trim(), layer, warnings);
-        if (value === undefined) continue;
-        options[key] = value;
-        sources[key] = layer;
-        continue;
-      }
-      if (rawValue.includes("${") && !(layer.expandsVariables ?? trusted)) {
-        warnings.push(
-          trusted
-            ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own ${layer.tool === "Yarn" ? ".yarnrc.yml" : ".npmrc"} in your account's home folder and in environment variables, never in a file that a variable or a project file names.`
-            : `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`,
-        );
-        continue;
-      }
-      if (!trusted) {
-        // A project file could name a proxy it controls, which would see which packages Calavera
-        // fetches and, for an http registry, could replace the package documents and tarballs
-        // together. The entry is skipped here, so it never replaces a proxy from a user file. An
-        // empty value and a noproxy entry only remove the proxy, so a project file may still set
-        // them. The warning is written after every layer is read, so it names the proxy that
-        // applies.
-        if (PROXY_URL_KEYS.has(key) && rawValue.trim()) {
-          rejectedProxies.push({ key, setting, layer: name });
+        // npm exports its resolved settings, and for a .npmrc value it exports the result of its
+        // own ${VAR} expansion. Such a value is the file's content, not environment, so it
+        // follows the file's rules and keeps its label. npm exports a key written in another
+        // spelling, such as https_proxy, under the same variable, so the comparison normalizes
+        // the file's keys as the variable names are normalized. The file's value is expanded
+        // only for this comparison, never used. The user layer and the global layer applied, or
+        // ignored, a value equal to their own (#1186); a different value was set by the caller.
+        const match = exportingLayers
+          .map((fileLayer) => ({
+            fileLayer,
+            fileKey: exportedFrom(fileLayer.entries, key, rawValue, env),
+          }))
+          .find(({ fileKey }) => fileKey !== undefined);
+        if (match?.fileKey !== undefined) {
+          applyExportedCopy(match.fileLayer, key, match.fileKey);
           continue;
         }
       }
-      /** @type {import("./launcher-config.js").Expansion} */
-      const expanded = layer.expand
-        ? layer.expand(rawValue.trim(), env)
-        : expandEnvironment(rawValue.trim(), env);
-      if (expanded.unset.length > 0) {
-        // An entry that references an unset variable is absent, rather than sent with the
-        // placeholder text.
-        for (const variable of expanded.unset) unsetVariables.add(variable);
-        notes.push(
-          `Ignored ${setting} in the ${name}: environment variable ${[...new Set(expanded.unset)].join(", ")} is not set.`,
-        );
-        continue;
-      }
-      const value = expanded.text;
-      if (PROXY_URL_KEYS.has(key) && value && !isProxyUrl(value)) {
-        // The value is never echoed: a proxy URL can carry credentials.
-        warnings.push(
-          `Ignored ${setting} in the ${name}: it must be an http, https, or socks proxy URL.`,
-        );
-        continue;
-      }
-      options[key] = value;
-      sources[key] = layer;
+      applyEntry(layer, key, printable(layer.settingNames?.[key] ?? key), rawValue);
     }
   }
 
@@ -478,6 +524,33 @@ function registryBypassesProxy(registryUrl, configured, env) {
         segments.length > 0 && segments.every((segment, index) => hostSegments[index] === segment)
       );
     });
+}
+
+/**
+ * The text of an entry, or undefined when it is not text. npm accepts noproxy as a list
+ * (noproxy[]=host) and joins it with commas.
+ * @param {string} key
+ * @param {unknown} entry
+ */
+function entryValue(key, entry) {
+  const value = key === "noproxy" && Array.isArray(entry) ? entry.join(",") : entry;
+  return typeof value === "string" ? value : undefined;
+}
+
+/**
+ * The global config file npm read: the file npm_config_globalconfig names, which npm exports
+ * whether a setting chose it or it is the default `<prefix>/etc/npmrc`, and otherwise
+ * `etc/npmrc` in npm_config_global_prefix (the `globalconfig` default in @npmcli/config
+ * lib/index.js, and `setEnvs`). Relative paths are resolved from `localPrefix`.
+ * @param {NodeJS.ProcessEnv} env
+ * @param {string} localPrefix
+ */
+function globalConfigPath(env, localPrefix) {
+  if (env.npm_config_globalconfig) return resolve(localPrefix, env.npm_config_globalconfig);
+  if (env.npm_config_global_prefix) {
+    return resolve(localPrefix, env.npm_config_global_prefix, "etc", "npmrc");
+  }
+  return undefined;
 }
 
 /**
