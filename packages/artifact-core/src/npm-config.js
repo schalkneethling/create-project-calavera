@@ -1,7 +1,7 @@
 // @ts-check
-import { access } from "node:fs/promises";
+import { access, realpath } from "node:fs/promises";
 import { homedir, userInfo } from "node:os";
-import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
 import { decode } from "ini";
 
@@ -46,6 +46,7 @@ const PROXY_PROTOCOLS = new Set([
 // The npm settings that choose the global config file (`globalconfig`, and `prefix`, whose
 // etc/npmrc is the default).
 const GLOBAL_CONFIG_CHOOSERS = new Set(["globalconfig", "prefix"]);
+const GLOBAL_LAYER = "global npmrc";
 // Same expression as @npmcli/config: ${VAR}, ${VAR?} for an empty fallback, and backslash escapes.
 const ENV_EXPRESSION = /(?<!\\)(\\*)\$\{([^${}?]+)(\?)?\}/g;
 
@@ -118,21 +119,31 @@ function environmentSettings(env) {
  * The key of `entries` whose value a package manager exported as the variable for `key`, if any.
  * A variable name keeps only letters, digits, and underscores, so other spellings of a key, such
  * as https_proxy or HTTPS-PROXY, export under the same name.
+ *
+ * npm expands a value with the environment it had when it loaded the file, before it exports its
+ * settings and INIT_CWD, so a value such as `http://evil.example/${npm_config_https_proxy?}`
+ * expands differently here. A file that Calavera does not expand therefore holds the exported
+ * value whenever its entry for the key contains a variable (#1186). npm exports a list as its
+ * entries joined with blank lines, without expanding them (`envVal` in @npmcli/config
+ * set-envs.js); the environment layer joins a noproxy list with commas instead.
  * @param {Record<string, unknown>} entries
  * @param {string} key
  * @param {string} value
  * @param {NodeJS.ProcessEnv} env
+ * @param {boolean} expands Whether Calavera expands variables in this file.
  */
-function exportedFrom(entries, key, value, env) {
+function exportedFrom(entries, key, value, env, expands) {
   return Object.keys(entries).find((fileKey) => {
+    // npm expands ${VAR} in keys too (`envReplace(key, this.env)` in @npmcli/config
+    // lib/index.js), so `https-proxy${UNSET?}` exports as npm_config_https_proxy (#1186).
+    if (normalizedKey(expandEnvironment(fileKey, env).text) !== key) return false;
     const fileValue = entries[fileKey];
-    return (
-      // npm expands ${VAR} in keys too (`envReplace(key, this.env)` in @npmcli/config
-      // lib/index.js), so `https-proxy${UNSET?}` exports as npm_config_https_proxy (#1186).
-      normalizedKey(expandEnvironment(fileKey, env).text) === key &&
-      typeof fileValue === "string" &&
-      expandEnvironment(fileValue.trim(), env).text === value.trim()
-    );
+    if (Array.isArray(fileValue)) {
+      return fileValue.map(String).join(key === "noproxy" ? "," : "\n\n") === value;
+    }
+    if (typeof fileValue !== "string") return false;
+    if (!expands && fileValue.includes("${")) return true;
+    return expandEnvironment(fileValue.trim(), env).text === value.trim();
   });
 }
 
@@ -248,20 +259,30 @@ export async function loadNpmRegistryOptions({
     if (globalPath !== undefined && globalPath !== userPath && globalPath !== projectPath) {
       // npm reads a global config file below the user .npmrc, expands variables in it, and
       // exports its values (#1186). A project file can choose it with `globalconfig` or with
-      // `prefix` (npm logs an error for a project prefix but still applies it), and a user file
-      // that a project file chose can do the same. Such a file, or one inside the project, is
-      // repository content and follows the project rules. Otherwise it is the global file of
-      // the npm installation and keeps user trust, without variable expansion.
-      const choosers = userIsAccountFile ? [projectEntries] : [projectEntries, userEntries];
-      const chosen = choosers.some((entries) =>
+      // `prefix` (npm logs an error for a project prefix but still applies it), and so can a
+      // user file that the project .npmrc chose with `userconfig`, unless that user file is
+      // your own ~/.npmrc. Such a global file, or one inside the project, is repository content
+      // and follows the project rules. Otherwise it is the global file of the npm installation
+      // and keeps user trust, without variable expansion.
+      /** @param {Record<string, unknown>} entries @param {Set<string>} names */
+      const setsOneOf = (entries, names) =>
         Object.keys(entries).some((key) =>
-          GLOBAL_CONFIG_CHOOSERS.has(normalizedKey(expandEnvironment(key, env).text)),
-        ),
+          names.has(normalizedKey(expandEnvironment(key, env).text)),
+        );
+      const userChosenByProject =
+        !userIsAccountFile && setsOneOf(projectEntries, new Set(["userconfig"]));
+      const chosen = [projectEntries, ...(userChosenByProject ? [userEntries] : [])].some(
+        (entries) => setsOneOf(entries, GLOBAL_CONFIG_CHOOSERS),
       );
-      const fromProject = relative(dirname(projectPath), globalPath);
-      const inProject = !fromProject.startsWith("..") && !isAbsolute(fromProject);
+      // Real paths, so a symbolic link to the project, or /var and /private/var on macOS, cannot
+      // place a project file outside it.
+      const fromProject = relative(
+        await realPath(dirname(projectPath)),
+        await realPath(globalPath),
+      );
+      const inProject = !fromProject.startsWith(`..${sep}`) && !isAbsolute(fromProject);
       globalLayer = {
-        name: "global npmrc",
+        name: GLOBAL_LAYER,
         entries: await readNpmrc(globalPath, warnings),
         trusted: !chosen && !inProject,
         expandsVariables: false,
@@ -321,9 +342,11 @@ export async function loadNpmRegistryOptions({
     }
     if (rawValue.includes("${") && !(layer.expandsVariables ?? trusted)) {
       warnings.push(
-        trusted
-          ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own ${layer.tool === "Yarn" ? ".yarnrc.yml" : ".npmrc"} in your account's home folder and in environment variables, never in a file that a variable or a project file names.`
-          : `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`,
+        trusted && name === GLOBAL_LAYER
+          ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, not in npm's global configuration file. Write the proxy URL without a variable, or set it in your own .npmrc or an environment variable.`
+          : trusted
+            ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own ${layer.tool === "Yarn" ? ".yarnrc.yml" : ".npmrc"} in your account's home folder and in environment variables, never in a file that a variable or a project file names.`
+            : `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`,
       );
       return;
     }
@@ -369,15 +392,16 @@ export async function loadNpmRegistryOptions({
    * `fileKey`. The layer applied a value under the same key itself. A key that npm expands to
    * `key`, such as `registry${UNSET?}`, is one npm uses but the layer did not read, so it is
    * applied here under the layer's rules: a variable in a registry value stops the command, and
-   * a project file must use https. Another spelling, such as https_proxy, npm does not use; a
-   * proxy under it from a project file is reported as ignored.
+   * a project file must use https. Another spelling, such as https_proxy, and a list that is
+   * not noproxy, the layer did not apply; a proxy under it from a project file is reported as
+   * ignored.
    * @param {ConfigLayer} layer @param {string} key @param {string} fileKey
    */
   const applyExportedCopy = (layer, key, fileKey) => {
-    if (fileKey === key) return;
-    if (expandEnvironment(fileKey, env).text === key) {
-      const fileValue = entryValue(key, layer.entries[fileKey]);
-      if (fileValue !== undefined) applyEntry(layer, key, printable(fileKey), fileValue);
+    const fileValue = entryValue(key, layer.entries[fileKey]);
+    if (fileValue !== undefined && fileKey === key) return;
+    if (fileValue !== undefined && expandEnvironment(fileKey, env).text === key) {
+      applyEntry(layer, key, printable(fileKey), fileValue);
       return;
     }
     if (!layer.trusted && PROXY_URL_KEYS.has(key)) {
@@ -406,15 +430,32 @@ export async function loadNpmRegistryOptions({
         // spelling, such as https_proxy, under the same variable, so the comparison normalizes
         // the file's keys as the variable names are normalized. The file's value is expanded
         // only for this comparison, never used. The user layer and the global layer applied, or
-        // ignored, a value equal to their own (#1186); a different value was set by the caller.
+        // ignored, a value equal to their own (#1186). A value that matches no file came from
+        // somewhere Calavera does not read, such as the caller's environment or an npm
+        // command-line flag, so it is trusted as environment.
         const match = exportingLayers
           .map((fileLayer) => ({
             fileLayer,
-            fileKey: exportedFrom(fileLayer.entries, key, rawValue, env),
+            fileKey: exportedFrom(
+              fileLayer.entries,
+              key,
+              rawValue,
+              env,
+              fileLayer.expandsVariables ?? fileLayer.trusted,
+            ),
           }))
           .find(({ fileKey }) => fileKey !== undefined);
         if (match?.fileKey !== undefined) {
           applyExportedCopy(match.fileLayer, key, match.fileKey);
+          continue;
+        }
+        // npm expands every value it exports, so a variable left in one came from a list or
+        // another value that npm did not expand. A registry value with a variable stops the
+        // command in applyEntry.
+        if (!isRegistryKey(key) && rawValue.includes("${")) {
+          warnings.push(
+            `Ignored ${printable(key)} in the environment: npm expands the variables it exports, so a variable left in this value comes from a file that npm did not expand, and Calavera does not expand it either.`,
+          );
           continue;
         }
       }
@@ -527,6 +568,14 @@ function registryBypassesProxy(registryUrl, configured, env) {
 }
 
 /**
+ * The real path of `path`, or `path` itself when it does not exist.
+ * @param {string} path
+ */
+async function realPath(path) {
+  return realpath(path).catch(() => path);
+}
+
+/**
  * The text of an entry, or undefined when it is not text. npm accepts noproxy as a list
  * (noproxy[]=host) and joins it with commas.
  * @param {string} key
@@ -541,7 +590,8 @@ function entryValue(key, entry) {
  * The global config file npm read: the file npm_config_globalconfig names, which npm exports
  * whether a setting chose it or it is the default `<prefix>/etc/npmrc`, and otherwise
  * `etc/npmrc` in npm_config_global_prefix (the `globalconfig` default in @npmcli/config
- * lib/index.js, and `setEnvs`). Relative paths are resolved from `localPrefix`.
+ * lib/index.js, and `setEnvs`). npm exports both as absolute paths; a relative one, which only a
+ * hand-made environment holds, is resolved from `localPrefix`.
  * @param {NodeJS.ProcessEnv} env
  * @param {string} localPrefix
  */
