@@ -18,6 +18,8 @@ const packageJson = JSON.parse(await readFile(new URL("../package.json", import.
 const current = packageJson.version;
 const SCHEMA = "https://opencode.ai/config.json";
 const PATH = "opencode.json";
+const README_POINTER =
+  "The OpenCode example in the MCP Server section of Calavera's README shows the entry: https://github.com/schalkneethling/create-project-calavera#mcp-server";
 
 /** @param {string} version @param {string} [runner] */
 const command = (version, runner = "npx") => [
@@ -348,15 +350,13 @@ for (const [label, text, sentences] of [
   [
     "an entry under mcp",
     `{\n  // mine\n  "mcp": { "calavera": ${JSON.stringify(v1Entry("6.2.1"))} }\n}\n`,
-    [
-      "Move the calavera entry under mcp.servers yourself, as the setup notes in .agents/calavera/mcp.md show, and remove enabled.",
-    ],
+    ["Move the calavera entry under mcp.servers yourself and remove enabled."],
   ],
   [
     "an entry under mcp.servers",
     `{ "mcp": { "servers": { "calavera": ${JSON.stringify(v2Entry("6.2.1"))}, }, }, }\n`,
     [
-      "Calavera does not update the version its calavera entry pins in a file with comments. To update it, change the create-project-calavera@<version> in the entry's command to the version the setup notes in .agents/calavera/mcp.md show.",
+      "Calavera does not update the version its calavera entry pins in a file with comments. To update it, change the create-project-calavera@<version> in the entry's command to the version of Calavera you run --init with.",
     ],
   ],
   [
@@ -364,7 +364,7 @@ for (const [label, text, sentences] of [
     `{\n  /* both */\n  "mcp": {\n    "servers": { "calavera": ${JSON.stringify(v2Entry("6.2.1"))} },\n    "calavera": ${JSON.stringify(v1Entry("6.2.1"))}\n  }\n}\n`,
     [
       "Calavera does not update the version its calavera entry pins in a file with comments.",
-      "Move the calavera entry under mcp.servers yourself,",
+      "Move the calavera entry under mcp.servers yourself and remove enabled.",
     ],
   ],
 ]) {
@@ -382,6 +382,11 @@ for (const [label, text, sentences] of [
         assert.ok(at !== -1 && at >= from, `${sentence} in order in ${reason}`);
         from = at + 1;
       }
+      // A kept file gets no setup notes, so the remedy points at Calavera's README, which always
+      // exists, and names it once, after every location (owner decision of 2026-11-24 on #1204).
+      assert.ok(reason.endsWith(` ${README_POINTER}`), reason);
+      assert.equal(reason.split(README_POINTER).length, 2, reason);
+      assert.doesNotMatch(reason, /\.agents\/calavera\/mcp\.md/);
     });
   });
 }

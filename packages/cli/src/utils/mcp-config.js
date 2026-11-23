@@ -824,9 +824,17 @@ const COMMENTS = "has comments or trailing commas, which Calavera would lose by 
  */
 function commentedEntrySentence(location) {
   return location.name === "mcp"
-    ? "Move the calavera entry under mcp.servers yourself, as the setup notes in .agents/calavera/mcp.md show, and remove enabled."
-    : "Calavera does not update the version its calavera entry pins in a file with comments. To update it, change the create-project-calavera@<version> in the entry's command to the version the setup notes in .agents/calavera/mcp.md show.";
+    ? "Move the calavera entry under mcp.servers yourself and remove enabled."
+    : "Calavera does not update the version its calavera entry pins in a file with comments. To update it, change the create-project-calavera@<version> in the entry's command to the version of Calavera you run --init with.";
 }
+
+/**
+ * Where a kept `opencode.json` with comments finds Calavera's entry. A run that keeps the file
+ * writes no setup notes, so the remedy points at Calavera's README, which always exists (owner
+ * decision of 2026-11-24 on #1204).
+ */
+const README_OPENCODE_POINTER =
+  "The OpenCode example in the MCP Server section of Calavera's README shows the entry: https://github.com/schalkneethling/create-project-calavera#mcp-server";
 
 /**
  * The text of `opencode.json` read as JSON with comments (JSONC), which OpenCode's schema allows,
@@ -917,6 +925,7 @@ export async function writeOpenCodeMcpConfig(
     return kept([
       `${targetPath} ${COMMENTS} it was left unchanged.`,
       ...found.map(({ location }) => commentedEntrySentence(location)),
+      README_OPENCODE_POINTER,
     ]);
   }
 

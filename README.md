@@ -837,7 +837,9 @@ OpenCode's migration guide says not to point OpenCode 1.x at files in the
 `mcp.servers` layout. When `opencode.json` holds the `calavera` entry that an
 earlier Calavera release wrote directly under `mcp`, `--init` moves it to
 `mcp.servers`; an entry you edited stays as it is, and `--init` says how to move
-it yourself. When the `opencode` on your `PATH` reports a version older than 2,
+it yourself. `--init` never rewrites an `opencode.json` with comments or
+trailing commas: move or update its `calavera` entry yourself to match the
+example above. When the `opencode` on your `PATH` reports a version older than 2,
 `--init` warns before it writes, but it writes the OpenCode 2 layout either way.
 
 Project-local MCP servers run from the project root. Matching the project
