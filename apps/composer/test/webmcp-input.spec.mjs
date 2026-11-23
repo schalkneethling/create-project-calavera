@@ -11,7 +11,11 @@ test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     window.webMcpTools = new Map();
     Object.defineProperty(document, "modelContext", {
-      value: { registerTool: (tool) => window.webMcpTools.set(tool.name, tool) },
+      value: {
+        registerTool: async (tool) => {
+          window.webMcpTools.set(tool.name, tool);
+        },
+      },
     });
     // download_recipe saves through a link click; record it instead of saving a file.
     window.downloads = 0;

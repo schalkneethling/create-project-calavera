@@ -56,7 +56,7 @@ test("the Composer registers nothing on navigator.modelContext, which no current
   expect(await page.evaluate(() => window.registeredWebMcpToolNames)).toEqual([]);
 });
 
-test("a rejected registration hides the banner and leaves no unhandled rejection", async ({
+test("every rejected registration is logged by name, the banner stays hidden, and no rejection is unhandled", async ({
   page,
 }) => {
   const pageErrors = collectPageErrors(page);
@@ -77,8 +77,42 @@ test("a rejected registration hides the banner and leaves no unhandled rejection
   await page.goto("/");
 
   await expect
-    .poll(() => consoleMessages.some((text) => text.includes("WebMCP tool registration failed.")))
-    .toBe(true);
+    .poll(() => consoleMessages.filter((text) => text.startsWith("WebMCP did not register ")))
+    .toHaveLength(12);
+  expect(
+    consoleMessages.some((text) => text.startsWith("WebMCP did not register list_profiles. ")),
+  ).toBe(true);
   await expect(page.locator("#webmcp-banner")).toBeHidden();
   expect(pageErrors).toEqual([]);
+});
+
+test("one rejected registration does not stop the others", async ({ page }) => {
+  const consoleMessages = [];
+  page.on("console", (message) => consoleMessages.push(message.text()));
+  await page.addInitScript(() => {
+    window.registeredWebMcpToolNames = [];
+    Object.defineProperty(document, "modelContext", {
+      value: {
+        registerTool: async ({ name }) => {
+          if (name === "compose_recipe") {
+            throw new DOMException(
+              "A tool with this name is already registered.",
+              "InvalidStateError",
+            );
+          }
+          window.registeredWebMcpToolNames.push(name);
+        },
+      },
+    });
+  });
+  await page.goto("/");
+
+  await expect(page.locator("#webmcp-banner")).toBeVisible();
+  const registered = await page.evaluate(() => window.registeredWebMcpToolNames);
+  expect(registered).toHaveLength(11);
+  expect(registered).not.toContain("compose_recipe");
+  expect(registered).toContain("download_recipe");
+  expect(
+    consoleMessages.some((text) => text.startsWith("WebMCP did not register compose_recipe. ")),
+  ).toBe(true);
 });
