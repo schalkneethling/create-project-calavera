@@ -379,7 +379,7 @@ test("an MCP client accepts the structured result and the pending-transaction re
       2,
     );
 
-    await pendingJournal([{ target: "created.md", hadTarget: false, backup: false }]);
+    await pendingJournal([{ target: ".agents/skills/created", hadTarget: false, backup: false }]);
     const pending = await call();
     assert.equal(pending.isError, undefined, JSON.stringify(pending.content));
     assert.equal(
@@ -443,16 +443,16 @@ test("the pending-transaction report names exactly the files the rollback restor
     );
     await pendingJournal([
       // Restored from its backup.
-      { target: "restored.md", hadTarget: true, backup: true },
+      { target: ".agents/skills/restored", hadTarget: true, backup: true },
       // Existed, but its backup was never made, so the rollback leaves it alone.
-      { target: "untouched.md", hadTarget: true, backup: false },
+      { target: ".agents/skills/untouched", hadTarget: true, backup: false },
       // New in the stopped operation, so the rollback removes it.
-      { target: "created.md", hadTarget: false, backup: false },
+      { target: ".agents/skills/created", hadTarget: false, backup: false },
     ]);
 
     const report = await callMcpTool("artifact_status", {});
 
-    assert.deepEqual(report.rollbackFiles, ["restored.md", "created.md"]);
+    assert.deepEqual(report.rollbackFiles, [".agents/skills/restored", ".agents/skills/created"]);
     assert.match(String(report.remedy), /the files in rollbackFiles first, then run: pnpm /);
   });
 });
@@ -503,7 +503,7 @@ test("the pending-transaction remedy keeps the caller's config path", async () =
       "recipes/calavera.json",
       `${JSON.stringify(buildRecipe("minimal", [], "npm"), null, 2)}\n`,
     );
-    await pendingJournal([{ target: "created.md", hadTarget: false, backup: false }]);
+    await pendingJournal([{ target: ".agents/skills/created", hadTarget: false, backup: false }]);
 
     const report = await callMcpTool("artifact_status", { config: "recipes/calavera.json" });
 
@@ -514,17 +514,24 @@ test("the pending-transaction remedy keeps the caller's config path", async () =
   });
 });
 
-test("rollbackFiles lists each file once and leaves out a target that is the project root", async () => {
-  await inProject("calavera-mcp-status-pending-duplicates-", async () => {
-    await mkdir(".calavera");
-    await pendingJournal([
-      { target: "created.md", hadTarget: false, backup: false },
-      { target: "created.md", hadTarget: false, backup: false },
-      { target: ".", hadTarget: false, backup: false },
-    ]);
+// #1193: the status tool reads the journal through the rollback's checks, so a journal whose target
+// is the project root, any other path a transaction never writes, or a path another target also
+// names, lists no files.
+for (const [name, targets] of [
+  ["targets the project root", [".agents/skills/created", "."]],
+  ["names a target twice", [".agents/skills/created", ".agents/skills/created"]],
+]) {
+  test(`rollbackFiles is null for a journal that ${name}`, async () => {
+    await inProject("calavera-mcp-status-pending-refused-", async () => {
+      await mkdir(".calavera");
+      await pendingJournal(targets.map((target) => ({ target, hadTarget: false, backup: false })));
+      const before = await snapshotDirectory();
 
-    const report = await callMcpTool("artifact_status", {});
+      const report = await callMcpTool("artifact_status", {});
 
-    assert.deepEqual(report.rollbackFiles, ["created.md"]);
+      assert.equal(report.rollbackFiles, null);
+      assert.match(String(report.remedy), /or the journal fails the rollback's checks/);
+      assert.deepEqual(await snapshotDirectory(), before);
+    });
   });
-});
+}

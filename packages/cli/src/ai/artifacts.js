@@ -329,7 +329,7 @@ function inferAiSourceName(type, sourcePath, index) {
  */
 function aiInstallPath(type, name, target) {
   if (type === "skill") {
-    return join(".agents", "skills", name);
+    return join(AI_OUTPUT_FOLDERS.skill, name);
   }
 
   if (!target) {
@@ -337,15 +337,29 @@ function aiInstallPath(type, name, target) {
   }
 
   if (type === "hook") {
-    return join(".agents", "hooks", target, `${name}.mjs`);
+    return join(AI_OUTPUT_FOLDERS.hook, target, `${name}.mjs`);
   }
 
   if (target === CODEX_AGENT_TARGET) {
-    return join(".codex", "agents", `${name}.toml`);
+    return join(AI_OUTPUT_FOLDERS.codexAgent, `${name}.toml`);
   }
 
-  return join(".agents", "agents", target, `${name}.md`);
+  return join(AI_OUTPUT_FOLDERS.agent, target, `${name}.md`);
 }
+
+/** The project folders `aiInstallPath` installs into; every AI artifact output lies below one. */
+const AI_OUTPUT_FOLDERS = Object.freeze({
+  skill: ".agents/skills",
+  hook: ".agents/hooks",
+  agent: ".agents/agents",
+  codexAgent: ".codex/agents",
+});
+
+/**
+ * The project folders AI artifact outputs, and so the artifact transaction's AI targets, lie
+ * strictly below (#1193).
+ */
+export const AI_ARTIFACT_OUTPUT_FOLDERS = Object.freeze(Object.values(AI_OUTPUT_FOLDERS));
 
 /**
  * @param {string} hookPath

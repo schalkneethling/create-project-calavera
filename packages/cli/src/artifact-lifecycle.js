@@ -1,6 +1,16 @@
 // @ts-check
-import { cp, mkdir, mkdtemp, readFile, rename, rm, rmdir, writeFile } from "node:fs/promises";
-import { dirname, join, relative, resolve } from "node:path";
+import {
+  cp,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  rename,
+  rm,
+  rmdir,
+  writeFile,
+} from "node:fs/promises";
+import nodePath, { dirname, join, relative, resolve, sep } from "node:path";
 import { tmpdir } from "node:os";
 
 import { artifactForId, artifactForLegacyPath } from "@schalkneethling/calavera-artifact-core";
@@ -12,6 +22,7 @@ import {
 import packageJson from "../package.json" with { type: "json" };
 
 import {
+  AI_ARTIFACT_OUTPUT_FOLDERS,
   aiArtifactOutputPaths,
   buildAiApplyResult,
   CODE_RABBIT_CONFIG_PATH,
@@ -289,7 +300,7 @@ async function pendingTransactionReport(config) {
   const command = artifactCommand(recipe, config, ["status"]);
   let files;
   if (rollbackFiles === null) {
-    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, so it cannot list the files the rollback would restore or remove. Save any edits to the files the stopped operation was changing, then run`;
+    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, or the journal fails the rollback's checks, so it cannot list the files the rollback would restore or remove. Save any edits to the files the stopped operation was changing, then run`;
   } else if (rollbackFiles.length === 0) {
     files = "The rollback restores or removes no file, so run";
   } else {
@@ -326,17 +337,15 @@ async function pendingRollbackFiles() {
   } catch {
     return null;
   }
-  // A target the journal names twice is listed once. A target that is the project root itself has
-  // an empty project path, which names no file, so it is left out; #1193 makes the journal check
-  // refuse such a journal.
-  const replaced = new Set();
+  // The journal check refuses a target that is the project root or that another target equals
+  // (#1193), so every target has its own, non-empty project path.
+  const replaced = [];
   for (const operation of operations) {
     if ((await fileExists(operation.backup)) || !operation.hadTarget) {
-      const path = relative(resolve("."), operation.target);
-      if (path !== "") replaced.add(path);
+      replaced.push(relative(resolve("."), operation.target));
     }
   }
-  return [...replaced];
+  return replaced;
 }
 
 /**
@@ -467,7 +476,14 @@ async function installUnlockedArtifacts(
   }
   const existedBefore = new Set();
   for (const path of [...createdDirectories, ...outputParents]) {
-    if (await fileExists(path)) existedBefore.add(path);
+    // `lstat`, not `fileExists`, so a symbolic link whose target is missing counts as existing,
+    // and the cleanup below never removes a link the person made (#1193).
+    try {
+      await lstat(path);
+      existedBefore.add(path);
+    } catch {
+      // Missing, so this attempt may create it and the cleanup may remove it.
+    }
   }
   let preflightFailed = false;
 
@@ -1110,6 +1126,8 @@ async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun
     loadFormatter,
   );
   if (dryRun) return [];
+  // #1193: the state, the journal, and the staging folder all lie in `.calavera`.
+  await refuseLinkedArtifactFolders([TRANSACTION_ROOT]);
   const stagingRoot = resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
   const stagedState = join(stagingRoot, "records", "state.json");
   const stagedGitignore = join(stagingRoot, "records", "gitignore");
@@ -1177,6 +1195,17 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
   // `normalizeSelections` maps the recipe's `ai` items one to one, so an index marks both.
   const staged = selections.map(({ id }) => requestedIds.has(id) || lockedById.has(id));
   const command = updating ? "artifacts update" : "artifacts install";
+  const stagedRecipe = Array.isArray(recipe.ai)
+    ? {
+        ...recipe,
+        ai: recipe.ai.filter(
+          (/** @type {unknown} */ _item, /** @type {number} */ index) => staged[index],
+        ),
+      }
+    : recipe;
+  const stagedSelections = selections.filter((_selection, index) => staged[index]);
+  // #1193: a linked folder stops the command before the cache block below writes anything.
+  await refuseLinkedArtifactFolders(artifactInstallFolders(stagedRecipe, stagedSelections));
   // #960: the cache block is planned and committed before anything resolves, so an edited block
   // stops the command before the registry fills the cache, and a cache the registry fills is
   // ignored even when the install fails afterwards. The install then reads the recorded block
@@ -1194,15 +1223,8 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
     options.dryRun,
   );
   const result = await stageArtifactInstall(
-    Array.isArray(recipe.ai)
-      ? {
-          ...recipe,
-          ai: recipe.ai.filter(
-            (/** @type {unknown} */ _item, /** @type {number} */ index) => staged[index],
-          ),
-        }
-      : recipe,
-    selections.filter((_selection, index) => staged[index]),
+    stagedRecipe,
+    stagedSelections,
     {
       lockedById,
       advanceIds: updating ? requestedIds : new Set(),
@@ -1256,9 +1278,10 @@ async function installArtifacts(options, updating, registry, loadFormatter) {
  */
 async function stageArtifactInstall(recipe, selections, plan, registry) {
   const { lockedById, advanceIds, artifactTag, dryRun, loadFormatter } = plan;
-  // A project whose formatter cannot load stops the dry run and the install alike, before
-  // anything is resolved or staged.
+  // A project whose formatter cannot load, or that links a folder the install writes into
+  // (#1193), stops the dry run and the install alike, before anything is resolved or staged.
   await loadFormatter();
+  await refuseLinkedArtifactFolders(artifactInstallFolders(recipe, selections));
   const stagingRoot = dryRun
     ? await createTemporaryFolder("calavera-artifact-stage-")
     : resolve(TRANSACTION_ROOT, `${Date.now()}-${process.pid}`);
@@ -1469,12 +1492,65 @@ async function formatRecordText(path, value, loadFormatter) {
 }
 
 /**
+ * The project files an artifact transaction may target (#1193). The two callers of
+ * `commitArtifactTransaction` write them: `commitArtifactCacheBlock` targets `.gitignore` and the
+ * state, and `stageArtifactInstall` the state, the lock, and `.coderabbit.yaml`.
+ */
+const TRANSACTION_TARGET_FILES = Object.freeze([
+  GITIGNORE_PATH,
+  STATE_PATH,
+  LOCK_PATH,
+  CODE_RABBIT_CONFIG_PATH,
+]);
+
+/**
+ * The project folders an artifact transaction may target paths strictly below, never the folder
+ * itself (#1193): `stageArtifactInstall` targets package folders and AI artifact outputs.
+ */
+const TRANSACTION_TARGET_FOLDERS = Object.freeze([PACKAGE_PATH, ...AI_ARTIFACT_OUTPUT_FOLDERS]);
+
+/**
+ * Whether an artifact transaction may target the absolute path `target` in the project at
+ * `projectRoot`: one of `TRANSACTION_TARGET_FILES`, or a path strictly below one of
+ * `TRANSACTION_TARGET_FOLDERS`. The project root, its parent folders, and the target folders
+ * themselves are never targets, and neither is a path with a segment that ends in a space or a
+ * dot. Paths are compared with `relative`, as `isPathInside` does, so a path that differs only in
+ * letter case on Windows counts as the same path.
+ *
+ * @param {string} projectRoot
+ * @param {string} target
+ * @param {Pick<typeof nodePath, "join" | "relative" | "isAbsolute" | "sep">} [pathRules] The
+ *   platform's path rules; tests pass `path.win32`.
+ */
+export function isTransactionTarget(projectRoot, target, pathRules = nodePath) {
+  const samePath = (/** @type {string} */ path) => pathRules.relative(path, target) === "";
+  // Windows strips a trailing space or dot from each path segment, so such a segment would name
+  // another path there; it is refused on every platform, so a journal is read the same way
+  // everywhere. No catalog path ends a segment that way.
+  const segments = pathRules.relative(projectRoot, target).split(pathRules.sep);
+  if (segments.some((segment) => segment.endsWith(" ") || segment.endsWith("."))) return false;
+  return (
+    TRANSACTION_TARGET_FILES.some((file) => samePath(pathRules.join(projectRoot, file))) ||
+    TRANSACTION_TARGET_FOLDERS.some((folder) => {
+      const root = pathRules.join(projectRoot, folder);
+      return !samePath(root) && isPathInside(root, target, pathRules);
+    })
+  );
+}
+
+/**
+ * Ends each message that refuses a journal, because `apply`, every `artifacts` command, and
+ * `eject` recover the journal first and stay blocked until it is gone.
+ */
+const JOURNAL_REFUSAL_REMEDY = `Calavera does not roll this journal back. Restore the files it names by hand if needed, using the backups in ${TRANSACTION_ROOT}, then remove ${TRANSACTION_PATH}.`;
+
+/**
  * Moves each staged path to its target through a journal that
  * `recoverArtifactTransaction` rolls back. Refuses, before anything moves, a
  * transaction root outside `.calavera/.transactions`, and an operation whose
  * staged path is outside the transaction root or missing, whose target is
- * outside the project, or whose target an earlier operation already names,
- * each with its own message.
+ * outside the project or not a path a transaction may target, or whose target
+ * an earlier operation already names, each with its own message.
  *
  * @param {string} transactionRoot
  * @param {{ staged: string, target: string }[]} operations
@@ -1503,11 +1579,25 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
         `Artifact transaction operation ${index} targets ${target}, which is outside the project ${projectRoot}.`,
       );
     }
+    if (!isTransactionTarget(projectRoot, target)) {
+      throw new Error(
+        `Artifact transaction operation ${index} targets ${target}, which is not a path an artifact transaction writes.`,
+      );
+    }
     const earlier = seenTargets.get(target);
     if (earlier !== undefined) {
       throw new Error(
         `Artifact transaction operations ${earlier} and ${index} both target ${target}.`,
       );
+    }
+    // Recovery refuses nested targets, and targets that differ only in letter case or Unicode
+    // normalization, so a commit that wrote them could never be rolled back.
+    for (const [other, otherIndex] of seenTargets) {
+      if (pathsOverlap(other, target)) {
+        throw new Error(
+          `Artifact transaction operations ${otherIndex} and ${index} target ${other} and ${target}, the same path or one inside the other.`,
+        );
+      }
     }
     if (!(await fileExists(staged))) {
       throw new Error(
@@ -1522,6 +1612,10 @@ export async function commitArtifactTransaction(transactionRoot, operations) {
       hadTarget: await fileExists(target),
     });
   }
+
+  const linked = await linkedJournalPath(projectRoot, normalizedRoot, journalOperations);
+  if (linked?.error) throw linked.error;
+  if (linked?.link) throw new Error(linkedFolderRefusal(linked.link));
 
   await writeAtomicJson(TRANSACTION_PATH, {
     schemaVersion: 1,
@@ -1551,8 +1645,49 @@ export async function recoverArtifactTransaction(options = {}) {
     throw new Error("A pending artifact transaction requires recovery before a dry run.");
   }
   const { transactionRoot, operations } = await readTransactionJournal();
+  await rollBackArtifactOperations(resolve("."), operations);
+  await rm(TRANSACTION_PATH, { force: true });
+  await rm(transactionRoot, { recursive: true, force: true });
+}
 
-  for (const operation of operations.reverse()) {
+/**
+ * Rolls back the operations of a journal that `readTransactionJournal` accepted, last first: each
+ * target with a backup gets its backup back, and each target that did not exist before is
+ * removed. Before each step, it stops when a folder above the target is a symbolic link, with a
+ * message that says which operations it already rolled back (#1193).
+ *
+ * @param {string} projectRoot
+ * @param {{ target: string, backup: string, hadTarget: boolean }[]} operations
+ */
+export async function rollBackArtifactOperations(projectRoot, operations) {
+  for (const [index, operation] of [...operations.entries()].reverse()) {
+    // An earlier step may have moved a backup that is a symbolic link into place, for example on
+    // a file system that treats two spellings the journal checks cannot tell apart as one name,
+    // so the folders are checked again before each step.
+    let link;
+    try {
+      link = await linkedFolder(projectRoot, dirname(operation.target));
+    } catch (error) {
+      throw new Error(
+        rollbackStoppedMessage(
+          index,
+          operations.length,
+          uncheckedFolders(projectRoot, operation.target, error),
+        ),
+        { cause: error },
+      );
+    }
+    if (link !== null) {
+      throw new Error(
+        rollbackStoppedMessage(
+          index,
+          operations.length,
+          `${relative(projectRoot, operation.target)} lies below the symbolic link ${relative(projectRoot, link)}`,
+        ),
+      );
+    }
+    // A step that fails throws its own error unchanged: callers report it as the rollback failure
+    // and tell the person to retry the rollback.
     if (await fileExists(operation.backup)) {
       await rm(operation.target, { recursive: true, force: true });
       await mkdir(dirname(operation.target), { recursive: true });
@@ -1561,14 +1696,36 @@ export async function recoverArtifactTransaction(options = {}) {
       await rm(operation.target, { recursive: true, force: true });
     }
   }
-  await rm(TRANSACTION_PATH, { force: true });
-  await rm(transactionRoot, { recursive: true, force: true });
 }
 
 /**
- * Reads the pending artifact transaction's journal without writing, and checks that every path it
- * names stays in its workspace: staged files and backups in the transaction root, targets in the
- * project. Throws on a journal that fails a check.
+ * The message for a rollback that stopped before operation `index` of `count`, last first, so
+ * operations after `index` were rolled back and operations up to `index` were not.
+ *
+ * @param {number} index
+ * @param {number} count
+ * @param {string} reason
+ */
+function rollbackStoppedMessage(index, count, reason) {
+  const last = count - 1;
+  let done = "It rolled back no operation yet.";
+  if (index === last - 1) done = `It already rolled back operation ${last}.`;
+  if (index < last - 1) done = `It already rolled back operations ${index + 1} to ${last}.`;
+  return `The artifact transaction rollback stopped before operation ${index}, because ${reason}. ${done} Calavera does not roll the rest of this journal back. A symbolic link on the way may be one the rollback moved into place from a backup, so replace every link on the paths of the targets of operations 0 to ${index} with a real folder before you restore those files by hand from the backups in ${TRANSACTION_ROOT}, then remove ${TRANSACTION_PATH}.`;
+}
+
+/**
+ * Reads the pending artifact transaction's journal without writing, and checks every path it
+ * names: staged files and backups stay in the transaction root, and each target is a path a
+ * transaction may target (`isTransactionTarget`), so never the project root, a parent folder of
+ * it, or a file outside the paths a transaction writes (#1193). No folder between the project root
+ * and the transaction root, a backup, or a target may be a symbolic link, because the rollback
+ * would then remove or move files outside the project, and no target may equal or lie inside
+ * another. Throws on a journal that fails a check; a message names operations by their index and
+ * paths by their project path, and quotes nothing else from the journal. The checks run before the
+ * rollback moves anything, and `rollBackArtifactOperations` checks for a symbolic link again before
+ * each step; a process that replaces a folder with a link between that check and the step's `rm`
+ * or `rename` is not detected.
  */
 async function readTransactionJournal() {
   const journal = await readJson(TRANSACTION_PATH);
@@ -1584,7 +1741,7 @@ async function readTransactionJournal() {
   if (!isPathInside(resolve(TRANSACTION_ROOT), transactionRoot)) {
     throw new Error("Invalid artifact transaction root.");
   }
-  const operations = journal.operations.map((operation) => {
+  const operations = journal.operations.map((operation, index) => {
     if (
       !operation ||
       typeof operation !== "object" ||
@@ -1605,7 +1762,189 @@ async function readTransactionJournal() {
     ) {
       throw new Error("Artifact transaction journal path escapes its workspace.");
     }
+    if (!isTransactionTarget(projectRoot, target)) {
+      const path = relative(projectRoot, target);
+      throw new Error(
+        `Artifact transaction journal operation ${index} targets ${path === "" ? "the project root" : path}, which is not a path an artifact transaction writes. ${JOURNAL_REFUSAL_REMEDY}`,
+      );
+    }
     return { staged, target, backup, hadTarget: operation.hadTarget };
   });
+  // A target equal to or inside another one is refused: the rollback could otherwise move a
+  // backup, which may be a symbolic link, into a folder that a later step removes files through.
+  for (const [index, { target }] of operations.entries()) {
+    for (const [earlier, other] of operations.slice(0, index).entries()) {
+      if (pathsOverlap(other.target, target)) {
+        throw new Error(
+          `Artifact transaction journal operations ${earlier} and ${index} target ${relative(projectRoot, other.target)} and ${relative(projectRoot, target)}, the same path or one inside the other. ${JOURNAL_REFUSAL_REMEDY}`,
+        );
+      }
+    }
+  }
+  const linked = await linkedJournalPath(projectRoot, transactionRoot, operations);
+  if (linked?.error) {
+    const subject =
+      linked.index === null
+        ? "the artifact transaction root"
+        : `artifact transaction journal operation ${linked.index}`;
+    throw new Error(
+      `Calavera cannot check ${subject}, because ${uncheckedFolders(projectRoot, linked.path, linked.error)}. ${JOURNAL_REFUSAL_REMEDY}`,
+      { cause: linked.error },
+    );
+  }
+  if (linked?.link) {
+    throw new Error(journalLinkRefusal(projectRoot, linked.path, linked.link));
+  }
   return { transactionRoot, operations };
+}
+
+/**
+ * Why the folders above `path` could not be checked for a symbolic link, naming the error code
+ * only, so no text from the file system or the journal beyond the path reaches the message.
+ *
+ * @param {string} projectRoot
+ * @param {string} path
+ * @param {unknown} error
+ */
+function uncheckedFolders(projectRoot, path, error) {
+  const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? "an error";
+  return `checking the folders above ${relative(projectRoot, path)} for a symbolic link failed with ${code}`;
+}
+
+/**
+ * The message that refuses a journal whose `path` lies below the symbolic link `link`.
+ *
+ * @param {string} projectRoot
+ * @param {string} path
+ * @param {string} link
+ */
+function journalLinkRefusal(projectRoot, path, link) {
+  return `Artifact transaction journal path ${relative(projectRoot, path)} lies below the symbolic link ${relative(projectRoot, link)}. ${JOURNAL_REFUSAL_REMEDY}`;
+}
+
+/**
+ * Whether `a` and `b` are the same path or one lies inside the other on a file system that
+ * ignores letter case and Unicode normalization, such as the default APFS on macOS. Both paths
+ * are compared folded on every platform, so a journal is refused the same way wherever it is
+ * read (#1193): decomposed, lower-cased, upper-cased, and lower-cased again, then composed. That
+ * merges the case pairs APFS merges and lower-casing alone misses, such as `ß`, `ẞ`, and `ss`,
+ * final and other sigma, and ligatures. It also merges dotless `ı` with `i`, which APFS keeps
+ * apart, so such a pair is refused although it would be safe. A fold can still miss aliases, such
+ * as Windows short names, so the rollback also checks for a symbolic link before each step.
+ *
+ * @param {string} a
+ * @param {string} b
+ */
+function pathsOverlap(a, b) {
+  const fold = (/** @type {string} */ path) =>
+    path.normalize("NFD").toLowerCase().toUpperCase().toLowerCase().normalize("NFC");
+  const foldedA = fold(a);
+  const foldedB = fold(b);
+  return isPathInside(foldedA, foldedB) || isPathInside(foldedB, foldedA);
+}
+
+/**
+ * The first path of an artifact transaction that lies below a symbolic link, with that link, or
+ * whose folders cannot be checked, with that error, together with the index of its operation
+ * (null for the transaction root), or null when every path is fine. The paths are the transaction root, each target, and each backup; the path
+ * itself is not checked, because removing or replacing a symbolic link changes only the link. The
+ * commit and the rollback both call it, so the commit never writes a journal the rollback refuses
+ * (#1193, owner decision of 2026-11-23).
+ *
+ * @param {string} projectRoot
+ * @param {string} transactionRoot
+ * @param {{ target: string, backup: string }[]} operations
+ * @returns {Promise<{ path: string, index: number | null, link: string | null, error: unknown } | null>}
+ */
+async function linkedJournalPath(projectRoot, transactionRoot, operations) {
+  for (const { path, index } of [
+    { path: transactionRoot, index: null },
+    ...operations.flatMap(({ target, backup }, index) => [
+      { path: target, index },
+      { path: backup, index },
+    ]),
+  ]) {
+    let link;
+    try {
+      link = await linkedFolder(projectRoot, dirname(path));
+    } catch (error) {
+      return { path, index, link: null, error };
+    }
+    if (link !== null) return { path, index, link, error: null };
+  }
+  return null;
+}
+
+/**
+ * The message that refuses to write artifacts through the symbolic link at the absolute path
+ * `link` (#1193, owner decision of 2026-11-23).
+ *
+ * @param {string} link
+ */
+function linkedFolderRefusal(link) {
+  const path = relative(resolve("."), link);
+  return `Calavera does not write artifacts through the symbolic link ${path}. Replace ${path} with a real folder, then run the command again.`;
+}
+
+/**
+ * Refuses, before an install, an update, or a cache block writes anything, when a folder that an
+ * artifact transaction stages into or targets below is a symbolic link or lies below one.
+ * `commitArtifactTransaction` refuses the same links again before it moves anything, so this check
+ * only makes the command stop before it writes the cache block, the registry cache, or the staging
+ * folder. The registry cache folder itself is not checked, because no transaction targets it. A
+ * targeted update checks the outputs of every selection it stages again, including those whose
+ * files do not change.
+ *
+ * @param {string[]} folders Project paths of the folders the command writes into.
+ */
+async function refuseLinkedArtifactFolders(folders) {
+  const projectRoot = resolve(".");
+  for (const folder of folders) {
+    const link = await linkedFolder(projectRoot, resolve(folder));
+    if (link !== null) throw new Error(linkedFolderRefusal(link));
+  }
+}
+
+/**
+ * The project folders an artifact transaction that installs the AI items of `recipe` stages into or
+ * targets below: the transaction folder, each selection's package folder, and the folder of each
+ * AI artifact output.
+ *
+ * @param {{ ai?: unknown }} recipe
+ * @param {{ id: string }[]} selections
+ */
+function artifactInstallFolders(recipe, selections) {
+  return [
+    TRANSACTION_ROOT,
+    ...selections.map(({ id }) => join(PACKAGE_PATH, id)),
+    ...resolveAiArtifacts(recipe).flatMap((artifact) =>
+      aiArtifactOutputPaths(artifact).map(dirname),
+    ),
+  ];
+}
+
+/**
+ * The first folder from below `projectRoot` down to `folder`, both included, that is a symbolic
+ * link, or null when none is. Stops at the first folder that does not exist, because nothing below
+ * it exists either. Throws when it cannot check a folder, for example because a file stands where
+ * a folder would be or a folder cannot be read, so the caller stops before it changes anything.
+ *
+ * @param {string} projectRoot
+ * @param {string} folder An absolute path inside `projectRoot`.
+ * @returns {Promise<string | null>}
+ */
+async function linkedFolder(projectRoot, folder) {
+  let current = projectRoot;
+  for (const name of relative(projectRoot, folder).split(sep).filter(Boolean)) {
+    current = join(current, name);
+    let stats;
+    try {
+      stats = await lstat(current);
+    } catch (error) {
+      if (/** @type {NodeJS.ErrnoException} */ (error).code === "ENOENT") return null;
+      throw error;
+    }
+    if (stats.isSymbolicLink()) return current;
+  }
+  return null;
 }
