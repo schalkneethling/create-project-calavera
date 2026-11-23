@@ -270,6 +270,8 @@ The implementation starts from the saved patch, `1089-opencode-v2-and-cursor.pat
 
 The setup notes template for the next release is `6.3.0`, which PR #1200 registered and no release has written yet. The implementation edits that template's OpenCode block rather than adding another template, because only published releases need a template of their own. #1185 merged a major changeset for `create-project-calavera` (PR #1203), so the next release is 7.0.0, and the release lists of the `6.3.0` template and of its epoch name 7.0.0 instead of 6.3.0 (owner decision 1); `earlier-guidance-table.test.mjs` already fails when a published version is in no template.
 
+> **Note (2026-11-23, #1219):** PR #1234 made the release-list change that owner decision 1 asks for, and it also renamed the template's id from `6.3.0` to `7.0.0`. The template's fixtures are now `packages/cli/fixtures/agent-guidance/mcp/7.0.0.*.md`, and its `releases` in `earlier-guidance.js` and `epochs.json` name 7.0.0. The #1204 implementation edits that template's OpenCode block. `earlier-guidance-table.test.mjs` now fails when a template lists an unpublished version other than the one the pending changesets produce (ADR-0017, Amendment 6).
+
 The docs change with the implementation: the README's MCP section and `docs/agent-first-calavera-workflow.md` show the new shape, state the OpenCode 2 requirement, and describe the version warning, and the changeset says what an OpenCode 1.x user sees.
 
 ## Owner decisions

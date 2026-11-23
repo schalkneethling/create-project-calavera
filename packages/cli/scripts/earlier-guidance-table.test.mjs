@@ -251,7 +251,9 @@ test("Given the pending changesets, then the table names no unpublished version 
     assert.deepEqual(
       unexpectedListedVersions(kindEpochs, { previous, version, next }),
       [],
-      `${file}: after ${previous}, the templates may list only ${version} and ${next}, the version the pending changesets produce. Rename any other listed version to ${next}, on main, in fixtures/agent-guidance/epochs.json and src/utils/earlier-guidance.js`,
+      next === version
+        ? `${file}: after ${previous}, the templates may list only ${version}, because no pending changeset releases ${packageJson.name}. Add the changeset for the change that wrote the listed text, or remove the listed version, on main, in fixtures/agent-guidance/epochs.json and src/utils/earlier-guidance.js`
+        : `${file}: after ${previous}, the templates may list only ${version} and ${next}, the version the pending changesets produce. Rename any other listed version to ${next}, on main, in fixtures/agent-guidance/epochs.json and src/utils/earlier-guidance.js`,
     );
   }
 });
@@ -307,8 +309,10 @@ test("Given a pinned version, then normalizePublishedPin normalizes it only when
   assert.equal(normalizePublishedPin(pin("99.0.0"), "99.0.0"), normalized);
   // A listed version newer than this checkout's, such as the upcoming 7.0.0, is not published yet.
   assert.equal(normalizePublishedPin(pin("7.0.0"), "6.2.1"), undefined);
-  // The Version Packages commit for 7.0.0: 6.2.1 is published, and 6.3.0, which #1089 listed as a
-  // guess before a major changeset made the next release 7.0.0, never will be (#1219).
+  // The Version Packages commit for 7.0.0: 7.0.0 is the version written, and 6.2.1 is published.
+  // 6.3.0, which #1089 listed as a guess before a major changeset made the next release 7.0.0,
+  // is no longer listed, so it counts only as an unlisted version. The table test above keeps
+  // such a guess out of the list, which is what stops it counting as an older release (#1219).
   assert.equal(normalizePublishedPin(pin("7.0.0"), "7.0.0"), normalized);
   assert.equal(normalizePublishedPin(pin("6.2.1"), "7.0.0"), normalized);
   assert.equal(normalizePublishedPin(pin("6.3.0"), "7.0.0"), undefined);
