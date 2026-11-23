@@ -76,9 +76,9 @@ export async function variablesFromReferences(paths, hasReference, warnings) {
  * The chains of `.env` files that Bun 1.3.9 may have loaded from `cwd`, each lowest precedence
  * first: `.env`, `.env.<mode>`, `.env.local` (not under `NODE_ENV=test`), and `.env.<mode>.local`.
  * Bun chooses the mode from the caller's NODE_ENV before it loads the files: `production` or
- * `test`, and `development` otherwise. When one of the files defines NODE_ENV, the NODE_ENV in
- * Calavera's environment may have come from it, which leaves Bun's mode at `development`, so that
- * chain is judged too.
+ * `test`, and `development` otherwise. When a file of the mode's chain or of the development chain
+ * defines NODE_ENV, the NODE_ENV in Calavera's environment may have come from it, which leaves
+ * Bun's mode at `development`, so that chain is judged too.
  * @param {string} cwd
  * @param {NodeJS.ProcessEnv} env
  * @param {string[]} warnings
@@ -92,7 +92,8 @@ export async function bunEnvironmentFileChains(cwd, env, warnings) {
   const mode =
     env.NODE_ENV === "production" || env.NODE_ENV === "test" ? env.NODE_ENV : "development";
   if (mode === "development") return [chain(mode)];
-  for (const path of chain(mode)) {
+  // A file of either chain may have set NODE_ENV: a development file, when the caller set none.
+  for (const path of new Set([...chain(mode), ...chain("development")])) {
     const text = await readConfigText(path, "environment file", warnings);
     if (text !== undefined && parseEnvironmentFile(text).has("NODE_ENV")) {
       return [chain(mode), chain("development")];

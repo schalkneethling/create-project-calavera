@@ -508,9 +508,20 @@ export async function loadNpmRegistryOptions({
   // Yarn loaded; every registry and proxy variable is then ignored.
   let unresolvedEnvironmentFiles = false;
   if (launcher === "yarn") {
-    const files = yarnEnvironmentFiles(layers, env.INIT_CWD || startingCwd, env);
+    // Yarn's starting folder is INIT_CWD for its scripts and binaries, but not under `yarn dlx`,
+    // and Calavera may have moved since it started, so every candidate counts.
+    const folders = [...new Set([env.INIT_CWD, startingCwd, cwd].filter((folder) => !!folder))];
+    const files = await yarnEnvironmentFiles({
+      folders: /** @type {string[]} */ (folders),
+      home,
+      env,
+    });
     unresolvedEnvironmentFiles = files.unresolved;
-    addClaims(await variablesFromReferences(files.paths, hasYarnReference, warnings), "Yarn");
+    // Each file counts on its own: a variable that any of them sets from a variable is ignored,
+    // because Calavera cannot tell which of them Yarn loaded, or in which order.
+    for (const path of files.paths) {
+      addClaims(await variablesFromReferences([path], hasYarnReference, warnings), "Yarn");
+    }
   }
   if (runtime === "bun") {
     for (const chain of await bunEnvironmentFileChains(startingCwd, env, warnings)) {
@@ -851,7 +862,7 @@ function registryValue(setting, value, layer, warnings) {
     // passes verification. A person may choose that in their own configuration, but a cloned
     // repository may not choose it for them.
     throw new Error(
-      `${subject}${where} must be an https URL. To use an http registry, set it in your own ${layer.tool === "Yarn" ? "~/.yarnrc.yml" : "~/.npmrc"} or in an environment variable.`,
+      `${subject}${where} must be an https URL. A project file wins over your own configuration, so to use an http registry, remove this setting there and set the registry in your own ${layer.tool === "Yarn" ? "~/.yarnrc.yml" : "~/.npmrc"} or in an environment variable.`,
     );
   }
   if (!url.username && !url.password) return value;

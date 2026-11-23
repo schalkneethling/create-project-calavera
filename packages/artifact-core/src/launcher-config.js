@@ -29,7 +29,6 @@ const YARN_VARIABLES = new Map([
  *   trusted: boolean,
  *   expandsVariables?: boolean,
  *   variables?: Record<string, string>,
- *   environmentFiles?: string[],
  *   tool?: "Yarn" | "Bun",
  *   settingNames?: Record<string, string>,
  *   expand?: (value: string, env: NodeJS.ProcessEnv) => Expansion,
@@ -193,22 +192,14 @@ export async function yarnLayers({ cwd, env, home, accountHome, scope, warnings 
     const trusted = path === homePath;
     const settings = await readYarnrc(path, warnings);
     const { entries, settingNames } = yarnEntries(settings, scope);
-    // `injectEnvironmentFiles` is an ABSOLUTE_PATH setting, resolved from the folder of the file
-    // that sets it; a trailing `?` makes a file optional.
-    const files = settings.injectEnvironmentFiles;
+
     layers.push({
       name: trusted ? "user .yarnrc.yml" : "project .yarnrc.yml",
       entries,
       settingNames,
       trusted,
       expandsVariables: trusted && isAccountFile(path, accountHome, ".yarnrc.yml"),
-      ...(Array.isArray(files)
-        ? {
-            environmentFiles: files
-              .filter((file) => typeof file === "string")
-              .map((file) => resolve(dirname(path), file.replace(/\?$/, ""))),
-          }
-        : {}),
+
       tool: "Yarn",
       expand: expandYarn,
     });
@@ -240,31 +231,57 @@ export async function yarnLayers({ cwd, env, home, accountHome, scope, warnings 
 }
 
 /**
- * The environment files Yarn 4.18.1 loads into the binaries it runs, lowest precedence first
- * (`Configuration.find` in @yarnpkg/core). YARN_INJECT_ENVIRONMENT_FILES, a comma-separated list
- * resolved from the folder Yarn started in, replaces the `.yarnrc.yml` settings; each
- * `injectEnvironmentFiles` entry of a `.yarnrc.yml` is resolved from that file's folder, and every
- * layer's entries count; without either, the default `.env.yarn` is in the folder Yarn started
- * in. A trailing `?` makes a file optional. Yarn expands variables in these paths before it reads
- * the files, which Calavera cannot reproduce, so `unresolved` says whether a path holds one.
- * @param {LauncherLayer[]} layers
- * @param {string} startingCwd The folder Yarn started in (INIT_CWD).
- * @param {NodeJS.ProcessEnv} env
+ * Every environment file that Yarn 4.18.1 may have loaded into the binaries it runs
+ * (`Configuration.find` in @yarnpkg/core). Yarn picks the files before it loads them, from its
+ * starting folder, the `.yarnrc.yml` files above it and in the home folder, and the
+ * YARN_INJECT_ENVIRONMENT_FILES and YARN_RC_FILENAME variables. Calavera cannot see that choice:
+ * the starting folder differs under `yarn dlx`, a script runs in its workspace, the CLI may move
+ * into another project, and a loaded file can itself set those variables. So it judges every file
+ * that any of these sources names, from every folder that may have been Yarn's starting folder.
+ * Yarn expands `${...}` in a path and unescapes `\\`, `\$`, and `\}` (`$Q`); a path that still
+ * holds a variable after unescaping is `unresolved`, because Calavera cannot tell which file it is.
+ * @param {{ folders: string[], home: string, env: NodeJS.ProcessEnv }} context
  */
-export function yarnEnvironmentFiles(layers, startingCwd, env) {
+export async function yarnEnvironmentFiles({ folders, home, env }) {
+  /** @type {Set<string>} */
+  const paths = new Set();
+  let unresolved = false;
+  /** @param {string} base @param {string} entry */
+  const add = (base, entry) => {
+    const text = entry.replace(/\?$/, "");
+    if (/(?<!\\)(?:\\\\)*\$\{/.test(text)) {
+      unresolved = true;
+      return;
+    }
+    paths.add(resolve(base, text.replace(/\\([\\$}])/g, "$1")));
+  };
   const variable = Object.entries(env).find(
     ([name]) => name.toLowerCase() === "yarn_inject_environment_files",
   )?.[1];
-  const paths =
-    variable !== undefined
-      ? variable
-          .split(",")
-          .filter(Boolean)
-          .map((file) => resolve(startingCwd, file.replace(/\?$/, "")))
-      : layers.some((layer) => layer.environmentFiles)
-        ? layers.flatMap((layer) => layer.environmentFiles ?? [])
-        : [join(startingCwd, ".env.yarn")];
-  return { paths, unresolved: paths.some((path) => path.includes("${")) };
+  const rcNames = new Set([
+    ".yarnrc.yml",
+    ...Object.entries(env)
+      .filter(([name, value]) => name.toLowerCase() === "yarn_rc_filename" && value)
+      .map(([, value]) => /** @type {string} */ (value)),
+  ]);
+  /** @type {Set<string>} */
+  const rcFiles = new Set([join(home, ".yarnrc.yml")]);
+  for (const folder of folders) {
+    add(folder, ".env.yarn");
+    if (variable !== undefined)
+      for (const entry of variable.split(",")) if (entry) add(folder, entry);
+    for (let directory = resolve(folder); ; directory = dirname(directory)) {
+      for (const name of rcNames) rcFiles.add(join(directory, name));
+      if (dirname(directory) === directory) break;
+    }
+  }
+  for (const rcFile of rcFiles) {
+    // yarnLayers already warns about a file it cannot read or parse.
+    const files = (await readYarnrc(rcFile, [])).injectEnvironmentFiles;
+    if (!Array.isArray(files)) continue;
+    for (const file of files) if (typeof file === "string") add(dirname(rcFile), file);
+  }
+  return { paths: [...paths], unresolved };
 }
 
 /**

@@ -1830,6 +1830,6 @@ test("under npm run from a subfolder, a project userconfig resolves from INIT_CW
         npm_config_registry: "http://insecure.example.com/",
       }),
     ),
-    /registry in the user \.npmrc that the project \.npmrc chose must be an https URL\. To use an http registry, set it in your own ~\/\.npmrc or in an environment variable\./,
+    /registry in the user \.npmrc that the project \.npmrc chose must be an https URL\. A project file wins over your own configuration, so to use an http registry, remove this setting there and set the registry in your own ~\/\.npmrc or in an environment variable\./,
   );
 });
