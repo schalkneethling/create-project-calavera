@@ -136,6 +136,7 @@ import {
   manifestDecisionLines,
   manifestDecisionQuestion,
   pathAtAncestor,
+  recipePathOutsideAncestorError,
 } from "./manifest-decision.js";
 import {
   integrationDependencies,
@@ -3248,20 +3249,13 @@ export async function applyRecipe(options) {
  * @returns {Promise<boolean>}
  */
 async function isInWorkingDirectory(path) {
-  return isPathInside(await realpath(process.cwd()), await withDirectoryLinksResolved(path));
-}
-
-/**
- * `path` with the links in its directory resolved and its last name kept, so a link to the file
- * itself is not followed. A directory that does not exist stays as given; reading or writing the
- * file reports it.
- *
- * @param {string} path Absolute path.
- * @returns {Promise<string>}
- */
-async function withDirectoryLinksResolved(path) {
-  const directory = await realpath(dirname(path)).catch(() => dirname(path));
-  return join(directory, basename(path));
+  let directory = dirname(path);
+  try {
+    directory = await realpath(directory);
+  } catch {
+    // A directory that does not exist is compared as given; reading the recipe reports it.
+  }
+  return isPathInside(await realpath(process.cwd()), join(directory, basename(path)));
 }
 
 /**
@@ -3364,27 +3358,30 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
   if (choice === "apply-at-ancestor") {
     const ancestorDirectory = dirname(decision.ancestor.manifestPath);
     // A recipe path given relative to this directory moves with the apply, so nothing is written
-    // here. Directory links are resolved first, so a path that reaches this directory through a
-    // link moves, and is checked, like any other path inside it.
-    const givenConfig = await withDirectoryLinksResolved(
-      resolve(directory, applyOptions.config ?? CONFIG_FILE),
-    );
-    const config = pathAtAncestor(chosen, givenConfig);
+    // here.
+    const config = pathAtAncestor(chosen, applyOptions.config ?? CONFIG_FILE);
 
     // Another project's recipe or state is a hard stop, not something to replace. The ancestor's
     // default recipe counts even when the recipe path given here is a custom one, because apply
     // would otherwise record state for this recipe next to it. Because the ancestor has no state,
     // no managed file there can be reowned, so reownManagedFiles needs no translation. The recipe
     // paths come first, so a directory with both a recipe and state names its recipe (#1038). A
-    // path listed twice is checked twice, which is harmless because the first hit stops. A recipe
-    // path outside this directory does not move, so a file there is not one the ancestor already
-    // has, and is not checked (#1142).
+    // path listed twice is checked twice, which is harmless because the first hit stops.
     for (const [existing, kind] of /** @type {const} */ ([
-      ...(isPathInside(directory, givenConfig) ? /** @type {const} */ ([[config, "recipe"]]) : []),
+      [config, "recipe"],
       [join(ancestorDirectory, CONFIG_FILE), "recipe"],
       [join(ancestorDirectory, STATE_FILE), "state"],
     ])) {
       if (await fileExists(existing)) {
+        // The recipe path still stops apply wherever it points, because apply would replace the
+        // file. A file outside the ancestor's directory, once links are resolved, is named as such
+        // rather than as the ancestor's recipe (#1142).
+        if (existing === config) {
+          const real = await realpath(existing);
+          if (!isPathInside(await realpath(ancestorDirectory), real)) {
+            throw recipePathOutsideAncestorError(chosen, existing, real);
+          }
+        }
         throw ancestorAlreadyManagedError(chosen, existing, kind);
       }
     }
