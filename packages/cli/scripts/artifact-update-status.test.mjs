@@ -28,6 +28,7 @@ import {
 } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
+import { answeringRegistry, pathSeparatedRegistries, silentRegistry } from "./local-registry.mjs";
 
 const REPOSITORY = {
   type: "git",
@@ -2203,4 +2204,277 @@ test("any HTTP failure reports the origin of the URL that failed, never its path
     assert.equal(byId["skill-code-review"]?.origin, "https://mirror.example.com:8443");
     assert.doesNotMatch(JSON.stringify(result), /secret-path/);
   });
+});
+
+// Issue #1138: a registry that accepts the connection and never answers held
+// `artifacts status --check-updates` until npm's own five-minute timeout. Each
+// lookup now has a deadline, and a lookup that misses it is reported for that artifact alone.
+// The tests use a short deadline, and assert the order of events and a generous upper bound,
+// so a loaded machine does not make them fail.
+const TEST_LOOKUP_DEADLINE_MS = 200;
+
+// The owner's decision on #1138: after a lookup to a registry misses its deadline, the remaining
+// artifacts on that registry are reported as not checked instead of each waiting for its own
+// deadline, and artifacts on other registries are still checked.
+const TIMING_DEADLINE_MS = 1_500;
+
+for (const artifactAction of ["status", "doctor"]) {
+  test(
+    `artifacts ${artifactAction}: after one lookup times out, the other artifacts on that registry are skipped and another registry is still checked`,
+    { timeout: 60_000 },
+    async () => {
+      const silentIds = ["skill-project-goal", "skill-code-review", "skill-css-tokens"];
+      const healthyId = "skill-release-with-confidence";
+      const lockedIds = [...silentIds, healthyId];
+      // A selection without a lock entry, on the silent registry, so the not-installed wording of
+      // a skipped lookup is covered too.
+      const unlockedId = "skill-frontend-testing";
+      await using silent = await silentRegistry();
+      await using healthy = await answeringRegistry(new Map([[packageName(healthyId), "0.3.0"]]));
+      await inProject(
+        {
+          ids: [...lockedIds, unlockedId],
+          locked: lockedIds.map((id) => ({ id, version: "0.2.1" })),
+        },
+        async () => {
+          // A project proxy is ignored with a warning, so the loader has a diagnostic that the
+          // timed-out lookup must keep.
+          await writeFile(".npmrc", "https-proxy=http://proxy.example.com/\n");
+          const services = {
+            // Each artifact's registry comes from npm_config_registry, so the silent and the
+            // healthy registries serve different artifacts.
+            resolve: (/** @type {Parameters<typeof resolveArtifactPackage>[0]} */ request) =>
+              resolveArtifactPackage({
+                ...request,
+                cwd: process.cwd(),
+                env: {
+                  npm_config_userconfig: join(process.cwd(), "missing.npmrc"),
+                  npm_config_registry: request.id === healthyId ? healthy.url : silent.url,
+                },
+              }),
+            extract: async () => {
+              throw new Error("Status never extracts a package.");
+            },
+            updateCheckDeadlineMs: TIMING_DEADLINE_MS,
+          };
+
+          const started = performance.now();
+          const result = await runArtifactCommand(statusOptions({ artifactAction }), services);
+          const elapsed = performance.now() - started;
+
+          // Only the first lookup reached the silent registry; the others sent no request.
+          assert.equal(silent.requests.length, 1);
+          assert.deepEqual(
+            healthy.requests.map((path) => decodeURIComponent(path)),
+            [`/${packageName(healthyId)}`],
+          );
+          const byId = new Map(result.artifacts.map((artifact) => [artifact.id, artifact]));
+          const healthyArtifact = byId.get(healthyId);
+          assert.equal(healthyArtifact?.updateCheckFailure, null);
+          assert.equal(healthyArtifact?.latestVersion, "0.3.0");
+
+          const rerun = `npm create project-calavera artifacts ${artifactAction} -- --check-updates`;
+          const remedy = `Check the network connection and the npm registry settings, then run: ${rerun}`;
+          const origin = new URL(silent.url).origin;
+          const silentArtifacts = result.artifacts.filter(({ id }) => silentIds.includes(id));
+          const [timedOut, ...skipped] = silentArtifacts;
+          assert.equal(skipped.length, 2);
+          const unlocked = byId.get(unlockedId);
+          assert.equal(unlocked?.updateCheckFailure?.code, "ELOOKUPSKIPPED");
+          assert.match(
+            timedOut?.updateCheckFailure?.npmDiagnostics.join("\n") ?? "",
+            /^Ignored https-proxy in the project \.npmrc/,
+          );
+          assert.deepEqual(
+            { ...timedOut?.updateCheckFailure, npmDiagnostics: [] },
+            {
+              code: "ELOOKUPTIMEOUT",
+              statusCode: null,
+              reason: `the registry did not answer the lookup for ${timedOut?.package} within ${TIMING_DEADLINE_MS} ms`,
+              remedy,
+              type: null,
+              origin: null,
+              npmDiagnostics: [],
+              unsetVariables: [],
+            },
+          );
+          assert.deepEqual(
+            skipped.map(({ updateCheckFailure }) => updateCheckFailure),
+            skipped.map(({ package: name }) => ({
+              code: "ELOOKUPSKIPPED",
+              statusCode: null,
+              reason: `Calavera did not look up ${name}, because the registry ${origin} did not answer an earlier lookup within ${TIMING_DEADLINE_MS} ms`,
+              remedy,
+              type: null,
+              origin: null,
+              npmDiagnostics: [],
+              unsetVariables: [],
+            })),
+          );
+          // The one lookup that timed out waited for its deadline. The request count above, not a
+          // time bound, shows that the skipped lookups did not wait, so a loaded machine cannot
+          // make this test fail.
+          assert.ok(elapsed >= TIMING_DEADLINE_MS, `the run finished after ${elapsed} ms`);
+          // The abort ended the one request: the client closed the connection it opened.
+          await silent.closed();
+
+          const lines = messages(formatArtifactStatus(result));
+          assert.ok(
+            lines.includes(`${unlockedId}  not installed, update not checked (latest)`),
+            `no not-checked line for the unlocked ${unlockedId}`,
+          );
+          for (const { id, version, tag } of skipped) {
+            assert.ok(
+              lines.includes(`${id}  ${version}, update not checked (${tag})`),
+              `no not-checked line for ${id}`,
+            );
+          }
+          assert.ok(
+            lines.includes(
+              `${timedOut?.id}  ${timedOut?.version}, update check failed (${timedOut?.tag})`,
+            ),
+          );
+          if (artifactAction === "doctor") {
+            const verdict = messages(artifactDoctorVerdict(result)).join("\n");
+            for (const id of silentIds) assert.match(verdict, new RegExp(id));
+          }
+        },
+      );
+    },
+  );
+}
+
+test(
+  "a timeout on one registry does not skip a registry on the same host with a different path",
+  { timeout: 60_000 },
+  async () => {
+    const silentIds = ["skill-project-goal", "skill-code-review"];
+    const answeringId = "skill-release-with-confidence";
+    const ids = [...silentIds, answeringId];
+    await using registries = await pathSeparatedRegistries(
+      new Map([[packageName(answeringId), "0.3.0"]]),
+    );
+    await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+      const services = {
+        resolve: (/** @type {Parameters<typeof resolveArtifactPackage>[0]} */ request) =>
+          resolveArtifactPackage({
+            ...request,
+            cwd: process.cwd(),
+            env: {
+              npm_config_userconfig: join(process.cwd(), "missing.npmrc"),
+              npm_config_registry:
+                request.id === answeringId ? registries.answeringUrl : registries.silentUrl,
+            },
+          }),
+        extract: async () => {
+          throw new Error("Status never extracts a package.");
+        },
+        updateCheckDeadlineMs: TEST_LOOKUP_DEADLINE_MS,
+      };
+
+      const result = await runArtifactCommand(statusOptions(), services);
+
+      // The answering registry's artifact is looked up after the silent registry timed out.
+      assert.deepEqual(
+        result.artifacts.map(({ id }) => id),
+        ids,
+      );
+      assert.deepEqual(
+        result.artifacts.map(({ updateCheckFailure }) => updateCheckFailure?.code ?? null),
+        ["ELOOKUPTIMEOUT", "ELOOKUPSKIPPED", null],
+      );
+      assert.equal(result.artifacts[2]?.latestVersion, "0.3.0");
+      assert.deepEqual(
+        registries.requests.map((path) => decodeURIComponent(path)),
+        [`/silent/${packageName(silentIds[0])}`, `/answering/${packageName(answeringId)}`],
+      );
+    });
+  },
+);
+
+test(
+  "a lookup that does not report its registry is never skipped, so each one waits for its own deadline",
+  { timeout: 60_000 },
+  async () => {
+    const ids = ["skill-project-goal", "skill-code-review"];
+    await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+      /** @type {string[]} */
+      const looked = [];
+      const services = {
+        ...statusRegistry({}),
+        resolve: (/** @type {{ id: string }} */ request) => {
+          looked.push(request.id);
+          return new Promise(() => {});
+        },
+        updateCheckDeadlineMs: TEST_LOOKUP_DEADLINE_MS,
+      };
+
+      const result = await runArtifactCommand(statusOptions(), services);
+
+      assert.deepEqual(looked, ids);
+      assert.deepEqual(
+        result.artifacts.map(({ updateCheckFailure }) => updateCheckFailure?.code),
+        ["ELOOKUPTIMEOUT", "ELOOKUPTIMEOUT"],
+      );
+    });
+  },
+);
+
+test(
+  "a lookup that ignores the abort is still reported at its deadline, and the next artifact gets its status",
+  { timeout: 60_000 },
+  async () => {
+    const ids = ["skill-project-goal", "skill-code-review"];
+    await inProject({ ids, locked: ids.map((id) => ({ id, version: "0.2.1" })) }, async () => {
+      const answering = statusRegistry({ "skill-code-review": { latest: "0.3.0" } });
+      /** @type {AbortSignal[]} */
+      const signals = [];
+      const services = {
+        ...answering,
+        resolve: (
+          /** @type {{ id: string, tag?: string, cache: string, signal?: AbortSignal }} */ request,
+        ) => {
+          assert.ok(request.signal, "the lookup receives no abort signal");
+          signals.push(request.signal);
+          // A lookup that never settles and never reads its signal.
+          return request.id === "skill-project-goal"
+            ? new Promise(() => {})
+            : answering.resolve(request);
+        },
+        updateCheckDeadlineMs: TEST_LOOKUP_DEADLINE_MS,
+      };
+
+      const result = await runArtifactCommand(statusOptions(), services);
+
+      const [goal, review] = result.artifacts;
+      assert.equal(goal?.updateCheckFailure?.code, "ELOOKUPTIMEOUT");
+      assert.equal(review?.updateCheckFailure, null);
+      assert.equal(review?.latestVersion, "0.3.0");
+      // The deadline aborted the lookup that missed it, and only that one.
+      assert.deepEqual(
+        signals.map(({ aborted }) => aborted),
+        [true, false],
+      );
+      const reason = /** @type {Error} */ (signals[0]?.reason);
+      assert.equal(reason.name, "UpdateCheckTimeout");
+      assert.equal(
+        reason.message,
+        `The registry did not answer within ${TEST_LOOKUP_DEADLINE_MS} ms.`,
+      );
+    });
+  },
+);
+
+test("a registry error that only carries the timeout code is not reported as a missed deadline", async () => {
+  await inProject(
+    { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },
+    async () => {
+      const registry = statusRegistry(
+        {},
+        {},
+        { "skill-project-goal": registryError("failed", { code: "ELOOKUPTIMEOUT" }) },
+      );
+      await assert.rejects(runArtifactCommand(statusOptions(), registry), /^Error: failed$/);
+    },
+  );
 });

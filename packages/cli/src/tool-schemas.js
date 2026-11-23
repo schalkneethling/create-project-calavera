@@ -581,7 +581,11 @@ export const sharedToolSchemas = Object.freeze({
 
 // The failed registry lookup of one artifact, as `artifacts status --check-updates` reports it (#993).
 const updateCheckFailureSchema = z.looseObject({
-  code: z.string().describe("The registry error's code, such as ETARGET for a missing dist-tag."),
+  code: z
+    .string()
+    .describe(
+      "The registry error's code, such as ETARGET for a missing dist-tag, ELOOKUPTIMEOUT when the registry did not answer before the lookup's deadline, or ELOOKUPSKIPPED when Calavera did not send the lookup, because the same registry missed an earlier lookup's deadline.",
+    ),
   type: z.string().nullable(),
   statusCode: z.number().nullable().describe("The registry's HTTP status, when it answered."),
   origin: z

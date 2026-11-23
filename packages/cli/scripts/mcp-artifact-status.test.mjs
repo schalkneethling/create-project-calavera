@@ -23,6 +23,7 @@ import { buildRecipe } from "../src/recipe.js";
 import { mcpOnlyToolSchemas, sharedToolSchemas } from "../src/tool-schemas.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
+import { answeringRegistry, silentRegistry } from "./local-registry.mjs";
 
 const ARTIFACT_ID = "skill-project-goal";
 const LOCKED_VERSION = "0.1.0";
@@ -535,3 +536,81 @@ for (const [name, targets] of [
     });
   });
 }
+
+// Issue #1138: the MCP tool shares the update check of `artifacts status --check-updates`, so a
+// registry that never answers is reported at the lookup deadline there too, instead of holding the
+// tool call open. After that lookup times out, the other artifacts on that registry are reported
+// as not checked, and an artifact on another registry is still checked.
+test(
+  "artifact_status with checkUpdates skips a silent registry after one timeout and still checks another registry",
+  { timeout: 60_000 },
+  async () => {
+    const deadline = 1_500;
+    const silentIds = ["skill-project-goal", "skill-code-review", "skill-css-tokens"];
+    const healthyId = "skill-release-with-confidence";
+    const ids = [...silentIds, healthyId];
+    const healthyPackage = artifactForId(healthyId)?.packageName;
+    assert.ok(healthyPackage);
+    await using silent = await silentRegistry();
+    await using healthy = await answeringRegistry(new Map([[healthyPackage, NEWER_VERSION]]));
+    await inProject("calavera-mcp-status-silent-", async (directory) => {
+      await writeFile(
+        "calavera.config.json",
+        `${JSON.stringify({ ...buildRecipe("minimal", [], "npm"), ai: ids.map((id) => ({ id })) }, null, 2)}\n`,
+      );
+      await runArtifactCommand(
+        { config: "calavera.config.json", dryRun: false, artifactAction: "install" },
+        stubRegistry(new Map(ids.map((id) => [id, LOCKED_VERSION]))),
+      );
+      // The tool is read-only, so the project must be byte-for-byte the same afterward.
+      const before = await snapshotDirectory();
+      const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
+      const server = createMcpServer({
+        // Each artifact's registry comes from npm_config_registry, so the two registries serve
+        // different artifacts.
+        resolve: (/** @type {Parameters<typeof resolveArtifactPackage>[0]} */ request) =>
+          localResolver(directory, request.id === healthyId ? healthy.url : silent.url).resolve(
+            request,
+          ),
+        ...forbiddenFormatter,
+        updateCheckDeadlineMs: deadline,
+      });
+      const client = new Client({ name: "calavera-artifact-status-test", version: "1.0.0" });
+      await server.connect(serverTransport);
+      await client.connect(clientTransport);
+      try {
+        await client.listTools();
+        const result = await client.callTool({
+          name: "artifact_status",
+          arguments: { checkUpdates: true },
+        });
+
+        assert.equal(result.isError, undefined, JSON.stringify(result.content));
+        const { artifacts } =
+          /** @type {{ artifacts: { id: string, latestVersion: string | null, updateCheckFailure: { code: string, reason: string, remedy: string } | null }[] }} */ (
+            result.structuredContent
+          );
+        const codes = artifacts
+          .filter(({ id }) => silentIds.includes(id))
+          .map(({ updateCheckFailure }) => updateCheckFailure?.code);
+        assert.deepEqual(codes, ["ELOOKUPTIMEOUT", "ELOOKUPSKIPPED", "ELOOKUPSKIPPED"]);
+        const checked = artifacts.find(({ id }) => id === healthyId);
+        assert.equal(checked?.updateCheckFailure, null);
+        assert.equal(checked?.latestVersion, NEWER_VERSION);
+        // Each reason names the deadline the server was given, so a deadline the tool does not
+        // pass on fails here, not on a time bound.
+        for (const { updateCheckFailure } of artifacts.filter(({ id }) => silentIds.includes(id))) {
+          assert.match(updateCheckFailure?.reason ?? "", new RegExp(`within ${deadline} ms$`));
+          assert.match(updateCheckFailure?.remedy ?? "", /^Check the network connection/);
+        }
+        // The request count shows that the skipped lookups sent nothing.
+        assert.equal(silent.requests.length, 1);
+        await silent.closed();
+        assert.deepEqual(await snapshotDirectory(), before);
+      } finally {
+        await client.close();
+        await server.close();
+      }
+    });
+  },
+);

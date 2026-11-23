@@ -119,6 +119,7 @@ import {
 import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
 import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
+import { withDeadline } from "./utils/deadline.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
 import { detectVitePlus } from "./vite-plus-detection.js";
 import {
@@ -7888,51 +7889,45 @@ function startVersionCheck(options, runArgs) {
     return undefined;
   }
 
-  const controller = new AbortController();
-  /** @type {Promise<import("./version-notice.js").VersionCheckResult>} */
-  const deadline = new Promise((resolvePromise) => {
-    controller.signal.addEventListener(
-      "abort",
-      () => resolvePromise({ status: "failed", error: controller.signal.reason }),
-      { once: true },
-    );
-  });
-  const timer = setTimeout(() => {
-    controller.abort(
-      new Error(`The registry did not answer within ${VERSION_CHECK_DEADLINE_MS} ms.`),
-    );
-  }, VERSION_CHECK_DEADLINE_MS);
   const launcher = launchingPackageManager(env.npm_config_user_agent) ?? "npm";
 
-  const check = checkForNewerVersion({
-    version: packageJson.version,
-    options,
-    cwd,
-    env,
-    packageRoot: cliPackageRoot,
-    packageName: packageJson.name,
-    resolveLatest: (context) =>
-      resolvePackageDistTag({
+  // checkForNewerVersion catches the resolver's failures, so a rejection here is almost always
+  // the deadline. Any rejection is a failed check.
+  return withDeadline(
+    VERSION_CHECK_DEADLINE_MS,
+    () => new Error(`The registry did not answer within ${VERSION_CHECK_DEADLINE_MS} ms.`),
+    (signal) =>
+      checkForNewerVersion({
+        version: packageJson.version,
+        options,
+        cwd,
+        env,
+        packageRoot: cliPackageRoot,
         packageName: packageJson.name,
-        tag: "latest",
-        ...context,
-        signal: controller.signal,
+        resolveLatest: (context) =>
+          resolvePackageDistTag({
+            packageName: packageJson.name,
+            tag: "latest",
+            ...context,
+            signal,
+          }),
+        runCommand: (latest) => {
+          const runner = createPackageRunnerCommand(
+            launcher,
+            `${packageJson.name}@${latest}`,
+            "create-project-calavera",
+          );
+          return formatShellCommand({
+            command: runner.command,
+            args: [...runner.args, ...runArgs],
+          });
+        },
+        updateCommand: (latest) => projectDependencyUpdateCommand(cwd, latest),
       }),
-    runCommand: (latest) => {
-      const runner = createPackageRunnerCommand(
-        launcher,
-        `${packageJson.name}@${latest}`,
-        "create-project-calavera",
-      );
-      return formatShellCommand({ command: runner.command, args: [...runner.args, ...runArgs] });
-    },
-    updateCommand: (latest) => projectDependencyUpdateCommand(cwd, latest),
-  });
-
-  return Promise.race([check, deadline])
+  )
+    .catch((error) => /** @type {const} */ ({ status: "failed", error }))
     .then((result) => versionNoticeText(result, env))
-    .catch(() => undefined)
-    .finally(() => clearTimeout(timer));
+    .catch(() => undefined);
 }
 
 /**

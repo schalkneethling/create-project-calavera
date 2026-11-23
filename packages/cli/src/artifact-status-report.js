@@ -23,7 +23,7 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {boolean | null} selected False for a lock entry the recipe no longer selects, which the next `artifacts install`, or `artifacts update` while the recipe selects any artifact, removes (#992). Null when there is no recipe to compare the lock with.
  *
  * @typedef {object} UpdateCheckFailure
- * @property {string} code The registry error's code, such as ETARGET for a missing dist-tag.
+ * @property {string} code The registry error's code, such as ETARGET for a missing dist-tag. Calavera sets two codes itself (#1138): ELOOKUPTIMEOUT when the registry did not answer before the lookup's deadline, and ELOOKUPSKIPPED when Calavera did not send the lookup, because the same registry missed an earlier lookup's deadline in this report.
  * @property {string | null} type The kind of a FETCH_ERROR, such as request-timeout or invalid-json, as minipass-fetch names it.
  * @property {number | null} statusCode The registry's HTTP status, when it answered.
  * @property {string | null} origin The origin (protocol, host, and port) that answered an HTTP failure, or null for a failure without one, such as a DNS error or a missing tag (ADR-0021).
@@ -196,11 +196,14 @@ export function formatArtifactStatus(result) {
   };
   for (const artifact of result.artifacts) {
     const failure = artifact.updateCheckFailure;
+    // #1138: a lookup skipped after its registry missed an earlier lookup's deadline never ran.
+    const outcome =
+      failure?.code === "ELOOKUPSKIPPED" ? "update not checked" : "update check failed";
     if (artifact.version === null) {
       if (failure) {
         lines.push({
           level: "warn",
-          message: `${artifact.id}  not installed, update check failed (${artifact.tag})`,
+          message: `${artifact.id}  not installed, ${outcome} (${artifact.tag})`,
         });
         failureLines(failure);
       } else {
@@ -216,7 +219,7 @@ export function formatArtifactStatus(result) {
     if (failure) {
       lines.push({
         level: "warn",
-        message: `${artifact.id}  ${artifact.version}, update check failed (${artifact.tag})${health}`,
+        message: `${artifact.id}  ${artifact.version}, ${outcome} (${artifact.tag})${health}`,
       });
       if (artifact.selected === false) info(notSelected);
       failureLines(failure);
