@@ -156,6 +156,7 @@ import {
   createEmptyState,
   managedFileStateForPath,
   managedFilesFromState,
+  mergeInstalledAiArtifacts,
   normalizeState,
   optionalStringArray,
   stateShowsEarlierApply,
@@ -4132,14 +4133,6 @@ function mergeRecipeIntoState(
 
   const nextManagedFiles = [...managedFilesByPath.values()];
   const preservesToolingRecipe = managedFiles.length === 0 && aiArtifacts.length > 0;
-  // #829: an artifact the recipe no longer selects keeps the record of what apply installed, as a
-  // stale managed file does, so clean can remove its output when it is unedited and report it when
-  // it was edited. Without the record, clean could not tell the output from the person's own files.
-  const selectedAiPaths = new Set(aiArtifacts.map(({ path }) => path));
-  const nextAiArtifacts = [
-    ...aiArtifacts,
-    ...previousState.aiArtifacts.filter(({ path }) => !selectedAiPaths.has(path)),
-  ];
 
   return {
     ...previousState,
@@ -4150,7 +4143,9 @@ function mergeRecipeIntoState(
     integrations: preservesToolingRecipe ? previousState.integrations : integrations,
     files: nextManagedFiles.map((file) => file.path),
     managedFiles: nextManagedFiles,
-    aiArtifacts: nextAiArtifacts,
+    // #829: an artifact the recipe no longer selects keeps the record of what apply installed, as a
+    // stale managed file does, so clean can tell its output from the person's own files.
+    aiArtifacts: mergeInstalledAiArtifacts(previousState.aiArtifacts, aiArtifacts),
     aiWiring,
     gitignoreBlocks,
     qualityScript,

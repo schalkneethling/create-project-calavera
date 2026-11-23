@@ -26,7 +26,7 @@ import {
   artifactTagFlags,
   artifactUpdateCommand,
 } from "./project-local-commands.js";
-import { createEmptyState, normalizeState } from "./state.js";
+import { createEmptyState, mergeInstalledAiArtifacts, normalizeState } from "./state.js";
 import {
   cleanupFailures,
   createTemporaryFolder,
@@ -1302,16 +1302,13 @@ async function stageArtifactInstall(recipe, selections, plan, registry) {
     const state = await readState();
     const outputRoot = join(stagingRoot, "outputs");
     const applied = await buildAiApplyResult(recipe, { dryRun, outputRoot }, state, sourcePaths);
-    const paths = new Set(applied.artifacts.map(({ path }) => path));
     // #838: formatted in the dry run as well, so the dry run stops where the install would.
     const stateText = await formatRecordText(
       STATE_PATH,
       {
         ...state,
-        aiArtifacts: [
-          ...state.aiArtifacts.filter(({ path }) => !paths.has(path)),
-          ...applied.artifacts,
-        ],
+        // #1139: the order apply writes, so a run that changes nothing leaves the state unchanged.
+        aiArtifacts: mergeInstalledAiArtifacts(state.aiArtifacts, applied.artifacts),
       },
       loadFormatter,
     );
