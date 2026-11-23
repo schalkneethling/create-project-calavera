@@ -266,6 +266,11 @@ test("a commit that fails part way leaves a journal of every operation, and reco
   });
 });
 
+// The end of each message that stops the rollback part way, for a journal whose operations up to
+// and including operation 0 are left.
+const STOPPED_REMEDY =
+  "Calavera does not roll the rest of this journal back. A symbolic link on the way may be one the rollback moved into place from a backup, so replace every link on the paths of the targets of operations 0 to 0 with a real folder before you restore those files by hand from the backups in .calavera/.transactions, then remove .calavera/artifact-transaction.json.";
+
 const REMEDY =
   "Calavera does not roll this journal back. Restore the files it names by hand if needed, using the backups in .calavera/.transactions, then remove .calavera/artifact-transaction.json.";
 
@@ -574,9 +579,14 @@ for (const { name, folder, nested } of [
     folder: String.fromCodePoint(0xe9),
     nested: `e${String.fromCodePoint(0x301)}/bar`,
   },
-  // Full case folding, which APFS applies and lower-casing alone does not: ß against ss, final
-  // sigma against sigma, and the ff ligature against ff.
+  // Case folding that APFS applies and lower-casing alone does not: ß against ss, capital sharp s
+  // against ss, final sigma against sigma, and the ff ligature against ff.
   { name: "full case folding (sharp s)", folder: String.fromCodePoint(0xdf), nested: "ss/bar" },
+  {
+    name: "full case folding (capital sharp s)",
+    folder: String.fromCodePoint(0x1e9e),
+    nested: "ss/bar",
+  },
   {
     name: "full case folding (final sigma)",
     folder: String.fromCodePoint(0x3c2),
@@ -654,7 +664,7 @@ test("the rollback stops before a step whose folder an earlier step replaced wit
           },
         ]),
         {
-          message: `The artifact transaction rollback stopped before operation 0, because ${join(".agents/skills/foo/bar")} lies below the symbolic link ${join(".agents/skills/foo")}. It already rolled back operations 1 to 1, so their backups are gone. Calavera does not roll the rest of this journal back. Restore the files of operations 0 to 0 by hand if needed, using the backups in .calavera/.transactions, then remove .calavera/artifact-transaction.json.`,
+          message: `The artifact transaction rollback stopped before operation 0, because ${join(".agents/skills/foo/bar")} lies below the symbolic link ${join(".agents/skills/foo")}. It already rolled back operation 1. ${STOPPED_REMEDY}`,
         },
       );
 
@@ -750,7 +760,81 @@ test("the rollback names that it rolled back nothing when the first step meets a
           },
         ]),
         {
-          message: `The artifact transaction rollback stopped before operation 0, because ${join(".agents/skills/a")} lies below the symbolic link ${join(".agents/skills")}. It rolled back no operation yet. Calavera does not roll the rest of this journal back. Restore the files of operations 0 to 0 by hand if needed, using the backups in .calavera/.transactions, then remove .calavera/artifact-transaction.json.`,
+          message: `The artifact transaction rollback stopped before operation 0, because ${join(".agents/skills/a")} lies below the symbolic link ${join(".agents/skills")}. It rolled back no operation yet. ${STOPPED_REMEDY}`,
+        },
+      );
+    } finally {
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+});
+
+// #1193: a step that meets a link stops the rollback when it would restore a backup, as it does
+// when it would remove a created target.
+test("the rollback stops part way with its remedy before a restore below a link", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "calavera-transaction-stop-")));
+    try {
+      const skills = join(project, ".agents/skills");
+      await mkdir(skills, { recursive: true });
+      await mkdir(join(root, "backups"), { recursive: true });
+      await mkdir(join(outside, "bar"));
+      await writeFile(join(outside, "bar/keep.txt"), "keep\n");
+      await writeFile(join(root, "backups/0"), "backup\n");
+      await symlink(outside, join(root, "backups/1"));
+      const outsideBefore = await snapshotDirectory(outside);
+
+      await assert.rejects(
+        rollBackArtifactOperations(project, [
+          {
+            staged,
+            target: join(skills, "foo/bar"),
+            backup: join(root, "backups/0"),
+            hadTarget: true,
+          },
+          { staged, target: join(skills, "foo"), backup: join(root, "backups/1"), hadTarget: true },
+        ]),
+        {
+          message: `The artifact transaction rollback stopped before operation 0, because ${join(".agents/skills/foo/bar")} lies below the symbolic link ${join(".agents/skills/foo")}. It already rolled back operation 1. ${STOPPED_REMEDY}`,
+        },
+      );
+      assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+      assert.equal(await readFile(join(root, "backups/0"), "utf8"), "backup\n");
+    } finally {
+      await rm(outside, { force: true, recursive: true });
+    }
+  });
+});
+
+// With several operations rolled back before the stop, the message names the whole range.
+test("the rollback names the range of operations it rolled back before it stopped", async () => {
+  await inTransactionProject(async ({ project, root, staged }) => {
+    const outside = await realpath(await mkdtemp(join(tmpdir(), "calavera-transaction-range-")));
+    try {
+      const skills = join(project, ".agents/skills");
+      await mkdir(skills, { recursive: true });
+      await writeFile(join(skills, "other"), "created\n");
+      await mkdir(join(root, "backups"), { recursive: true });
+      await symlink(outside, join(root, "backups/1"));
+
+      await assert.rejects(
+        rollBackArtifactOperations(project, [
+          {
+            staged,
+            target: join(skills, "foo/bar"),
+            backup: join(root, "backups/0"),
+            hadTarget: false,
+          },
+          { staged, target: join(skills, "foo"), backup: join(root, "backups/1"), hadTarget: true },
+          {
+            staged,
+            target: join(skills, "other"),
+            backup: join(root, "backups/2"),
+            hadTarget: false,
+          },
+        ]),
+        {
+          message: `The artifact transaction rollback stopped before operation 0, because ${join(".agents/skills/foo/bar")} lies below the symbolic link ${join(".agents/skills/foo")}. It already rolled back operations 1 to 2. ${STOPPED_REMEDY}`,
         },
       );
     } finally {

@@ -1642,7 +1642,8 @@ export async function recoverArtifactTransaction(options = {}) {
 /**
  * Rolls back the operations of a journal that `readTransactionJournal` accepted, last first: each
  * target with a backup gets its backup back, and each target that did not exist before is
- * removed. Before each step, it stops when a folder above the target is a symbolic link (#1193).
+ * removed. Before each step, it stops when a folder above the target is a symbolic link, with a
+ * message that says which operations it already rolled back (#1193).
  *
  * @param {string} projectRoot
  * @param {{ target: string, backup: string, hadTarget: boolean }[]} operations
@@ -1654,14 +1655,16 @@ export async function rollBackArtifactOperations(projectRoot, operations) {
     // so the folders are checked again before each step.
     const link = await linkedFolder(projectRoot, dirname(operation.target));
     if (link !== null) {
-      const rolledBack =
-        index === operations.length - 1
-          ? "It rolled back no operation yet."
-          : `It already rolled back operations ${index + 1} to ${operations.length - 1}, so their backups are gone.`;
       throw new Error(
-        `The artifact transaction rollback stopped before operation ${index}, because ${relative(projectRoot, operation.target)} lies below the symbolic link ${relative(projectRoot, link)}. ${rolledBack} Calavera does not roll the rest of this journal back. Restore the files of operations 0 to ${index} by hand if needed, using the backups in ${TRANSACTION_ROOT}, then remove ${TRANSACTION_PATH}.`,
+        rollbackStoppedMessage(
+          index,
+          operations.length,
+          `${relative(projectRoot, operation.target)} lies below the symbolic link ${relative(projectRoot, link)}`,
+        ),
       );
     }
+    // A step that fails throws its own error unchanged: callers report it as the rollback failure
+    // and tell the person to retry the rollback.
     if (await fileExists(operation.backup)) {
       await rm(operation.target, { recursive: true, force: true });
       await mkdir(dirname(operation.target), { recursive: true });
@@ -1670,6 +1673,22 @@ export async function rollBackArtifactOperations(projectRoot, operations) {
       await rm(operation.target, { recursive: true, force: true });
     }
   }
+}
+
+/**
+ * The message for a rollback that stopped before operation `index` of `count`, last first, so
+ * operations after `index` were rolled back and operations up to `index` were not.
+ *
+ * @param {number} index
+ * @param {number} count
+ * @param {string} reason
+ */
+function rollbackStoppedMessage(index, count, reason) {
+  const last = count - 1;
+  let done = "It rolled back no operation yet.";
+  if (index === last - 1) done = `It already rolled back operation ${last}.`;
+  if (index < last - 1) done = `It already rolled back operations ${index + 1} to ${last}.`;
+  return `The artifact transaction rollback stopped before operation ${index}, because ${reason}. ${done} Calavera does not roll the rest of this journal back. A symbolic link on the way may be one the rollback moved into place from a backup, so replace every link on the paths of the targets of operations 0 to ${index} with a real folder before you restore those files by hand from the backups in ${TRANSACTION_ROOT}, then remove ${TRANSACTION_PATH}.`;
 }
 
 /**
@@ -1761,17 +1780,18 @@ function journalLinkRefusal(projectRoot, path, link) {
  * Whether `a` and `b` are the same path or one lies inside the other on a file system that
  * ignores letter case and Unicode normalization, such as the default APFS on macOS. Both paths
  * are compared folded on every platform, so a journal is refused the same way wherever it is
- * read (#1193): decomposed, upper-cased and then lower-cased, which applies full case folding
- * (`ß` and `ss`, final and other sigma, ligatures) that lower-casing alone misses, and composed
- * again. A fold can still miss aliases, such as Windows short names, so the rollback also checks
- * for a symbolic link before each step.
+ * read (#1193): decomposed, lower-cased, upper-cased, and lower-cased again, then composed. That
+ * merges the case pairs APFS merges and lower-casing alone misses, such as `ß`, `ẞ`, and `ss`,
+ * final and other sigma, and ligatures. It also merges dotless `ı` with `i`, which APFS keeps
+ * apart, so such a pair is refused although it would be safe. A fold can still miss aliases, such
+ * as Windows short names, so the rollback also checks for a symbolic link before each step.
  *
  * @param {string} a
  * @param {string} b
  */
 function pathsOverlap(a, b) {
   const fold = (/** @type {string} */ path) =>
-    path.normalize("NFD").toUpperCase().toLowerCase().normalize("NFC");
+    path.normalize("NFD").toLowerCase().toUpperCase().toLowerCase().normalize("NFC");
   const foldedA = fold(a);
   const foldedB = fold(b);
   return isPathInside(foldedA, foldedB) || isPathInside(foldedB, foldedA);
