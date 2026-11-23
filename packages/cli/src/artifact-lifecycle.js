@@ -813,6 +813,10 @@ async function artifactStatus(
   const cache = temporaryCache ?? resolve(CACHE_PATH);
   // A failed update check names this command, so a person can retry the same report (#993).
   const retryCommand = command([options.artifactAction ?? "status"], ["--check-updates"]);
+  // The origins of the registries that missed a lookup's deadline in this report. The lookups
+  // after that one to the same registry are skipped instead of each waiting (#1138).
+  /** @type {Set<string>} */
+  const silentRegistries = new Set();
   try {
     const artifacts = [];
     for (const entry of lock.artifacts) {
@@ -833,7 +837,8 @@ async function artifactStatus(
       );
       const { latest, updateCheckFailure } = await checkForUpdate(
         options.checkUpdates,
-        (signal) => registry.resolve({ id: entry.id, tag: entry.tag, cache, signal }),
+        (signal, beforeLookup) =>
+          registry.resolve({ id: entry.id, tag: entry.tag, cache, signal, beforeLookup }),
         {
           packageName: entry.package,
           tag: entry.tag,
@@ -844,6 +849,7 @@ async function artifactStatus(
               : null,
           retryCommand,
           deadlineMs: updateCheckDeadlineMs,
+          silentRegistries,
         },
       );
       const updateAvailable = Boolean(latest && latest.version !== entry.version);
@@ -879,13 +885,15 @@ async function artifactStatus(
       if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
       const { latest, updateCheckFailure } = await checkForUpdate(
         options.checkUpdates,
-        (signal) => registry.resolve({ id: selection.id, tag: "latest", cache, signal }),
+        (signal, beforeLookup) =>
+          registry.resolve({ id: selection.id, tag: "latest", cache, signal, beforeLookup }),
         {
           packageName: artifact.packageName,
           tag: "latest",
           followLatestCommand: null,
           retryCommand,
           deadlineMs: updateCheckDeadlineMs,
+          silentRegistries,
         },
       );
       artifacts.push({
@@ -965,6 +973,23 @@ class UpdateCheckTimeout extends Error {
 }
 
 /**
+ * A lookup that status did not send, because an earlier lookup to the same registry missed its
+ * deadline in this report (#1138).
+ */
+class UpdateCheckSkipped extends Error {
+  /** @param {string} registryOrigin @param {number} deadlineMs */
+  constructor(registryOrigin, deadlineMs) {
+    super(
+      `The registry ${registryOrigin} did not answer an earlier lookup within ${deadlineMs} ms.`,
+    );
+    this.name = "UpdateCheckSkipped";
+    this.code = "ELOOKUPSKIPPED";
+    this.registryOrigin = registryOrigin;
+    this.deadlineMs = deadlineMs;
+  }
+}
+
+/**
  * The npm configuration notes of a lookup that missed its deadline. Artifact-core attaches them
  * to the error the aborted request ends with, which usually arrives within the same turn of the
  * event loop as the abort. The lookup gets until the next turn, so a lookup that ignores the
@@ -993,6 +1018,11 @@ async function abortedLookupNotes(pending) {
  * Each lookup is held to `context.deadlineMs` with the version notice's deadline and abort
  * (ADR-0019 Decision 2): at the deadline the lookup's signal is aborted, which ends pacote's
  * request, and the artifact is reported as ELOOKUPTIMEOUT, even if the lookup ignores the abort.
+ * The lookup names its registry through `beforeLookup` before it sends a request. Once a lookup to
+ * a registry times out, its origin joins `context.silentRegistries`, and each later lookup to that
+ * registry is stopped there and reported as ELOOKUPSKIPPED, with the same remedy, so the report
+ * waits for one deadline per silent registry instead of one per artifact. A lookup that never
+ * names its registry, such as a test stand-in, is never skipped.
  * Only an error whose `code` names a registry, network, timeout, or TLS failure is reported this
  * way (see REGISTRY_LOOKUP_CODE). Every other error stops the report as before: Calavera's own,
  * which carry no code and say what to fix (an invalid npm configuration, a package whose identity
@@ -1004,23 +1034,36 @@ async function abortedLookupNotes(pending) {
  *
  * @template {{ version: string }} T
  * @param {boolean | undefined} checkUpdates
- * @param {(signal: AbortSignal) => Promise<T>} lookup
- * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string, deadlineMs: number }} context
+ * @param {(signal: AbortSignal, beforeLookup: (registry: { origin: string }) => void) => Promise<T>} lookup
+ * @param {{ packageName: string, tag: string, followLatestCommand: string | null, retryCommand: string, deadlineMs: number, silentRegistries: Set<string> }} context
  * @returns {Promise<{ latest: T | null, updateCheckFailure: import("./artifact-status-report.js").UpdateCheckFailure | null }>}
  */
 async function checkForUpdate(checkUpdates, lookup, context) {
   if (!checkUpdates) return { latest: null, updateCheckFailure: null };
   /** @type {Promise<T> | undefined} */
   let pending;
+  /** @type {{ origin: string } | undefined} */
+  let lookupRegistry;
+  /** @param {{ origin: string }} registry */
+  const beforeLookup = (registry) => {
+    lookupRegistry = registry;
+    if (context.silentRegistries.has(registry.origin)) {
+      throw new UpdateCheckSkipped(registry.origin, context.deadlineMs);
+    }
+  };
   try {
     const latest = await withDeadline(
       context.deadlineMs,
       () => new UpdateCheckTimeout(context.deadlineMs),
-      (signal) => (pending = lookup(signal)),
+      (signal) => (pending = lookup(signal, beforeLookup)),
     );
     return { latest, updateCheckFailure: null };
   } catch (error) {
+    if (error instanceof UpdateCheckSkipped) {
+      return { latest: null, updateCheckFailure: lookupSkippedFailure(error, context) };
+    }
     if (error instanceof UpdateCheckTimeout) {
+      if (lookupRegistry) context.silentRegistries.add(lookupRegistry.origin);
       // withDeadline calls the lookup before its deadline can pass, so `pending` is set.
       const notes = await abortedLookupNotes(/** @type {Promise<T>} */ (pending));
       return { latest: null, updateCheckFailure: lookupTimeoutFailure(error, notes, context) };
@@ -1103,6 +1146,28 @@ function lookupTimeoutFailure(timeout, notes, { packageName, retryCommand }) {
     type: null,
     origin: null,
     ...notes,
+  };
+}
+
+/**
+ * The report of a lookup that status skipped after an earlier lookup to the same registry missed
+ * its deadline (#1138). It has the timeout's remedy, and no npm configuration notes, because the
+ * timed-out artifact already reports them.
+ *
+ * @param {UpdateCheckSkipped} skipped
+ * @param {{ packageName: string, retryCommand: string }} context
+ * @returns {import("./artifact-status-report.js").UpdateCheckFailure}
+ */
+function lookupSkippedFailure(skipped, { packageName, retryCommand }) {
+  return {
+    code: skipped.code,
+    statusCode: null,
+    reason: `Calavera did not look up ${packageName}, because the registry ${skipped.registryOrigin} did not answer an earlier lookup within ${skipped.deadlineMs} ms`,
+    remedy: `Check the network connection and the npm registry settings, then run: ${retryCommand}`,
+    type: null,
+    origin: null,
+    npmDiagnostics: [],
+    unsetVariables: [],
   };
 }
 

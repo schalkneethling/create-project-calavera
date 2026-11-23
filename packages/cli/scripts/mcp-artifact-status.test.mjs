@@ -23,7 +23,7 @@ import { buildRecipe } from "../src/recipe.js";
 import { mcpOnlyToolSchemas, sharedToolSchemas } from "../src/tool-schemas.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
-import { silentRegistry } from "./silent-registry.mjs";
+import { answeringRegistry, silentRegistry } from "./local-registry.mjs";
 
 const ARTIFACT_ID = "skill-project-goal";
 const LOCKED_VERSION = "0.1.0";
@@ -538,19 +538,38 @@ for (const [name, targets] of [
 }
 
 // Issue #1138: the MCP tool shares the update check of `artifacts status --check-updates`, so a
-// registry that never answers is reported per artifact at the lookup deadline there too, instead
-// of holding the tool call open.
+// registry that never answers is reported at the lookup deadline there too, instead of holding the
+// tool call open. After that lookup times out, the other artifacts on that registry are reported
+// as not checked, and an artifact on another registry is still checked.
 test(
-  "artifact_status with checkUpdates reports a registry that never answers at the lookup deadline",
+  "artifact_status with checkUpdates skips a silent registry after one timeout and still checks another registry",
   { timeout: 60_000 },
   async () => {
-    const deadline = 200;
-    await using registry = await silentRegistry();
+    const deadline = 1_500;
+    const silentIds = ["skill-project-goal", "skill-code-review", "skill-css-tokens"];
+    const healthyId = "skill-release-with-confidence";
+    const ids = [...silentIds, healthyId];
+    const healthyPackage = artifactForId(healthyId)?.packageName;
+    assert.ok(healthyPackage);
+    await using silent = await silentRegistry();
+    await using healthy = await answeringRegistry(new Map([[healthyPackage, NEWER_VERSION]]));
     await inProject("calavera-mcp-status-silent-", async (directory) => {
-      await lockedProject();
+      await writeFile(
+        "calavera.config.json",
+        `${JSON.stringify({ ...buildRecipe("minimal", [], "npm"), ai: ids.map((id) => ({ id })) }, null, 2)}\n`,
+      );
+      await runArtifactCommand(
+        { config: "calavera.config.json", dryRun: false, artifactAction: "install" },
+        stubRegistry(new Map(ids.map((id) => [id, LOCKED_VERSION]))),
+      );
       const [clientTransport, serverTransport] = InMemoryTransport.createLinkedPair();
       const server = createMcpServer({
-        ...localResolver(directory, registry.url),
+        // Each artifact's registry comes from npm_config_registry, so the two registries serve
+        // different artifacts.
+        resolve: (/** @type {Parameters<typeof resolveArtifactPackage>[0]} */ request) =>
+          localResolver(directory, request.id === healthyId ? healthy.url : silent.url).resolve(
+            request,
+          ),
         ...forbiddenFormatter,
         updateCheckDeadlineMs: deadline,
       });
@@ -559,24 +578,32 @@ test(
       await client.connect(clientTransport);
       try {
         await client.listTools();
+        const started = performance.now();
         const result = await client.callTool({
           name: "artifact_status",
           arguments: { checkUpdates: true },
         });
+        const elapsed = performance.now() - started;
 
         assert.equal(result.isError, undefined, JSON.stringify(result.content));
-        const [artifact] =
-          /** @type {{ artifacts: { updateCheckFailure: { code: string, reason: string, remedy: string } | null }[] }} */ (
+        const { artifacts } =
+          /** @type {{ artifacts: { id: string, latestVersion: string | null, updateCheckFailure: { code: string, reason: string, remedy: string } | null }[] }} */ (
             result.structuredContent
-          ).artifacts;
-        assert.equal(artifact?.updateCheckFailure?.code, "ELOOKUPTIMEOUT");
-        assert.match(
-          artifact?.updateCheckFailure?.reason ?? "",
-          new RegExp(`did not answer the lookup for .+ within ${deadline} ms$`),
-        );
-        assert.match(artifact?.updateCheckFailure?.remedy ?? "", /^Check the network connection/);
-        assert.equal(registry.requests.length, 1);
-        await registry.closed();
+          );
+        const codes = artifacts
+          .filter(({ id }) => silentIds.includes(id))
+          .map(({ updateCheckFailure }) => updateCheckFailure?.code);
+        assert.deepEqual(codes, ["ELOOKUPTIMEOUT", "ELOOKUPSKIPPED", "ELOOKUPSKIPPED"]);
+        const checked = artifacts.find(({ id }) => id === healthyId);
+        assert.equal(checked?.updateCheckFailure, null);
+        assert.equal(checked?.latestVersion, NEWER_VERSION);
+        for (const { updateCheckFailure } of artifacts.filter(({ id }) => silentIds.includes(id))) {
+          assert.match(updateCheckFailure?.remedy ?? "", /^Check the network connection/);
+        }
+        assert.equal(silent.requests.length, 1);
+        assert.ok(elapsed >= deadline, `the tool answered after ${elapsed} ms`);
+        assert.ok(elapsed < silentIds.length * deadline, `the tool took ${elapsed} ms`);
+        await silent.closed();
       } finally {
         await client.close();
         await server.close();
