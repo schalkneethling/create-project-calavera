@@ -232,6 +232,12 @@ function registryNotes() {
 }
 
 /**
+ * The actions `artifacts` runs. Each one's result names it `artifacts <action>`, so an error
+ * result for that action names it the same way (#1227).
+ */
+export const ARTIFACT_ACTIONS = ["install", "status", "doctor", "migrate", "update"];
+
+/**
  * @param {ArtifactOptions} options
  * @param {ArtifactServices} [services]
  */
@@ -252,7 +258,9 @@ export async function runArtifactCommand(options, services = {}) {
     case "update":
       return installArtifacts(options, true, registry, loadFormatter);
     default:
-      throw new Error("Artifacts command must be install, status, doctor, migrate, or update.");
+      throw new Error(
+        `Artifacts command must be ${new Intl.ListFormat("en", { type: "disjunction" }).format(ARTIFACT_ACTIONS)}.`,
+      );
   }
 }
 

@@ -910,10 +910,12 @@ approves the proposed recipe and dry-run result.
   with `eject`, `--yes` removes only the items that match Calavera's records exactly
 - `--json`; when the arguments themselves are invalid, such as an unknown flag, a flag
   missing its value, or an unknown command, or when the command stops with an error while it
-  runs, the run prints `{ command, ok: false, issues }` and exits 1, with `command` set to the
-  command the run would have run, or `null` when that is not a command Calavera has, and the
-  error as an issue with the level `error`, in the same redacted text the run prints without
-  `--json`; a `--json` after `--new` belongs to `vp create` and does not count
+  runs, the run prints `{ command, ok: false, issues }` and exits 1, with the error as an issue
+  with the level `error`, in the same redacted text the run prints without `--json`; `command`
+  is the name the command's success result uses, such as `apply` for `update`, `agent-init` for
+  `bootstrap`, and `artifacts status` for `artifacts status`, or `null` when Calavera has no such
+  command or `artifacts` action; a `--json` after `--new` belongs to `vp create` and does not
+  count
 
 ## Debugging Errors
 

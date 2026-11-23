@@ -101,6 +101,8 @@ const cases = [
   },
   {
     command: "bootstrap",
+    // The name of its success result (#1227), as cli-result-command-names.test.mjs checks.
+    result: "agent-init",
     setup: invalidPackageJSON,
     args: ["bootstrap"],
     message: packageJSONParseError,
@@ -113,6 +115,7 @@ const cases = [
   },
   {
     command: "update",
+    result: "apply",
     setup: empty,
     args: ["update", "--config", "missing.json"],
     message: "ENOENT: no such file or directory, open '<directory>/missing.json'",
@@ -133,6 +136,8 @@ const cases = [
   },
   {
     command: "artifacts",
+    // No success result names an action Calavera does not have.
+    result: null,
     setup: empty,
     args: ["artifacts", "bogus"],
     message: "Artifacts command must be install, status, doctor, migrate, or update.",
@@ -152,6 +157,7 @@ const cases = [
 
 for (const {
   command,
+  result: resultCommand = command,
   setup,
   args,
   jsonArgs = [...args, "--json"],
@@ -176,7 +182,7 @@ for (const {
       assert.equal(result.code, 1);
       assert.equal(result.stderr, "");
       assert.deepEqual(JSON.parse(result.stdout), {
-        command,
+        command: resultCommand,
         ok: false,
         issues: [{ level: "error", message }],
       });
