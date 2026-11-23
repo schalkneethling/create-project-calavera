@@ -183,9 +183,10 @@ export function assertFirstSelection(firstIndexById, id, index) {
  * #1125, owner decision of 2026-11-21: apply refuses a legacy entry, such as
  * `{ "type": "skill", "src": "skills/protected-branch-guard" }`, that selects an artifact that
  * declares wiring or inputs, because a legacy entry cannot record the inputs and Calavera does not
- * guess them. `artifacts migrate` rewrites each legacy entry as an ID entry. Apply, update, their
- * dry runs, and the MCP apply tools call this before they plan or write anything. Clean still
- * reads a legacy entry; doctor reports the refusal with `legacyEntryWiringRefusal` (#1140).
+ * guess them. `artifacts migrate` rewrites each legacy entry as an ID entry. Apply, update,
+ * `artifacts install` and `artifacts update` (#1137), their dry runs, and the MCP apply tools call
+ * this before they plan or write anything. Clean still reads a legacy entry; doctor reports the
+ * refusal with `legacyEntryWiringRefusal` (#1140).
  *
  * @param {unknown} aiConfig
  */
