@@ -1,5 +1,4 @@
 // @ts-check
-import { access } from "node:fs/promises";
 import { dirname, isAbsolute, join, resolve } from "node:path";
 
 import { TomlError, parse as parseToml } from "smol-toml";
@@ -241,39 +240,31 @@ export async function yarnLayers({ cwd, env, home, accountHome, scope, warnings 
 }
 
 /**
- * The environment files Yarn 4 loads into the binaries it runs: every file that an
- * `injectEnvironmentFiles` setting of the `.yarnrc.yml` layers names, or by default `.env.yarn`
- * in the project folder (`Configuration.find` in @yarnpkg/core). Files of every layer count, so a
- * file that only a farther `.yarnrc.yml` names is still judged. Lowest precedence first.
+ * The environment files Yarn 4.18.1 loads into the binaries it runs, lowest precedence first
+ * (`Configuration.find` in @yarnpkg/core). YARN_INJECT_ENVIRONMENT_FILES, a comma-separated list
+ * resolved from the folder Yarn started in, replaces the `.yarnrc.yml` settings; each
+ * `injectEnvironmentFiles` entry of a `.yarnrc.yml` is resolved from that file's folder, and every
+ * layer's entries count; without either, the default `.env.yarn` is in the folder Yarn started
+ * in. A trailing `?` makes a file optional. Yarn expands variables in these paths before it reads
+ * the files, which Calavera cannot reproduce, so `unresolved` says whether a path holds one.
  * @param {LauncherLayer[]} layers
- * @param {string} cwd
+ * @param {string} startingCwd The folder Yarn started in (INIT_CWD).
+ * @param {NodeJS.ProcessEnv} env
  */
-export async function yarnEnvironmentFiles(layers, cwd) {
-  const configured = layers.flatMap((layer) => layer.environmentFiles ?? []);
-  if (layers.some((layer) => layer.environmentFiles)) return configured;
-  const projectCwd = await yarnProjectCwd(cwd);
-  return projectCwd === undefined ? [] : [join(projectCwd, ".env.yarn")];
-}
-
-/**
- * Yarn's project folder: the nearest folder with a yarn.lock, or else the topmost folder with a
- * package.json (`findProjectCwd` in @yarnpkg/core).
- * @param {string} cwd
- */
-async function yarnProjectCwd(cwd) {
-  /** @param {string} path */
-  const exists = (path) =>
-    access(path).then(
-      () => true,
-      () => false,
-    );
-  /** @type {string | undefined} */
-  let topmost;
-  for (let directory = resolve(cwd); ; directory = dirname(directory)) {
-    if (await exists(join(directory, "yarn.lock"))) return directory;
-    if (await exists(join(directory, "package.json"))) topmost = directory;
-    if (dirname(directory) === directory) return topmost;
-  }
+export function yarnEnvironmentFiles(layers, startingCwd, env) {
+  const variable = Object.entries(env).find(
+    ([name]) => name.toLowerCase() === "yarn_inject_environment_files",
+  )?.[1];
+  const paths =
+    variable !== undefined
+      ? variable
+          .split(",")
+          .filter(Boolean)
+          .map((file) => resolve(startingCwd, file.replace(/\?$/, "")))
+      : layers.some((layer) => layer.environmentFiles)
+        ? layers.flatMap((layer) => layer.environmentFiles ?? [])
+        : [join(startingCwd, ".env.yarn")];
+  return { paths, unresolved: paths.some((path) => path.includes("${")) };
 }
 
 /**

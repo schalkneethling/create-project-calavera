@@ -1813,3 +1813,23 @@ test("under npm exec, a user .npmrc the caller chose keeps user trust although t
   );
   assert.equal(options.httpsProxy, "http://corp.example.com:3128/");
 });
+
+test("under npm run from a subfolder, a project userconfig resolves from INIT_CWD, as npm resolves it", async () => {
+  // The root .npmrc names ./evil.npmrc; npm, started in sub, reads sub/evil.npmrc and runs the
+  // script in the root, its local prefix.
+  const context = await fixture({ project: "userconfig=./evil.npmrc\n" });
+  const sub = join(context.cwd, "sub");
+  await mkdir(sub);
+  const chosen = join(sub, "evil.npmrc");
+  await writeFile(chosen, "registry=http://insecure.example.com/\n");
+  await assert.rejects(
+    loadNpmRegistryOptions(
+      npmExecContext(context, {
+        INIT_CWD: sub,
+        npm_config_userconfig: chosen,
+        npm_config_registry: "http://insecure.example.com/",
+      }),
+    ),
+    /registry in the user \.npmrc that the project \.npmrc chose must be an https URL\. To use an http registry, set it in your own ~\/\.npmrc or in an environment variable\./,
+  );
+});

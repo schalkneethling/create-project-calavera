@@ -1371,3 +1371,60 @@ try {
     await rm(directory, { recursive: true, force: true });
   }
 });
+
+test("a redirect to another host also bypasses a proxy variable that .env.yarn set from a variable", async () => {
+  // The registry on 127.0.0.1 redirects to a second registry on localhost, which serves the package
+  // document and the tarball. HTTP_PROXY names a closed port, so a request that falls back to it
+  // fails.
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-env-yarn-redirect-"));
+  const packed = await packFixture(directory);
+  const target = await startRegistry(packed, {
+    listenHost: "localhost",
+    tarballUrl: (port) => `http://localhost:${port}/-/artifact.tgz`,
+  });
+  const targetPort = target.host.split(":").at(-1);
+  const registry = await startRegistry(packed, { redirectTo: `http://localhost:${targetPort}` });
+  try {
+    const project = join(directory, "project");
+    await mkdir(project);
+    await writeFile(join(project, ".env.yarn"), "HTTP_PROXY=http://${PROXY_HOST}:9\n");
+    const script = join(directory, "probe.mjs");
+    const registryModule = new URL("../src/registry.js", import.meta.url).href;
+    await writeFile(
+      script,
+      `import { extractArtifactPackage, resolveArtifactPackage } from ${JSON.stringify(registryModule)};
+try {
+  const resolution = await resolveArtifactPackage({ id: "skill-project-goal", cache: process.env.PROBE_CACHE, cwd: process.env.PROBE_CWD, env: process.env });
+  await extractArtifactPackage({ ...resolution, cache: process.env.PROBE_CACHE }, process.env.PROBE_DESTINATION, "2.2.0", { cwd: process.env.PROBE_CWD, env: process.env });
+  console.log(JSON.stringify({ ok: true }));
+} catch (error) {
+  console.log(JSON.stringify({ ok: false, code: error.code ?? null }));
+}
+`,
+    );
+    const { stdout } = await execFileAsync(process.execPath, [script], {
+      env: {
+        PATH: process.env.PATH,
+        HOME: join(directory, "home"),
+        HTTP_PROXY: "http://127.0.0.1:9",
+        PROXY_HOST: "127.0.0.1",
+        npm_config_user_agent: "yarn/4.18.1 npm/? node/v24.3.0 darwin arm64",
+        INIT_CWD: project,
+        YARN_NPM_REGISTRY_SERVER: `http://${registry.host}`,
+        PROBE_CACHE: join(directory, "cache"),
+        PROBE_CWD: project,
+        PROBE_DESTINATION: join(directory, "extracted"),
+        ...(process.env.__STRYKER_ACTIVE_MUTANT__
+          ? { __STRYKER_ACTIVE_MUTANT__: process.env.__STRYKER_ACTIVE_MUTANT__ }
+          : {}),
+      },
+    });
+    assert.deepEqual(JSON.parse(stdout), { ok: true });
+    assert.equal(registry.requests.length, 1);
+    assert.equal(target.requests.length, 2);
+  } finally {
+    await registry.close();
+    await target.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});

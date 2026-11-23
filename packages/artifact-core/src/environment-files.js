@@ -40,12 +40,12 @@ export function hasYarnReference(value) {
 }
 
 /**
- * Bun expands `$NAME` and `${NAME}`, in any quotes, and a backslash escapes the next `$` (probed
- * with Bun 1.3.9).
+ * Bun expands `$NAME` and `${NAME}`, in any quotes, also when NAME starts with a digit, and any
+ * backslash before `$` keeps it literal (probed with Bun 1.3.9).
  * @param {string} value
  */
 export function hasBunReference(value) {
-  return /(?<!\\)(?:\\\\)*\$(?:\{|[A-Za-z_])/.test(value);
+  return /(?<!\\)\$(?:\{|\w)/.test(value);
 }
 
 /**
@@ -73,15 +73,30 @@ export async function variablesFromReferences(paths, hasReference, warnings) {
 }
 
 /**
- * The `.env` files Bun 1.3.9 loads from the working folder, lowest precedence first: `.env`,
- * `.env.<mode>`, `.env.local` (not under `NODE_ENV=test`), and `.env.<mode>.local`, where the
- * mode is `production` or `test` from NODE_ENV, and `development` otherwise.
+ * The chains of `.env` files that Bun 1.3.9 may have loaded from `cwd`, each lowest precedence
+ * first: `.env`, `.env.<mode>`, `.env.local` (not under `NODE_ENV=test`), and `.env.<mode>.local`.
+ * Bun chooses the mode from the caller's NODE_ENV before it loads the files: `production` or
+ * `test`, and `development` otherwise. When one of the files defines NODE_ENV, the NODE_ENV in
+ * Calavera's environment may have come from it, which leaves Bun's mode at `development`, so that
+ * chain is judged too.
  * @param {string} cwd
  * @param {NodeJS.ProcessEnv} env
+ * @param {string[]} warnings
  */
-export function bunEnvironmentFiles(cwd, env) {
+export async function bunEnvironmentFileChains(cwd, env, warnings) {
+  /** @param {string} mode */
+  const chain = (mode) =>
+    [".env", `.env.${mode}`, ...(mode === "test" ? [] : [".env.local"]), `.env.${mode}.local`].map(
+      (name) => join(cwd, name),
+    );
   const mode =
     env.NODE_ENV === "production" || env.NODE_ENV === "test" ? env.NODE_ENV : "development";
-  const names = [".env", `.env.${mode}`, ...(mode === "test" ? [] : [".env.local"])];
-  return [...names, `.env.${mode}.local`].map((name) => join(cwd, name));
+  if (mode === "development") return [chain(mode)];
+  for (const path of chain(mode)) {
+    const text = await readConfigText(path, "environment file", warnings);
+    if (text !== undefined && parseEnvironmentFile(text).has("NODE_ENV")) {
+      return [chain(mode), chain("development")];
+    }
+  }
+  return [chain(mode)];
 }

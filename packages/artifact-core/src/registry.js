@@ -44,7 +44,7 @@ export async function resolveArtifactPackage(request) {
     withAuthFailure(npm, { subject: artifact.packageName, download: false }, () =>
       withRegistryCode(artifact.packageName, () =>
         pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
-          ...npm.requestOptions(npm.registryUrl),
+          ...npm.requestOptions,
           cache: request.cache,
           offline: request.offline,
           fullMetadata: true,
@@ -90,7 +90,7 @@ export async function resolvePackageDistTag({ packageName, tag, cwd, env, signal
   const manifest = await withNpmDiagnostics(npm, () =>
     withAuthFailure(npm, { subject: packageName, download: false }, () =>
       pacote.manifest(`${packageName}@${tag}`, {
-        ...npm.requestOptions(npm.registryUrl),
+        ...npm.requestOptions,
         fetchRetries: 0,
         signal,
       }),
@@ -127,7 +127,7 @@ export async function extractArtifactPackage(resolution, destination, cliVersion
         { subject: `${resolution.packageName}@${resolution.version}`, download: true },
         () =>
           pacote.extract(resolution.resolved, destination, {
-            ...npm.requestOptions(tarballUrl),
+            ...npm.requestOptions,
             registry: npm.registryUrl,
             cache: resolution.cache,
             integrity: resolution.integrity,

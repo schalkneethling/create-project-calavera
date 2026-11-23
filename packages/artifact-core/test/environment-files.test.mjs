@@ -41,5 +41,7 @@ test("hasYarnReference and hasBunReference follow each tool's expansion syntax a
   assert.equal(hasBunReference("http://$X/"), true);
   assert.equal(hasBunReference("http://${X}/"), true);
   assert.equal(hasBunReference("http://\\$X/"), false);
-  assert.equal(hasBunReference("http://$1/"), false);
+  assert.equal(hasBunReference("http://\\\\$X/"), false);
+  assert.equal(hasBunReference("http://$1/"), true);
+  assert.equal(hasBunReference("http://$/"), false);
 });

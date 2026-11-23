@@ -1,5 +1,7 @@
 // @ts-check
 import { access, realpath } from "node:fs/promises";
+import { Agent as HttpAgent } from "node:http";
+import { Agent as HttpsAgent } from "node:https";
 import { homedir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
@@ -7,7 +9,7 @@ import { decode } from "ini";
 
 import { printable, readConfigText } from "./config-files.js";
 import {
-  bunEnvironmentFiles,
+  bunEnvironmentFileChains,
   hasBunReference,
   hasYarnReference,
   variablesFromReferences,
@@ -54,6 +56,9 @@ const PROXY_PROTOCOLS = new Set([
 // etc/npmrc is the default).
 const GLOBAL_CONFIG_CHOOSERS = new Set(["globalconfig", "prefix"]);
 const GLOBAL_LAYER = "global npmrc";
+// The folder Calavera started in, before the CLI changes into a new or ancestor project. Yarn and
+// Bun loaded their environment files relative to it (#1186).
+const STARTING_CWD = process.cwd();
 // Same expression as @npmcli/config: ${VAR}, ${VAR?} for an empty fallback, and backslash escapes.
 const ENV_EXPRESSION = /(?<!\\)(\\*)\$\{([^${}?]+)(\?)?\}/g;
 
@@ -246,19 +251,24 @@ async function userConfigPath(env, home, launcher) {
  * came from a variable in such a file is ignored with a warning (#1186, owner decisions 2 and 3
  * of 2026-11-24); one that the file sets literally follows the environment rules. When that
  * variable is a proxy variable that @npmcli/agent falls back to, such as HTTPS_PROXY,
- * `requestOptions(url)` excludes the request's host from proxies.
+ * and no proxy setting applies, `requestOptions` sends every request, redirects included, through
+ * an agent without a proxy; otherwise it equals `options`.
  * `accountHome` replaces the operating system account's home folder, and `runtime` the runtime
  * that runs Calavera, for tests only.
  * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string, accountHome?: string, runtime?: "bun" | "node" }} [context]
- * @returns {Promise<{ options: Record<string, string>, requestOptions: (url: string) => Record<string, string>, registry: EffectiveRegistry, registryUrl: string, warnings: string[], diagnostics: string[], unsetVariables: string[] }>}
+ * @returns {Promise<{ options: Record<string, string>, requestOptions: Record<string, unknown>, registry: EffectiveRegistry, registryUrl: string, warnings: string[], diagnostics: string[], unsetVariables: string[] }>}
  */
 export async function loadNpmRegistryOptions({
-  cwd = process.cwd(),
+  cwd: cwdOption,
   env = process.env,
   scope,
   accountHome = accountHomeFolder(),
   runtime = process.versions.bun ? "bun" : "node",
 } = {}) {
+  const cwd = cwdOption ?? process.cwd();
+  // The folder whose environment files Yarn or Bun loaded: the given `cwd`, or else the folder
+  // Calavera started in. Yarn also passes its own starting folder as INIT_CWD.
+  const startingCwd = cwdOption ?? STARTING_CWD;
   /** @type {string[]} */
   const warnings = [];
   // Notes for failure messages only; `diagnostics` adds every warning to them.
@@ -324,7 +334,9 @@ export async function loadNpmRegistryOptions({
       (userconfigRespelled ||
         (typeof projectUserconfig === "string" &&
           (projectUserconfig.includes("${") ||
-            (await realPath(resolveUserconfig(projectUserconfig, home, cwd))) ===
+            // npm resolves a relative path from the folder it started in, which it exports as
+            // INIT_CWD; `npm run` then runs the script in the local prefix.
+            (await realPath(resolveUserconfig(projectUserconfig, home, env.INIT_CWD || cwd))) ===
               (await realPath(userPath)))));
     const globalPath = npmStarted ? globalConfigPath(env, dirname(projectPath)) : undefined;
     if (globalPath !== undefined && globalPath !== userPath && globalPath !== projectPath) {
@@ -485,8 +497,6 @@ export async function loadNpmRegistryOptions({
     }
   };
 
-  // The .npmrc layers whose values npm exports, the project file first, because its rules are
-  // the strictest when two files hold the same value.
   // The variables that a Yarn 4 `.env.yarn` or a Bun `.env` file set from a variable (#1186).
   /** @type {Map<string, { path: string, tool: string }>} */
   const fromEnvironmentFiles = new Map();
@@ -494,16 +504,27 @@ export async function loadNpmRegistryOptions({
   const addClaims = (claimed, tool) => {
     for (const [name, path] of claimed) fromEnvironmentFiles.set(name, { path, tool });
   };
+  // Set when a Yarn environment file path holds a variable, so Calavera cannot tell which file
+  // Yarn loaded; every registry and proxy variable is then ignored.
+  let unresolvedEnvironmentFiles = false;
   if (launcher === "yarn") {
-    const paths = await yarnEnvironmentFiles(layers, cwd);
-    addClaims(await variablesFromReferences(paths, hasYarnReference, warnings), "Yarn");
+    const files = yarnEnvironmentFiles(layers, env.INIT_CWD || startingCwd, env);
+    unresolvedEnvironmentFiles = files.unresolved;
+    addClaims(await variablesFromReferences(files.paths, hasYarnReference, warnings), "Yarn");
   }
   if (runtime === "bun") {
-    const paths = bunEnvironmentFiles(cwd, env);
-    addClaims(await variablesFromReferences(paths, hasBunReference, warnings), "Bun");
+    for (const chain of await bunEnvironmentFileChains(startingCwd, env, warnings)) {
+      addClaims(await variablesFromReferences(chain, hasBunReference, warnings), "Bun");
+    }
   }
   /** @param {string} name */
   const ignoreFromEnvironmentFile = (name) => {
+    if (unresolvedEnvironmentFiles) {
+      warnings.push(
+        `Ignored ${printable(name)}: a .yarnrc.yml setting or YARN_INJECT_ENVIRONMENT_FILES names an environment file with a variable in its path, so Calavera cannot tell which file Yarn loaded or whether it set this variable from a variable. Write the path without a variable.`,
+      );
+      return true;
+    }
     const claim = fromEnvironmentFiles.get(name);
     if (!claim) return false;
     const file = printable(relative(cwd, claim.path) || claim.path);
@@ -514,6 +535,8 @@ export async function loadNpmRegistryOptions({
     return true;
   };
 
+  // The .npmrc layers whose values npm exports, the project file first, because its rules are
+  // the strictest when two files hold the same value.
   const fileLayers = layers.filter((candidate) => !candidate.npmEnvironment);
   const exportingLayers = [
     ...fileLayers.filter((candidate) => !candidate.trusted),
@@ -643,13 +666,11 @@ export async function loadNpmRegistryOptions({
     ignoredProxyVariables.length > 0 && !options.proxy && !options.httpsProxy;
   return {
     options,
-    requestOptions: (url) =>
-      bypassEnvironmentProxy
-        ? {
-            ...options,
-            noProxy: [options.noProxy, new URL(url).hostname].filter(Boolean).join(","),
-          }
-        : options,
+    // @npmcli/agent uses an `agent` option as it is, for the first request and for every
+    // redirect (`getAgent` in @npmcli/agent and `remoteFetch` in make-fetch-happen), and
+    // minipass-fetch calls a function agent with the request URL. Direct agents therefore keep
+    // the ignored proxy variable away from every host a request reaches.
+    requestOptions: bypassEnvironmentProxy ? { ...options, agent: directAgent } : options,
     registry: {
       origin: registryUrl.origin,
       source: sources[registryKey]?.name ?? "default",
@@ -687,6 +708,19 @@ function registryBypassesProxy(registryUrl, configured, env) {
         segments.length > 0 && segments.every((segment, index) => hostSegments[index] === segment)
       );
     });
+}
+
+const directAgents = {
+  http: new HttpAgent({ keepAlive: true }),
+  https: new HttpsAgent({ keepAlive: true }),
+};
+
+/**
+ * An agent without a proxy for the protocol of `url`.
+ * @param {URL} url
+ */
+function directAgent(url) {
+  return url.protocol === "https:" ? directAgents.https : directAgents.http;
 }
 
 /**
@@ -817,7 +851,7 @@ function registryValue(setting, value, layer, warnings) {
     // passes verification. A person may choose that in their own configuration, but a cloned
     // repository may not choose it for them.
     throw new Error(
-      `${subject}${where} must be an https URL. To use an http registry, set it in your user configuration.`,
+      `${subject}${where} must be an https URL. To use an http registry, set it in your own ${layer.tool === "Yarn" ? "~/.yarnrc.yml" : "~/.npmrc"} or in an environment variable.`,
     );
   }
   if (!url.username && !url.password) return value;
