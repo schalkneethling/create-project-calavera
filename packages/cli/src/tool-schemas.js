@@ -732,7 +732,7 @@ export function toolJsonSchema(schema, { io, browser = false }) {
 
 /**
  * The JSON Schema `inputSchema`, and `outputSchema` where one is declared, that the Composer
- * passes to `navigator.modelContext.registerTool` for each shared tool.
+ * passes to `document.modelContext.registerTool` for each shared tool.
  *
  * @returns {Record<string, { inputSchema: object, outputSchema?: object }>}
  */

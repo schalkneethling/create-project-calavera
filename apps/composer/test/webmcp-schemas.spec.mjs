@@ -10,9 +10,9 @@ test("the Composer registers the core's schemas for every tool it shares with MC
 }) => {
   await page.addInitScript(() => {
     window.registeredWebMcpTools = [];
-    Object.defineProperty(navigator, "modelContext", {
+    Object.defineProperty(document, "modelContext", {
       value: {
-        registerTool: ({ name, inputSchema, outputSchema }) => {
+        registerTool: async ({ name, inputSchema, outputSchema }) => {
           window.registeredWebMcpTools.push(structuredClone({ name, inputSchema, outputSchema }));
         },
       },

@@ -34,7 +34,7 @@ export function registeredToolNamesIn(script) {
 }
 
 /**
- * The tool names the Composer registers through `navigator.modelContext.registerTool`, in
+ * The tool names the Composer registers through `document.modelContext.registerTool`, in
  * registration order.
  *
  * @returns {Promise<string[]>}
