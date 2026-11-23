@@ -184,9 +184,8 @@ async function planArtifactCacheBlock(state, declared, command) {
 
 /**
  * How long one registry lookup of an update check may take, in milliseconds, before status reports
- * it for that artifact and moves on (#1138). npm's own timeout is five minutes per attempt, with
- * retries, which leaves a registry that accepts the connection and never answers holding the
- * report for many minutes.
+ * it for that artifact and moves on (#1138). npm's own timeout is five minutes, which leaves a
+ * registry that accepts the connection and never answers holding the report that long.
  */
 const UPDATE_CHECK_DEADLINE_MS = 15_000;
 
@@ -966,6 +965,29 @@ class UpdateCheckTimeout extends Error {
 }
 
 /**
+ * The npm configuration notes of a lookup that missed its deadline. Artifact-core attaches them
+ * to the error the aborted request ends with, which usually arrives within the same turn of the
+ * event loop as the abort. The lookup gets until the next turn, so a lookup that ignores the
+ * abort cannot hold the report; it then has no notes.
+ *
+ * @param {Promise<unknown>} pending
+ */
+async function abortedLookupNotes(pending) {
+  const late = await Promise.race([
+    pending.then(
+      () => undefined,
+      (/** @type {unknown} */ error) => error,
+    ),
+    new Promise((done) => setImmediate(() => done(undefined))),
+  ]);
+  const fields = /** @type {{ npmDiagnostics?: unknown, unsetVariables?: unknown }} */ (late ?? {});
+  return {
+    npmDiagnostics: notesList(fields.npmDiagnostics),
+    unsetVariables: notesList(fields.unsetVariables),
+  };
+}
+
+/**
  * Asks the registry for the release on an artifact's channel when update checks are on. A failed
  * registry lookup is reported for that artifact alone, so the others still get a status (#993).
  * Each lookup is held to `context.deadlineMs` with the version notice's deadline and abort
@@ -988,14 +1010,21 @@ class UpdateCheckTimeout extends Error {
  */
 async function checkForUpdate(checkUpdates, lookup, context) {
   if (!checkUpdates) return { latest: null, updateCheckFailure: null };
+  /** @type {Promise<T> | undefined} */
+  let pending;
   try {
     const latest = await withDeadline(
       context.deadlineMs,
       () => new UpdateCheckTimeout(context.deadlineMs),
-      lookup,
+      (signal) => (pending = lookup(signal)),
     );
     return { latest, updateCheckFailure: null };
   } catch (error) {
+    if (error instanceof UpdateCheckTimeout) {
+      // withDeadline calls the lookup before its deadline can pass, so `pending` is set.
+      const notes = await abortedLookupNotes(/** @type {Promise<T>} */ (pending));
+      return { latest: null, updateCheckFailure: lookupTimeoutFailure(error, notes, context) };
+    }
     const failure = updateCheckFailure(error, context);
     if (!failure) throw error;
     return { latest: null, updateCheckFailure: failure };
@@ -1057,6 +1086,27 @@ function uriOrigin(value) {
 }
 
 /**
+ * The report of a lookup that missed its deadline (#1138). It has no HTTP status or origin,
+ * because the registry never answered.
+ *
+ * @param {UpdateCheckTimeout} timeout
+ * @param {{ npmDiagnostics: string[], unsetVariables: string[] }} notes
+ * @param {{ packageName: string, retryCommand: string }} context
+ * @returns {import("./artifact-status-report.js").UpdateCheckFailure}
+ */
+function lookupTimeoutFailure(timeout, notes, { packageName, retryCommand }) {
+  return {
+    code: timeout.code,
+    statusCode: null,
+    reason: `the registry did not answer the lookup for ${packageName} within ${timeout.deadlineMs} ms`,
+    remedy: `Check the network connection and the npm registry settings, then run: ${retryCommand}`,
+    type: null,
+    origin: null,
+    ...notes,
+  };
+}
+
+/**
  * The report of a failed registry lookup, or undefined for an error that is not one.
  *
  * @param {unknown} error
@@ -1064,18 +1114,6 @@ function uriOrigin(value) {
  * @returns {import("./artifact-status-report.js").UpdateCheckFailure | undefined}
  */
 function updateCheckFailure(error, { packageName, tag, followLatestCommand, retryCommand }) {
-  if (error instanceof UpdateCheckTimeout) {
-    return {
-      code: error.code,
-      statusCode: null,
-      reason: `the registry did not answer the lookup for ${packageName} within ${error.deadlineMs} ms`,
-      remedy: `Check the network connection and the npm registry settings, then run: ${retryCommand}`,
-      type: null,
-      origin: null,
-      npmDiagnostics: [],
-      unsetVariables: [],
-    };
-  }
   const fields =
     /** @type {{ code?: unknown, statusCode?: unknown, npmDiagnostics?: unknown, unsetVariables?: unknown, distTags?: unknown, type?: unknown, origin?: unknown, setting?: unknown, layer?: unknown, registryOrigin?: unknown, uri?: unknown, cause?: { distTags?: unknown, uri?: unknown } }} */ (
       error ?? {}

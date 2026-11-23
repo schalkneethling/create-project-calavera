@@ -2207,7 +2207,7 @@ test("any HTTP failure reports the origin of the URL that failed, never its path
 });
 
 // Issue #1138: a registry that accepts the connection and never answers held
-// `artifacts status --check-updates` until npm's own five-minute timeout, retried twice. Each
+// `artifacts status --check-updates` until npm's own five-minute timeout. Each
 // lookup now has a deadline, and a lookup that misses it is reported for that artifact alone.
 // The tests use a short deadline, and assert the order of events and a generous upper bound,
 // so a loaded machine does not make them fail.
@@ -2226,6 +2226,9 @@ test(
         npm_config_userconfig: join(process.cwd(), "missing.npmrc"),
         npm_config_registry: registry.url,
       };
+      // A project proxy is ignored with a warning, so the loader has a diagnostic that the
+      // timed-out lookup must keep.
+      await writeFile(".npmrc", "https-proxy=http://proxy.example.com/\n");
       const services = {
         resolve: (/** @type {Parameters<typeof resolveArtifactPackage>[0]} */ request) =>
           resolveArtifactPackage({ ...request, cwd: process.cwd(), env }),
@@ -2245,8 +2248,17 @@ test(
         ids.map((id) => `/${packageName(id)}`),
       );
       const rerun = "npm create project-calavera artifacts status -- --check-updates";
+      for (const { updateCheckFailure } of result.artifacts) {
+        assert.match(
+          updateCheckFailure?.npmDiagnostics.join("\n") ?? "",
+          /^Ignored https-proxy in the project \.npmrc/,
+        );
+      }
       assert.deepEqual(
-        result.artifacts.map(({ updateCheckFailure }) => updateCheckFailure),
+        result.artifacts.map(({ updateCheckFailure }) => ({
+          ...updateCheckFailure,
+          npmDiagnostics: [],
+        })),
         ids.map((id) => ({
           code: "ELOOKUPTIMEOUT",
           statusCode: null,

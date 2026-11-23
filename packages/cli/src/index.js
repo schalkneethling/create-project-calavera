@@ -7886,7 +7886,8 @@ function startVersionCheck(options, runArgs) {
 
   const launcher = launchingPackageManager(env.npm_config_user_agent) ?? "npm";
 
-  // checkForNewerVersion never rejects, so a rejection is the deadline, and is a failed check.
+  // checkForNewerVersion catches the resolver's failures, so a rejection here is almost always
+  // the deadline. Any rejection is a failed check.
   return withDeadline(
     VERSION_CHECK_DEADLINE_MS,
     () => new Error(`The registry did not answer within ${VERSION_CHECK_DEADLINE_MS} ms.`),
