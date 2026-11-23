@@ -72,8 +72,9 @@ async function missingFolderError(path, error) {
  * at `path` or at a folder on the way to it, that reaches a file outside the project stops apply,
  * because apply would change that file. A path the caller gave outside the project, by its own
  * name and its folder's real path, is written as given, because no link leads it there. A path in
- * a folder that does not exist, or cannot be opened, stops with a Calavera error that names the
- * path, instead of the raw `ENOENT` the write would throw.
+ * a folder that does not exist, or cannot be opened, and a path that is or reaches a folder, stop
+ * with a Calavera error that names the path, instead of the raw error the write would throw. A
+ * hard link is not a link here: it has no direction, so it cannot be told apart from a file.
  *
  * @param {string} path Absolute recipe path.
  * @param {string} projectDirectory The directory apply runs in.
@@ -99,18 +100,35 @@ export async function assertRecipeWriteTarget(path, projectDirectory) {
 
   if (stats?.isSymbolicLink()) {
     const target = await linkTarget(path);
-    const real = await realpath(path).catch(() => undefined);
-    if (real === undefined) {
+    const resolved = await realpath(path).then(
+      (real) => ({ real, failure: undefined }),
+      (/** @type {NodeJS.ErrnoException} */ failure) => ({ real: undefined, failure }),
+    );
+    if (resolved.failure !== undefined) {
+      const { failure } = resolved;
+      if (failure.code !== "ENOENT") {
+        // A loop, or a target that cannot be reached, is not a missing file, so it is not called
+        // one.
+        throw Object.assign(
+          new Error(
+            `Calavera refused to write the recipe: ${path} is a link to ${target}, which does not lead to a file (${failure.code}), so Calavera cannot tell where writing the recipe would land. Replace the link with the recipe file itself, then run apply again. ${STOPPED}`,
+            { cause: failure },
+          ),
+          { code: failure.code },
+        );
+      }
       const outside = !isPathInside(project, await nearestExistingRealPath(target));
       throw new Error(
         `Calavera refused to write the recipe: ${path} is a link to ${target}, which does not exist${outside ? ` and is outside ${project}` : ""}, so writing the recipe would create ${target} instead. Remove the link, or point it at an existing file inside ${project}, then run apply again. ${STOPPED}`,
       );
     }
+    const { real } = resolved;
     if (namedInside && !isPathInside(project, real)) {
       throw new Error(
         `Calavera refused to write the recipe: ${path} is a link to ${real === target ? target : `${target}, at the real path ${real}`}, which is outside ${project}, so writing the recipe would change a file outside the project. Replace the link with the recipe file itself, or give a recipe path inside ${project}, then run apply again. ${STOPPED}`,
       );
     }
+    await assertNotFolder(path, real);
     return;
   }
 
@@ -120,6 +138,27 @@ export async function assertRecipeWriteTarget(path, projectDirectory) {
   if (namedInside && !isPathInside(project, real)) {
     throw new Error(
       `Calavera refused to write the recipe: ${path} reaches ${real} through a folder link, which is outside ${project}, so writing the recipe would ${stats === undefined ? "create" : "change"} a file outside the project. Give a recipe path inside ${project} that no folder link leads out of, then run apply again. ${STOPPED}`,
+    );
+  }
+  if (stats?.isDirectory()) {
+    await assertNotFolder(path, real);
+  }
+}
+
+/**
+ * Stops with a Calavera error, instead of the raw `EISDIR` the write would throw, when the recipe
+ * path, or the file a link there reaches, is a folder.
+ *
+ * @param {string} path
+ * @param {string} real
+ */
+async function assertNotFolder(path, real) {
+  if ((await lstat(real)).isDirectory()) {
+    throw Object.assign(
+      new Error(
+        `Calavera cannot write the recipe at ${path}, because ${real === path ? path : `it leads to ${real}, which`} is a folder. Give a recipe path that names a file, then run apply again. ${STOPPED}`,
+      ),
+      { code: "EISDIR" },
     );
   }
 }

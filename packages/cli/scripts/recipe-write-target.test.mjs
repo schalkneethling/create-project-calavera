@@ -271,6 +271,46 @@ test("apply names the recipe path when its folder does not exist", async () => {
   );
 });
 
+test(
+  "apply refuses a recipe link that loops without calling its target missing",
+  fileLinkSkip,
+  async () => {
+    await using fixture = await projectAndElsewhere();
+    const link = join(fixture.root, "calavera.config.json");
+    await symlink(link, link);
+
+    const error = await unchanged(fixture, () => refusal(fixture.root, "calavera.config.json"));
+    assert.ok(
+      error.message.includes(
+        `${link} is a link to ${link}, which does not lead to a file (ELOOP), so Calavera cannot tell where writing the recipe would land.`,
+      ),
+      error.message,
+    );
+    assert.equal(/** @type {NodeJS.ErrnoException} */ (error).code, "ELOOP");
+    assert.equal(/** @type {NodeJS.ErrnoException} */ (error.cause).code, "ELOOP");
+  },
+);
+
+test("apply names the recipe path when it is a folder or links to one", fileLinkSkip, async () => {
+  await using fixture = await projectAndElsewhere();
+  const folder = join(fixture.root, "configs");
+  await symlink(folder, join(fixture.root, "folder-link.json"));
+
+  for (const [config, why] of [
+    ["configs", `${folder} is a folder.`],
+    ["folder-link.json", `it leads to ${folder}, which is a folder.`],
+  ]) {
+    const error = await unchanged(fixture, () => refusal(fixture.root, config));
+    assert.ok(
+      error.message.startsWith(
+        `Calavera cannot write the recipe at ${join(fixture.root, config)}, because ${why}`,
+      ),
+      error.message,
+    );
+    assert.equal(/** @type {NodeJS.ErrnoException} */ (error).code, "EISDIR");
+  }
+});
+
 test("apply names the recipe path when a folder on the way is a file", async () => {
   await using fixture = await projectAndElsewhere();
   const given = join(fixture.root, "package.json", "recipe.json");
