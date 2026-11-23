@@ -1011,7 +1011,7 @@ test("a rollback over the files a stopped commit wrote, unchanged, restores the 
   });
 });
 
-for (const { name, edit, changed } of [
+for (const { name, edit, changed, skip = false } of [
   {
     name: "an edited .gitignore",
     edit: (/** @type {string} */ project) =>
@@ -1028,6 +1028,22 @@ for (const { name, edit, changed } of [
     name: "a file added to an artifact folder",
     edit: (/** @type {string} */ project) =>
       writeFile(join(project, ".agents/skills/a/notes.md"), "my-secret-line\n"),
+    changed: [".agents/skills/a"],
+  },
+  {
+    // #1174: a permission change is an edit. Windows reports no execute bit, so the case runs
+    // only where chmod can set it.
+    name: "a file in an artifact folder made executable",
+    edit: (/** @type {string} */ project) =>
+      chmod(join(project, ".agents/skills/a/references/guide.md"), 0o755),
+    changed: [".agents/skills/a"],
+    skip: process.platform === "win32",
+  },
+  {
+    // Windows reports the read-only attribute as the write bits, so this case runs everywhere.
+    name: "a file in an artifact folder made read-only",
+    edit: (/** @type {string} */ project) =>
+      chmod(join(project, ".agents/skills/a/SKILL.md"), 0o444),
     changed: [".agents/skills/a"],
   },
   {
@@ -1052,7 +1068,7 @@ for (const { name, edit, changed } of [
     changed: [".gitignore", ".agents/skills/a"],
   },
 ]) {
-  test(`the rollback stops and changes nothing over ${name}`, async () => {
+  test(`the rollback stops and changes nothing over ${name}`, { skip }, async () => {
     await inTransactionProject(async (paths) => {
       await interruptedCommit(paths);
       await edit(paths.project);
@@ -1221,10 +1237,13 @@ test(
 
 // #1174: the fingerprint tells apart each change the rollback must not overwrite, including a
 // change only to where a file sits in the folder, or to where a symbolic link points.
-test("the written fingerprint changes with each entry's path, kind, bytes, and link target", async () => {
+test("the written fingerprint changes with each entry's path, kind, mode, bytes, and link target", async () => {
   await inTransactionProject(async ({ root }) => {
-    /** @param {Record<string, string | null | { link: string }>} entries */
-    const fingerprintOf = async (entries) => {
+    /**
+     * @param {Record<string, string | null | { link: string }>} entries
+     * @param {Record<string, number>} [modes] Modes to set after the entries exist.
+     */
+    const fingerprintOf = async (entries, modes = {}) => {
       const folder = await mkdtemp(join(root, "tree-"));
       for (const [path, value] of Object.entries(entries)) {
         const full = join(folder, path);
@@ -1233,7 +1252,11 @@ test("the written fingerprint changes with each entry's path, kind, bytes, and l
         else if (typeof value === "string") await writeFile(full, value);
         else await symlink(value.link, full);
       }
-      return writtenFingerprint(folder);
+      for (const [path, mode] of Object.entries(modes)) await chmod(join(folder, path), mode);
+      const digest = await writtenFingerprint(folder);
+      // The temporary project is removed after the test, which a read-only folder would stop.
+      for (const path of Object.keys(modes)) await chmod(join(folder, path), 0o755);
+      return digest;
     };
     const digests = [
       await fingerprintOf({ "a/b": "x" }),
@@ -1246,6 +1269,8 @@ test("the written fingerprint changes with each entry's path, kind, bytes, and l
       await fingerprintOf({ "a/b": null, "a/c": "x" }),
       await fingerprintOf({ d: null, e: "x" }),
       await fingerprintOf({ f: null, e: "x" }),
+      await fingerprintOf({ "a/b": "x" }, { "a/b": 0o444 }),
+      await fingerprintOf({ "a/b": "x" }, { a: 0o555 }),
     ];
     assert.equal(new Set(digests).size, digests.length);
     assert.equal(await fingerprintOf({ "a/b": "x" }), digests[0]);

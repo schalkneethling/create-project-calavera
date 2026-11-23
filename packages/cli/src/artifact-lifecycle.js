@@ -1839,24 +1839,30 @@ const SHA256_DIGEST = /^[0-9a-f]{64}$/;
 
 /**
  * A SHA-256 digest of everything at `path`, which it never follows when it is a symbolic link:
- * the kind of each entry, its path below `path`, a file's bytes, and a link's target, so an edited,
- * added, removed, or retyped entry, even an empty folder, gives another digest. File modes are not
- * part of it, so a permission change alone is not an edit. The commit records it for each staged
- * path, which the move then puts at the target unchanged (#1174).
+ * the kind of each entry, its path below `path`, the mode bits of a file or folder, a file's bytes,
+ * and a link's target, so an edited, added, removed, retyped, or re-permissioned entry, even an
+ * empty folder, gives another digest. The commit records it for each staged path, and the move
+ * keeps all of it, so an unchanged target still matches (#1174).
+ *
+ * The mode bits are `mode & 0o7777`: on POSIX the permission bits and the setuid, setgid, and
+ * sticky bits. On Windows, Node reports `0o666`, or `0o444` when the read-only attribute is set,
+ * and no execute bit, so there the digest catches a change to the read-only attribute. A link's
+ * own mode is left out, because Linux cannot change it and the rollback never reads through it.
  *
  * @param {string} path
  */
 export async function writtenFingerprint(path) {
   const hash = createHash("sha256");
   // One JSON line per entry, so each entry's path alone places it in the tree.
-  const record = (/** @type {string[]} */ entry) => hash.update(`${JSON.stringify(entry)}\n`);
+  const record = (/** @type {(string | number)[]} */ entry) =>
+    hash.update(`${JSON.stringify(entry)}\n`);
   /** @param {string} current @param {string} name */
   const add = async (current, name) => {
     const stats = await lstat(current);
     if (stats.isSymbolicLink()) {
       record(["link", name, await readlink(current)]);
     } else if (stats.isDirectory()) {
-      record(["folder", name]);
+      record(["folder", name, stats.mode & 0o7777]);
       for (const child of (await readdir(current)).sort()) {
         await add(join(current, child), name === "" ? child : `${name}/${child}`);
       }
@@ -1864,7 +1870,7 @@ export async function writtenFingerprint(path) {
       const bytes = createHash("sha256")
         .update(await readFile(current))
         .digest("hex");
-      record(["file", name, bytes]);
+      record(["file", name, stats.mode & 0o7777, bytes]);
     } else {
       record(["other", name]);
     }
