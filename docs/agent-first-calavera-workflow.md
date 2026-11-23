@@ -474,8 +474,10 @@ apply tools:
 14. `dry_run_apply`
 15. `apply_recipe`
 
-WebMCP exposes the browser-safe subset: Baseline lookup, recipe composition,
-and recipe download, but not project inspection or apply:
+WebMCP, which the Composer registers through
+`document.modelContext.registerTool`, exposes the browser-safe subset:
+Baseline lookup, recipe composition, and recipe download, but not project
+inspection or apply:
 
 1. `list_profiles`
 2. `list_integrations`

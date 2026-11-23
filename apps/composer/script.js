@@ -818,12 +818,14 @@ const downloadRecipeInputSchema = {
  * Registers a WebMCP tool whose execute function first checks its input against the inputSchema it
  * registers (#1176). The browser does not check the input against the schema before it calls
  * execute, so this is the only check. `coreCheck` runs the core's own check on a refused input, so
- * the refusal carries the core's message.
+ * the refusal carries the core's message. `registerTool` returns a promise that rejects when the
+ * browser refuses the tool, for example a duplicate name (WebMCP specification, section 4.2), so
+ * the caller awaits it.
  *
  * @param {{ inputSchema: Record<string, unknown>, execute: (input: any, options?: unknown) => unknown, coreCheck?: (input: any) => unknown, [key: string]: unknown }} tool
  */
 function registerCheckedTool({ coreCheck, execute, ...tool }) {
-  navigator.modelContext.registerTool({
+  return document.modelContext.registerTool({
     ...tool,
     // The second argument carries the call's AbortSignal (ToolExecuteCallbackOptions).
     execute: async (input, options) =>
@@ -831,15 +833,17 @@ function registerCheckedTool({ coreCheck, execute, ...tool }) {
   });
 }
 
-function registerWebMcpTools() {
-  if (!navigator.modelContext?.registerTool) {
+// The WebMCP specification (section 4.1, "Extensions to Document") and Chrome's imperative API
+// guide expose the tool registry as document.modelContext; neither documents navigator.modelContext.
+async function registerWebMcpTools() {
+  if (!document.modelContext?.registerTool) {
     return;
   }
 
   try {
     // ADR-0018 Decision 2: the input and output schemas of the tools the MCP server shares come
     // from one definition in the core, through webMcpSchemas.
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "list_profiles",
       description: recipeToolDescriptions.list_profiles,
       ...webMcpSchemas.list_profiles,
@@ -865,7 +869,7 @@ function registerWebMcpTools() {
       },
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "list_integrations",
       description: recipeToolDescriptions.list_integrations,
       ...webMcpSchemas.list_integrations,
@@ -879,7 +883,7 @@ function registerWebMcpTools() {
       },
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "describe_integration",
       description: recipeToolDescriptions.describe_integration,
       ...webMcpSchemas.describe_integration,
@@ -903,7 +907,7 @@ function registerWebMcpTools() {
       },
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "list_ai_artifacts",
       description: recipeToolDescriptions.list_ai_artifacts,
       ...webMcpSchemas.list_ai_artifacts,
@@ -918,7 +922,7 @@ function registerWebMcpTools() {
         ),
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "list_baseline_targets",
       description: recipeToolDescriptions.list_baseline_targets,
       ...webMcpSchemas.list_baseline_targets,
@@ -926,7 +930,7 @@ function registerWebMcpTools() {
       execute: async () => ({ metadata: baselineMetadata, targets: listBaselineTargets() }),
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "describe_baseline_target",
       description: recipeToolDescriptions.describe_baseline_target,
       ...webMcpSchemas.describe_baseline_target,
@@ -935,7 +939,7 @@ function registerWebMcpTools() {
       execute: async ({ target }) => describeBaselineTarget(target),
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "search_baseline_features",
       description: recipeToolDescriptions.search_baseline_features,
       ...webMcpSchemas.search_baseline_features,
@@ -946,7 +950,7 @@ function registerWebMcpTools() {
       }),
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "recommend_baseline_target",
       description: recipeToolDescriptions.recommend_baseline_target,
       ...webMcpSchemas.recommend_baseline_target,
@@ -955,7 +959,7 @@ function registerWebMcpTools() {
       execute: async ({ features }) => recommendBaselineTarget(features),
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "compose_recipe",
       description: recipeToolDescriptions.compose_recipe,
       ...webMcpSchemas.compose_recipe,
@@ -971,7 +975,7 @@ function registerWebMcpTools() {
       },
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "validate_recipe",
       description: recipeToolDescriptions.validate_recipe,
       ...webMcpSchemas.validate_recipe,
@@ -997,7 +1001,7 @@ function registerWebMcpTools() {
       },
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "explain_recipe",
       description: recipeToolDescriptions.explain_recipe,
       ...webMcpSchemas.explain_recipe,
@@ -1012,7 +1016,7 @@ function registerWebMcpTools() {
         ),
     });
 
-    registerCheckedTool({
+    await registerCheckedTool({
       name: "download_recipe",
       description: recipeToolDescriptions.download_recipe,
       inputSchema: downloadRecipeInputSchema,

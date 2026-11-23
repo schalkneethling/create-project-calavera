@@ -1179,7 +1179,7 @@ Apply copies the recipe into the project root as `calavera.config.json`. The
 [agent-first command table](#agent-first-command-table) lists the commands for
 each package manager.
 
-When the browser exposes WebMCP, the composer registers a browser parity surface
+When the browser exposes WebMCP through `document.modelContext`, the composer registers a browser parity surface
 for the MCP recipe composition workflow:
 
 1. `list_profiles`

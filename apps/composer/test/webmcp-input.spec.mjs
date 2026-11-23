@@ -10,7 +10,7 @@ import { nodeOnlyInputMessage } from "../../../packages/cli/src/recipe.js";
 test.beforeEach(async ({ page }) => {
   await page.addInitScript(() => {
     window.webMcpTools = new Map();
-    Object.defineProperty(navigator, "modelContext", {
+    Object.defineProperty(document, "modelContext", {
       value: { registerTool: (tool) => window.webMcpTools.set(tool.name, tool) },
     });
     // download_recipe saves through a link click; record it instead of saving a file.
