@@ -935,6 +935,9 @@ async function applyAtAncestorRefusal(fixture, config) {
   assert.fail(`apply-at-ancestor did not stop on ${config}`);
 }
 
+// A file symbolic link on Windows needs Developer Mode or an extra privilege.
+const fileLinkSkip = { skip: process.platform === "win32" };
+
 // #1142: an existing file at the recipe path stops apply-at-ancestor wherever it is, because apply
 // would replace it. Only a file inside the ancestor's directory, after links are resolved, is
 // called that directory's recipe; any other file is named as an existing file outside it.
@@ -942,58 +945,95 @@ test("apply-at-ancestor stops on an existing recipe path outside the ancestor wi
   await using fixture = await directoryUnderUnmanagedProject();
   await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
     "recipe.json": json(recipe),
+    "folder/keep.txt": "keep\n",
   });
-  const outside = join(elsewhere.root, "recipe.json");
   const before = await snapshotDirectory(fixture.root);
   const elsewhereBefore = await snapshotDirectory(elsewhere.root);
 
-  const stopped = (await applyAtAncestorRefusal(fixture, outside)).message;
-  assert.ok(
-    stopped.includes(
-      `with its recipe at ${outside}, but an existing file is at ${outside}, outside ${fixture.root}, and Calavera does not replace it.`,
-    ),
-    stopped,
-  );
-  assert.doesNotMatch(stopped, /recipe of its own/);
-  assert.match(stopped, /Choose a recipe path that does not exist yet, or choose create-here\./);
-  assert.match(stopped, /Calavera stopped before writing anything\.$/);
+  // A folder at the recipe path is named as something that exists, not as a file.
+  for (const outside of [join(elsewhere.root, "recipe.json"), join(elsewhere.root, "folder")]) {
+    const stopped = (await applyAtAncestorRefusal(fixture, outside)).message;
+    assert.ok(
+      stopped.includes(
+        `with its recipe at ${outside}, but ${outside} already exists, which is outside ${fixture.root}, and Calavera does not replace it.`,
+      ),
+      stopped,
+    );
+    assert.doesNotMatch(stopped, /recipe of its own/);
+    assert.match(stopped, /Choose a recipe path that does not exist yet, or choose create-here\./);
+    assert.match(stopped, /Calavera stopped before writing anything\.$/);
+  }
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
   assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
 });
 
-test("apply-at-ancestor names the file a link in the ancestor points to outside it, not the ancestor's recipe", async () => {
+test("apply-at-ancestor names the real path of a recipe path that reaches outside through a folder link", async () => {
   await using fixture = await directoryUnderUnmanagedProject();
   await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
     "recipe.json": json(recipe),
   });
-  const outside = join(elsewhere.root, "recipe.json");
-  const link = join(fixture.root, "out.json");
-  await symlink(outside, link);
+  await symlink(elsewhere.root, join(fixture.root, "via"), "junction");
+  const given = join(fixture.root, "via", "recipe.json");
   const before = await snapshotDirectory(fixture.root);
   const elsewhereBefore = await snapshotDirectory(elsewhere.root);
 
-  const stopped = (await applyAtAncestorRefusal(fixture, join("..", "out.json"))).message;
+  // The file itself is not a link, so the message does not call it one.
+  const stopped = (await applyAtAncestorRefusal(fixture, join("..", "via", "recipe.json"))).message;
   assert.ok(
     stopped.includes(
-      `but ${link} links to an existing file at ${outside}, outside ${fixture.root}, and Calavera does not replace it.`,
+      `but ${given} already exists, at the real path ${join(elsewhere.root, "recipe.json")}, which is outside ${fixture.root}`,
     ),
     stopped,
   );
-  assert.doesNotMatch(stopped, /recipe of its own/);
+  assert.doesNotMatch(stopped, /is a link to|recipe of its own/);
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
   assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
 });
 
-test("apply-at-ancestor stops on a recipe path that links to the inspected directory's recipe", async () => {
-  await using fixture = await directoryUnderUnmanagedProject();
-  await symlink(join(fixture.project, "calavera.config.json"), join(fixture.root, "alias.json"));
-  const before = await snapshotDirectory(fixture.root);
+test(
+  "apply-at-ancestor names the file a link in the ancestor points to outside it, not the ancestor's recipe",
+  fileLinkSkip,
+  async () => {
+    await using fixture = await directoryUnderUnmanagedProject();
+    await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+      "recipe.json": json(recipe),
+    });
+    const outside = join(elsewhere.root, "recipe.json");
+    const link = join(fixture.root, "out.json");
+    await symlink(outside, link);
+    const before = await snapshotDirectory(fixture.root);
+    const elsewhereBefore = await snapshotDirectory(elsewhere.root);
 
-  const stopped = (await applyAtAncestorRefusal(fixture, join("..", "alias.json"))).message;
-  // The link resolves inside the ancestor's directory, so it is that directory's recipe.
-  assert.match(stopped, /alias\.json already exists there, so the directory has a Calavera recipe/);
-  assert.deepEqual(await snapshotDirectory(fixture.root), before);
-});
+    const stopped = (await applyAtAncestorRefusal(fixture, join("..", "out.json"))).message;
+    assert.ok(
+      stopped.includes(
+        `but ${link} is a link to ${outside}, which is outside ${fixture.root}, and Calavera does not replace it.`,
+      ),
+      stopped,
+    );
+    assert.doesNotMatch(stopped, /recipe of its own/);
+    assert.deepEqual(await snapshotDirectory(fixture.root), before);
+    assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+  },
+);
+
+test(
+  "apply-at-ancestor stops on a recipe path that links to the inspected directory's recipe",
+  fileLinkSkip,
+  async () => {
+    await using fixture = await directoryUnderUnmanagedProject();
+    await symlink(join(fixture.project, "calavera.config.json"), join(fixture.root, "alias.json"));
+    const before = await snapshotDirectory(fixture.root);
+
+    const stopped = (await applyAtAncestorRefusal(fixture, join("..", "alias.json"))).message;
+    // The link resolves inside the ancestor's directory, so it is that directory's recipe.
+    assert.match(
+      stopped,
+      /alias\.json already exists there, so the directory has a Calavera recipe/,
+    );
+    assert.deepEqual(await snapshotDirectory(fixture.root), before);
+  },
+);
 
 test("apply-at-ancestor stops on an existing file beside the inspected directory", async () => {
   await using fixture = await directoryUnderUnmanagedProject();
@@ -1019,7 +1059,12 @@ test("apply-at-ancestor leaves a file behind a folder link in the inspected dire
 
   // The path is inside the inspected directory, so it moves to the ancestor's directory, where
   // there is no linkout folder. Apply stops when it writes the recipe there, before any other write.
-  await applyAtAncestorRefusal(fixture, join("linkout", "recipe.json"));
+  const stopped = await applyAtAncestorRefusal(fixture, join("linkout", "recipe.json"));
+  assert.equal(/** @type {NodeJS.ErrnoException} */ (stopped).code, "ENOENT");
+  assert.ok(
+    stopped.message.includes(join(fixture.root, "linkout", "recipe.json")),
+    stopped.message,
+  );
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
   assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
 });
@@ -1039,38 +1084,45 @@ test("apply-at-ancestor stops on a recipe path that reaches the inspected direct
   assert.deepEqual(await snapshotDirectory(fixture.root), before);
 });
 
-test("apply-at-ancestor names an ancestor recipe that links outside it as an outside file, and keeps the state message", async () => {
-  await using fixture = await directoryUnderUnmanagedProject();
-  await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
-    "recipe.json": json(recipe),
-    "state.json": json(createEmptyState()),
-  });
-  const ancestorRecipe = join(fixture.root, "calavera.config.json");
-  await symlink(join(elsewhere.root, "recipe.json"), ancestorRecipe);
+test(
+  "apply-at-ancestor calls the ancestor's default recipe its own recipe even when it links outside, and keeps the state message",
+  fileLinkSkip,
+  async () => {
+    await using fixture = await directoryUnderUnmanagedProject();
+    await using elsewhere = await createTemporaryFixture("manifest-choice-elsewhere", {
+      "recipe.json": json(recipe),
+      "state.json": json(createEmptyState()),
+    });
+    const ancestorRecipe = join(fixture.root, "calavera.config.json");
+    await symlink(join(elsewhere.root, "recipe.json"), ancestorRecipe);
 
-  // The ancestor's default recipe is checked even with a custom recipe path.
-  const recipeStop = (await applyAtAncestorRefusal(fixture, "custom.json")).message;
-  assert.ok(
-    recipeStop.includes(
-      `but ${ancestorRecipe} links to an existing file at ${join(elsewhere.root, "recipe.json")}, outside ${fixture.root}`,
-    ),
-    recipeStop,
-  );
+    // The ancestor's default recipe is what Calavera reads there, wherever the link points, so it is
+    // that directory's recipe, with the default recipe path and with a custom one.
+    for (const config of ["calavera.config.json", "custom.json"]) {
+      const recipeStop = (await applyAtAncestorRefusal(fixture, config)).message;
+      assert.ok(
+        recipeStop.includes(
+          `but ${ancestorRecipe} already exists there, so the directory has a Calavera recipe of its own.`,
+        ),
+        recipeStop,
+      );
+    }
 
-  await rm(ancestorRecipe);
-  await mkdir(join(fixture.root, ".calavera"));
-  const statePath = join(fixture.root, ".calavera", "state.json");
-  await symlink(join(elsewhere.root, "state.json"), statePath);
-  const before = await snapshotDirectory(fixture.root);
-  const elsewhereBefore = await snapshotDirectory(elsewhere.root);
+    await rm(ancestorRecipe);
+    await mkdir(join(fixture.root, ".calavera"));
+    const statePath = join(fixture.root, ".calavera", "state.json");
+    await symlink(join(elsewhere.root, "state.json"), statePath);
+    const before = await snapshotDirectory(fixture.root);
+    const elsewhereBefore = await snapshotDirectory(elsewhere.root);
 
-  const stateStop = (await applyAtAncestorRefusal(fixture, "custom.json")).message;
-  assert.ok(
-    stateStop.includes(
-      `but ${statePath} already exists there, so Calavera has already recorded state for that directory.`,
-    ),
-    stateStop,
-  );
-  assert.deepEqual(await snapshotDirectory(fixture.root), before);
-  assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
-});
+    const stateStop = (await applyAtAncestorRefusal(fixture, "custom.json")).message;
+    assert.ok(
+      stateStop.includes(
+        `but ${statePath} already exists there, so Calavera has already recorded state for that directory.`,
+      ),
+      stateStop,
+    );
+    assert.deepEqual(await snapshotDirectory(fixture.root), before);
+    assert.deepEqual(await snapshotDirectory(elsewhere.root), elsewhereBefore);
+  },
+);

@@ -2,4 +2,4 @@
 "create-project-calavera": patch
 ---
 
-When `apply-at-ancestor` stops because a recipe file already exists at the recipe path, or at the ancestor's `calavera.config.json`, and that file is outside the ancestor's directory once every link is resolved, the message now names it as an existing file outside that directory instead of calling it the ancestor's own recipe. A path that is a link names both the link and the file it points to. Apply still stops in every case where it stopped before, so the file is never replaced, and the state-file message is unchanged (#1142).
+When `apply-at-ancestor` stops because something already exists at the given recipe path, and it is outside the ancestor's directory once every link is resolved, the message now says so instead of calling it the ancestor's own recipe. A recipe path that is itself a link is named as a link to its target, and a path that reaches outside through a folder link names its real path. Apply still stops in every case where it stopped before, so nothing there is replaced. The ancestor's own `calavera.config.json` and `.calavera/state.json` keep their messages (#1142).

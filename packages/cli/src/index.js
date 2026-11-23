@@ -3367,19 +3367,30 @@ async function resolveManifestChoice(recipe, applyOptions, artifactServices) {
     // no managed file there can be reowned, so reownManagedFiles needs no translation. The recipe
     // paths come first, so a directory with both a recipe and state names its recipe (#1038). A
     // path listed twice is checked twice, which is harmless because the first hit stops.
+    const ancestorRecipe = join(ancestorDirectory, CONFIG_FILE);
     for (const [existing, kind] of /** @type {const} */ ([
       [config, "recipe"],
-      [join(ancestorDirectory, CONFIG_FILE), "recipe"],
+      [ancestorRecipe, "recipe"],
       [join(ancestorDirectory, STATE_FILE), "state"],
     ])) {
       if (await fileExists(existing)) {
-        // A recipe path still stops apply wherever it points, because apply would replace the
-        // file. A recipe file outside the ancestor's directory, once links are resolved, is named
-        // as such rather than as the ancestor's recipe (#1142). State keeps its own message.
-        if (kind === "recipe") {
-          const real = await realpath(existing);
-          if (!isPathInside(await realpath(ancestorDirectory), real)) {
-            throw recipePathOutsideAncestorError(chosen, existing, real);
+        // A given recipe path still stops apply wherever it points, because apply would replace
+        // the file. When the file, with every link resolved, is outside the ancestor's directory,
+        // it is named as such rather than as the ancestor's recipe (#1142). The ancestor's own
+        // calavera.config.json is the recipe Calavera reads there, so it keeps that message.
+        if (existing === config && existing !== ancestorRecipe) {
+          let outside;
+          try {
+            const real = await realpath(existing);
+            if (!isPathInside(await realpath(ancestorDirectory), real)) {
+              const isLink = (await lstat(existing)).isSymbolicLink();
+              outside = recipePathOutsideAncestorError(chosen, existing, real, isLink);
+            }
+          } catch {
+            // The path changed after it was found, so the plain refusal below still stops apply.
+          }
+          if (outside) {
+            throw outside;
           }
         }
         throw ancestorAlreadyManagedError(chosen, existing, kind);
