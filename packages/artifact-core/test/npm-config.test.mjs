@@ -960,7 +960,7 @@ test("a proxy with a variable in a user .npmrc outside the account home is ignor
   });
   assert.equal(result.options.httpsProxy, undefined);
   assert.deepEqual(result.warnings, [
-    "Ignored https-proxy in the user .npmrc: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, never in a file that a variable or a project file names.",
+    "Ignored https-proxy in the user .npmrc: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, never in a file that a variable or a project file names. Write the proxy URL without a variable, or remove the entry and set the proxy in your own .npmrc or an environment variable; while the entry is there, an npm_config_https_proxy variable does not replace it when npm starts Calavera.",
   ]);
   assert.doesNotMatch(inspect(result, { depth: 10 }), new RegExp(SECRET_PROXY));
 });
@@ -1712,4 +1712,55 @@ test("under npm exec, a key in your own ~/.npmrc is expanded, not read as a patt
     }),
   );
   assert.equal(options.httpsProxy, "http://caller.example.com:3128/");
+});
+
+// #1186, fifth review: npm honors only the exact key `userconfig`, but exports every spelling in
+// lowercase, so a project `USERCONFIG=./evil.npmrc` replaces the caller's npm_config_userconfig
+// although npm read the caller's file. Calavera cannot find the file npm read, so the user file it
+// would read follows the project rules.
+
+test("under npm exec, a project userconfig in another spelling makes the user .npmrc follow the project rules", async () => {
+  for (const projectKey of ["USERCONFIG", "UserConfig", "userconfig${INIT_CWD?}"]) {
+    const context = await fixture({ project: `${projectKey}=./evil.npmrc\n` });
+    const chosen = join(context.cwd, "evil.npmrc");
+    await writeFile(
+      chosen,
+      "https-proxy=http://attacker.invalid:1/\nregistry=http://insecure.invalid/\n",
+    );
+    await assert.rejects(
+      loadNpmRegistryOptions(
+        npmExecContext(context, {
+          INIT_CWD: context.cwd,
+          npm_config_userconfig: chosen,
+          npm_config_https_proxy: "http://attacker.invalid:1/",
+          npm_config_registry: "http://insecure.invalid/",
+        }),
+      ),
+      /registry in the user \.npmrc must be an https URL/,
+      projectKey,
+    );
+    await writeFile(chosen, "https-proxy=http://attacker.invalid:1/\n");
+    const { options, warnings } = await loadNpmRegistryOptions(
+      npmExecContext(context, {
+        INIT_CWD: context.cwd,
+        npm_config_userconfig: chosen,
+        npm_config_https_proxy: "http://attacker.invalid:1/",
+      }),
+    );
+    assert.equal(options.httpsProxy, undefined, projectKey);
+    assert.match(warnings.join("\n"), /^Ignored https-proxy in the user \.npmrc/m, projectKey);
+  }
+});
+
+test("under npm exec, the exact project userconfig key keeps the chosen user .npmrc's registry and literal proxy, as decided", async () => {
+  const context = await fixture({ project: "userconfig=./evil.npmrc\n" });
+  const chosen = join(context.cwd, "evil.npmrc");
+  await writeFile(chosen, "https-proxy=http://chosen.example.com:1/\n");
+  const { options } = await loadNpmRegistryOptions(
+    npmExecContext(context, {
+      npm_config_userconfig: chosen,
+      npm_config_https_proxy: "http://chosen.example.com:1/",
+    }),
+  );
+  assert.equal(options.httpsProxy, "http://chosen.example.com:1/");
 });

@@ -138,8 +138,9 @@ function exportedFrom(entries, key, value, env, expands) {
   return Object.keys(entries).find((fileKey) => {
     if (!keyMatches(fileKey, key, env, expands)) return false;
     const fileValue = entries[fileKey];
-    // A noproxy list is not compared: a project file may set noproxy, and the environment
-    // layer applies the same value.
+    // A list is compared as npm joins it, with blank lines. The environment layer joins a noproxy
+    // list with commas, so a noproxy list of more than one entry matches no file and applies as
+    // environment, which does not matter: a project file may set noproxy.
     if (Array.isArray(fileValue)) return fileValue.map(String).join("\n\n") === value;
     if (typeof fileValue !== "string") return false;
     if (!expands && fileValue.includes("${")) return true;
@@ -278,6 +279,11 @@ export async function loadNpmRegistryOptions({
     // npm ignores a project .npmrc that is the user config, as in a project at the home directory.
     projectEntries = projectPath === userPath ? {} : await readNpmrc(projectPath, warnings);
     const userIsAccountFile = isAccountFile(userPath, accountHome, ".npmrc");
+    const userconfigRespelled =
+      npmStarted &&
+      Object.keys(projectEntries).some(
+        (key) => key !== "userconfig" && keyMatches(key, "userconfig", env, false),
+      );
     const globalPath = npmStarted ? globalConfigPath(env, dirname(projectPath)) : undefined;
     if (globalPath !== undefined && globalPath !== userPath && globalPath !== projectPath) {
       // npm reads a global config file below the user .npmrc, expands variables in it, and
@@ -318,8 +324,12 @@ export async function loadNpmRegistryOptions({
       {
         name: "user .npmrc",
         entries: userEntries,
-        trusted: true,
-        expandsVariables: userIsAccountFile,
+        // npm honors only the exact key `userconfig`, but exports every spelling of it in
+        // lowercase, so a project `USERCONFIG=./evil.npmrc` replaces the caller's
+        // npm_config_userconfig although npm read the caller's file (#1186). Calavera cannot
+        // find the file npm read, so the file it reads then follows the project rules.
+        trusted: !userconfigRespelled,
+        expandsVariables: userIsAccountFile && !userconfigRespelled,
         accepts,
       },
       { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
@@ -368,7 +378,7 @@ export async function loadNpmRegistryOptions({
         trusted && name === GLOBAL_LAYER
           ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own .npmrc in your account's home folder and in environment variables, not in npm's global configuration file. Write the proxy URL without a variable, or remove the entry and set the proxy in your own .npmrc or an environment variable; while the entry is there, an npm_config_${key.replace(/-/g, "_")} variable does not replace it when npm starts Calavera.`
           : trusted
-            ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own ${layer.tool === "Yarn" ? ".yarnrc.yml" : ".npmrc"} in your account's home folder and in environment variables, never in a file that a variable or a project file names.`
+            ? `Ignored ${setting} in the ${name}: Calavera expands variables only in your own ${layer.tool === "Yarn" ? ".yarnrc.yml" : ".npmrc"} in your account's home folder and in environment variables, never in a file that a variable or a project file names.${layer.tool === "Yarn" ? "" : ` Write the proxy URL without a variable, or remove the entry and set the proxy in your own .npmrc or an environment variable; while the entry is there, an npm_config_${key.replace(/-/g, "_")} variable does not replace it when npm starts Calavera.`}`
             : `Ignored ${setting} in the ${name}: Calavera expands variables only in user configuration files and environment variables, never in a project file.`,
       );
       return;
@@ -458,7 +468,9 @@ export async function loadNpmRegistryOptions({
         // only for this comparison, never used. The user layer and the global layer applied, or
         // ignored, a value equal to their own (#1186). A value that matches no file came from
         // somewhere Calavera does not read, such as the caller's environment or an npm
-        // command-line flag, so it is trusted as environment.
+        // command-line flag, so it is trusted as environment. An npm that another npm started
+        // passes the outer project's exports on as environment too; running such a command
+        // already runs the outer repository's scripts.
         const match = exportingLayers
           .map((fileLayer) => ({
             fileLayer,
