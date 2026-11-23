@@ -1116,6 +1116,28 @@ test("after the edited path is moved out of the project, the rollback restores t
 
 // #1174: a file the person created at a target the stopped operation had not created yet is a
 // change too, because the rollback would remove it.
+// #1174: a journaled target replaced with a link to a missing file is a change too. The check looks
+// at the link itself, not at what it points to, so a link that follows to nothing still stops the
+// rollback, which would otherwise remove it.
+test("the rollback stops over a journaled target replaced with a dangling link, and keeps the link", async () => {
+  await inTransactionProject(async (paths) => {
+    await interruptedCommit(paths);
+    const gitignore = join(paths.project, ".gitignore");
+    await rm(gitignore);
+    await symlink("missing-file", gitignore);
+    const journal = await readFile(TRANSACTION_PATH, "utf8");
+    const edited = await snapshotDirectory(paths.project);
+
+    await assert.rejects(recoverArtifactTransaction(), {
+      message: `The artifact transaction rollback stopped before changing anything, because it would replace or remove paths that changed after the stopped operation wrote them: .gitignore. ${EDITED_REMEDY}`,
+    });
+
+    assert.equal(await readlink(gitignore), "missing-file");
+    assert.deepEqual(await snapshotDirectory(paths.project), edited);
+    assert.equal(await readFile(TRANSACTION_PATH, "utf8"), journal);
+  });
+});
+
 test("the rollback stops over a file created at a target the stopped operation never wrote", async () => {
   await inTransactionProject(async (paths) => {
     await interruptedCommit(paths);
