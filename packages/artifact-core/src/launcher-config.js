@@ -1,6 +1,7 @@
 // @ts-check
+import { readFile as readFileText, readlink as readLink } from "node:fs/promises";
 import { homedir } from "node:os";
-import { basename, dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
 import { TomlError, parse as parseToml } from "smol-toml";
 import { parseDocument } from "yaml";
@@ -234,67 +235,108 @@ export async function yarnLayers({ cwd, env, home, accountHome, scope, warnings 
   return layers;
 }
 
-// The variables that decide which environment files Yarn loads. Yarn reads them from its own
-// environment before it loads the files, but a loaded file can change them for the child.
-const YARN_FILE_INPUTS = ["yarn_rc_filename", "yarn_inject_environment_files", "home", "pwd"];
+// The variables, beside YARN_INJECT_ENVIRONMENT_FILES, that decide which environment files Yarn
+// loads. Yarn reads them from its own environment before it loads the files, but a loaded file can
+// change them for the child. On Windows, os.homedir() reads USERPROFILE rather than HOME.
+const YARN_FILE_INPUTS = [
+  "yarn_rc_filename",
+  "yarn_inject_environment_files",
+  "home",
+  "userprofile",
+];
 
 /**
- * The environment files Yarn 4.18.1 loaded into the environment of the binary or script that
- * runs Calavera, lowest precedence first (`Configuration.find` and `makeScriptEnv` in
- * @yarnpkg/core). From the source:
+ * The working folder of the Yarn process that started Calavera, read from /proc on Linux when the
+ * parent process runs Yarn, or null when it cannot be read. Yarn reads its default `.env.yarn`
+ * from this folder, which it does not pass to the child: under `--cwd`, `yarn workspace`, and
+ * `yarn workspaces foreach`, INIT_CWD names another folder, and Yarn overwrites PWD.
+ * @param {{ platform?: string, ppid?: number, readFile?: (path: string) => Promise<string>, readlink?: (path: string) => Promise<string> }} [system]
+ */
+export async function yarnParentCwd({
+  platform = process.platform,
+  ppid = process.ppid,
+  readFile = (path) => readFileText(path, "utf8"),
+  readlink = (path) => readLink(path),
+} = {}) {
+  if (platform !== "linux") return null;
+  try {
+    const command = await readFile(`/proc/${ppid}/cmdline`);
+    if (!/yarn/i.test(command)) return null;
+    return await readlink(`/proc/${ppid}/cwd`);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * Whether an environment variable name is the Yarn setting `setting`, as Yarn reads its variables:
+ * lowercased, the `yarn_` prefix removed, and the rest camel-cased (`getEnvironmentSettings` in
+ * @yarnpkg/core), so YARN_INJECT_ENVIRONMENT__FILES is injectEnvironmentFiles too.
+ * @param {string} name @param {string} setting
+ */
+function isYarnSetting(name, setting) {
+  const lower = name.toLowerCase();
+  if (!lower.startsWith("yarn_")) return false;
+  const words = lower
+    .slice("yarn_".length)
+    .split(/[_\-\s.]+/)
+    .filter(Boolean);
+  const camel = words
+    .map((word, index) => (index ? word.charAt(0).toUpperCase() + word.slice(1) : word))
+    .join("");
+  return camel === setting;
+}
+
+/**
+ * The environment files Yarn 4.18.1 loaded into the environment of the binary or script that runs
+ * Calavera, lowest precedence first (`Configuration.find` and `makeScriptEnv` in @yarnpkg/core):
  *
  * - Yarn passes the folder it started in as INIT_CWD; without it, Yarn's script environment did
  *   not start Calavera, and no file was loaded.
- * - YARN_INJECT_ENVIRONMENT_FILES, split on commas and resolved from that folder, replaces the
- *   `injectEnvironmentFiles` lists of the settings files.
- * - Otherwise those lists count, joined from `~/.yarnrc.yml` (from `os.homedir()`) and from each
- *   `.yarnrc.yml`, or the file YARN_RC_FILENAME names, from the root down to the starting folder,
- *   each entry resolved from its file's folder.
- * - Otherwise the default `.env.yarn` counts, relative to Yarn's own process folder: the starting
- *   folder, except under `yarn dlx`, whose starting folder is a temporary `xfs-*`/`dlx-<pid>`
- *   project while the binary runs in Yarn's folder, the folder Calavera started in.
- * - A trailing `?` makes a file optional, and Yarn unescapes `\\\\`, `\\$`, and `\\}` in a path and
- *   expands `${...}` in it.
+ * - The `injectEnvironmentFiles` lists of `~/.yarnrc.yml` (from `os.homedir()`) and of each
+ *   `.yarnrc.yml`, or the file YARN_RC_FILENAME names, from the root down to INIT_CWD are joined,
+ *   home first, each entry resolved from its file's folder.
+ * - Without a list, the default `.env.yarn` is read from Yarn's own process folder
+ *   (`yarnProcessCwd`).
+ * - A trailing `?` makes a file optional. Yarn unescapes `\\`, `\$`, and `\}` in a path and
+ *   expands `${...}` in it with an empty environment, as no environment is loaded yet.
  *
- * `undetermined` gives the reason when Calavera cannot tell which files Yarn loaded: a path holds
- * a variable; a file Yarn may have loaded sets one of Yarn's own inputs (YARN_RC_FILENAME,
- * YARN_INJECT_ENVIRONMENT_FILES, HOME, or PWD), so the values Calavera sees may not be the ones
- * Yarn used; or PWD names another folder than INIT_CWD, as after `--cwd`, and both have a
- * `.env.yarn`. Each reason comes with a remedy.
- * @param {{ env: NodeJS.ProcessEnv, startingCwd: string, accountHome: string | undefined, cwd: string }} context
+ * `undetermined` gives a reason and a remedy when Calavera cannot tell which files Yarn loaded:
+ * YARN_INJECT_ENVIRONMENT_FILES is set, which a loaded file could have changed; a settings file
+ * uses a form of the setting that Calavera does not model; a path has a variable without a value;
+ * HOME names another folder than the account's home while a home settings file lists files; a
+ * file Yarn may have loaded sets one of Yarn's inputs; or the default applies, Yarn's process
+ * folder is unknown, and a `.env.yarn` exists that Yarn may have read.
+ * @param {{ env: NodeJS.ProcessEnv, startingCwd: string, accountHome: string | undefined, cwd: string, yarnProcessCwd: string | null }} context
  * @returns {Promise<{ paths: string[], undetermined?: { reason: string, remedy: string } }>}
  */
-export async function yarnEnvironmentFiles({ env, startingCwd, accountHome, cwd }) {
+export async function yarnEnvironmentFiles({ env, startingCwd, accountHome, cwd, yarnProcessCwd }) {
   if (!env.INIT_CWD) return { paths: [] };
   const yarnStart = resolve(env.INIT_CWD);
-  const dlx = await isDlxProject(yarnStart);
-  const yarnProcessCwd = dlx ? resolve(startingCwd) : yarnStart;
   /** @param {string} path */
   const label = (path) => printable(relative(cwd, path) || path);
-  /** @param {string} name */
-  const variable = (name) => Object.entries(env).find(([key]) => key.toLowerCase() === name)?.[1];
+  /** @param {string} reason @param {string} remedy */
+  const undetermined = (reason, remedy) => ({ paths: [], undetermined: { reason, remedy } });
+
+  if (Object.keys(env).some((name) => isYarnSetting(name, "injectEnvironmentFiles"))) {
+    return undetermined(
+      "YARN_INJECT_ENVIRONMENT_FILES is set, and a file that Yarn loaded can change it, so Calavera cannot tell the value Yarn used",
+      "List the files in injectEnvironmentFiles in the project's .yarnrc.yml instead.",
+    );
+  }
+  const rcName =
+    Object.entries(env).find(([name]) => name.toLowerCase() === "yarn_rc_filename")?.[1] ||
+    ".yarnrc.yml";
+  const seenHome =
+    (process.platform === "win32" ? env.USERPROFILE : env.HOME) || accountHome || homedir();
 
   /**
-   * The files for one set of Yarn's inputs.
-   * @param {{ rcName: string, inject: string | undefined, home: string }} inputs
+   * The joined lists of the settings files for one home folder, or the reason Calavera cannot
+   * model them. Yarn takes the nearest file's value and, while the values are lists, prepends the
+   * lists of farther files; another form stops the join (`W9` in @yarnpkg/core).
+   * @param {string} home
    */
-  const filesFor = async ({ rcName, inject, home }) => {
-    /** @type {string[]} */
-    const paths = [];
-    let unresolved = false;
-    /** @param {string} base @param {string} entry */
-    const add = (base, entry) => {
-      const text = entry.replace(/\?$/, "");
-      if (/(?<!\\)(?:\\\\)*\$\{/.test(text)) {
-        unresolved = true;
-        return;
-      }
-      paths.push(resolve(base, text.replace(/\\([\\$}])/g, "$1")));
-    };
-    if (inject !== undefined) {
-      for (const entry of inject.split(",")) if (entry) add(yarnStart, entry);
-      return { paths, unresolved, usedDefault: false };
-    }
+  const listsFor = async (home) => {
     /** @type {string[]} */
     const rcFiles = [];
     for (let directory = yarnStart; ; directory = dirname(directory)) {
@@ -303,92 +345,100 @@ export async function yarnEnvironmentFiles({ env, startingCwd, accountHome, cwd 
     }
     const homeRc = join(home, ".yarnrc.yml");
     if (!rcFiles.includes(homeRc)) rcFiles.unshift(homeRc);
-    let listed = false;
-    for (const rcFile of rcFiles) {
+    /** @type {{ rcFile: string, entries: string[] }[]} */
+    const lists = [];
+    for (const rcFile of [...rcFiles].reverse()) {
       // yarnLayers already warns about a file it cannot read or parse.
-      const files = (await readYarnrc(rcFile, [])).injectEnvironmentFiles;
-      if (!Array.isArray(files)) continue;
-      listed = true;
-      for (const file of files) if (typeof file === "string") add(dirname(rcFile), file);
+      const value = (await readYarnrc(rcFile, [])).injectEnvironmentFiles;
+      if (value === undefined) continue;
+      if (!Array.isArray(value) || !value.every((entry) => typeof entry === "string")) {
+        return { rcFile, unmodelled: true, lists };
+      }
+      lists.unshift({ rcFile, entries: value });
     }
-    if (!listed) paths.push(join(yarnProcessCwd, ".env.yarn"));
-    return { paths, unresolved, usedDefault: !listed };
+    return { rcFile: undefined, unmodelled: false, lists };
   };
 
-  const seen = await filesFor({
-    rcName: variable("yarn_rc_filename") || ".yarnrc.yml",
-    inject: variable("yarn_inject_environment_files"),
-    home: env.HOME || homedir(),
-  });
-  if (seen.unresolved) {
-    return {
-      paths: seen.paths,
-      undetermined: {
-        reason:
-          "a .yarnrc.yml setting or YARN_INJECT_ENVIRONMENT_FILES names an environment file with a variable in its path",
-        remedy: "Write the path without a variable.",
-      },
-    };
+  const seen = await listsFor(seenHome);
+  if (seen.unmodelled && seen.rcFile) {
+    return undetermined(
+      `${label(seen.rcFile)} sets injectEnvironmentFiles in a form Calavera does not read`,
+      "Write injectEnvironmentFiles as a list of paths.",
+    );
   }
-  // The files Yarn loads without any of its inputs set by a file: a file in either set that sets
-  // one of them means the values Calavera sees may not be the ones Yarn used.
-  const plain = await filesFor({
-    rcName: ".yarnrc.yml",
-    inject: undefined,
-    home: accountHome ?? homedir(),
-  });
-  for (const path of new Set([...seen.paths, ...plain.paths])) {
+  if (accountHome !== undefined && resolve(seenHome) !== resolve(accountHome)) {
+    const own = await listsFor(accountHome);
+    const homeLists = [...seen.lists, ...own.lists].some(
+      ({ rcFile }) =>
+        rcFile === join(seenHome, ".yarnrc.yml") || rcFile === join(accountHome, ".yarnrc.yml"),
+    );
+    if (homeLists || own.unmodelled) {
+      return undetermined(
+        "HOME names another folder than your account's home, a home .yarnrc.yml lists environment files, and a file that Yarn loaded can change HOME",
+        "List the files in the project's .yarnrc.yml instead of the home one.",
+      );
+    }
+  }
+
+  /** @type {string[]} */
+  const paths = [];
+  for (const { rcFile, entries } of seen.lists) {
+    for (const entry of entries) {
+      const expanded = expandYarn(entry.replace(/\?$/, ""), {});
+      if (expanded.unset.length > 0) {
+        return undetermined(
+          "a .yarnrc.yml setting names an environment file with a variable in its path that Yarn cannot expand",
+          "Write the path without a variable.",
+        );
+      }
+      paths.push(resolve(dirname(rcFile), expanded.text.replace(/\\([\\$}])/g, "$1")));
+    }
+  }
+  if (seen.lists.length === 0) {
+    if (yarnProcessCwd !== null) {
+      paths.push(join(resolve(yarnProcessCwd), ".env.yarn"));
+    } else {
+      // Yarn ran in INIT_CWD or one of its parents (`--cwd`, `yarn workspace`), or in the folder
+      // Calavera started in (`yarn dlx`); a .env.yarn in any of them may be the one Yarn read.
+      /** @type {Set<string>} */
+      const folders = new Set();
+      for (const start of [yarnStart, resolve(startingCwd)]) {
+        for (let directory = start; ; directory = dirname(directory)) {
+          folders.add(directory);
+          if (dirname(directory) === directory) break;
+        }
+      }
+      for (const folder of folders) {
+        if (
+          (await readConfigText(join(folder, ".env.yarn"), "environment file", [])) !== undefined
+        ) {
+          return undetermined(
+            "it cannot see the folder Yarn ran in, which decides which .env.yarn Yarn read",
+            "List the file in injectEnvironmentFiles in the project's .yarnrc.yml, so Calavera can tell whether Yarn loaded it.",
+          );
+        }
+      }
+    }
+  }
+  // A loaded file that sets one of Yarn's inputs means the values Calavera sees may not be the
+  // ones Yarn used.
+  for (const path of paths) {
     const text = await readConfigText(path, "environment file", []);
     if (text === undefined) continue;
-    const key = [...parseEnvironmentFile(text).keys()].find((each) =>
-      YARN_FILE_INPUTS.includes(each.toLowerCase()),
+    const key = [...parseEnvironmentFile(text).keys()].find(
+      (each) =>
+        YARN_FILE_INPUTS.includes(each.toLowerCase()) ||
+        isYarnSetting(each, "injectEnvironmentFiles"),
     );
     if (key !== undefined) {
       const name = printable(key);
-      return {
-        paths: seen.paths,
-        undetermined: {
-          reason: `${label(path)} sets ${name}, which changes the files Yarn loads`,
-          remedy: `Remove ${name} from ${label(path)}.`,
-        },
-      };
+      return undetermined(
+        `${label(path)} sets ${name}, which changes the files Yarn loads`,
+        `Remove ${name} from ${label(path)}.`,
+      );
     }
   }
-  // `--cwd` moves Yarn's starting folder without moving its process, and only the shell's PWD
-  // shows where the process was; a .env.yarn in both makes the default ambiguous.
-  const shellCwd = env.PWD ? resolve(env.PWD) : undefined;
-  if (seen.usedDefault && !dlx && shellCwd !== undefined && shellCwd !== yarnStart) {
-    const both = await Promise.all(
-      [shellCwd, yarnStart].map((folder) => readConfigText(join(folder, ".env.yarn"), "", [])),
-    );
-    if (both.every((text) => text !== undefined)) {
-      return {
-        paths: seen.paths,
-        undetermined: {
-          reason: `Yarn may have started in ${label(shellCwd)} rather than the folder it names in INIT_CWD, for example with --cwd, and both folders have a .env.yarn`,
-          remedy: "Run Yarn from the project folder without --cwd.",
-        },
-      };
-    }
-  }
-  return { paths: seen.paths };
-}
-
-/**
- * Whether `folder` is the temporary project `yarn dlx` creates: `dlx-<pid>` in an `xfs-*` folder,
- * with an empty package.json and yarn.lock, and a .yarnrc.yml (`dlx` in @yarnpkg/plugin-dlx).
- * @param {string} folder
- */
-async function isDlxProject(folder) {
-  if (!/^dlx-\d+$/.test(basename(folder)) || !basename(dirname(folder)).startsWith("xfs-")) {
-    return false;
-  }
-  const files = await Promise.all(
-    ["package.json", "yarn.lock", ".yarnrc.yml"].map((name) =>
-      readConfigText(join(folder, name), "", []),
-    ),
-  );
-  return files.every((text) => text !== undefined);
+  return { paths };
 }
 
 /**

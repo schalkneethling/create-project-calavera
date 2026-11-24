@@ -22,6 +22,7 @@ import {
   isAccountFile,
   yarnEnvironmentFiles,
   yarnLayers,
+  yarnParentCwd,
 } from "./launcher-config.js";
 
 /** @typedef {import("./launcher-config.js").Launcher} Launcher */
@@ -256,8 +257,9 @@ async function userConfigPath(env, home, launcher) {
  * and no proxy setting applies, `requestOptions` sends every request, redirects included, through
  * an agent without a proxy; otherwise it equals `options`.
  * `accountHome` replaces the operating system account's home folder, `runtime` the runtime that
- * runs Calavera, and `execArgv` that runtime's options, for tests only.
- * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string, accountHome?: string, runtime?: "bun" | "node", execArgv?: string[] }} [context]
+ * runs Calavera, `execArgv` that runtime's options, and `yarnProcessCwd` the folder Yarn's process
+ * ran in (null when unknown), for tests only.
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string, accountHome?: string, runtime?: "bun" | "node", execArgv?: string[], yarnProcessCwd?: string | null }} [context]
  * @returns {Promise<{ options: Record<string, string>, requestOptions: Record<string, unknown>, registry: EffectiveRegistry, registryUrl: string, warnings: string[], diagnostics: string[], unsetVariables: string[] }>}
  */
 export async function loadNpmRegistryOptions({
@@ -267,6 +269,7 @@ export async function loadNpmRegistryOptions({
   accountHome = accountHomeFolder(),
   runtime = process.versions.bun ? "bun" : "node",
   execArgv = process.execArgv,
+  yarnProcessCwd,
 } = {}) {
   const cwd = cwdOption ?? process.cwd();
   // The folder whose environment files Yarn or Bun loaded: the given `cwd`, or else the folder
@@ -567,7 +570,13 @@ export async function loadNpmRegistryOptions({
   /** @type {{ reason: string, remedy: string } | undefined} */
   let undeterminedEnvironmentFiles;
   if (launcher === "yarn") {
-    const files = await yarnEnvironmentFiles({ env, startingCwd, accountHome, cwd });
+    const files = await yarnEnvironmentFiles({
+      env,
+      startingCwd,
+      accountHome,
+      cwd,
+      yarnProcessCwd: yarnProcessCwd === undefined ? await yarnParentCwd() : yarnProcessCwd,
+    });
     undeterminedEnvironmentFiles = files.undetermined;
     addClaims(await variablesFromReferences(files.paths, mayHoldVariable, warnings), "Yarn");
   }

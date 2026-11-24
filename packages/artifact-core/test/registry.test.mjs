@@ -1334,6 +1334,8 @@ test("a proxy variable that .env.yarn sets from a variable is bypassed for the l
     await mkdir(project);
     await writeFile(join(project, "yarn.lock"), "");
     await writeFile(join(project, ".env.yarn"), "HTTP_PROXY=http://${PROXY_HOST}:9\n");
+    // A listed file lets Calavera tell that Yarn loaded it, without seeing Yarn's own folder.
+    await writeFile(join(project, ".yarnrc.yml"), "injectEnvironmentFiles:\n  - .env.yarn\n");
     const script = join(directory, "probe.mjs");
     const registryModule = new URL("../src/registry.js", import.meta.url).href;
     await writeFile(
@@ -1390,6 +1392,8 @@ test("a redirect to another host also bypasses a proxy variable that .env.yarn s
     const project = join(directory, "project");
     await mkdir(project);
     await writeFile(join(project, ".env.yarn"), "HTTP_PROXY=http://${PROXY_HOST}:9\n");
+    // A listed file lets Calavera tell that Yarn loaded it, without seeing Yarn's own folder.
+    await writeFile(join(project, ".yarnrc.yml"), "injectEnvironmentFiles:\n  - .env.yarn\n");
     const script = join(directory, "probe.mjs");
     const registryModule = new URL("../src/registry.js", import.meta.url).href;
     await writeFile(
