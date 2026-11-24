@@ -611,6 +611,16 @@ export async function loadNpmRegistryOptions({
       );
       return true;
     }
+    // Bun keeps a variable the caller set, and Calavera cannot see --no-env-file or
+    // `env = false` in bunfig.toml, so the value may be the caller's own; changing the file is
+    // the remedy that works either way. Yarn lets a loaded file replace the caller's value, so
+    // under Yarn the value is the file's.
+    if (claim.tool === "Bun") {
+      warnings.push(
+        `Ignored ${variable}, which ${file} sets from a variable: Calavera cannot tell whether the value came from that file or from your own environment, because Bun keeps a variable you set, and Bun may not have loaded the file at all, as with --no-env-file or env = false in bunfig.toml. Calavera does not take a variable's value from a project file. Remove or rename ${variable} in ${file}.`,
+      );
+      return true;
+    }
     warnings.push(
       `Ignored ${variable}, which ${file} sets from a variable: ${claim.tool} expanded the variable before Calavera started, and Calavera does not take a variable's value from a project file. Write the value without a variable in ${file}, or remove it from ${file} and set ${variable} in your own environment.`,
     );
@@ -626,16 +636,21 @@ export async function loadNpmRegistryOptions({
   ];
   for (const layer of layers) {
     for (const [key, entry] of Object.entries(layer.entries)) {
-      // Under the Bun settings the .npmrc proxy keys are not read, as Bun does not read them;
-      // a note names each one, so a dropped proxy is not silent.
+      // Under the Bun settings the .npmrc proxy keys (proxy, https-proxy, and noproxy, also as a
+      // noproxy[] list) are not read, as Bun does not read them; a note names each one, so a
+      // dropped proxy setting is not silent.
       if (
         launcher === "bun" &&
         layer.npmrc &&
-        (key === "proxy" || key === "https-proxy") &&
+        NPM_PROXY_KEYS.has(key) &&
         entryValue(key, entry)?.trim()
       ) {
+        const remedy =
+          key === "noproxy"
+            ? "To exclude hosts from a proxy, set NO_PROXY."
+            : "To use a proxy, set HTTPS_PROXY.";
         warnings.push(
-          `Ignored ${printable(key)} in the ${layer.name}: Bun does not read proxy settings from .npmrc files, so Calavera, which Bun runs, does not either. To use a proxy, set HTTPS_PROXY.`,
+          `Ignored ${printable(key)} in the ${layer.name}: Bun does not read proxy settings from .npmrc files, so Calavera, which Bun runs, does not either. ${remedy}`,
         );
       }
       // The allowlist comes first, so the value of any other key, such as a credential, is never

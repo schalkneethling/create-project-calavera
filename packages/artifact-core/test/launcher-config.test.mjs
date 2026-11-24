@@ -1372,7 +1372,7 @@ test("when Bun runs Calavera, a registry or proxy that a .env file sets from a v
     assert.deepEqual(
       result.warnings,
       [
-        "Ignored HTTPS_PROXY, which .env sets from a variable: Bun expanded the variable before Calavera started, and Calavera does not take a variable's value from a project file. Write the value without a variable in .env, or remove it from .env and set HTTPS_PROXY in your own environment.",
+        "Ignored HTTPS_PROXY, which .env sets from a variable: Calavera cannot tell whether the value came from that file or from your own environment, because Bun keeps a variable you set, and Bun may not have loaded the file at all, as with --no-env-file or env = false in bunfig.toml. Calavera does not take a variable's value from a project file. Remove or rename HTTPS_PROXY in .env.",
       ],
       reference,
     );
@@ -1457,7 +1457,7 @@ test("a real Bun run loads the project .env, and the loader ignores the proxy it
     `import { loadNpmRegistryOptions } from ${JSON.stringify(loader)};
 const loaded = process.env.HTTPS_PROXY !== undefined;
 const { requestOptions, warnings } = await loadNpmRegistryOptions({ cwd: process.cwd(), env: process.env });
-console.log(JSON.stringify({ loaded, proxy: typeof requestOptions.agent !== "function", warned: warnings.some((w) => w.startsWith("Ignored HTTPS_PROXY, which .env sets from a variable: Bun")) }));
+console.log(JSON.stringify({ loaded, proxy: typeof requestOptions.agent !== "function", warned: warnings.some((w) => w.startsWith("Ignored HTTPS_PROXY, which .env sets from a variable: Calavera cannot tell whether")) }));
 `,
   );
   let stdout;
@@ -1915,24 +1915,22 @@ test("when Bun runs Calavera with --env-file, the named files are judged too", a
   }
 });
 
-test("under Bun, the note names each .npmrc proxy URL it skips, but not noproxy or an empty value", async () => {
+test("under Bun, the note names each .npmrc proxy setting it skips, noproxy included, but not an empty value", async () => {
   const context = await fixture({
     userAgent: BUN,
     files: {
       "home/.npmrc": "proxy=http://plain-proxy.example.com/\nnoproxy=internal.example.com\n",
-      "workspace/project/.npmrc": "https-proxy=\n",
+      "workspace/project/.npmrc":
+        "https-proxy=\nnoproxy[]=a.example.com\nnoproxy[]=b.example.com\n",
     },
   });
   const { warnings } = await loadNpmRegistryOptions(context);
   assert.deepEqual(warnings, [
     "Ignored proxy in the user .npmrc: Bun does not read proxy settings from .npmrc files, so Calavera, which Bun runs, does not either. To use a proxy, set HTTPS_PROXY.",
+    "Ignored noproxy in the user .npmrc: Bun does not read proxy settings from .npmrc files, so Calavera, which Bun runs, does not either. To exclude hosts from a proxy, set NO_PROXY.",
+    "Ignored noproxy in the project .npmrc: Bun does not read proxy settings from .npmrc files, so Calavera, which Bun runs, does not either. To exclude hosts from a proxy, set NO_PROXY.",
   ]);
 });
-
-// Owner decision of 2026-11-24 on #1225: under Yarn 4, only the environment files Yarn actually
-// loaded for this run count, derived from Yarn 4.18.1's `Configuration.find` and from what Yarn
-// passes to the child; when Calavera cannot tell, it ignores every registry and proxy variable
-// and says why.
 
 test("under Yarn, a caller's own variable applies when only a file Yarn did not load names it", async () => {
   // Yarn started in packages/a, so it loaded packages/a/.env.yarn, which does not exist, and not
@@ -2376,4 +2374,73 @@ test("under Yarn, a variable in an injectEnvironmentFiles path is expanded as Ya
   const result = await loadNpmRegistryOptions(context);
   assert.equal(result.options.proxy, undefined);
   assert.equal(result.registry.origin, "https://caller-mirror.example.com");
+});
+
+// Independent review of 5476708 on #1225.
+
+test("when Bun runs Calavera directly, a launcher variable that a .env file sets from a variable keeps the Bun settings", async () => {
+  // Bun expanded npm_execpath=${A} to /x/npm-cli.js, so the value Calavera sees differs from the
+  // file's text; the file still set it.
+  const context = await fixture({
+    files: {
+      "workspace/project/.env":
+        "A=/x/npm-cli.js\nnpm_execpath=${A}\nnpm_command=exec\nnpm_config_https_proxy=http://dotenv-evil.example:3\n",
+    },
+    env: {
+      A: "/x/npm-cli.js",
+      npm_execpath: "/x/npm-cli.js",
+      npm_command: "exec",
+      npm_config_https_proxy: "http://dotenv-evil.example:3",
+    },
+  });
+  const result = await loadNpmRegistryOptions({ ...context, runtime: "bun" });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.match(result.warnings.join("\n"), /^Ignored npm_execpath, which \.env sets/m);
+});
+
+test("when Bun runs Calavera, the warning for a variable a .env file sets from a variable says Calavera cannot tell where the value came from, also with --no-env-file", async () => {
+  // The caller set HTTPS_PROXY in their own shell, which Bun keeps; with --no-env-file Bun
+  // loaded no .env at all. Either way the remedy that works is to change the file.
+  for (const execArgv of [[], ["--no-env-file"]]) {
+    const context = await fixture({
+      files: { "workspace/project/.env": "HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n" },
+      env: { HTTPS_PROXY: "http://corp.example.com:3128" },
+    });
+    const result = await loadNpmRegistryOptions({ ...context, runtime: "bun", execArgv });
+    assert.deepEqual(
+      result.warnings,
+      [
+        "Ignored HTTPS_PROXY, which .env sets from a variable: Calavera cannot tell whether the value came from that file or from your own environment, because Bun keeps a variable you set, and Bun may not have loaded the file at all, as with --no-env-file or env = false in bunfig.toml. Calavera does not take a variable's value from a project file. Remove or rename HTTPS_PROXY in .env.",
+      ],
+      execArgv.join(" "),
+    );
+  }
+});
+
+test("under Yarn, the wording for a file Yarn loaded still says Yarn expanded the variable", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: {
+      "workspace/project/.env.yarn": "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
+    },
+    env: { CI_SECRET, YARN_HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
+  });
+  const { warnings } = await loadNpmRegistryOptions(context);
+  assert.deepEqual(warnings, [
+    "Ignored YARN_HTTPS_PROXY, which .env.yarn sets from a variable: Yarn expanded the variable before Calavera started, and Calavera does not take a variable's value from a project file. Write the value without a variable in .env.yarn, or remove it from .env.yarn and set YARN_HTTPS_PROXY in your own environment.",
+  ]);
+});
+
+test("under Yarn without a known folder, a .env.yarn inside node_modules is not a candidate", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: {
+      "workspace/project/node_modules/dep/.env.yarn":
+        "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
+    },
+    env: { YARN_HTTPS_PROXY: "http://caller.example.com:1" },
+  });
+  const { options, warnings } = await loadNpmRegistryOptions({ ...context, yarnProcessCwd: null });
+  assert.equal(options.proxy, "http://caller.example.com:1");
+  assert.deepEqual(warnings, []);
 });

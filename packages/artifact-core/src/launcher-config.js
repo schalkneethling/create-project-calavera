@@ -235,11 +235,11 @@ export async function yarnLayers({ cwd, env, home, accountHome, scope, warnings 
   return layers;
 }
 
+// How many project folders Calavera searches for a .env.yarn when it cannot see Yarn's folder.
+const YARN_PROJECT_FOLDER_LIMIT = 10_000;
 // The variables, beside YARN_INJECT_ENVIRONMENT_FILES, that decide which environment files Yarn
 // loads. Yarn reads them from its own environment before it loads the files, but a loaded file can
 // change them for the child. On Windows, os.homedir() reads USERPROFILE rather than HOME.
-// How many project folders Calavera searches for a .env.yarn when it cannot see Yarn's folder.
-const YARN_PROJECT_FOLDER_LIMIT = 10_000;
 const YARN_FILE_INPUTS = [
   "yarn_rc_filename",
   "yarn_inject_environment_files",
