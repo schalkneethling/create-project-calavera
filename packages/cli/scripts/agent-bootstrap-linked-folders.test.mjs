@@ -10,6 +10,7 @@ import { dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
+import { agentBootstrap } from "../src/index.js";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 
 const binPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
@@ -118,3 +119,41 @@ for (const entryPoint of ENTRY_POINTS) {
     });
   });
 }
+
+// The refusal comes before the prompts, so a person at a terminal is never asked a question for a
+// run that is then refused. In a terminal with an AGENTS.md, both prompts would otherwise be asked.
+test("agent-init in a terminal refuses a linked .agents before it asks anything", async () => {
+  await withProject(async ({ project, outside }) => {
+    await writeFile(join(project, "AGENTS.md"), "# Existing project guidance\n");
+    await symlink(outside, join(project, ".agents"));
+    const projectBefore = await snapshotDirectory(project);
+    const outsideBefore = await snapshotDirectory(outside);
+    /** @type {string[]} */
+    const asked = [];
+    const ask = (/** @type {string} */ prompt) => async () => {
+      asked.push(prompt);
+      throw new Error(`asked ${prompt} before the refusal`);
+    };
+    const previousCwd = process.cwd();
+    const original = Object.getOwnPropertyDescriptor(process.stdin, "isTTY");
+    Object.defineProperty(process.stdin, "isTTY", { value: true, configurable: true });
+    process.chdir(project);
+    try {
+      await assert.rejects(
+        agentBootstrap(
+          {},
+          { ask: { guidanceMode: ask("guidanceMode"), mcpHarness: ask("mcpHarness") } },
+        ),
+        { message: refusal(".agents") },
+      );
+    } finally {
+      process.chdir(previousCwd);
+      if (original) Object.defineProperty(process.stdin, "isTTY", original);
+      else delete process.stdin.isTTY;
+    }
+
+    assert.deepEqual(asked, []);
+    assert.deepEqual(await snapshotDirectory(project), projectBefore);
+    assert.deepEqual(await snapshotDirectory(outside), outsideBefore);
+  });
+});
