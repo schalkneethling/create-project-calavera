@@ -1,7 +1,7 @@
 // @ts-check
 import { lstatSync, readFileSync } from "node:fs";
 import { access, constants, realpath, readFile, writeFile } from "node:fs/promises";
-import nodePath, { dirname, isAbsolute, relative, resolve, sep } from "node:path";
+import nodePath, { dirname, resolve } from "node:path";
 
 import { jsonSyntaxProblem } from "./parse-position.js";
 
@@ -28,16 +28,28 @@ export function isPathInside(parent, child, pathRules = nodePath) {
   );
 }
 
-/** @param {string} path @param {string} [label] */
-export function assertSafeRelativePath(path, label = "Path") {
-  const normalized = relative(".", resolve(path));
+/**
+ * Returns `path` when it names something below `root`: not absolute, with no `..` segment, not
+ * `root` itself, and inside `root` once resolved, which on Windows also refuses a drive-relative
+ * path such as `D:state.json`.
+ *
+ * @param {string} path
+ * @param {string} [label]
+ * @param {{ pathRules?: Pick<typeof nodePath, "relative" | "resolve" | "isAbsolute" | "sep">, root?: string }} [options]
+ *   `pathRules` are the platform's path rules; tests pass `win32`. `root` defaults to the
+ *   working directory.
+ */
+export function assertSafeRelativePath(
+  path,
+  label = "Path",
+  { pathRules = nodePath, root = process.cwd() } = {},
+) {
+  const target = pathRules.resolve(root, path);
   if (
-    isAbsolute(path) ||
+    pathRules.isAbsolute(path) ||
     path.split(/[\\/]/).includes("..") ||
-    !normalized ||
-    normalized === ".." ||
-    normalized.startsWith(`..${sep}`) ||
-    isAbsolute(normalized)
+    !pathRules.relative(root, target) ||
+    !isPathInside(root, target, pathRules)
   ) {
     throw new Error(`${label} must stay inside the current project workspace.`);
   }
@@ -55,12 +67,7 @@ export async function assertWorkspacePath(path, root = process.cwd(), label = "P
     ancestor = parent;
   }
   const canonicalAncestor = await realpath(ancestor);
-  const relativeAncestor = relative(canonicalRoot, canonicalAncestor);
-  if (
-    relativeAncestor === ".." ||
-    relativeAncestor.startsWith(`..${sep}`) ||
-    isAbsolute(relativeAncestor)
-  ) {
+  if (!isPathInside(canonicalRoot, canonicalAncestor)) {
     throw new Error(`${label} must stay inside the current project workspace.`);
   }
   return target;

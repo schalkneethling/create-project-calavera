@@ -4,11 +4,12 @@
 // no deadline, and no printing: the CLI adapter in index.js passes the resolver, holds the request
 // to its deadline, and prints the result, so the tests here need no network (Decision 7).
 import { readFile, realpath } from "node:fs/promises";
-import { isAbsolute, join, relative } from "node:path";
+import { join, relative } from "node:path";
 
 import semver from "semver";
 
 import { formatErrorChain, isDebugEnabled } from "./utils/error-chain.js";
+import { isPathInside } from "./utils/fs.js";
 
 /** How long the request may take from its start, in milliseconds (Decision 2). */
 export const VERSION_CHECK_DEADLINE_MS = 1_500;
@@ -54,8 +55,8 @@ export function versionCheckApplies(options, env) {
 async function isProjectDependency(packageRoot, cwd, packageName) {
   try {
     const [realRoot, realProject] = await Promise.all([realpath(packageRoot), realpath(cwd)]);
-    const inside = relative(join(realProject, "node_modules"), realRoot);
-    if (!inside || inside.startsWith("..") || isAbsolute(inside)) {
+    const nodeModules = join(realProject, "node_modules");
+    if (relative(nodeModules, realRoot) === "" || !isPathInside(nodeModules, realRoot)) {
       return false;
     }
 
