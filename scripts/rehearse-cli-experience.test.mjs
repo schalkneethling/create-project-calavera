@@ -1017,7 +1017,8 @@ test("the script-name mask covers only the summary's script lines, not other scr
   const run = (/** @type {string[]} */ extra, group = scriptGroup) =>
     listingViolations([...listed, ...group, ...extra].join("\n"), items);
   assert.deepEqual(run([]), []);
-  // The same shapes inside a Clack frame, as the CLI prints them, are still script lines.
+  // The CLI prints the summary without a Clack frame today; should it print one, the same shapes
+  // inside it are still script lines.
   assert.deepEqual(
     run(
       [],
@@ -1041,12 +1042,15 @@ test("the script-name mask covers only the summary's script lines, not other scr
     '  Before, Would add script knip: ""',
     '  Before, Would rename script knip to lint: ""',
     '  Before, Would change script knip from "" to ""',
+    "  Before, Would omit script knip: no reason",
     "  Before, Would omit vp check from script knip: no reason",
     "  Before, Scripts already set: knip",
   ]) {
     assert.deepEqual(run([line]), ["knip is printed 2 times"], line);
   }
   for (const line of [
+    '  Would add script knip: "" for stylelint',
+    '  Removed script knip: "" for stylelint',
     '  Would rename script knip to lint: "" for stylelint',
     '  Would change script knip from "" to "" for stylelint',
   ]) {

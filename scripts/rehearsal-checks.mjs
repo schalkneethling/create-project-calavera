@@ -546,12 +546,14 @@ export function listingViolations(output, items, statements = []) {
 const QUOTED_VALUE = /"(?:[^"\\]|\\.)*"/g;
 
 // The lines scriptLines in apply-summary.js prints, once a quoted value is reduced to "", with the
-// script names they hold in the groups named "name": "Would add script knip: \"\"", "Renamed script
-// lint to lint:styles: \"\"", "Changed script knip from \"\" to \"\"", "Would omit vp check from
-// script quality: <reason>", or "Scripts already set: knip, lint:styles". A name can hold colons,
-// as lint:styles does, so only a colon before a space ends it.
+// script names they hold in named groups, "name" and a rename's "target": "Would add script knip:
+// \"\"", "Renamed script lint to lint:styles: \"\"", "Changed script knip from \"\" to \"\"", "Would
+// omit script knip: <reason>", "Would omit vp check from script quality: <reason>", or "Scripts
+// already set: knip, lint:styles". A name can hold colons, as lint:styles does, so only a colon
+// before a space ends it.
 const SCRIPT_LINES = [
-  /^(?:Would add|Added|Would remove|Removed|Would omit|Omitted) script (?<name>\S+?): /d,
+  /^(?:Would add|Added|Would remove|Removed) script (?<name>\S+?): ""$/d,
+  /^(?:Would omit|Omitted) script (?<name>\S+?): /d,
   /^(?:Would rename|Renamed) script (?<name>\S+?) to (?<target>\S+?): ""$/d,
   /^(?:Would change|Changed) script (?<name>\S+?) from "" to ""$/d,
   /^(?:Would omit|Omitted) \S.*? from script (?<name>\S+?): /d,
