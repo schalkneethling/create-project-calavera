@@ -40,6 +40,7 @@ import {
   artifactCacheIgnoreLines,
   artifactCachePointers,
   prepareArtifactSources,
+  refuseLinkedArtifactFolders,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
 import { integrationCatalog, removedToolchainIntegrations } from "./catalog.js";
@@ -5022,8 +5023,22 @@ export async function agentBootstrap(options = {}, { ask = askForAgentBootstrap 
     bootstrapOptions.packageManager ?? detectPackageManager(detectedPackageJSON) ?? "npm",
   );
   const launchCommand = createMcpLaunchCommand(packageManager);
+  const skillSources = agentBootstrapSkillSources();
 
-  await assertBootstrapDirectoryAvailable(".calavera");
+  // #1231 (owner decision of 2026-11-23 on #1193): the folders the bootstrap writes into must be
+  // real folders, so a symbolic link on the path of any of them stops every run, a dry run as well,
+  // before anything is written. They are the base skill's folder, which the copy writes into; the
+  // folder of the manual MCP setup notes, which every harness falls back to when its MCP config
+  // cannot be written; and the folder of the state file. AGENTS.md, its fallback, and
+  // .coderabbit.yaml are in the project folder itself. #1238 covers the folders of the MCP configs.
+  await refuseLinkedArtifactFolders([
+    ...resolveAiArtifacts(AGENT_BOOTSTRAP_SKILL_RECIPE, skillSources).flatMap(
+      aiArtifactOutputPaths,
+    ),
+    dirname(AGENT_BOOTSTRAP_MCP_FILE),
+    dirname(STATE_FILE),
+  ]);
+  await assertBootstrapDirectoryAvailable(dirname(STATE_FILE));
 
   // #669: the Markdown Calavera writes is formatted by the project's formatter before anything is
   // written, so a Vite+ project's vp check accepts it, and a project whose formatter cannot load
@@ -5041,7 +5056,6 @@ export async function agentBootstrap(options = {}, { ask = askForAgentBootstrap 
   ]);
 
   const previousState = await readStateIfPresent();
-  const skillSources = agentBootstrapSkillSources();
   // #986: the skill records are planned without writing, as apply plans them (#838), so the state
   // that records them is formatted before any skill file is copied.
   const aiResult = await buildAiApplyResult(
