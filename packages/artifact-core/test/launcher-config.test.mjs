@@ -2236,9 +2236,6 @@ test("yarnParentCwd reads the working folder of a Yarn parent process from /proc
         assert.equal(path, "/proc/4242/cwd");
         return "/repo";
       },
-      run: async () => {
-        throw new Error("not on Linux");
-      },
     });
   for (const yarn of [
     "node\0/usr/lib/node_modules/corepack/dist/yarn.js\0workspace\0",
@@ -2256,36 +2253,9 @@ test("yarnParentCwd reads the working folder of a Yarn parent process from /proc
   ]) {
     assert.equal(await read(other), null, other);
   }
+  // Only Linux has /proc; macOS and Windows use the candidate files.
+  assert.equal(await read("node\0/x/yarn.js\0", "darwin"), null);
   assert.equal(await read("node\0/x/yarn.js\0", "win32"), null);
-});
-
-test("yarnParentCwd asks ps and lsof on macOS, only when the parent runs Yarn", async () => {
-  /** @param {string} args */
-  const read = (args) =>
-    yarnParentCwd({
-      platform: "darwin",
-      ppid: 4242,
-      readFile: async () => {
-        throw new Error("no /proc");
-      },
-      readlink: async () => {
-        throw new Error("no /proc");
-      },
-      run: async (command, commandArgs) => {
-        if (command === "ps") {
-          assert.deepEqual(commandArgs, ["-o", "args=", "-p", "4242"]);
-          return `${args}\n`;
-        }
-        assert.equal(command, "lsof");
-        assert.deepEqual(commandArgs, ["-a", "-d", "cwd", "-p", "4242", "-Fn"]);
-        return "p4242\nfcwd\nn/Users/u/repo\n";
-      },
-    });
-  assert.equal(
-    await read("node /Users/u/.cache/node/corepack/v1/yarn/4.18.1/yarn.js --cwd ../proj probe"),
-    "/Users/u/repo",
-  );
-  assert.equal(await read("sh ./scripts/yarn-ci.sh"), null);
 });
 
 test("under Yarn without a known folder, a candidate's claim stays although a later candidate sets the same variable literally", async () => {

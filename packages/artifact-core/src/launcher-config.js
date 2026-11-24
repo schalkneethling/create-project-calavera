@@ -1,9 +1,7 @@
 // @ts-check
-import { execFile } from "node:child_process";
 import { readdir, readFile as readFileText, readlink as readLink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
-import { promisify } from "node:util";
 
 import { TomlError, parse as parseToml } from "smol-toml";
 import { parseDocument } from "yaml";
@@ -264,44 +262,26 @@ function runsYarn(args) {
  * The working folder of the Yarn process that started Calavera, or null when it cannot be read.
  * Yarn reads its default `.env.yarn` from this folder, which it does not pass to the child: under
  * `--cwd`, `yarn workspace`, and `yarn workspaces foreach`, INIT_CWD names another folder, and
- * Yarn overwrites PWD. On Linux it comes from /proc; on macOS from `ps` and `lsof`, which ship
- * with the system. Either way the parent must run Yarn, so a shell script between Yarn and
- * Calavera gives null.
- * @param {{ platform?: string, ppid?: number, readFile?: (path: string) => Promise<string>, readlink?: (path: string) => Promise<string>, run?: (command: string, args: string[]) => Promise<string> }} [system]
+ * Yarn overwrites PWD. It comes from /proc, so only on Linux, and only when the parent runs Yarn,
+ * so a shell script between Yarn and Calavera gives null. Elsewhere, such as on macOS and Windows,
+ * yarnEnvironmentFiles judges the candidate `.env.yarn` files instead (owner decision on #1186).
+ * @param {{ platform?: string, ppid?: number, readFile?: (path: string) => Promise<string>, readlink?: (path: string) => Promise<string> }} [system]
  */
 export async function yarnParentCwd({
   platform = process.platform,
   ppid = process.ppid,
   readFile = (path) => readFileText(path, "utf8"),
   readlink = (path) => readLink(path),
-  run = runCommand,
 } = {}) {
   try {
     if (platform === "linux") {
       const args = (await readFile(`/proc/${ppid}/cmdline`)).split("\0");
       return runsYarn(args) ? await readlink(`/proc/${ppid}/cwd`) : null;
     }
-    if (platform === "darwin") {
-      // ps joins the arguments with spaces; a path with a space only makes the check fail.
-      const args = (await run("ps", ["-o", "args=", "-p", String(ppid)])).trim().split(" ");
-      if (!runsYarn(args)) return null;
-      const output = await run("lsof", ["-a", "-d", "cwd", "-p", String(ppid), "-Fn"]);
-      const line = output.split("\n").find((each) => each.startsWith("n"));
-      return line ? line.slice(1) : null;
-    }
   } catch {
     // An unreadable or missing source leaves the folder unknown.
   }
   return null;
-}
-
-/**
- * The standard output of a short command, with a two-second limit.
- * @param {string} command @param {string[]} args
- */
-async function runCommand(command, args) {
-  const { stdout } = await promisify(execFile)(command, args, { timeout: 2000 });
-  return stdout;
 }
 
 /**
