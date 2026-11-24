@@ -18,6 +18,8 @@ import { getCACertificates, setDefaultCACertificates } from "node:tls";
 import { fileURLToPath } from "node:url";
 import { promisify } from "node:util";
 
+import pacote from "pacote";
+
 import { artifactForId } from "../src/catalog.js";
 import * as npmConfig from "../src/npm-config.js";
 import {
@@ -28,6 +30,9 @@ import {
 import { removeTemporaryDirectories, temporaryDirectory } from "./temporary-directory.mjs";
 
 const execFileAsync = promisify(execFile);
+// @npmcli/agent is CommonJS, and Node cannot see `cache` as a named export of it.
+/** @type {{ clear: () => void, agent: Map<string, unknown>, proxy: Map<string, unknown> }} */
+const agentCache = createRequire(import.meta.url)("@npmcli/agent").cache;
 const artifact = artifactForId("skill-project-goal");
 const packageRoot = fileURLToPath(new URL("../../artifacts/skill-project-goal/", import.meta.url));
 // A plain-http host that is not loopback. The local proxy answers for it.
@@ -374,6 +379,30 @@ test("a lookup and a download redirected from loopback http to loopback http suc
   assert.deepEqual(proxy.requests, []);
 });
 
+test("a lookup and a download redirected from https to loopback http succeed", async (t) => {
+  const proxy = await startProxy();
+  const loopback = await startServer({ secure: false, host: "localhost" });
+  const first = await startServer({
+    secure: true,
+    host: "127.0.0.1",
+    redirect: (path) => `${loopback.origin}${path}`,
+  });
+  t.after(() => Promise.all([proxy.close(), first.close(), loopback.close()]));
+  const context = await npmContext({ registry: first.origin, proxy: proxy.url });
+
+  const resolution = await resolveArtifactPackage({ id: artifact.id, ...context });
+  const result = await extractArtifactPackage(
+    { ...resolution, resolved: `${first.origin}/-/artifact.tgz` },
+    context.destination,
+    "2.2.0",
+    context,
+  );
+  assert.equal(result.manifest.id, artifact.id);
+  assert.equal(first.requests.length, 2);
+  assert.equal(loopback.requests.length, 2);
+  assert.deepEqual(proxy.requests, []);
+});
+
 test("a lookup and a download redirected from https to https succeed", async (t) => {
   const proxy = await startProxy();
   const second = await startServer({ secure: true, host: "localhost" });
@@ -478,5 +507,47 @@ test("the agent options Calavera passes match npm-registry-fetch's defaults", ()
     maxSockets: defaults.maxSockets,
     timeout: defaults.timeout,
     noProxy: defaults.noProxy,
+    strictSSL: defaults.strictSSL,
   });
+});
+
+test("Calavera's agents are the ones make-fetch-happen would choose from the same options", async (t) => {
+  // Each lookup goes once through pacote with the loader's options alone, where make-fetch-happen
+  // chooses the agent, and once through Calavera's guarded call. @npmcli/agent caches its agents and
+  // proxy agents by every option that shapes them, so equal cache keys mean equal agents. The http
+  // registry is reached directly and the https one through the proxy.
+  const fromMakeFetchHappen = createRequire(
+    createRequire(createRequire(import.meta.url).resolve("pacote")).resolve("npm-registry-fetch"),
+  );
+  const ownAgent = createRequire(import.meta.url).resolve("@npmcli/agent");
+  assert.equal(
+    createRequire(fromMakeFetchHappen.resolve("make-fetch-happen")).resolve("@npmcli/agent"),
+    ownAgent,
+    "artifact-core and make-fetch-happen load the same @npmcli/agent",
+  );
+  const proxy = await startProxy();
+  const plain = await startServer({ secure: false, host: "127.0.0.1" });
+  const secure = await startServer({ secure: true, host: "localhost" });
+  t.after(() => Promise.all([proxy.close(), plain.close(), secure.close()]));
+
+  for (const registry of [plain.origin, secure.origin]) {
+    const context = await npmContext({ registry, proxy: proxy.url, proxyLoopback: true });
+    const keys = async (/** @type {() => Promise<unknown>} */ run) => {
+      agentCache.clear();
+      await run();
+      return { agents: [...agentCache.agent.keys()], proxies: [...agentCache.proxy.keys()] };
+    };
+    const npm = await npmConfig.loadNpmRegistryOptions({
+      ...context,
+      scope: "@schalkneethling",
+    });
+    const chosen = await keys(() =>
+      pacote.manifest(`${artifact.packageName}@latest`, { ...npm.requestOptions, fetchRetries: 0 }),
+    );
+    const guarded = await keys(() =>
+      resolvePackageDistTag({ packageName: artifact.packageName, tag: "latest", ...context }),
+    );
+    assert.ok(chosen.agents.length > 0, registry);
+    assert.deepEqual(guarded, chosen, registry);
+  }
 });

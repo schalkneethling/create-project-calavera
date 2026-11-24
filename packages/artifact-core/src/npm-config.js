@@ -821,14 +821,18 @@ function registryBypassesProxy(registryUrl, configured, env) {
 }
 
 // The defaults of the agent options npm-registry-fetch passes to make-fetch-happen, as
-// `maxSockets: opts.maxSockets`, `timeout: opts.timeout || 30 * 1000`, and `noProxy: opts.noProxy`
-// (npm-registry-fetch lib/index.js and lib/default-opts.js, which reads NOPROXY when it loads).
-// make-fetch-happen hands them to @npmcli/agent (`getAgent` in make-fetch-happen lib/remote.js).
-// A test compares them with the installed npm-registry-fetch.
+// `maxSockets: opts.maxSockets`, `timeout: opts.timeout || 30 * 1000`, `noProxy: opts.noProxy`, and
+// `strictSSL: opts.strictSSL` (npm-registry-fetch lib/index.js and lib/default-opts.js, which reads
+// NOPROXY when it loads). make-fetch-happen turns `strictSSL` into `rejectUnauthorized`
+// (lib/options.js) and hands them all to @npmcli/agent (`getAgent` in lib/remote.js). The proxy
+// agents open their connection to an https proxy with these options, not the request's, so
+// `rejectUnauthorized` keeps that certificate checked whatever NODE_TLS_REJECT_UNAUTHORIZED says.
+// Tests compare them with the installed npm-registry-fetch and the agents it would choose.
 export const NPM_REGISTRY_FETCH_AGENT_DEFAULTS = {
   maxSockets: 12,
   timeout: 5 * 60 * 1000,
   noProxy: process.env.NOPROXY,
+  strictSSL: true,
 };
 
 /**
@@ -843,10 +847,12 @@ export function requestAgent(requestOptions) {
   if (typeof requestOptions.agent === "function") {
     return /** @type {(url: URL) => unknown} */ (requestOptions.agent);
   }
+  const { strictSSL, ...defaults } = NPM_REGISTRY_FETCH_AGENT_DEFAULTS;
   const agentOptions = {
-    ...NPM_REGISTRY_FETCH_AGENT_DEFAULTS,
+    ...defaults,
+    rejectUnauthorized: strictSSL,
     proxy: requestOptions.httpsProxy || requestOptions.proxy,
-    noProxy: requestOptions.noProxy ?? NPM_REGISTRY_FETCH_AGENT_DEFAULTS.noProxy,
+    noProxy: requestOptions.noProxy ?? defaults.noProxy,
   };
   return (url) => getAgent(url, agentOptions);
 }
