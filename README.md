@@ -989,7 +989,8 @@ includes a proxy that npm passes on from the project `.npmrc` it read, such as t
 file when you run `npx` from a workspace member. A user `.npmrc` that a project `.npmrc` chose with
 `userconfig` counts as a project file too, unless it is your own `~/.npmrc`. A registry or proxy
 variable that a project's Yarn 4 `.env.yarn` sets from a variable, such as `${CI_TOKEN}`, is ignored
-with a warning when Yarn loaded that file for the run, and so is one that a project's `.env` file
+with a warning when Yarn loaded that file for the run (or, on macOS and Windows, where Calavera
+cannot see which `.env.yarn` Yarn read, when Yarn could have read it), and so is one that a project's `.env` file
 sets that way when Bun runs Calavera; a value those files set without a variable applies, and so
 does a variable you set that no loaded file sets. Calavera reads and sends no registry credential, so
 a registry that requires authentication cannot answer the check, and the notice stays quiet. Under Yarn 2 or later, it asks the registry and proxy that your

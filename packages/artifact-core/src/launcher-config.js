@@ -1,5 +1,5 @@
 // @ts-check
-import { readFile as readFileText, readlink as readLink } from "node:fs/promises";
+import { readdir, readFile as readFileText, readlink as readLink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
 
@@ -238,6 +238,8 @@ export async function yarnLayers({ cwd, env, home, accountHome, scope, warnings 
 // The variables, beside YARN_INJECT_ENVIRONMENT_FILES, that decide which environment files Yarn
 // loads. Yarn reads them from its own environment before it loads the files, but a loaded file can
 // change them for the child. On Windows, os.homedir() reads USERPROFILE rather than HOME.
+// How many project folders Calavera searches for a .env.yarn when it cannot see Yarn's folder.
+const YARN_PROJECT_FOLDER_LIMIT = 10_000;
 const YARN_FILE_INPUTS = [
   "yarn_rc_filename",
   "yarn_inject_environment_files",
@@ -297,7 +299,8 @@ function isYarnSetting(name, setting) {
  *   `.yarnrc.yml`, or the file YARN_RC_FILENAME names, from the root down to INIT_CWD are joined,
  *   home first, each entry resolved from its file's folder.
  * - Without a list, the default `.env.yarn` is read from Yarn's own process folder
- *   (`yarnProcessCwd`).
+ *   (`yarnProcessCwd`). When that folder is unknown, every `.env.yarn` Yarn could have read is a
+ *   candidate (`candidates`), and each counts on its own.
  * - A trailing `?` makes a file optional. Yarn unescapes `\\`, `\$`, and `\}` in a path and
  *   expands `${...}` in it with an empty environment, as no environment is loaded yet.
  *
@@ -306,11 +309,19 @@ function isYarnSetting(name, setting) {
  * uses a form of the setting that Calavera does not model; a path has a variable without a value;
  * HOME names another folder than the account's home while a home settings file lists files; a
  * file Yarn may have loaded sets one of Yarn's inputs; or the default applies, Yarn's process
- * folder is unknown, and a `.env.yarn` exists that Yarn may have read.
- * @param {{ env: NodeJS.ProcessEnv, startingCwd: string, accountHome: string | undefined, cwd: string, yarnProcessCwd: string | null }} context
- * @returns {Promise<{ paths: string[], undetermined?: { reason: string, remedy: string } }>}
+ * folder is unknown, and the candidate folders cannot be bounded (no PROJECT_CWD, or more project
+ * folders than `folderLimit`).
+ * @param {{ env: NodeJS.ProcessEnv, startingCwd: string, accountHome: string | undefined, cwd: string, yarnProcessCwd: string | null, folderLimit?: number }} context
+ * @returns {Promise<{ paths: string[], candidates?: boolean, undetermined?: { reason: string, remedy: string } }>}
  */
-export async function yarnEnvironmentFiles({ env, startingCwd, accountHome, cwd, yarnProcessCwd }) {
+export async function yarnEnvironmentFiles({
+  env,
+  startingCwd,
+  accountHome,
+  cwd,
+  yarnProcessCwd,
+  folderLimit = YARN_PROJECT_FOLDER_LIMIT,
+}) {
   if (!env.INIT_CWD) return { paths: [] };
   const yarnStart = resolve(env.INIT_CWD);
   /** @param {string} path */
@@ -382,6 +393,8 @@ export async function yarnEnvironmentFiles({ env, startingCwd, accountHome, cwd,
 
   /** @type {string[]} */
   const paths = [];
+  // True when `paths` are the files Yarn could have read, any of which it may have loaded.
+  let candidates = false;
   for (const { rcFile, entries } of seen.lists) {
     for (const entry of entries) {
       const expanded = expandYarn(entry.replace(/\?$/, ""), {});
@@ -398,26 +411,40 @@ export async function yarnEnvironmentFiles({ env, startingCwd, accountHome, cwd,
     if (yarnProcessCwd !== null) {
       paths.push(join(resolve(yarnProcessCwd), ".env.yarn"));
     } else {
-      // Yarn ran in INIT_CWD or one of its parents (`--cwd`, `yarn workspace`), or in the folder
-      // Calavera started in (`yarn dlx`); a .env.yarn in any of them may be the one Yarn read.
+      // Yarn's folder is unknown (no /proc), so every .env.yarn it could have read counts, each on
+      // its own. From the source: `yarn workspace` and `yarn workspaces foreach` run anywhere in
+      // the project, which Yarn passes as PROJECT_CWD; `yarn --cwd` runs in a folder above the
+      // folder it names, when that is relative; and `yarn dlx`, whose PROJECT_CWD and INIT_CWD
+      // name a temporary project, runs the binary where Calavera starts. A run started outside
+      // these folders, such as `yarn --cwd /elsewhere` from an unrelated folder, is not covered.
+      if (!env.PROJECT_CWD) {
+        return undetermined(
+          "it cannot see the folder Yarn ran in, and Yarn passed no PROJECT_CWD, so the folders Yarn could have run in are unknown",
+          "List the file in injectEnvironmentFiles in the project's .yarnrc.yml, so Calavera can tell whether Yarn loaded it.",
+        );
+      }
+      const projectCwd = resolve(env.PROJECT_CWD);
       /** @type {Set<string>} */
       const folders = new Set();
-      for (const start of [yarnStart, resolve(startingCwd)]) {
+      for (const start of [yarnStart, projectCwd, resolve(startingCwd)]) {
         for (let directory = start; ; directory = dirname(directory)) {
           folders.add(directory);
           if (dirname(directory) === directory) break;
         }
       }
-      for (const folder of folders) {
-        if (
-          (await readConfigText(join(folder, ".env.yarn"), "environment file", [])) !== undefined
-        ) {
-          return undetermined(
-            "it cannot see the folder Yarn ran in, which decides which .env.yarn Yarn read",
-            "List the file in injectEnvironmentFiles in the project's .yarnrc.yml, so Calavera can tell whether Yarn loaded it.",
-          );
-        }
+      const inProject = await projectFolders(projectCwd, folderLimit);
+      if (inProject === undefined) {
+        return undetermined(
+          "it cannot see the folder Yarn ran in, and the project has more folders than Calavera searches for a .env.yarn",
+          "List the file in injectEnvironmentFiles in the project's .yarnrc.yml, so Calavera can tell whether Yarn loaded it.",
+        );
       }
+      for (const folder of inProject) folders.add(folder);
+      for (const folder of folders) {
+        const path = join(folder, ".env.yarn");
+        if ((await readConfigText(path, "environment file", [])) !== undefined) paths.push(path);
+      }
+      candidates = true;
     }
   }
   // A loaded file that sets one of Yarn's inputs means the values Calavera sees may not be the
@@ -438,7 +465,30 @@ export async function yarnEnvironmentFiles({ env, startingCwd, accountHome, cwd,
       );
     }
   }
-  return { paths };
+  return { paths, candidates };
+}
+
+/**
+ * Every folder in `root`, `root` included, except node_modules and .git folders, or undefined
+ * when there are more than `limit`.
+ * @param {string} root @param {number} limit
+ */
+async function projectFolders(root, limit) {
+  /** @type {string[]} */
+  const folders = [];
+  const pending = [root];
+  while (pending.length > 0) {
+    const folder = /** @type {string} */ (pending.pop());
+    folders.push(folder);
+    if (folders.length > limit) return undefined;
+    const entries = await readdir(folder, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git") {
+        pending.push(join(folder, entry.name));
+      }
+    }
+  }
+  return folders;
 }
 
 /**

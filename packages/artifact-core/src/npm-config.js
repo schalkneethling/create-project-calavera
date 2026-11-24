@@ -578,7 +578,11 @@ export async function loadNpmRegistryOptions({
       yarnProcessCwd: yarnProcessCwd === undefined ? await yarnParentCwd() : yarnProcessCwd,
     });
     undeterminedEnvironmentFiles = files.undetermined;
-    addClaims(await variablesFromReferences(files.paths, mayHoldVariable, warnings), "Yarn");
+    // Candidates count on their own: Yarn loaded at most one of them, so no file's value can
+    // replace another's. A list Yarn loaded counts in its order.
+    for (const chain of files.candidates ? files.paths.map((path) => [path]) : [files.paths]) {
+      addClaims(await variablesFromReferences(chain, mayHoldVariable, warnings), "Yarn");
+    }
   }
   if (runtime === "bun") {
     for (const chain of bunChains) {
