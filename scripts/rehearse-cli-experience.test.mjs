@@ -985,6 +985,58 @@ test("a package.json script name is not a listing of the package it shares a nam
   );
 });
 
+test("an integration input's recipe path is not a listed file, but a real file named twice still fails (#1143)", () => {
+  // The apply --dry-run output and the integrationInputs entry --json reports for a recipe that
+  // selects github-repository-controls and records its defaultBranch, trimmed from a real run.
+  const output = [
+    "Calavera apply dry run complete. No files were changed.",
+    "",
+    "Integrations:",
+    "  editorconfig",
+    "  github-repository-controls",
+    "    defaultBranch = main (recorded in the recipe)",
+    "",
+    "Files:",
+    "  Would update package.json",
+    "  Would write and own .editorconfig",
+    "  Would write and own .github/repository-controls.json",
+    "  Would write and own scripts/repository-controls.mjs",
+    "",
+    "Scripts:",
+    '  Would add script repo:controls:check: "node scripts/repository-controls.mjs"',
+  ].join("\n");
+  const report = {
+    changes: [
+      { type: "update", path: "package.json" },
+      { type: "write", path: ".editorconfig" },
+      { type: "write", path: ".github/repository-controls.json" },
+      { type: "write", path: "scripts/repository-controls.mjs" },
+    ],
+    integrationInputs: [
+      {
+        integration: "github-repository-controls",
+        name: "defaultBranch",
+        path: "integrationOptions.github-repository-controls.defaultBranch",
+        value: "main",
+        source: "recorded",
+      },
+    ],
+  };
+  const items = namedItems(report);
+  assert.deepEqual(items, [
+    "package.json",
+    ".editorconfig",
+    ".github/repository-controls.json",
+    "scripts/repository-controls.mjs",
+  ]);
+  assert.deepEqual(listingViolations(output, items), []);
+  assert.deepEqual(
+    listingViolations(`${output}\n  Would write and own .editorconfig`, items),
+    [".editorconfig is printed 2 times"],
+    "a real file the output names twice is still a repeat",
+  );
+});
+
 test("the cache must be ignored by a line inside a Calavera-marked block of the root .gitignore", () => {
   const gitignore = [
     "node_modules",
