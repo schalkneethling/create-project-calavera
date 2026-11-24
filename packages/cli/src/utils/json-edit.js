@@ -22,23 +22,33 @@ export function withoutBom(text) {
 /**
  * @typedef {{ path: string[], value: unknown }} JsonEdit A member to set to `value`, or to remove
  *   when `value` is undefined. A set adds missing objects on the way to the member.
- * @typedef {{ eol: string, unit: string }} JsonStyle
  */
 
 /**
- * The line ending and one indentation level `text` uses: CRLF when any line ends in it, and the
- * indentation of the outer object's first member when that member opens an indented line, as it
- * does in a file a formatter wrote. Any other text, such as `{}` or JSON on one line, gets two
- * spaces, as Calavera writes a new file.
+ * One indentation level of `text`: the indentation of the outer object's first member when that
+ * member opens an indented line, as it does in a file a formatter wrote. Any other text, such as
+ * `{}` or JSON on one line, gets two spaces, as Calavera writes a new file.
  *
  * @param {string} text
- * @returns {JsonStyle}
  */
-function styleOf(text) {
+function indentUnitOf(text) {
   const first = parseTree(text)?.children?.[0];
   const indent =
     first !== undefined && startsLine(text, first.offset) ? indentAt(text, first.offset) : "";
-  return { eol: text.includes("\r\n") ? "\r\n" : "\n", unit: indent || "  " };
+  return indent || "  ";
+}
+
+/**
+ * The line ending of the line `offset` is on, so an edit matches the lines around it even when a
+ * stray line elsewhere ends differently. A line without an ending, such as JSON on one line, gets
+ * LF.
+ *
+ * @param {string} text
+ * @param {number} offset
+ */
+function eolAt(text, offset) {
+  // Without a line feed after `offset`, the index is -2, which holds no character.
+  return text[text.indexOf("\n", offset) - 1] === "\r" ? "\r\n" : "\n";
 }
 
 /**
@@ -65,14 +75,15 @@ function startsLine(text, offset) {
 }
 
 /**
- * `value` as JSON in `style`, for a value whose first line sits on a line indented by `indent`.
+ * `value` as JSON indented by `unit` and ending its lines with `eol`, for a value whose first line
+ * sits on a line indented by `indent`.
  *
  * @param {unknown} value
  * @param {string} indent
- * @param {JsonStyle} style
+ * @param {{ unit: string, eol: string }} style
  */
-function render(value, indent, style) {
-  return JSON.stringify(value, null, style.unit).replaceAll("\n", `${style.eol}${indent}`);
+function render(value, indent, { unit, eol }) {
+  return JSON.stringify(value, null, unit).replaceAll("\n", `${eol}${indent}`);
 }
 
 /**
@@ -93,17 +104,20 @@ function objectNode(node, path) {
  * @param {string} text
  * @param {string[]} path
  * @param {unknown} value
- * @param {JsonStyle} style
+ * @param {string} unit One indentation level, from `indentUnitOf`.
  * @returns {import("jsonc-parser").Edit}
  */
-function setEdit(text, path, value, style) {
+function setEdit(text, path, value, unit) {
   const root = parseTree(text);
   const existing = findNodeAtLocation(/** @type {import("jsonc-parser").Node} */ (root), path);
   if (existing !== undefined) {
     return {
       offset: existing.offset,
       length: existing.length,
-      content: render(value, indentAt(text, existing.offset), style),
+      content: render(value, indentAt(text, existing.offset), {
+        unit,
+        eol: eolAt(text, existing.offset),
+      }),
     };
   }
 
@@ -129,22 +143,25 @@ function setEdit(text, path, value, style) {
   if (last === undefined) {
     // An empty object gets the member on its own line, and its closing brace on the next.
     const outer = indentAt(text, parent.offset);
-    const inner = `${outer}${style.unit}`;
+    const inner = `${outer}${unit}`;
+    const eol = eolAt(text, parent.offset);
     return {
       offset: parent.offset + 1,
       length: parent.length - 2,
-      content: `${style.eol}${inner}${key}: ${render(member, inner, style)}${style.eol}${outer}`,
+      content: `${eol}${inner}${key}: ${render(member, inner, { unit, eol })}${eol}${outer}`,
     };
   }
 
   // After the last member, at its indentation when it opens its line.
   const indent = startsLine(text, last.offset)
     ? indentAt(text, last.offset)
-    : `${indentAt(text, parent.offset)}${style.unit}`;
+    : `${indentAt(text, parent.offset)}${unit}`;
+  const offset = last.offset + last.length;
+  const eol = eolAt(text, offset);
   return {
-    offset: last.offset + last.length,
+    offset,
     length: 0,
-    content: `,${style.eol}${indent}${key}: ${render(member, indent, style)}`,
+    content: `,${eol}${indent}${key}: ${render(member, indent, { unit, eol })}`,
   };
 }
 
@@ -182,7 +199,8 @@ function removeEdit(text, path) {
 
 /**
  * Applies `edits` to the JSON object `text` in order, changing only the bytes of each member: a
- * new member follows the last one, in the file's indentation and line endings, and a removed member
+ * new member follows the last one, in the file's indentation and the line ending of the line it
+ * follows, and a removed member
  * takes its comma with it. Text outside the edited members, a byte order mark included, keeps its
  * bytes.
  *
@@ -193,9 +211,9 @@ function removeEdit(text, path) {
 export function editJson(text, edits) {
   const bom = text.startsWith(BOM) ? BOM : "";
   let body = withoutBom(text);
-  const style = styleOf(body);
+  const unit = indentUnitOf(body);
   for (const { path, value } of edits) {
-    const edit = value === undefined ? removeEdit(body, path) : setEdit(body, path, value, style);
+    const edit = value === undefined ? removeEdit(body, path) : setEdit(body, path, value, unit);
     if (edit !== undefined) body = applyEdits(body, [edit]);
   }
   return `${bom}${body}`;

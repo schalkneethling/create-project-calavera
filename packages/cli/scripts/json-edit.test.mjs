@@ -68,3 +68,28 @@ test("the indentation level comes from the outer object's first member, not the 
     '{\n   "a": {\n      "b": 1\n   }\n}\n',
   );
 });
+
+test("a new member lines up with the members before it, wherever they sit", () => {
+  assert.equal(
+    editJson('{\n\t"a": {\n  \t"b": 1\n\t}\n}\n', [{ path: ["a", "c"], value: 2 }]),
+    '{\n\t"a": {\n  \t"b": 1,\n  \t"c": 2\n\t}\n}\n',
+  );
+});
+
+test("an edit takes the line ending of the line it is on, not of a stray line elsewhere", () => {
+  // An LF file with one CRLF line, before and after the edits.
+  assert.equal(
+    editJson('{\r\n  "a": {\n    "b": 1\n  },\n  "c": {}\n}\n', [
+      { path: ["a", "d"], value: [2] },
+      { path: ["c", "e"], value: 3 },
+    ]),
+    '{\r\n  "a": {\n    "b": 1,\n    "d": [\n      2\n    ]\n  },\n  "c": {\n    "e": 3\n  }\n}\n',
+  );
+  // A CRLF file with one LF line.
+  assert.equal(
+    editJson('{\r\n  "a": 1,\n  "b": 2\r\n}\r\n', [{ path: ["b"], value: { c: 3 } }]),
+    '{\r\n  "a": 1,\n  "b": {\r\n    "c": 3\r\n  }\r\n}\r\n',
+  );
+  // Text on one line gets LF.
+  assert.equal(editJson("{}", [{ path: ["a"], value: 1 }]), '{\n  "a": 1\n}');
+});

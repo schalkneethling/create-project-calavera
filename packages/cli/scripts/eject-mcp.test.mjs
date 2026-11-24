@@ -1422,3 +1422,44 @@ test("opencode: a JSONC file with entries in both places reports both and is nev
     );
   });
 });
+
+// #1221: `--init` now writes its entry into a JSON harness file that opens with a byte order mark
+// (BOM), so `eject` reads such a file too, instead of stopping the whole run. Its rewrite of the
+// file through `writeJSON` drops the BOM, which changes text Calavera did not write, so only an
+// approved run removes the entry, and `--yes` leaves it.
+for (const { harness, path } of HARNESSES.filter(({ harness }) => harness !== "codex")) {
+  test(`${harness}: an entry --init wrote into a file with a byte order mark is unedited, and an approved run removes it`, async () => {
+    await inProject(async () => {
+      await write(path, "﻿{}\n");
+      const init = await agentBootstrap({ json: true, assumeYes: true, mcpHarness: harness });
+      assert.equal(init.mcp.action, "update");
+      const before = await readFile(path, "utf8");
+      assert.ok(before.startsWith("﻿{\n"), "--init keeps the byte order mark");
+
+      const found = await plan();
+      const entry = item(found, path);
+      assert.deepEqual(found.reported, []);
+      assert.equal(entry.edits, "unedited");
+      assert.equal(entry.matchesRecords, false, "dropping the byte order mark needs approval");
+      assert.match(entry.note ?? "", /formatter/);
+      assert.equal(entry.contents, "{}\n");
+
+      await executeEject(selectEjectItems(found, { assumeYes: true }).remove);
+      assert.equal(await readFile(path, "utf8"), before, "--yes leaves it");
+
+      await ejectApproved();
+      assert.equal(await readFile(path, "utf8"), "{}\n");
+    });
+  });
+}
+
+test("opencode: a file with a byte order mark and comments is read as JSONC, and its entry is kept and reported", async () => {
+  await inProject(async () => {
+    const calavera = JSON.parse(json(createOpenCodeMcpJsonConfig(npmLaunch))).mcp.servers.calavera;
+    await write(
+      "opencode.json",
+      `﻿{\n  // OpenCode settings\n  "mcp": { "servers": { "calavera": ${JSON.stringify(calavera)} } }\n}\n`,
+    );
+    await assertKeptAndReported("opencode.json", /is JSON with comments \(JSONC\), not plain JSON/);
+  });
+});

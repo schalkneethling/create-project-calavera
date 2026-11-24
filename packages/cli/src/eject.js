@@ -84,6 +84,7 @@ import {
   normalizePublishedPin,
 } from "./utils/earlier-guidance.js";
 import { isPlainObject } from "./utils/guards.js";
+import { withoutBom } from "./utils/json-edit.js";
 import { rewriteLossProblem, toJSONText, writeJSON } from "./utils/json-rewrite.js";
 import { findBlock, findMarkedBlock } from "./utils/marked-block.js";
 import {
@@ -998,6 +999,10 @@ async function planJsonMcpEntry(path, locations, loadFormatter, schema) {
   const entry = await readTextEntry(path);
   if (entry?.text === undefined) return NO_MCP_ENTRY;
   const { identity, text } = entry;
+  // `--init` writes into a file that opens with a byte order mark (BOM), which neither JSON.parse
+  // nor jsonc-parser reads, so both read the text without it (#1221). The rewrite through
+  // `writeJSON` drops the BOM, so it counts as a change to text Calavera did not write.
+  const body = withoutBom(text);
   const inside = await insideProject(path);
   /**
    * The entries, named by location, and what to do about them.
@@ -1015,13 +1020,13 @@ async function planJsonMcpEntry(path, locations, loadFormatter, schema) {
   /** @type {unknown} */
   let config;
   try {
-    config = JSON.parse(text);
+    config = JSON.parse(body);
   } catch {
     /** @type {import("jsonc-parser").ParseError[]} */
     const errors = [];
     // An empty or whitespace-only file holds no entry, as it did before JSONC was read, so it is
     // left untouched rather than a stop.
-    const jsonc = parseJsonc(text, errors, { allowTrailingComma: true, allowEmptyContent: true });
+    const jsonc = parseJsonc(body, errors, { allowTrailingComma: true, allowEmptyContent: true });
     // eject never changes a file outside the project, so it has no need to read it.
     if (!inside) return mcpEntryOutside(path);
     const [problem] = errors;
@@ -1032,7 +1037,7 @@ async function planJsonMcpEntry(path, locations, loadFormatter, schema) {
         // hold a token. This cause says only what went wrong and where.
         {
           cause: new Error(
-            `JSON with comments (JSONC) parse error ${printParseErrorCode(problem.error)} at ${positionOf(text, problem.offset)}`,
+            `JSON with comments (JSONC) parse error ${printParseErrorCode(problem.error)} at ${positionOf(body, problem.offset)}`,
           ),
         },
       );
@@ -1060,7 +1065,7 @@ async function planJsonMcpEntry(path, locations, loadFormatter, schema) {
   if (unedited.length === 0) return { items: [], reported };
   const formatter = await loadFormatter();
   // A harness file can hold tokens, so the problem names the line of a number, not the number.
-  const loss = await rewriteLossProblem(text, path, formatter, { withoutValues: true });
+  const loss = await rewriteLossProblem(body, path, formatter, { withoutValues: true });
   if (loss !== undefined) {
     const { entries, remedy } = named(unedited);
     // The edited entries it keeps anyway are still reported (ADR-0017, Decision 4).
@@ -1110,7 +1115,7 @@ async function planJsonMcpEntry(path, locations, loadFormatter, schema) {
     removed.push(["$schema"]);
   }
   const contents = await writeJSON(next, path, formatter);
-  const tree = /** @type {import("jsonc-parser").Node} */ (parseTree(text));
+  const tree = /** @type {import("jsonc-parser").Node} */ (parseTree(body));
   // `JSON.parse` read the file, so the tree has every removed member. They are listed in the order
   // the file holds them.
   const members = removed
@@ -1121,9 +1126,9 @@ async function planJsonMcpEntry(path, locations, loadFormatter, schema) {
       ),
     }))
     .toSorted((a, b) => a.node.offset - b.node.offset);
-  const lineAt = (/** @type {number} */ offset) => text.slice(0, offset).split("\n").length - 1;
+  const lineAt = (/** @type {number} */ offset) => body.slice(0, offset).split("\n").length - 1;
   const around = aroundLines(
-    text.split("\n"),
+    body.split("\n"),
     lineAt(Math.min(...members.map(({ node }) => node.offset))),
     lineAt(Math.max(...members.map(({ node }) => node.offset + node.length))),
     jsonValuesHidden,
