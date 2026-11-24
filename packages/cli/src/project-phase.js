@@ -1,0 +1,313 @@
+// @ts-check
+import { aiArtifactOutputPaths, hashAiInstall, resolveAiArtifacts } from "./ai/artifacts.js";
+import {
+  normalizePackageSelections,
+  pendingRollbackFiles,
+  readLock,
+  readState,
+  STATE_PATH,
+  TRANSACTION_PATH,
+} from "./artifact-lifecycle.js";
+import { readEjectedMarker } from "./ejected-marker.js";
+import { stateShowsEarlierApply } from "./state.js";
+import { fileExists, readJSON } from "./utils/fs.js";
+import { isPlainObject } from "./utils/guards.js";
+
+/**
+ * @typedef {import("./artifact-lifecycle.js").ArtifactLockEntry} ArtifactLockEntry
+ * @typedef {import("./ejected-marker.js").EjectedMarker} EjectedMarker
+ *
+ * @typedef {"pending-transaction" | "unmanaged" | "ejected" | "bootstrapped" | "composed" | "applied" | "drifted" | "incomplete"} ProjectPhase
+ * @typedef {"pending" | "current" | "missing" | "edited" | "unrecorded"} ArtifactConditionName
+ * @typedef {{ name: ArtifactConditionName, reason: string }} Condition
+ *
+ * @typedef {object} ArtifactOutput One output path of an artifact, as the state and the disk show it.
+ * @property {string} path
+ * @property {boolean} installed The path exists.
+ * @property {boolean} managed The state holds a record for the path.
+ * @property {boolean} locallyEdited The path exists, has a record, and its hash differs from it.
+ *
+ * @typedef {object} ClassifiedArtifact
+ * @property {string} id
+ * @property {ArtifactLockEntry | null} lockEntry The lock entry, or null for a selection without one.
+ * @property {boolean | null} selected Whether the recipe selects the artifact, or null without a recipe.
+ * @property {ArtifactOutput[]} outputs
+ * @property {Condition} condition
+ *
+ * @typedef {object} ProjectRecords Which of Calavera's records exist, so a doctor can name the
+ *   ones that remain and the ones that are missing.
+ * @property {boolean} recipe
+ * @property {boolean} state
+ * @property {boolean} profile The state records a profile, the signal that `apply` ran.
+ * @property {number} lockEntries
+ * @property {boolean} baseSkillRecorded The state records the base skill that `--init` installs.
+ * @property {boolean} baseSkillPresent The base skill's folder exists.
+ *
+ * @typedef {object} ProjectPhaseResult
+ * @property {ProjectPhase} phase
+ * @property {ClassifiedArtifact[]} artifacts Every lock entry, then every selection without one.
+ *   Empty while a transaction is pending.
+ * @property {EjectedMarker | null} marker Null while a transaction is pending.
+ * @property {ProjectRecords | null} records Null while a transaction is pending.
+ * @property {string[] | null} rollbackFiles While a transaction is pending, the project paths the
+ *   rollback would restore or remove, or null when the journal cannot be read. Null otherwise.
+ */
+
+/** The base skill that `--init` installs and records without a lock entry (ADR-0020, Decision 2). */
+const BASE_SKILL_PATH = ".agents/skills/calavera";
+
+/** The artifact conditions that make a project `drifted` after `apply`, for a selected artifact. */
+const DRIFTED_CONDITIONS = new Set(["missing", "edited", "unrecorded"]);
+
+/**
+ * Derives the project's phase and each artifact's condition from Calavera's records and the
+ * files they name, as ADR-0020, Decisions 1 to 3 define them, in the current folder. It writes
+ * nothing, and nothing it returns is persisted, so every run computes it again. A pending artifact
+ * transaction wins over every other finding: the function then reads only the journal and whether
+ * each journaled backup exists, because a rollback may still change the other records.
+ *
+ * A recipe, state, or lock that cannot be read, parsed, or that fails its shape check stops the
+ * function with the reader's error (Decision 7). A `.gitignore` that cannot be read does not: the
+ * marker then reads as `unreadable`, which counts as no marker.
+ *
+ * The phase reads the artifacts the records name. ADR-0020 also counts managed files and the
+ * recorded wiring toward `drifted`; those classifications join this function in the pull requests
+ * that follow it in the #1112 stack, before any command reads it.
+ *
+ * @param {{ config: string }} options `config` is the recipe path, as `--config` names it.
+ * @returns {Promise<ProjectPhaseResult>}
+ */
+export async function deriveProjectPhase({ config }) {
+  if (await fileExists(TRANSACTION_PATH)) {
+    return {
+      phase: "pending-transaction",
+      artifacts: [],
+      marker: null,
+      records: null,
+      rollbackFiles: await pendingRollbackFiles(),
+    };
+  }
+
+  const recipeFound = await fileExists(config);
+  const selections = recipeFound ? normalizePackageSelections(await readRecipeAi(config)) : [];
+  const stateFound = await fileExists(STATE_PATH);
+  const state = await readState();
+  const lock = await readLock();
+  const marker = await readEjectedMarker();
+  const baseSkillRecorded = state.aiArtifacts.some(({ path }) => path === BASE_SKILL_PATH);
+
+  /** @type {ProjectRecords} */
+  const records = {
+    recipe: recipeFound,
+    state: stateFound,
+    profile: stateFound && stateShowsEarlierApply(state),
+    lockEntries: lock.artifacts.length,
+    baseSkillRecorded,
+    baseSkillPresent: baseSkillRecorded && (await fileExists(BASE_SKILL_PATH)),
+  };
+
+  const hashes = new Map(state.aiArtifacts.map(({ path, hash }) => [path, hash]));
+  const selectedIds = new Set(selections.map(({ id }) => id));
+  const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
+  /** @type {ClassifiedArtifact[]} */
+  const artifacts = [];
+  for (const entry of lock.artifacts) {
+    const outputs = await artifactOutputs(entry.type, entry.destination, entry.target, hashes);
+    const selected = recipeFound ? selectedIds.has(entry.id) : null;
+    artifacts.push({
+      id: entry.id,
+      lockEntry: entry,
+      selected,
+      outputs,
+      condition: lockedCondition(entry, selected, outputs),
+    });
+  }
+  for (const selection of selections) {
+    if (lockedIds.has(selection.id)) continue;
+    // normalizePackageSelections has already refused an ID the catalog does not hold.
+    const [resolved] = resolveAiArtifacts({ ai: [selection] });
+    if (!resolved) throw new Error(`Could not resolve artifact ${selection.id}.`);
+    const outputs = await artifactOutputs(resolved.type, resolved.path, selection.target, hashes);
+    artifacts.push({
+      id: selection.id,
+      lockEntry: null,
+      selected: true,
+      outputs,
+      condition: unlockedCondition(selection.id, outputs),
+    });
+  }
+
+  return {
+    phase: phaseFromRecords(records, marker, artifacts),
+    artifacts,
+    marker,
+    records,
+    rollbackFiles: null,
+  };
+}
+
+/**
+ * The recipe's `ai` list. The recipe must be a JSON object, so a file that holds another value
+ * stops the function with a message that names the file and quotes none of it.
+ *
+ * @param {string} config
+ */
+async function readRecipeAi(config) {
+  const recipe = await readJSON(config);
+  if (!isPlainObject(recipe)) throw new Error(`${config} must hold a JSON object.`);
+  return recipe.ai;
+}
+
+/**
+ * The phase tree of ADR-0020, Decision 2, checked in order, stopping at the first phase that fits.
+ *
+ * @param {ProjectRecords} records
+ * @param {EjectedMarker} marker
+ * @param {ClassifiedArtifact[]} artifacts
+ * @returns {ProjectPhase}
+ */
+function phaseFromRecords(records, marker, artifacts) {
+  if (!records.recipe) {
+    if (!records.state && records.lockEntries === 0) {
+      // Any block with paired markers is the marker, edited or not; a broken marker is none.
+      return marker.status === "complete" || marker.status === "edited" ? "ejected" : "unmanaged";
+    }
+    // The base skill is present only when the state records it, so a state file exists here.
+    if (!records.profile && records.lockEntries === 0 && records.baseSkillPresent) {
+      return "bootstrapped";
+    }
+    return "incomplete";
+  }
+  if (!records.state) return records.lockEntries > 0 ? "incomplete" : "composed";
+  if (!records.profile) return "composed";
+  const drifted = artifacts.some(
+    ({ selected, condition }) => selected === true && DRIFTED_CONDITIONS.has(condition.name),
+  );
+  return drifted ? "drifted" : "applied";
+}
+
+/**
+ * Each output path of an artifact with what the disk and the state show for it, computed as
+ * `artifacts status` computes `installed`, `managed`, and `locallyEdited`.
+ *
+ * @param {"skill" | "hook" | "agent"} type
+ * @param {string} destination
+ * @param {string | undefined} target
+ * @param {Map<string, string>} hashes The hash the state records for each output path.
+ * @returns {Promise<ArtifactOutput[]>}
+ */
+async function artifactOutputs(type, destination, target, hashes) {
+  return Promise.all(
+    aiArtifactOutputPaths({ type, path: destination }).map(async (path) => {
+      const recorded = hashes.get(path);
+      const installed = await fileExists(path);
+      const locallyEdited =
+        installed &&
+        recorded !== undefined &&
+        (await hashAiInstall(type, path, target)) !== recorded;
+      return { path, installed, managed: recorded !== undefined, locallyEdited };
+    }),
+  );
+}
+
+const LIST = new Intl.ListFormat("en", { type: "conjunction" });
+
+/**
+ * The paths of the outputs that pass `test`, as a list a reason can name, with the verb phrase
+ * that agrees with their number, or undefined when none passes.
+ *
+ * @param {ArtifactOutput[]} outputs
+ * @param {(output: ArtifactOutput) => boolean} test
+ * @param {string} one The phrase after a single path, such as "does not exist".
+ * @param {string} several The phrase after several paths, such as "do not exist".
+ */
+function pathsWhere(outputs, test, one, several) {
+  const paths = outputs.filter(test).map(({ path }) => path);
+  if (paths.length === 0) return undefined;
+  return `${LIST.format(paths)} ${paths.length === 1 ? one : several}`;
+}
+
+/**
+ * The condition of a lock entry (ADR-0020, Decision 3). Below `current`, the order is the order of
+ * precedence: an output that is missing wins over an edited one, and an edited one over one
+ * without a state record.
+ *
+ * @param {ArtifactLockEntry} entry
+ * @param {boolean | null} selected
+ * @param {ArtifactOutput[]} outputs
+ * @returns {Condition}
+ */
+function lockedCondition(entry, selected, outputs) {
+  const locked = `The lock records ${entry.id} at version ${entry.version}`;
+  // #992: install and update drop the entry of an artifact the recipe no longer selects.
+  const leftover =
+    selected === false
+      ? `, the recipe no longer selects it, so artifacts install drops its lock entry`
+      : "";
+  const missing = pathsWhere(
+    outputs,
+    ({ installed }) => !installed,
+    "does not exist",
+    "do not exist",
+  );
+  if (missing) return { name: "missing", reason: `${locked}${leftover}, and ${missing}.` };
+  const edited = pathsWhere(
+    outputs,
+    ({ locallyEdited }) => locallyEdited,
+    "differs from the hash the state records",
+    "differ from the hashes the state records",
+  );
+  if (edited) return { name: "edited", reason: `${locked}${leftover}, and ${edited}.` };
+  const unrecorded = pathsWhere(
+    outputs,
+    ({ managed }) => !managed,
+    "has no record in the state, so Calavera does not manage it",
+    "have no record in the state, so Calavera does not manage them",
+  );
+  if (unrecorded) {
+    return { name: "unrecorded", reason: `${locked}${leftover}, and ${unrecorded}.` };
+  }
+  return {
+    name: "current",
+    reason: `${locked}${leftover}, and every file it installed matches the hash the state records.`,
+  };
+}
+
+/**
+ * The condition of a selection without a lock entry (ADR-0020, Decision 3). It is `pending` until
+ * an output that has a state record is missing or differs from it: an installed artifact that
+ * someone edited or deleted fails whether or not the lock records it (owner decision 10, #994).
+ * For a hook with one recorded output out of two, ADR-0020 names no condition ("Items for the
+ * implementation issues"); the recorded output decides, as it does when both are recorded.
+ *
+ * @param {string} id
+ * @param {ArtifactOutput[]} outputs
+ * @returns {Condition}
+ */
+function unlockedCondition(id, outputs) {
+  const unlocked = `The recipe selects ${id}, which has no lock entry`;
+  const missing = pathsWhere(
+    outputs,
+    ({ installed, managed }) => managed && !installed,
+    "does not exist, although the state records it",
+    "do not exist, although the state records them",
+  );
+  if (missing) return { name: "missing", reason: `${unlocked}, and ${missing}.` };
+  const edited = pathsWhere(
+    outputs,
+    ({ locallyEdited }) => locallyEdited,
+    "differs from the hash the state records",
+    "differ from the hashes the state records",
+  );
+  if (edited) return { name: "edited", reason: `${unlocked}, and ${edited}.` };
+  if (outputs.every(({ installed, managed }) => installed && managed)) {
+    return {
+      name: "pending",
+      reason: `${unlocked}, but its files are present and match what the state records, so artifacts install records it in the lock.`,
+    };
+  }
+  return {
+    name: "pending",
+    reason: `${unlocked} yet, so artifacts install or apply installs it.`,
+  };
+}
