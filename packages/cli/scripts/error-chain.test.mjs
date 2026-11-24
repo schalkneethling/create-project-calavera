@@ -3,7 +3,7 @@
 // The redaction patterns themselves are tested in redact.test.mjs.
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { cp, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, mkdtemp, readFile, rename, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import test from "node:test";
@@ -189,6 +189,162 @@ test("a cause whose message a wrapper repeats keeps its code and name, but not i
   ]) {
     assert.equal(errorChain(new Error(`Could not save: ${message}.`, { cause }), {}).length, 1);
   }
+});
+
+test("a cause keeps its code, errno, and syscall, so the same code on two calls differs", async () => {
+  const message = "the lock file could not be replaced";
+  /** @param {Record<string, unknown>} fields */
+  const wrapped = (fields) =>
+    new Error(`Could not save: ${message}.`, { cause: Object.assign(new Error(message), fields) });
+  const onRename = wrapped({ code: "EBUSY", errno: -16, syscall: "rename" });
+  const onOpen = wrapped({ code: "EBUSY", errno: -16, syscall: "open" });
+
+  // The printed text is unchanged: errno and syscall are for the structured chain only.
+  assert.equal(formatErrorChain(onRename, {}), `Could not save: ${message}.`);
+  assert.equal(formatErrorChain(onRename, {}), formatErrorChain(onOpen, {}));
+
+  // The structured chain keeps both, so EBUSY on rename and EBUSY on open differ.
+  assert.deepEqual(errorChain(onRename, {}), [
+    { name: "Error", message: `Could not save: ${message}.` },
+    { name: "Error", message: "", code: "EBUSY", errno: -16, syscall: "rename" },
+  ]);
+  assert.notDeepEqual(errorChain(onRename, {}), errorChain(onOpen, {}));
+  assert.notEqual(
+    JSON.stringify(toolErrorResult(onRename, {})),
+    JSON.stringify(toolErrorResult(onOpen, {})),
+  );
+
+  // A numeric code is kept as its decimal text, because `code` is a string in the MCP
+  // output (ADR-0018, Decision 6), so two exit codes differ.
+  const exitOne = wrapped({ code: 1 });
+  const exitTwo = wrapped({ code: 2 });
+  assert.equal(formatErrorChain(exitOne, {}), formatErrorChain(exitTwo, {}));
+  assert.deepEqual(errorChain(exitOne, {})[1], { name: "Error", message: "", code: "1" });
+  assert.notDeepEqual(errorChain(exitOne, {}), errorChain(exitTwo, {}));
+
+  // Each field alone keeps a repeated cause, because each alone can tell two failures apart.
+  assert.deepEqual(errorChain(wrapped({ errno: -13 }), {})[1], {
+    name: "Error",
+    message: "",
+    errno: -13,
+  });
+  assert.deepEqual(errorChain(wrapped({ syscall: "open" }), {})[1], {
+    name: "Error",
+    message: "",
+    syscall: "open",
+  });
+
+  // A value that tells nothing apart is not kept: a string that is empty once terminal
+  // escape sequences are removed, a number that is not finite, or a value of another type.
+  // An errno is kept only as a number, and a syscall only as a string, so that each field
+  // has one type.
+  for (const value of ["", "\u001b[0m", Number.NaN, Number.POSITIVE_INFINITY, true, {}, null]) {
+    for (const field of ["code", "errno", "syscall"]) {
+      assert.equal(
+        errorChain(wrapped({ [field]: value }), {}).length,
+        1,
+        `${field}: ${String(value)}`,
+      );
+    }
+  }
+  assert.equal(errorChain(wrapped({ errno: "-13" }), {}).length, 1);
+  assert.equal(errorChain(wrapped({ syscall: 5 }), {}).length, 1);
+
+  // A real failure from Node keeps the code, errno, and syscall that Node gave it.
+  const directory = await mkdtemp(join(tmpdir(), "calavera-error-chain-errno-"));
+  try {
+    const missing = join(directory, "missing.json");
+    /** @param {() => Promise<unknown>} call */
+    const failure = async (call) => {
+      try {
+        await call();
+      } catch (error) {
+        return error;
+      }
+      throw new Error("the call did not fail");
+    };
+    const readFailure = await failure(() => readFile(missing));
+    const renameFailure = await failure(() => rename(missing, join(directory, "moved.json")));
+    const [, readCause] = errorChain(new Error("Could not read.", { cause: readFailure }), {});
+    const [, renameCause] = errorChain(new Error("Could not read.", { cause: renameFailure }), {});
+
+    assert.equal(readCause.code, "ENOENT");
+    assert.equal(readCause.errno, /** @type {NodeJS.ErrnoException} */ (readFailure).errno);
+    assert.equal(typeof readCause.errno, "number");
+    assert.equal(readCause.syscall, "open");
+    assert.equal(renameCause.code, "ENOENT");
+    assert.equal(renameCause.errno, /** @type {NodeJS.ErrnoException} */ (renameFailure).errno);
+    assert.equal(typeof renameCause.errno, "number");
+    assert.equal(renameCause.syscall, "rename");
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a cause's code and syscall are redacted as its message is, and an errno that holds a secret is left out", () => {
+  const env = { NPM_TOKEN: envSecret, NODE_AUTH_TOKEN: "1234567890" };
+  const cause = Object.assign(new Error("request failed"), {
+    code: 1234567890,
+    errno: -1234567890,
+    syscall: `connect ${envSecret}`,
+  });
+
+  const chain = errorChain(new Error("Could not fetch.", { cause }), env);
+
+  assert.ok(!JSON.stringify(chain).includes("1234567890"), JSON.stringify(chain));
+  assertNoSecret(JSON.stringify(chain));
+  // A numeric code is redacted as text. An errno that redaction would change is left out,
+  // so that errno is always a number.
+  assert.deepEqual(chain[1], {
+    name: "Error",
+    message: "request failed",
+    code: "[redacted]",
+    syscall: "connect [redacted]",
+  });
+  // An errno that redaction leaves as it is stays a number with the same environment.
+  assert.equal(
+    errorChain(
+      new Error("Could not fetch.", {
+        cause: Object.assign(new Error("request failed"), { errno: -2 }),
+      }),
+      env,
+    )[1].errno,
+    -2,
+  );
+
+  // With redaction active, two failures that differ only in fields it leaves alone, the
+  // syscall or a numeric code, stay distinguishable after wrapping.
+  const wrap = (/** @type {Record<string, unknown>} */ fields) =>
+    errorChain(
+      new Error("Could not open the recipe: open failed.", {
+        cause: Object.assign(new Error("open failed"), fields),
+      }),
+      env,
+    );
+  const onRename = wrap({ code: "EBUSY", errno: -16, syscall: "rename" });
+  const onOpen = wrap({ code: "EBUSY", errno: -16, syscall: "open" });
+  assert.deepEqual(onRename[1], {
+    name: "Error",
+    message: "",
+    code: "EBUSY",
+    errno: -16,
+    syscall: "rename",
+  });
+  assert.notDeepEqual(onRename, onOpen);
+  assert.deepEqual(wrap({ code: 1 })[1], { name: "Error", message: "", code: "1" });
+  assert.notDeepEqual(wrap({ code: 1 }), wrap({ code: 2 }));
+});
+
+test("a failed execFile's exit code reaches the MCP error result as a string", async () => {
+  const failure = await new Promise((resolve) => {
+    execFile(process.execPath, ["-e", "process.exit(3)"], (error) => resolve(error));
+  });
+  assert.ok(failure instanceof Error, "the child process did not fail");
+
+  const result = toolErrorResult(new Error("The check failed.", { cause: failure }), {});
+  const [cause] = JSON.parse(result.content[0].text).error.causes;
+
+  assert.equal(cause.code, "3");
 });
 
 test("a cause is left out whole only when its whole message occurs in an earlier one", () => {
