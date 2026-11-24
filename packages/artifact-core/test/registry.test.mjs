@@ -1355,6 +1355,8 @@ try {
         HTTP_PROXY: "http://127.0.0.1:9",
         PROXY_HOST: "127.0.0.1",
         npm_config_user_agent: "yarn/4.18.1 npm/? node/v24.3.0 darwin arm64",
+        // Yarn passes the folder it started in to every binary it runs.
+        INIT_CWD: project,
         YARN_NPM_REGISTRY_SERVER: `http://${registry.host}`,
         PROBE_CACHE: join(directory, "cache"),
         PROBE_CWD: project,

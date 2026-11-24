@@ -562,24 +562,14 @@ export async function loadNpmRegistryOptions({
   const addClaims = (claimed, tool) => {
     for (const [name, path] of claimed) fromEnvironmentFiles.set(name, { path, tool });
   };
-  // Set when a Yarn environment file path holds a variable, so Calavera cannot tell which file
-  // Yarn loaded; every registry and proxy variable is then ignored.
-  let unresolvedEnvironmentFiles = false;
+  // Set, with its reason and remedy, when Calavera cannot tell which environment files Yarn
+  // loaded; every registry and proxy variable is then ignored (#1186).
+  /** @type {{ reason: string, remedy: string } | undefined} */
+  let undeterminedEnvironmentFiles;
   if (launcher === "yarn") {
-    // Yarn's starting folder is INIT_CWD for its scripts and binaries, but not under `yarn dlx`,
-    // and Calavera may have moved since it started, so every candidate counts.
-    const folders = [...new Set([env.INIT_CWD, startingCwd, cwd].filter((folder) => !!folder))];
-    const files = await yarnEnvironmentFiles({
-      folders: /** @type {string[]} */ (folders),
-      home,
-      env,
-    });
-    unresolvedEnvironmentFiles = files.unresolved;
-    // Each file counts on its own: a variable that any of them sets from a variable is ignored,
-    // because Calavera cannot tell which of them Yarn loaded, or in which order.
-    for (const path of files.paths) {
-      addClaims(await variablesFromReferences([path], mayHoldVariable, warnings), "Yarn");
-    }
+    const files = await yarnEnvironmentFiles({ env, startingCwd, accountHome, cwd });
+    undeterminedEnvironmentFiles = files.undetermined;
+    addClaims(await variablesFromReferences(files.paths, mayHoldVariable, warnings), "Yarn");
   }
   if (runtime === "bun") {
     for (const chain of bunChains) {
@@ -588,9 +578,9 @@ export async function loadNpmRegistryOptions({
   }
   /** @param {string} name */
   const ignoreFromEnvironmentFile = (name) => {
-    if (unresolvedEnvironmentFiles) {
+    if (undeterminedEnvironmentFiles) {
       warnings.push(
-        `Ignored ${printable(name)}: a .yarnrc.yml setting or YARN_INJECT_ENVIRONMENT_FILES names an environment file with a variable in its path, so Calavera cannot tell which file Yarn loaded or whether it set this variable from a variable. Write the path without a variable.`,
+        `Ignored ${printable(name)}: Calavera cannot tell which environment files Yarn loaded for this run, because ${undeterminedEnvironmentFiles.reason}. ${undeterminedEnvironmentFiles.remedy}`,
       );
       return true;
     }
