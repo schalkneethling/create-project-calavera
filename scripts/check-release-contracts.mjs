@@ -92,6 +92,7 @@ assert.equal(
   "node scripts/release-orchestrator.mjs publish",
 );
 assert.match(rootPackage.scripts["release:contracts"], /release-orchestrator\.test\.mjs/);
+assert.match(rootPackage.scripts["release:contracts"], /move-next-tag\.test\.mjs/);
 assert.equal(
   semver.valid(rootPackage.devDependencies.fledgling),
   rootPackage.devDependencies.fledgling,
@@ -129,10 +130,6 @@ assert.match(
 );
 assert.match(
   buildJob,
-  /path: \$\{\{ runner\.temp \}\}\/package-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}\/\*\.tgz/,
-);
-assert.match(
-  buildJob,
   /- name: Upload package artifact[\s\S]*?\n {10}name: package[\s\S]*?\n {10}overwrite: true/,
 );
 assert.match(
@@ -155,14 +152,48 @@ assert.match(publishJob, /^ {6}id-token: write$/m);
 assert.match(publishJob, /node-version: 24\.8\.0/);
 assert.match(publishJob, /npm publish .*--access public.*--tag "\$dist_tag"/);
 assert.doesNotMatch(publishJob, /NODE_AUTH_TOKEN|NPM_TOKEN/);
-// The runbook documents removing a stale `next` tag as a manual step because the publisher is not
-// granted "Allow npm dist-tag"; update the runbook if the workflow starts changing dist-tags.
-assert.doesNotMatch(
-  publishJob
-    .split("\n")
-    .filter((line) => !line.trimStart().startsWith("#"))
-    .join("\n"),
-  /\bnpm\b[^\n]*\bdist-tags?\b/,
+// A stable release also moves `next` to it (#993, #1126). Trusted publishing can change a dist-tag
+// only with npm CLI 11.21.0 or later, and no Node.js 24 release bundles that npm, so the publish job
+// installs an exact, reviewed npm before it publishes.
+const npmUpgrade = publishJob.match(/^ {10}npm install --global npm@(\S+)$/m);
+assert(npmUpgrade, "the publish job must install an exact npm version");
+assert.equal(semver.valid(npmUpgrade[1]), npmUpgrade[1], "the publish job's npm must be exact");
+assert(
+  semver.gte(npmUpgrade[1], "11.21.0"),
+  "trusted publishing changes dist-tags only with npm CLI 11.21.0 or later",
+);
+assert(
+  publishJob.indexOf(npmUpgrade[0]) < publishJob.indexOf("npm publish"),
+  "the publish job must install npm before it publishes",
+);
+// Only move-next-tag.mjs changes a dist-tag, so its guards against moving `next` backward or to a
+// prerelease cannot be bypassed by an inline command.
+const publishCommands = publishJob
+  .split("\n")
+  .filter((line) => !line.trimStart().startsWith("#"))
+  .join("\n");
+assert.doesNotMatch(publishCommands, /\bnpm\b[^\n]*\bdist-tag\b/);
+assert.match(
+  buildJob,
+  /cp scripts\/move-next-tag\.mjs "\$PACKAGE_DIR\/move-next-tag\.mjs"/,
+  "the build job must ship the tag script inside the package artifact",
+);
+assert.match(
+  buildJob,
+  /path: \|\n {12}\$\{\{ runner\.temp \}\}\/package-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}\/\*\.tgz\n {12}\$\{\{ runner\.temp \}\}\/package-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}\/move-next-tag\.mjs\n/,
+  "the package artifact must hold the tarballs and the tag script at its root",
+);
+assert.match(publishJob, /publish_state=skipped/);
+assert.match(publishJob, /publish_state=published/);
+assert.match(
+  publishJob,
+  /if ! node "\$PACKAGE_DIR\/move-next-tag\.mjs" "\$package_name" "\$package_version" "\$publish_state"; then\n {14}next_tag_failures\+=\("\$\{package_name\}@\$\{package_version\}"\)/,
+  "every tarball, published or skipped, must run the tag script, and a failure must not stop the loop",
+);
+assert.match(
+  publishJob,
+  /if \[ "\$\{#next_tag_failures\[@\]\}" -gt 0 \]; then[\s\S]*?exit 1\n {10}fi\n?$/,
+  "the publish job must fail after the loop when any next tag did not move",
 );
 assert.equal(
   publishWorkflow.includes(`echo "${publishSkipLine("${package_name}", "${package_version}")}"`),

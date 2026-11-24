@@ -135,18 +135,21 @@ Typing the exact phrase is the one human approval in the whole flow. After that,
 
 1. flips the draft release to published, setting the prerelease flag from the version channel;
 2. waits for the resulting `.github/workflows/publish.yml` run (triggered by `release: published`) and
-   watches it to completion;
+   watches it to completion. That run publishes every package, then moves each stable package's
+   `next` dist-tag to the new version (see [Move a stale `next` tag](#move-a-stale-next-tag)). If the
+   run fails, the error names its log and how to recover;
 3. verifies npm provenance and the correct dist-tag for every package in the plan. Each `npm view`
    lookup here retries a bounded number of times on an explicit "not found yet" response — npm's own
    publish output warns a fresh version "may take a few minutes to become available" — before failing;
    any other registry error still fails immediately;
 4. smoke-tests the published CLI with `npx create-project-calavera@<version> --help`, and, when an
    artifact package changed, installs it into a disposable fixture project;
-5. reports any public package whose `next` dist-tag resolves to a version lower than `latest`, with
-   the exact `npm dist-tag rm` command for each, under an `ACTION REQUIRED` heading after the final
-   success line. This report never fails a published release; if the lookup itself fails, it says
-   so and tells you to run `npm view <pkg> dist-tags --json` by hand. See
-   [Remove a stale `next` tag](#remove-a-stale-next-tag).
+5. reports any public package whose `next` dist-tag resolves to a version lower than `latest`, and
+   any stable package in this release that has no `next` tag, with the exact `npm dist-tag add`
+   command for each, under an `ACTION REQUIRED` heading after the final success line. This report
+   never fails a published release; if the lookup itself fails, it says so and tells you to run
+   `npm view <pkg> dist-tags --json` by hand. See
+   [Move a stale `next` tag](#move-a-stale-next-tag).
 
 Use `--yes` only once you have already reviewed the draft yourself and want to skip the interactive
 prompt (for example, scripted re-runs after a transient failure). A rerun reuses the published
@@ -185,34 +188,61 @@ pnpm list -r --depth -1 --json |
 Compare each package's dist-tags against the channel the step 4 plan printed for it (`-> latest` or
 `-> next`):
 
-- for a stable (`latest`) release, `latest` should resolve to the new version;
+- for a stable (`latest`) release, `latest` and `next` should both resolve to the new version, unless
+  `next` already pointed to a newer prerelease, which stays;
 - for a `next` prerelease, `next` should resolve to the new version while `latest` stays on whatever it
   pointed to before.
 
 Unrelated packages and channels should be unchanged either way.
 
-## Remove a stale `next` tag
+## Move a stale `next` tag
 
 After a stable release, `next` must not point at a version lower than `latest`. Otherwise
-`npm install <package>@next` installs an older build than `npm install <package>`. Step 5 of
-`release:publish` prints a `npm dist-tag rm <package> next` command for each affected package. Run
-each command from a terminal where you are logged in to npm as a package owner:
+`npm install <package>@next` installs an older build than `npm install <package>`. So the publish
+workflow moves `next` to each stable version it publishes (owner decision on
+[#993](https://github.com/schalkneethling/create-project-calavera/issues/993)). It runs
+`scripts/move-next-tag.mjs` once per package, which follows these rules:
+
+| `next` before the release          | Result                                                     |
+| ---------------------------------- | ---------------------------------------------------------- |
+| Missing, or older than the version | `next` moves to the version                                |
+| Already the version                | No change                                                  |
+| A newer prerelease                 | No change, because `next` never moves back                 |
+| Any value, for a prerelease        | No change, because `npm publish --tag next` already set it |
+
+For a version an earlier attempt already published, the script moves `next` only when `latest` is
+that version, so a rerun never puts `next` behind `latest`.
+
+The workflow changes dist-tags through npm trusted publishing, with no token. That needs two things,
+as [Managing dist-tags with trusted publishing](https://docs.npmjs.com/trusted-publishers#managing-dist-tags-with-trusted-publishing)
+describes:
+
+- npm CLI 11.21.0 or later. The publish job installs an exact npm before it publishes, because no
+  Node.js 24 release bundles that version. `check-release-contracts.mjs` asserts the pin.
+- **Allow npm dist-tag** enabled on each package's trusted publisher, under the package's
+  **Settings** > **Trusted publishing** on npmjs.com. It is off by default and independent of the
+  publish permission. Enable it once for every public package, and again for each package you mint,
+  because neither Fledgling nor `npm trust` can set it.
+
+When the workflow cannot move a tag, it still publishes every package, then fails the job and prints,
+for each package, the `npm dist-tag add` command that failed and what to change. `release:publish`
+then stops with the run's log command. To recover:
+
+1. Read the log with `gh run view <run-id> --repo schalkneethling/create-project-calavera --log-failed`.
+2. Fix the cause it names, usually by enabling **Allow npm dist-tag** for that package.
+3. Rerun the failed job with `gh run rerun <run-id> --repo schalkneethling/create-project-calavera --failed`.
+   The job skips the packages that are already published and moves their `next` tags.
+4. Rerun `pnpm release:publish -- --yes` to verify the release.
+
+If step 5 of `release:publish` still reports a stale tag, run the command it prints from a terminal
+where you are logged in to npm as a package owner, then check the result:
 
 ```bash
-npm dist-tag rm <package> next
+npm dist-tag add <package>@<latest> next
 npm view <package> dist-tags --json
 ```
 
 A `next` tag that is ahead of `latest` is a prerelease in flight and needs no action.
-
-This is a manual step. npm trusted publishing can run `npm dist-tag`, but only with npm CLI 11.21.0+
-or 12.2.0+, and only when **Allow npm dist-tag** is enabled on the package's trusted publisher
-configuration. That option is off by default and independent of the publish permission. The publish
-workflow is not configured with it (the maintainer confirms the setting on npmjs.com), and
-`publish.yml` pins Node 24.8.0, whose bundled npm is 11.6.0, older than 11.21.0. Automating the
-removal would therefore also need an npm upgrade in the workflow. `check-release-contracts.mjs`
-asserts the workflow never runs `npm dist-tag`. See
-[Managing dist-tags with trusted publishing](https://docs.npmjs.com/trusted-publishers#managing-dist-tags-with-trusted-publishing).
 
 ## New packages (minting)
 
