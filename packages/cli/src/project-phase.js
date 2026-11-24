@@ -1,6 +1,16 @@
 // @ts-check
-import { aiArtifactOutputPaths, hashAiInstall, resolveAiArtifacts } from "./ai/artifacts.js";
+import { resolve } from "node:path";
+
+import semver from "semver";
+
 import {
+  AI_ARTIFACT_OUTPUT_FOLDERS,
+  aiArtifactOutputPaths,
+  hashAiInstall,
+  resolveAiArtifacts,
+} from "./ai/artifacts.js";
+import {
+  LOCK_PATH,
   normalizePackageSelections,
   pendingRollbackFiles,
   readLock,
@@ -10,7 +20,7 @@ import {
 } from "./artifact-lifecycle.js";
 import { readEjectedMarker } from "./ejected-marker.js";
 import { stateShowsEarlierApply } from "./state.js";
-import { fileExists, readJSON } from "./utils/fs.js";
+import { fileExists, isPathInside, readJSON } from "./utils/fs.js";
 import { isPlainObject } from "./utils/guards.js";
 
 /**
@@ -59,6 +69,10 @@ const BASE_SKILL_PATH = ".agents/skills/calavera";
 /** The artifact conditions that make a project `drifted` after `apply`, for a selected artifact. */
 const DRIFTED_CONDITIONS = new Set(["missing", "edited", "unrecorded"]);
 
+/** An artifact ID as the catalog writes it, lowercase kebab case. */
+const ARTIFACT_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
+const ARTIFACT_TYPES = new Set(["skill", "hook", "agent"]);
+
 /**
  * Derives the project's phase and each artifact's condition from Calavera's records and the
  * files they name, as ADR-0020, Decisions 1 to 3 define them, in the current folder. It writes
@@ -70,9 +84,11 @@ const DRIFTED_CONDITIONS = new Set(["missing", "edited", "unrecorded"]);
  * function with the reader's error (Decision 7). A `.gitignore` that cannot be read does not: the
  * marker then reads as `unreadable`, which counts as no marker.
  *
- * The phase reads the artifacts the records name. ADR-0020 also counts managed files and the
- * recorded wiring toward `drifted`; those classifications join this function in the pull requests
- * that follow it in the #1112 stack, before any command reads it.
+ * The phase reads the artifacts the records name. Three parts of ADR-0020 join this function in
+ * the pull requests that follow it in the #1112 stack, before any command reads it: managed files
+ * and the recorded wiring, which also count toward `drifted`, and the per-output notes of
+ * Decision 3 for a selection's output that already exists without a state record, which compare
+ * the output with an offline copy of the artifact cache.
  *
  * @param {{ config: string }} options `config` is the recipe path, as `--config` names it.
  * @returns {Promise<ProjectPhaseResult>}
@@ -111,7 +127,8 @@ export async function deriveProjectPhase({ config }) {
   const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
   /** @type {ClassifiedArtifact[]} */
   const artifacts = [];
-  for (const entry of lock.artifacts) {
+  for (const [index, entry] of lock.artifacts.entries()) {
+    assertLockEntryShape(entry, index);
     const outputs = await artifactOutputs(entry.type, entry.destination, entry.target, hashes);
     const selected = recipeFound ? selectedIds.has(entry.id) : null;
     artifacts.push({
@@ -144,6 +161,47 @@ export async function deriveProjectPhase({ config }) {
     records,
     rollbackFiles: null,
   };
+}
+
+/**
+ * Stops on a lock entry whose fields a reason or a file check would use and cannot trust, because
+ * `readLock` checks only that the lock holds an array (Decision 7). A reason names an entry's ID
+ * and version, so both must have the shapes Calavera writes, and the entry's files must lie in an
+ * artifact output folder, so a hand-edited destination cannot make the function hash another
+ * project file. The message names the entry by its position and quotes none of its text.
+ *
+ * @param {unknown} entry
+ * @param {number} index
+ * @returns {asserts entry is ArtifactLockEntry}
+ */
+function assertLockEntryShape(entry, index) {
+  const problem = !isPlainObject(entry)
+    ? "is not an object"
+    : typeof entry.id !== "string" || !ARTIFACT_ID.test(entry.id)
+      ? "has no artifact ID in the form Calavera writes"
+      : typeof entry.version !== "string" || semver.valid(entry.version) === null
+        ? "has no valid version"
+        : typeof entry.type !== "string" || !ARTIFACT_TYPES.has(entry.type)
+          ? "has no artifact type Calavera knows"
+          : entry.target !== undefined && typeof entry.target !== "string"
+            ? "has a target that is not a string"
+            : typeof entry.destination !== "string" || !inOutputFolder(entry.destination)
+              ? "has a destination outside the artifact output folders"
+              : undefined;
+  if (problem !== undefined) {
+    throw new Error(
+      `${LOCK_PATH} artifacts[${index}] ${problem}, so Calavera cannot check it. Restore the lock from version control, or run artifacts install to write it again.`,
+    );
+  }
+}
+
+/** @param {string} path */
+function inOutputFolder(path) {
+  const target = resolve(path);
+  return AI_ARTIFACT_OUTPUT_FOLDERS.some((folder) => {
+    const root = resolve(folder);
+    return root !== target && isPathInside(root, target);
+  });
 }
 
 /**
@@ -304,6 +362,19 @@ function unlockedCondition(id, outputs) {
     return {
       name: "pending",
       reason: `${unlocked}, but its files are present and match what the state records, so artifacts install records it in the lock.`,
+    };
+  }
+  const unrecorded = pathsWhere(
+    outputs,
+    ({ installed, managed }) => installed && !managed,
+    "already exists without a state record, so apply stops on it unless it matches the package",
+    "already exist without a state record, so apply stops on them unless they match the package",
+  );
+  if (unrecorded) {
+    // apply refuses to replace such a file unless it matches the package (assertSafeAiWrite).
+    return {
+      name: "pending",
+      reason: `${unlocked} yet, and ${unrecorded}.`,
     };
   }
   return {

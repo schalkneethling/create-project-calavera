@@ -22,9 +22,9 @@ export const EJECTED_LINE =
  * What `.gitignore` holds of the `ejected` block. `complete` and `edited` both have paired
  * markers, so ADR-0020 reads both as the marker; `edited` holds anything other than the fixed
  * line. `broken` has an unpaired, repeated, out-of-order, or changed marker, so it counts as no
- * marker for the phase, and `apply` and `eject` stop on it. `unreadable` is a `.gitignore` that
- * exists and cannot be read, such as a folder; it counts as no marker, and `code` names the
- * error. A reason in ADR-0020's sense never quotes a line from the file, so none is kept here.
+ * marker for the phase, and ADR-0017, Amendment 5 has `apply` and `eject` stop on it.
+ * `unreadable` is a `.gitignore` that exists and cannot be read, such as a folder; it counts as
+ * no marker, and `code` names the error. A reason in ADR-0020's sense never quotes a line from the file, so none is kept here.
  *
  * @typedef {{ status: "absent" | "complete" | "edited" | "broken" } | { status: "unreadable", code: string }} EjectedMarker
  */

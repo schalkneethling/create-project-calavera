@@ -201,6 +201,18 @@ test("a state without profile that records no base skill, and no recipe, is inco
   });
 });
 
+test("a base skill folder that the state does not record is not bootstrapped", async () => {
+  await inProject(async () => {
+    await mkdir(BASE_SKILL, { recursive: true });
+    await writeFile(join(BASE_SKILL, "SKILL.md"), "the person's copy\n");
+    await mkdir(".calavera");
+    await writeJsonFile(STATE, { version: 1, aiArtifacts: [] });
+    const result = await derive();
+    assert.equal(result.phase, "incomplete");
+    assert.equal(result.records?.baseSkillPresent, false);
+  });
+});
+
 test("--init and then init move the project from bootstrapped to composed", async () => {
   await inProject(async () => {
     runCli(["--init", "--yes", "--mcp-harness", "skip"]);
@@ -479,11 +491,11 @@ test("a selection with files on disk but no state record stays pending", async (
     await writeFile(join(SKILL, "SKILL.md"), "the person's own skill\n");
     const result = await derive();
     assert.equal(result.phase, "composed");
-    // The files are not Calavera's, so the reason does not call them installed.
+    // The files are not Calavera's, so the reason says that apply stops on them.
     assert.deepEqual(conditionOf(result, ARTIFACT), {
       selected: true,
       name: "pending",
-      reason: `The recipe selects ${ARTIFACT}, which has no lock entry yet, so artifacts install or apply installs it.`,
+      reason: `The recipe selects ${ARTIFACT}, which has no lock entry yet, and ${SKILL} already exists without a state record, so apply stops on it unless it matches the package.`,
     });
   });
 });
@@ -520,6 +532,16 @@ test("a hook selection with one recorded output that differs is edited", async (
       name: "pending",
       reason: `The recipe selects ${hook}, which has no lock entry yet, so artifacts install or apply installs it.`,
     });
+
+    // Both outputs on disk without a record: the reason names both.
+    const [, fragment] = result0.artifacts[0]?.outputs ?? [];
+    assert.ok(fragment);
+    await writeFile(fragment.path, "{}\n");
+    await writeJsonFile(STATE, { version: 1, aiArtifacts: [] });
+    assert.equal(
+      conditionOf(await derive(), hook).reason,
+      `The recipe selects ${hook}, which has no lock entry yet, and ${output.path} and ${fragment.path} already exist without a state record, so apply stops on them unless they match the package.`,
+    );
   });
 });
 
@@ -584,7 +606,9 @@ test("a pending transaction wins over every other record and lists the rollback"
     });
     // A record that would otherwise stop the function is not read.
     await writeFile(STATE, "{ not json");
+    const before = await snapshotDirectory();
     const result = await derive();
+    assert.deepEqual(await snapshotDirectory(), before);
     assert.equal(result.phase, "pending-transaction");
     assert.deepEqual(result.rollbackFiles, [LOCK]);
     assert.deepEqual(result.artifacts, []);
@@ -612,6 +636,82 @@ test("an unreadable recipe, state, or lock stops the function", async () => {
 
     await writeFile(CONFIG, "[]");
     await assert.rejects(derive(), { message: `${CONFIG} must hold a JSON object.` });
+  });
+});
+
+test("a lock entry with an untrusted shape stops the function and quotes none of it", async () => {
+  await inProject(async () => {
+    await applied([ARTIFACT]);
+    const lock = await readJsonFile(LOCK);
+    const [entry] = lock.artifacts;
+    const cases = [
+      ["not an object", "is not an object"],
+      [{ ...entry, id: "x. Injected sentence" }, "has no artifact ID in the form Calavera writes"],
+      [{ ...entry, id: undefined }, "has no artifact ID in the form Calavera writes"],
+      [{ ...entry, version: "text from the file" }, "has no valid version"],
+      [{ ...entry, type: "plugin" }, "has no artifact type Calavera knows"],
+      [{ ...entry, target: 1 }, "has a target that is not a string"],
+      [
+        { ...entry, destination: "package.json" },
+        "has a destination outside the artifact output folders",
+      ],
+      [
+        { ...entry, destination: ".agents/skills" },
+        "has a destination outside the artifact output folders",
+      ],
+      [
+        { ...entry, destination: undefined },
+        "has a destination outside the artifact output folders",
+      ],
+    ];
+    for (const [value, problem] of cases) {
+      await writeJsonFile(LOCK, { ...lock, artifacts: [value] });
+      await assert.rejects(derive(), {
+        message: `${LOCK} artifacts[0] ${problem}, so Calavera cannot check it. Restore the lock from version control, or run artifacts install to write it again.`,
+      });
+    }
+    await writeJsonFile(LOCK, lock);
+    assert.equal((await derive()).phase, "applied");
+  });
+});
+
+test("a Codex agent is hashed as its target installs it", async () => {
+  await inProject(async () => {
+    const agent = artifactCatalog.find(({ type }) => type === "agent");
+    assert.ok(agent);
+    const destination = ".codex/agents/reviewer.toml";
+    await mkdir(".codex/agents", { recursive: true });
+    await writeFile(destination, 'name = "reviewer"\r\n');
+    await mkdir(".calavera");
+    await writeJsonFile(LOCK, {
+      schemaVersion: 1,
+      artifacts: [
+        {
+          id: agent.id,
+          type: "agent",
+          version: "1.0.0",
+          tag: "latest",
+          target: "codex",
+          destination,
+        },
+      ],
+    });
+    await writeJsonFile(STATE, {
+      version: 1,
+      profile: "minimal",
+      aiArtifacts: [
+        {
+          type: "agent",
+          name: "reviewer",
+          source: agent.id,
+          path: destination,
+          target: "codex",
+          hash: await hashAiInstall("agent", destination, "codex"),
+        },
+      ],
+    });
+    await writeRecipe([]);
+    assert.equal(conditionOf(await derive(), agent.id).name, "current");
   });
 });
 
