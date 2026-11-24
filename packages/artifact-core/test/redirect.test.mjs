@@ -27,6 +27,7 @@ import {
   resolveArtifactPackage,
   resolvePackageDistTag,
 } from "../src/registry.js";
+import { redirectGuard } from "../src/redirect-guard.js";
 import { removeTemporaryDirectories, temporaryDirectory } from "./temporary-directory.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -505,6 +506,33 @@ for (const { form, location } of OTHER_HOST) {
     assert.deepEqual(proxy.requests, [
       `${REMOTE_HTTP}/@schalkneethling%2fcalavera-skill-project-goal`,
     ]);
+  });
+}
+
+// The own-host rule compares every hop with the configured registry, not with the previous hop or
+// the first hop the check sees: a cached 301 from the registry means the first hop the check sees
+// can already be on another host.
+for (const { chain, refused } of [
+  { chain: [REMOTE_HTTP, "http://localhost:4873", "http://mirror.example.test"], refused: 3 },
+  { chain: [REMOTE_HTTP, `${REMOTE_HTTP}/again`, "http://mirror.example.test"], refused: 3 },
+  { chain: [REMOTE_HTTP, "http://127.0.0.1:4873", `${REMOTE_HTTP}/back`], refused: null },
+  { chain: ["http://mirror.example.test"], refused: 1 },
+]) {
+  test(`the own-host rule judges ${chain.join(" -> ")} against the registry`, () => {
+    const agent = redirectGuard({
+      packageName: artifact.packageName,
+      download: false,
+      startUrl: `${REMOTE_HTTP}/`,
+      agent: () => "agent",
+    });
+    for (const [index, url] of chain.entries()) {
+      if (index + 1 === refused) {
+        assert.throws(() => agent(new URL(url)), { code: "EINSECUREREDIRECT", otherHost: true });
+        return;
+      }
+      assert.equal(agent(new URL(url)), "agent");
+    }
+    assert.equal(refused, null);
   });
 }
 

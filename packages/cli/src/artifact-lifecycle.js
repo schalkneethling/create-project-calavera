@@ -1322,15 +1322,21 @@ function refusedRedirect(error, packageName, retryCommand) {
       error ?? {}
     );
   const refusal = fields.otherHost === undefined && fields.cause ? fields.cause : fields;
+  const https =
+    "Point the npm registry settings at a registry that serves Calavera's packages over https without redirecting to plain http";
   let redirected = "was redirected to plain http on a host that is not loopback";
+  let remedy = https;
   if (refusal.otherHost === true) {
     redirected = "was redirected over plain http to a host other than the registry's own";
+    // Only the person's own configuration may name a plain-http registry (#1185, #1186).
+    remedy =
+      "Point the npm registry settings at an https registry, or at a plain-http registry in your user configuration that does not redirect lookups to another host";
   } else if (refusal.protocol === "https:") {
     redirected = "was redirected from https to plain http on a host that is not loopback";
   }
   return {
     reason: `the registry lookup for ${packageName} ${redirected}, which Calavera does not follow`,
-    remedy: `Point the npm registry settings at a registry that serves Calavera's packages over https, or from its own host over plain http, without redirecting to plain http on another host, then run: ${retryCommand}`,
+    remedy: `${remedy}, then run: ${retryCommand}`,
   };
 }
 

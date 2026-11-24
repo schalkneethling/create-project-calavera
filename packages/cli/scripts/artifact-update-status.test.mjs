@@ -2483,8 +2483,18 @@ test("a registry error that only carries the timeout code is not reported as a m
 
 // #1207, owner decision 3 (2026-11-24): a redirect that artifact-core refuses is a failed lookup of
 // that artifact, so the report names it and checks the rest. The reason and remedy quote no URL.
-const REFUSED_REDIRECT_REMEDY =
-  "Point the npm registry settings at a registry that serves Calavera's packages over https, or from its own host over plain http, without redirecting to plain http on another host, then run: ";
+// The remedy fits the refusal: a downgrade from https, a plain-http registry that sent the lookup to
+// another host, or a refusal whose fields Calavera cannot read.
+const REFUSED_REDIRECT_REMEDY = {
+  downgrade:
+    "Point the npm registry settings at a registry that serves Calavera's packages over https without redirecting to plain http, then run: ",
+  otherHost:
+    "Point the npm registry settings at an https registry, or at a plain-http registry in your user configuration that does not redirect lookups to another host, then run: ",
+  unknown:
+    "Point the npm registry settings at a registry that serves Calavera's packages over https without redirecting to plain http, then run: ",
+};
+const STATUS_RETRY = "npm create project-calavera artifacts status -- --check-updates";
+const DOCTOR_RETRY = "npm create project-calavera artifacts doctor -- --check-updates";
 
 test("a redirect that artifact-core refuses is reported for that artifact, and the rest are checked, by status, doctor, and the read-only report", async () => {
   // A plain-http registry on 127.0.0.1 redirects the lookup of one package to plain http on
@@ -2567,6 +2577,7 @@ test("a redirect that artifact-core refuses is reported for that artifact, and t
             { resolve },
           ),
         };
+        const retries = { status: STATUS_RETRY, doctor: DOCTOR_RETRY, readOnly: STATUS_RETRY };
         for (const [name, result] of Object.entries(reports)) {
           const refused = result.artifacts.find(({ id }) => id === refusedId);
           const checked = result.artifacts.find(({ id }) => id === checkedId);
@@ -2585,10 +2596,18 @@ test("a redirect that artifact-core refuses is reported for that artifact, and t
             },
             name,
           );
-          assert.ok(refused?.updateCheckFailure?.remedy?.startsWith(REFUSED_REDIRECT_REMEDY), name);
+          assert.equal(
+            refused?.updateCheckFailure?.remedy,
+            `${REFUSED_REDIRECT_REMEDY.otherHost}${retries[/** @type {keyof typeof retries} */ (name)]}`,
+            name,
+          );
           assert.equal(checked?.latestVersion, "0.3.0", name);
           assert.equal(checked?.updateCheckFailure, null, name);
-          const report = JSON.stringify(result) + messages(formatArtifactStatus(result)).join("\n");
+          const report = [
+            JSON.stringify(result),
+            ...messages(formatArtifactStatus(result)),
+            ...artifactDoctorVerdict(result).map(({ message }) => message),
+          ].join("\n");
           assert.doesNotMatch(report, /example\.test/, name);
         }
         assert.deepEqual(
@@ -2611,8 +2630,14 @@ test("a refused redirect from https names the downgrade, whether its fields are 
   const downgrade = `the registry lookup for ${name} was redirected from https to plain http on a host that is not loopback, which Calavera does not follow`;
   const unknown = `the registry lookup for ${name} was redirected to plain http on a host that is not loopback, which Calavera does not follow`;
   const fields = { code: "EINSECUREREDIRECT", protocol: "https:", otherHost: false };
-  for (const { form, error, reason } of [
-    { form: "on the error", error: registryError("refused", fields), reason: downgrade },
+  const { downgrade: downgradeRemedy, unknown: unknownRemedy } = REFUSED_REDIRECT_REMEDY;
+  for (const { form, error, reason, remedy } of [
+    {
+      form: "on the error",
+      error: registryError("refused", fields),
+      reason: downgrade,
+      remedy: downgradeRemedy,
+    },
     {
       // artifact-core's npm configuration notes wrap the refusal and keep it as `cause`.
       form: "on the cause",
@@ -2621,18 +2646,21 @@ test("a refused redirect from https names the downgrade, whether its fields are 
         cause: registryError("refused", fields),
       }),
       reason: downgrade,
+      remedy: downgradeRemedy,
     },
     {
       // The error's own fields win over a cause's.
       form: "on the error, beside a cause with other fields",
       error: registryError("refused", { ...fields, cause: { otherHost: true } }),
       reason: downgrade,
+      remedy: downgradeRemedy,
     },
     {
       // artifact-core writes "http:" only for a download from loopback http, never for a lookup.
       form: "from http without another host",
       error: registryError("refused", { ...fields, protocol: "http:" }),
       reason: unknown,
+      remedy: unknownRemedy,
     },
     {
       form: "missing or malformed",
@@ -2642,6 +2670,7 @@ test("a refused redirect from https names the downgrade, whether its fields are 
         otherHost: "yes",
       }),
       reason: unknown,
+      remedy: unknownRemedy,
     },
   ]) {
     await inProject(
@@ -2651,7 +2680,7 @@ test("a refused redirect from https names the downgrade, whether its fields are 
           await runArtifactCommand(statusOptions(), statusRegistry({}, {}, { [refusedId]: error }))
         ).artifacts;
         assert.equal(artifact?.updateCheckFailure?.reason, reason, form);
-        assert.ok(artifact?.updateCheckFailure?.remedy?.startsWith(REFUSED_REDIRECT_REMEDY), form);
+        assert.equal(artifact?.updateCheckFailure?.remedy, `${remedy}${STATUS_RETRY}`, form);
         assert.doesNotMatch(JSON.stringify(artifact), /example\.test/, form);
       },
     );

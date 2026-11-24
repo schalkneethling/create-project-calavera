@@ -22,7 +22,8 @@ const HOST_RULE =
  * because #1194 allows a tarball only from https or loopback http. A lookup that stayed on plain
  * http, on a registry the rules allow, may reach only the registry's own host over http, with host
  * and port as the URL parser writes them (owner decision 1 on #1207): the person named that
- * registry, not wherever it redirects. It otherwise returns the agent `agent` chooses for that URL. `startUrl` is the URL the call requests first: the registry for a
+ * registry, not wherever it redirects. It otherwise returns the agent `agent` chooses for that URL.
+ * `startUrl` is the URL the call requests first: the registry for a
  * lookup and the tarball URL for a download. A hop that make-fetch-happen serves from its cache,
  * such as a stored 301, never reaches the agent, so a lookup that starts on https counts as on
  * https from the start, not from the first hop the agent sees.
