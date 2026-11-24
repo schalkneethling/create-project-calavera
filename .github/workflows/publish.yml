@@ -75,18 +75,11 @@ jobs:
           pnpm --filter @schalkneethling/calavera-baseline-core pack --pack-destination "$PACKAGE_DIR"
           pnpm --filter @schalkneethling/calavera-artifact-core pack --pack-destination "$PACKAGE_DIR"
           pnpm --filter "./packages/artifacts/*" --recursive pack --pack-destination "$PACKAGE_DIR"
-          # The publish job has no checkout, so the script that moves `next` travels with the
-          # tarballs (#1126).
-          cp scripts/move-next-tag.mjs "$PACKAGE_DIR/move-next-tag.mjs"
       - name: Upload package artifact
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: package
-          # With more than one path, the artifact root is their nearest common folder, so the
-          # tarballs and the script sit side by side at the root.
-          path: |
-            ${{ runner.temp }}/package-${{ github.run_id }}-${{ github.run_attempt }}/*.tgz
-            ${{ runner.temp }}/package-${{ github.run_id }}-${{ github.run_attempt }}/move-next-tag.mjs
+          path: ${{ runner.temp }}/package-${{ github.run_id }}-${{ github.run_attempt }}/*.tgz
           if-no-files-found: error
           overwrite: true
 
@@ -99,19 +92,30 @@ jobs:
       contents: read
       id-token: write
     steps:
+      # Only the script that moves `next` (#1126), read from the release commit rather than from the
+      # build artifact, so nothing the build job wrote runs while this job can mint OIDC tokens.
+      # Non-cone mode checks out that one file and no root files.
+      - name: Checkout next tag script
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+          sparse-checkout: scripts/move-next-tag.mjs
+          sparse-checkout-cone-mode: false
       - name: Setup Node.js
         uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
         with:
           node-version: 24.8.0
           registry-url: https://registry.npmjs.org
           package-manager-cache: false
-      # Trusted publishing can change a dist-tag only with npm CLI 11.21.0 or later, and Node.js
-      # 24.8.0 bundles npm 11.6.0. See
+      # Trusted publishing can change a dist-tag only with npm CLI 11.21.0 or later (or 12.2.0 or
+      # later on npm 12), and Node.js 24.8.0, which this job pins, bundles npm 11.6.0. See
       # https://docs.npmjs.com/trusted-publishers#managing-dist-tags-with-trusted-publishing
+      # The exact version is reviewed here and asserted by check-release-contracts.mjs; npm has
+      # no lockfile to install itself from.
       - name: Install npm
-        run: |
+        run: | # zizmor: ignore[adhoc-packages]
           npm install --global npm@11.21.2
-          npm --version
+          test "$(npm --version)" = 11.21.2
       - name: Download package artifact
         uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
@@ -120,6 +124,7 @@ jobs:
       - name: Publish package
         env:
           PACKAGE_DIR: ${{ runner.temp }}/package-${{ github.run_id }}-${{ github.run_attempt }}
+          NEXT_TAG_SCRIPT: ${{ github.workspace }}/scripts/move-next-tag.mjs
         run: |
           mapfile -t tarballs < <(find "$PACKAGE_DIR" -maxdepth 1 -name "*.tgz" -print)
           if [ "${#tarballs[@]}" -eq 0 ]; then
@@ -154,7 +159,7 @@ jobs:
             # A stable release also moves `next` to it, so `next` is never older than `latest`
             # (#993). The script never moves `next` backward or to a prerelease. A skipped version
             # runs it too, so rerunning this job repairs a tag an earlier attempt could not move.
-            if ! node "$PACKAGE_DIR/move-next-tag.mjs" "$package_name" "$package_version" "$publish_state"; then
+            if ! node "$NEXT_TAG_SCRIPT" "$package_name" "$package_version" "$publish_state"; then
               next_tag_failures+=("${package_name}@${package_version}")
             fi
           done

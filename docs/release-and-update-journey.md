@@ -39,7 +39,7 @@ Use Changesets prerelease mode to create a reviewed version such as `1.1.0-beta.
 
 - stable versions publish under `latest`;
 - versions containing a prerelease suffix publish under `next`;
-- a stable version also moves `next` to itself, unless `next` already points to a newer prerelease,
+- a stable version also moves `next` to itself, unless `next` already points to a newer version,
   so `next` is never older than `latest`.
 
 Install the `next` version in a fixture with `artifacts update <id> --tag next`, confirm the exact lock entry and installed bytes, then release a stable version for `latest`. Never move an ordinary project lock during `apply`; only `artifacts update` may advance it.

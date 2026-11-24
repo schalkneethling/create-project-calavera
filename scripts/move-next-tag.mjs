@@ -142,9 +142,9 @@ export function moveNextTag(args, options = {}) {
   if (added.status !== 0) {
     report(
       [
-        `Could not move next for ${name} to ${version}: npm ${addArgs.join(" ")} ${failure(added)}. npm's own output above names the cause.`,
-        `If it says the trusted publisher cannot manage dist-tags, enable Allow npm dist-tag in the package's trusted publishing settings on npmjs.com. Changing a dist-tag through trusted publishing also needs npm CLI 11.21.0 or later.`,
-        `Then rerun the failed publish job, or run npm ${addArgs.join(" ")} from a terminal logged in to npm as a package owner. See "Move a stale next tag" in docs/release-runbook.md.`,
+        `Could not move next for ${name} to ${version}: npm ${addArgs.join(" ")} ${failure(added)}. npm's own output above shows its error.`,
+        `The usual cause is that Allow npm dist-tag is not enabled on the package's trusted publisher on npmjs.com, and npm may report that only as an authentication error. Changing a dist-tag through trusted publishing also needs npm CLI 11.21.0 or later, or 12.2.0 or later.`,
+        `Enable it, then rerun the failed publish job, or run npm ${addArgs.join(" ")} from a terminal logged in to npm as a package owner. See "Move a stale next tag" in docs/release-runbook.md.`,
       ].join("\n"),
     );
     return 1;

@@ -257,9 +257,9 @@ test("moveNextTag names the package, the command, and the remedy when npm dist-t
   assert.equal(
     text,
     [
-      "Could not move next for pkg to 1.2.0: npm dist-tag add pkg@1.2.0 next exited with 1. npm's own output above names the cause.",
-      "If it says the trusted publisher cannot manage dist-tags, enable Allow npm dist-tag in the package's trusted publishing settings on npmjs.com. Changing a dist-tag through trusted publishing also needs npm CLI 11.21.0 or later.",
-      'Then rerun the failed publish job, or run npm dist-tag add pkg@1.2.0 next from a terminal logged in to npm as a package owner. See "Move a stale next tag" in docs/release-runbook.md.',
+      "Could not move next for pkg to 1.2.0: npm dist-tag add pkg@1.2.0 next exited with 1. npm's own output above shows its error.",
+      "The usual cause is that Allow npm dist-tag is not enabled on the package's trusted publisher on npmjs.com, and npm may report that only as an authentication error. Changing a dist-tag through trusted publishing also needs npm CLI 11.21.0 or later, or 12.2.0 or later.",
+      'Enable it, then rerun the failed publish job, or run npm dist-tag add pkg@1.2.0 next from a terminal logged in to npm as a package owner. See "Move a stale next tag" in docs/release-runbook.md.',
     ].join("\n"),
   );
 });

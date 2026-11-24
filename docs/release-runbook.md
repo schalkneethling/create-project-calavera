@@ -207,7 +207,7 @@ workflow moves `next` to each stable version it publishes (owner decision on
 | ---------------------------------- | ---------------------------------------------------------- |
 | Missing, or older than the version | `next` moves to the version                                |
 | Already the version                | No change                                                  |
-| A newer prerelease                 | No change, because `next` never moves back                 |
+| A newer version                    | No change, because `next` never moves back                 |
 | Any value, for a prerelease        | No change, because `npm publish --tag next` already set it |
 
 For a version an earlier attempt already published, the script moves `next` only when `latest` is
@@ -217,12 +217,21 @@ The workflow changes dist-tags through npm trusted publishing, with no token. Th
 as [Managing dist-tags with trusted publishing](https://docs.npmjs.com/trusted-publishers#managing-dist-tags-with-trusted-publishing)
 describes:
 
-- npm CLI 11.21.0 or later. The publish job installs an exact npm before it publishes, because no
-  Node.js 24 release bundles that version. `check-release-contracts.mjs` asserts the pin.
+- npm CLI 11.21.0 or later, or 12.2.0 or later on npm 12. The publish job installs an exact npm
+  before it publishes and checks that it is the npm on `PATH`, because Node.js 24.8.0, which the job
+  pins, bundles npm 11.6.0. `check-release-contracts.mjs` asserts the pin.
 - **Allow npm dist-tag** enabled on each package's trusted publisher, under the package's
   **Settings** > **Trusted publishing** on npmjs.com. It is off by default and independent of the
   publish permission. Enable it once for every public package, and again for each package you mint,
-  because neither Fledgling nor `npm trust` can set it.
+  because `npm trust` (in npm 11.21.2) and Fledgling 1.3.1 have no option for it.
+
+npm's documentation says that existing trusted publisher connections cannot be changed, and that
+you delete a connection and create a new one to change it. It does not say whether that applies to
+**Allow npm dist-tag**. If npmjs.com does not let you select it on an existing connection, recreate
+the connection with the same repository, workflow (`publish.yml`), and environment (`publish`), with
+both `npm publish` and **Allow npm dist-tag** allowed. A new connection expires unless it completes a
+publish within 2 days, so recreate it no more than 2 days before the next release. See
+"Trusted publisher configuration expiry" in [Trusted publishing](https://docs.npmjs.com/trusted-publishers).
 
 When the workflow cannot move a tag, it still publishes every package, then fails the job and prints,
 for each package, the `npm dist-tag add` command that failed and what to change. `release:publish`
@@ -231,7 +240,8 @@ then stops with the run's log command. To recover:
 1. Read the log with `gh run view <run-id> --repo schalkneethling/create-project-calavera --log-failed`.
 2. Fix the cause it names, usually by enabling **Allow npm dist-tag** for that package.
 3. Rerun the failed job with `gh run rerun <run-id> --repo schalkneethling/create-project-calavera --failed`.
-   The job skips the packages that are already published and moves their `next` tags.
+   The job skips the packages that are already published and moves their `next` tags. If the
+   `publish` environment requires approval, approve the rerun as you would a new run.
 4. Rerun `pnpm release:publish -- --yes` to verify the release.
 
 If step 5 of `release:publish` still reports a stale tag, run the command it prints from a terminal
@@ -242,7 +252,8 @@ npm dist-tag add <package>@<latest> next
 npm view <package> dist-tags --json
 ```
 
-A `next` tag that is ahead of `latest` is a prerelease in flight and needs no action.
+A `next` tag that is ahead of `latest` needs no action: it is a prerelease in flight, or a newer
+stable version after a maintenance release.
 
 ## New packages (minting)
 
@@ -258,6 +269,7 @@ Review the Fledgling plan, then apply it (Fledgling requires npm 11.15.0 or newe
   pnpm exec fledgling add @schalkneethling/calavera-new --yes --repo schalkneethling/create-project-calavera --workflow publish.yml --env publish --publish --placeholder-version 0.0.0
 
 The first release of each minted package must be a stable version so it replaces the 0.0.0 placeholder on latest.
+On npmjs.com, enable Allow npm dist-tag on each minted package's trusted publisher, so the publish workflow can move its next tag (see "Move a stale next tag" in docs/release-runbook.md).
 Then rerun pnpm release:prepare.
 ```
 

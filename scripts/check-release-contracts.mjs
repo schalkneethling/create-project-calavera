@@ -130,6 +130,10 @@ assert.match(
 );
 assert.match(
   buildJob,
+  /path: \$\{\{ runner\.temp \}\}\/package-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}\/\*\.tgz/,
+);
+assert.match(
+  buildJob,
   /- name: Upload package artifact[\s\S]*?\n {10}name: package[\s\S]*?\n {10}overwrite: true/,
 );
 assert.match(
@@ -173,26 +177,31 @@ const publishCommands = publishJob
   .filter((line) => !line.trimStart().startsWith("#"))
   .join("\n");
 assert.doesNotMatch(publishCommands, /\bnpm\b[^\n]*\bdist-tag\b/);
+assert(
+  publishJob.includes(`test "$(npm --version)" = ${npmUpgrade[1]}`),
+  "the publish job must confirm the npm it installed is the one on PATH",
+);
+// The tag script runs while the job can mint OIDC tokens, so it comes from the release commit, not
+// from the artifact the build job wrote.
 assert.match(
-  buildJob,
-  /cp scripts\/move-next-tag\.mjs "\$PACKAGE_DIR\/move-next-tag\.mjs"/,
-  "the build job must ship the tag script inside the package artifact",
+  publishJob,
+  /- name: Checkout next tag script\n {8}uses: actions\/checkout@[0-9a-f]{40} # v\S+\n {8}with:\n {10}persist-credentials: false\n {10}sparse-checkout: scripts\/move-next-tag\.mjs\n {10}sparse-checkout-cone-mode: false\n/,
 );
 assert.match(
-  buildJob,
-  /path: \|\n {12}\$\{\{ runner\.temp \}\}\/package-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}\/\*\.tgz\n {12}\$\{\{ runner\.temp \}\}\/package-\$\{\{ github\.run_id \}\}-\$\{\{ github\.run_attempt \}\}\/move-next-tag\.mjs\n/,
-  "the package artifact must hold the tarballs and the tag script at its root",
+  publishJob,
+  /NEXT_TAG_SCRIPT: \$\{\{ github\.workspace \}\}\/scripts\/move-next-tag\.mjs/,
 );
+assert.doesNotMatch(buildJob, /move-next-tag/, "the build artifact must not carry the tag script");
 assert.match(publishJob, /publish_state=skipped/);
 assert.match(publishJob, /publish_state=published/);
 assert.match(
   publishJob,
-  /if ! node "\$PACKAGE_DIR\/move-next-tag\.mjs" "\$package_name" "\$package_version" "\$publish_state"; then\n {14}next_tag_failures\+=\("\$\{package_name\}@\$\{package_version\}"\)/,
+  /if ! node "\$NEXT_TAG_SCRIPT" "\$package_name" "\$package_version" "\$publish_state"; then\n {14}next_tag_failures\+=\("\$\{package_name\}@\$\{package_version\}"\)/,
   "every tarball, published or skipped, must run the tag script, and a failure must not stop the loop",
 );
 assert.match(
   publishJob,
-  /if \[ "\$\{#next_tag_failures\[@\]\}" -gt 0 \]; then[\s\S]*?exit 1\n {10}fi\n?$/,
+  /\n {10}done\n {10}if \[ "\$\{#next_tag_failures\[@\]\}" -gt 0 \]; then\n[^\n]*\n {12}exit 1\n {10}fi\n/,
   "the publish job must fail after the loop when any next tag did not move",
 );
 assert.equal(

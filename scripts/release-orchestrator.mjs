@@ -341,6 +341,7 @@ function assertPackagesMinted(packages) {
       `  ${fledglingCommand(names, false)}`,
       "",
       `The first release of each minted package must be a stable version so it replaces the ${placeholderVersion} placeholder on latest.`,
+      'On npmjs.com, enable Allow npm dist-tag on each minted package\'s trusted publisher, so the publish workflow can move its next tag (see "Move a stale next tag" in docs/release-runbook.md).',
       "Then rerun pnpm release:prepare.",
     ].join("\n"),
   );
