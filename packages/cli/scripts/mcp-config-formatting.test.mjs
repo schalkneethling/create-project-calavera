@@ -157,3 +157,22 @@ test("a formatted opencode.json stays formatted when the entry moves from mcp to
     });
   });
 });
+
+test("output that vite.config.ts prints stops the update with its remedy, before anything is written", async () => {
+  await using project = await createTemporaryFixture("mcp-formatting-banner", {});
+  await writeVitePlusFormatter(project.root, { banner: "[dotenv] injecting env" });
+  const formatter = await loadProjectFormatter(project.root, "managed");
+  const originalDirectory = process.cwd();
+  process.chdir(project.root);
+  try {
+    const before = '{\n  "mcpServers": {\n    "other": { "command": "node" }\n  }\n}\n';
+    await writeFile(".mcp.json", before);
+    await assert.rejects(
+      () => writeEntry(".mcp.json", entry, async () => formatter),
+      /returned text for \.mcp\.json that is not JSON.*Make sure vite\.config\.ts prints nothing/,
+    );
+    assert.equal(await readFile(".mcp.json", "utf8"), before);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+});

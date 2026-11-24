@@ -307,3 +307,19 @@ test("an empty JSON harness file object gets the entry on its own lines", async 
     });
   }
 });
+
+test("an opencode.json with a byte order mark and comments is read as JSONC and kept, not set up by hand", async () => {
+  await inProject(async () => {
+    const before = `\uFEFF{\n  // OpenCode settings\n  "mcp": {\n    "servers": {\n      "calavera": ${JSON.stringify({ type: "local", command: command(current) })}\n    }\n  }\n}\n`;
+    await write("opencode.json", before);
+
+    const result = await init("opencode");
+
+    assert.equal(result.mcp.action, "skip");
+    assert.match(
+      result.changes.find((change) => change.path === "opencode.json")?.reason ?? "",
+      /^opencode\.json has comments or trailing commas/,
+    );
+    assert.equal(await readFile("opencode.json", "utf8"), before);
+  });
+});

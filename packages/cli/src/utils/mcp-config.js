@@ -111,7 +111,9 @@ async function writeNewProjectJsonConfig(path, config, dryRun, changes, loadForm
 async function editedProjectJsonText(path, contents, edits, loadFormatter) {
   const edited = editJson(contents, edits);
   const formatter = await generatedJSONFormatter(path, loadFormatter);
-  if ((await formatter.format(path, contents)) !== contents) return edited;
+  // Validated like the edited text, so output that vite.config.ts prints, or a formatter that
+  // changes values, stops with its remedy instead of passing as a file the formatter would change.
+  if ((await formatJSONText(contents, path, formatter)) !== contents) return edited;
   return formatJSONText(edited, path, formatter);
 }
 

@@ -845,11 +845,12 @@ To skip that check, set `CALAVERA_NO_OPENCODE_VERSION_CHECK` to `1` or `true`.
 
 When `--init` adds, updates, or moves the `calavera` entry in `.mcp.json`,
 `.cursor/mcp.json`, or `opencode.json`, it changes only that entry: the rest of
-the file keeps its indentation, line endings, byte order mark, and key order. In
-a Vite+ project, a file that already passes `vp fmt` is formatted again after the
-edit, so `vp check` still passes. A file that `vp fmt` would change keeps your
-formatting, with only the entry edited, because formatting it would also rewrite
-your own lines.
+the file keeps its indentation, line endings, byte order mark, and key order. The
+one exception is a Vite+ project whose file already passes `vp fmt`: there the
+file is formatted again after the edit, so `vp check` still passes, and `vp fmt`
+can rewrap a line around the entry, such as an object that no longer fits on one
+line. A file that `vp fmt` would change keeps your formatting, with only the
+entry edited, because formatting it would also rewrite your own lines.
 
 Project-local MCP servers run from the project root. Matching the project
 package manager prevents package-manager preflight failures before Calavera can

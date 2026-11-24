@@ -57,3 +57,14 @@ test("withoutBom removes only a byte order mark that opens the text", () => {
   assert.equal(withoutBom("﻿{}"), "{}");
   assert.equal(withoutBom("{}﻿"), "{}﻿");
 });
+
+test("the indentation level comes from the outer object's first member, not the first indented line", () => {
+  assert.equal(
+    editJson('{"a": {\n      "b": 1\n  },\n  "c": {}\n}\n', [{ path: ["c", "d"], value: 1 }]),
+    '{"a": {\n      "b": 1\n  },\n  "c": {\n    "d": 1\n  }\n}\n',
+  );
+  assert.equal(
+    editJson('{\n   "a": {}\n}\n', [{ path: ["a", "b"], value: 1 }]),
+    '{\n   "a": {\n      "b": 1\n   }\n}\n',
+  );
+});

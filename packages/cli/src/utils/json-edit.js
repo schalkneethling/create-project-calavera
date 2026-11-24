@@ -27,17 +27,18 @@ export function withoutBom(text) {
 
 /**
  * The line ending and one indentation level `text` uses: CRLF when any line ends in it, and the
- * leading whitespace of the first indented line, which is a member of the outer object. Text
- * without an indented line, such as `{}`, gets two spaces, as Calavera writes a new file.
+ * indentation of the outer object's first member when that member opens an indented line, as it
+ * does in a file a formatter wrote. Any other text, such as `{}` or JSON on one line, gets two
+ * spaces, as Calavera writes a new file.
  *
  * @param {string} text
  * @returns {JsonStyle}
  */
 function styleOf(text) {
-  return {
-    eol: text.includes("\r\n") ? "\r\n" : "\n",
-    unit: /^([ \t]+)\S/m.exec(text)?.[1] ?? "  ",
-  };
+  const first = parseTree(text)?.children?.[0];
+  const indent =
+    first !== undefined && startsLine(text, first.offset) ? indentAt(text, first.offset) : "";
+  return { eol: text.includes("\r\n") ? "\r\n" : "\n", unit: indent || "  " };
 }
 
 /**
@@ -191,8 +192,8 @@ function removeEdit(text, path) {
  */
 export function editJson(text, edits) {
   const bom = text.startsWith(BOM) ? BOM : "";
-  const style = styleOf(text);
   let body = withoutBom(text);
+  const style = styleOf(body);
   for (const { path, value } of edits) {
     const edit = value === undefined ? removeEdit(body, path) : setEdit(body, path, value, style);
     if (edit !== undefined) body = applyEdits(body, [edit]);
