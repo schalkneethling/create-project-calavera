@@ -8,8 +8,9 @@ import { TomlError, parse as parseToml } from "smol-toml";
 
 import { normalizePinnedVersion, normalizePublishedPin } from "./earlier-guidance.js";
 import { fileExists, parseJSON } from "./fs.js";
-import { formatGeneratedText } from "./generated-text.js";
-import { repeatedKeyProblem } from "./json-rewrite.js";
+import { formatGeneratedText, generatedJSONFormatter } from "./generated-text.js";
+import { editJson, withoutBom } from "./json-edit.js";
+import { formatJSONText, repeatedKeyProblem } from "./json-rewrite.js";
 import { isPlainObject } from "./guards.js";
 
 /**
@@ -58,59 +59,97 @@ async function readProjectJsonConfigIfPresent(path) {
 
   const currentContents = await readFile(path, "utf8");
   return {
-    currentConfig: assertJsonObjectConfig(parseJSON(currentContents, path), path),
+    currentConfig: assertJsonObjectConfig(parseJSON(withoutBom(currentContents), path), path),
     currentContents,
   };
 }
 
 /**
- * Writes `nextConfig` as the text the project's formatter produces, so a Vite+ project's
- * `vp check` accepts the file and a second run finds it up to date (#669).
+ * Writes a new harness file holding `config`, as the text the project's formatter produces, so a
+ * Vite+ project's `vp check` accepts the file (#669).
  *
  * @param {string} path
- * @param {Record<string, unknown>} nextConfig
+ * @param {Record<string, unknown>} config
  * @param {boolean} dryRun
  * @param {McpConfigChange[]} changes
  * @param {LoadFormatter} loadFormatter
- * @param {string} [currentContents]
+ * @returns {Promise<McpConfigAction>}
+ */
+async function writeNewProjectJsonConfig(path, config, dryRun, changes, loadFormatter) {
+  const targetPath = normalizeConfigPath(path);
+  const contents = await formatGeneratedText(
+    targetPath,
+    `${JSON.stringify(config, null, 2)}\n`,
+    loadFormatter,
+  );
+  changes.push({ type: "write", path: targetPath });
+
+  if (!dryRun) {
+    const directory = dirname(targetPath).trim();
+    if (directory !== ".") {
+      await mkdir(directory, { recursive: true });
+    }
+    await writeFile(targetPath, contents);
+  }
+
+  return "write";
+}
+
+/**
+ * The text of a person's harness file after `edits`, which change only Calavera's entry: every other
+ * byte stays as the person wrote it (brief C8, #1221). The edited text then goes through the
+ * project's formatter only when the file already passes it, as a Vite+ project's `vp check` passes
+ * a file it formatted. A file the formatter would change keeps the person's bytes, because
+ * formatting it would rewrite the person's lines as well as the entry.
+ *
+ * @param {string} path
+ * @param {string} contents
+ * @param {import("./json-edit.js").JsonEdit[]} edits
+ * @param {LoadFormatter} loadFormatter
+ * @returns {Promise<string>}
+ */
+async function editedProjectJsonText(path, contents, edits, loadFormatter) {
+  const edited = editJson(contents, edits);
+  const formatter = await generatedJSONFormatter(path, loadFormatter);
+  // Validated like the edited text, so output that vite.config.ts prints, or a formatter that
+  // changes values, stops with its remedy instead of passing as a file the formatter would change.
+  if ((await formatJSONText(contents, path, formatter)) !== contents) return edited;
+  return formatJSONText(edited, path, formatter);
+}
+
+/**
+ * Applies `edits` to a person's harness file, or reports it up to date when there are none.
+ *
+ * @param {string} path
+ * @param {string} currentContents
+ * @param {import("./json-edit.js").JsonEdit[]} edits
+ * @param {boolean} dryRun
+ * @param {McpConfigChange[]} changes
+ * @param {LoadFormatter} loadFormatter
  * @param {string} [updateReason] The reason of an `update` change.
  * @returns {Promise<McpConfigAction>}
  */
-async function writeProjectJsonConfig(
+async function updateProjectJsonConfig(
   path,
-  nextConfig,
+  currentContents,
+  edits,
   dryRun,
   changes,
   loadFormatter,
-  currentContents,
   updateReason = "Add or update Calavera MCP server.",
 ) {
   const targetPath = normalizeConfigPath(path);
-  const nextContents = await formatGeneratedText(
-    targetPath,
-    `${JSON.stringify(nextConfig, null, 2)}\n`,
-    loadFormatter,
-  );
-
-  if (currentContents === undefined) {
-    changes.push({ type: "write", path: targetPath });
-
-    if (!dryRun) {
-      const directory = dirname(targetPath).trim();
-      if (directory !== ".") {
-        await mkdir(directory, { recursive: true });
-      }
-      await writeFile(targetPath, nextContents);
-    }
-
-    return "write";
-  }
-
-  if (currentContents === nextContents) {
+  if (edits.length === 0) {
     changes.push({ type: "skip", path: targetPath, reason: "Already up to date." });
     return "skip";
   }
 
+  const nextContents = await editedProjectJsonText(
+    targetPath,
+    currentContents,
+    edits,
+    loadFormatter,
+  );
   changes.push({ type: "update", path: targetPath, reason: updateReason });
 
   if (!dryRun) {
@@ -359,19 +398,25 @@ export async function writeMcpServersJsonConfig(
     return "skip";
   }
 
-  return writeProjectJsonConfig(
+  if (currentContents === undefined) {
+    return writeNewProjectJsonConfig(
+      targetPath,
+      { mcpServers: { calavera: entry } },
+      dryRun,
+      changes,
+      loadFormatter,
+    );
+  }
+
+  return updateProjectJsonConfig(
     targetPath,
-    {
-      ...currentConfig,
-      mcpServers: {
-        ...(isPlainObject(mcpServers) ? mcpServers : {}),
-        calavera: entry,
-      },
-    },
+    currentContents,
+    isDeepStrictEqual(mcpServers?.calavera, entry)
+      ? []
+      : [{ path: ["mcpServers", "calavera"], value: entry }],
     dryRun,
     changes,
     loadFormatter,
-    currentContents,
   );
 }
 
@@ -904,7 +949,7 @@ export async function writeOpenCodeMcpConfig(
 ) {
   const targetPath = normalizeConfigPath(path);
   if (!(await fileExists(targetPath))) {
-    return writeProjectJsonConfig(
+    return writeNewProjectJsonConfig(
       targetPath,
       createOpenCodeMcpJsonConfig(launchCommand),
       dryRun,
@@ -918,9 +963,9 @@ export async function writeOpenCodeMcpConfig(
   let parsed;
   let commented = false;
   try {
-    parsed = parseJSON(currentContents, targetPath);
+    parsed = parseJSON(withoutBom(currentContents), targetPath);
   } catch (error) {
-    const jsonc = parseOpenCodeJsonc(currentContents);
+    const jsonc = parseOpenCodeJsonc(withoutBom(currentContents));
     if (jsonc === undefined) throw error;
     parsed = jsonc.value;
     commented = true;
@@ -1001,24 +1046,23 @@ export async function writeOpenCodeMcpConfig(
 
   const moved = found.some(({ location }) => location.name === "mcp");
   const servers = isPlainObject(mcp) && isPlainObject(mcp.servers) ? mcp.servers : {};
-  const restOfMcp = isPlainObject(mcp)
-    ? Object.fromEntries(Object.entries(mcp).filter(([name]) => name !== "calavera"))
-    : {};
-  return writeProjectJsonConfig(
+  const entry = createOpenCodeMcpEntry(launchCommand);
+  return updateProjectJsonConfig(
     targetPath,
-    {
-      ...currentConfig,
-      $schema:
-        typeof currentConfig.$schema === "string" ? currentConfig.$schema : OPENCODE_CONFIG_SCHEMA,
-      mcp: {
-        ...restOfMcp,
-        servers: { ...servers, calavera: createOpenCodeMcpEntry(launchCommand) },
-      },
-    },
+    currentContents,
+    [
+      ...(typeof currentConfig.$schema === "string"
+        ? []
+        : [{ path: ["$schema"], value: OPENCODE_CONFIG_SCHEMA }]),
+      ...(isDeepStrictEqual(servers.calavera, entry)
+        ? []
+        : [{ path: ["mcp", "servers", "calavera"], value: entry }]),
+      // After the entry under `mcp.servers` is in place, so `mcp` never becomes empty on the way.
+      ...(moved ? [{ path: ["mcp", "calavera"], value: undefined }] : []),
+    ],
     dryRun,
     changes,
     loadFormatter,
-    currentContents,
     moved ? openCodeMoveReason(dryRun) : undefined,
   );
 }
