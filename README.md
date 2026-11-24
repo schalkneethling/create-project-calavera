@@ -966,8 +966,9 @@ agent client starts. A client does not always pass the variables of your shell t
 `CALAVERA_DEBUG` in the `env` field of the server's entry in the client's MCP configuration.
 With the switch on, a cause whose text repeats an earlier message is kept with an empty message, so
 that its stack is still shown. Without the switch, an MCP tool's error result still keeps such a
-cause, with an empty message, when it carries a `code`, such as `EBUSY`, or a name other than
-`Error`, so that two failures with the same message stay distinguishable. The CLI does not print it.
+cause, with an empty message, when it carries a `code`, such as `EBUSY`, an `errno`, a `syscall`,
+such as `rename` or `open`, or a name other than `Error`, so that two failures with the same message
+stay distinguishable. The CLI does not print it.
 
 ## The Version Notice
 

@@ -22,9 +22,9 @@ export function truncateFailureLine(line) {
  * @typedef {{
  *   name?: string,
  *   message: string,
- *   code?: string | number,
- *   errno?: string | number,
- *   syscall?: string | number,
+ *   code?: string,
+ *   errno?: number,
+ *   syscall?: string,
  *   stack?: string,
  * }} ErrorChainEntry
  */
@@ -153,27 +153,48 @@ function stackFrames(value, redact) {
 }
 
 /**
- * A field that can tell two failures apart, such as `code`, `errno`, or
- * `syscall`, redacted, or undefined when it tells nothing apart. A string is
- * kept when it is not empty once redacted. A finite number is kept as a
- * number when redacting its decimal form leaves that form as it is, and
- * otherwise as the redacted text, so that a secret never reaches the chain in
- * any form.
+ * A text field that can tell two failures apart, such as `syscall`, redacted,
+ * or undefined when it is not a string or is empty once redacted.
  *
  * @param {unknown} value
  * @param {(text: string) => string} redact
- * @returns {string | number | undefined}
+ * @returns {string | undefined}
  */
-function shownField(value, redact) {
-  if (typeof value === "string") {
-    const shown = redact(value);
-    return shown === "" ? undefined : shown;
-  }
-  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+function shownText(value, redact) {
+  if (typeof value !== "string") return undefined;
+  const shown = redact(value);
+  return shown === "" ? undefined : shown;
+}
 
+/**
+ * A `code`, redacted, as text. A finite number, such as the exit code that
+ * `execFile` gives, is kept as its decimal text, because `code` is a string
+ * in the MCP output and retyping it would break a client (ADR-0018,
+ * Decision 6).
+ *
+ * @param {unknown} value
+ * @param {(text: string) => string} redact
+ */
+function shownCode(value, redact) {
+  return shownText(
+    typeof value === "number" && Number.isFinite(value) ? String(value) : value,
+    redact,
+  );
+}
+
+/**
+ * An `errno`, which is always a number, or undefined when it is not a finite
+ * number or when redacting its decimal form would change it. A number cannot
+ * hold redacted text, so an `errno` that holds a secret is left out.
+ *
+ * @param {unknown} value
+ * @param {(text: string) => string} redact
+ * @returns {number | undefined}
+ */
+function shownErrno(value, redact) {
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
   const decimal = String(value);
-  const shown = redact(decimal);
-  return shown === decimal ? value : shown;
+  return redact(decimal) === decimal ? value : undefined;
 }
 
 /** @param {string} text */
@@ -205,8 +226,9 @@ function containsWhole(text, part) {
  * The error and each error under it, in the order a reader follows them: an
  * error, then its `cause`, then the members of an AggregateError, each once.
  * Every message, name, `code`, `errno`, and `syscall` is redacted with
- * `redactSecrets`, and terminal control sequences are removed. A `code` or
- * `errno` that is a number stays a number unless redaction changes it.
+ * `redactSecrets`, and terminal control sequences are removed. A `code` that
+ * is a number is kept as its decimal text. An `errno` is kept only as a
+ * number, and is left out when redaction would change it.
  *
  * One rule keeps the chain free of repeated text, so a wrapper may either
  * embed its cause's message in its own or defer to the cause:
@@ -296,9 +318,9 @@ function chainEntries(error, env) {
     const name = readProperty(value, "name");
     const hasName = typeof name === "string" && name !== "";
     const shownName = hasName ? redact(name) : undefined;
-    const shownCode = shownField(readProperty(value, "code"), redact);
-    const shownErrno = shownField(readProperty(value, "errno"), redact);
-    const shownSyscall = shownField(readProperty(value, "syscall"), redact);
+    const keptCode = shownCode(readProperty(value, "code"), redact);
+    const keptErrno = shownErrno(readProperty(value, "errno"), redact);
+    const keptSyscall = shownText(readProperty(value, "syscall"), redact);
     const frames = debug ? stackFrames(value, redact) : undefined;
     const textLeftOut = !isError && whole !== "" && lines.length === 0;
     if (
@@ -307,9 +329,9 @@ function chainEntries(error, env) {
       // A cause with an empty message of its own is still shown, by its name.
       (whole === "" && hasName) ||
       (textLeftOut &&
-        (shownCode !== undefined ||
-          shownErrno !== undefined ||
-          shownSyscall !== undefined ||
+        (keptCode !== undefined ||
+          keptErrno !== undefined ||
+          keptSyscall !== undefined ||
           (Boolean(shownName) && shownName !== "Error"))) ||
       frames !== undefined
     ) {
@@ -317,9 +339,9 @@ function chainEntries(error, env) {
         entry: {
           ...(shownName !== undefined ? { name: shownName } : {}),
           message: (isError ? lines : lines.map(truncateFailureLine)).join("\n"),
-          ...(shownCode !== undefined ? { code: shownCode } : {}),
-          ...(shownErrno !== undefined ? { errno: shownErrno } : {}),
-          ...(shownSyscall !== undefined ? { syscall: shownSyscall } : {}),
+          ...(keptCode !== undefined ? { code: keptCode } : {}),
+          ...(keptErrno !== undefined ? { errno: keptErrno } : {}),
+          ...(keptSyscall !== undefined ? { syscall: keptSyscall } : {}),
           ...(frames ? { stack: frames.join("\n") } : {}),
         },
         textLeftOut,
