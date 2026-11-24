@@ -19,7 +19,14 @@ export function truncateFailureLine(line) {
 }
 
 /**
- * @typedef {{ name?: string, message: string, code?: string, stack?: string }} ErrorChainEntry
+ * @typedef {{
+ *   name?: string,
+ *   message: string,
+ *   code?: string | number,
+ *   errno?: string | number,
+ *   syscall?: string | number,
+ *   stack?: string,
+ * }} ErrorChainEntry
  */
 
 /**
@@ -145,6 +152,30 @@ function stackFrames(value, redact) {
   return frames.length > 0 ? frames : undefined;
 }
 
+/**
+ * A field that can tell two failures apart, such as `code`, `errno`, or
+ * `syscall`, redacted, or undefined when it tells nothing apart. A string is
+ * kept when it is not empty once redacted. A finite number is kept as a
+ * number when redacting its decimal form leaves that form as it is, and
+ * otherwise as the redacted text, so that a secret never reaches the chain in
+ * any form.
+ *
+ * @param {unknown} value
+ * @param {(text: string) => string} redact
+ * @returns {string | number | undefined}
+ */
+function shownField(value, redact) {
+  if (typeof value === "string") {
+    const shown = redact(value);
+    return shown === "" ? undefined : shown;
+  }
+  if (typeof value !== "number" || !Number.isFinite(value)) return undefined;
+
+  const decimal = String(value);
+  const shown = redact(decimal);
+  return shown === decimal ? value : shown;
+}
+
 /** @param {string} text */
 function normalize(text) {
   return text.trim().replace(/\.$/, "");
@@ -173,8 +204,9 @@ function containsWhole(text, part) {
 /**
  * The error and each error under it, in the order a reader follows them: an
  * error, then its `cause`, then the members of an AggregateError, each once.
- * Every message, name, and code is redacted with `redactSecrets`, and terminal
- * control sequences are removed.
+ * Every message, name, `code`, `errno`, and `syscall` is redacted with
+ * `redactSecrets`, and terminal control sequences are removed. A `code` or
+ * `errno` that is a number stays a number unless redaction changes it.
  *
  * One rule keeps the chain free of repeated text, so a wrapper may either
  * embed its cause's message in its own or defer to the cause:
@@ -190,10 +222,11 @@ function containsWhole(text, part) {
  * The error itself is always kept in full.
  *
  * A cause whose text the rule above leaves out is still kept, with an empty
- * message, when it carries a `code`, or a name other than plain `Error`, that
- * is not empty once redacted and stripped of control sequences, so
- * that two failures a wrapper describes with the same words stay
- * distinguishable: a wrapped `EBUSY` and a wrapped `ENOENT`, for example.
+ * message, when it carries a `code`, an `errno`, a `syscall`, or a name other
+ * than plain `Error`, that is not empty once redacted and stripped of control
+ * sequences, so that two failures a wrapper describes with the same words
+ * stay distinguishable: a wrapped `EBUSY` and a wrapped `ENOENT`, or `EBUSY`
+ * on `rename` and `EBUSY` on `open`, for example.
  *
  * When `isDebugEnabled(env)`, each entry also carries `stack`: the call-site
  * lines of its stack, redacted the same way. A cause whose text the rule above
@@ -263,8 +296,9 @@ function chainEntries(error, env) {
     const name = readProperty(value, "name");
     const hasName = typeof name === "string" && name !== "";
     const shownName = hasName ? redact(name) : undefined;
-    const code = readProperty(value, "code");
-    const shownCode = typeof code === "string" && code !== "" ? redact(code) : undefined;
+    const shownCode = shownField(readProperty(value, "code"), redact);
+    const shownErrno = shownField(readProperty(value, "errno"), redact);
+    const shownSyscall = shownField(readProperty(value, "syscall"), redact);
     const frames = debug ? stackFrames(value, redact) : undefined;
     const textLeftOut = !isError && whole !== "" && lines.length === 0;
     if (
@@ -272,7 +306,11 @@ function chainEntries(error, env) {
       lines.length > 0 ||
       // A cause with an empty message of its own is still shown, by its name.
       (whole === "" && hasName) ||
-      (textLeftOut && (Boolean(shownCode) || (Boolean(shownName) && shownName !== "Error"))) ||
+      (textLeftOut &&
+        (shownCode !== undefined ||
+          shownErrno !== undefined ||
+          shownSyscall !== undefined ||
+          (Boolean(shownName) && shownName !== "Error"))) ||
       frames !== undefined
     ) {
       entries.push({
@@ -280,6 +318,8 @@ function chainEntries(error, env) {
           ...(shownName !== undefined ? { name: shownName } : {}),
           message: (isError ? lines : lines.map(truncateFailureLine)).join("\n"),
           ...(shownCode !== undefined ? { code: shownCode } : {}),
+          ...(shownErrno !== undefined ? { errno: shownErrno } : {}),
+          ...(shownSyscall !== undefined ? { syscall: shownSyscall } : {}),
           ...(frames ? { stack: frames.join("\n") } : {}),
         },
         textLeftOut,
@@ -322,7 +362,8 @@ function withStack(text, { stack }) {
  * line that starts with `Caused by:`, with further lines of that cause
  * indented. With the debug switch on, each entry's stack frames follow it.
  * A cause whose message the error chain left out, and that has no stack to
- * show, adds no line: its code and name are for the structured diagnostics.
+ * show, adds no line: its name, `code`, `errno`, and `syscall` are for the
+ * structured diagnostics, and no entry prints them.
  *
  * @param {unknown} error
  * @param {Record<string, string | undefined>} [env] The environment whose secret values are redacted.
