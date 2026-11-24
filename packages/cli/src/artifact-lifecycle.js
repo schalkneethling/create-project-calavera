@@ -2226,17 +2226,19 @@ function linkedFolderRefusal(link) {
 }
 
 /**
- * Refuses, before an install, an update, or a cache block writes anything, when a folder that an
- * artifact transaction stages into or targets below is a symbolic link or lies below one.
+ * Refuses, before an install, an update, a cache block, or the agent bootstrap writes anything, when
+ * a folder that the command writes into is a symbolic link or lies below one. For an install or an
+ * update, those are the folders an artifact transaction stages into or targets below;
  * `commitArtifactTransaction` refuses the same links again before it moves anything, so this check
  * only makes the command stop before it writes the cache block, the registry cache, or the staging
  * folder. The registry cache folder itself is not checked, because no transaction targets it. A
  * targeted update checks the outputs of every selection it stages again, including those whose
- * files do not change.
+ * files do not change. The agent bootstrap has no transaction, so this check is the only one that
+ * stops it (#1231).
  *
  * @param {string[]} folders Project paths of the folders the command writes into.
  */
-async function refuseLinkedArtifactFolders(folders) {
+export async function refuseLinkedArtifactFolders(folders) {
   const projectRoot = resolve(".");
   for (const folder of folders) {
     const link = await linkedFolder(projectRoot, resolve(folder));

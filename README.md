@@ -1105,7 +1105,11 @@ recipe selects, including artifacts that are already locked. A targeted update
 checks every artifact it stages again, including artifacts whose files do not
 change. `artifacts status --check-updates` stops when `.calavera` is a symbolic
 link, because the update check fills the registry cache in `.calavera/cache`.
-The message names the link;
+`--init`, `agent-init`, and `bootstrap` stop before they write anything, with or
+without `--dry-run`, when `.agents`, `.agents/skills`, `.agents/skills/calavera`,
+`.agents/calavera`, or `.calavera` is a symbolic link, because those are the
+folders the bootstrap writes the base skill, the MCP setup notes, and its state
+into. The message names the link;
 replace it with a real folder and run the command again. A link that points from
 another tool's folder to a folder under `.agents/` is fine.
 
