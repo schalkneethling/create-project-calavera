@@ -362,6 +362,31 @@ test("a tarball download redirected from loopback http to http on a host that is
   assert.deepEqual(proxy.requests, []);
 });
 
+test("a download that starts on loopback http is judged from http, even when the registry is on https", async (t) => {
+  // The download's first URL is the tarball, not the registry, so the refusal reports http: as the
+  // protocol it was on.
+  const proxy = await startProxy();
+  const tarballHost = await startServer({
+    secure: false,
+    host: "localhost",
+    redirect: (path) => (path.endsWith(".tgz") ? `${REMOTE_HTTP}${path}` : undefined),
+  });
+  const registry = await startServer({
+    secure: true,
+    host: "127.0.0.1",
+    tarballUrl: () => `${tarballHost.origin}/-/artifact.tgz`,
+  });
+  t.after(() => Promise.all([proxy.close(), tarballHost.close(), registry.close()]));
+  const context = await npmContext({ registry: registry.origin, proxy: proxy.url });
+
+  const resolution = await resolveArtifactPackage({ id: artifact.id, ...context });
+  const failure = await failureOf(
+    extractArtifactPackage(resolution, context.destination, "2.2.0", context),
+  );
+  assertRefusal(failure, { from: "http:", download: true, requests: 2 });
+  assert.deepEqual(proxy.requests, []);
+});
+
 test("a lookup and a download redirected from loopback http to loopback http succeed", async (t) => {
   const proxy = await startProxy();
   const second = await startServer({ secure: false, host: "localhost" });
@@ -613,6 +638,45 @@ test("the agent options Calavera passes match npm-registry-fetch's defaults", ()
     noProxy: defaults.noProxy,
     strictSSL: defaults.strictSSL,
   });
+});
+
+test("NOPROXY, which npm-registry-fetch reads and @npmcli/agent does not, keeps a host away from the proxy", async (t) => {
+  // npm-registry-fetch reads NOPROXY when it loads, so a child process starts with it set. The user
+  // .npmrc names a proxy and no noproxy setting, so only the NOPROXY fallback keeps the registry on
+  // 127.0.0.1 direct.
+  const proxy = await startProxy();
+  const registry = await startServer({ secure: false, host: "127.0.0.1" });
+  t.after(() => Promise.all([proxy.close(), registry.close()]));
+  const directory = await temporaryDirectory("calavera-redirect-noproxy-");
+  const userconfig = join(directory, "user.npmrc");
+  await writeFile(
+    userconfig,
+    `@schalkneethling:registry=${registry.origin}/\nproxy=${proxy.url}/\n`,
+  );
+  const script = join(directory, "probe.mjs");
+  const registryModule = new URL("../src/registry.js", import.meta.url).href;
+  await writeFile(
+    script,
+    `import { resolvePackageDistTag } from ${JSON.stringify(registryModule)};
+const version = await resolvePackageDistTag({ packageName: ${JSON.stringify(artifact.packageName)}, tag: "latest", cwd: process.env.PROBE_CWD, env: process.env });
+console.log(JSON.stringify({ version }));
+`,
+  );
+  const { stdout } = await execFileAsync(process.execPath, [script], {
+    env: {
+      PATH: process.env.PATH,
+      HOME: join(directory, "home"),
+      NOPROXY: "127.0.0.1",
+      npm_config_userconfig: userconfig,
+      PROBE_CWD: directory,
+      ...(process.env.__STRYKER_ACTIVE_MUTANT__
+        ? { __STRYKER_ACTIVE_MUTANT__: process.env.__STRYKER_ACTIVE_MUTANT__ }
+        : {}),
+    },
+  });
+  assert.deepEqual(JSON.parse(stdout), { version: (await packed()).version });
+  assert.deepEqual(proxy.requests, []);
+  assert.equal(registry.requests.length, 1);
 });
 
 test("Calavera's agents are the ones make-fetch-happen would choose from the same options", async (t) => {

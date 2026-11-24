@@ -8,8 +8,13 @@ import { LOOPBACK_HOSTS, TARBALL_RULE } from "./tarball-url.js";
 // (`getNodeRequestOptions` in minipass-fetch/lib/request.js). A function agent therefore sees
 // every hop that reaches the network, and an error it throws ends the fetch before anything is
 // sent: minipass-fetch rejects with it unchanged. make-fetch-happen would retry it like any error
-// it does not know (`remoteFetch` in lib/remote.js), but Calavera passes no `fetchRetries`, so
-// npm-registry-fetch asks for no retries; with retries, each attempt would be refused the same way.
+// it does not know (`remoteFetch` in lib/remote.js), but no retry happens. resolvePackageDistTag
+// passes `fetchRetries: 0`, and the other calls pass none, so npm-registry-fetch sends
+// `retries: 0` or `retries: undefined` (lib/index.js). make-fetch-happen spreads that over its own
+// `retries: 0` (lib/options.js), and @gar/promise-retry spreads it over its default of 10, so an
+// undefined value replaces that default too and no retry delays are built (lib/index.js). A
+// future `fetchRetries` above 0 would retry the refusal, and each attempt would be refused the
+// same way, only later.
 
 const DOWNGRADE_RULE =
   "Calavera does not follow a redirect from https to plain http, except to localhost, 127.0.0.1, or ::1.";
