@@ -1114,13 +1114,14 @@ async function checkForUpdate(checkUpdates, lookup, context) {
 
 // The codes of a failed registry lookup: an HTTP answer (npm-registry-fetch sets `E<status>`, or
 // EOTP and EAUTHIP for some 401s), a missing version (ETARGET), a package document artifact-core
-// could not read (EBADPACKUMENT), a fetch failure or abort
+// could not read (EBADPACKUMENT), a redirect artifact-core refused to follow (EINSECUREREDIRECT,
+// #1207), a fetch failure or abort
 // (minipass-fetch), a proxy or timeout failure (@npmcli/agent), and DNS, socket, and TLS failures
 // from Node. A local file system code, such as EACCES or ENOSPC from the cache, is not one.
 const REGISTRY_LOOKUP_CODE = new RegExp(
   [
     "^E\\d{3}$",
-    "^(EOTP|EAUTHIP|ETARGET|EBADPACKUMENT|FETCH_ERROR|FETCH_ABORTED|EINVALIDPROXY)$",
+    "^(EOTP|EAUTHIP|ETARGET|EBADPACKUMENT|EINSECUREREDIRECT|FETCH_ERROR|FETCH_ABORTED|EINVALIDPROXY)$",
     "^E(CONNECTION|IDLE|RESPONSE|TRANSFER)TIMEOUT$",
     "^(ENOTFOUND|EAI_AGAIN|ECONNREFUSED|ECONNRESET|ETIMEDOUT|EHOSTUNREACH|ENETUNREACH)$",
     "^(CERT_|UNABLE_TO_|SELF_SIGNED_|DEPTH_ZERO_SELF_SIGNED_|ERR_TLS_|ERR_SSL_)",
@@ -1264,6 +1265,9 @@ function updateCheckFailure(error, { packageName, tag, followLatestCommand, retr
           ...notes,
         };
   }
+  if (code === "EINSECUREREDIRECT") {
+    return { code, statusCode, ...refusedRedirect(error, packageName, retryCommand), ...notes };
+  }
   const kind = type === null ? code : `${code} ${type}`;
   const details = statusCode === null ? kind : `${kind}, HTTP ${statusCode}`;
   // npm-registry-fetch sets `statusCode` on every HTTP error, while its `code` is EOTP or EAUTHIP
@@ -1299,6 +1303,34 @@ function updateCheckFailure(error, { packageName, tag, followLatestCommand, retr
     reason: `the registry lookup for ${packageName} failed (${details})`,
     remedy: `Check ${check}, then run: ${retryCommand}`,
     ...notes,
+  };
+}
+
+/**
+ * The reason and remedy for a redirect artifact-core refused (#1207). artifact-core sets
+ * `protocol` and `otherHost` on its refusal, or on the cause when its npm configuration notes
+ * wrap it. Only the exact values artifact-core writes are read, so no other text, such as a URL,
+ * reaches the report.
+ *
+ * @param {unknown} error
+ * @param {string} packageName
+ * @param {string} retryCommand
+ */
+function refusedRedirect(error, packageName, retryCommand) {
+  const fields =
+    /** @type {{ protocol?: unknown, otherHost?: unknown, cause?: { protocol?: unknown, otherHost?: unknown } }} */ (
+      error ?? {}
+    );
+  const refusal = fields.otherHost === undefined && fields.cause ? fields.cause : fields;
+  let redirected = "was redirected to plain http on a host that is not loopback";
+  if (refusal.otherHost === true) {
+    redirected = "was redirected over plain http to a host other than the registry's own";
+  } else if (refusal.protocol === "https:") {
+    redirected = "was redirected from https to plain http on a host that is not loopback";
+  }
+  return {
+    reason: `the registry lookup for ${packageName} ${redirected}, which Calavera does not follow`,
+    remedy: `Point the npm registry settings at a registry that serves Calavera's packages over https, or from its own host over plain http, without redirecting to plain http on another host, then run: ${retryCommand}`,
   };
 }
 

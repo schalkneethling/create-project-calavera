@@ -39,6 +39,8 @@ const packageRoot = fileURLToPath(new URL("../../artifacts/skill-project-goal/",
 const REMOTE_HTTP = "http://registry.example.test";
 const DOWNGRADE_RULE =
   "Calavera does not follow a redirect from https to plain http, except to localhost, 127.0.0.1, or ::1.";
+const HOST_RULE =
+  "Calavera follows a redirect over plain http only to the registry's own host, or to localhost, 127.0.0.1, or ::1.";
 const TARBALL_RULE =
   "Calavera fetches artifact tarballs only from https URLs, or from http URLs on localhost, 127.0.0.1, or ::1.";
 
@@ -245,16 +247,21 @@ function failureOf(promise) {
 /**
  * The refusal names the package and the two protocols and quotes no other URL text.
  * @param {any} failure
- * @param {{ from: string, download: boolean, requests: number }} expected `requests` counts the
- *   requests the check saw, the refused one included.
+ * @param {{ from: string, download: boolean, requests: number, otherHost?: boolean }} expected
+ *   `requests` counts the requests the check saw, the refused one included. `otherHost` marks a
+ *   lookup on a plain-http registry that was sent to another plain-http host.
  */
-function assertRefusal(failure, { from, download, requests }) {
+function assertRefusal(failure, { from, download, requests, otherHost = false }) {
   const refusal = failure.cause?.code === "EINSECUREREDIRECT" ? failure.cause : failure;
   assert.equal(failure.code, "EINSECUREREDIRECT");
+  const subject = download ? "tarball download" : "package document lookup";
   assert.equal(
     refusal.message,
-    `Calavera did not fetch ${artifact.packageName}: a redirect led its ${download ? "tarball download" : "package document lookup"} from ${from} to http: on a host that is not loopback. ${download ? TARBALL_RULE : DOWNGRADE_RULE}`,
+    otherHost
+      ? `Calavera did not fetch ${artifact.packageName}: a redirect led its ${subject} from http: to http: on another host that is not loopback. ${HOST_RULE}`
+      : `Calavera did not fetch ${artifact.packageName}: a redirect led its ${subject} from ${from} to http: on a host that is not loopback. ${download ? TARBALL_RULE : DOWNGRADE_RULE}`,
   );
+  assert.equal(refusal.otherHost, otherHost);
   assert.equal(refusal.packageName, artifact.packageName);
   assert.equal(refusal.protocol, from);
   assert.equal(refusal.redirectProtocol, "http:");
@@ -459,6 +466,75 @@ test("a lookup that starts on a user's http registry and passes through https is
     `${REMOTE_HTTP}/@schalkneethling%2fcalavera-skill-project-goal`,
   ]);
   assert.equal(secure.requests.length, 1);
+});
+
+// Owner decision 1 on #1207 (2026-11-24): a plain-http registry that the rules allow may redirect
+// over plain http only to its own host, as the URL parser writes host and port, or to loopback.
+const SAME_HOST = [
+  { form: "another path", location: `${REMOTE_HTTP}/elsewhere/document` },
+  { form: "the default port written out", location: "http://REGISTRY.example.test:80/document" },
+];
+for (const { form, location } of SAME_HOST) {
+  test(`a user's http registry may redirect a lookup to its own host, with ${form}`, async (t) => {
+    const proxy = await startProxy({
+      redirect: (url) => (url.includes("calavera-skill-project-goal") ? location : undefined),
+    });
+    t.after(proxy.close);
+    const context = await npmContext({ registry: REMOTE_HTTP, proxy: proxy.url });
+
+    const resolution = await resolveArtifactPackage({ id: artifact.id, ...context });
+    assert.equal(resolution.version, (await packed()).version);
+    assert.equal(proxy.requests.length, 2);
+  });
+}
+
+const OTHER_HOST = [
+  { form: "another host", location: "http://mirror.example.test/document" },
+  { form: "another port on the same host", location: `${REMOTE_HTTP}:8080/document` },
+];
+for (const { form, location } of OTHER_HOST) {
+  test(`a user's http registry that redirects a lookup to ${form} over http is refused`, async (t) => {
+    const proxy = await startProxy({
+      redirect: (url) => (url.includes("calavera-skill-project-goal") ? location : undefined),
+    });
+    t.after(proxy.close);
+    const context = await npmContext({ registry: REMOTE_HTTP, proxy: proxy.url });
+
+    const failure = await failureOf(resolveArtifactPackage({ id: artifact.id, ...context }));
+    assertRefusal(failure, { from: "http:", download: false, requests: 2, otherHost: true });
+    assert.deepEqual(proxy.requests, [
+      `${REMOTE_HTTP}/@schalkneethling%2fcalavera-skill-project-goal`,
+    ]);
+  });
+}
+
+test("a loopback http registry that redirects a lookup to http on a host that is not loopback is refused", async (t) => {
+  const proxy = await startProxy();
+  const first = await startServer({
+    secure: false,
+    host: "127.0.0.1",
+    redirect: (path) => `${REMOTE_HTTP}${path}`,
+  });
+  t.after(() => Promise.all([proxy.close(), first.close()]));
+  const context = await npmContext({ registry: first.origin, proxy: proxy.url });
+
+  const failure = await failureOf(resolveArtifactPackage({ id: artifact.id, ...context }));
+  assertRefusal(failure, { from: "http:", download: false, requests: 2, otherHost: true });
+  assert.deepEqual(proxy.requests, []);
+});
+
+test("a user's http registry may redirect a lookup to loopback http", async (t) => {
+  const loopback = await startServer({ secure: false, host: "localhost" });
+  const proxy = await startProxy({
+    redirect: (url) =>
+      url.startsWith(REMOTE_HTTP) ? `${loopback.origin}${new URL(url).pathname}` : undefined,
+  });
+  t.after(() => Promise.all([proxy.close(), loopback.close()]));
+  const context = await npmContext({ registry: REMOTE_HTTP, proxy: proxy.url });
+
+  const resolution = await resolveArtifactPackage({ id: artifact.id, ...context });
+  assert.equal(resolution.version, (await packed()).version);
+  assert.equal(loopback.requests.length, 1);
 });
 
 for (const { setting, proxies } of [
