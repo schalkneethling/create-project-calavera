@@ -1,6 +1,8 @@
 // @ts-check
 import { isDeepStrictEqual } from "node:util";
 
+import { withoutBom } from "./json-edit.js";
+
 /** The remedy for formatted text that holds something Calavera did not send. */
 export const PRINTS_NOTHING =
   "Make sure vite.config.ts prints nothing when vp fmt loads it, then run Calavera again.";
@@ -59,8 +61,22 @@ export function toJSONText(value) {
  * @throws When the formatted text does not parse back to `value`.
  */
 export async function writeJSON(value, path, formatter) {
-  const json = toJSONText(value);
-  const text = await formatter.format(path, `${json}\n`);
+  return formatJSONText(`${toJSONText(value)}\n`, path, formatter);
+}
+
+/**
+ * Returns `json` formatted by the project's formatter as the file at `path`, such as a person's
+ * harness file after Calavera edited one member of it (#1221). A byte order mark is kept for the
+ * formatter, which decides whether it stays, and ignored when the values are compared.
+ *
+ * @param {string} json JSON text, which can open with a byte order mark.
+ * @param {string} path The file path relative to the project root.
+ * @param {ProjectFormatter} formatter
+ * @returns {Promise<string>}
+ * @throws When the formatted text does not parse back to the values of `json`.
+ */
+export async function formatJSONText(json, path, formatter) {
+  const text = await formatter.format(path, json);
   // The formatter runs the project's vite.config.ts, and anything that file prints, such as a
   // dotenv banner, arrives before the formatted text. Text that no longer holds the values goes
   // nowhere near the file.
@@ -68,14 +84,15 @@ export async function writeJSON(value, path, formatter) {
   // vite.config.ts printed.
   let parsed;
   try {
-    parsed = JSON.parse(text);
+    parsed = JSON.parse(withoutBom(text));
   } catch {
     throw new Error(
       `${formatter.description} returned text for ${path} that is not JSON, so something came with the formatted text, such as output that vite.config.ts printed. ${PRINTS_NOTHING}`,
     );
   }
-  // Compared with the JSON Calavera sent, not with `value`: JSON has no -0, so -0 arrives as 0.
-  if (!isDeepStrictEqual(parsed, JSON.parse(json))) {
+  // Compared with the JSON Calavera sent, parsed again, not with a value it was written from:
+  // JSON has no -0, so -0 arrives as 0.
+  if (!isDeepStrictEqual(parsed, JSON.parse(withoutBom(json)))) {
     throw new Error(
       `${formatter.description} returned text for ${path} that is JSON but holds other values than the ones Calavera sent. ${CHANGED_CONTENT}`,
     );
