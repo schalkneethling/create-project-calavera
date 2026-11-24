@@ -38,6 +38,9 @@ const artifact = artifactForId("skill-project-goal");
 const packageRoot = fileURLToPath(new URL("../../artifacts/skill-project-goal/", import.meta.url));
 // A plain-http host that is not loopback. The local proxy answers for it.
 const REMOTE_HTTP = "http://registry.example.test";
+// Whether a request the test proxy receives is for the registry host itself. The origin is compared
+// exactly, so a longer host that starts with the same text is not the registry.
+const isRemote = (/** @type {string} */ url) => new URL(url).origin === new URL(REMOTE_HTTP).origin;
 const DOWNGRADE_RULE =
   "Calavera does not follow a redirect from https to plain http, except to localhost, 127.0.0.1, or ::1.";
 const HOST_RULE =
@@ -486,7 +489,7 @@ test("a lookup that starts on a user's http registry and passes through https is
   });
   t.after(secure.close);
   const redirecting = await startProxy({
-    redirect: (url) => (url.startsWith(REMOTE_HTTP) ? `${secure.origin}/next` : undefined),
+    redirect: (url) => (isRemote(url) ? `${secure.origin}/next` : undefined),
   });
   t.after(redirecting.close);
   const context = await npmContext({ registry: REMOTE_HTTP, proxy: redirecting.url });
@@ -605,8 +608,7 @@ test("a loopback http registry that redirects a lookup to http on a host that is
 test("a user's http registry may redirect a lookup to loopback http", async (t) => {
   const loopback = await startServer({ secure: false, host: "localhost" });
   const proxy = await startProxy({
-    redirect: (url) =>
-      url.startsWith(REMOTE_HTTP) ? `${loopback.origin}${new URL(url).pathname}` : undefined,
+    redirect: (url) => (isRemote(url) ? `${loopback.origin}${new URL(url).pathname}` : undefined),
   });
   t.after(() => Promise.all([proxy.close(), loopback.close()]));
   const context = await npmContext({ registry: REMOTE_HTTP, proxy: proxy.url });
