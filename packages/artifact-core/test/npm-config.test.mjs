@@ -1900,14 +1900,39 @@ test("under npm exec, a key in your own ~/.npmrc that npm expands to https-proxy
   assert.equal(options.httpsProxy, "http://own.example.com:1/");
 });
 
-test("under npm exec, no note about a caller's value when the exported value is npm's own expansion", async () => {
-  const context = await fixture({ project: "https-proxy=http://${PHOST}:1/\n" });
+test("under npm exec, the note about a caller's value appears whenever a project entry with a variable claims the exported value, because npm's expansion cannot always be reproduced", async () => {
+  // npm expands with the environment it had while loading the file, before INIT_CWD and its own
+  // exports, so equality with Calavera's expansion proves nothing; the note is conditional.
+  for (const value of [
+    "http://${PHOST}:1/",
+    "${npm_config_https_proxy}",
+    "http://${INIT_CWD}.example/",
+  ]) {
+    const context = await fixture({ project: `https-proxy=${value}\n` });
+    const { warnings } = await loadNpmRegistryOptions(
+      npmExecContext(context, {
+        PHOST: "project-proxy.example.com",
+        npm_config_https_proxy: "http://project-proxy.example.com:1/",
+      }),
+    );
+    assert.match(
+      warnings.join("\n"),
+      /^Also ignored npm_config_https_proxy in the environment/m,
+      value,
+    );
+  }
+});
+
+test("under npm exec, a user .npmrc that keeps user trust gets no extra note, because its warning already says the variable does not replace the entry", async () => {
+  const context = await fixture({});
+  const ci = join(context.directory, "ci.npmrc");
+  await writeFile(ci, "https-proxy=http://${CORP_HOST}:3128/\n");
   const { warnings } = await loadNpmRegistryOptions(
     npmExecContext(context, {
-      PHOST: "project-proxy.example.com",
-      npm_config_https_proxy: "http://project-proxy.example.com:1/",
+      npm_config_userconfig: ci,
+      npm_config_https_proxy: "http://caller.example.com:3128/",
     }),
   );
   assert.equal(warnings.length, 1);
-  assert.match(warnings[0], /^Ignored https-proxy in the project \.npmrc/);
+  assert.match(warnings[0], /an npm_config_https_proxy variable does not replace it/);
 });

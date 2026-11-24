@@ -1,5 +1,5 @@
 // @ts-check
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 
 import { readConfigText } from "./config-files.js";
 
@@ -31,21 +31,13 @@ export function parseEnvironmentFile(text) {
 }
 
 /**
- * Yarn expands `${NAME}` and its fallback forms, and a backslash escapes the next `$`
- * (`$Q` in Yarn 4.18.1).
+ * Whether a value from an environment file may hold a variable: Yarn and Bun expand `${NAME}` (and
+ * Bun `$NAME`), and both turn an escaped `\\${NAME}` into a literal `${NAME}`, which Calavera's
+ * environment layer would expand from the caller's environment. Any `$` therefore counts.
  * @param {string} value
  */
-export function hasYarnReference(value) {
-  return /(?<!\\)(?:\\\\)*\$\{/.test(value);
-}
-
-/**
- * Bun expands `$NAME` and `${NAME}`, in any quotes, also when NAME starts with a digit, and any
- * backslash before `$` keeps it literal (probed with Bun 1.3.9).
- * @param {string} value
- */
-export function hasBunReference(value) {
-  return /(?<!\\)\$(?:\{|\w)/.test(value);
+export function mayHoldVariable(value) {
+  return value.includes("$");
 }
 
 /**
@@ -73,18 +65,28 @@ export async function variablesFromReferences(paths, hasReference, warnings) {
 }
 
 /**
- * The file of `paths` that defines each variable last, so a later file replaces an earlier one. A
- * file that does not exist or cannot be read is skipped; variablesFromReferences warns about the
- * second.
+ * The file of `paths` that defines each variable last, so a later file replaces an earlier one,
+ * with the value Bun gives it: without surrounding quotes, and with `\\n`, `\\r`, and `\\t` in a
+ * double-quoted value turned into the characters they name (probed with Bun 1.3.9). A file that
+ * does not exist or cannot be read is skipped; variablesFromReferences warns about the second.
  * @param {string[]} paths Lowest precedence first.
  */
 export async function environmentFileSources(paths) {
-  /** @type {Map<string, string>} */
+  /** @type {Map<string, { path: string, value: string }>} */
   const sources = new Map();
   for (const path of paths) {
     const text = await readConfigText(path, "environment file", []);
     if (text === undefined) continue;
-    for (const name of parseEnvironmentFile(text).keys()) sources.set(name, path);
+    for (const [name, raw] of parseEnvironmentFile(text)) {
+      const trimmed = raw.trim();
+      const quote = /^(['"`])([\s\S]*)\1$/.exec(trimmed);
+      const inner = quote?.[2] ?? trimmed;
+      const value =
+        quote?.[1] === '"'
+          ? inner.replaceAll("\\n", "\n").replaceAll("\\r", "\r").replaceAll("\\t", "\t")
+          : inner;
+      sources.set(name, { path, value });
+    }
   }
   return sources;
 }
@@ -96,11 +98,14 @@ export async function environmentFileSources(paths) {
  * `test`, and `development` otherwise. When a file of the mode's chain or of the development chain
  * defines NODE_ENV, the NODE_ENV in Calavera's environment may have come from it, which leaves
  * Bun's mode at `development`, so that chain is judged too.
+ * Bun also loads each file that an `--env-file` option of its own command line names, so those
+ * files are a chain of their own.
  * @param {string} cwd
  * @param {NodeJS.ProcessEnv} env
  * @param {string[]} warnings
+ * @param {string[]} execArgv Bun's options, as process.execArgv holds them.
  */
-export async function bunEnvironmentFileChains(cwd, env, warnings) {
+export async function bunEnvironmentFileChains(cwd, env, warnings, execArgv) {
   /** @param {string} mode */
   const chain = (mode) =>
     [".env", `.env.${mode}`, ...(mode === "test" ? [] : [".env.local"]), `.env.${mode}.local`].map(
@@ -108,13 +113,21 @@ export async function bunEnvironmentFileChains(cwd, env, warnings) {
     );
   const mode =
     env.NODE_ENV === "production" || env.NODE_ENV === "test" ? env.NODE_ENV : "development";
-  if (mode === "development") return [chain(mode)];
+  /** @type {string[]} */
+  const named = [];
+  execArgv.forEach((option, index) => {
+    const next = execArgv[index + 1];
+    if (option.startsWith("--env-file=")) named.push(option.slice("--env-file=".length));
+    else if (option === "--env-file" && next) named.push(next);
+  });
+  const extra = named.length > 0 ? [named.map((file) => resolve(cwd, file))] : [];
+  if (mode === "development") return [chain(mode), ...extra];
   // A file of either chain may have set NODE_ENV: a development file, when the caller set none.
   for (const path of new Set([...chain(mode), ...chain("development")])) {
     const text = await readConfigText(path, "environment file", warnings);
     if (text !== undefined && parseEnvironmentFile(text).has("NODE_ENV")) {
-      return [chain(mode), chain("development")];
+      return [chain(mode), chain("development"), ...extra];
     }
   }
-  return [chain(mode)];
+  return [chain(mode), ...extra];
 }

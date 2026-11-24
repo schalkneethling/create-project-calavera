@@ -1,11 +1,7 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import {
-  hasBunReference,
-  hasYarnReference,
-  parseEnvironmentFile,
-} from "../src/environment-files.js";
+import { mayHoldVariable, parseEnvironmentFile } from "../src/environment-files.js";
 
 test("parseEnvironmentFile finds the keys and raw values that dotenv's parse finds", () => {
   const entries = parseEnvironmentFile(
@@ -33,15 +29,9 @@ test("parseEnvironmentFile finds the keys and raw values that dotenv's parse fin
   });
 });
 
-test("hasYarnReference and hasBunReference follow each tool's expansion syntax and escapes", () => {
-  assert.equal(hasYarnReference("http://${X}/"), true);
-  assert.equal(hasYarnReference("http://\\${X}/"), false);
-  assert.equal(hasYarnReference("http://\\\\${X}/"), true);
-  assert.equal(hasYarnReference("http://$X/"), false);
-  assert.equal(hasBunReference("http://$X/"), true);
-  assert.equal(hasBunReference("http://${X}/"), true);
-  assert.equal(hasBunReference("http://\\$X/"), false);
-  assert.equal(hasBunReference("http://\\\\$X/"), false);
-  assert.equal(hasBunReference("http://$1/"), true);
-  assert.equal(hasBunReference("http://$/"), false);
+test("mayHoldVariable counts every $, escaped or not, because Yarn and Bun unescape \\$ to a literal $ that Calavera would expand", () => {
+  assert.equal(mayHoldVariable("http://${X}/"), true);
+  assert.equal(mayHoldVariable("http://$X/"), true);
+  assert.equal(mayHoldVariable("http://\\${X}/"), true);
+  assert.equal(mayHoldVariable("http://plain.example.com/"), false);
 });
