@@ -662,7 +662,9 @@ function assertListing(result, items, statements = []) {
 /**
  * The files, dependencies, and artifacts a JSON result names, wherever they sit in it: every
  * `path`, `destination`, and `file` value, the names in a dependency list or the keys of a
- * dependency map, and artifact IDs.
+ * dependency map, and artifact IDs. An `integrationInputs` entry's `path` is the input's place in
+ * the recipe, such as `integrationOptions.github-repository-controls.defaultBranch`, not a file,
+ * and the summary prints the input by its name and value, so the entries name no item (#1143).
  *
  * @param {unknown} value
  * @returns {string[]}
@@ -682,6 +684,7 @@ export function namedItems(value) {
       return;
     }
     for (const [name, child] of Object.entries(node)) {
+      if (name === "integrationInputs") continue;
       if (/dependencies$/i.test(name) && Array.isArray(child)) {
         // ApplyResult.dependencies is a list of package names.
         for (const entry of child) {
