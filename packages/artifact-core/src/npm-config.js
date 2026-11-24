@@ -559,11 +559,11 @@ export async function loadNpmRegistryOptions({
   };
 
   // The variables that a Yarn 4 `.env.yarn` or a Bun `.env` file set from a variable (#1186).
-  /** @type {Map<string, { path: string, tool: string }>} */
+  /** @type {Map<string, { path: string, tool: string, candidate: boolean }>} */
   const fromEnvironmentFiles = new Map();
-  /** @param {Map<string, string>} claimed @param {string} tool */
-  const addClaims = (claimed, tool) => {
-    for (const [name, path] of claimed) fromEnvironmentFiles.set(name, { path, tool });
+  /** @param {Map<string, string>} claimed @param {string} tool @param {boolean} [candidate] */
+  const addClaims = (claimed, tool, candidate = false) => {
+    for (const [name, path] of claimed) fromEnvironmentFiles.set(name, { path, tool, candidate });
   };
   // Set, with its reason and remedy, when Calavera cannot tell which environment files Yarn
   // loaded; every registry and proxy variable is then ignored (#1186).
@@ -581,7 +581,11 @@ export async function loadNpmRegistryOptions({
     // Candidates count on their own: Yarn loaded at most one of them, so no file's value can
     // replace another's. A list Yarn loaded counts in its order.
     for (const chain of files.candidates ? files.paths.map((path) => [path]) : [files.paths]) {
-      addClaims(await variablesFromReferences(chain, mayHoldVariable, warnings), "Yarn");
+      addClaims(
+        await variablesFromReferences(chain, mayHoldVariable, warnings),
+        "Yarn",
+        files.candidates,
+      );
     }
   }
   if (runtime === "bun") {
@@ -601,6 +605,12 @@ export async function loadNpmRegistryOptions({
     if (!claim) return false;
     const file = printable(relative(cwd, claim.path) || claim.path);
     const variable = printable(name);
+    if (claim.candidate) {
+      warnings.push(
+        `Ignored ${variable}, which ${file} sets from a variable, and Yarn may have loaded that file: Calavera cannot see the folder Yarn ran in, which decides which .env.yarn Yarn read, and Calavera does not take a variable's value from a project file. Write the value without a variable in ${file}, or list the file Yarn loads in injectEnvironmentFiles in the project's .yarnrc.yml, or an empty list if it loads none, so Calavera can tell.`,
+      );
+      return true;
+    }
     warnings.push(
       `Ignored ${variable}, which ${file} sets from a variable: ${claim.tool} expanded the variable before Calavera started, and Calavera does not take a variable's value from a project file. Write the value without a variable in ${file}, or remove it from ${file} and set ${variable} in your own environment.`,
     );

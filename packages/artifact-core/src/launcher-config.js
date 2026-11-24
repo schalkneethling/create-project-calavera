@@ -1,7 +1,9 @@
 // @ts-check
+import { execFile } from "node:child_process";
 import { readdir, readFile as readFileText, readlink as readLink } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve } from "node:path";
+import { promisify } from "node:util";
 
 import { TomlError, parse as parseToml } from "smol-toml";
 import { parseDocument } from "yaml";
@@ -248,26 +250,58 @@ const YARN_FILE_INPUTS = [
 ];
 
 /**
- * The working folder of the Yarn process that started Calavera, read from /proc on Linux when the
- * parent process runs Yarn, or null when it cannot be read. Yarn reads its default `.env.yarn`
- * from this folder, which it does not pass to the child: under `--cwd`, `yarn workspace`, and
- * `yarn workspaces foreach`, INIT_CWD names another folder, and Yarn overwrites PWD.
- * @param {{ platform?: string, ppid?: number, readFile?: (path: string) => Promise<string>, readlink?: (path: string) => Promise<string> }} [system]
+ * Whether a parent process's arguments run Yarn: the program or the script it runs is `yarn`,
+ * Yarn's bundle `yarn.js` or `yarn.cjs`, or a Yarn release such as `yarn-4.18.1.cjs`.
+ * @param {string[]} args
+ */
+function runsYarn(args) {
+  return args
+    .slice(0, 2)
+    .some((arg) => /^yarn(?:-\d[\w.-]*\.c?js|\.c?js)?$/.test(arg.split(/[\\/]/).pop() ?? ""));
+}
+
+/**
+ * The working folder of the Yarn process that started Calavera, or null when it cannot be read.
+ * Yarn reads its default `.env.yarn` from this folder, which it does not pass to the child: under
+ * `--cwd`, `yarn workspace`, and `yarn workspaces foreach`, INIT_CWD names another folder, and
+ * Yarn overwrites PWD. On Linux it comes from /proc; on macOS from `ps` and `lsof`, which ship
+ * with the system. Either way the parent must run Yarn, so a shell script between Yarn and
+ * Calavera gives null.
+ * @param {{ platform?: string, ppid?: number, readFile?: (path: string) => Promise<string>, readlink?: (path: string) => Promise<string>, run?: (command: string, args: string[]) => Promise<string> }} [system]
  */
 export async function yarnParentCwd({
   platform = process.platform,
   ppid = process.ppid,
   readFile = (path) => readFileText(path, "utf8"),
   readlink = (path) => readLink(path),
+  run = runCommand,
 } = {}) {
-  if (platform !== "linux") return null;
   try {
-    const command = await readFile(`/proc/${ppid}/cmdline`);
-    if (!/yarn/i.test(command)) return null;
-    return await readlink(`/proc/${ppid}/cwd`);
+    if (platform === "linux") {
+      const args = (await readFile(`/proc/${ppid}/cmdline`)).split("\0");
+      return runsYarn(args) ? await readlink(`/proc/${ppid}/cwd`) : null;
+    }
+    if (platform === "darwin") {
+      // ps joins the arguments with spaces; a path with a space only makes the check fail.
+      const args = (await run("ps", ["-o", "args=", "-p", String(ppid)])).trim().split(" ");
+      if (!runsYarn(args)) return null;
+      const output = await run("lsof", ["-a", "-d", "cwd", "-p", String(ppid), "-Fn"]);
+      const line = output.split("\n").find((each) => each.startsWith("n"));
+      return line ? line.slice(1) : null;
+    }
   } catch {
-    return null;
+    // An unreadable or missing source leaves the folder unknown.
   }
+  return null;
+}
+
+/**
+ * The standard output of a short command, with a two-second limit.
+ * @param {string} command @param {string[]} args
+ */
+async function runCommand(command, args) {
+  const { stdout } = await promisify(execFile)(command, args, { timeout: 2000 });
+  return stdout;
 }
 
 /**
@@ -293,8 +327,8 @@ function isYarnSetting(name, setting) {
  * The environment files Yarn 4.18.1 loaded into the environment of the binary or script that runs
  * Calavera, lowest precedence first (`Configuration.find` and `makeScriptEnv` in @yarnpkg/core):
  *
- * - Yarn passes the folder it started in as INIT_CWD; without it, Yarn's script environment did
- *   not start Calavera, and no file was loaded.
+ * - Yarn passes the folder it works in, which --cwd and `yarn workspace` set, as INIT_CWD; without
+ *   it, Yarn's script environment did not start Calavera, and no file was loaded.
  * - The `injectEnvironmentFiles` lists of `~/.yarnrc.yml` (from `os.homedir()`) and of each
  *   `.yarnrc.yml`, or the file YARN_RC_FILENAME names, from the root down to INIT_CWD are joined,
  *   home first, each entry resolved from its file's folder.
@@ -420,7 +454,7 @@ export async function yarnEnvironmentFiles({
       if (!env.PROJECT_CWD) {
         return undetermined(
           "it cannot see the folder Yarn ran in, and Yarn passed no PROJECT_CWD, so the folders Yarn could have run in are unknown",
-          "List the file in injectEnvironmentFiles in the project's .yarnrc.yml, so Calavera can tell whether Yarn loaded it.",
+          "List the file Yarn loads in injectEnvironmentFiles in the project's .yarnrc.yml, or an empty list if it loads none, so Calavera can tell.",
         );
       }
       const projectCwd = resolve(env.PROJECT_CWD);
@@ -436,7 +470,7 @@ export async function yarnEnvironmentFiles({
       if (inProject === undefined) {
         return undetermined(
           "it cannot see the folder Yarn ran in, and the project has more folders than Calavera searches for a .env.yarn",
-          "List the file in injectEnvironmentFiles in the project's .yarnrc.yml, so Calavera can tell whether Yarn loaded it.",
+          "List the file Yarn loads in injectEnvironmentFiles in the project's .yarnrc.yml, or an empty list if it loads none, so Calavera can tell.",
         );
       }
       for (const folder of inProject) folders.add(folder);
@@ -469,7 +503,7 @@ export async function yarnEnvironmentFiles({
 }
 
 /**
- * Every folder in `root`, `root` included, except node_modules and .git folders, or undefined
+ * Every folder in `root`, `root` included, except node_modules and dot-folders, or undefined
  * when there are more than `limit`.
  * @param {string} root @param {number} limit
  */
@@ -483,7 +517,8 @@ async function projectFolders(root, limit) {
     if (folders.length > limit) return undefined;
     const entries = await readdir(folder, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
-      if (entry.isDirectory() && entry.name !== "node_modules" && entry.name !== ".git") {
+      // node_modules and dot-folders, such as .git, .yarn, and .next, are not where Yarn runs.
+      if (entry.isDirectory() && entry.name !== "node_modules" && !entry.name.startsWith(".")) {
         pending.push(join(folder, entry.name));
       }
     }
