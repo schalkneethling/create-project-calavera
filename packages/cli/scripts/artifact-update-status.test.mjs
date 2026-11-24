@@ -12,7 +12,7 @@ import test from "node:test";
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import { resolveArtifactPackage } from "@schalkneethling/calavera-artifact-core/registry";
 
-import { runArtifactCommand } from "../src/artifact-lifecycle.js";
+import { readArtifactStatus, runArtifactCommand } from "../src/artifact-lifecycle.js";
 import {
   artifactDoctorVerdict,
   artifactReleaseNotesUrl,
@@ -680,6 +680,8 @@ test("registry, network, timeout, and TLS codes are each reported per artifact",
     "ERR_TLS_CERT_ALTNAME_INVALID",
     // Artifact-core's code for a package document it cannot read, such as a null body.
     "EBADPACKUMENT",
+    // Artifact-core's code for a redirect it refused to follow (#1207).
+    "EINSECUREREDIRECT",
   ];
   await inProject(
     { ids: ["skill-project-goal"], locked: [{ id: "skill-project-goal", version: "0.2.1" }] },
@@ -2477,4 +2479,210 @@ test("a registry error that only carries the timeout code is not reported as a m
       await assert.rejects(runArtifactCommand(statusOptions(), registry), /^Error: failed$/);
     },
   );
+});
+
+// #1207, owner decision 3 (2026-11-24): a redirect that artifact-core refuses is a failed lookup of
+// that artifact, so the report names it and checks the rest. The reason and remedy quote no URL.
+// The remedy fits the refusal: a downgrade from https, a plain-http registry that sent the lookup to
+// another host, or a refusal whose fields Calavera cannot read.
+const REFUSED_REDIRECT_REMEDY = {
+  downgrade:
+    "Point the npm registry settings at a registry that serves Calavera's packages over https without redirecting to plain http, then run: ",
+  otherHost:
+    "Point the npm registry settings at an https registry, or at a plain-http registry in your own user configuration or environment that does not redirect lookups to another host, then run: ",
+  unknown:
+    "Point the npm registry settings at a registry that serves Calavera's packages over https without redirecting to plain http, then run: ",
+};
+const STATUS_RETRY = "npm create project-calavera artifacts status -- --check-updates";
+const DOCTOR_RETRY = "npm create project-calavera artifacts doctor -- --check-updates";
+
+test("a redirect that artifact-core refuses is reported for that artifact, and the rest are checked, by status, doctor, and the read-only report", async () => {
+  // A plain-http registry on 127.0.0.1 redirects the lookup of one package to plain http on
+  // another host, which artifact-core refuses before the request. The user .npmrc sends every
+  // request that is not loopback to a local proxy, so the refused host is never looked up.
+  const refusedId = "skill-project-goal";
+  const checkedId = "skill-code-review";
+  /** @type {string[]} */
+  const proxied = [];
+  const proxy = createServer((request, response) => {
+    proxied.push(request.url ?? "");
+    response.writeHead(404);
+    response.end();
+  });
+  const registry = createServer((request, response) => {
+    const name = decodeURIComponent((request.url ?? "/").slice(1));
+    if (name === packageName(refusedId)) {
+      response.writeHead(301, { location: `http://registry.example.test/${request.url}` });
+      response.end();
+      return;
+    }
+    const { port } = /** @type {import("node:net").AddressInfo} */ (registry.address());
+    response.writeHead(200, { "content-type": "application/json" });
+    response.end(
+      JSON.stringify({
+        name,
+        "dist-tags": { latest: "0.3.0" },
+        versions: {
+          "0.3.0": {
+            name,
+            version: "0.3.0",
+            dist: {
+              tarball: `http://127.0.0.1:${port}/-/package.tgz`,
+              integrity: `sha512-${"a".repeat(86)}==`,
+            },
+          },
+        },
+      }),
+    );
+  });
+  for (const server of [proxy, registry]) {
+    await new Promise((done) => server.listen(0, "127.0.0.1", () => done(undefined)));
+  }
+  const portOf = (/** @type {import("node:http").Server} */ server) =>
+    /** @type {import("node:net").AddressInfo} */ (server.address()).port;
+  try {
+    await inProject(
+      {
+        ids: [refusedId, checkedId],
+        locked: [
+          { id: refusedId, version: "0.2.1" },
+          { id: checkedId, version: "0.2.1" },
+        ],
+      },
+      async () => {
+        const userconfig = join(process.cwd(), "user.npmrc");
+        await writeFile(
+          userconfig,
+          [
+            `@schalkneethling:registry=http://127.0.0.1:${portOf(registry)}/`,
+            `proxy=http://127.0.0.1:${portOf(proxy)}/`,
+            "noproxy=127.0.0.1",
+            "",
+          ].join("\n"),
+        );
+        const env = { npm_config_userconfig: userconfig, HOME: process.cwd() };
+        const resolve = (/** @type {Parameters<typeof resolveArtifactPackage>[0]} */ request) =>
+          resolveArtifactPackage({ ...request, cwd: process.cwd(), env });
+        const services = {
+          resolve,
+          extract: async () => {
+            throw new Error("Status never extracts a package.");
+          },
+        };
+        const reports = {
+          status: await runArtifactCommand(statusOptions(), services),
+          doctor: await runArtifactCommand(statusOptions({ artifactAction: "doctor" }), services),
+          readOnly: await readArtifactStatus(
+            { config: "calavera.config.json", checkUpdates: true },
+            { resolve },
+          ),
+        };
+        const retries = { status: STATUS_RETRY, doctor: DOCTOR_RETRY, readOnly: STATUS_RETRY };
+        for (const [name, result] of Object.entries(reports)) {
+          const refused = result.artifacts.find(({ id }) => id === refusedId);
+          const checked = result.artifacts.find(({ id }) => id === checkedId);
+          assert.deepEqual(
+            refused?.updateCheckFailure && {
+              code: refused.updateCheckFailure.code,
+              statusCode: refused.updateCheckFailure.statusCode,
+              origin: refused.updateCheckFailure.origin,
+              reason: refused.updateCheckFailure.reason,
+            },
+            {
+              code: "EINSECUREREDIRECT",
+              statusCode: null,
+              origin: null,
+              reason: `the registry lookup for ${packageName(refusedId)} was redirected over plain http to a host other than the registry's own, which Calavera does not follow`,
+            },
+            name,
+          );
+          assert.equal(
+            refused?.updateCheckFailure?.remedy,
+            `${REFUSED_REDIRECT_REMEDY.otherHost}${retries[/** @type {keyof typeof retries} */ (name)]}`,
+            name,
+          );
+          assert.equal(checked?.latestVersion, "0.3.0", name);
+          assert.equal(checked?.updateCheckFailure, null, name);
+          const report = [
+            JSON.stringify(result),
+            ...messages(formatArtifactStatus(result)),
+            ...artifactDoctorVerdict(result).map(({ message }) => message),
+          ].join("\n");
+          assert.doesNotMatch(report, /example\.test/, name);
+        }
+        assert.deepEqual(
+          artifactDoctorVerdict(reports.doctor)[0]?.message,
+          `The update check failed for 1 artifact: ${refusedId}. The lines above name each cause. The installed files were still checked.`,
+        );
+        assert.deepEqual(proxied, []);
+      },
+    );
+  } finally {
+    for (const server of [proxy, registry]) {
+      await new Promise((done) => server.close(() => done(undefined)));
+    }
+  }
+});
+
+test("a refused redirect from https names the downgrade, whether its fields are on the error or its cause", async () => {
+  const refusedId = "skill-project-goal";
+  const name = packageName(refusedId);
+  const downgrade = `the registry lookup for ${name} was redirected from https to plain http on a host that is not loopback, which Calavera does not follow`;
+  const unknown = `the registry lookup for ${name} was redirected to plain http on a host that is not loopback, which Calavera does not follow`;
+  const fields = { code: "EINSECUREREDIRECT", protocol: "https:", otherHost: false };
+  const { downgrade: downgradeRemedy, unknown: unknownRemedy } = REFUSED_REDIRECT_REMEDY;
+  for (const { form, error, reason, remedy } of [
+    {
+      form: "on the error",
+      error: registryError("refused", fields),
+      reason: downgrade,
+      remedy: downgradeRemedy,
+    },
+    {
+      // artifact-core's npm configuration notes wrap the refusal and keep it as `cause`.
+      form: "on the cause",
+      error: registryError("refused, with notes", {
+        code: "EINSECUREREDIRECT",
+        cause: registryError("refused", fields),
+      }),
+      reason: downgrade,
+      remedy: downgradeRemedy,
+    },
+    {
+      // The error's own fields win over a cause's.
+      form: "on the error, beside a cause with other fields",
+      error: registryError("refused", { ...fields, cause: { otherHost: true } }),
+      reason: downgrade,
+      remedy: downgradeRemedy,
+    },
+    {
+      // artifact-core writes "http:" only for a download from loopback http, never for a lookup.
+      form: "from http without another host",
+      error: registryError("refused", { ...fields, protocol: "http:" }),
+      reason: unknown,
+      remedy: unknownRemedy,
+    },
+    {
+      form: "missing or malformed",
+      error: registryError("refused", {
+        code: "EINSECUREREDIRECT",
+        protocol: "https://registry.example.test/",
+        otherHost: "yes",
+      }),
+      reason: unknown,
+      remedy: unknownRemedy,
+    },
+  ]) {
+    await inProject(
+      { ids: [refusedId], locked: [{ id: refusedId, version: "0.2.1" }] },
+      async () => {
+        const [artifact] = (
+          await runArtifactCommand(statusOptions(), statusRegistry({}, {}, { [refusedId]: error }))
+        ).artifacts;
+        assert.equal(artifact?.updateCheckFailure?.reason, reason, form);
+        assert.equal(artifact?.updateCheckFailure?.remedy, `${remedy}${STATUS_RETRY}`, form);
+        assert.doesNotMatch(JSON.stringify(artifact), /example\.test/, form);
+      },
+    );
+  }
 });

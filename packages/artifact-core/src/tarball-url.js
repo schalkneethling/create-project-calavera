@@ -6,8 +6,8 @@
 
 // The hosts that may serve a tarball over plain http, as URL.hostname writes them. The release
 // rehearsal's registry and the tests listen on loopback (owner decision on #1194).
-const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
-const TARBALL_RULE =
+export const LOOPBACK_HOSTS = new Set(["localhost", "127.0.0.1", "[::1]"]);
+export const TARBALL_RULE =
   "Calavera fetches artifact tarballs only from https URLs, or from http URLs on localhost, 127.0.0.1, or ::1.";
 // The longest protocol a message quotes, colon included. Every protocol npm-package-arg knows is
 // shorter; a longer one is registry text that the message reports as too long instead.

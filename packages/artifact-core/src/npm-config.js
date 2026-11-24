@@ -5,6 +5,7 @@ import { Agent as HttpsAgent } from "node:https";
 import { homedir, userInfo } from "node:os";
 import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
 
+import { getAgent } from "@npmcli/agent";
 import { decode } from "ini";
 
 import { printable, readConfigText } from "./config-files.js";
@@ -817,6 +818,43 @@ function registryBypassesProxy(registryUrl, configured, env) {
         segments.length > 0 && segments.every((segment, index) => hostSegments[index] === segment)
       );
     });
+}
+
+// The defaults of the agent options npm-registry-fetch passes to make-fetch-happen, as
+// `maxSockets: opts.maxSockets`, `timeout: opts.timeout || 30 * 1000`, `noProxy: opts.noProxy`, and
+// `strictSSL: opts.strictSSL` (npm-registry-fetch lib/index.js and lib/default-opts.js, which reads
+// NOPROXY when it loads). make-fetch-happen turns `strictSSL` into `rejectUnauthorized`
+// (lib/options.js) and hands them all to @npmcli/agent (`getAgent` in lib/remote.js). The proxy
+// agents open their connection to an https proxy with these options, not the request's, so
+// `rejectUnauthorized` keeps that certificate checked whatever NODE_TLS_REJECT_UNAUTHORIZED says.
+// Tests compare them with the installed npm-registry-fetch and the agents it would choose.
+export const NPM_REGISTRY_FETCH_AGENT_DEFAULTS = {
+  maxSockets: 12,
+  timeout: 5 * 60 * 1000,
+  noProxy: process.env.NOPROXY,
+  strictSSL: true,
+};
+
+/**
+ * The agent function for `requestOptions`: its own `agent` when it has one, or else the agent
+ * that make-fetch-happen would choose with @npmcli/agent from the same options, so a caller that
+ * wraps the agent, such as the redirect check, keeps the proxy and noProxy settings and the
+ * proxy environment variables that @npmcli/agent falls back to.
+ * @param {Record<string, unknown>} requestOptions
+ * @returns {(url: URL) => unknown}
+ */
+export function requestAgent(requestOptions) {
+  if (typeof requestOptions.agent === "function") {
+    return /** @type {(url: URL) => unknown} */ (requestOptions.agent);
+  }
+  const { strictSSL, ...defaults } = NPM_REGISTRY_FETCH_AGENT_DEFAULTS;
+  const agentOptions = {
+    ...defaults,
+    rejectUnauthorized: strictSSL,
+    proxy: requestOptions.httpsProxy || requestOptions.proxy,
+    noProxy: requestOptions.noProxy ?? defaults.noProxy,
+  };
+  return (url) => getAgent(url, agentOptions);
 }
 
 const directAgents = {

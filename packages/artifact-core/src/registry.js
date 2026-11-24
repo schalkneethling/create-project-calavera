@@ -7,7 +7,8 @@ import pacote from "pacote";
 import semver from "semver";
 
 import { artifactForId } from "./catalog.js";
-import { loadNpmRegistryOptions, pacoteTarballUrl } from "./npm-config.js";
+import { loadNpmRegistryOptions, pacoteTarballUrl, requestAgent } from "./npm-config.js";
+import { redirectGuard } from "./redirect-guard.js";
 import { assertTarballUrl, withTarballRefusal } from "./tarball-url.js";
 
 const TAGS = new Set(["latest", "next"]);
@@ -44,7 +45,7 @@ export async function resolveArtifactPackage(request) {
     withAuthFailure(npm, { subject: artifact.packageName, download: false }, () =>
       withRegistryCode(artifact.packageName, () =>
         pacote.manifest(`${artifact.packageName}@${request.version ?? tag}`, {
-          ...npm.requestOptions,
+          ...guardedRequestOptions(npm, { packageName: artifact.packageName, download: false }),
           cache: request.cache,
           offline: request.offline,
           fullMetadata: true,
@@ -90,7 +91,7 @@ export async function resolvePackageDistTag({ packageName, tag, cwd, env, signal
   const manifest = await withNpmDiagnostics(npm, () =>
     withAuthFailure(npm, { subject: packageName, download: false }, () =>
       pacote.manifest(`${packageName}@${tag}`, {
-        ...npm.requestOptions,
+        ...guardedRequestOptions(npm, { packageName, download: false }),
         fetchRetries: 0,
         signal,
       }),
@@ -127,7 +128,11 @@ export async function extractArtifactPackage(resolution, destination, cliVersion
         { subject: `${resolution.packageName}@${resolution.version}`, download: true },
         () =>
           pacote.extract(resolution.resolved, destination, {
-            ...npm.requestOptions,
+            ...guardedRequestOptions(npm, {
+              packageName: resolution.packageName,
+              download: true,
+              startUrl: tarballUrl,
+            }),
             registry: npm.registryUrl,
             cache: resolution.cache,
             integrity: resolution.integrity,
@@ -154,6 +159,27 @@ export async function extractArtifactPackage(resolution, destination, cliVersion
   }
 
   return { manifest, payloadPath, payloadHash: await hashArtifactPayload(payloadPath) };
+}
+
+/**
+ * The npm request options for one pacote call, with an agent that refuses a redirect to plain http
+ * on a host that is not loopback (#1207); see redirectGuard. Every pacote call passes its options
+ * through here, so no lookup or download follows such a redirect. `startUrl` is the first URL
+ * requested: the tarball URL for a download, and the registry for a lookup.
+ * @param {{ requestOptions: Record<string, unknown>, registryUrl: string }} npm
+ * @param {{ packageName: string, download: boolean, startUrl?: string }} request
+ * @returns {Record<string, unknown>}
+ */
+function guardedRequestOptions(npm, { packageName, download, startUrl = npm.registryUrl }) {
+  return {
+    ...npm.requestOptions,
+    agent: redirectGuard({
+      packageName,
+      download,
+      startUrl,
+      agent: requestAgent(npm.requestOptions),
+    }),
+  };
 }
 
 /** @param {{ packageName: string }} artifact The npm scope of the package, such as @schalkneethling. */
