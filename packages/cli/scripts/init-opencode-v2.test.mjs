@@ -439,6 +439,13 @@ for (const [label, mcp, expected, absent] of /** @type {const} */ ([
     /Move the calavera entry/,
   ],
   [
+    "an edited entry under mcp beside Calavera's entry under mcp.servers",
+    `{ "calavera": { "type": "local", "command": ["mine"], "enabled": true }, "servers": { "calavera": ${JSON.stringify(v2Entry(current))} } }`,
+    // Moving it into mcp.servers would make two calavera keys there, so it is not told to move.
+    "The calavera entry under mcp in opencode.json differs from every entry a Calavera release wrote, so it was left unchanged as a local edit. The calavera entry under mcp.servers already pins this release of Calavera. The file holds two calavera servers: keep the one you mean to use and remove the other.",
+    /move the entry there|Move the calavera entry/,
+  ],
+  [
     "an edited switch under mcp beside an entry under mcp.servers",
     `{ "calavera": { "enabled": false }, "servers": { "calavera": ${JSON.stringify(v2Entry(current))} } }`,
     'The calavera entry under mcp holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on the calavera entry under mcp.servers.',
@@ -461,9 +468,21 @@ test("a file with comments and an mcp.servers that is not the container gives bo
   await inProject(async () => {
     const text = `{\n  // mine\n  "mcp": { "servers": { "type": "local", "command": ["x"] } }\n}\n`;
     await writeFile(PATH, text);
+    // Another run would keep the file again, so the remedy asks for none.
     assert.equal(
       await assertKept(text),
-      "opencode.json has comments or trailing commas, which Calavera would lose by rewriting it, so it was left unchanged. opencode.json holds a server named servers directly under mcp, a name OpenCode 2 reserves for the object that holds servers, so it was left unchanged. Rename that server, then run --init again.",
+      "opencode.json has comments or trailing commas, which Calavera would lose by rewriting it, so it was left unchanged. opencode.json holds a server named servers directly under mcp, a name OpenCode 2 reserves for the object that holds servers, so it was left unchanged. Rename that server.",
+    );
+  });
+});
+
+test("a file with comments, an mcp.servers that is not the container, and an edited entry under mcp names the entry and asks for no rerun", async () => {
+  await inProject(async () => {
+    const text = `{\n  // mine\n  "mcp": { "calavera": { "type": "local", "command": ["mine"] }, "servers": ["x"] }\n}\n`;
+    await writeFile(PATH, text);
+    assert.equal(
+      await assertKept(text),
+      "opencode.json has comments or trailing commas, which Calavera would lose by rewriting it, so it was left unchanged. opencode.json holds an mcp.servers member that is not an object of servers, so it was left unchanged. Correct it as OpenCode's MCP documentation describes. The calavera entry under mcp in opencode.json differs from every entry a Calavera release wrote, so it was left unchanged as a local edit.",
     );
   });
 });

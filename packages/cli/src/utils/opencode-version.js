@@ -133,8 +133,10 @@ export async function checkOpenCodeVersion({
  * @returns {Promise<{ versionCheck: "ran", stdout: string } | { versionCheck: "timeout" | "failed" }>}
  */
 function runVersion(executable, folder, env, timeoutMs, platform) {
-  // On macOS and Linux the child leads a process group of its own, so a timeout ends everything it
-  // started too, such as the native binary npm's `opencode` launcher runs. On Windows, where a
+  // On macOS and Linux the child leads a process group of its own, so a timeout, too much output,
+  // or an exit of Calavera before the check ends kills everything in the group too, such as the
+  // native binary npm's `opencode` launcher runs. After a normal close the group is left alone,
+  // because its process ID may already name another process. On Windows, where a
   // detached child gets a console of its own, only the one `opencode.exe` is killed (owner decision
   // of 2026-11-24 on #1204). This uses `spawn`, because `execFile` does not pass `detached` on.
   const group = platform !== "win32";

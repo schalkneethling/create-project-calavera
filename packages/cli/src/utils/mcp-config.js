@@ -703,24 +703,27 @@ export function isOpenCodeServerContainer(value) {
 
 /**
  * Why `--init` leaves `opencode.json` unchanged when its `mcp.servers` is not OpenCode 2's object of
- * servers, or undefined when it is, or when `mcp` has no `servers` (ADR-0022, Decision 3).
+ * servers, or undefined when it is, or when `mcp` has no `servers` (ADR-0022, Decision 3). In a
+ * file with comments the remedy asks for no further run, because that run keeps the file again.
  *
  * @param {Record<string, unknown>} mcp
  * @param {string} path
+ * @param {boolean} commented
  * @returns {string | undefined}
  */
-function openCodeServersProblem(mcp, path) {
+function openCodeServersProblem(mcp, path, commented) {
+  const rerun = commented ? "." : ", then run --init again.";
   if (!Object.hasOwn(mcp, "servers") || isOpenCodeServerContainer(mcp.servers)) return undefined;
   const servers = mcp.servers;
   const reserved =
     "a name OpenCode 2 reserves for the object that holds servers, so it was left unchanged.";
   if (isPlainObject(servers) && typeof servers.type === "string") {
-    return `${path} holds a server named servers directly under mcp, ${reserved} Rename that server, then run --init again.`;
+    return `${path} holds a server named servers directly under mcp, ${reserved} Rename that server${rerun}`;
   }
   if (isPlainObject(servers) && Object.keys(servers).join() === "enabled") {
-    return `${path} holds an enabled switch for a server named servers directly under mcp, ${reserved} Rename or remove it, then run --init again.`;
+    return `${path} holds an enabled switch for a server named servers directly under mcp, ${reserved} Rename or remove it${rerun}`;
   }
-  return `${path} holds an mcp.servers member that is not an object of servers, so it was left unchanged. Correct it as OpenCode's MCP documentation describes, then run --init again.`;
+  return `${path} holds an mcp.servers member that is not an object of servers, so it was left unchanged. Correct it as OpenCode's MCP documentation describes${rerun}`;
 }
 
 /**
@@ -845,6 +848,9 @@ function commentedEntrySentence(path, { location, entry }, alone) {
     return `${named} holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on ${alone ? "a full calavera entry" : "the calavera entry"} under mcp.servers.`;
   }
   const edited = editedEntrySentence(path, named, pinsUnpublishedVersion(entry, location.entries));
+  // Beside another entry, a move would make two under mcp.servers, so the remedy for two servers
+  // that follows is the only one.
+  if (!alone) return edited;
   return location.name === "mcp"
     ? `${edited} OpenCode 2 reads servers from mcp.servers: move the entry there and replace enabled with disabled, as OpenCode's migration guide describes, or remove it.`
     : `${edited} To use Calavera's entry instead, replace yours with it.`;
@@ -932,11 +938,30 @@ export async function writeOpenCodeMcpConfig(
     return /** @type {const} */ ("skip");
   };
   const found = openCodeEntriesIn(currentConfig, locations);
-  const serversProblem = isPlainObject(mcp) ? openCodeServersProblem(mcp, targetPath) : undefined;
+  const serversProblem = isPlainObject(mcp)
+    ? openCodeServersProblem(mcp, targetPath, commented)
+    : undefined;
+  // With an `mcp.servers` that is not the container, only an entry directly under `mcp` can be
+  // found; it is named with its state, and the person corrects `mcp.servers` before any entry can
+  // be placed (ADR-0022, Decision 2).
+  const stateSentences = () =>
+    found.map(({ location, entry }) =>
+      isCalaveraMcpEntry(entry, location.entries)
+        ? `The calavera entry under ${location.name} is one a Calavera release wrote.`
+        : editedEntrySentence(
+            targetPath,
+            `The calavera entry under ${location.name}`,
+            pinsUnpublishedVersion(entry, location.entries),
+          ),
+    );
 
   if (commented) {
     if (serversProblem !== undefined) {
-      return kept([`${targetPath} ${COMMENTS} it was left unchanged.`, serversProblem]);
+      return kept([
+        `${targetPath} ${COMMENTS} it was left unchanged.`,
+        serversProblem,
+        ...stateSentences(),
+      ]);
     }
     if (found.length === 0) {
       // Nothing of Calavera's to keep, and the person needs the entry to add: a manual setup.
@@ -968,22 +993,7 @@ export async function writeOpenCodeMcpConfig(
     ...each,
     edited: !isCalaveraMcpEntry(each.entry, each.location.entries),
   }));
-  if (serversProblem !== undefined) {
-    // `mcp.servers` is not searched, so only an entry directly under `mcp` can be named; the
-    // person corrects `mcp.servers` before any entry can be placed (ADR-0022, Decision 2).
-    return kept([
-      serversProblem,
-      ...judged.map(({ location, entry, edited }) =>
-        edited
-          ? editedEntrySentence(
-              targetPath,
-              `The calavera entry under ${location.name}`,
-              pinsUnpublishedVersion(entry, location.entries),
-            )
-          : `The calavera entry under ${location.name} is one a Calavera release wrote.`,
-      ),
-    ]);
-  }
+  if (serversProblem !== undefined) return kept([serversProblem, ...stateSentences()]);
   if (judged.some(({ edited }) => edited)) {
     changes.push(editedOpenCodeChange(targetPath, judged));
     return "skip";

@@ -432,6 +432,80 @@ test(
 );
 
 test(
+  "a check that ended removes its exit handler, so exiting later signals no process group",
+  posix,
+  async () => {
+    await withFolders(async ({ project, bin }) => {
+      await stub(bin, printing("1.19.6\n"));
+      const moduleUrl = new URL("../src/utils/opencode-version.js", import.meta.url).href;
+      const record = join(project, "kills.json");
+      const script = join(project, "run-and-exit.mjs");
+      // The spy writes every signal it sees at once, because signal-exit runs its callbacks after
+      // the ordinary exit listeners, so an exit listener would write before they run.
+      await writeFile(
+        script,
+        [
+          `import { appendFileSync, writeFileSync } from "node:fs";`,
+          `writeFileSync(${JSON.stringify(record)}, "");`,
+          `const kill = process.kill.bind(process);`,
+          `process.kill = (pid, signal) => { appendFileSync(${JSON.stringify(record)}, JSON.stringify([pid, signal]) + "\\n"); try { return kill(pid, signal); } catch { return false; } };`,
+          `const { checkOpenCodeVersion } = await import(${JSON.stringify(moduleUrl)});`,
+          `const outcome = await checkOpenCodeVersion({ env: { PATH: ${JSON.stringify(bin)} }, timeoutMs: 20000 });`,
+          `appendFileSync(${JSON.stringify(record)}, JSON.stringify({ outcome }) + "\\n");`,
+          `process.exit(0);`,
+        ].join("\n"),
+      );
+      await new Promise((resolvePromise, reject) => {
+        execFile(process.execPath, [script], { timeout: 30_000 }, (error) =>
+          error ? reject(error) : resolvePromise(undefined),
+        );
+      });
+      const entries = (await readFile(record, "utf8"))
+        .split("\n")
+        .filter((line) => line !== "")
+        .map((line) => JSON.parse(line));
+      const outcome = entries.find((entry) => !Array.isArray(entry))?.outcome;
+      const kills = entries.filter((entry) => Array.isArray(entry));
+      assert.deepEqual(outcome, { versionCheck: "older", version: "1.19.6" });
+      assert.deepEqual(
+        kills.filter((/** @type {[number, string]} */ [pid]) => pid < 0),
+        [],
+        "a negative process ID names a group",
+      );
+    });
+  },
+);
+
+test(
+  "the child's standard input is never the caller's: it reads from the null device",
+  posix,
+  async () => {
+    await withFolders(async ({ project, bin }) => {
+      const record = join(bin, "stdin.json");
+      await stub(
+        bin,
+        [
+          `const fs = require("node:fs");`,
+          `const input = fs.fstatSync(0);`,
+          `const empty = fs.statSync("/dev/null");`,
+          `fs.writeFileSync(${JSON.stringify(record)}, JSON.stringify(input.isCharacterDevice() && input.rdev === empty.rdev));`,
+          printing("1.19.6\n"),
+        ].join("\n"),
+      );
+      const script = await runnerScript(project, bin, 20_000);
+      // The runner's own standard input is a pipe, so a child that inherited it would see a pipe.
+      await new Promise((resolvePromise) => {
+        const runner = spawnProcess(process.execPath, [script], {
+          stdio: ["pipe", "ignore", "ignore"],
+        });
+        runner.once("exit", resolvePromise);
+      });
+      assert.equal(JSON.parse(await readFile(record, "utf8")), true);
+    });
+  },
+);
+
+test(
   "a process whose check succeeds exits at once, not when the bound would have ended it",
   posix,
   async () => {
