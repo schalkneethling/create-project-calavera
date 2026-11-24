@@ -641,7 +641,8 @@ test("the agent options Calavera passes match npm-registry-fetch's defaults", ()
 });
 
 test("NOPROXY, which npm-registry-fetch reads and @npmcli/agent does not, keeps a host away from the proxy", async (t) => {
-  // npm-registry-fetch reads NOPROXY when it loads, so a child process starts with it set. The user
+  // Calavera's NPM_REGISTRY_FETCH_AGENT_DEFAULTS reads NOPROXY when npm-config.js loads, as
+  // npm-registry-fetch's default-opts.js does, so a child process starts with it set. The user
   // .npmrc names a proxy and no noproxy setting, so only the NOPROXY fallback keeps the registry on
   // 127.0.0.1 direct.
   const proxy = await startProxy();
