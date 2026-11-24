@@ -1328,9 +1328,10 @@ function refusedRedirect(error, packageName, retryCommand) {
   let remedy = https;
   if (refusal.otherHost === true) {
     redirected = "was redirected over plain http to a host other than the registry's own";
-    // Only the person's own configuration may name a plain-http registry (#1185, #1186).
+    // Only the person's own user configuration or environment may name a plain-http registry
+    // (#1185, #1186).
     remedy =
-      "Point the npm registry settings at an https registry, or at a plain-http registry in your user configuration that does not redirect lookups to another host";
+      "Point the npm registry settings at an https registry, or at a plain-http registry in your own user configuration or environment that does not redirect lookups to another host";
   } else if (refusal.protocol === "https:") {
     redirected = "was redirected from https to plain http on a host that is not loopback";
   }

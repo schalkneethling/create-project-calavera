@@ -49,10 +49,22 @@ export function redirectGuard({ packageName, download, startUrl, agent }) {
     if (url.protocol === "https:") wasHttps = true;
     else if (!LOOPBACK_HOSTS.has(url.hostname)) {
       if (wasHttps || download) throw refusal(packageName, download, wasHttps, false, requests);
-      if (url.host !== start.host) throw refusal(packageName, download, false, true, requests);
+      if (hostKey(url) !== hostKey(start)) {
+        throw refusal(packageName, download, false, true, requests);
+      }
     }
     return agent(url);
   };
+}
+
+/**
+ * The host and port of `url` for the own-host rule. One trailing dot on the host name names the same
+ * host in DNS, so it is removed; the port stays, as the URL parser writes it (empty for the
+ * default). The loopback check reads `hostname` itself, so `localhost.` is not loopback.
+ * @param {URL} url
+ */
+function hostKey(url) {
+  return `${url.hostname.replace(/\.$/, "")}${url.port ? `:${url.port}` : ""}`;
 }
 
 /**

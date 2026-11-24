@@ -2489,7 +2489,7 @@ const REFUSED_REDIRECT_REMEDY = {
   downgrade:
     "Point the npm registry settings at a registry that serves Calavera's packages over https without redirecting to plain http, then run: ",
   otherHost:
-    "Point the npm registry settings at an https registry, or at a plain-http registry in your user configuration that does not redirect lookups to another host, then run: ",
+    "Point the npm registry settings at an https registry, or at a plain-http registry in your own user configuration or environment that does not redirect lookups to another host, then run: ",
   unknown:
     "Point the npm registry settings at a registry that serves Calavera's packages over https without redirecting to plain http, then run: ",
 };

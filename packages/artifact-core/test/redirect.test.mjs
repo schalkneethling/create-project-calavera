@@ -7,7 +7,7 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
-import { readFile, readdir, writeFile } from "node:fs/promises";
+import { mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { createServer as createHttpServer } from "node:http";
 import { createServer as createHttpsServer } from "node:https";
 import { createRequire } from "node:module";
@@ -314,7 +314,12 @@ test("a dist-tag lookup redirected from https to http on a host that is not loop
   const context = await npmContext({ registry: first.origin, proxy: proxy.url });
 
   const failure = await failureOf(
-    resolvePackageDistTag({ packageName: artifact.packageName, tag: "latest", ...context }),
+    resolvePackageDistTag({
+      packageName: artifact.packageName,
+      tag: "latest",
+      cwd: context.cwd,
+      env: context.env,
+    }),
   );
   assertRefusal(failure, { from: "https:", download: false, requests: 2 });
   assert.deepEqual(proxy.requests, []);
@@ -561,6 +566,27 @@ for (const { chain, refused } of [
   });
 }
 
+// One trailing dot names the same host in DNS, so the own-host rule ignores it on either side and
+// keeps the port. A loopback name with a trailing dot, such as localhost., is not a loopback host.
+for (const { start, hop, otherHost } of [
+  { start: `${REMOTE_HTTP}/`, hop: "http://registry.example.test./document", otherHost: null },
+  { start: "http://registry.example.test./", hop: `${REMOTE_HTTP}/document`, otherHost: null },
+  { start: `${REMOTE_HTTP}/`, hop: "http://registry.example.test.:8080/document", otherHost: true },
+  { start: `${REMOTE_HTTP}/`, hop: "http://localhost.:4873/document", otherHost: true },
+  { start: "https://registry.example.test/", hop: "http://localhost.:4873/", otherHost: false },
+]) {
+  test(`the own-host rule judges ${hop} after ${start}`, () => {
+    const agent = redirectGuard({
+      packageName: artifact.packageName,
+      download: false,
+      startUrl: start,
+      agent: () => "agent",
+    });
+    if (otherHost === null) assert.equal(agent(new URL(hop)), "agent");
+    else assert.throws(() => agent(new URL(hop)), { code: "EINSECUREREDIRECT", otherHost });
+  });
+}
+
 test("a loopback http registry that redirects a lookup to http on a host that is not loopback is refused", async (t) => {
   const proxy = await startProxy();
   const first = await startServer({
@@ -640,6 +666,50 @@ test("the agent options Calavera passes match npm-registry-fetch's defaults", ()
   });
 });
 
+test("the dist-tag lookup stores no response, so every redirect it follows reaches the check", async (t) => {
+  // resolvePackageDistTag passes pacote no cache. pacote then hands make-fetch-happen no cache path
+  // for the package document (pacote lib/registry.js spreads the caller's options, and its default
+  // cache folder serves only tarballs), so a cacheable 301 is asked for again on the next lookup.
+  // A child process with its own HOME shows that nothing lands in npm's cache folder either.
+  const target = await startServer({ secure: false, host: "127.0.0.1" });
+  const first = await startServer({
+    secure: false,
+    host: "127.0.0.1",
+    redirect: (path) => `${target.origin}${path}`,
+    cacheable: true,
+  });
+  t.after(() => Promise.all([first.close(), target.close()]));
+  const directory = await temporaryDirectory("calavera-redirect-dist-tag-cache-");
+  const home = join(directory, "home");
+  await mkdir(home);
+  const userconfig = join(directory, "user.npmrc");
+  await writeFile(userconfig, `@schalkneethling:registry=${first.origin}/\n`);
+  const script = join(directory, "probe.mjs");
+  const registryModule = new URL("../src/registry.js", import.meta.url).href;
+  await writeFile(
+    script,
+    `import { resolvePackageDistTag } from ${JSON.stringify(registryModule)};
+for (let run = 0; run < 2; run += 1) {
+  await resolvePackageDistTag({ packageName: ${JSON.stringify(artifact.packageName)}, tag: "latest", cwd: process.env.PROBE_CWD, env: process.env });
+}
+`,
+  );
+  await execFileAsync(process.execPath, [script], {
+    env: {
+      PATH: process.env.PATH,
+      HOME: home,
+      npm_config_userconfig: userconfig,
+      PROBE_CWD: directory,
+      ...(process.env.__STRYKER_ACTIVE_MUTANT__
+        ? { __STRYKER_ACTIVE_MUTANT__: process.env.__STRYKER_ACTIVE_MUTANT__ }
+        : {}),
+    },
+  });
+  assert.equal(first.requests.length, 2);
+  assert.equal(target.requests.length, 2);
+  assert.deepEqual(await readdir(home), []);
+});
+
 test("NOPROXY, which npm-registry-fetch reads and @npmcli/agent does not, keeps a host away from the proxy", async (t) => {
   // Calavera's NPM_REGISTRY_FETCH_AGENT_DEFAULTS reads NOPROXY when npm-config.js loads, as
   // npm-registry-fetch's default-opts.js does, so a child process starts with it set. The user
@@ -714,7 +784,12 @@ test("Calavera's agents are the ones make-fetch-happen would choose from the sam
       pacote.manifest(`${artifact.packageName}@latest`, { ...npm.requestOptions, fetchRetries: 0 }),
     );
     const guarded = await keys(() =>
-      resolvePackageDistTag({ packageName: artifact.packageName, tag: "latest", ...context }),
+      resolvePackageDistTag({
+        packageName: artifact.packageName,
+        tag: "latest",
+        cwd: context.cwd,
+        env: context.env,
+      }),
     );
     assert.ok(chosen.agents.length > 0, registry);
     assert.deepEqual(guarded, chosen, registry);
