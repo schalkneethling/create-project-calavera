@@ -1109,9 +1109,9 @@ link, because the update check fills the registry cache in `.calavera/cache`.
 without `--dry-run`, when `.agents`, `.agents/skills`, `.agents/skills/calavera`,
 `.agents/calavera`, or `.calavera` is a symbolic link, because those are the
 folders the bootstrap writes the base skill, the MCP setup notes, and its state
-into. The message names the link;
-replace it with a real folder and run the command again. A link that points from
-another tool's folder to a folder under `.agents/` is fine.
+into. The message names the link; replace it with a real folder and run the
+command again. A link that points from another tool's folder to a folder under
+`.agents/` is fine.
 
 When a recipe installs a skill, Calavera also creates or updates
 `.coderabbit.yaml` so CodeRabbit excludes `.claude/skills/**`,
