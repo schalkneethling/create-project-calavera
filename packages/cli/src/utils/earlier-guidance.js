@@ -175,15 +175,16 @@ const MCP = [
     ],
   },
   {
-    // #1089: the Cursor entry gains `type: "stdio"`. The next release publishes it, which the
+    // #1089: the Cursor entry gains `type: "stdio"`, and #1204 moves the OpenCode entry under
+    // `mcp.servers` and says OpenCode 2 is required. The next release publishes it, which the
     // pending major changeset makes 7.0.0 (#1219).
     releases: ["7.0.0"],
     pinned: true,
     sha256: [
-      "3f991036fbd0a03cd7c94f5d74d664b5a5585ea74123b26c0053d0b7c33f375a",
-      "df9374e482c6fde8be3b06e796fe496e6b0204329cfb122343ceba38bfd038e8",
-      "a1ff4d71c11729e02caa4c894c6798f55a9837dfb868d3b4954b5814730f64d2",
-      "6dab409502700cbd1fc33dd4ce32441aa1e75f4b914a5fc559982b23e445b5a0",
+      "cb854dca45d3bd995216f0152b352168bd91e08195b6c38ff3cc536f3840ff7e",
+      "79fd3d0af94948cb3e174ab1de0823c713955fe7f3bd3b86546212361f2bf030",
+      "1ae4c2aa7317c0a811b4733cff4ac221f84a10975460af58abc1fabe762e724e",
+      "6cb7f881dd030d62d31109721dbf165777ef626992cecf9fd0d3634815ee0d50",
     ],
   },
 ];

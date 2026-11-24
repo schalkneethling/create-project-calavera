@@ -3,6 +3,7 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 import { isDeepStrictEqual } from "node:util";
 
+import { parse as parseJsonc } from "jsonc-parser";
 import { TomlError, parse as parseToml } from "smol-toml";
 
 import { normalizePinnedVersion, normalizePublishedPin } from "./earlier-guidance.js";
@@ -72,6 +73,7 @@ async function readProjectJsonConfigIfPresent(path) {
  * @param {McpConfigChange[]} changes
  * @param {LoadFormatter} loadFormatter
  * @param {string} [currentContents]
+ * @param {string} [updateReason] The reason of an `update` change.
  * @returns {Promise<McpConfigAction>}
  */
 async function writeProjectJsonConfig(
@@ -81,6 +83,7 @@ async function writeProjectJsonConfig(
   changes,
   loadFormatter,
   currentContents,
+  updateReason = "Add or update Calavera MCP server.",
 ) {
   const targetPath = normalizeConfigPath(path);
   const nextContents = await formatGeneratedText(
@@ -108,7 +111,7 @@ async function writeProjectJsonConfig(
     return "skip";
   }
 
-  changes.push({ type: "update", path: targetPath, reason: "Add or update Calavera MCP server." });
+  changes.push({ type: "update", path: targetPath, reason: updateReason });
 
   if (!dryRun) {
     await writeFile(targetPath, nextContents);
@@ -180,11 +183,9 @@ function withPinNormalized(value) {
 export function calaveraMcpEntries(harness, launches) {
   switch (harness) {
     case "opencode":
-      return launches.map(
-        (launch) =>
-          /** @type {{ mcp: Record<string, unknown> }} */ (createOpenCodeMcpJsonConfig(launch)).mcp
-            .calavera,
-      );
+      // Only the `mcp.servers` entry: the entry 6.2.1 and earlier releases wrote directly under
+      // `mcp` comes from `openCodeMcpLocations`, so no writer can obtain it here (ADR-0022).
+      return launches.map(createOpenCodeMcpEntry);
     case "codex":
       // The table `createCodexMcpTomlBlock` writes parses to the launch command.
       return launches.map(({ command, args }) => ({ command, args }));
@@ -259,20 +260,36 @@ export const UNPUBLISHED_PIN =
   "pins a version of create-project-calavera that this release of Calavera does not know as published";
 
 /**
+ * The sentence that says a harness file's `calavera` entry is a local edit, which `--init` keeps
+ * (brief C8).
+ *
+ * @param {string} path
+ * @param {string} entry How the entry is named in the file, such as "The calavera entry under mcp".
+ * @param {boolean} unpublished Whether the entry differs only in pinning an unpublished version.
+ */
+function editedEntrySentence(path, entry, unpublished) {
+  const why = unpublished ? UNPUBLISHED_PIN : "differs from every entry a Calavera release wrote";
+  return `${entry} in ${path} ${why}, so it was left unchanged as a local edit.`;
+}
+
+const DEFAULT_EDITED_REMEDY =
+  "To use Calavera's entry instead, remove yours, then run --init again.";
+
+/**
  * The change for a harness file whose `calavera` entry is a local edit, which `--init` keeps
  * (brief C8), with what to do to get Calavera's entry instead.
  *
  * @param {string} path
  * @param {string} entry How the entry is named in the file, such as "The calavera entry under mcp".
  * @param {boolean} unpublished Whether the entry differs only in pinning an unpublished version.
+ * @param {string} [remedy] What to do about it, when the default does not fit the location.
  * @returns {McpConfigChange}
  */
-function editedEntryChange(path, entry, unpublished) {
-  const why = unpublished ? UNPUBLISHED_PIN : "differs from every entry a Calavera release wrote";
+function editedEntryChange(path, entry, unpublished, remedy = DEFAULT_EDITED_REMEDY) {
   return {
     type: "skip",
     path,
-    reason: `${entry} in ${path} ${why}, so it was left unchanged as a local edit. To use Calavera's entry instead, remove yours, then run --init again.`,
+    reason: `${editedEntrySentence(path, entry, unpublished)} ${remedy}`,
   };
 }
 
@@ -610,26 +627,268 @@ export async function writeCodexMcpConfig(path, launchCommand, entries, dryRun, 
 export const OPENCODE_CONFIG_SCHEMA = "https://opencode.ai/config.json";
 
 /**
+ * The `calavera` entry Calavera writes under `mcp.servers` in `opencode.json`: OpenCode 2 requires
+ * `type` and `command` for a local server and connects it unless `disabled` is set, which defaults
+ * to `false`, so the entry carries neither `enabled` nor `disabled`
+ * (https://opencode.ai/docs/mcp-servers/, "Config" and "Local"; ADR-0022, Decision 1).
+ *
+ * @param {McpLaunchCommand} launchCommand
+ * @returns {Record<string, unknown>}
+ */
+export function createOpenCodeMcpEntry(launchCommand) {
+  return { type: "local", command: [launchCommand.command, ...launchCommand.args] };
+}
+
+/**
+ * The entry 2.2.0 through 6.2.1 wrote directly under `mcp`, in the layout OpenCode 1.x reads.
+ * Calavera never writes it again: only `openCodeMcpLocations` calls this, so `--init` can move the
+ * entry and `eject` can remove it (ADR-0022, Decision 8).
+ *
+ * @param {McpLaunchCommand} launchCommand
+ * @returns {Record<string, unknown>}
+ */
+function createEarlierOpenCodeMcpEntry(launchCommand) {
+  return { ...createOpenCodeMcpEntry(launchCommand), enabled: true };
+}
+
+/**
  * @param {McpLaunchCommand} launchCommand
  * @returns {Record<string, unknown>}
  */
 export function createOpenCodeMcpJsonConfig(launchCommand) {
   return {
     $schema: OPENCODE_CONFIG_SCHEMA,
-    mcp: {
-      calavera: {
-        type: "local",
-        command: [launchCommand.command, ...launchCommand.args],
-        enabled: true,
-      },
-    },
+    mcp: { servers: { calavera: createOpenCodeMcpEntry(launchCommand) } },
   };
 }
 
 /**
+ * @typedef {object} OpenCodeMcpLocation
+ * @property {"mcp.servers" | "mcp"} name How the location is named in messages.
+ * @property {string[]} keys The keys that lead to the object that holds the `calavera` entry.
+ * @property {unknown[]} entries The entries a Calavera release wrote there, one for each package
+ *   manager.
+ */
+
+/**
+ * Where `opencode.json` can hold Calavera's entry, each with the entries a release wrote there:
+ * `mcp.servers` from 7.0.0 on, and directly under `mcp` for 2.2.0 through 6.2.1. `--init` and
+ * `eject` both read this list, so a change to an entry updates both (ADR-0022, Decision 7).
+ *
+ * @param {McpLaunchCommand[]} launches The launch command for each supported package manager.
+ * @returns {OpenCodeMcpLocation[]}
+ */
+export function openCodeMcpLocations(launches) {
+  return [
+    {
+      name: "mcp.servers",
+      keys: ["mcp", "servers"],
+      entries: calaveraMcpEntries("opencode", launches),
+    },
+    { name: "mcp", keys: ["mcp"], entries: launches.map(createEarlierOpenCodeMcpEntry) },
+  ];
+}
+
+/**
+ * Whether `value`, the `servers` member of `mcp`, is OpenCode 2's object of servers: an object
+ * whose every member is an object. A server of either layout always has a string `type`, so an
+ * OpenCode 1.x server named `servers` fails this, while a container that holds a server named
+ * `type` passes it (ADR-0022, Decision 3).
+ *
+ * @param {unknown} value
+ */
+export function isOpenCodeServerContainer(value) {
+  return isPlainObject(value) && Object.values(value).every(isPlainObject);
+}
+
+/**
+ * Why `--init` leaves `opencode.json` unchanged when its `mcp.servers` is not OpenCode 2's object of
+ * servers, or undefined when it is, or when `mcp` has no `servers` (ADR-0022, Decision 3). In a
+ * file with comments the remedy asks for no further run, because that run keeps the file again.
+ *
+ * @param {Record<string, unknown>} mcp
+ * @param {string} path
+ * @param {boolean} commented
+ * @returns {string | undefined}
+ */
+function openCodeServersProblem(mcp, path, commented) {
+  const rerun = commented ? "." : ", then run --init again.";
+  if (!Object.hasOwn(mcp, "servers") || isOpenCodeServerContainer(mcp.servers)) return undefined;
+  const servers = mcp.servers;
+  const reserved =
+    "a name OpenCode 2 reserves for the object that holds servers, so it was left unchanged.";
+  if (isPlainObject(servers) && typeof servers.type === "string") {
+    return `${path} holds a server named servers directly under mcp, ${reserved} Rename that server${rerun}`;
+  }
+  if (isPlainObject(servers) && Object.keys(servers).join() === "enabled") {
+    return `${path} holds an enabled switch for a server named servers directly under mcp, ${reserved} Rename or remove it${rerun}`;
+  }
+  return `${path} holds an mcp.servers member that is not an object of servers, so it was left unchanged. Correct it as OpenCode's MCP documentation describes${rerun}`;
+}
+
+/**
+ * The `calavera` entries a parsed `opencode.json` holds, in the order of the file. `mcp.servers` is
+ * searched only when it is OpenCode 2's object of servers, so a server named `servers` is never
+ * read as one (ADR-0022, Decision 3).
+ *
+ * @param {unknown} config
+ * @param {OpenCodeMcpLocation[]} locations From `openCodeMcpLocations`.
+ * @returns {{ location: OpenCodeMcpLocation, entry: unknown }[]}
+ */
+export function openCodeEntriesIn(config, locations) {
+  if (!isPlainObject(config) || !isPlainObject(config.mcp)) return [];
+  const mcp = config.mcp;
+  const order = Object.keys(mcp);
+  /** @param {OpenCodeMcpLocation} location */
+  const positionOf = (location) => order.indexOf(location.name === "mcp" ? "calavera" : "servers");
+  return locations
+    .flatMap((location) => {
+      const holder =
+        location.name === "mcp" ? mcp : isOpenCodeServerContainer(mcp.servers) ? mcp.servers : {};
+      return isPlainObject(holder) && Object.hasOwn(holder, "calavera")
+        ? [{ location, entry: holder.calavera }]
+        : [];
+    })
+    .toSorted((a, b) => positionOf(a.location) - positionOf(b.location));
+}
+
+const OPENCODE_2_REMEDY =
+  "OpenCode 2 reads servers from mcp.servers: move the entry there and replace enabled with disabled, as OpenCode's migration guide describes, or remove it, then run --init again.";
+const ENABLED_SWITCH_REMEDY =
+  'That entry holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on a full calavera entry under mcp.servers, then run --init again.';
+const TWO_ENTRIES_REMEDY =
+  "Keep the one you mean to use: OpenCode 2 reads servers from mcp.servers, so move yours there and replace enabled with disabled, as OpenCode's migration guide describes, then remove the other, or remove yours to use Calavera's entry. Then run --init again.";
+
+const TWO_ENTRIES_SWITCH_REMEDY =
+  'The entry under mcp holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on the calavera entry under mcp.servers, then run --init again.';
+
+/**
+ * Whether `entry` holds only `enabled`, the OpenCode 1.x way to switch off a server configured
+ * elsewhere.
+ *
+ * @param {unknown} entry
+ */
+function isEnabledSwitch(entry) {
+  return isPlainObject(entry) && Object.keys(entry).join() === "enabled";
+}
+
+/**
+ * The kept-file change for an `opencode.json` that holds an edited `calavera` entry: the file stays
+ * as it is, because C8 forbids rewriting the edited entry, and a partial write would rewrite the
+ * file while the conflict remains (ADR-0022, Decision 2).
+ *
+ * @param {string} path
+ * @param {{ location: OpenCodeMcpLocation, entry: unknown, edited: boolean }[]} found
+ * @returns {McpConfigChange}
+ */
+function editedOpenCodeChange(path, found) {
+  /** @param {OpenCodeMcpLocation} location */
+  const named = (location) => `The calavera entry under ${location.name}`;
+  if (found.length === 1) {
+    const [{ location, entry }] = /** @type {[(typeof found)[number]]} */ (found);
+    const unpublished = pinsUnpublishedVersion(entry, location.entries);
+    if (location.name === "mcp.servers") {
+      return editedEntryChange(path, named(location), unpublished);
+    }
+    return editedEntryChange(
+      path,
+      named(location),
+      unpublished,
+      isEnabledSwitch(entry) ? ENABLED_SWITCH_REMEDY : OPENCODE_2_REMEDY,
+    );
+  }
+  // An edited switch under `mcp` cannot move to `mcp.servers` as it is, so it gets its own remedy.
+  const editedSwitch = found.some(
+    ({ location, entry, edited }) => edited && location.name === "mcp" && isEnabledSwitch(entry),
+  );
+  const sentences = found.map(({ location, entry, edited }) =>
+    edited
+      ? editedEntrySentence(path, named(location), pinsUnpublishedVersion(entry, location.entries))
+      : `${named(location)} is one a Calavera release wrote.`,
+  );
+  return {
+    type: "skip",
+    path,
+    reason: [
+      ...sentences,
+      `The file holds two calavera servers, so it was left unchanged.`,
+      editedSwitch ? TWO_ENTRIES_SWITCH_REMEDY : TWO_ENTRIES_REMEDY,
+    ].join(" "),
+  };
+}
+
+const COMMENTS = "has comments or trailing commas, which Calavera would lose by rewriting it, so";
+
+/**
+ * What to do about one `calavera` entry in an `opencode.json` with comments, which `--init` never
+ * rewrites (ADR-0022, Decision 2). Each entry is judged as in a plain JSON file, so an edited entry
+ * is never treated as Calavera's, and a switch is never told to become an empty entry. No sentence
+ * asks for another run of `--init`, because the run would keep the file again.
+ *
+ * @param {string} path
+ * @param {{ location: OpenCodeMcpLocation, entry: unknown }} found
+ * @param {boolean} alone Whether it is the only `calavera` entry in the file.
+ */
+function commentedEntrySentence(path, { location, entry }, alone) {
+  const named = `The calavera entry under ${location.name}`;
+  if (isCalaveraMcpEntry(entry, location.entries)) {
+    if (location.name === "mcp") {
+      // Beside an entry under `mcp.servers`, a move would make two there, so only the remedy for
+      // two servers applies.
+      return alone
+        ? "Move the calavera entry from mcp to mcp.servers yourself and remove enabled."
+        : `${named} is one a Calavera release wrote.`;
+    }
+    // Any package manager's launch command counts, so only the pinned version can be out of date.
+    return normalizePinnedVersion(JSON.stringify(entry))?.pin === writtenVersion(location.entries)
+      ? `${named} already pins this release of Calavera.`
+      : "Calavera does not update the version its calavera entry pins in a file with comments. To update it, change the create-project-calavera@<version> in the entry's command to the version of Calavera you run --init with.";
+  }
+  if (location.name === "mcp" && isEnabledSwitch(entry)) {
+    return `${named} holds only enabled, which OpenCode 1.x uses to switch off a server configured elsewhere: remove it, or set "disabled": true on ${alone ? "a full calavera entry" : "the calavera entry"} under mcp.servers.`;
+  }
+  const edited = editedEntrySentence(path, named, pinsUnpublishedVersion(entry, location.entries));
+  // Beside another entry, a move would make two under mcp.servers, so the remedy for two servers
+  // that follows is the only one.
+  if (!alone) return edited;
+  return location.name === "mcp"
+    ? `${edited} OpenCode 2 reads servers from mcp.servers: move the entry there and replace enabled with disabled, as OpenCode's migration guide describes, or remove it.`
+    : `${edited} To use Calavera's entry instead, replace yours with it.`;
+}
+
+/**
+ * Where a kept `opencode.json` with comments finds Calavera's entry. A run that keeps the file
+ * writes no setup notes, so the remedy points at Calavera's README, which always exists (owner
+ * decision of 2026-11-24 on #1204).
+ */
+const README_OPENCODE_POINTER =
+  "The OpenCode example in the MCP Server section of Calavera's README shows the entry: https://github.com/schalkneethling/create-project-calavera#mcp-server";
+
+/**
+ * The text of `opencode.json` read as JSON with comments (JSONC), which OpenCode's schema allows,
+ * or undefined when it is not JSONC either. Empty text is neither, so it keeps the message for JSON
+ * that does not parse (ADR-0022, Decision 2).
+ *
+ * @param {string} text
+ * @returns {{ value: unknown } | undefined}
+ */
+function parseOpenCodeJsonc(text) {
+  /** @type {import("jsonc-parser").ParseError[]} */
+  const errors = [];
+  const value = parseJsonc(text, errors, { allowTrailingComma: true, allowEmptyContent: false });
+  return errors.length === 0 ? { value } : undefined;
+}
+
+/**
+ * Writes Calavera's entry under `mcp.servers` in `opencode.json`, moving an unedited entry an
+ * earlier release wrote directly under `mcp`. The file stays unchanged, as a kept file with a
+ * remedy, when it holds an edited entry, an `mcp.servers` that is not OpenCode 2's object of
+ * servers, or comments with a `calavera` entry. A shape Calavera cannot read throws, which the
+ * caller turns into a manual setup (ADR-0022, Decisions 2 and 3).
+ *
  * @param {string} path
  * @param {McpLaunchCommand} launchCommand
- * @param {unknown[]} entries The entries a Calavera release wrote, from `calaveraMcpEntries`.
+ * @param {OpenCodeMcpLocation[]} locations From `openCodeMcpLocations`.
  * @param {boolean} dryRun
  * @param {McpConfigChange[]} changes
  * @param {LoadFormatter} loadFormatter
@@ -638,17 +897,90 @@ export function createOpenCodeMcpJsonConfig(launchCommand) {
 export async function writeOpenCodeMcpConfig(
   path,
   launchCommand,
-  entries,
+  locations,
   dryRun,
   changes,
   loadFormatter,
 ) {
   const targetPath = normalizeConfigPath(path);
-  const { currentConfig, currentContents } = await readProjectJsonConfigIfPresent(targetPath);
+  if (!(await fileExists(targetPath))) {
+    return writeProjectJsonConfig(
+      targetPath,
+      createOpenCodeMcpJsonConfig(launchCommand),
+      dryRun,
+      changes,
+      loadFormatter,
+    );
+  }
+
+  const currentContents = await readFile(targetPath, "utf8");
+  /** @type {unknown} */
+  let parsed;
+  let commented = false;
+  try {
+    parsed = parseJSON(currentContents, targetPath);
+  } catch (error) {
+    const jsonc = parseOpenCodeJsonc(currentContents);
+    if (jsonc === undefined) throw error;
+    parsed = jsonc.value;
+    commented = true;
+  }
+  const currentConfig = assertJsonObjectConfig(parsed, targetPath);
   const mcp = currentConfig.mcp;
 
   if (mcp !== undefined && !isPlainObject(mcp)) {
     throw new Error(`${targetPath} mcp must be an object.`);
+  }
+
+  /** @param {string[]} sentences */
+  const kept = (sentences) => {
+    changes.push({ type: "skip", path: targetPath, reason: sentences.join(" ") });
+    return /** @type {const} */ ("skip");
+  };
+  const found = openCodeEntriesIn(currentConfig, locations);
+  const serversProblem = isPlainObject(mcp)
+    ? openCodeServersProblem(mcp, targetPath, commented)
+    : undefined;
+  // With an `mcp.servers` that is not the container, only an entry directly under `mcp` can be
+  // found; it is named with its state, and the person corrects `mcp.servers` before any entry can
+  // be placed (ADR-0022, Decision 2).
+  const stateSentences = () =>
+    found.map(({ location, entry }) =>
+      isCalaveraMcpEntry(entry, location.entries)
+        ? `The calavera entry under ${location.name} is one a Calavera release wrote.`
+        : editedEntrySentence(
+            targetPath,
+            `The calavera entry under ${location.name}`,
+            pinsUnpublishedVersion(entry, location.entries),
+          ),
+    );
+
+  if (commented) {
+    if (serversProblem !== undefined) {
+      return kept([
+        `${targetPath} ${COMMENTS} it was left unchanged.`,
+        serversProblem,
+        ...stateSentences(),
+      ]);
+    }
+    if (found.length === 0) {
+      // Nothing of Calavera's to keep, and the person needs the entry to add: a manual setup.
+      throw new Error(
+        `${targetPath} ${COMMENTS} Calavera did not add its entry. Add the calavera entry from .agents/calavera/mcp.md under mcp.servers yourself.`,
+      );
+    }
+    return kept([
+      `${targetPath} ${COMMENTS} it was left unchanged.`,
+      ...found.map((each) => commentedEntrySentence(targetPath, each, found.length === 1)),
+      // A switch that holds only `enabled` is not a second server.
+      ...(found.length > 1 &&
+      !found.some(({ location, entry }) => location.name === "mcp" && isEnabledSwitch(entry))
+        ? [
+            "The file holds two calavera servers: keep the one you mean to use and remove the other.",
+          ]
+        : []),
+      README_OPENCODE_POINTER,
+    ]);
   }
 
   const repeated = repeatedKeyChange(targetPath, currentContents);
@@ -657,21 +989,21 @@ export async function writeOpenCodeMcpConfig(
     return "skip";
   }
 
-  if (
-    isPlainObject(mcp) &&
-    Object.hasOwn(mcp, "calavera") &&
-    !isCalaveraMcpEntry(mcp.calavera, entries)
-  ) {
-    changes.push(
-      editedEntryChange(
-        targetPath,
-        "The calavera entry under mcp",
-        pinsUnpublishedVersion(mcp.calavera, entries),
-      ),
-    );
+  const judged = found.map((each) => ({
+    ...each,
+    edited: !isCalaveraMcpEntry(each.entry, each.location.entries),
+  }));
+  if (serversProblem !== undefined) return kept([serversProblem, ...stateSentences()]);
+  if (judged.some(({ edited }) => edited)) {
+    changes.push(editedOpenCodeChange(targetPath, judged));
     return "skip";
   }
 
+  const moved = found.some(({ location }) => location.name === "mcp");
+  const servers = isPlainObject(mcp) && isPlainObject(mcp.servers) ? mcp.servers : {};
+  const restOfMcp = isPlainObject(mcp)
+    ? Object.fromEntries(Object.entries(mcp).filter(([name]) => name !== "calavera"))
+    : {};
   return writeProjectJsonConfig(
     targetPath,
     {
@@ -679,19 +1011,27 @@ export async function writeOpenCodeMcpConfig(
       $schema:
         typeof currentConfig.$schema === "string" ? currentConfig.$schema : OPENCODE_CONFIG_SCHEMA,
       mcp: {
-        ...(isPlainObject(mcp) ? mcp : {}),
-        calavera: {
-          type: "local",
-          command: [launchCommand.command, ...launchCommand.args],
-          enabled: true,
-        },
+        ...restOfMcp,
+        servers: { ...servers, calavera: createOpenCodeMcpEntry(launchCommand) },
       },
     },
     dryRun,
     changes,
     loadFormatter,
     currentContents,
+    moved ? openCodeMoveReason(dryRun) : undefined,
   );
+}
+
+/**
+ * The reason of the `update` change that moves the entry an earlier release wrote directly under
+ * `mcp` to `mcp.servers` (ADR-0022, Decision 5). It names the file only through the change's path,
+ * so the summary names `opencode.json` once.
+ *
+ * @param {boolean} dryRun
+ */
+export function openCodeMoveReason(dryRun) {
+  return `${dryRun ? "Would move" : "Moved"} the calavera entry from mcp to mcp.servers, the layout OpenCode 2 reads. OpenCode's migration guide says not to point OpenCode 1.x at files in this layout: install OpenCode 2, or restore the file from version control.`;
 }
 
 /**

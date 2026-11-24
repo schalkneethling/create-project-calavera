@@ -217,12 +217,14 @@ import {
   createCursorMcpJsonConfig,
   createMcpServersJsonConfig,
   createOpenCodeMcpJsonConfig,
+  openCodeMcpLocations,
   projectMcpConfigPath,
   calaveraMcpEntries,
   writeCodexMcpConfig,
   writeMcpServersJsonConfig,
   writeOpenCodeMcpConfig,
 } from "./utils/mcp-config.js";
+import { checkOpenCodeVersion, openCodeVersionWarning } from "./utils/opencode-version.js";
 import { artifactTargetPromptOptions, groupedPromptOptions } from "./utils/prompt-options.js";
 import { pluralizeCount, quoteScriptValue, titleCase } from "./utils/text.js";
 import { VARLOCK_POINTER, VARLOCK_SCHEMA_PATH } from "./varlock.js";
@@ -323,7 +325,7 @@ import { VARLOCK_POINTER, VARLOCK_SCHEMA_PATH } from "./varlock.js";
  * @typedef {{ status: VitePlusDetection["status"], signalConflict: boolean, lines: string[] }} VitePlusReport
  * @typedef {{ reownManagedFiles?: string[], managedFilePlans?: { path: string, contents: string }[], packageTestFindings?: ProjectInspectionFinding[] }} ProjectInspectionOptions `managedFilePlans` holds the managed files with the text apply would write, formatted by the project's formatter; without it, inspection compares the unformatted text, so it never runs the formatter. `packageTestFindings` holds the findings apply already planned with the package manager it resolved, so inspection reports them instead of planning them again.
  * @typedef {{ scripts: Record<string, string>, omittedScripts: ScriptOmission[], omittedQualitySteps: QualityStepOmission[], earlierQualityValues: string[] }} ScriptPlan earlierQualityValues are the values a release before #230 wrote for a recipe whose quality the plan now omits, which the dry run names when the project's value matches one and the state file predates the qualityScript record (#230, #937)
- * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", from?: string, category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[], formatting?: string }} Change
+ * @typedef {{ type: string, path: string, action?: "write" | "update" | "scaffold" | "merge", ownership?: "calavera" | "project", from?: string, category?: "ai", aiType?: string, name?: string, reason?: string, skipReasons?: CleanSkipReason[], scripts?: string[], omittedScripts?: ScriptOmission[], removedDefaultTestScript?: boolean, removedQualityScript?: string, renamedScripts?: ScriptRename[], omittedQualitySteps?: QualityStepOmission[], formatting?: string, warning?: string }} Change
  * @typedef {{ script: string, value: string, previous?: unknown, renamedFrom?: string }} ScriptChange A package.json script apply adds, changes from `previous`, or renames from `renamedFrom`, whose value was `previous`.
  * @typedef {{ from: string, to: string }} ScriptRename
  *
@@ -2284,6 +2286,9 @@ ${codexConfig}
 \`\`\`json
 ${opencodeConfig}
 \`\`\`
+
+Calavera requires OpenCode 2. OpenCode's migration guide says not to point
+OpenCode 1.x at files in the \`mcp.servers\` layout.
 
 Project-local MCP servers should be registered from the project root. Using the
 package manager declared by the project avoids package-manager preflight
@@ -4668,7 +4673,7 @@ const askForAgentBootstrap = {
  * @param {boolean} dryRun
  * @param {Change[]} changes
  * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
- * @returns {Promise<{ harness: McpHarness, action: "manual" | "write" | "update" | "skip", path?: string, reason?: string }>}
+ * @returns {Promise<{ harness: McpHarness, action: "manual" | "write" | "update" | "skip", path?: string, reason?: string, versionCheck?: import("./utils/opencode-version.js").OpenCodeVersionCheck }>}
  */
 async function writeAgentBootstrapMcpConfig(
   harness,
@@ -4693,6 +4698,13 @@ async function writeAgentBootstrapMcpConfig(
   // An existing `calavera` entry is updated only when a release wrote it, for any package manager;
   // any other entry is a local edit and is kept (#1205).
   const launches = mcpLaunchCommands();
+  // ADR-0022, Decision 6: the OpenCode on PATH is checked once, before the write, only to warn.
+  const openCode = harness === "opencode" ? await checkOpenCodeVersion() : undefined;
+  const warning =
+    openCode?.versionCheck === "older"
+      ? openCodeVersionWarning(/** @type {string} */ (openCode.version))
+      : undefined;
+  const versionCheck = openCode === undefined ? {} : { versionCheck: openCode.versionCheck };
 
   try {
     switch (harness) {
@@ -4720,7 +4732,7 @@ async function writeAgentBootstrapMcpConfig(
         action = await writeOpenCodeMcpConfig(
           path,
           launchCommand,
-          calaveraMcpEntries(harness, launches),
+          openCodeMcpLocations(launches),
           dryRun,
           changes,
           loadFormatter,
@@ -4734,15 +4746,26 @@ async function writeAgentBootstrapMcpConfig(
     return {
       harness,
       action: "manual",
-      // The error's own trailing period is dropped so the sentence ends once.
+      // The error's own trailing period is dropped so the sentence ends once. Without a change for
+      // the file, the warning goes on this one line that names it (ADR-0022, Decision 6).
       reason: `Could not write project MCP config at ${path}: ${(error instanceof Error
         ? error.message
         : String(error)
-      ).replace(/\.$/, "")}. ${AGENT_BOOTSTRAP_MANUAL_MCP_SETUP}`,
+      ).replace(
+        /\.$/,
+        "",
+      )}. ${AGENT_BOOTSTRAP_MANUAL_MCP_SETUP}${warning === undefined ? "" : ` Warning: ${warning}`}`,
+      ...versionCheck,
     };
   }
 
-  return { harness, action, path };
+  if (warning !== undefined) {
+    // The writer lists the file exactly once, as written, updated, or kept.
+    const change = changes.slice(initialChangeCount).find((each) => each.path === path);
+    if (change !== undefined) change.warning = warning;
+  }
+
+  return { harness, action, path, ...versionCheck };
 }
 
 /**
@@ -7684,6 +7707,18 @@ function printArtifactCacheBlock(result) {
  * @returns {string | undefined}
  */
 function formatAgentBootstrapChange(change, dryRun) {
+  const line = formatAgentBootstrapChangeLine(change, dryRun);
+  return line === undefined || change.warning === undefined
+    ? line
+    : `${line} Warning: ${change.warning}`;
+}
+
+/**
+ * @param {Change} change
+ * @param {boolean} dryRun
+ * @returns {string | undefined}
+ */
+function formatAgentBootstrapChangeLine(change, dryRun) {
   switch (change.type) {
     case "write":
       return dryRun ? `Would write ${change.path}` : `Wrote ${change.path}`;
