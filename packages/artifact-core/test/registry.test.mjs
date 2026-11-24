@@ -494,8 +494,11 @@ test("a 401 behind a loader diagnostic keeps the message, the notes, and the ori
   try {
     const fixture = await npmConfigFixture(
       "",
-      `@schalkneethling:registry=http://${registry.host}/\nhttps-proxy=http://\${CALAVERA_UNSET_PROXY}/\n`,
+      `@schalkneethling:registry=http://${registry.host}/\n`,
     );
+    // The environment expands variables in a proxy value; a temporary user .npmrc is not the
+    // account's own ~/.npmrc, so it would not (#1186).
+    fixture.env.npm_config_https_proxy = "http://${CALAVERA_UNSET_PROXY}/";
     const failure = await resolveArtifactPackage({
       id: "skill-project-goal",
       cache: fixture.cache,
@@ -519,7 +522,7 @@ test("a 401 behind a loader diagnostic keeps the message, the notes, and the ori
     assert.equal(failure.registryOrigin, `http://${registry.host}`);
     assert.equal(failure.cause.code, "E401");
     assert.deepEqual(failure.unsetVariables, ["CALAVERA_UNSET_PROXY"]);
-    assert.match(failure.npmDiagnostics.join("\n"), /^Ignored https-proxy in the user \.npmrc/m);
+    assert.match(failure.npmDiagnostics.join("\n"), /^Ignored https-proxy in the environment/m);
   } finally {
     await registry.close();
   }
@@ -618,8 +621,11 @@ test("a missing dist-tag behind npm configuration notes keeps the tags on its ca
   try {
     const fixture = await npmConfigFixture(
       "",
-      `@schalkneethling:registry=http://${registry.host}/\nhttps-proxy=http://\${CALAVERA_UNSET_PROXY}/\n`,
+      `@schalkneethling:registry=http://${registry.host}/\n`,
     );
+    // The environment expands variables in a proxy value; a temporary user .npmrc is not the
+    // account's own ~/.npmrc, so it would not (#1186).
+    fixture.env.npm_config_https_proxy = "http://${CALAVERA_UNSET_PROXY}/";
     const failure = await resolveArtifactPackage({
       id: "skill-project-goal",
       tag: "next",
@@ -1312,6 +1318,119 @@ test("beforeLookup receives the registry before any request, and an error it thr
   } finally {
     server.closeAllConnections();
     await new Promise((done) => server.close(() => done(undefined)));
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a proxy variable that .env.yarn sets from a variable is bypassed for the lookup and the download", async () => {
+  // @npmcli/agent reads the proxy variables from process.env when it loads, so the lookup runs in
+  // a child process whose HTTP_PROXY names a closed port, as a Yarn 4 .env.yarn with
+  // `HTTP_PROXY=http://${PROXY_HOST}:9` would set it. Without the bypass, both requests fail.
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-env-yarn-proxy-"));
+  const packed = await packFixture(directory);
+  const registry = await startRegistry(packed);
+  try {
+    const project = join(directory, "project");
+    await mkdir(project);
+    await writeFile(join(project, "yarn.lock"), "");
+    await writeFile(join(project, ".env.yarn"), "HTTP_PROXY=http://${PROXY_HOST}:9\n");
+    // A listed file lets Calavera tell that Yarn loaded it, without seeing Yarn's own folder.
+    await writeFile(join(project, ".yarnrc.yml"), "injectEnvironmentFiles:\n  - .env.yarn\n");
+    const script = join(directory, "probe.mjs");
+    const registryModule = new URL("../src/registry.js", import.meta.url).href;
+    await writeFile(
+      script,
+      `import { extractArtifactPackage, resolveArtifactPackage } from ${JSON.stringify(registryModule)};
+try {
+  const resolution = await resolveArtifactPackage({ id: "skill-project-goal", cache: process.env.PROBE_CACHE, cwd: process.env.PROBE_CWD, env: process.env });
+  await extractArtifactPackage({ ...resolution, cache: process.env.PROBE_CACHE }, process.env.PROBE_DESTINATION, "2.2.0", { cwd: process.env.PROBE_CWD, env: process.env });
+  console.log(JSON.stringify({ ok: true }));
+} catch (error) {
+  console.log(JSON.stringify({ ok: false, code: error.code ?? null }));
+}
+`,
+    );
+    const { stdout } = await execFileAsync(process.execPath, [script], {
+      env: {
+        PATH: process.env.PATH,
+        HOME: join(directory, "home"),
+        HTTP_PROXY: "http://127.0.0.1:9",
+        PROXY_HOST: "127.0.0.1",
+        npm_config_user_agent: "yarn/4.18.1 npm/? node/v24.3.0 darwin arm64",
+        // Yarn passes the folder it started in to every binary it runs.
+        INIT_CWD: project,
+        YARN_NPM_REGISTRY_SERVER: `http://${registry.host}`,
+        PROBE_CACHE: join(directory, "cache"),
+        PROBE_CWD: project,
+        PROBE_DESTINATION: join(directory, "extracted"),
+        ...(process.env.__STRYKER_ACTIVE_MUTANT__
+          ? { __STRYKER_ACTIVE_MUTANT__: process.env.__STRYKER_ACTIVE_MUTANT__ }
+          : {}),
+      },
+    });
+    assert.deepEqual(JSON.parse(stdout), { ok: true });
+    assert.equal(registry.requests.length, 2);
+  } finally {
+    await registry.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("a redirect to another host also bypasses a proxy variable that .env.yarn set from a variable", async () => {
+  // The registry on 127.0.0.1 redirects to a second registry on localhost, which serves the package
+  // document and the tarball. HTTP_PROXY names a closed port, so a request that falls back to it
+  // fails.
+  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-env-yarn-redirect-"));
+  const packed = await packFixture(directory);
+  const target = await startRegistry(packed, {
+    listenHost: "localhost",
+    tarballUrl: (port) => `http://localhost:${port}/-/artifact.tgz`,
+  });
+  const targetPort = target.host.split(":").at(-1);
+  const registry = await startRegistry(packed, { redirectTo: `http://localhost:${targetPort}` });
+  try {
+    const project = join(directory, "project");
+    await mkdir(project);
+    await writeFile(join(project, ".env.yarn"), "HTTP_PROXY=http://${PROXY_HOST}:9\n");
+    // A listed file lets Calavera tell that Yarn loaded it, without seeing Yarn's own folder.
+    await writeFile(join(project, ".yarnrc.yml"), "injectEnvironmentFiles:\n  - .env.yarn\n");
+    const script = join(directory, "probe.mjs");
+    const registryModule = new URL("../src/registry.js", import.meta.url).href;
+    await writeFile(
+      script,
+      `import { extractArtifactPackage, resolveArtifactPackage } from ${JSON.stringify(registryModule)};
+try {
+  const resolution = await resolveArtifactPackage({ id: "skill-project-goal", cache: process.env.PROBE_CACHE, cwd: process.env.PROBE_CWD, env: process.env });
+  await extractArtifactPackage({ ...resolution, cache: process.env.PROBE_CACHE }, process.env.PROBE_DESTINATION, "2.2.0", { cwd: process.env.PROBE_CWD, env: process.env });
+  console.log(JSON.stringify({ ok: true }));
+} catch (error) {
+  console.log(JSON.stringify({ ok: false, code: error.code ?? null }));
+}
+`,
+    );
+    const { stdout } = await execFileAsync(process.execPath, [script], {
+      env: {
+        PATH: process.env.PATH,
+        HOME: join(directory, "home"),
+        HTTP_PROXY: "http://127.0.0.1:9",
+        PROXY_HOST: "127.0.0.1",
+        npm_config_user_agent: "yarn/4.18.1 npm/? node/v24.3.0 darwin arm64",
+        INIT_CWD: project,
+        YARN_NPM_REGISTRY_SERVER: `http://${registry.host}`,
+        PROBE_CACHE: join(directory, "cache"),
+        PROBE_CWD: project,
+        PROBE_DESTINATION: join(directory, "extracted"),
+        ...(process.env.__STRYKER_ACTIVE_MUTANT__
+          ? { __STRYKER_ACTIVE_MUTANT__: process.env.__STRYKER_ACTIVE_MUTANT__ }
+          : {}),
+      },
+    });
+    assert.deepEqual(JSON.parse(stdout), { ok: true });
+    assert.equal(registry.requests.length, 1);
+    assert.equal(target.requests.length, 2);
+  } finally {
+    await registry.close();
+    await target.close();
     await rm(directory, { recursive: true, force: true });
   }
 });
