@@ -233,8 +233,8 @@ test("a cause keeps its numeric code, errno, and syscall, so the same code on tw
     syscall: "open",
   });
 
-  // A value that tells nothing apart is not kept: an empty or control-only string,
-  // a number that is not finite, or a value of another type.
+  // A value that tells nothing apart is not kept: a string that is empty once terminal
+  // escape sequences are removed, a number that is not finite, or a value of another type.
   for (const value of ["", "\u001b[0m", Number.NaN, Number.POSITIVE_INFINITY, true, {}, null]) {
     for (const field of ["code", "errno", "syscall"]) {
       assert.equal(
@@ -295,12 +295,27 @@ test("a cause's errno and syscall are redacted as its message is", () => {
     syscall: "connect [redacted]",
   });
 
-  // Two failures that differ only in a field redaction leaves alone stay distinguishable.
-  const eacces = Object.assign(new Error("open failed"), { code: "EACCES", errno: -13 });
-  const enoent = Object.assign(new Error("open failed"), { code: "ENOENT", errno: -2 });
-  const wrap = (/** @type {Error} */ error) =>
-    errorChain(new Error("Could not open the recipe: open failed.", { cause: error }), env);
-  assert.notDeepEqual(wrap(eacces), wrap(enoent));
+  // With redaction active, two failures that differ only in fields it leaves alone, the
+  // syscall or a numeric code, stay distinguishable after wrapping.
+  const wrap = (/** @type {Record<string, unknown>} */ fields) =>
+    errorChain(
+      new Error("Could not open the recipe: open failed.", {
+        cause: Object.assign(new Error("open failed"), fields),
+      }),
+      env,
+    );
+  const onRename = wrap({ code: "EBUSY", errno: -16, syscall: "rename" });
+  const onOpen = wrap({ code: "EBUSY", errno: -16, syscall: "open" });
+  assert.deepEqual(onRename[1], {
+    name: "Error",
+    message: "",
+    code: "EBUSY",
+    errno: -16,
+    syscall: "rename",
+  });
+  assert.notDeepEqual(onRename, onOpen);
+  assert.deepEqual(wrap({ code: 1 })[1], { name: "Error", message: "", code: 1 });
+  assert.notDeepEqual(wrap({ code: 1 }), wrap({ code: 2 }));
 });
 
 test("a cause is left out whole only when its whole message occurs in an earlier one", () => {

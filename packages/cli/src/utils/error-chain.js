@@ -223,8 +223,8 @@ function containsWhole(text, part) {
  *
  * A cause whose text the rule above leaves out is still kept, with an empty
  * message, when it carries a `code`, an `errno`, a `syscall`, or a name other
- * than plain `Error`, that is not empty once redacted and stripped of control
- * sequences, so that two failures a wrapper describes with the same words
+ * than plain `Error`, that is not empty once redacted and stripped of terminal
+ * escape sequences, so that two failures a wrapper describes with the same words
  * stay distinguishable: a wrapped `EBUSY` and a wrapped `ENOENT`, or `EBUSY`
  * on `rename` and `EBUSY` on `open`, for example.
  *
