@@ -258,11 +258,12 @@ test("a selection that is not installed yet does not hide a broken installed art
 });
 
 test("the verdict names every artifact with a problem, and only those", () => {
-  /** @param {string} id @param {Partial<{ installed: boolean, managed: boolean, locallyEdited: boolean }>} health */
+  /** @param {string} id @param {Partial<{ installed: boolean, managed: boolean, locallyEdited: boolean, selected: boolean | null }>} health */
   const entry = (id, health) => ({
     id,
     version: /** @type {string | null} */ ("0.2.1"),
     installCommand: /** @type {string | null} */ (null),
+    selected: /** @type {boolean | null} */ (true),
     installed: true,
     managed: true,
     locallyEdited: false,
@@ -286,9 +287,25 @@ test("the verdict names every artifact with a problem, and only those", () => {
   });
   assert.equal(isArtifactHealthy(entry("a", {})), true);
   assert.equal(isArtifactHealthy(notInstalled("a")), true);
-  for (const problem of [{ installed: false }, { managed: false }, { locallyEdited: true }]) {
+  for (const problem of [
+    { installed: false },
+    { managed: false },
+    { locallyEdited: true },
+    // #1111 covers only a deselected entry whose files were deleted. Without a recipe, `selected`
+    // is null, so Calavera cannot tell a leftover entry from a broken one.
+    { installed: false, selected: null },
+    { managed: false, selected: false },
+    { locallyEdited: true, selected: false },
+  ]) {
     assert.equal(isArtifactHealthy(entry("a", problem)), false, JSON.stringify(problem));
   }
+  // #1111: a lock entry the recipe no longer selects, whose files were deleted, is a leftover
+  // record, whether or not `clean` also removed its state record.
+  assert.equal(isArtifactHealthy(entry("a", { installed: false, selected: false })), true);
+  assert.equal(
+    isArtifactHealthy(entry("a", { installed: false, managed: false, selected: false })),
+    true,
+  );
   assert.deepEqual(verdict([]), [{ level: "success", message: HEALTHY }]);
   assert.deepEqual(verdict([entry("a", {})]), [{ level: "success", message: HEALTHY }]);
   assert.deepEqual(verdict([notInstalled("b")]), [
@@ -324,4 +341,145 @@ test("the verdict names every artifact with a problem, and only those", () => {
       },
     ],
   );
+});
+
+// #1111 (owner decision of 2026-11-21 on #994, ADR-0020 Decision 4): a lock entry the recipe no
+// longer selects, whose files were deleted, is a leftover record, not a broken project. Both
+// commands print it as a warning that names the entry once, with the command that drops the entry,
+// and doctor exits 0 when nothing else is wrong. A selected artifact whose files were deleted
+// still fails.
+const INSTALL_COMMAND = "npm create project-calavera artifacts install";
+const LEFTOVER_LINES = [
+  `${ARTIFACT}  0.2.1 (latest), files missing`,
+  `  Not selected, files deleted: the recipe no longer selects this artifact and its files were deleted, so only its lock entry remains. To remove the entry, run: ${INSTALL_COMMAND}`,
+];
+
+/**
+ * A project whose recipe no longer selects the artifact `installedProject` installed, and whose
+ * files for it were deleted. The state still records the files, as it does until `clean` runs.
+ *
+ * @param {string} label
+ * @param {object[]} [ai] The recipe's selections after the edit.
+ */
+async function leftoverProject(label, ai = []) {
+  const fixture = await installedProject(label);
+  await writeFile(
+    join(fixture.root, "calavera.config.json"),
+    json({ ...buildRecipe("minimal", [], "npm"), ai }),
+  );
+  await rm(join(fixture.root, SKILL_DIRECTORY), { recursive: true });
+  return fixture;
+}
+
+/** @param {string} text */
+const mentions = (text) => text.split(ARTIFACT).length - 1;
+
+test("artifacts doctor warns about a deselected lock entry whose files were deleted, and exits 0 (text output)", async () => {
+  await using fixture = await leftoverProject("artifacts-doctor-leftover-text");
+
+  const { code, stdout, stderr } = await runCli(fixture.root, ["artifacts", "doctor"]);
+
+  assert.equal(code, 0, `artifacts doctor exited ${code}\n${stdout}\n${stderr}`);
+  // The warning goes to stderr; the healthy verdict closes stdout.
+  assert.deepEqual(stderr.trimEnd().split("\n"), LEFTOVER_LINES);
+  assert.equal(stdout.trimEnd().split("\n").at(-1), HEALTHY);
+  assert.equal(mentions(stdout + stderr), 1, stdout + stderr);
+});
+
+test("artifacts doctor --json reports a deselected lock entry whose files were deleted as ok, with the command that drops it", async () => {
+  await using fixture = await leftoverProject("artifacts-doctor-leftover-json");
+
+  const { code, stdout, stderr } = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
+
+  assert.equal(code, 0, `artifacts doctor exited ${code}\n${stdout}\n${stderr}`);
+  assert.equal(stderr, "");
+  const report = JSON.parse(stdout);
+  assert.equal(report.ok, true);
+  assert.deepEqual(
+    report.artifacts.map(({ id, selected, installed, installCommand }) => ({
+      id,
+      selected,
+      installed,
+      installCommand,
+    })),
+    [{ id: ARTIFACT, selected: false, installed: false, installCommand: INSTALL_COMMAND }],
+  );
+});
+
+test("artifacts status classifies a deselected lock entry whose files were deleted as artifacts doctor does", async () => {
+  await using fixture = await leftoverProject("artifacts-status-leftover");
+
+  const text = await runCli(fixture.root, ["artifacts", "status"]);
+  assert.equal(text.code, 0, text.stdout + text.stderr);
+  assert.deepEqual(text.stderr.trimEnd().split("\n"), LEFTOVER_LINES);
+  assert.ok(!text.stdout.includes("Calavera artifacts doctor"), text.stdout);
+
+  const status = JSON.parse((await runCli(fixture.root, ["artifacts", "status", "--json"])).stdout);
+  const doctor = JSON.parse((await runCli(fixture.root, ["artifacts", "doctor", "--json"])).stdout);
+  assert.equal(status.ok, true);
+  assert.deepEqual(status.artifacts, doctor.artifacts);
+});
+
+test("the command the warning names drops the leftover lock entry, so doctor then reports nothing", async () => {
+  await using fixture = await leftoverProject("artifacts-doctor-leftover-remedy");
+  const report = JSON.parse((await runCli(fixture.root, ["artifacts", "doctor", "--json"])).stdout);
+  // The runner prefix is the recipe's npm runner; the rest is the CLI command the test runs.
+  const [, , , ...remedy] = report.artifacts[0].installCommand.split(" ");
+  assert.deepEqual(remedy, ["artifacts", "install"]);
+
+  const install = await runCli(fixture.root, remedy);
+  assert.equal(install.code, 0, install.stdout + install.stderr);
+
+  const after = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
+  assert.equal(after.code, 0, after.stdout + after.stderr);
+  assert.deepEqual(JSON.parse(after.stdout).artifacts, []);
+  const text = await runCli(fixture.root, ["artifacts", "doctor"]);
+  assert.equal(text.stderr, "");
+  assert.equal(mentions(text.stdout), 0, text.stdout);
+});
+
+test("a deselected lock entry whose files were deleted does not hide a selected artifact whose files were deleted", async () => {
+  await using fixture = await createTemporaryFixture("artifacts-doctor-leftover-and-missing", {
+    "calavera.config.json": json({
+      ...buildRecipe("minimal", [], "npm"),
+      ai: [{ id: ARTIFACT }, { id: "skill-code-review" }],
+    }),
+  });
+  const originalDirectory = process.cwd();
+  try {
+    process.chdir(fixture.root);
+    await runArtifactCommand(
+      { config: "calavera.config.json", dryRun: false, artifactAction: "install" },
+      stubRegistry(
+        new Map([
+          [ARTIFACT, "0.2.1"],
+          ["skill-code-review", "0.2.1"],
+        ]),
+      ),
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+  await writeFile(
+    join(fixture.root, "calavera.config.json"),
+    json({ ...buildRecipe("minimal", [], "npm"), ai: [{ id: "skill-code-review" }] }),
+  );
+  await rm(join(fixture.root, SKILL_DIRECTORY), { recursive: true });
+  await rm(join(fixture.root, ".agents/skills/code-review"), { recursive: true });
+
+  const text = await runCli(fixture.root, ["artifacts", "doctor"]);
+  assert.equal(text.code, 1, text.stdout + text.stderr);
+  const stderr = text.stderr.trimEnd().split("\n");
+  assert.equal(
+    stderr.at(-1),
+    "Calavera artifacts doctor found problems with 1 artifact: skill-code-review.",
+  );
+  assert.ok(stderr.includes(LEFTOVER_LINES[0]), text.stderr);
+  assert.equal(mentions(text.stdout + text.stderr), 1, text.stdout + text.stderr);
+
+  const asJson = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
+  assert.equal(asJson.code, 1, asJson.stdout + asJson.stderr);
+  const report = JSON.parse(asJson.stdout);
+  assert.equal(report.ok, false);
+  assert.equal(report.artifacts.find(({ id }) => id === "skill-code-review").installCommand, null);
 });

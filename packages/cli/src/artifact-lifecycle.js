@@ -35,7 +35,11 @@ import {
 import { assertFirstSelection, assertNoLegacyEntryNeedsWiring } from "./ai/recipe-items.js";
 import { GITIGNORE_PATH, planGitignoreBlocks } from "./ignore-lines.js";
 import { validateRecipe } from "./recipe.js";
-import { artifactReleaseNotesUrl, isArtifactHealthy } from "./artifact-status-report.js";
+import {
+  artifactReleaseNotesUrl,
+  isArtifactHealthy,
+  isLeftoverLockEntry,
+} from "./artifact-status-report.js";
 import {
   artifactCommand,
   artifactTagFlags,
@@ -891,9 +895,12 @@ async function artifactStatus(
         },
       );
       const updateAvailable = Boolean(latest && latest.version !== entry.version);
+      const installed = outputs.every(({ installed }) => installed);
+      // #992: without a recipe, status cannot say which lock entries an install would drop.
+      const selected = recipeFound ? selectedIds.has(entry.id) : null;
       artifacts.push({
         ...entry,
-        installed: outputs.every(({ installed }) => installed),
+        installed,
         managed: outputs.every(({ managed }) => managed),
         locallyEdited: outputs.some(({ locallyEdited }) => locallyEdited),
         latestVersion: latest?.version ?? null,
@@ -910,9 +917,11 @@ async function artifactStatus(
           updateAvailable && selectedIds.has(entry.id)
             ? artifactUpdateCommand(recipe, options.config, entry.id, entry.tag)
             : null,
-        installCommand: null,
-        // #992: without a recipe, status cannot say which lock entries an install would drop.
-        selected: recipeFound ? selectedIds.has(entry.id) : null,
+        // #1111: `artifacts install` drops a leftover lock entry, so it is the entry's remedy.
+        installCommand: isLeftoverLockEntry({ version: entry.version, selected, installed })
+          ? command(["install"])
+          : null,
+        selected,
         updateCheckFailure,
       });
     }

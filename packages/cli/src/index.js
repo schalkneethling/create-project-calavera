@@ -7843,8 +7843,9 @@ const commandRunners = Object.assign(
         printResult(result, options.json);
         // #994: doctor fails the run when an installed artifact's files are missing, are not
         // managed, or carry a local edit, as `doctor` does for an error (#1030). A selection that
-        // is not installed yet does not fail it. `artifacts status` reports the same problems and
-        // stays informational.
+        // is not installed yet does not fail it, and neither does a lock entry the recipe no
+        // longer selects whose files were deleted (#1111). `artifacts status` reports the same
+        // problems and stays informational.
         if (options.artifactAction === "doctor" && result.ok !== true) {
           process.exitCode = 1;
         }
