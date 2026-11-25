@@ -2,9 +2,11 @@
 import { rmSync } from "node:fs";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { isAbsolute, join, relative, resolve } from "node:path";
+import { join, resolve } from "node:path";
 
 import { onExit } from "signal-exit";
+
+import { isPathInside } from "./fs.js";
 
 /**
  * The failures of one or more cleanups. A cleanup that runs further cleanups throws this, so the
@@ -213,8 +215,7 @@ export function temporaryFolderLeftovers(failures) {
         reason: `Calavera could not remove one of its temporary folders${codeOf(failure)}. Look for a calavera- folder in the system's temporary folder or in .calavera/.transactions/, and remove it.`,
       };
     }
-    const fromProject = relative(process.cwd(), failure.path);
-    const inProject = !fromProject.startsWith("..") && !isAbsolute(fromProject);
+    const inProject = isPathInside(process.cwd(), failure.path);
     return {
       path: failure.path,
       reason: `Calavera could not remove this temporary folder${codeOf(failure)}. ${LEFTOVER_REMEDY}${inProject ? ` ${IN_PROJECT_NOTE}` : ""}`,

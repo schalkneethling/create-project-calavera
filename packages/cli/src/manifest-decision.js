@@ -1,5 +1,7 @@
 // @ts-check
-import { dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { dirname, join, relative, resolve } from "node:path";
+
+import { isPathInside } from "./utils/fs.js";
 
 /**
  * @typedef {import("./vite-plus-detection.js").VitePlusDetection} VitePlusDetection
@@ -120,8 +122,7 @@ export function manifestChoiceNotApplicableError(directory, detection) {
 export function pathAtAncestor(decision, path) {
   const absolute = resolve(decision.directory, path);
   const inside = relative(decision.directory, absolute);
-  const outside = inside === ".." || inside.startsWith(`..${sep}`) || isAbsolute(inside);
-  return inside === "" || outside
+  return inside === "" || !isPathInside(decision.directory, absolute)
     ? absolute
     : join(dirname(decision.ancestor.manifestPath), inside);
 }

@@ -10,13 +10,14 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { dirname, join, resolve, sep } from "node:path";
+import { dirname, join, resolve } from "node:path";
 import { isDeepStrictEqual, promisify } from "node:util";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 
 import { resolveAiArtifacts } from "./artifacts.js";
 import { planClaudeSettings, runsSkill } from "./claude-settings.js";
+import { isPathInside } from "../utils/fs.js";
 import { jsonSyntaxProblem } from "../utils/parse-position.js";
 import {
   fillInputPlaceholders,
@@ -461,7 +462,7 @@ export async function wiringFilesThatMention(artifactPath, plannedFiles, cwd = p
     const linksIntoArtifact =
       artifactRealPath !== undefined &&
       read.realPath !== undefined &&
-      (read.realPath === artifactRealPath || read.realPath.startsWith(`${artifactRealPath}${sep}`));
+      isPathInside(artifactRealPath, read.realPath);
     const named = path.startsWith(".claude/")
       ? settingsMentionPath(read.contents, wanted)
       : mentionsPath(read.contents, wanted);

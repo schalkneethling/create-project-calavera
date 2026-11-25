@@ -13,7 +13,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createRequire } from "node:module";
-import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "node:path";
+import { basename, dirname, join, relative, resolve, sep } from "node:path";
 import { fileURLToPath } from "node:url";
 import { parseArgs as parseNodeArgs, stripVTControlCharacters, styleText } from "node:util";
 
@@ -1278,14 +1278,7 @@ async function resolveProjectVpBin(projectDirectory) {
 
   const packageDirectory = dirname(manifestPath);
   const binPath = resolve(packageDirectory, bin);
-  const fromPackage = relative(packageDirectory, binPath);
-
-  if (
-    fromPackage === "" ||
-    fromPackage === ".." ||
-    fromPackage.startsWith(`..${sep}`) ||
-    isAbsolute(fromPackage)
-  ) {
+  if (relative(packageDirectory, binPath) === "" || !isPathInside(packageDirectory, binPath)) {
     throw new Error(`${manifestPath} declares a vp bin outside the vite-plus package: ${bin}`);
   }
 
