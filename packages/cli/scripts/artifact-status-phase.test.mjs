@@ -20,7 +20,11 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { readArtifactStatus, runArtifactCommand } from "../src/artifact-lifecycle.js";
-import { artifactDoctorVerdict, formatArtifactStatus } from "../src/artifact-status-report.js";
+import {
+  artifactDoctorVerdict,
+  formatArtifactStatus,
+  formatPhaseReport,
+} from "../src/artifact-status-report.js";
 import { applyRecipeObject } from "../src/index.js";
 import { deriveProjectPhase } from "../src/project-phase.js";
 import { buildRecipe } from "../src/recipe.js";
@@ -452,6 +456,118 @@ test("--check-updates still records the cache block in an applied project", asyn
     const status = await run("status", { checkUpdates: true });
     assert.equal(status.phase, "applied");
     assert.equal(status.ignoreChanges.length, 1);
+  });
+});
+
+test("a formatter that cannot format the state skips the cache block: a note in status, an error in doctor", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    await rm(".gitignore", { force: true });
+    // vite-plus declared but not installed, so the state cannot be formatted for the block.
+    await writeJsonFile("package.json", { scripts: {}, devDependencies: { "vite-plus": "1.0.0" } });
+    const before = await snapshotDirectory();
+    const problem =
+      "Calavera did not record the artifact cache block in .gitignore, because the project's formatter could not format .calavera/state.json (not-installed), so this report resolved packages through a temporary cache and wrote nothing. This is not a finding about the project's phase or an artifact; the managed-file check above names the cause and its remedy.";
+    const services = registry();
+    const status = await run("status", { checkUpdates: true }, services);
+    assert.equal(status.cacheBlockProblem, problem);
+    assert.deepEqual(status.ignoreChanges, []);
+    assert.ok(services.requests.length > 0, "the update check still ran");
+    assert.deepEqual(await snapshotDirectory(), before);
+    assert.ok(
+      formatPhaseReport(status).some(
+        ({ level, message }) => level === "info" && message === problem,
+      ),
+    );
+    const doctor = await run("doctor", { checkUpdates: true });
+    assert.equal(doctor.cacheBlockProblem, problem);
+    assert.equal(doctor.ok, false);
+    assert.ok(
+      formatPhaseReport(doctor).some(
+        ({ level, message }) => level === "error" && message === problem,
+      ),
+    );
+    assert.match(artifactDoctorVerdict(doctor).at(-1)?.message ?? "", /the artifact cache block/);
+    assert.deepEqual(await snapshotDirectory(), before);
+    // Without --check-updates, no block is planned, so there is no cache block problem.
+    assert.equal((await run("status")).cacheBlockProblem, null);
+  });
+});
+
+test("--check-updates records the cache block in a drifted project", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    await rm(".gitignore", { force: true });
+    await writeFile(join(SKILL, "SKILL.md"), "edited\n");
+    const status = await run("status", { checkUpdates: true });
+    assert.equal(status.phase, "drifted");
+    assert.equal(status.ignoreChanges.length, 1);
+  });
+});
+
+test("an installed selection without a lock entry is named as installed, not as not installed yet", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    await writeJsonFile(LOCK, { schemaVersion: 1, artifacts: [] });
+    const doctor = await run("doctor");
+    const [entry] = doctor.artifacts;
+    assert.equal(entry?.condition.name, "pending");
+    assert.equal(entry?.installed, true);
+    const lines = formatArtifactStatus(doctor).map(({ message }) => message);
+    assert.equal(
+      lines.some((line) => line.includes("not installed")),
+      false,
+      lines.join("\n"),
+    );
+    assert.ok(lines.includes(`${ARTIFACT}  installed, no lock entry (latest)`), lines.join("\n"));
+    assert.ok(lines.includes(`  ${entry?.condition.reason}`), lines.join("\n"));
+    assert.ok(
+      lines.includes(`  Record it in the lock: ${entry?.installCommand}`),
+      lines.join("\n"),
+    );
+    const verdict = artifactDoctorVerdict(doctor).map(({ message }) => message);
+    assert.equal(
+      verdict.some((line) => line.startsWith("Selected artifact not installed yet")),
+      false,
+    );
+    assert.equal(doctor.ok, true);
+  });
+});
+
+test("a selected artifact whose files cannot be read says so on its line", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    await rm(SKILL, { recursive: true });
+    await writeFile(SKILL, "a file where the folder was\n");
+    const lines = formatArtifactStatus(await run("doctor")).map(({ message }) => message);
+    assert.ok(
+      lines.includes(`${ARTIFACT}  0.1.0 (latest), files cannot be read`),
+      lines.join("\n"),
+    );
+  });
+});
+
+test("the pending-transaction line in the text output names the listed files, not a JSON field", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    const root = ".calavera/.transactions/stopped";
+    await mkdir(`${root}/backup`, { recursive: true });
+    await writeJsonFile(JOURNAL, {
+      schemaVersion: 1,
+      transactionRoot: root,
+      operations: [
+        {
+          staged: `${root}/staged/x`,
+          target: ".agents/skills/x",
+          backup: `${root}/backup/x`,
+          hadTarget: false,
+        },
+      ],
+    });
+    const doctor = await run("doctor");
+    assert.match(doctor.remedy, /files in rollbackFiles/);
+    assert.equal(doctor.phaseLine.message.includes("rollbackFiles"), false);
+    assert.match(doctor.phaseLine.message, /Save any edits to the files listed below first/);
   });
 });
 

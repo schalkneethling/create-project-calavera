@@ -1385,12 +1385,14 @@ test("release notes normalize the directory and anchor the version heading", () 
  * @returns {import("../src/artifact-status-report.js").ArtifactStatusEntry}
  */
 function entry(overrides) {
+  // A selection without a lock entry is not installed unless the test says its files are present.
+  const unlocked = overrides.version === null;
   const merged = {
     id: "skill-project-goal",
     version: "0.2.1",
     tag: "latest",
-    installed: true,
-    managed: true,
+    installed: !unlocked,
+    managed: !unlocked,
     locallyEdited: false,
     latestVersion: null,
     updateAvailable: false,

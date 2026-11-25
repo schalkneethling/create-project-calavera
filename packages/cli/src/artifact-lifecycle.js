@@ -53,6 +53,7 @@ import {
   temporaryFolderLeftovers,
 } from "./utils/cleanup.js";
 import { fileExists, isPathInside, parseJSON, readJSON } from "./utils/fs.js";
+import { FormatterFailure } from "./utils/formatter-failure.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { rewriteLossProblem } from "./utils/json-rewrite.js";
 import { withDeadline } from "./utils/deadline.js";
@@ -364,10 +365,15 @@ async function pendingTransactionReport(config, commandName, rollbackFiles) {
     phase: "pending-transaction",
     rollbackFiles,
     remedy,
-    phaseLine: { level: "error", message: remedy },
+    // The text output lists the files under the line, so it does not name the JSON field.
+    phaseLine: {
+      level: "error",
+      message: remedy.replace("the files in rollbackFiles first", "the files listed below first"),
+    },
     phaseNotes: [],
     formatterFailures: [],
     managedFilePlanProblem: null,
+    cacheBlockProblem: null,
   };
 }
 
@@ -850,15 +856,31 @@ async function artifactStatus(
           `artifacts ${options.artifactAction} --check-updates`,
         )
       : undefined;
+  // Owner decision of 2026-11-25 on #1112: when the formatter cannot format the state that
+  // records the block, the report writes no block, resolves through a temporary cache, and says
+  // so: a note in artifacts status, which exits 0, and an error in artifacts doctor, which names
+  // the cache block and says it is not a finding about the phase or an artifact (Decision 5).
+  /** @type {string | null} */
+  let cacheBlockProblem = null;
+  /** @type {typeof cacheBlock} */
+  let recordedBlock = cacheBlock;
   if (cacheBlock) {
     // The status report has no field for a folder left behind (#1172), so a staging folder that
     // stays still stops the report, now with the folder and its remedy (#1136).
-    const leftoverFailures = await commitArtifactCacheBlock(
-      cacheBlock,
-      state,
-      loadFormatter,
-      options.dryRun,
-    );
+    /** @type {Awaited<ReturnType<typeof commitArtifactCacheBlock>>} */
+    let leftoverFailures = [];
+    try {
+      leftoverFailures = await commitArtifactCacheBlock(
+        cacheBlock,
+        state,
+        loadFormatter,
+        options.dryRun,
+      );
+    } catch (error) {
+      if (!(error instanceof CacheBlockFormatFailure)) throw error;
+      recordedBlock = undefined;
+      cacheBlockProblem = `Calavera did not record the artifact cache block in ${GITIGNORE_PATH}, because the project's formatter could not format ${STATE_PATH} (${error.kind ?? "an error that is not a formatter failure"}), so this report resolved packages through a temporary cache and wrote nothing. This is not a finding about the project's phase or an artifact; the managed-file check above names the cause and its remedy.`;
+    }
     if (leftoverFailures.length > 0) {
       throw errorWithLeftovers(
         new Error("Calavera could not remove the staging folder of the artifact cache block."),
@@ -867,7 +889,7 @@ async function artifactStatus(
     }
   }
   const temporaryCache =
-    resolvesPackages && (options.dryRun || !writesCache)
+    resolvesPackages && (options.dryRun || !writesCache || cacheBlockProblem !== null)
       ? await mkdtemp(join(tmpdir(), "calavera-artifact-status-"))
       : undefined;
   const cache = temporaryCache ?? resolve(CACHE_PATH);
@@ -1018,10 +1040,11 @@ async function artifactStatus(
         phaseLine(phase, { command: "artifacts doctor", recipe, config: options.config }).level !==
           "error" &&
         phase.formatterFailures.length === 0 &&
-        phase.managedFilePlanProblem === null,
+        phase.managedFilePlanProblem === null &&
+        cacheBlockProblem === null,
       artifacts,
-      ignoreChanges: cacheBlock?.changes ?? [],
-      pointers: artifactCachePointers(cacheBlock?.changes ?? []),
+      ignoreChanges: recordedBlock?.changes ?? [],
+      pointers: artifactCachePointers(recordedBlock?.changes ?? []),
       phase: phase.phase,
       phaseLine: phaseLine(phase, {
         command: commandName,
@@ -1032,9 +1055,30 @@ async function artifactStatus(
       phaseNotes: phaseNotes(phase),
       formatterFailures: phase.formatterFailures,
       managedFilePlanProblem: phase.managedFilePlanProblem,
+      cacheBlockProblem,
     };
   } finally {
     if (temporaryCache) await rm(temporaryCache, { recursive: true, force: true });
+  }
+}
+
+/**
+ * The project's formatter could not format the state that records the artifact cache block, so
+ * the block was not written. Nothing was written when this is thrown. It keeps the formatter
+ * failure's kind, never its message, which can quote a setting from the person's `.editorconfig`.
+ */
+class CacheBlockFormatFailure extends Error {
+  /** @param {unknown} cause */
+  constructor(cause) {
+    super(
+      "The project's formatter could not format the state that records the artifact cache block.",
+      {
+        cause,
+      },
+    );
+    this.name = "CacheBlockFormatFailure";
+    /** @type {string | null} */
+    this.kind = cause instanceof FormatterFailure ? cause.kind : null;
   }
 }
 
@@ -1401,11 +1445,17 @@ function refusedRedirect(error, packageName, retryCommand) {
  */
 async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun) {
   if (!cacheBlock.writesState) return [];
-  const stateText = await formatRecordText(
-    STATE_PATH,
-    { ...state, gitignoreBlocks: cacheBlock.gitignoreBlocks },
-    loadFormatter,
-  );
+  let stateText;
+  try {
+    stateText = await formatRecordText(
+      STATE_PATH,
+      { ...state, gitignoreBlocks: cacheBlock.gitignoreBlocks },
+      loadFormatter,
+    );
+  } catch (error) {
+    // Nothing is written yet, so the caller can report the failure instead of stopping.
+    throw new CacheBlockFormatFailure(error);
+  }
   if (dryRun) return [];
   // #1193: the state, the journal, and the staging folder all lie in `.calavera`.
   await refuseLinkedArtifactFolders([TRANSACTION_ROOT]);

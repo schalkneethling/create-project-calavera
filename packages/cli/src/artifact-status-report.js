@@ -35,7 +35,7 @@ import { isPlainObject } from "./utils/guards.js";
  *
  * @typedef {{ level: "info" | "warn" | "error", message: string }} PhaseLine
  * @typedef {{ path: string | null, kind: string | null, reason: string }} FormatterFailureFinding
- * @typedef {{ command: string, artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, updateAllBlockedBy: string[], ok: boolean, phase: string, phaseLine: PhaseLine, phaseNotes: string[], formatterFailures: FormatterFailureFinding[], managedFilePlanProblem: string | null, rollbackFiles?: string[] | null }} ArtifactStatusReport
+ * @typedef {{ command: string, artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, updateAllBlockedBy: string[], ok: boolean, phase: string, phaseLine: PhaseLine, phaseNotes: string[], formatterFailures: FormatterFailureFinding[], managedFilePlanProblem: string | null, cacheBlockProblem?: string | null, rollbackFiles?: string[] | null }} ArtifactStatusReport
  * @typedef {{ level: "info" | "success" | "warn" | "error", message: string }} ReportLine
  * @typedef {{ id: string, version: string, tag: "latest" | "next" }} RemovedLockEntry
  */
@@ -171,6 +171,21 @@ function isDeselectedProblem(artifact) {
 }
 
 /**
+ * Whether a selection without a lock entry is installed: its files are present and match what the
+ * state records, so only its lock entry is missing (ADR-0020, Decision 3).
+ *
+ * @param {Pick<ArtifactStatusEntry, "version" | "installed" | "managed" | "condition">} artifact
+ */
+function isInstalledWithoutLockEntry(artifact) {
+  return (
+    artifact.version === null &&
+    artifact.condition.name === "pending" &&
+    artifact.installed &&
+    artifact.managed
+  );
+}
+
+/**
  * Whether `artifacts doctor` finds no problem with an artifact, read from its condition (ADR-0020,
  * Decision 4). The status result's `ok`, which sets doctor's exit status, and doctor's verdict line
  * both use it, so the two cannot disagree (#994). A selected artifact fails when its files are
@@ -191,7 +206,7 @@ export function isArtifactHealthy(artifact) {
  * plan problem, which artifacts doctor reports as errors and status as notes. During a pending
  * transaction, each file the rollback would replace or remove follows the phase line.
  *
- * @param {Pick<ArtifactStatusReport, "command" | "phase" | "phaseLine" | "phaseNotes" | "formatterFailures" | "managedFilePlanProblem" | "rollbackFiles">} result
+ * @param {Pick<ArtifactStatusReport, "command" | "phase" | "phaseLine" | "phaseNotes" | "formatterFailures" | "managedFilePlanProblem" | "cacheBlockProblem" | "rollbackFiles">} result
  * @returns {ReportLine[]}
  */
 export function formatPhaseReport(result) {
@@ -205,6 +220,9 @@ export function formatPhaseReport(result) {
   }
   if (result.managedFilePlanProblem !== null) {
     lines.push({ level: checkLevel, message: result.managedFilePlanProblem });
+  }
+  if (result.cacheBlockProblem) {
+    lines.push({ level: checkLevel, message: result.cacheBlockProblem });
   }
   if (result.phase === "pending-transaction") {
     for (const path of result.rollbackFiles ?? []) {
@@ -281,17 +299,26 @@ export function formatArtifactStatus(result) {
       continue;
     }
     if (artifact.version === null) {
+      // ADR-0020, Decision 3: a selection whose files are present and match the state is pending
+      // only for its lock entry, so its line does not call an installed artifact missing.
+      const present = isInstalledWithoutLockEntry(artifact);
+      const state = present ? "installed, no lock entry" : "not installed";
       if (failure) {
         lines.push({
           level: "warn",
-          message: `${artifact.id}  not installed, ${outcome} (${artifact.tag})`,
+          message: `${artifact.id}  ${state}, ${outcome} (${artifact.tag})`,
         });
         failureLines(failure);
       } else {
         const latest = result.offline ? "" : `, latest ${artifact.latestVersion}`;
-        info(`${artifact.id}  not installed${latest} (${artifact.tag})`);
+        info(`${artifact.id}  ${state}${latest} (${artifact.tag})`);
       }
-      info(`  Install: ${artifact.installCommand}`);
+      if (present) {
+        info(`  ${artifact.condition.reason}`);
+        info(`  Record it in the lock: ${artifact.installCommand}`);
+      } else {
+        info(`  Install: ${artifact.installCommand}`);
+      }
       continue;
     }
 
@@ -381,14 +408,17 @@ export function formatArtifactStatus(result) {
  * names each artifact with a problem and each other check that failed, so a person or an agent
  * can tell a healthy project from a broken one without reading every line.
  *
- * @param {Pick<ArtifactStatusReport, "ok" | "artifacts" | "phase" | "phaseLine" | "formatterFailures" | "managedFilePlanProblem">} result
+ * @param {Pick<ArtifactStatusReport, "ok" | "artifacts" | "phase" | "phaseLine" | "formatterFailures" | "managedFilePlanProblem" | "cacheBlockProblem">} result
  * @returns {ReportLine[]}
  */
 export function artifactDoctorVerdict(result) {
   /** @type {ReportLine[]} */
   const lines = [];
   const notInstalled = result.artifacts.filter(
-    ({ version, condition }) => version === null && condition.name === "pending",
+    (artifact) =>
+      artifact.version === null &&
+      artifact.condition.name === "pending" &&
+      !isInstalledWithoutLockEntry(artifact),
   );
   const [one] = notInstalled;
   if (one) {
@@ -427,6 +457,11 @@ export function artifactDoctorVerdict(result) {
       : []),
     ...(result.managedFilePlanProblem !== null
       ? ["the managed-file check, which could not plan the managed files"]
+      : []),
+    ...(result.cacheBlockProblem
+      ? [
+          "the artifact cache block, which it did not record, and which is not a finding about the phase or an artifact",
+        ]
       : []),
     ...(failing.length > 0
       ? [

@@ -370,8 +370,16 @@ test("artifact_status returns the pending-transaction phase instead of recoverin
       phase: "pending-transaction",
       rollbackFiles: [".calavera/state.json"],
       remedy: PENDING_REMEDY,
-      // ADR-0020: the phase line, at the doctors' level, with the same text as the remedy.
-      phaseLine: { level: "error", message: PENDING_REMEDY },
+      // ADR-0020: the phase line, at the doctors' level. The text output lists the files under it,
+      // so it names them as listed below rather than by the JSON field.
+      phaseLine: {
+        level: "error",
+        message: PENDING_REMEDY.replace(
+          "the files in rollbackFiles first",
+          "the files listed below first",
+        ),
+      },
+      cacheBlockProblem: null,
       phaseNotes: [],
       formatterFailures: [],
       managedFilePlanProblem: null,
