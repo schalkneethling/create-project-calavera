@@ -34,7 +34,7 @@ import {
 import { assertFirstSelection, assertNoLegacyEntryNeedsWiring } from "./ai/recipe-items.js";
 import { GITIGNORE_PATH, planGitignoreBlocks } from "./ignore-lines.js";
 import { formatterFailure } from "./phase-managed-files.js";
-import { phaseLine, phaseNotes } from "./phase-lines.js";
+import { phaseLine, phaseNotes, unrecordedFileEntries } from "./phase-lines.js";
 import { deriveProjectPhase } from "./project-phase.js";
 import { validateRecipe } from "./recipe.js";
 import { artifactReleaseNotesUrl, isArtifactHealthy } from "./artifact-status-report.js";
@@ -63,7 +63,7 @@ import { projectFormatterLoader } from "./utils/project-formatter.js";
 export const LOCK_PATH = ".calavera/artifacts.lock.json";
 export const STATE_PATH = ".calavera/state.json";
 export const CACHE_ROOT = ".calavera/cache";
-const CACHE_PATH = `${CACHE_ROOT}/npm`;
+export const CACHE_PATH = `${CACHE_ROOT}/npm`;
 export const PACKAGE_PATH = ".calavera/packages";
 export const TRANSACTION_PATH = ".calavera/artifact-transaction.json";
 export const TRANSACTION_ROOT = ".calavera/.transactions";
@@ -828,7 +828,8 @@ async function migrateRecipe(options, loadFormatter) {
 
 /**
  * @param {ArtifactOptions} options
- * @param {{ resolve: typeof resolveArtifactPackage }} registry
+ * @param {ArtifactRegistry} registry Resolves update checks and, offline, the cached packages the
+ *   phase function compares unrecorded outputs with.
  * @param {() => Promise<ProjectFormatter>} loadFormatter Formats the state when the cache block is recorded.
  * @param {{ readOnly?: boolean, updateCheckDeadlineMs?: number }} [mode] With `readOnly`, as
  *   `readArtifactStatus` runs it, the report plans no cache block and resolves through a temporary
@@ -846,7 +847,11 @@ async function artifactStatus(
   // ADR-0020, Decision 1: the phase function classifies the project first, and writes nothing. The
   // read-only report runs no project code, so the project's formatter never loads for it (owner
   // decision 24); the commands load it as apply does.
-  const phase = await deriveProjectPhase({ config: options.config, runsProjectCode: !readOnly });
+  const phase = await deriveProjectPhase({
+    config: options.config,
+    runsProjectCode: !readOnly,
+    registry,
+  });
   if (phase.phase === "pending-transaction") {
     // Only artifacts doctor and the read-only report get here: artifacts status recovers the
     // transaction before it reports (owner decision 20). Nothing is planned, written, or resolved.
@@ -979,9 +984,11 @@ async function artifactStatus(
         selected,
         updateCheckFailure,
         condition,
+        // A lock entry's output without a record is its unrecorded condition, with no note.
+        unrecordedFiles: [],
       });
     }
-    for (const { id, lockEntry, condition, outputs } of phase.artifacts) {
+    for (const { id, lockEntry, condition, outputs, unrecordedFiles } of phase.artifacts) {
       if (lockEntry !== null) continue;
       const selection = /** @type {{ id: string, target?: string }} */ (
         selections.find((candidate) => candidate.id === id)
@@ -1028,6 +1035,7 @@ async function artifactStatus(
         selected: true,
         updateCheckFailure,
         condition,
+        unrecordedFiles: unrecordedFileEntries(id, unrecordedFiles, recipe, options.config),
       });
     }
     // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only

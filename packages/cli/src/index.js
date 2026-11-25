@@ -41,12 +41,14 @@ import {
   TRANSACTION_PATH as EJECT_TRANSACTION_PATH,
   artifactCacheIgnoreLines,
   artifactCachePointers,
+  artifactRegistry,
   pendingTransactionRemedy,
   prepareArtifactSources,
   refuseLinkedArtifactFolders,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
 import { doctorReportLines, phaseIssues } from "./doctor-report.js";
+import { unrecordedFileEntries } from "./phase-lines.js";
 import { deriveProjectPhase } from "./project-phase.js";
 import { integrationCatalog, removedToolchainIntegrations } from "./catalog.js";
 import {
@@ -399,7 +401,7 @@ import { VARLOCK_POINTER, VARLOCK_SCHEMA_PATH } from "./varlock.js";
  * @property {string} [phase] The project phase (ADR-0020). Absent when a record doctor cannot read
  *   stopped it before it classified (Amendment 1).
  * @property {{ level: DoctorIssue["level"], message: string }} [phaseLine]
- * @property {{ id: string, selected: boolean | null, condition: { name: string, reason: string } }[]} [artifacts]
+ * @property {{ id: string, selected: boolean | null, condition: { name: string, reason: string }, unrecordedFiles: { path: string, comparedVersion: string | null, matches: boolean | null, reason: string }[] }[]} [artifacts]
  *   Each artifact the phase function classifies, as artifacts doctor reports it.
  * @property {{ path: string, integration: string, selected: boolean, condition: { name: string, reason: string } }[]} [managedFiles]
  *   Each managed file the recipe declares.
@@ -5781,9 +5783,11 @@ export function unknownIntegrationWarnings(recipe, detection, configPath) {
  * doctor goes on.
  *
  * @param {Pick<CliOptions, "config" | "packageManager">} options
+ * @param {import("./artifact-lifecycle.js").ArtifactServices} [services] The registry client the
+ *   phase function reads the artifact cache with, offline; tests pass a stand-in.
  * @returns {Promise<DoctorResult>}
  */
-export async function doctor(options) {
+export async function doctor(options, services = {}) {
   const hasConfig = await fileExists(options.config);
   const hasPackageJSON = await fileExists("package.json");
   /** @type {DoctorIssue[]} */
@@ -5944,7 +5948,10 @@ export async function doctor(options) {
 
   let phase;
   try {
-    phase = await deriveProjectPhase({ config: options.config });
+    phase = await deriveProjectPhase({
+      config: options.config,
+      registry: artifactRegistry(services),
+    });
   } catch (error) {
     return stop(error);
   }
@@ -5973,7 +5980,12 @@ export async function doctor(options) {
     phase: phase.phase,
     phaseLine,
     issues: allIssues,
-    artifacts: phase.artifacts.map(({ id, selected, condition }) => ({ id, selected, condition })),
+    artifacts: phase.artifacts.map(({ id, selected, condition, unrecordedFiles }) => ({
+      id,
+      selected,
+      condition,
+      unrecordedFiles: unrecordedFileEntries(id, unrecordedFiles, recipe, options.config),
+    })),
     managedFiles: phase.managedFiles.map(({ path, integration, condition }) => ({
       path,
       integration,

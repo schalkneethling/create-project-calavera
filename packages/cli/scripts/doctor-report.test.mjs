@@ -58,6 +58,7 @@ const artifact = (selected, name) => ({
   selected,
   outputs: [],
   condition: { name, reason: "skill-a reason." },
+  unrecordedFiles: [],
 });
 
 test("the phase line comes first, at the doctors' level in doctor's words", () => {

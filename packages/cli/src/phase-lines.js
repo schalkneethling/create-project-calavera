@@ -179,3 +179,50 @@ function incompleteMessage(result, run, config) {
 function capitalize(text) {
   return `${text.charAt(0).toUpperCase()}${text.slice(1)}`;
 }
+
+/**
+ * The note both doctors print for an output of an artifact without a lock entry that already
+ * exists without a state record (ADR-0020, Decision 3), as `message`, which names the artifact,
+ * and `detail`, which does not, for a report that prints the note under the artifact's line. The
+ * remedies keep the person's file and never offer `--reown-managed-file`, which has no effect on a
+ * file without a record. A match with the cached package is still a note, because `apply` resolves
+ * the current version online, and the dry run runs `apply`'s own check without writing.
+ *
+ * @param {string} id
+ * @param {import("./phase-unrecorded-files.js").UnrecordedFile} file
+ * @param {{ recipe: unknown, config: string }} options
+ * @returns {{ message: string, detail: string }}
+ */
+export function unrecordedFileNote(id, { path, comparedVersion, matches }, { recipe, config }) {
+  const dryRun = calaveraCommand(recipe, config, ["apply"], ["--dry-run"]);
+  /** @param {string | undefined} name */
+  const words = (name) => {
+    const artifact = name ? `the ${name} package` : "the package";
+    const keep = `To keep your file, rename or move it, deselect ${name ?? "the artifact"}, or move its contents into a file of your own.`;
+    const check = `Run ${dryRun} to see whether apply accepts it, without writing to the project.`;
+    if (comparedVersion === null || matches === null) {
+      return `${path} already exists without a state record, and apply stops on it unless it matches ${artifact}, which the artifact cache cannot supply offline. ${keep} ${check}`;
+    }
+    if (matches) {
+      return `${path} already exists without a state record and matches version ${comparedVersion} of ${artifact} in the artifact cache. apply resolves the current version online and accepts the file only if that version matches too. ${check}`;
+    }
+    return `${path} already exists without a state record and differs from version ${comparedVersion} of ${artifact} in the artifact cache, so apply stops on it unless the version it resolves online matches the file. ${keep} ${check}`;
+  };
+  return { message: words(id), detail: words(undefined) };
+}
+
+/**
+ * The `unrecordedFiles` of an artifact entry in a report's JSON: the phase function's comparison
+ * with each note's words, without the artifact's ID, because the entry names it.
+ *
+ * @param {string} id
+ * @param {import("./phase-unrecorded-files.js").UnrecordedFile[]} files
+ * @param {unknown} recipe
+ * @param {string} config
+ */
+export function unrecordedFileEntries(id, files, recipe, config) {
+  return files.map((file) => ({
+    ...file,
+    reason: unrecordedFileNote(id, file, { recipe, config }).detail,
+  }));
+}

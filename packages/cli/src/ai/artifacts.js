@@ -458,6 +458,26 @@ async function hashAiSource(type, sourcePath, target) {
 }
 
 /**
+ * The hash `apply` records for each output of an artifact, in the order of
+ * `aiArtifactOutputPaths`, computed from the package's payload. A hook has two outputs, the script
+ * and its settings fragment; every other type has one. An output matches its package when
+ * `hashAiInstall` of the installed path equals the hash at the same position.
+ *
+ * @param {AiArtifactType} type
+ * @param {string} sourcePath The payload path of the extracted package.
+ * @param {string | undefined} target
+ * @returns {Promise<string[]>}
+ */
+export async function aiOutputSourceHashes(type, sourcePath, target) {
+  return type === "hook"
+    ? Promise.all([
+        hashFile(join(sourcePath, "hook.mjs")),
+        hashFile(join(sourcePath, "settings-fragment.json")),
+      ])
+    : [await hashAiSource(type, sourcePath, target)];
+}
+
+/**
  * @param {AiArtifactType} type
  * @param {string} installPath
  * @param {string} [target]
@@ -632,13 +652,11 @@ export async function buildAiApplyResult(recipe, options, previousState, sourceP
   for (const artifact of artifacts) {
     await assertAiSourceExists(artifact.type, artifact.sourcePath, artifact.index);
     const outputPaths = aiArtifactOutputPaths(artifact);
-    const sourceHashes =
-      artifact.type === "hook"
-        ? await Promise.all([
-            hashFile(join(artifact.sourcePath, "hook.mjs")),
-            hashFile(join(artifact.sourcePath, "settings-fragment.json")),
-          ])
-        : [await hashAiSource(artifact.type, artifact.sourcePath, artifact.target)];
+    const sourceHashes = await aiOutputSourceHashes(
+      artifact.type,
+      artifact.sourcePath,
+      artifact.target,
+    );
     let needsWrite = false;
 
     for (const [outputIndex, path] of outputPaths.entries()) {
