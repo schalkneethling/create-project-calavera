@@ -5,7 +5,7 @@
 // `doctor`: errors fail the run, everything else is advisory).
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -258,7 +258,7 @@ test("a selection that is not installed yet does not hide a broken installed art
 });
 
 test("the verdict names every artifact with a problem, and only those", () => {
-  /** @param {string} id @param {Partial<{ installed: boolean, managed: boolean, locallyEdited: boolean, selected: boolean | null }>} health */
+  /** @param {string} id @param {Partial<{ installed: boolean, managed: boolean, locallyEdited: boolean, selected: boolean | null, installCommand: string | null }>} health */
   const entry = (id, health) => ({
     id,
     version: /** @type {string | null} */ ("0.2.1"),
@@ -296,14 +296,23 @@ test("the verdict names every artifact with a problem, and only those", () => {
     // A deselected entry that is edited or unrecorded is left to the #1112 stack (ADR-0020,
     // Decision 4, owner decision 6), so this test does not pin it either way.
     { installed: false, selected: null },
+    // The leftover warning comes from the phase function, which status records as the entry's
+    // install command, so a deselected entry with missing files and no command still fails.
+    { installed: false, selected: false },
   ]) {
     assert.equal(isArtifactHealthy(entry("a", problem)), false, JSON.stringify(problem));
   }
   // #1111: a lock entry the recipe no longer selects, whose files were deleted, is a leftover
   // record, whether or not `clean` also removed its state record.
-  assert.equal(isArtifactHealthy(entry("a", { installed: false, selected: false })), true);
+  const drop = "pnpm dlx create-project-calavera artifacts install";
   assert.equal(
-    isArtifactHealthy(entry("a", { installed: false, managed: false, selected: false })),
+    isArtifactHealthy(entry("a", { installed: false, selected: false, installCommand: drop })),
+    true,
+  );
+  assert.equal(
+    isArtifactHealthy(
+      entry("a", { installed: false, managed: false, selected: false, installCommand: drop }),
+    ),
     true,
   );
   assert.deepEqual(verdict([]), [{ level: "success", message: HEALTHY }]);
@@ -351,7 +360,7 @@ test("the verdict names every artifact with a problem, and only those", () => {
 const INSTALL_COMMAND = "npm create project-calavera artifacts install";
 const LEFTOVER_LINES = [
   `${ARTIFACT}  0.2.1 (latest), files missing`,
-  `  Not selected, files missing: the recipe no longer selects this artifact, and some or all of its files were deleted, so its lock entry is a leftover. artifacts install drops the entry and installs what the recipe selects: ${INSTALL_COMMAND}`,
+  `  Not selected, files missing: the recipe no longer selects this artifact, and some or all of its files were deleted, so its lock entry is a leftover. artifacts install removes the entry when it can also install what the recipe selects, and otherwise stops and names the problem: ${INSTALL_COMMAND}`,
 ];
 
 /**
@@ -532,4 +541,85 @@ test("a deselected hook with one of its two files deleted is a warning, not a fa
     LEFTOVER_LINES[1],
   ]);
   assert.equal(text.stdout.trimEnd().split("\n").at(-1), HEALTHY);
+});
+
+// ADR-0020 Decision 9: the leftover warning comes from the phase function. When the phase function
+// refuses a record that status still reads, here a lock entry whose version is not valid, status
+// keeps reporting as it did before #1111, and the entry fails, until the #1112 stack settles it.
+test("when the phase function refuses the lock, status still reports and the deselected entry fails", async () => {
+  await using fixture = await leftoverProject("artifacts-doctor-leftover-refused");
+  const lockPath = join(fixture.root, ".calavera/artifacts.lock.json");
+  const lock = JSON.parse(await readFile(lockPath, "utf8"));
+  lock.artifacts[0].version = "not-a-version";
+  await writeFile(lockPath, json(lock));
+
+  // In process as well, so mutation testing sees which code the report runs.
+  const originalDirectory = process.cwd();
+  process.chdir(fixture.root);
+  try {
+    const inProcess =
+      /** @type {{ ok: boolean, artifacts: { installCommand: string | null }[] }} */ (
+        await runArtifactCommand({
+          config: "calavera.config.json",
+          dryRun: false,
+          artifactAction: "doctor",
+        })
+      );
+    assert.equal(inProcess.ok, false);
+    assert.equal(inProcess.artifacts[0]?.installCommand, null);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+
+  const doctor = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
+  assert.equal(doctor.code, 1, doctor.stdout + doctor.stderr);
+  const report = JSON.parse(doctor.stdout);
+  assert.equal(report.ok, false);
+  assert.deepEqual(
+    report.artifacts.map(({ id, installCommand }) => ({ id, installCommand })),
+    [{ id: ARTIFACT, installCommand: null }],
+  );
+
+  const status = await runCli(fixture.root, ["artifacts", "status", "--json"]);
+  assert.equal(status.code, 0, status.stdout + status.stderr);
+  assert.equal(JSON.parse(status.stdout).ok, false);
+});
+
+// The remedy does not promise more than `artifacts install` does: the install stops when a
+// selection's file already exists without a state record, and then keeps the leftover entry.
+test("the leftover note does not promise that artifacts install drops the entry when the install stops", async () => {
+  await using fixture = await leftoverProject("artifacts-doctor-leftover-install-stops", [
+    { id: "skill-code-review" },
+  ]);
+  await mkdir(join(fixture.root, ".agents/skills/code-review"), { recursive: true });
+  await writeFile(join(fixture.root, ".agents/skills/code-review/SKILL.md"), "my own skill\n");
+
+  const text = await runCli(fixture.root, ["artifacts", "doctor"]);
+  assert.equal(text.code, 0, text.stdout + text.stderr);
+  const stderr = text.stderr.trimEnd().split("\n");
+  assert.deepEqual(stderr.slice(0, 2), LEFTOVER_LINES);
+  assert.match(
+    LEFTOVER_LINES[1],
+    /removes the entry when it can also install what the recipe selects, and otherwise stops/,
+  );
+
+  const originalDirectory = process.cwd();
+  try {
+    process.chdir(fixture.root);
+    await assert.rejects(
+      runArtifactCommand(
+        { config: "calavera.config.json", dryRun: false, artifactAction: "install" },
+        stubRegistry(new Map([["skill-code-review", "0.2.1"]])),
+      ),
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+  const lock = JSON.parse(
+    await readFile(join(fixture.root, ".calavera/artifacts.lock.json"), "utf8"),
+  );
+  assert.deepEqual(
+    lock.artifacts.map(({ id }) => id),
+    [ARTIFACT],
+  );
 });

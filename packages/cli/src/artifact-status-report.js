@@ -18,7 +18,7 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {boolean} updateAvailable
  * @property {string | null} releaseNotesUrl
  * @property {string | null} updateCommand
- * @property {string | null} installCommand The `artifacts install` command, for a selection without a lock entry, which it installs, and for a leftover lock entry (`isLeftoverLockEntry`), which it drops (#1111). Null otherwise.
+ * @property {string | null} installCommand The `artifacts install` command, for a selection without a lock entry, which it installs, and for a lock entry that the phase function classifies as not selected and `missing`, which it drops when it can also install the recipe's selections (#1111). Null otherwise.
  * @property {UpdateCheckFailure | null} updateCheckFailure Why `--check-updates` could not look up this artifact's channel, or null when the lookup succeeded or did not run (#993).
  * @property {boolean | null} selected False for a lock entry the recipe no longer selects, which the next `artifacts install`, or `artifacts update` while the recipe selects any artifact, removes (#992). Null when there is no recipe to compare the lock with.
  *
@@ -47,7 +47,7 @@ const NOTHING_SELECTED =
 
 // #1111: the note for a leftover lock entry, which replaces the "Not selected" note above.
 const LEFTOVER =
-  "  Not selected, files missing: the recipe no longer selects this artifact, and some or all of its files were deleted, so its lock entry is a leftover. artifacts install drops the entry and installs what the recipe selects:";
+  "  Not selected, files missing: the recipe no longer selects this artifact, and some or all of its files were deleted, so its lock entry is a leftover. artifacts install removes the entry when it can also install what the recipe selects, and otherwise stops and names the problem:";
 
 // A GitHub owner or repository name; "." and ".." are refused separately.
 const GITHUB_NAME = /^[\w.-]+$/;
@@ -153,15 +153,16 @@ function healthNotes(artifact) {
 /**
  * Whether an artifact is a lock entry the recipe no longer selects, whose files were deleted
  * (#1111). It is a leftover record, not a broken project (owner decision of 2026-11-21 on #994),
- * so both commands print it as a warning with the command that drops the entry. It is the
- * "not selected, `missing`" cell of ADR-0020, Decision 4: `installed` is false when any output
- * does not exist, which is when the phase function gives a lock entry the `missing` condition.
- * Without a recipe, `selected` is null, so the entry is not a leftover.
+ * so both commands print it as a warning with the command that drops the entry. The phase
+ * function decides it (ADR-0020, Decisions 4 and 9): status gives a lock entry an install command
+ * only when the phase function classifies the entry as not selected and `missing`, so this reads
+ * that decision rather than making its own. Both callers handle a selection without a lock entry
+ * (`version` is null), whose install command installs it, before they ask.
  *
- * @param {Pick<ArtifactStatusEntry, "version" | "installed" | "selected">} artifact
+ * @param {Pick<ArtifactStatusEntry, "installCommand">} artifact
  */
-export function isLeftoverLockEntry(artifact) {
-  return artifact.version !== null && artifact.selected === false && !artifact.installed;
+function isLeftoverLockEntry(artifact) {
+  return artifact.installCommand !== null;
 }
 
 /**
@@ -171,7 +172,7 @@ export function isLeftoverLockEntry(artifact) {
  * and apply, so it is not a problem; doctor names it in a note instead (owner decision on #994).
  * A leftover lock entry is not a problem either; both commands print it as a warning (#1111).
  *
- * @param {Pick<ArtifactStatusEntry, "version" | "installed" | "managed" | "locallyEdited" | "selected">} artifact
+ * @param {Pick<ArtifactStatusEntry, "version" | "installed" | "managed" | "locallyEdited" | "installCommand">} artifact
  */
 export function isArtifactHealthy(artifact) {
   return (

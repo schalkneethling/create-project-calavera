@@ -623,7 +623,7 @@ const artifactStatusEntrySchema = z.looseObject({
     .string()
     .nullable()
     .describe(
-      "The CLI command that runs artifacts install: for a selection without a lock entry, it installs the artifact; for a lock entry the recipe no longer selects whose files were deleted, it drops the entry. Null otherwise. The person runs it; this tool does not.",
+      "The CLI command that runs artifacts install: for a selection without a lock entry, it installs the artifact; for a lock entry the recipe no longer selects whose files were deleted, it drops the entry when it can also install what the recipe selects. Null otherwise. The person runs it; this tool does not.",
     ),
   selected: z
     .boolean()
