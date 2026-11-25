@@ -56,6 +56,7 @@ import {
   AGENT_BOOTSTRAP_SECTION_START,
 } from "./agent-bootstrap-files.js";
 import {
+  BASE_SKILL_PATH,
   CODE_RABBIT_CONFIG_FIRST_LINE,
   CODE_RABBIT_CONFIG_PATH,
   CODE_RABBIT_PACKAGES_FILTER,
@@ -108,9 +109,6 @@ import {
 import { STAGING_ROOT } from "./staging-leftovers.js";
 
 const CALAVERA_ROOT = ".calavera";
-// The path the bootstrap installs the base Calavera skill to, and that `skill-calavera` installs to
-// when a recipe selects it.
-const BASE_SKILL_PATH = ".agents/skills/calavera";
 // The folder that holds the MCP setup notes. `eject` removes it once removing the notes has left
 // it empty (ADR-0017, Decision 2).
 const MCP_NOTES_ROOT = dirname(AGENT_BOOTSTRAP_MCP_FILE);

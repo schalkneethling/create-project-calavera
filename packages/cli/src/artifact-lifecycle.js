@@ -363,11 +363,12 @@ async function pendingTransactionReport(config) {
 /**
  * The project paths of the files the pending transaction's rollback would restore from their
  * backups or remove, as `recoverArtifactTransaction` decides it, read without writing, or null
- * when the journal cannot be read or fails its checks.
+ * when the journal cannot be read or fails its checks. The read-only status report and the phase
+ * function (ADR-0020, Decision 1) both list them.
  *
  * @returns {Promise<string[] | null>}
  */
-async function pendingRollbackFiles() {
+export async function pendingRollbackFiles() {
   let operations;
   try {
     ({ operations } = await readTransactionJournal());
