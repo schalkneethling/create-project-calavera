@@ -126,7 +126,15 @@ jobs:
           PACKAGE_DIR: ${{ runner.temp }}/package-${{ github.run_id }}-${{ github.run_attempt }}
           NEXT_TAG_SCRIPT: ${{ github.workspace }}/scripts/move-next-tag.mjs
         run: |
-          mapfile -t tarballs < <(find "$PACKAGE_DIR" -maxdepth 1 -name "*.tgz" -print)
+          # Stop on the first failed command, so a failed npm publish ends the job instead of being
+          # reported as a next tag that did not move. Conditions such as `if ! node ...` are exempt.
+          set -euo pipefail
+          # A read loop rather than mapfile, so the step also runs under the bash 3.2 that macOS
+          # ships, where publish-workflow.test.mjs runs it.
+          tarballs=()
+          while IFS= read -r tarball; do
+            tarballs+=("$tarball")
+          done < <(find "$PACKAGE_DIR" -maxdepth 1 -name "*.tgz" -print | sort)
           if [ "${#tarballs[@]}" -eq 0 ]; then
             echo "No package tarball found in $PACKAGE_DIR."
             exit 1
@@ -149,8 +157,11 @@ jobs:
               fi
               rm "$view_output"
               echo "Confirmed ${package_name}@${package_version} is not published."
+              # Build metadata (after +) may contain hyphens, so only the part before it decides
+              # whether this is a prerelease, as semver and move-next-tag.mjs decide.
+              version_core=${package_version%%+*}
               dist_tag=latest
-              if [[ "$package_version" == *-* ]]; then
+              if [[ "$version_core" == *-* ]]; then
                 dist_tag=next
               fi
               npm publish "$(realpath "$tarball")" --access public --tag "$dist_tag"

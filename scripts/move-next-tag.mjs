@@ -1,9 +1,9 @@
 // Moves a package's npm `next` dist-tag to a stable release, so `next` is never older than
 // `latest` (owner decision on #993, implemented in #1126). The publish job in
 // .github/workflows/publish.yml runs this once per tarball, after `npm publish` or after it skips
-// an already published version. That job has no checkout and no installed dependencies, so this
-// file imports only Node.js built-ins and compares versions itself; move-next-tag.test.mjs holds
-// that comparison to the semver package.
+// an already published version. That job checks out only this file and installs no dependencies,
+// so this file imports only Node.js built-ins and compares versions itself; move-next-tag.test.mjs
+// holds that comparison to the semver package.
 //
 //   node move-next-tag.mjs <package> <version> <published|skipped>
 //

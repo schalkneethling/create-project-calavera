@@ -24,6 +24,12 @@ const workflowJob = (workflow, jobName) => {
   );
   return lines.slice(start, nextJob === -1 ? undefined : nextJob).join("\n");
 };
+const stepRun = (job, stepName) => {
+  const start = job.indexOf(`      - name: ${stepName}\n`);
+  assert.notEqual(start, -1, `the job must have a "${stepName}" step`);
+  const next = job.indexOf("\n      - name: ", start + 1);
+  return job.slice(start, next === -1 ? undefined : next);
+};
 const testJob = workflowJob(publishWorkflow, "test");
 const buildJob = workflowJob(publishWorkflow, "build");
 const publishJob = workflowJob(publishWorkflow, "publish");
@@ -93,6 +99,7 @@ assert.equal(
 );
 assert.match(rootPackage.scripts["release:contracts"], /release-orchestrator\.test\.mjs/);
 assert.match(rootPackage.scripts["release:contracts"], /move-next-tag\.test\.mjs/);
+assert.match(rootPackage.scripts["release:contracts"], /publish-workflow\.test\.mjs/);
 assert.equal(
   semver.valid(rootPackage.devDependencies.fledgling),
   rootPackage.devDependencies.fledgling,
@@ -149,7 +156,8 @@ assert.match(publishWorkflow, /find "\$PACKAGE_DIR" -maxdepth 1 -name "\*\.tgz"/
 assert.match(publishWorkflow, /npm view .*version >"\$view_output" 2>&1/);
 assert.match(publishWorkflow, /grep -Eq .*E404\|404/);
 assert.match(publishWorkflow, /exit "\$view_status"/);
-assert.match(publishWorkflow, /\[\[ "\$package_version" == \*-\* \]\]/);
+assert.match(publishWorkflow, /version_core=\$\{package_version%%\+\*\}/);
+assert.match(publishWorkflow, /\[\[ "\$version_core" == \*-\* \]\]/);
 assert.match(publishWorkflow, /dist_tag=next/);
 assert.match(publishJob, /^ {4}environment: publish$/m);
 assert.match(publishJob, /^ {6}id-token: write$/m);
@@ -157,8 +165,9 @@ assert.match(publishJob, /node-version: 24\.8\.0/);
 assert.match(publishJob, /npm publish .*--access public.*--tag "\$dist_tag"/);
 assert.doesNotMatch(publishJob, /NODE_AUTH_TOKEN|NPM_TOKEN/);
 // A stable release also moves `next` to it (#993, #1126). Trusted publishing can change a dist-tag
-// only with npm CLI 11.21.0 or later, and no Node.js 24 release bundles that npm, so the publish job
-// installs an exact, reviewed npm before it publishes.
+// only with npm CLI 11.21.0 or later, so the publish job must install an exact npm of at least that
+// version before it publishes, and confirm it is the npm on PATH, whatever npm the pinned Node.js
+// bundles.
 const npmUpgrade = publishJob.match(/^ {10}npm install --global npm@(\S+)$/m);
 assert(npmUpgrade, "the publish job must install an exact npm version");
 assert.equal(semver.valid(npmUpgrade[1]), npmUpgrade[1], "the publish job's npm must be exact");
@@ -194,6 +203,15 @@ assert.match(
 assert.doesNotMatch(buildJob, /move-next-tag/, "the build artifact must not carry the tag script");
 assert.match(publishJob, /publish_state=skipped/);
 assert.match(publishJob, /publish_state=published/);
+// publish-workflow.test.mjs runs the step to prove its control flow; these keep its shell options
+// from being weakened in a way that test might not exercise.
+assert.match(
+  stepRun(publishJob, "Publish package"),
+  /^ {10}set -euo pipefail$/m,
+  "the publish step must stop on the first failed command",
+);
+assert.doesNotMatch(publishJob, /^\s*set \+[a-z]*e/m, "the publish job must not turn off -e");
+assert.doesNotMatch(publishJob, /npm publish [^\n]*\|\|/, "a failed npm publish must stop the job");
 assert.match(
   publishJob,
   /if ! node "\$NEXT_TAG_SCRIPT" "\$package_name" "\$package_version" "\$publish_state"; then\n {14}next_tag_failures\+=\("\$\{package_name\}@\$\{package_version\}"\)/,

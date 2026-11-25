@@ -121,6 +121,19 @@ test("planNextTag never moves next backward", () => {
   );
 });
 
+// publish.yml makes the same call for the channel: only a hyphen before any build metadata (+)
+// marks a prerelease.
+test("planNextTag reads build metadata the way semver does", () => {
+  assert.equal(semver.prerelease("1.2.0+build-1"), null);
+  assert.deepEqual(planNextTag({ version: "1.2.0+build-1", state: "published", tags: {} }), {
+    action: "move",
+  });
+  assert.deepEqual(planNextTag({ version: "1.2.0-rc.1+build-1", state: "published", tags: {} }), {
+    action: "keep",
+    reason: "1.2.0-rc.1+build-1 is a prerelease, which npm publish --tag next already tagged",
+  });
+});
+
 test("planNextTag never moves next to a prerelease", () => {
   assert.deepEqual(planNextTag({ version: "1.2.0-next.1", state: "published", tags: {} }), {
     action: "keep",

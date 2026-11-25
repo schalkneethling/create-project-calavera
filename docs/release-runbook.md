@@ -233,9 +233,11 @@ both `npm publish` and **Allow npm dist-tag** allowed. A new connection expires 
 publish within 2 days, so recreate it no more than 2 days before the next release. See
 "Trusted publisher configuration expiry" in [Trusted publishing](https://docs.npmjs.com/trusted-publishers).
 
-When the workflow cannot move a tag, it still publishes every package, then fails the job and prints,
-for each package, the `npm dist-tag add` command that failed and what to change. `release:publish`
-then stops with the run's log command. To recover:
+When the workflow cannot move a tag, it still publishes every package, then fails the job. For each
+affected package, it prints the command that failed, below npm's own error output. When the tag
+change failed, that is the `npm dist-tag add` command, followed by the likely fix. When reading the
+package's dist-tags failed, it is the `npm view` command, and the tag is left unchanged.
+`release:publish` then stops with the run's log command. To recover:
 
 1. Read the log with `gh run view <run-id> --repo schalkneethling/create-project-calavera --log-failed`.
 2. Fix the cause it names, usually by enabling **Allow npm dist-tag** for that package.
