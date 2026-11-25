@@ -6,11 +6,20 @@
 // files it was needed for are `not-checked`. The function stays read-only.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdir, mkdtempDisposable, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import {
+  access,
+  mkdir,
+  mkdtempDisposable,
+  readFile,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import test from "node:test";
 
+import { readArtifactStatus, runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { applyRecipeObject } from "../src/index.js";
 import { deriveProjectPhase } from "../src/project-phase.js";
 import { buildRecipe } from "../src/recipe.js";
@@ -396,6 +405,31 @@ test("without running project code, a project without Vite+ is classified in ful
     const result = await deriveProjectPhase({ config: CONFIG, runsProjectCode: false });
     assert.equal(fileCondition(result, KNIP).name, "edited");
     assert.equal(result.phase, "drifted");
+  });
+});
+
+test("artifact status and the read-only status tool run no project code to find leftover lock entries", async () => {
+  await inProject(async (directory) => {
+    await applied(["knip"], [ARTIFACT]);
+    await declareVitePlus();
+    // A vp that leaves a file behind whenever anything runs it.
+    const ran = join(directory, "vp-ran");
+    await writeVitePlusFormatter(directory, { bin: { vp: "./bin/sentinel.mjs" } });
+    await writeFile(
+      join(directory, "node_modules/vite-plus/bin/sentinel.mjs"),
+      `import { writeFileSync } from "node:fs";\nwriteFileSync(${JSON.stringify(ran)}, "");\n`,
+    );
+    const knip = await readJsonFile(KNIP);
+    await writeJsonFile(KNIP, { ...knip, entry: ["src/main.ts"] });
+    await readArtifactStatus({ config: CONFIG });
+    await runArtifactCommand(
+      { config: CONFIG, dryRun: false, artifactAction: "status" },
+      { ...registry(), loadFormatter: async () => assert.fail("status loads no formatter") },
+    );
+    await assert.rejects(access(ran), { code: "ENOENT" });
+    // The same stand-in runs when the formatter loads, so the check above can fail.
+    await derive();
+    await access(ran);
   });
 });
 
