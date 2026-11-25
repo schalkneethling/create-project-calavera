@@ -384,6 +384,12 @@ function artifactLines(result) {
   const lines = [];
   /** @type {Set<string>} */
   const named = new Set();
+  // The settings files already named by an artifact above, so a later artifact that changes the
+  // same file refers to it instead of naming it again (#1145).
+  /** @type {Set<string>} */
+  const namedSettingsFiles = new Set();
+  const wiringFor = (/** @type {WiringChange[]} */ changes) =>
+    changes.flatMap((change) => wiringLines(change, dryRun, namedSettingsFiles));
 
   // An artifact's catalog ID names it in the lock entries, inputs, and wiring, also for an item the
   // recipe selects by its legacy type and src (#1119).
@@ -412,7 +418,7 @@ function artifactLines(result) {
     for (const { name, ...input } of inputs) {
       lines.push(info(`${DETAIL}${name} = ${formatInputValue(input)}`));
     }
-    lines.push(...wiring.flatMap((change) => wiringLines(change, dryRun)));
+    lines.push(...wiringFor(wiring));
   }
 
   const deselected = [
@@ -420,11 +426,7 @@ function artifactLines(result) {
   ];
   for (const id of deselected) {
     lines.push(info(`${ITEM}${id}, which the recipe no longer selects`));
-    lines.push(
-      ...result.wiringChanges
-        .filter(({ artifact }) => artifact === id)
-        .flatMap((change) => wiringLines(change, dryRun)),
-    );
+    lines.push(...wiringFor(result.wiringChanges.filter(({ artifact }) => artifact === id)));
   }
 
   return [
@@ -506,15 +508,20 @@ function artifactHeadline(id, locked, written, unchanged, dryRun) {
  * The lines for one artifact's part of a wiring file, under the artifact's own line, so the
  * artifact is not named again; the approval covers the exact text. The groups an artifact adds to,
  * replaces in, or removes from .claude/settings.json sit under one line for the file, so the file
- * is named once (#1128).
+ * is named once for them (#1128). When several artifacts change the file, the first names it and
+ * each later one refers to the file listed above, with its own groups under its own line, so the
+ * file is named once and each artifact's part stays with that artifact (#1145).
  *
  * @param {WiringChange} change
  * @param {boolean} dryRun
+ * @param {Set<string>} namedSettingsFiles The settings files an artifact above already named; this
+ * call adds `path` to it.
  * @returns {SummaryLine[]}
  */
 function wiringLines(
   { path, kind, type, block, removedBlock, groupChanges, reformatted, deselected },
   dryRun,
+  namedSettingsFiles,
 ) {
   const because = deselected
     ? "because the recipe no longer selects it"
@@ -536,13 +543,22 @@ function wiringLines(
         : tense(dryRun, "Would update", "Updated");
     return [detail(`${action} its block in ${path}: ${quoteScriptValue(block)}`)];
   }
-  if (type === "unchanged") return [detail(`${path} already holds its hook groups`)];
+  const named = namedSettingsFiles.has(path);
+  namedSettingsFiles.add(path);
+  if (type === "unchanged") {
+    return [
+      detail(
+        `${named ? "The Claude Code settings file listed above" : path} already holds its hook groups`,
+      ),
+    ];
+  }
+  const settingsFile = named ? "the Claude Code settings file listed above" : path;
   const file =
     type === "write"
       ? tense(dryRun, "Would write", "Wrote")
       : tense(dryRun, "Would update", "Updated");
   return [
-    detail(`${file} ${path}:`),
+    detail(`${file} ${settingsFile}:`),
     ...[
       ...(groupChanges ?? []).map(({ event, action, group, previous }) =>
         action === "add"

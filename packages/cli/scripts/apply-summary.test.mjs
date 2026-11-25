@@ -942,6 +942,122 @@ test("integrations name their packages once and say how the install ran", () => 
   );
 });
 
+test("apply --dry-run and apply name .claude/settings.json once when two artifacts change it, with each artifact's groups under that artifact (#1145)", async () => {
+  await inManagedProject(async () => {
+    // Only the guard declares Claude Code groups today, so the second artifact is one the recipe
+    // no longer selects: its recorded Stop group is in the settings file, and apply removes it
+    // while the guard replaces its own groups for a new protected branch.
+    execFileSync("git", ["symbolic-ref", "HEAD", "refs/heads/1145-settings-once"]);
+    const guard = (/** @type {string} */ protectedBranch) => ({
+      ...buildRecipe("default", ["editorconfig"], "pnpm"),
+      ai: [{ id: "skill-protected-branch-guard", inputs: { protectedBranch } }],
+    });
+    const registry = stubRegistry(richReleases);
+    const text = (/** @type {import("../src/summary-lines.js").SummaryLine[]} */ lines) =>
+      printed(lines.map((line) => line.text));
+    const first = await applyRecipeObject(
+      guard("main"),
+      { ...applyOptions, dryRun: true },
+      registry,
+    );
+    await applyRecipeObject(
+      first.recipe,
+      { ...applyOptions, approvedArtifacts: first.autoInstalledArtifacts },
+      registry,
+    );
+
+    const retiredGroup = {
+      hooks: [
+        {
+          type: "command",
+          command: 'node "$CLAUDE_PROJECT_DIR/.agents/skills/retired-guard/scripts/stop.mjs"',
+          timeout: 10,
+        },
+      ],
+    };
+    const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+    state.aiArtifacts.push({
+      type: "skill",
+      name: "retired-guard",
+      source: "skill-retired-guard",
+      path: ".agents/skills/retired-guard",
+      hash: "0000000",
+    });
+    state.aiWiring.push({ artifact: "skill-retired-guard", claudeCode: { Stop: [retiredGroup] } });
+    await writeFile(".calavera/state.json", `${JSON.stringify(state, null, 2)}\n`);
+    const settings = JSON.parse(await readFile(".claude/settings.json", "utf8"));
+    settings.hooks.Stop = [retiredGroup];
+    await writeFile(".claude/settings.json", `${JSON.stringify(settings, null, 2)}\n`);
+
+    const dryRun = await applyRecipeObject(
+      guard("develop"),
+      { ...applyOptions, dryRun: true },
+      registry,
+    );
+    // --json and MCP callers keep one change per artifact.
+    assert.deepEqual(
+      dryRun.wiringChanges
+        .filter(({ path }) => path === ".claude/settings.json")
+        .map(({ artifact, type }) => [artifact, type]),
+      [
+        ["skill-protected-branch-guard", "update"],
+        ["skill-retired-guard", "update"],
+      ],
+    );
+    // namedItems takes artifact IDs from the lock entries, and neither artifact locks anything
+    // here, so the IDs the wiring changes name are checked as well.
+    const planned = [
+      ...namedItems(JSON.parse(JSON.stringify(dryRun))),
+      ...new Set(dryRun.wiringChanges.map(({ artifact }) => artifact)),
+    ];
+    assert.ok(planned.includes(".claude/settings.json"), planned.join());
+    const dryRunText = text(applySummaryLines(dryRun));
+    assert.deepEqual(listingViolations(dryRunText, planned, dryRun.vitePlus.lines), [], dryRunText);
+    const removedStop = `Would remove the Stop group, because the recipe no longer selects it: ${JSON.stringify(retiredGroup)}`;
+    assert.ok(
+      dryRunText.includes(
+        [
+          "    Would update .claude/settings.json:",
+          `      Would replace the SessionStart group: ${guardGroup("session-start")} with ${guardGroup("session-start").replace(" main", " develop")}`,
+        ].join("\n"),
+      ),
+      dryRunText,
+    );
+    assert.ok(
+      dryRunText.includes(
+        [
+          "  skill-retired-guard, which the recipe no longer selects",
+          "    Would update the Claude Code settings file listed above:",
+          `      ${removedStop}`,
+        ].join("\n"),
+      ),
+      dryRunText,
+    );
+
+    const applied = await applyRecipeObject(
+      dryRun.recipe,
+      { ...applyOptions, approvedArtifacts: dryRun.autoInstalledArtifacts },
+      registry,
+    );
+    const appliedText = text(applySummaryLines(applied));
+    assert.deepEqual(listingViolations(appliedText, planned), [], appliedText);
+    assert.ok(
+      appliedText.includes(
+        [
+          "  skill-retired-guard, which the recipe no longer selects",
+          "    Updated the Claude Code settings file listed above:",
+          `      ${removedStop.replace("Would remove", "Removed")}`,
+        ].join("\n"),
+      ),
+      appliedText,
+    );
+    assert.equal(
+      Object.hasOwn(JSON.parse(await readFile(".claude/settings.json", "utf8")).hooks, "Stop"),
+      false,
+    );
+  });
+});
+
 test("each artifact is one line, with its outputs, inputs, and wiring under it", () => {
   const recipe = {
     version: 1,
@@ -996,7 +1112,7 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
       removedBlock: "run c",
     },
     {
-      artifact: "skill-code-review",
+      artifact: "hook-block-dangerous-commands",
       path: ".claude/settings.json",
       kind: "claude-settings",
       type: "unchanged",
@@ -1062,20 +1178,21 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
     "info   Would write hook-block-dangerous-commands:",
     "info     .agents/hooks/claude-code/block-dangerous-commands.mjs",
     "info     .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
+    "info     .claude/settings.json already holds its hook groups",
     "info   skill-code-review",
     "info     branch = main (recorded in the recipe)",
     'info     .vite-hooks/pre-commit already holds its block: "run a"',
     'info     Would update its block in .vite-hooks/pre-push: "run b"',
     'info     Would remove its block from .vite-hooks/pre-push, because it no longer wires that hook: "run c"',
-    "info     .claude/settings.json already holds its hook groups",
-    "info     Would update .claude/settings.json:",
+    // #1145: an artifact after the one that named the settings file refers to it.
+    "info     Would update the Claude Code settings file listed above:",
     'info       Would replace the SessionStart group: {"a":0} with {"a":1}',
     'info       Would remove the PreToolUse group: {"b":0}',
     "info       Would also change the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes",
     "info   Would lock skill-css-tokens 0.3.0; its files in the project already match",
     "info   skill-dropped, which the recipe no longer selects",
     'info     Would remove its block from .vite-hooks/pre-commit, because the recipe no longer selects it: "run d"',
-    "info     Would update .claude/settings.json:",
+    "info     Would update the Claude Code settings file listed above:",
     'info       Would remove the Stop group, because the recipe no longer selects it: {"c":0}',
     "warn   An npm setting was ignored.",
     "warn   A wiring warning.",
@@ -1090,6 +1207,28 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
       "info   Locked skill-css-tokens 0.3.0; its files in the project already matched",
     ),
     true,
+  );
+  // An artifact that leaves the settings file as it is, after one that changes it, refers to it.
+  const unchangedSecond = levels(
+    applySummaryLines({
+      ...result,
+      wiringChanges: /** @type {any} */ ([
+        { ...wiringChanges[4], artifact: "hook-block-dangerous-commands" },
+        { ...wiringChanges[3], artifact: "skill-code-review" },
+      ]),
+    }),
+  );
+  assert.equal(
+    unchangedSecond.includes(
+      "info     The Claude Code settings file listed above already holds its hook groups",
+    ),
+    true,
+    unchangedSecond.join("\n"),
+  );
+  assert.equal(
+    unchangedSecond.filter((line) => line.includes(".claude/settings.json")).length,
+    1,
+    unchangedSecond.join("\n"),
   );
   // The wiring file sits under the artifact, not under Files.
   const lines = applySummaryLines(result).map(({ text }) => text);
