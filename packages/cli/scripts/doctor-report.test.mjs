@@ -61,12 +61,17 @@ const artifact = (selected, name) => ({
 });
 
 test("the phase line comes first, at the doctors' level in doctor's words", () => {
-  // The recipe heading names the path, so doctor's phase line says "the recipe".
   assert.deepEqual(issues({ phase: "composed" })[0], {
     level: "warning",
     check: "phase",
-    message: "The recipe is not applied yet, so run pnpm dlx create-project-calavera apply.",
+    message:
+      "The recipe in calavera.config.json is not applied yet, so run pnpm dlx create-project-calavera apply.",
   });
+  // doctor lists every drifted item under its heading, so its drifted line points nowhere else.
+  assert.equal(
+    issues({ phase: "drifted", artifacts: [artifact(true, "edited")] })[0]?.message,
+    "The phase is drifted.",
+  );
   assert.equal(issues({ phase: "unmanaged" })[0]?.level, "error");
   assert.equal(issues({ phase: "applied" })[0]?.level, "info");
 });
@@ -199,14 +204,12 @@ test("each artifact condition has the level #994 set, and the marker notes come 
 /**
  * @param {import("../src/doctor-report.js").DoctorIssue[]} list
  * @param {string[] | null} [rollbackFiles]
- * @param {string} [config]
  */
-const lines = (list, rollbackFiles, config) =>
+const lines = (list, rollbackFiles) =>
   doctorReportLines({
     ok: !list.some(({ level }) => level === "error"),
     issues: list,
     rollbackFiles,
-    config,
   });
 
 test("the text output groups each check under its heading, in a fixed order", () => {
@@ -241,21 +244,17 @@ test("the text output groups each check under its heading, in a fixed order", ()
   );
 });
 
-test("the recipe heading names the recipe path, and wiring without an artifact line names the artifact once", () => {
+test("wiring without an artifact line names the artifact once", () => {
   assert.deepEqual(
-    lines(
-      [
-        { level: "info", check: "phase", message: "The phase is drifted." },
-        { level: "warning", check: "recipe", message: "r" },
-        { level: "error", check: "wiring", message: "x w1", artifact: "skill-x", detail: "w1" },
-        { level: "warning", check: "wiring", message: "x w2", artifact: "skill-x", detail: "w2" },
-      ],
-      undefined,
-      "config/recipe.json",
-    ).slice(0, 7),
+    lines([
+      { level: "info", check: "phase", message: "The phase is drifted." },
+      { level: "warning", check: "recipe", message: "r" },
+      { level: "error", check: "wiring", message: "x w1", artifact: "skill-x", detail: "w1" },
+      { level: "warning", check: "wiring", message: "x w2", artifact: "skill-x", detail: "w2" },
+    ]).slice(0, 7),
     [
       { level: "info", message: "The phase is drifted." },
-      { level: "info", message: "Recipe config/recipe.json:" },
+      { level: "info", message: "Recipe:" },
       { level: "warn", message: "  r" },
       { level: "info", message: "Artifacts:" },
       {

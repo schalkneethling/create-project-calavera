@@ -94,7 +94,7 @@ function toolchainIssues(report) {
   return report.issues
     .filter(({ message }) =>
       removedToolchainIntegrations.some(({ id }) =>
-        message.startsWith(`The recipe selects ${id},`),
+        message.startsWith(`calavera.config.json selects ${id},`),
       ),
     )
     .map(({ level, message }) => ({ level, message }));
@@ -170,25 +170,25 @@ const managedInMember = {
   corroborating: [],
 };
 
-test("removedToolchainWarnings names the integration and the signal once per id, and the recipe without its path", () => {
+test("removedToolchainWarnings names the integration, the signal, and the recipe path once per id", () => {
   const recipeObject = { integrations: ["eslint", "knip", "oxfmt", "eslint"] };
 
-  assert.deepEqual(removedToolchainWarnings(recipeObject, managedInMember), [
+  assert.deepEqual(removedToolchainWarnings(recipeObject, managedInMember, "config/recipe.json"), [
     {
       level: "warning",
       message:
-        "The recipe selects oxfmt, a JavaScript and TypeScript formatting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at /work/repo/package.json) and provides formatting, so remove oxfmt from the recipe; apply refuses the recipe until you do.",
+        "config/recipe.json selects oxfmt, a JavaScript and TypeScript formatting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at /work/repo/package.json) and provides formatting, so remove oxfmt from config/recipe.json; apply refuses the recipe until you do.",
     },
     {
       level: "warning",
       message:
-        "The recipe selects eslint, a JavaScript and TypeScript linting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at /work/repo/package.json) and provides linting, so remove eslint from the recipe; apply refuses the recipe until you do.",
+        "config/recipe.json selects eslint, a JavaScript and TypeScript linting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at /work/repo/package.json) and provides linting, so remove eslint from config/recipe.json; apply refuses the recipe until you do.",
     },
   ]);
 });
 
 test("removedToolchainWarnings returns nothing for a recipe without integrations", () => {
-  assert.deepEqual(removedToolchainWarnings({}, managedInMember), []);
+  assert.deepEqual(removedToolchainWarnings({}, managedInMember, "c.json"), []);
 });
 
 for (const detection of [
@@ -222,12 +222,12 @@ test("doctor warns about each removed toolchain integration in a vp create proje
     {
       level: "warning",
       message:
-        "The recipe selects oxlint, a JavaScript and TypeScript linting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at package.json) and provides linting, so remove oxlint from the recipe; apply refuses the recipe until you do.",
+        "calavera.config.json selects oxlint, a JavaScript and TypeScript linting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at package.json) and provides linting, so remove oxlint from calavera.config.json; apply refuses the recipe until you do.",
     },
     {
       level: "warning",
       message:
-        "The recipe selects typescript, a JavaScript and TypeScript type-checking integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at package.json) and provides type-checking, so remove typescript from the recipe; apply refuses the recipe until you do.",
+        "calavera.config.json selects typescript, a JavaScript and TypeScript type-checking integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at package.json) and provides type-checking, so remove typescript from calavera.config.json; apply refuses the recipe until you do.",
     },
   ]);
   assert.equal(report.ok, true, "a toolchain warning must not make doctor fail");
@@ -241,11 +241,10 @@ test("doctor prints the toolchain warning in its human output and exits 0", asyn
 
   const { stdout, stderr } = await runDoctor(fixture.root);
 
-  // The heading names the recipe path, so the warning under it says "the recipe".
-  assert.ok(stdout.split("\n").includes("Recipe calavera.config.json:"), stdout);
+  assert.ok(stdout.split("\n").includes("Recipe:"), stdout);
   assert.match(
     stderr,
-    /^ {2}The recipe selects prettier, a JavaScript and TypeScript formatting integration that Calavera removed\. Vite\+ manages this project \(vite-plus-dependency signal at package\.json\)/m,
+    /^ {2}calavera\.config\.json selects prettier, a JavaScript and TypeScript formatting integration that Calavera removed\. Vite\+ manages this project \(vite-plus-dependency signal at package\.json\)/m,
   );
   assert.deepEqual(await snapshotDirectory(fixture.root), before, "doctor changed a file");
 });
@@ -281,7 +280,7 @@ test("doctor run from a workspace member names the ancestor manifest that matche
   assert.deepEqual(toolchainIssues(await doctorReport(member)), [
     {
       level: "warning",
-      message: `The recipe selects eslint, a JavaScript and TypeScript linting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at ${join(fixture.root, "package.json")}) and provides linting, so remove eslint from the recipe; apply refuses the recipe until you do.`,
+      message: `calavera.config.json selects eslint, a JavaScript and TypeScript linting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at ${join(fixture.root, "package.json")}) and provides linting, so remove eslint from calavera.config.json; apply refuses the recipe until you do.`,
     },
   ]);
 });
@@ -304,7 +303,9 @@ for (const integrations of [
     assert.deepEqual(vitePlusToolchainIssues(report), []);
     assert.deepEqual(
       toolchainIssues(report).map(({ message }) => message.split(",")[0]),
-      integrations.filter((id) => isRemovedToolchainId(id)).map((id) => `The recipe selects ${id}`),
+      integrations
+        .filter((id) => isRemovedToolchainId(id))
+        .map((id) => `calavera.config.json selects ${id}`),
     );
     assert.equal(report.ok, true);
     const toolchain = toolchainIssues(report).map(({ message }) => message);

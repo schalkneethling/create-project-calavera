@@ -2,7 +2,7 @@
 "create-project-calavera": minor
 ---
 
-`doctor` now reads the project's phase, as `artifacts doctor` does (ADR-0020). Its report starts with a line that names the phase and what resolves it, and lists what it found under headings. The recipe heading names the recipe path, and each wiring finding prints under its artifact's line. Its `--json` result gains `phase`, `phaseLine`, `artifacts`, and `managedFiles`. Each issue gains `check`, which names the check it comes from, an artifact or wiring issue gains `artifact`, a wiring issue gains `detail`, the finding without the artifact's ID, and `level` gains `info`. No field was renamed or removed. The closing line names each check that failed, and says which of them `artifacts doctor` does not make.
+`doctor` now reads the project's phase, as `artifacts doctor` does (ADR-0020). Its report starts with a line that names the phase and what resolves it, and lists what it found under headings. Each wiring finding keeps its remedy and prints under its artifact's line. Its `--json` result gains `phase`, `phaseLine`, `artifacts`, and `managedFiles`. Each issue gains `check`, which names the check it comes from, an artifact or wiring issue gains `artifact`, a wiring issue gains `detail`, the finding without the artifact's ID, and `level` gains `info`. No field was renamed or removed. The closing line names each check that failed, and says which of them `artifacts doctor` does not make.
 
 `doctor` now fails in these cases:
 

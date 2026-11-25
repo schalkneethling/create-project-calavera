@@ -145,8 +145,7 @@ function artifactIssue({ id, selected, condition }, install) {
  * The heading each check's issues are printed under, in the order the groups print, so every
  * managed file and artifact is named once, under a heading, as the release's listing check
  * requires (`listingViolations` in `scripts/rehearsal-checks.mjs`). The names match the apply
- * summary's groups. The recipe group's heading names the recipe path, which its lines then do
- * not repeat. The wiring findings print under their artifact in the Artifacts group, so an
+ * summary's groups. The wiring findings print under their artifact in the Artifacts group, so an
  * artifact with both an artifact line and wiring findings is named once.
  *
  * @type {[string, DoctorCheck[]][]}
@@ -218,7 +217,7 @@ function artifactLines(group, logLevel) {
  * and last the verdict, which names each check that failed and, in a sentence of its own, the
  * ones artifacts doctor does not make (ADR-0020, Decision 5).
  *
- * @param {{ ok: boolean, issues: DoctorIssue[], rollbackFiles?: string[] | null, config?: string }} result
+ * @param {{ ok: boolean, issues: DoctorIssue[], rollbackFiles?: string[] | null }} result
  * @returns {{ level: "error" | "warn" | "info" | "success", message: string }[]}
  */
 export function doctorReportLines(result) {
@@ -238,7 +237,7 @@ export function doctorReportLines(result) {
     if (group.length === 0) continue;
     lines.push({
       level: "info",
-      message: heading === "Recipe:" && result.config ? `Recipe ${result.config}:` : heading,
+      message: heading,
     });
     if (heading === "Artifacts:") {
       lines.push(...artifactLines(group, logLevel));

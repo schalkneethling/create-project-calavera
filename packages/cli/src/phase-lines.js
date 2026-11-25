@@ -40,9 +40,8 @@ const LIST = new Intl.ListFormat("en", { type: "conjunction" });
  * @param {unknown} options.recipe The parsed recipe, or undefined, for the runner commands name.
  * @param {string} options.config
  * @param {boolean} [options.readOnly] The read-only status tool, which never runs the formatter.
- * @param {boolean} [options.forDoctor] For `doctor`, which names the recipe path in its recipe
- *   group's heading and each drifted item under its own heading, so its phase line names neither
- *   (ADR-0020, Decision 4 and Amendment 2).
+ * @param {boolean} [options.forDoctor] For `doctor`, which lists each drifted item under its own
+ *   heading, so its drifted line does not point elsewhere (ADR-0020, Decision 4 and Amendment 2).
  * @returns {PhaseLine}
  */
 export function phaseLine(
@@ -67,11 +66,10 @@ export function phaseLine(
       }`,
     bootstrapped: () =>
       `The project is bootstrapped and has no recipe yet, so run ${run("init")}, or ${elsewhere}. If an eject stopped partway, run ${run("eject")} again.`,
-    composed: () =>
-      `The recipe${forDoctor ? "" : ` in ${config}`} is not applied yet, so run ${run("apply")}.`,
+    composed: () => `The recipe in ${config} is not applied yet, so run ${run("apply")}.`,
     applied: () => "The phase is applied.",
     drifted: () => `The phase is drifted.${forDoctor ? "" : driftedElsewhere(result)}`,
-    incomplete: () => incompleteMessage(result, run, forDoctor ? undefined : config),
+    incomplete: () => incompleteMessage(result, run, config),
   };
   const notChecked =
     readOnly && result.managedFiles.some(({ condition }) => condition.name === "not-checked")
@@ -151,19 +149,19 @@ function driftedElsewhere(result) {
  *
  * @param {ProjectPhaseResult} result
  * @param {(...positionals: string[]) => string} run
- * @param {string | undefined} config The recipe path, or undefined to say "the recipe".
+ * @param {string} config
  */
 function incompleteMessage(result, run, config) {
   const records = /** @type {NonNullable<ProjectPhaseResult["records"]>} */ (result.records);
   const remain = [
-    ...(records.recipe ? [config ? `the recipe ${config}` : "the recipe"] : []),
+    ...(records.recipe ? [`the recipe ${config}`] : []),
     ...(records.state ? [STATE_PATH] : []),
     ...(records.lockEntries > 0 ? [LOCK_PATH] : []),
     ...(records.packagesPresent ? [PACKAGE_PATH] : []),
     ...(records.baseSkillPresent ? [BASE_SKILL_PATH] : []),
   ];
   const missing = [
-    ...(records.recipe ? [] : [config ? `the recipe ${config}` : "the recipe"]),
+    ...(records.recipe ? [] : [`the recipe ${config}`]),
     ...(records.state ? [] : [STATE_PATH]),
     ...(records.baseSkillRecorded && !records.baseSkillPresent ? [BASE_SKILL_PATH] : []),
   ];

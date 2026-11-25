@@ -79,25 +79,26 @@ const managed = {
 };
 
 const removedOxlint =
-  "The recipe selects oxlint, a JavaScript and TypeScript linting integration that Calavera removed (ADR-0002). Vite+ provides linting, and a project without Vite+ runs vp create or vp migrate first (ADR-0009). Remove oxlint from the recipe; apply refuses the recipe until you do.";
+  "c.json selects oxlint, a JavaScript and TypeScript linting integration that Calavera removed (ADR-0002). Vite+ provides linting, and a project without Vite+ runs vp create or vp migrate first (ADR-0009). Remove oxlint from c.json; apply refuses the recipe until you do.";
 
 test("unknownIntegrationWarnings warns once per unknown id and names unrecognized ids by position", () => {
   assert.deepEqual(
     unknownIntegrationWarnings(
       { integrations: ["knip", "oxlint", "not-a-tool", "oxlint", "not-a-tool", "another"] },
       unmanaged,
+      "c.json",
     ),
     [
       { level: "warning", message: removedOxlint },
       {
         level: "warning",
         message:
-          "The recipe's integrations[2] is not an integration Calavera knows, so remove it from the recipe; apply refuses the recipe until you do.",
+          "c.json integrations[2] is not an integration Calavera knows, so remove it from c.json; apply refuses the recipe until you do.",
       },
       {
         level: "warning",
         message:
-          "The recipe's integrations[5] is not an integration Calavera knows, so remove it from the recipe; apply refuses the recipe until you do.",
+          "c.json integrations[5] is not an integration Calavera knows, so remove it from c.json; apply refuses the recipe until you do.",
       },
     ],
   );
@@ -105,12 +106,12 @@ test("unknownIntegrationWarnings warns once per unknown id and names unrecognize
 
 test("unknownIntegrationWarnings leaves a removed toolchain id to the #431 warning in a project Vite+ manages", () => {
   assert.deepEqual(
-    unknownIntegrationWarnings({ integrations: ["oxlint", "not-a-tool"] }, managed),
+    unknownIntegrationWarnings({ integrations: ["oxlint", "not-a-tool"] }, managed, "c.json"),
     [
       {
         level: "warning",
         message:
-          "The recipe's integrations[1] is not an integration Calavera knows, so remove it from the recipe; apply refuses the recipe until you do.",
+          "c.json integrations[1] is not an integration Calavera knows, so remove it from c.json; apply refuses the recipe until you do.",
       },
     ],
   );
@@ -118,18 +119,19 @@ test("unknownIntegrationWarnings leaves a removed toolchain id to the #431 warni
 
 for (const detection of [unmanaged, { status: "unknown", corroborating: [] }]) {
   test(`unknownIntegrationWarnings warns about a removed toolchain id when detection is ${detection.status}`, () => {
-    assert.deepEqual(unknownIntegrationWarnings({ integrations: ["oxlint"] }, detection), [
-      { level: "warning", message: removedOxlint },
-    ]);
+    assert.deepEqual(
+      unknownIntegrationWarnings({ integrations: ["oxlint"] }, detection, "c.json"),
+      [{ level: "warning", message: removedOxlint }],
+    );
   });
 }
 
 test("unknownIntegrationWarnings returns nothing for a recipe of catalog ids or no integrations", () => {
   assert.deepEqual(
-    unknownIntegrationWarnings({ integrations: ["knip", "editorconfig"] }, unmanaged),
+    unknownIntegrationWarnings({ integrations: ["knip", "editorconfig"] }, unmanaged, "c.json"),
     [],
   );
-  assert.deepEqual(unknownIntegrationWarnings({}, unmanaged), []);
+  assert.deepEqual(unknownIntegrationWarnings({}, unmanaged, "c.json"), []);
 });
 
 test("doctor warns about each unknown integration in a plain Vite project and writes nothing", async () => {
@@ -145,12 +147,12 @@ test("doctor warns about each unknown integration in a plain Vite project and wr
     {
       level: "warning",
       message:
-        "The recipe selects eslint, a JavaScript and TypeScript linting integration that Calavera removed (ADR-0005). Vite+ provides linting, and a project without Vite+ runs vp create or vp migrate first (ADR-0009). Remove eslint from the recipe; apply refuses the recipe until you do.",
+        "calavera.config.json selects eslint, a JavaScript and TypeScript linting integration that Calavera removed (ADR-0005). Vite+ provides linting, and a project without Vite+ runs vp create or vp migrate first (ADR-0009). Remove eslint from calavera.config.json; apply refuses the recipe until you do.",
     },
     {
       level: "warning",
       message:
-        "The recipe's integrations[2] is not an integration Calavera knows, so remove it from the recipe; apply refuses the recipe until you do.",
+        "calavera.config.json integrations[2] is not an integration Calavera knows, so remove it from calavera.config.json; apply refuses the recipe until you do.",
     },
   ]);
   assert.deepEqual(await snapshotDirectory(fixture.root), before, "doctor changed a file");
@@ -164,11 +166,10 @@ test("doctor prints the unknown integration warning in its human output and exit
 
   const { stdout, stderr } = await runDoctor(fixture.root);
 
-  // The heading names the recipe path, so the warning under it says "the recipe".
-  assert.ok(stdout.split("\n").includes("Recipe calavera.config.json:"), stdout);
+  assert.ok(stdout.split("\n").includes("Recipe:"), stdout);
   assert.match(
     stderr,
-    /^ {2}The recipe selects prettier, a JavaScript and TypeScript formatting integration that Calavera removed \(ADR-0006\)\. Vite\+ provides formatting, and a project without Vite\+ runs vp create or vp migrate first \(ADR-0009\)\./m,
+    /^ {2}calavera\.config\.json selects prettier, a JavaScript and TypeScript formatting integration that Calavera removed \(ADR-0006\)\. Vite\+ provides formatting, and a project without Vite\+ runs vp create or vp migrate first \(ADR-0009\)\./m,
   );
 });
 
@@ -180,31 +181,31 @@ test("doctor gives a removed id in a vp create project the #431 warning only, an
     {
       level: "warning",
       message:
-        "The recipe selects oxlint, a JavaScript and TypeScript linting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at package.json) and provides linting, so remove oxlint from the recipe; apply refuses the recipe until you do.",
+        "calavera.config.json selects oxlint, a JavaScript and TypeScript linting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at package.json) and provides linting, so remove oxlint from calavera.config.json; apply refuses the recipe until you do.",
     },
     {
       level: "warning",
       message:
-        "The recipe's integrations[1] is not an integration Calavera knows, so remove it from the recipe; apply refuses the recipe until you do.",
+        "calavera.config.json integrations[1] is not an integration Calavera knows, so remove it from calavera.config.json; apply refuses the recipe until you do.",
     },
   ]);
 });
 
 for (const profile of ["modern", "classic"]) {
   test(`removedProfileWarnings names the removed ${profile} profile and its replacement`, () => {
-    assert.deepEqual(removedProfileWarnings({ profile }), [
+    assert.deepEqual(removedProfileWarnings({ profile }, "c.json"), [
       {
         level: "warning",
-        message: `The recipe names the ${profile} profile, which Calavera removed (ADR-0011), so change profile to default in the recipe; apply refuses the recipe until you do.`,
+        message: `c.json names the ${profile} profile, which Calavera removed (ADR-0011), so change profile to default in c.json; apply refuses the recipe until you do.`,
       },
     ]);
   });
 }
 
 test("removedProfileWarnings returns nothing for a current profile or none", () => {
-  assert.deepEqual(removedProfileWarnings({ profile: "default" }), []);
-  assert.deepEqual(removedProfileWarnings({ profile: "minimal" }), []);
-  assert.deepEqual(removedProfileWarnings({}), []);
+  assert.deepEqual(removedProfileWarnings({ profile: "default" }, "c.json"), []);
+  assert.deepEqual(removedProfileWarnings({ profile: "minimal" }, "c.json"), []);
+  assert.deepEqual(removedProfileWarnings({}, "c.json"), []);
 });
 
 test("doctor warns about a removed profile before the integration warnings, as apply checks it first, and exits 0", async () => {
@@ -219,12 +220,12 @@ test("doctor warns about a removed profile before the integration warnings, as a
     {
       level: "warning",
       message:
-        "The recipe names the modern profile, which Calavera removed (ADR-0011), so change profile to default in the recipe; apply refuses the recipe until you do.",
+        "calavera.config.json names the modern profile, which Calavera removed (ADR-0011), so change profile to default in calavera.config.json; apply refuses the recipe until you do.",
     },
     {
       level: "warning",
       message:
-        "The recipe selects oxfmt, a JavaScript and TypeScript formatting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at package.json) and provides formatting, so remove oxfmt from the recipe; apply refuses the recipe until you do.",
+        "calavera.config.json selects oxfmt, a JavaScript and TypeScript formatting integration that Calavera removed. Vite+ manages this project (vite-plus-dependency signal at package.json) and provides formatting, so remove oxfmt from calavera.config.json; apply refuses the recipe until you do.",
     },
   ]);
   assert.deepEqual(await snapshotDirectory(fixture.root), before, "doctor changed a file");

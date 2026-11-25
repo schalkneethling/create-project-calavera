@@ -102,10 +102,10 @@ test("doctor reads the recipe from options.config", async () => {
   const result = await doctorIn(fixture.root, { config: "config/recipe.json" });
   assert.equal(result.ok, true);
   assert.equal(result.phase, "composed");
-  // The recipe heading names the path, so the phase line names it only in the command it gives.
+  // The phase line names the recipe path doctor read.
   assert.equal(
     result.phaseLine?.message,
-    "The recipe is not applied yet, so run npm create project-calavera apply -- --config config/recipe.json.",
+    "The recipe in config/recipe.json is not applied yet, so run npm create project-calavera apply -- --config config/recipe.json.",
   );
   assert.deepEqual(findings(result), []);
 });
@@ -148,9 +148,9 @@ test("doctor lists the removed profile, removed toolchain, and unknown integrati
   assert.equal(detection.status, "managed", "the fixture must be a Vite+ project");
   const parsed = /** @type {import("../src/index.js").Recipe} */ ({ version: 1, ...recipe });
   const expected = [
-    ...removedProfileWarnings(parsed),
-    ...removedToolchainWarnings(parsed, detection),
-    ...unknownIntegrationWarnings(parsed, detection),
+    ...removedProfileWarnings(parsed, RECIPE),
+    ...removedToolchainWarnings(parsed, detection, RECIPE),
+    ...unknownIntegrationWarnings(parsed, detection, RECIPE),
   ];
   // Each helper contributes, so dropping any one of them from doctor changes the result.
   assert.equal(expected.length, 3, JSON.stringify(expected));

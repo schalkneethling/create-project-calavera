@@ -5688,31 +5688,28 @@ function vitePlusRemovedToolchainSelections(recipe, detection) {
  * apply refuses the recipe while `resolveRecipeIntegrations` drops them silently. Detection is the
  * same ADR-0001 function `inspect_project` reads; any status other than `managed` yields nothing.
  *
- * The warning says "the recipe" rather than its path, because doctor names the path once, in the
- * heading of its recipe group, so the release's listing check finds it once (ADR-0020,
- * Amendment 2).
- *
  * @param {Recipe} recipe
  * @param {VitePlusDetection} detection
+ * @param {string} configPath
  * @returns {{ level: "warning", message: string }[]}
  */
-export function removedToolchainWarnings(recipe, detection) {
+export function removedToolchainWarnings(recipe, detection, configPath) {
   return vitePlusRemovedToolchainSelections(recipe, detection).map(({ id, provides }) => ({
     level: "warning",
-    message: `The recipe selects ${id}, a JavaScript and TypeScript ${provides} integration that Calavera removed. Vite+ manages this project (${detection.signal} signal at ${detection.manifestPath}) and provides ${provides}, so remove ${id} from the recipe; apply refuses the recipe until you do.`,
+    message: `${configPath} selects ${id}, a JavaScript and TypeScript ${provides} integration that Calavera removed. Vite+ manages this project (${detection.signal} signal at ${detection.manifestPath}) and provides ${provides}, so remove ${id} from ${configPath}; apply refuses the recipe until you do.`,
   }));
 }
 
 /**
  * One warning when a recipe names a profile that ADR-0011 removed (#1082), because apply's recipe
  * validation refuses it. The warning names the profile by its fixed key in
- * `removedProfileReplacements`, never by the recipe's text. Like the other recipe warnings, it says
- * "the recipe" rather than its path, which doctor names in the recipe group's heading.
+ * `removedProfileReplacements`, never by the recipe's text.
  *
  * @param {Recipe} recipe
+ * @param {string} configPath
  * @returns {{ level: "warning", message: string }[]}
  */
-export function removedProfileWarnings(recipe) {
+export function removedProfileWarnings(recipe, configPath) {
   const removed = Object.entries(removedProfileReplacements).find(
     ([profile]) => profile === recipe.profile,
   );
@@ -5724,7 +5721,7 @@ export function removedProfileWarnings(recipe) {
   return [
     {
       level: "warning",
-      message: `The recipe names the ${profile} profile, which Calavera removed (ADR-0011), so change profile to ${replacement} in the recipe; apply refuses the recipe until you do.`,
+      message: `${configPath} names the ${profile} profile, which Calavera removed (ADR-0011), so change profile to ${replacement} in ${configPath}; apply refuses the recipe until you do.`,
     },
   ];
 }
@@ -5735,14 +5732,14 @@ export function removedProfileWarnings(recipe) {
  * removed toolchain id that the #431 warning already covers gets no second warning. A removed id
  * is named by its catalog entry, with the ADR that removed it and ADR-0009's advice for a project
  * without Vite+; any other id is text from the person's file, so the warning names its position in
- * `integrations` instead of echoing it. It says "the recipe" rather than its path, which doctor
- * names in the recipe group's heading.
+ * `integrations` instead of echoing it.
  *
  * @param {Recipe} recipe
  * @param {VitePlusDetection} detection
+ * @param {string} configPath
  * @returns {{ level: "warning", message: string }[]}
  */
-export function unknownIntegrationWarnings(recipe, detection) {
+export function unknownIntegrationWarnings(recipe, detection, configPath) {
   const covered = new Set(
     vitePlusRemovedToolchainSelections(recipe, detection).map(({ id }) => id),
   );
@@ -5762,8 +5759,8 @@ export function unknownIntegrationWarnings(recipe, detection) {
     warnings.push({
       level: "warning",
       message: removed
-        ? `The recipe selects ${removed.id}, a JavaScript and TypeScript ${removed.provides} integration that Calavera removed (${removed.adr}). Vite+ provides ${removed.provides}, and a project without Vite+ runs vp create or vp migrate first (ADR-0009). Remove ${removed.id} from the recipe; apply refuses the recipe until you do.`
-        : `The recipe's integrations[${index}] is not an integration Calavera knows, so remove it from the recipe; apply refuses the recipe until you do.`,
+        ? `${configPath} selects ${removed.id}, a JavaScript and TypeScript ${removed.provides} integration that Calavera removed (${removed.adr}). Vite+ provides ${removed.provides}, and a project without Vite+ runs vp create or vp migrate first (ADR-0009). Remove ${removed.id} from ${configPath}; apply refuses the recipe until you do.`
+        : `${configPath} integrations[${index}] is not an integration Calavera knows, so remove it from ${configPath}; apply refuses the recipe until you do.`,
     });
   }
 
@@ -5837,9 +5834,9 @@ export async function doctor(options) {
       const withCheck = (check) => (issue) => ({ ...issue, check });
       recipeIssues.push(
         // apply's validation checks the profile before the integrations, so doctor lists it first.
-        ...removedProfileWarnings(recipe).map(withCheck("recipe")),
-        ...removedToolchainWarnings(recipe, detection).map(withCheck("recipe")),
-        ...unknownIntegrationWarnings(recipe, detection).map(withCheck("recipe")),
+        ...removedProfileWarnings(recipe, options.config).map(withCheck("recipe")),
+        ...removedToolchainWarnings(recipe, detection, options.config).map(withCheck("recipe")),
+        ...unknownIntegrationWarnings(recipe, detection, options.config).map(withCheck("recipe")),
       );
       // #1140: right after validating the recipe, apply refuses a legacy entry that selects an
       // artifact with wiring or inputs (#1125), so doctor reports that refusal, with apply's
@@ -6820,21 +6817,17 @@ function printSummaryLines(lines) {
 /**
  * @param {CommandResult} result
  * @param {boolean} [asJSON]
- * @param {{ dryRun?: boolean, noInstall?: boolean, config?: string }} [command] The options the command ran with,
+ * @param {{ dryRun?: boolean, noInstall?: boolean }} [command] The options the command ran with,
  * where its result does not record them.
  */
-function printResult(
-  result,
-  asJSON = false,
-  { dryRun: commandDryRun = false, noInstall, config } = {},
-) {
+function printResult(result, asJSON = false, { dryRun: commandDryRun = false, noInstall } = {}) {
   if (asJSON) {
     console.info(JSON.stringify(result, null, 2));
     return;
   }
 
   if (result.command === "doctor") {
-    for (const { level, message } of doctorReportLines({ ...result, config })) {
+    for (const { level, message } of doctorReportLines(result)) {
       logger[level](message);
     }
     return;
@@ -7122,7 +7115,7 @@ const commandRunners = Object.assign(
       result: "doctor",
       run: async (options) => {
         const result = await doctor(options);
-        printResult(result, options.json, { config: options.config });
+        printResult(result, options.json);
         // #1030: `ok` is false only when an issue has the level "error", so warnings stay advisory
         // and a CI step that runs doctor fails only on an error.
         if (!result.ok) {

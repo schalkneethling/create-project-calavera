@@ -453,7 +453,7 @@ test("the listing check passes on doctor's output in composed, incomplete, and p
     let output = `${stdout}${stderr}`;
     assert.equal(
       stderr.split("\n")[0],
-      "The recipe is not applied yet, so run npm create project-calavera apply.",
+      "The recipe in calavera.config.json is not applied yet, so run npm create project-calavera apply.",
     );
     assert.deepEqual(listingViolations(output, [EDITORCONFIG, KNIP, ARTIFACT]), []);
 
