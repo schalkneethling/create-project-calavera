@@ -1438,7 +1438,7 @@ test("status output warns about a leftover lock entry, with the command that dro
     installCommand: "npm create project-calavera artifacts install",
   };
   const note =
-    "  Not selected, files deleted: the recipe no longer selects this artifact and its files were deleted, so only its lock entry remains. To remove the entry, run: npm create project-calavera artifacts install";
+    "  Not selected, files missing: the recipe no longer selects this artifact, and some or all of its files were deleted, so its lock entry is a leftover. artifacts install drops the entry and installs what the recipe selects: npm create project-calavera artifacts install";
   const report = {
     offline: false,
     updateAllCommand: null,

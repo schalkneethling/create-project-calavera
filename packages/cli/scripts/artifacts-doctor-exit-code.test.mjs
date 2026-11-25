@@ -293,9 +293,9 @@ test("the verdict names every artifact with a problem, and only those", () => {
     { locallyEdited: true },
     // #1111 covers only a deselected entry whose files were deleted. Without a recipe, `selected`
     // is null, so Calavera cannot tell a leftover entry from a broken one.
+    // A deselected entry that is edited or unrecorded is left to the #1112 stack (ADR-0020,
+    // Decision 4, owner decision 6), so this test does not pin it either way.
     { installed: false, selected: null },
-    { managed: false, selected: false },
-    { locallyEdited: true, selected: false },
   ]) {
     assert.equal(isArtifactHealthy(entry("a", problem)), false, JSON.stringify(problem));
   }
@@ -351,7 +351,7 @@ test("the verdict names every artifact with a problem, and only those", () => {
 const INSTALL_COMMAND = "npm create project-calavera artifacts install";
 const LEFTOVER_LINES = [
   `${ARTIFACT}  0.2.1 (latest), files missing`,
-  `  Not selected, files deleted: the recipe no longer selects this artifact and its files were deleted, so only its lock entry remains. To remove the entry, run: ${INSTALL_COMMAND}`,
+  `  Not selected, files missing: the recipe no longer selects this artifact, and some or all of its files were deleted, so its lock entry is a leftover. artifacts install drops the entry and installs what the recipe selects: ${INSTALL_COMMAND}`,
 ];
 
 /**
@@ -482,4 +482,54 @@ test("a deselected lock entry whose files were deleted does not hide a selected 
   const report = JSON.parse(asJson.stdout);
   assert.equal(report.ok, false);
   assert.equal(report.artifacts.find(({ id }) => id === "skill-code-review").installCommand, null);
+});
+
+// A hook installs two files. With one of them deleted, the phase function gives the deselected
+// entry the `missing` condition, so doctor warns about it as it does for a deleted skill.
+test("a deselected hook with one of its two files deleted is a warning, not a failure", async () => {
+  const HOOK = "hook-block-dangerous-commands";
+  await using fixture = await createTemporaryFixture("artifacts-doctor-leftover-hook", {
+    "calavera.config.json": json({ ...buildRecipe("minimal", [], "npm"), ai: [{ id: HOOK }] }),
+  });
+  const originalDirectory = process.cwd();
+  try {
+    process.chdir(fixture.root);
+    await runArtifactCommand(
+      { config: "calavera.config.json", dryRun: false, artifactAction: "install" },
+      stubRegistry(new Map([[HOOK, "0.4.0"]])),
+    );
+  } finally {
+    process.chdir(originalDirectory);
+  }
+  await writeFile(
+    join(fixture.root, "calavera.config.json"),
+    json({ ...buildRecipe("minimal", [], "npm"), ai: [] }),
+  );
+  await rm(
+    join(fixture.root, ".agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json"),
+  );
+
+  // In process as well, so mutation testing sees which code the report runs.
+  process.chdir(fixture.root);
+  try {
+    const report = /** @type {{ ok: boolean, artifacts: { installed: boolean }[] }} */ (
+      await runArtifactCommand({
+        config: "calavera.config.json",
+        dryRun: false,
+        artifactAction: "doctor",
+      })
+    );
+    assert.equal(report.artifacts[0]?.installed, false);
+    assert.equal(report.ok, true);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+
+  const text = await runCli(fixture.root, ["artifacts", "doctor"]);
+  assert.equal(text.code, 0, text.stdout + text.stderr);
+  assert.deepEqual(text.stderr.trimEnd().split("\n"), [
+    `${HOOK}  0.4.0 (latest), files missing`,
+    LEFTOVER_LINES[1],
+  ]);
+  assert.equal(text.stdout.trimEnd().split("\n").at(-1), HEALTHY);
 });

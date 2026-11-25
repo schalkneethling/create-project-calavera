@@ -47,7 +47,7 @@ const NOTHING_SELECTED =
 
 // #1111: the note for a leftover lock entry, which replaces the "Not selected" note above.
 const LEFTOVER =
-  "  Not selected, files deleted: the recipe no longer selects this artifact and its files were deleted, so only its lock entry remains. To remove the entry, run:";
+  "  Not selected, files missing: the recipe no longer selects this artifact, and some or all of its files were deleted, so its lock entry is a leftover. artifacts install drops the entry and installs what the recipe selects:";
 
 // A GitHub owner or repository name; "." and ".." are refused separately.
 const GITHUB_NAME = /^[\w.-]+$/;
