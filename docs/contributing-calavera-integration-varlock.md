@@ -387,9 +387,11 @@ Notes:
 
 This example comes from a pnpm project that does not use Vite+, which is why the
 Project group reports it as unmanaged and the `quality` script has no Vite+
-steps. In a Vite+-managed project, the Project group reports `managed`, the
-install command is `vp add -D knip varlock stylelint`, and `quality` starts
-with `vp check && vp test --passWithNoTests`.
+steps. In a Vite+-managed project with a single package, the Project group
+reports "Vite+ detection: managed", the install command is
+`vp add -D knip varlock stylelint`, and `quality` starts with
+`vp check && vp test --passWithNoTests`. A workspace root gets a different
+install command and test step.
 
 ## Add Doctor Coverage
 
