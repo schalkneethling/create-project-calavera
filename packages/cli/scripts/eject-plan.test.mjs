@@ -1192,10 +1192,13 @@ test("a .gitignore that leads out of the project is never edited: its block is k
       plan.items.some(({ path }) => path === ".gitignore"),
       false,
     );
+    // One report for the artifact-cache block it keeps, and one for the ejected block it does not
+    // add (ADR-0017, Amendment 5); the summary prints both under the one path.
     assert.deepEqual(
       plan.reported.map(({ path }) => path),
-      [".gitignore"],
+      [".gitignore", ".gitignore"],
     );
+    assert.equal(plan.ejectedBlock, undefined);
     const outcome = await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
     assert.deepEqual(outcome.failed, []);
   });

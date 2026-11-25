@@ -17,6 +17,7 @@ import {
   ARTIFACT_CACHE_POINTER,
   ARTIFACT_CACHE_REASON,
 } from "./artifact-lifecycle.js";
+import { EJECTED_BLOCK } from "./ejected-marker.js";
 import { GITIGNORE_PATH } from "./ignore-lines.js";
 import { resolveRecipeIntegrations } from "./recipe.js";
 import { integrationDependencies } from "./stryker-options.js";
@@ -304,7 +305,9 @@ export function ignoreChangeLine(
     const because =
       integration === ARTIFACT_CACHE_BLOCK
         ? "the recipe selects no artifacts and .calavera/cache/ does not exist"
-        : `${integration} no longer adds lines to it`;
+        : integration === EJECTED_BLOCK
+          ? "apply manages this project again"
+          : `${integration} no longer adds lines to it`;
     return `${tense(dryRun, "Would remove", "Removed")} the ${integration} block${inPath("from")}, because ${because}: ${quoted(removedLines)}`;
   }
   const what = path === GITIGNORE_PATH ? `the ${integration} block` : `the ${integration} lines`;

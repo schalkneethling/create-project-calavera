@@ -15,6 +15,7 @@ import { quoteScriptValue } from "./utils/text.js";
 /**
  * @typedef {import("./index.js").EjectResult} EjectResult
  * @typedef {import("./index.js").EjectResultItem} EjectResultItem
+ * @typedef {import("./index.js").EjectedBlockResult} EjectedBlockResult
  * @typedef {import("./summary-lines.js").SummaryLine} SummaryLine
  */
 
@@ -38,32 +39,55 @@ export function ejectSummaryLines(result) {
   /** @param {EjectResultItem} item */
   const reportsFor = (item) =>
     result.reported.filter(({ path }) => path === item.path).map(({ reason }) => reason);
+  // The `ejected` block goes under the item for the same file, such as the artifact-cache block's
+  // removal, so `.gitignore` is printed once; without one, it is listed on its own.
+  const block = result.ejectedBlock;
+  const blockOwner =
+    block === undefined ? undefined : result.items.find(({ path }) => path === block.path);
+  // Whether --yes would leave anything, so the list says that --yes would not add the block.
+  const yesLeavesAny = result.items.some(
+    ({ outcome, matchesRecords, keptRecord }) =>
+      outcome === "planned" && (!matchesRecords || keptRecord),
+  );
   /** @param {EjectResultItem} item */
-  const itemLines = (item) => ownItemLines(item, reportsFor(item));
+  const blockDetails = (item) =>
+    block !== undefined && item === blockOwner ? ejectedBlockDetails(block, yesLeavesAny) : [];
+  /** @param {EjectedBlockResult["outcome"]} outcome */
+  const standaloneBlock = (outcome) =>
+    block !== undefined && blockOwner === undefined && block.outcome === outcome
+      ? ejectedBlockLines(block, yesLeavesAny)
+      : [];
+  /** @param {EjectResultItem} item */
+  const itemLines = (item) => [...ownItemLines(item, reportsFor(item)), ...blockDetails(item)];
   /** @param {EjectResultItem} item */
   const samePathReports = (item) =>
     reportsFor(item).map((reason) => info(`${DETAIL}${withoutOwnPath(reason, item.path)}`));
 
   pushGroup(lines, "Would remove", withOutcome("planned").flatMap(itemLines));
+  pushGroup(lines, "Would add", standaloneBlock("planned"));
   pushGroup(lines, "Removed", withOutcome("removed").flatMap(itemLines));
-  pushGroup(lines, "Left for an interactive run", withOutcome("left").flatMap(itemLines));
-  pushGroup(
-    lines,
-    "Failed",
-    withOutcome("failed").flatMap((item) => [
+  pushGroup(lines, "Added", standaloneBlock("written"));
+  pushGroup(lines, "Left for an interactive run", [
+    ...withOutcome("left").flatMap(itemLines),
+    ...standaloneBlock("left"),
+  ]);
+  pushGroup(lines, "Failed", [
+    ...withOutcome("failed").flatMap((item) => [
       info(`${ITEM}${item.path}: ${withoutOwnPath(item.error ?? "", item.path)}`),
       ...samePathReports(item),
+      ...blockDetails(item),
       info(`${DETAIL}Fix the cause, then run eject again.`),
     ]),
-  );
-  pushGroup(
-    lines,
-    "Skipped",
-    withOutcome("skipped").flatMap((item) => [
+    ...standaloneBlock("failed"),
+  ]);
+  pushGroup(lines, "Skipped", [
+    ...withOutcome("skipped").flatMap((item) => [
       info(`${ITEM}${item.path}: ${withoutOwnPath(item.error ?? "", item.path)}`),
       ...samePathReports(item),
+      ...blockDetails(item),
     ]),
-  );
+    ...standaloneBlock("skipped"),
+  ]);
   pushGroup(
     lines,
     "Kept",
@@ -159,6 +183,95 @@ function ownItemLines(item, reports) {
 
 /** @param {string} line */
 const quoted = (line) => info(`${TEXT}${quoteScriptValue(line)}`);
+
+const MARKS = "the block that marks the project as ejected";
+
+/**
+ * The `ejected` block's lines under the item for the same file (ADR-0017, Amendment 5): before the
+ * removal, the exact lines the person approves, and afterward, what became of the block.
+ *
+ * @param {EjectedBlockResult} block
+ * @param {boolean} yesLeavesAny Whether `--yes` would leave an item, and so would add no block.
+ * @returns {SummaryLine[]}
+ */
+function ejectedBlockDetails(block, yesLeavesAny) {
+  switch (block.outcome) {
+    case "planned":
+      return [
+        info(
+          `${DETAIL}Once everything else is removed, eject adds this block at the end of the file:`,
+        ),
+        ...block.lines.map(quoted),
+        ...yesNote(yesLeavesAny),
+      ];
+    case "written":
+      return [info(`${DETAIL}eject added ${MARKS} at the end of the file.`)];
+    case "left":
+      return [info(`${DETAIL}${leftReason()}`)];
+    case "failed":
+      return [
+        info(
+          `${DETAIL}eject could not add the ejected block: ${withoutOwnPath(block.error ?? "", block.path)}`,
+        ),
+      ];
+    case "skipped":
+      return [info(`${DETAIL}${withoutOwnPath(block.error ?? "", block.path)}`)];
+  }
+}
+
+/**
+ * The `ejected` block as an entry of its own, when no other item names its file.
+ *
+ * @param {EjectedBlockResult} block
+ * @param {boolean} yesLeavesAny
+ * @returns {SummaryLine[]}
+ */
+function ejectedBlockLines(block, yesLeavesAny) {
+  const creates = block.type === "write";
+  const lead = `${ITEM}${block.path}: `;
+  switch (block.outcome) {
+    case "planned":
+      return [
+        info(
+          `${lead}eject ${creates ? "creates the file with" : "adds at the end of the file"} ${MARKS}, once everything else is removed:`,
+        ),
+        ...block.lines.map(quoted),
+        ...yesNote(yesLeavesAny),
+      ];
+    case "written":
+      return [
+        info(
+          `${lead}eject ${creates ? "created the file with" : "added at the end of the file"} ${MARKS}.`,
+        ),
+      ];
+    case "left":
+      return [info(`${lead}${leftReason()}`)];
+    case "failed":
+      return [
+        info(
+          `${lead}eject could not add the ejected block: ${withoutOwnPath(block.error ?? "", block.path)}`,
+        ),
+        info(`${DETAIL}Fix the cause, then run eject again.`),
+      ];
+    case "skipped":
+      return [info(`${lead}${withoutOwnPath(block.error ?? "", block.path)}`)];
+  }
+}
+
+/** @param {boolean} yesLeavesAny */
+function yesNote(yesLeavesAny) {
+  return yesLeavesAny
+    ? [
+        info(
+          `${DETAIL}--yes leaves items for an interactive approval, so it would not add the block.`,
+        ),
+      ]
+    : [];
+}
+
+function leftReason() {
+  return `eject adds ${MARKS} only once everything else is removed, and --yes left items for an interactive approval.`;
+}
 
 /**
  * Each reported path once, with every reason `eject` reports for it under it.

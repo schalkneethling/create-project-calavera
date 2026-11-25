@@ -710,11 +710,11 @@ test("the headline counts what a run removes and what --yes leaves", async () =>
     const count = dryRun.items.length;
     assert.equal(
       dryRun.message,
-      `Dry run complete. Nothing was changed. eject would remove ${count} items; --yes would leave 1 item for an interactive approval.`,
+      `Dry run complete. Nothing was changed. eject would remove ${count} items and then add the block that marks the project as ejected; --yes would leave 1 item for an interactive approval.`,
     );
     const { asked, result: cancelled } = await ejectInteractively([], false);
     assert.deepEqual(asked, [
-      `Remove the ${count} items listed above, including any marked edited?`,
+      `Remove the ${count} items listed above, including any marked edited, and add the ejected block to .gitignore?`,
     ]);
     assert.equal(cancelled.message, "eject cancelled. Nothing was changed.");
 
@@ -724,7 +724,7 @@ test("the headline counts what a run removes and what --yes leaves", async () =>
     const edited = await eject(["--dry-run"]);
     assert.equal(
       edited.message,
-      `Dry run complete. Nothing was changed. eject would remove ${count} items; --yes would leave 2 items for an interactive approval, and would keep 1 record that the items it leaves need.`,
+      `Dry run complete. Nothing was changed. eject would remove ${count} items and then add the block that marks the project as ejected; --yes would leave 2 items for an interactive approval, and would keep 1 record that the items it leaves need.`,
     );
     assert.match(
       human(edited),
@@ -752,10 +752,13 @@ test("a dry run with nothing --yes would leave says only what it would remove", 
     const result = await eject(["--dry-run"]);
     assert.equal(
       result.message,
-      `Dry run complete. Nothing was changed. eject would remove ${result.items.length} items.`,
+      `Dry run complete. Nothing was changed. eject would remove ${result.items.length} items and then add the block that marks the project as ejected.`,
     );
     const yes = await eject(["--yes"]);
-    assert.equal(yes.message, `Removed ${yes.items.length} items.`);
+    assert.equal(
+      yes.message,
+      `Removed ${yes.items.length} items and added the block that marks the project as ejected.`,
+    );
   });
 });
 
@@ -838,7 +841,7 @@ test("a failed removal skips the items that depend on it and counts both", async
       assert.equal(result.status, "failed");
       assert.equal(
         result.message,
-        `Removed ${removed} items. 3 items could not be removed; each one says why below. Fix the cause, then run eject again.`,
+        `Removed ${removed} items. 3 items could not be removed, and eject could not add the ejected block; each one says why below. Fix the cause, then run eject again.`,
       );
     } finally {
       await chmod(".calavera", 0o755);
@@ -1005,10 +1008,20 @@ test("after --init and apply, an approved eject leaves no footprint and changes 
         );
       const before = await outside();
       assert.ok(Object.keys(before).includes(".editorconfig"));
+      // This recipe adds no .gitignore lines, so eject creates the file for its block.
+      assert.equal(await exists(".gitignore"), false);
 
       const { result } = await ejectInteractively([], true);
       assert.equal(result.status, "ejected");
-      assert.deepEqual(await outside(), before);
+      // ADR-0017, Amendment 5: the one change outside the footprint is the ejected block, added at
+      // the end of .gitignore after the person's lines and the integrations' blocks.
+      const { ".gitignore": _gitignore, ...rest } = await outside();
+      const { ".gitignore": _before, ...restBefore } = before;
+      assert.deepEqual(rest, restBefore);
+      assert.equal(
+        await readFile(".gitignore", "utf8"),
+        `# calavera:ejected:start\n# create-project-calavera eject removed Calavera's records from this project.\n# calavera:ejected:end\n`,
+      );
       for (const path of INIT_FOOTPRINT) assert.equal(await exists(path), false, `${path} is gone`);
       assert.deepEqual(JSON.parse(await readFile(".mcp.json", "utf8")), {});
       assert.equal((await eject(["--dry-run"])).status, "nothing-to-do");
