@@ -3,6 +3,8 @@
 // existing file at a managed path would stop apply. Apply, clean, and the project phase that every
 // doctor reads (ADR-0020, Decision 3) use this module, so the doctors' verdict on a managed file
 // cannot drift from what apply does with it.
+import { basename } from "node:path";
+
 import { HTML_VALIDATE_IGNORE_PATH, htmlValidateIgnoreText } from "./ignore-lines.js";
 import { githubRepositoryControlManagedFiles } from "./github-repository-controls.js";
 import { GITHUB_REPOSITORY_CONTROLS_ID } from "./github-repository-controls-options.js";
@@ -119,12 +121,53 @@ function createReactDoctorConfig() {
   };
 }
 
+/**
+ * Knip reports files nothing imports, so it ignores the folders Calavera installs into: the agent
+ * files under `.agents/` (#747) and the extracted artifact packages under `.calavera/packages/`
+ * (#1320). An earlier release's `knip.json` is accepted when its hash equals the state record's,
+ * or, for a recorded file, when its JSON equals one of `EARLIER_KNIP_CONFIGS`.
+ */
 function createKnipConfig() {
   return {
     $schema: "https://unpkg.com/knip@6/schema.json",
-    ignore: [".agents/**"],
+    ignore: [".agents/**", ".calavera/**"],
     ignoreExportsUsedInFile: true,
   };
+}
+
+/**
+ * The `knip.json` values earlier releases wrote, read from their published tarballs. Releases 5.0.1
+ * to 6.0.0 recorded the hash of the text before the project's formatter ran, so after a person's
+ * `vp fmt` only the JSON value still identifies the file as unedited (#1320).
+ */
+const EARLIER_KNIP_CONFIGS = [
+  // 2.3.0 to 5.0.0
+  { $schema: "https://unpkg.com/knip@6/schema.json", ignoreExportsUsedInFile: true },
+  // 5.0.1 to 6.2.1
+  {
+    $schema: "https://unpkg.com/knip@6/schema.json",
+    ignore: [".agents/**"],
+    ignoreExportsUsedInFile: true,
+  },
+];
+
+/**
+ * The managed JSON files whose earlier values count as unedited, by file name. The file name, not
+ * the path, because the project phase names a root-only file relative to a monorepo member.
+ */
+const EARLIER_MANAGED_JSON_VALUES = new Map([["knip.json", EARLIER_KNIP_CONFIGS]]);
+
+/**
+ * Whether a managed JSON file's contents equal a value an earlier release wrote for that file.
+ *
+ * @param {string} path
+ * @param {string} installedContents
+ */
+function matchesEarlierManagedJson(path, installedContents) {
+  const earlierValues = EARLIER_MANAGED_JSON_VALUES.get(basename(path)) ?? [];
+  return earlierValues.some((value) =>
+    jsonContentsMatch(path, installedContents, JSON.stringify(value)),
+  );
 }
 
 /**
@@ -295,7 +338,8 @@ export async function formatManagedFilePlans(plans, loadFormatter) {
  * How the file on disk at a managed path compares with what apply would write there, by the rule
  * `assertSafeManagedFileWrite` and `inspectManagedFilePlan` both apply. `accepted` means apply
  * writes over it without stopping: the contents equal the planned contents, the hash equals the
- * state record's, or the JSON values are equal. `edited` is a recorded file apply stops on, and
+ * state record's, or the JSON values are equal, or a recorded file's JSON equals a value an
+ * earlier release wrote there (#1320). `edited` is a recorded file apply stops on, and
  * `unrecorded` a file without a record apply stops on, as not recorded as Calavera-managed.
  *
  * @param {string} path
@@ -309,7 +353,8 @@ export function managedFileDifference(path, installedContents, plannedContents, 
   if (
     installedHash === textHash(plannedContents) ||
     stateFile?.hash === installedHash ||
-    jsonContentsMatch(path, installedContents, plannedContents)
+    jsonContentsMatch(path, installedContents, plannedContents) ||
+    (stateFile !== undefined && matchesEarlierManagedJson(path, installedContents))
   ) {
     return "accepted";
   }
