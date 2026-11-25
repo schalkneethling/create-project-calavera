@@ -687,6 +687,19 @@ test("Given intact blocks whose script is missing, doctor reports an error per b
     /so the pre-commit hook fails and Git refuses every commit\. Because the recipe no longer selects skill-protected-branch-guard, create-project-calavera apply removes the block/,
   );
 
+  // #1112: each finding's detail is its message without the artifact's ID, for doctor's text
+  // output, which prints it under the artifact's own line.
+  for (const selected of [new Set([id]), new Set()]) {
+    for (const { message, detail } of await findings(selected)) {
+      assert.ok(message.includes(id), message);
+      assert.ok(!detail.includes(id), detail);
+      assert.equal(
+        detail,
+        message.replace(`the ${id} block`, "the block").replace(`selects ${id}`, "selects it"),
+      );
+    }
+  }
+
   await mkdir(join(project.root, skillDirectory, "scripts"), { recursive: true });
   await writeFile(join(project.root, skillDirectory, "scripts/guard.mjs"), "");
   assert.deepEqual(await findings(new Set([id])), []);

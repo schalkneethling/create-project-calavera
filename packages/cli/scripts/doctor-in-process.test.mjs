@@ -4,7 +4,7 @@
 // the CLI's output and exit code.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import { legacyEntryWiringRefusal } from "../src/ai/recipe-items.js";
@@ -31,6 +31,19 @@ const missingPackageJSON = {
 };
 
 /**
+ * The findings of a doctor result, without the phase line that comes first and without each
+ * issue's check, so a test pins the findings it is about (ADR-0020, Decision 4). The phase line's
+ * own rules are pinned in doctor-phase.test.mjs.
+ *
+ * @param {import("../src/index.js").DoctorResult} result
+ */
+function findings(result) {
+  return result.issues
+    .filter(({ check }) => check !== "phase")
+    .map(({ level, message }) => ({ level, message }));
+}
+
+/**
  * Runs doctor in `directory` and restores the previous working directory afterward.
  *
  * @param {string} directory
@@ -51,39 +64,33 @@ function recipeFile(recipe) {
   return json({ version: 1, ...recipe });
 }
 
-test("Given no recipe, doctor reports it as an error and does not read further", async () => {
+// ADR-0020, owner decision 2: a project without Calavera's files is `unmanaged`, an error in both
+// doctors, which replaces the earlier "Missing calavera.config.json" error.
+const unmanagedLine =
+  "No recipe, state, or lock exists here, so Calavera does not manage this project. Pass --config <path> when the recipe is saved elsewhere, or run npm create project-calavera init to start.";
+
+test("Given no recipe, doctor reports the unmanaged phase as an error and does not read further", async () => {
   await using fixture = await createTemporaryFixture("doctor-in-process-no-recipe", {
     "package.json": json({ name: "fixture" }),
   });
 
-  assert.deepEqual(await doctorIn(fixture.root), {
-    command: "doctor",
-    ok: false,
-    issues: [
-      {
-        level: "error",
-        message: "Missing calavera.config.json. Run create-project-calavera init first.",
-      },
-    ],
-  });
+  const result = await doctorIn(fixture.root);
+  assert.equal(result.ok, false);
+  assert.equal(result.phase, "unmanaged");
+  assert.deepEqual(result.issues, [{ level: "error", check: "phase", message: unmanagedLine }]);
 });
 
-test("Given neither a recipe nor package.json, doctor reports both, the error first", async () => {
+test("Given neither a recipe nor package.json, doctor reports both, the phase line first", async () => {
   await using fixture = await createTemporaryFixture("doctor-in-process-empty", {
     ".keep": "",
   });
 
-  assert.deepEqual(await doctorIn(fixture.root), {
-    command: "doctor",
-    ok: false,
-    issues: [
-      {
-        level: "error",
-        message: "Missing calavera.config.json. Run create-project-calavera init first.",
-      },
-      missingPackageJSON,
-    ],
-  });
+  const result = await doctorIn(fixture.root);
+  assert.equal(result.ok, false);
+  assert.deepEqual(result.issues, [
+    { level: "error", check: "phase", message: unmanagedLine },
+    { ...missingPackageJSON, check: "project" },
+  ]);
 });
 
 test("doctor reads the recipe from options.config", async () => {
@@ -92,11 +99,15 @@ test("doctor reads the recipe from options.config", async () => {
     "config/recipe.json": recipeFile({ profile: "default", integrations: [] }),
   });
 
-  assert.deepEqual(await doctorIn(fixture.root, { config: "config/recipe.json" }), {
-    command: "doctor",
-    ok: true,
-    issues: [],
-  });
+  const result = await doctorIn(fixture.root, { config: "config/recipe.json" });
+  assert.equal(result.ok, true);
+  assert.equal(result.phase, "composed");
+  // The phase line names the recipe path doctor read.
+  assert.equal(
+    result.phaseLine?.message,
+    "The recipe in config/recipe.json is not applied yet, so run npm create project-calavera apply -- --config config/recipe.json.",
+  );
+  assert.deepEqual(findings(result), []);
 });
 
 test("Given a recipe and no package.json, doctor warns and stays ok", async () => {
@@ -104,11 +115,9 @@ test("Given a recipe and no package.json, doctor warns and stays ok", async () =
     [RECIPE]: recipeFile({ profile: "default", integrations: [] }),
   });
 
-  assert.deepEqual(await doctorIn(fixture.root), {
-    command: "doctor",
-    ok: true,
-    issues: [missingPackageJSON],
-  });
+  const result = await doctorIn(fixture.root);
+  assert.equal(result.ok, true);
+  assert.deepEqual(findings(result), [missingPackageJSON]);
 });
 
 test("Given a recipe that is not valid JSON, doctor stops with an error after the issues found before it", async () => {
@@ -120,9 +129,12 @@ test("Given a recipe that is not valid JSON, doctor stops with an error after th
 
   assert.equal(result.command, "doctor");
   assert.equal(result.ok, false);
+  // ADR-0020 Amendment 1: a run that stops before it classifies has no phase.
+  assert.equal(Object.hasOwn(result, "phase"), false);
   assert.equal(result.issues.length, 2, JSON.stringify(result.issues));
-  assert.deepEqual(result.issues[0], missingPackageJSON);
+  assert.deepEqual(result.issues[0], { ...missingPackageJSON, check: "project" });
   assert.equal(result.issues[1]?.level, "error");
+  assert.equal(result.issues[1]?.check, "records");
   assert.match(result.issues[1]?.message ?? "", /calavera\.config\.json/);
 });
 
@@ -143,11 +155,20 @@ test("doctor lists the removed profile, removed toolchain, and unknown integrati
   // Each helper contributes, so dropping any one of them from doctor changes the result.
   assert.equal(expected.length, 3, JSON.stringify(expected));
 
-  assert.deepEqual(await doctorIn(fixture.root), {
-    command: "doctor",
-    ok: true,
-    issues: expected,
-  });
+  const result = await doctorIn(fixture.root);
+  assert.deepEqual(
+    result.issues
+      .filter(({ check }) => check === "recipe")
+      .map(({ level, message }) => ({ level, message })),
+    expected,
+  );
+  // The fixture declares vite-plus without installing it, so the formatter apply would load
+  // cannot load, an error on the managed-file check (ADR-0020, owner decision 17).
+  assert.equal(result.ok, false);
+  assert.deepEqual(
+    result.issues.filter(({ level }) => level === "error").map(({ check }) => check),
+    ["managed-file-check"],
+  );
 });
 
 test("Given a legacy entry that selects a wired artifact, doctor reports apply's refusal as an error", async () => {
@@ -164,30 +185,35 @@ test("Given a legacy entry that selects a wired artifact, doctor reports apply's
   assert.equal(result.ok, false);
   assert.deepEqual(
     result.issues.filter(({ level }) => level === "error"),
-    [{ level: "error", message: refusal }],
+    [{ level: "error", message: refusal, check: "recipe" }],
   );
 });
 
-test("Given a selected integration whose managed file is missing, doctor warns and names the file", async () => {
+test("Given a selected integration whose managed file does not exist yet, doctor warns and names the file", async () => {
   await using fixture = await createTemporaryFixture("doctor-in-process-missing-file", {
     "package.json": json({ name: "fixture" }),
     [RECIPE]: recipeFile({ profile: "default", integrations: ["editorconfig"] }),
   });
 
-  assert.deepEqual(await doctorIn(fixture.root), {
-    command: "doctor",
-    ok: true,
-    issues: [
-      {
-        level: "warning",
-        message:
-          "Missing managed file: .editorconfig. Run create-project-calavera apply to regenerate managed files.",
-      },
-    ],
-  });
+  const result = await doctorIn(fixture.root);
+  assert.equal(result.ok, true);
+  // ADR-0020, Decision 4: a file apply has not written yet is pending, a warning with the apply
+  // command, which replaces the earlier "Missing managed file" warning.
+  assert.deepEqual(result.issues.slice(1), [
+    {
+      level: "warning",
+      check: "managed-file",
+      message:
+        ".editorconfig does not exist yet, so apply writes it. Run npm create project-calavera apply.",
+    },
+  ]);
 
+  // The person's own file there is a note: apply stops on it as not recorded.
   await writeFile(join(fixture.root, ".editorconfig"), "root = true\n");
-  assert.deepEqual(await doctorIn(fixture.root), { command: "doctor", ok: true, issues: [] });
+  assert.deepEqual(
+    (await doctorIn(fixture.root)).issues.slice(1).map(({ level, check }) => [level, check]),
+    [["info", "managed-file"]],
+  );
 });
 
 test("Given Varlock without its schema, doctor warns until the schema exists", async () => {
@@ -199,6 +225,7 @@ test("Given Varlock without its schema, doctor warns until the schema exists", a
     level: "warning",
     message:
       "Missing Varlock schema: .env.schema. Run create-project-calavera apply to scaffold it.",
+    check: "managed-file",
   };
 
   assert.deepEqual(
@@ -213,7 +240,28 @@ test("Given Varlock without its schema, doctor warns until the schema exists", a
   );
 });
 
-test("Given a selected AI artifact that is not installed, doctor warns about each missing output", async () => {
+test("Given a state doctor cannot use, the stop keeps the warnings doctor found before it", async () => {
+  await using fixture = await createTemporaryFixture("doctor-in-process-stop-keeps", {
+    "package.json": json({ name: "fixture" }),
+    [RECIPE]: recipeFile({ profile: "default", integrations: ["varlock"] }),
+    ".calavera/state.json": "{",
+  });
+
+  // The Varlock warning comes before the state read, and the stop keeps it (ADR-0020 Amendment 1).
+  const result = await doctorIn(fixture.root);
+  assert.equal(result.ok, false);
+  assert.equal("phase" in result, false);
+  assert.deepEqual(
+    result.issues.map(({ level, check }) => [level, check]),
+    [
+      ["warning", "managed-file"],
+      ["error", "records"],
+    ],
+  );
+  assert.match(result.issues[1]?.message ?? "", /^doctor cannot use \.calavera\/state\.json\./);
+});
+
+test("Given a selected AI artifact that is not installed, doctor reports it as pending in a note", async () => {
   await using fixture = await createTemporaryFixture("doctor-in-process-ai-output", {
     "package.json": json({ name: "fixture" }),
     [RECIPE]: recipeFile({
@@ -222,20 +270,23 @@ test("Given a selected AI artifact that is not installed, doctor warns about eac
     }),
   });
 
-  assert.deepEqual(await doctorIn(fixture.root), {
-    command: "doctor",
-    ok: true,
-    issues: [
-      {
-        level: "warning",
-        message:
-          "Missing managed AI skill: .agents/skills/project-goal. Run create-project-calavera apply to regenerate managed AI artifacts.",
-      },
-    ],
-  });
-
-  await mkdir(join(fixture.root, ".agents/skills/project-goal"), { recursive: true });
-  assert.deepEqual(await doctorIn(fixture.root), { command: "doctor", ok: true, issues: [] });
+  // ADR-0020, Decision 4 and #994: a selection that is not installed yet is a note, as artifacts
+  // doctor gives it, which replaces the earlier "Missing managed AI skill" warning.
+  const result = await doctorIn(fixture.root);
+  assert.equal(result.ok, true);
+  assert.deepEqual(result.issues.slice(1), [
+    {
+      level: "info",
+      check: "artifact",
+      artifact: "skill-project-goal",
+      message:
+        "The recipe selects skill-project-goal, which has no lock entry yet, so artifacts install or apply installs it.",
+    },
+  ]);
+  assert.deepEqual(
+    result.artifacts?.map(({ id, condition }) => [id, condition.name]),
+    [["skill-project-goal", "pending"]],
+  );
 });
 
 // A workspace member under a `.git` repository root, each with its own package.json.
@@ -272,23 +323,28 @@ test("From a workspace member, doctor reports apply's root-only refusal and chec
     errors[0]?.message ?? "",
     /github-repository-controls applies at the repository root/,
   );
+  assert.equal(errors[0]?.check, "repository-root");
   // The refusal names the recipe's package manager, which doctor resolves only from a member.
   assert.match(errors[0]?.message ?? "", /pnpm dlx create-project-calavera apply --dry-run/);
-  // editorconfig is not root-only, so doctor checks its file in the member.
-  const [editorconfig, ...rootOnlyWarnings] = issues.filter(({ level }) => level === "warning");
+  // editorconfig is not root-only, so doctor checks its file in the member; the root-only files
+  // are checked at the repository root, and their remedy runs apply from there, by its path, with
+  // the recipe path left to the person, because a member's --config path does not hold there.
+  const managed = issues.filter(({ check }) => check === "managed-file");
+  const [editorconfig, ...rootOnlyWarnings] = managed;
   assert.deepEqual(editorconfig, {
     level: "warning",
+    check: "managed-file",
     message:
-      "Missing managed file: .editorconfig. Run create-project-calavera apply to regenerate managed files.",
+      ".editorconfig does not exist yet, so apply writes it. Run pnpm dlx create-project-calavera apply.",
   });
   assert.ok(rootOnlyWarnings.length > 0, "doctor checked no root-only file");
-  for (const { message } of rootOnlyWarnings) {
+  for (const { level, message } of rootOnlyWarnings) {
+    assert.equal(level, "warning");
     assert.match(
       message,
-      new RegExp(
-        `^Missing managed file: \\.\\./\\.\\./\\S+\\. Run create-project-calavera apply from the repository root, ${fixture.root.replaceAll(/[.*+?^${}()|[\]\\]/g, "\\$&")}, to regenerate managed files, adding --config <path> when the recipe is saved elsewhere\\.$`,
-      ),
+      /^\.\.\/\.\.\/\S+ does not exist yet, so apply writes it\. Run pnpm dlx create-project-calavera apply from the repository root, \/\S+, adding --config <path> when the recipe is saved elsewhere\.$/,
     );
+    assert.ok(message.includes(`${basename(fixture.root)},`), message);
   }
 });
 
@@ -305,13 +361,15 @@ test("At the repository root, doctor reports no root-only refusal, names the fil
   const { ok, issues } = await doctorIn(fixture.root);
 
   assert.equal(ok, true, JSON.stringify(issues));
-  assert.ok(issues.length > 0, "doctor checked no file");
-  for (const { level, message } of issues) {
+  const managed = issues.filter(({ check }) => check === "managed-file");
+  assert.ok(managed.length > 0, "doctor checked no file");
+  assert.deepEqual(
+    issues.filter(({ check }) => check === "repository-root"),
+    [],
+  );
+  for (const { level, message } of managed) {
     assert.equal(level, "warning");
-    assert.match(
-      message,
-      /^Missing managed file: (?!\.\.\/)\S+\. Run create-project-calavera apply to regenerate managed files\.$/,
-    );
+    assert.match(message, /^(?!\.\.\/)\S+ does not exist yet, so apply writes it\. Run /);
   }
 });
 
@@ -344,11 +402,9 @@ test("From a workspace member with neither a root-only integration nor a Git-hoo
     }),
   });
 
-  assert.deepEqual(await doctorIn(join(fixture.root, "packages/member")), {
-    command: "doctor",
-    ok: true,
-    issues: [],
-  });
+  const result = await doctorIn(join(fixture.root, "packages/member"));
+  assert.equal(result.ok, true);
+  assert.deepEqual(findings(result), []);
 });
 
 test("Given recorded wiring whose hook file is missing, doctor's finding follows whether the recipe still selects the artifact", async () => {
@@ -373,6 +429,11 @@ test("Given recorded wiring whose hook file is missing, doctor's finding follows
   await writeFile(
     join(fixture.root, RECIPE),
     recipeFile({ profile: "default", integrations: [], ai: [{ id: guardId }] }),
+  );
+  assert.ok(
+    (await doctorIn(fixture.root)).issues
+      .filter(({ message }) => message.startsWith(".vite-hooks/pre-commit"))
+      .every(({ check }) => check === "wiring"),
   );
   const [selected, ...restSelected] = await wiringMessages();
   assert.deepEqual(restSelected, []);
@@ -416,8 +477,27 @@ test("Given a state file that is a directory, doctor stops with an error that na
   const result = await doctorIn(fixture.root);
 
   assert.equal(result.ok, false);
+  assert.equal(Object.hasOwn(result, "phase"), false);
   assert.equal(result.issues.length, 1, JSON.stringify(result.issues));
   assert.equal(result.issues[0]?.level, "error");
+  assert.equal(result.issues[0]?.check, "records");
   assert.match(result.issues[0]?.message ?? "", /^doctor cannot use \.calavera\/state\.json\./);
   assert.match(result.issues[0]?.message ?? "", /EISDIR/);
+});
+
+test("A run that stops on the state keeps the recipe warnings it found before the stop", async () => {
+  await using fixture = await createTemporaryFixture("doctor-in-process-stop-after-warning", {
+    "package.json": json({ name: "fixture" }),
+    [RECIPE]: recipeFile({ profile: "modern", integrations: [] }),
+  });
+  await mkdir(join(fixture.root, STATE), { recursive: true });
+
+  const result = await doctorIn(fixture.root);
+  assert.deepEqual(
+    result.issues.map(({ level, check }) => [level, check]),
+    [
+      ["warning", "recipe"],
+      ["error", "records"],
+    ],
+  );
 });

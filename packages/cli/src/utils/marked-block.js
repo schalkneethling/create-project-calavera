@@ -39,7 +39,7 @@ export function markers(owner) {
  * @param {string} owner
  * @param {string} [command] The command the reason tells the person to run again once the
  *   markers are fixed.
- * @returns {FoundBlock | { reason: string }}
+ * @returns {FoundBlock | { reason: string, changedMarker?: true }}
  */
 export function findBlock(path, contents, owner, command = "apply") {
   return findMarkedBlock(
@@ -66,7 +66,9 @@ export function findBlock(path, contents, owner, command = "apply") {
  *   counts as a changed marker. `label` names the block in a reason.
  * @param {string} command The command the reason tells the person to run again once the markers
  *   are fixed.
- * @returns {FoundBlock | { reason: string }}
+ * @returns {FoundBlock | { reason: string, changedMarker?: true }} `changedMarker` marks the
+ *   reason that quotes a marker line the person changed, so a report that must not print file
+ *   text can word that case itself.
  */
 export function findMarkedBlock(path, contents, { start, end, names, label }, command) {
   // Lines keep their own endings. A file with Windows line endings gets them on the lines
@@ -89,6 +91,7 @@ export function findMarkedBlock(path, contents, { start, end, names, label }, co
   );
   if (changedMarker !== undefined) {
     return {
+      changedMarker: true,
       reason: `${path}: a marker line was changed: "${changedMarker}". Calavera only recognizes "${start}" and "${end}" as whole lines. Restore them, or remove the block, both markers included, and run ${command} again.`,
     };
   }

@@ -63,23 +63,38 @@ test("Given apply installed a legacy skill entry, doctor reports no issue and ex
 
     const { status, stdout, stderr } = runDoctor();
     assert.equal(status, 0, `doctor exited ${status}\n${stdout}\n${stderr}`);
-    assert.deepEqual(JSON.parse(stdout), { command: "doctor", ok: true, issues: [] });
+    // Applied with nothing to report: only the phase line (ADR-0020, Decision 4).
+    const report = JSON.parse(stdout);
+    assert.equal(report.ok, true);
+    assert.equal(report.phase, "applied");
+    assert.deepEqual(
+      report.issues.map((/** @type {{ check: string }} */ { check }) => check),
+      ["phase"],
+    );
   });
 });
 
-test("Given a legacy skill entry apply has not installed, doctor warns about the missing output instead of a missing source", async () => {
+test("Given a legacy skill entry apply has not installed, doctor reports it as pending instead of a missing source", async () => {
   await inProject(async () => {
     await writeRecipe(recipeWith([{ type: "skill", src: "skills/project-goal" }]));
 
     const { status, stdout, stderr } = runDoctor();
     assert.equal(status, 0, `doctor exited ${status}\n${stdout}\n${stderr}`);
-    assert.deepEqual(JSON.parse(stdout).issues, [
-      {
-        level: "warning",
-        message:
-          "Missing managed AI skill: .agents/skills/project-goal. Run create-project-calavera apply to regenerate managed AI artifacts.",
-      },
-    ]);
+    // The legacy entry is named by its catalog ID, as a pending artifact (ADR-0020, Decision 4).
+    assert.deepEqual(
+      JSON.parse(stdout).issues.filter(
+        (/** @type {{ check: string }} */ { check }) => check === "artifact",
+      ),
+      [
+        {
+          level: "info",
+          check: "artifact",
+          artifact: "skill-project-goal",
+          message:
+            "The recipe selects skill-project-goal, which has no lock entry yet, so artifacts install or apply installs it.",
+        },
+      ],
+    );
   });
 });
 
@@ -147,14 +162,22 @@ test("Given a legacy entry selects the protected branch guard, doctor reports ap
     const { ok, issues } = JSON.parse(stdout);
     assert.equal(ok, false);
     assert.deepEqual(
-      issues.filter((/** @type {{ level: string }} */ { level }) => level === "error"),
+      issues
+        .filter((/** @type {{ level: string }} */ { level }) => level === "error")
+        .map((/** @type {{ level: string, message: string }} */ { level, message }) => ({
+          level,
+          message,
+        })),
       [{ level: "error", message: GUARD_LEGACY_REFUSAL }],
     );
     // The refusal comes before the findings whose remedy is to run apply, which apply refuses
     // until artifacts migrate rewrites the entry.
     const messages = issues.map((/** @type {{ message: string }} */ { message }) => message);
+    // The guard is not installed yet, so doctor reports it as pending (ADR-0020, Decision 4).
     const missingGuard = messages.findIndex((message) =>
-      message.startsWith("Missing managed AI skill: .agents/skills/protected-branch-guard."),
+      message.startsWith(
+        "The recipe selects skill-protected-branch-guard, which has no lock entry",
+      ),
     );
     assert.ok(missingGuard > 0, messages.join("\n"));
     assert.ok(messages.indexOf(GUARD_LEGACY_REFUSAL) < missingGuard, messages.join("\n"));

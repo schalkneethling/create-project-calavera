@@ -157,11 +157,14 @@ export function planViteHookBlock({ path, contents, artifactId, line, recorded }
  * @param {string} path
  * @param {string} contents
  * @param {string} artifactId
- * @returns {{ found: false } | { found: true, text: string } | { reason: string }}
+ * @returns {{ found: false } | { found: true, text: string } | { reason: string, changedMarker: boolean }}
+ *   `changedMarker` is true when the reason quotes a marker line the person changed.
  */
 export function readViteHookBlock(path, contents, artifactId) {
   const block = findBlock(path, contents, artifactId);
-  if ("reason" in block) return { reason: block.reason };
+  if ("reason" in block) {
+    return { reason: block.reason, changedMarker: block.changedMarker === true };
+  }
   return block.startIndex === -1 ? { found: false } : { found: true, text: block.current };
 }
 

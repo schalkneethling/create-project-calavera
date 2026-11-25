@@ -40,9 +40,14 @@ const LIST = new Intl.ListFormat("en", { type: "conjunction" });
  * @param {unknown} options.recipe The parsed recipe, or undefined, for the runner commands name.
  * @param {string} options.config
  * @param {boolean} [options.readOnly] The read-only status tool, which never runs the formatter.
+ * @param {boolean} [options.forDoctor] For `doctor`, which lists each drifted item under its own
+ *   heading, so its drifted line does not point elsewhere (ADR-0020, Decision 4 and Amendment 2).
  * @returns {PhaseLine}
  */
-export function phaseLine(result, { command, recipe, config, readOnly = false }) {
+export function phaseLine(
+  result,
+  { command, recipe, config, readOnly = false, forDoctor = false },
+) {
   const level = command === "artifacts doctor" ? DOCTOR_LEVELS[result.phase] : "info";
   /** @param {...string} positionals */
   const run = (...positionals) => calaveraCommand(recipe, config, positionals);
@@ -63,7 +68,7 @@ export function phaseLine(result, { command, recipe, config, readOnly = false })
       `The project is bootstrapped and has no recipe yet, so run ${run("init")}, or ${elsewhere}. If an eject stopped partway, run ${run("eject")} again.`,
     composed: () => `The recipe in ${config} is not applied yet, so run ${run("apply")}.`,
     applied: () => "The phase is applied.",
-    drifted: () => `The phase is drifted.${driftedElsewhere(result)}`,
+    drifted: () => `The phase is drifted.${forDoctor ? "" : driftedElsewhere(result)}`,
     incomplete: () => incompleteMessage(result, run, config),
   };
   const notChecked =

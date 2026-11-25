@@ -278,7 +278,9 @@ for (const packageManager of ["npm", "pnpm"]) {
 
     assert.equal(report.ok, false);
     assert.deepEqual(
-      report.issues.filter(({ level }) => level === "error"),
+      report.issues
+        .filter(({ level }) => level === "error")
+        .map(({ level, message }) => ({ level, message })),
       [{ level: "error", message: applyRefusal }],
     );
   });
@@ -371,7 +373,9 @@ for (const packageManager of ["npm", "pnpm"]) {
 
     assert.equal(report.ok, false);
     assert.deepEqual(
-      report.issues.filter(({ level }) => level === "error"),
+      report.issues
+        .filter(({ level }) => level === "error")
+        .map(({ level, message }) => ({ level, message })),
       [{ level: "error", message: applyRefusal }],
     );
   });
@@ -409,7 +413,9 @@ test("doctor from a workspace member reports both refusals when the recipe selec
 
   assert.equal(report.ok, false);
   assert.deepEqual(
-    report.issues.filter(({ level }) => level === "error"),
+    report.issues
+      .filter(({ level }) => level === "error")
+      .map(({ level, message }) => ({ level, message })),
     [
       { level: "error", message: rootOnlyRefusal },
       { level: "error", message: gitHookRefusal },
