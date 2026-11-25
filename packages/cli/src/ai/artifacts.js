@@ -356,6 +356,13 @@ const AI_OUTPUT_FOLDERS = Object.freeze({
 });
 
 /**
+ * The base Calavera skill, which `--init` installs and records without a lock entry, and which
+ * `skill-calavera` installs to when a recipe selects it. `eject` removes it, and the phase function
+ * reads it to tell a bootstrapped project (ADR-0020, Decision 2).
+ */
+export const BASE_SKILL_PATH = `${AI_OUTPUT_FOLDERS.skill}/calavera`;
+
+/**
  * The project folders AI artifact outputs, and so the artifact transaction's AI targets, lie
  * strictly below (#1193).
  */

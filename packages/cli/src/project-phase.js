@@ -1,10 +1,12 @@
 // @ts-check
 import { resolve } from "node:path";
 
+import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import semver from "semver";
 
 import {
   AI_ARTIFACT_OUTPUT_FOLDERS,
+  BASE_SKILL_PATH,
   aiArtifactOutputPaths,
   hashAiInstall,
   resolveAiArtifacts,
@@ -28,7 +30,7 @@ import { isPlainObject } from "./utils/guards.js";
  * @typedef {import("./ejected-marker.js").EjectedMarker} EjectedMarker
  *
  * @typedef {"pending-transaction" | "unmanaged" | "ejected" | "bootstrapped" | "composed" | "applied" | "drifted" | "incomplete"} ProjectPhase
- * @typedef {"pending" | "current" | "missing" | "edited" | "unrecorded"} ArtifactConditionName
+ * @typedef {"pending" | "current" | "missing" | "unreadable" | "edited" | "unrecorded"} ArtifactConditionName
  * @typedef {{ name: ArtifactConditionName, reason: string }} Condition
  *
  * @typedef {object} ArtifactOutput One output path of an artifact, as the state and the disk show it.
@@ -36,6 +38,8 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {boolean} installed The path exists.
  * @property {boolean} managed The state holds a record for the path.
  * @property {boolean} locallyEdited The path exists, has a record, and its hash differs from it.
+ * @property {string | null} unreadable The error code when the path exists, has a record, and
+ *   cannot be hashed, such as ENOTDIR for a file where a skill's folder belongs; null otherwise.
  *
  * @typedef {object} ClassifiedArtifact
  * @property {string} id
@@ -63,11 +67,8 @@ import { isPlainObject } from "./utils/guards.js";
  *   rollback would restore or remove, or null when the journal cannot be read. Null otherwise.
  */
 
-/** The base skill that `--init` installs and records without a lock entry (ADR-0020, Decision 2). */
-const BASE_SKILL_PATH = ".agents/skills/calavera";
-
 /** The artifact conditions that make a project `drifted` after `apply`, for a selected artifact. */
-const DRIFTED_CONDITIONS = new Set(["missing", "edited", "unrecorded"]);
+const DRIFTED_CONDITIONS = new Set(["missing", "unreadable", "edited", "unrecorded"]);
 
 /** An artifact ID as the catalog writes it, lowercase kebab case. */
 const ARTIFACT_ID = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -81,8 +82,10 @@ const ARTIFACT_TYPES = new Set(["skill", "hook", "agent"]);
  * each journaled backup exists, because a rollback may still change the other records.
  *
  * A recipe, state, or lock that cannot be read, parsed, or that fails its shape check stops the
- * function with the reader's error (Decision 7). A `.gitignore` that cannot be read does not: the
- * marker then reads as `unreadable`, which counts as no marker.
+ * function with the reader's error (Decision 7, with the #1213 correction to Amendment 1). Nothing
+ * else does. A `.gitignore` that cannot be read makes the marker read as `unreadable`, which counts
+ * as no marker, and an artifact output that cannot be hashed gives that artifact the `unreadable`
+ * condition while every other artifact is still classified.
  *
  * The phase reads the artifacts the records name. Three parts of ADR-0020 join this function in
  * the pull requests that follow it in the #1112 stack, before any command reads it: managed files
@@ -105,7 +108,7 @@ export async function deriveProjectPhase({ config }) {
   }
 
   const recipeFound = await fileExists(config);
-  const selections = recipeFound ? normalizePackageSelections(await readRecipeAi(config)) : [];
+  const selections = recipeFound ? await readRecipeSelections(config) : [];
   const stateFound = await fileExists(STATE_PATH);
   const state = await readState();
   const lock = await readLock();
@@ -136,7 +139,7 @@ export async function deriveProjectPhase({ config }) {
       lockEntry: entry,
       selected,
       outputs,
-      condition: lockedCondition(entry, selected, outputs),
+      condition: lockedCondition(entry, index, selected, outputs),
     });
   }
   for (const selection of selections) {
@@ -165,10 +168,12 @@ export async function deriveProjectPhase({ config }) {
 
 /**
  * Stops on a lock entry whose fields a reason or a file check would use and cannot trust, because
- * `readLock` checks only that the lock holds an array (Decision 7). A reason names an entry's ID
- * and version, so both must have the shapes Calavera writes, and the entry's files must lie in an
- * artifact output folder, so a hand-edited destination cannot make the function hash another
- * project file. The message names the entry by its position and quotes none of its text.
+ * `readLock` checks only that the lock holds an array (Decision 7). A reason names an entry's ID,
+ * so it must have the shape Calavera writes; the version must be valid, although no reason quotes
+ * it; the type must be the catalog's for a known ID, so the outputs are hashed as what they are;
+ * and the entry's files must lie in an artifact output folder, so a hand-edited destination cannot
+ * make the function hash another project file. The message names the entry by its position and
+ * quotes none of its text.
  *
  * @param {unknown} entry
  * @param {number} index
@@ -183,16 +188,30 @@ function assertLockEntryShape(entry, index) {
         ? "has no valid version"
         : typeof entry.type !== "string" || !ARTIFACT_TYPES.has(entry.type)
           ? "has no artifact type Calavera knows"
-          : entry.target !== undefined && typeof entry.target !== "string"
-            ? "has a target that is not a string"
-            : typeof entry.destination !== "string" || !inOutputFolder(entry.destination)
-              ? "has a destination outside the artifact output folders"
-              : undefined;
+          : catalogTypeDiffers(entry.id, entry.type)
+            ? "has a type that differs from its catalog artifact"
+            : entry.target !== undefined && typeof entry.target !== "string"
+              ? "has a target that is not a string"
+              : typeof entry.destination !== "string" || !inOutputFolder(entry.destination)
+                ? "has a destination outside the artifact output folders"
+                : undefined;
   if (problem !== undefined) {
     throw new Error(
       `${LOCK_PATH} artifacts[${index}] ${problem}, so Calavera cannot check it. Restore the lock from version control, or run artifacts install to write it again.`,
     );
   }
+}
+
+/**
+ * Whether the catalog holds the entry's artifact with another type, as a hand-edited `type` would
+ * leave it. An ID the catalog no longer holds is left to the output checks.
+ *
+ * @param {string} id
+ * @param {string} type
+ */
+function catalogTypeDiffers(id, type) {
+  const catalogType = artifactForId(id)?.type;
+  return catalogType !== undefined && catalogType !== type;
 }
 
 /** @param {string} path */
@@ -205,15 +224,31 @@ function inOutputFolder(path) {
 }
 
 /**
- * The recipe's `ai` list. The recipe must be a JSON object, so a file that holds another value
- * stops the function with a message that names the file and quotes none of it.
+ * The recipe's artifact selections. The recipe must be a JSON object whose `ai` field, when
+ * present, is a list, and every selection must name an artifact the catalog holds, once. A recipe
+ * that breaks one of these rules stops the function with a message that names the recipe file
+ * (Amendment 1) and quotes none of it; the selection reader's own message names only catalog IDs
+ * and positions, and its error stays the cause. `doctor` validates the whole recipe before it
+ * classifies, but `artifacts status` and `artifacts doctor` do not, so the function checks what it
+ * reads itself.
  *
  * @param {string} config
  */
-async function readRecipeAi(config) {
+async function readRecipeSelections(config) {
   const recipe = await readJSON(config);
   if (!isPlainObject(recipe)) throw new Error(`${config} must hold a JSON object.`);
-  return recipe.ai;
+  if (recipe.ai !== undefined && !Array.isArray(recipe.ai)) {
+    throw new Error(`${config} ai must be a list of artifact selections.`);
+  }
+  try {
+    return normalizePackageSelections(recipe.ai);
+  } catch (error) {
+    // normalizePackageSelections throws only its own errors, which name catalog IDs and positions.
+    const problem = /** @type {Error} */ (error).message;
+    throw new Error(`${config} has an artifact selection Calavera cannot use: ${problem}`, {
+      cause: error,
+    });
+  }
 }
 
 /**
@@ -259,11 +294,19 @@ async function artifactOutputs(type, destination, target, hashes) {
     aiArtifactOutputPaths({ type, path: destination }).map(async (path) => {
       const recorded = hashes.get(path);
       const installed = await fileExists(path);
-      const locallyEdited =
-        installed &&
-        recorded !== undefined &&
-        (await hashAiInstall(type, path, target)) !== recorded;
-      return { path, installed, managed: recorded !== undefined, locallyEdited };
+      const managed = recorded !== undefined;
+      /** @type {ArtifactOutput} */
+      const output = { path, installed, managed, locallyEdited: false, unreadable: null };
+      if (!installed || !managed) return output;
+      try {
+        output.locallyEdited = (await hashAiInstall(type, path, target)) !== recorded;
+      } catch (error) {
+        // Only the code is kept: a file-system message can carry text from the project.
+        const { code } = /** @type {NodeJS.ErrnoException} */ (error);
+        if (typeof code !== "string") throw error;
+        output.unreadable = code;
+      }
+      return output;
     }),
   );
 }
@@ -286,17 +329,35 @@ function pathsWhere(outputs, test, one, several) {
 }
 
 /**
+ * The `unreadable` condition's phrase for the outputs that could not be hashed, each with its
+ * error code, or undefined when every output could be.
+ *
+ * @param {ArtifactOutput[]} outputs
+ */
+function unreadablePhrase(outputs) {
+  const unreadable = outputs.filter((output) => output.unreadable !== null);
+  if (unreadable.length === 0) return undefined;
+  const paths = LIST.format(unreadable.map(({ path, unreadable: code }) => `${path} (${code})`));
+  return `Calavera cannot read ${paths} for the comparison with the state`;
+}
+
+/**
  * The condition of a lock entry (ADR-0020, Decision 3). Below `current`, the order is the order of
- * precedence: an output that is missing wins over an edited one, and an edited one over one
- * without a state record.
+ * precedence: an output that is missing wins over one Calavera cannot read, that one over an
+ * edited one, and an edited one over one without a state record. `unreadable` is not one of
+ * ADR-0020's conditions: an output that cannot be hashed would otherwise stop the run, which
+ * Decision 7 allows only for the recipe, the state, and the lock. The reason names the entry by its
+ * position in the lock and its ID, never its version, because a valid version can still carry
+ * text from the lock.
  *
  * @param {ArtifactLockEntry} entry
+ * @param {number} index
  * @param {boolean | null} selected
  * @param {ArtifactOutput[]} outputs
  * @returns {Condition}
  */
-function lockedCondition(entry, selected, outputs) {
-  const locked = `The lock records ${entry.id} at version ${entry.version}`;
+function lockedCondition(entry, index, selected, outputs) {
+  const locked = `The lock entry artifacts[${index}] records ${entry.id}`;
   // #992: install and update drop the entry of an artifact the recipe no longer selects.
   const leftover =
     selected === false
@@ -309,6 +370,10 @@ function lockedCondition(entry, selected, outputs) {
     "do not exist",
   );
   if (missing) return { name: "missing", reason: `${locked}${leftover}, and ${missing}.` };
+  const unreadable = unreadablePhrase(outputs);
+  if (unreadable) {
+    return { name: "unreadable", reason: `${locked}${leftover}, and ${unreadable}.` };
+  }
   const edited = pathsWhere(
     outputs,
     ({ locallyEdited }) => locallyEdited,
@@ -351,6 +416,8 @@ function unlockedCondition(id, outputs) {
     "do not exist, although the state records them",
   );
   if (missing) return { name: "missing", reason: `${unlocked}, and ${missing}.` };
+  const unreadable = unreadablePhrase(outputs);
+  if (unreadable) return { name: "unreadable", reason: `${unlocked}, and ${unreadable}.` };
   const edited = pathsWhere(
     outputs,
     ({ locallyEdited }) => locallyEdited,

@@ -275,7 +275,7 @@ test("apply makes the project applied, and each change to an artifact drifts it"
     assert.deepEqual(conditionOf(result, ARTIFACT), {
       selected: true,
       name: "current",
-      reason: `The lock records ${ARTIFACT} at version 0.1.0, and every file it installed matches the hash the state records.`,
+      reason: `The lock entry artifacts[0] records ${ARTIFACT}, and every file it installed matches the hash the state records.`,
     });
 
     // One drifted artifact drifts the project while the other stays current.
@@ -286,7 +286,7 @@ test("apply makes the project applied, and each change to an artifact drifts it"
     assert.deepEqual(conditionOf(result, ARTIFACT), {
       selected: true,
       name: "edited",
-      reason: `The lock records ${ARTIFACT} at version 0.1.0, and ${SKILL} differs from the hash the state records.`,
+      reason: `The lock entry artifacts[0] records ${ARTIFACT}, and ${SKILL} differs from the hash the state records.`,
     });
 
     await rm(SKILL, { recursive: true });
@@ -295,7 +295,7 @@ test("apply makes the project applied, and each change to an artifact drifts it"
     assert.deepEqual(conditionOf(result, ARTIFACT), {
       selected: true,
       name: "missing",
-      reason: `The lock records ${ARTIFACT} at version 0.1.0, and ${SKILL} does not exist.`,
+      reason: `The lock entry artifacts[0] records ${ARTIFACT}, and ${SKILL} does not exist.`,
     });
 
     // apply again writes the artifact back, which returns the project to applied.
@@ -317,7 +317,7 @@ test("an installed output without a state record is unrecorded and drifts the pr
     assert.deepEqual(conditionOf(result, ARTIFACT), {
       selected: true,
       name: "unrecorded",
-      reason: `The lock records ${ARTIFACT} at version 0.1.0, and ${SKILL} has no record in the state, so Calavera does not manage it.`,
+      reason: `The lock entry artifacts[0] records ${ARTIFACT}, and ${SKILL} has no record in the state, so Calavera does not manage it.`,
     });
   });
 });
@@ -355,7 +355,7 @@ test("a missing output wins over an edited one, and an edited one over an unreco
     await writeJsonFile(STATE, { version: 1, profile: "minimal", aiArtifacts: [] });
     assert.equal(
       conditionOf(await derive(), hook).reason,
-      `The lock records ${hook} at version 1.0.0, and ${hookPath} and ${fragmentPath} have no record in the state, so Calavera does not manage them.`,
+      `The lock entry artifacts[0] records ${hook}, and ${hookPath} and ${fragmentPath} have no record in the state, so Calavera does not manage them.`,
     );
 
     // Both outputs recorded and both edited.
@@ -368,7 +368,7 @@ test("a missing output wins over an edited one, and an edited one over an unreco
     await writeFile(fragmentPath, "[]\n");
     assert.equal(
       conditionOf(await derive(), hook).reason,
-      `The lock records ${hook} at version 1.0.0, and ${hookPath} and ${fragmentPath} differ from the hashes the state records.`,
+      `The lock entry artifacts[0] records ${hook}, and ${hookPath} and ${fragmentPath} differ from the hashes the state records.`,
     );
 
     // Without a lock entry, both recorded outputs edited, then both missing.
@@ -406,14 +406,14 @@ test("a missing output wins over an edited one, and an edited one over an unreco
     assert.deepEqual(conditionOf(await derive(), hook), {
       selected: true,
       name: "missing",
-      reason: `The lock records ${hook} at version 1.0.0, and ${fragmentPath} does not exist.`,
+      reason: `The lock entry artifacts[0] records ${hook}, and ${fragmentPath} does not exist.`,
     });
 
     // A reason names every output that has the problem.
     await rm(hookPath);
     assert.equal(
       conditionOf(await derive(), hook).reason,
-      `The lock records ${hook} at version 1.0.0, and ${hookPath} and ${fragmentPath} do not exist.`,
+      `The lock entry artifacts[0] records ${hook}, and ${hookPath} and ${fragmentPath} do not exist.`,
     );
   });
 });
@@ -427,7 +427,7 @@ test("a lock entry the recipe no longer selects never drifts the project", async
     assert.deepEqual(conditionOf(result, OTHER), {
       selected: false,
       name: "current",
-      reason: `The lock records ${OTHER} at version 0.2.0, the recipe no longer selects it, so artifacts install drops its lock entry, and every file it installed matches the hash the state records.`,
+      reason: `The lock entry artifacts[1] records ${OTHER}, the recipe no longer selects it, so artifacts install drops its lock entry, and every file it installed matches the hash the state records.`,
     });
 
     // #1111: deselected, then its files deleted, as clean leaves it.
@@ -437,7 +437,7 @@ test("a lock entry the recipe no longer selects never drifts the project", async
     assert.deepEqual(conditionOf(result, OTHER), {
       selected: false,
       name: "missing",
-      reason: `The lock records ${OTHER} at version 0.2.0, the recipe no longer selects it, so artifacts install drops its lock entry, and ${OTHER_SKILL} does not exist.`,
+      reason: `The lock entry artifacts[1] records ${OTHER}, the recipe no longer selects it, so artifacts install drops its lock entry, and ${OTHER_SKILL} does not exist.`,
     });
   });
 });
@@ -562,7 +562,7 @@ test("a deleted recipe after apply is incomplete, with every artifact still clas
     assert.deepEqual(conditionOf(result, ARTIFACT), {
       selected: null,
       name: "current",
-      reason: `The lock records ${ARTIFACT} at version 0.1.0, and every file it installed matches the hash the state records.`,
+      reason: `The lock entry artifacts[0] records ${ARTIFACT}, and every file it installed matches the hash the state records.`,
     });
   });
 });
@@ -681,7 +681,9 @@ test("a Codex agent is hashed as its target installs it", async () => {
     assert.ok(agent);
     const destination = ".codex/agents/reviewer.toml";
     await mkdir(".codex/agents", { recursive: true });
-    await writeFile(destination, 'name = "reviewer"\r\n');
+    // Bytes that are not valid UTF-8: the Codex target hashes the text it reads, which replaces
+    // them, so its hash differs from the hash of the bytes that another target would compute.
+    await writeFile(destination, Buffer.from([0x6e, 0x3d, 0xff, 0xfe, 0x0a]));
     await mkdir(".calavera");
     await writeJsonFile(LOCK, {
       schemaVersion: 1,
@@ -712,6 +714,101 @@ test("a Codex agent is hashed as its target installs it", async () => {
     });
     await writeRecipe([]);
     assert.equal(conditionOf(await derive(), agent.id).name, "current");
+  });
+});
+
+test("an output that cannot be hashed is unreadable, and the run classifies the rest", async () => {
+  await inProject(async () => {
+    await applied([ARTIFACT, OTHER]);
+    // A file where the skill's folder was.
+    await rm(SKILL, { recursive: true });
+    await writeFile(SKILL, "not a folder\n");
+    const result = await derive();
+    assert.equal(result.phase, "drifted");
+    assert.deepEqual(conditionOf(result, ARTIFACT), {
+      selected: true,
+      name: "unreadable",
+      reason: `The lock entry artifacts[0] records ${ARTIFACT}, and Calavera cannot read ${SKILL} (ENOTDIR) for the comparison with the state.`,
+    });
+    assert.equal(conditionOf(result, OTHER).name, "current");
+
+    // Without a lock entry the selection is named by the recipe.
+    await rm(LOCK);
+    assert.deepEqual(conditionOf(await derive(), ARTIFACT), {
+      selected: true,
+      name: "unreadable",
+      reason: `The recipe selects ${ARTIFACT}, which has no lock entry, and Calavera cannot read ${SKILL} (ENOTDIR) for the comparison with the state.`,
+    });
+  });
+});
+
+test("a lock entry whose type differs from its catalog artifact stops the function", async () => {
+  await inProject(async () => {
+    await applied([ARTIFACT]);
+    const lock = await readJsonFile(LOCK);
+    lock.artifacts[0].type = "agent";
+    await writeJsonFile(LOCK, lock);
+    await assert.rejects(derive(), {
+      message: `${LOCK} artifacts[0] has a type that differs from its catalog artifact, so Calavera cannot check it. Restore the lock from version control, or run artifacts install to write it again.`,
+    });
+  });
+});
+
+test("the recipe's ai field must be a list of known selections, named by the recipe file", async () => {
+  await inProject(async () => {
+    await writeFile(CONFIG, `${JSON.stringify({ ...recipeWith([]), ai: ARTIFACT })}\n`);
+    await assert.rejects(derive(), {
+      message: `${CONFIG} ai must be a list of artifact selections.`,
+    });
+    await writeFile(
+      CONFIG,
+      `${JSON.stringify({ ...recipeWith([]), ai: [{ id: "not-an-artifact" }] })}\n`,
+    );
+    await assert.rejects(derive(), (error) => {
+      assert.ok(error instanceof Error);
+      assert.equal(
+        error.message,
+        `${CONFIG} has an artifact selection Calavera cannot use: Unknown artifact selection.`,
+      );
+      assert.ok(error.cause instanceof Error);
+      return true;
+    });
+  });
+});
+
+test("a lock entry for an ID the catalog no longer holds is still classified", async () => {
+  await inProject(async () => {
+    await applied([ARTIFACT]);
+    const lock = await readJsonFile(LOCK);
+    lock.artifacts[0].id = "skill-retired";
+    await writeJsonFile(LOCK, lock);
+    await writeRecipe([]);
+    const result = await derive();
+    assert.equal(result.phase, "applied");
+    assert.equal(conditionOf(result, "skill-retired").name, "current");
+  });
+});
+
+test("a recipe without an ai field selects nothing", async () => {
+  await inProject(async () => {
+    const { ai, ...recipe } = recipeWith([]);
+    assert.ok(ai);
+    await writeJsonFile(CONFIG, recipe);
+    const result = await derive();
+    assert.equal(result.phase, "composed");
+    assert.deepEqual(result.artifacts, []);
+  });
+});
+
+test("a reason names the lock entry by position and never quotes its version", async () => {
+  await inProject(async () => {
+    await applied([ARTIFACT]);
+    const lock = await readJsonFile(LOCK);
+    lock.artifacts[0].version = "1.0.0-any.words.here";
+    await writeJsonFile(LOCK, lock);
+    const { reason } = conditionOf(await derive(), ARTIFACT);
+    assert.equal(reason.includes("words"), false);
+    assert.match(reason, /^The lock entry artifacts\[0\] records skill-project-goal,/);
   });
 });
 

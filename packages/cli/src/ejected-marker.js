@@ -24,9 +24,10 @@ export const EJECTED_LINE =
  * line. `broken` has an unpaired, repeated, out-of-order, or changed marker, so it counts as no
  * marker for the phase, and ADR-0017, Amendment 5 has `apply` and `eject` stop on it.
  * `unreadable` is a `.gitignore` that exists and cannot be read, such as a folder; it counts as
- * no marker, and `code` names the error. A reason in ADR-0020's sense never quotes a line from the file, so none is kept here.
+ * no marker, and `code` names the error's code, or is null when the error has none. A reason in
+ * ADR-0020's sense never quotes a line from the file, so none is kept here.
  *
- * @typedef {{ status: "absent" | "complete" | "edited" | "broken" } | { status: "unreadable", code: string }} EjectedMarker
+ * @typedef {{ status: "absent" | "complete" | "edited" | "broken" } | { status: "unreadable", code: string | null }} EjectedMarker
  */
 
 /**
@@ -40,8 +41,9 @@ export async function readEjectedMarker() {
   try {
     contents = await readFile(GITIGNORE_PATH, "utf8");
   } catch (error) {
-    const code = /** @type {NodeJS.ErrnoException} */ (error).code ?? "an error";
-    return code === "ENOENT" ? { status: "absent" } : { status: "unreadable", code };
+    const { code } = /** @type {NodeJS.ErrnoException} */ (error);
+    if (code === "ENOENT") return { status: "absent" };
+    return { status: "unreadable", code: code ?? null };
   }
   const block = findBlock(GITIGNORE_PATH, contents, EJECTED_BLOCK);
   // findBlock's reason quotes a changed marker line, which is the person's text, so only the
