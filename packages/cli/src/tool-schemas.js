@@ -646,6 +646,34 @@ const artifactStatusEntrySchema = z.looseObject({
         .describe("What Calavera found and what resolves it. It names paths and IDs only."),
     })
     .describe("The artifact's condition, computed on every call and never stored (ADR-0020)."),
+  unrecordedFiles: z
+    .array(
+      z.looseObject({
+        path: z.string(),
+        comparedVersion: z
+          .string()
+          .nullable()
+          .describe(
+            "The version in the project's artifact cache the file was compared with, offline, or null when the cache could not supply the package. A file that cannot be read keeps the version and has matches null.",
+          ),
+        matches: z
+          .boolean()
+          .nullable()
+          .describe("Whether the file equals that version's file, or null when not compared."),
+        notCompared: z
+          .string()
+          .nullable()
+          .describe(
+            "Why Calavera could not compare the file, with the error code when there is one, or null when it compared it.",
+          ),
+        reason: z
+          .string()
+          .describe("The note to show the person, with remedies that keep their file."),
+      }),
+    )
+    .describe(
+      "Each file of a selection without a lock entry that already exists without a state record, which apply stops on unless it matches the package (ADR-0020). Empty for a lock entry.",
+    ),
 });
 
 /**

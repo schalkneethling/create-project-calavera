@@ -12,6 +12,7 @@ import {
   resolveAiArtifacts,
 } from "./ai/artifacts.js";
 import {
+  artifactRegistry,
   LOCK_PATH,
   normalizePackageSelections,
   PACKAGE_PATH,
@@ -24,6 +25,7 @@ import {
 import { artifactWiringFindings, installedSkillDirectory } from "./ai/artifact-wiring.js";
 import { readEjectedMarker } from "./ejected-marker.js";
 import { classifyManagedFiles, DRIFTED_FILE_CONDITIONS } from "./phase-managed-files.js";
+import { compareUnrecordedOutputs } from "./phase-unrecorded-files.js";
 import { optionalStringArray, stateShowsEarlierApply } from "./state.js";
 import { fileExists, isPathInside, readJSON } from "./utils/fs.js";
 import { isPlainObject } from "./utils/guards.js";
@@ -62,6 +64,10 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {boolean | null} selected Whether the recipe selects the artifact, or null without a recipe.
  * @property {ArtifactOutput[]} outputs
  * @property {Condition} condition
+ * @property {import("./phase-unrecorded-files.js").UnrecordedFile[]} unrecordedFiles Each output
+ *   of a selection without a lock entry that already exists without a state record, compared
+ *   offline against the artifact cache (Decision 3). Empty for a lock entry, whose unrecorded
+ *   output is its `unrecorded` condition.
  *
  * @typedef {object} ProjectRecords Which of Calavera's records exist, so a doctor can name the
  *   ones that remain and the ones that are missing.
@@ -119,13 +125,18 @@ const ARTIFACT_TYPES = new Set(["skill", "hook", "agent"]);
  * later pull request of the #1112 stack; they compare the output with an offline copy of the
  * artifact cache.
  *
- * @param {{ config: string, runsProjectCode?: boolean }} options `config` is the recipe path, as
- *   `--config` names it. `runsProjectCode: false` keeps the project's formatter from loading, for
- *   the read-only MCP status tool (ADR-0020, owner decision 24): files that need it are
- *   `not-checked`.
+ * @param {{ config: string, runsProjectCode?: boolean, registry?: import("./artifact-lifecycle.js").ArtifactRegistry }} options
+ *   `config` is the recipe path, as `--config` names it. `runsProjectCode: false` keeps the
+ *   project's formatter from loading, for the read-only MCP status tool (ADR-0020, owner decision
+ *   24): files that need it are `not-checked`. `registry` reads the artifact cache, offline, for
+ *   the unrecorded outputs; it defaults to the real registry client.
  * @returns {Promise<ProjectPhaseResult>}
  */
-export async function deriveProjectPhase({ config, runsProjectCode = true }) {
+export async function deriveProjectPhase({
+  config,
+  runsProjectCode = true,
+  registry = artifactRegistry({}),
+}) {
   if (await fileExists(TRANSACTION_PATH)) {
     return {
       phase: "pending-transaction",
@@ -175,8 +186,11 @@ export async function deriveProjectPhase({ config, runsProjectCode = true }) {
       selected,
       outputs,
       condition: lockedCondition(entry, index, selected, outputs),
+      unrecordedFiles: [],
     });
   }
+  /** @type {import("./phase-unrecorded-files.js").UnrecordedCandidate[]} */
+  const unlocked = [];
   for (const selection of selections) {
     if (lockedIds.has(selection.id)) continue;
     // normalizePackageSelections has already refused an ID the catalog does not hold.
@@ -189,7 +203,23 @@ export async function deriveProjectPhase({ config, runsProjectCode = true }) {
       selected: true,
       outputs,
       condition: unlockedCondition(selection.id, outputs),
+      unrecordedFiles: [],
     });
+    unlocked.push({
+      id: selection.id,
+      type: resolved.type,
+      target: selection.target,
+      outputs: outputs.map(({ path, installed, managed }) => ({
+        path,
+        unrecorded: installed && !managed,
+      })),
+    });
+  }
+  // Decision 3: apply stops on an unlocked artifact's output that exists without a record unless
+  // it matches the package, so each one is compared with the cached package, offline.
+  const unrecordedById = await compareUnrecordedOutputs(unlocked, registry);
+  for (const artifact of artifacts) {
+    artifact.unrecordedFiles = unrecordedById.get(artifact.id) ?? artifact.unrecordedFiles;
   }
 
   const { managedFiles, formatterFailures, planProblem } = recipe

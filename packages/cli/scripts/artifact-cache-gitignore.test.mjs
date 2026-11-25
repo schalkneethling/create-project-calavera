@@ -22,7 +22,7 @@ import { fileURLToPath } from "node:url";
 
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
 import { integrationCatalog } from "../src/catalog.js";
-import { applyRecipeObject } from "../src/index.js";
+import { agentBootstrap, applyRecipeObject, ejectProject, parseArgs } from "../src/index.js";
 import { callMcpTool } from "../src/mcp.js";
 import { buildRecipe } from "../src/recipe.js";
 import { stubRegistry } from "./artifact-registry-stub.mjs";
@@ -751,6 +751,65 @@ for (const { name, rerun, options, setup } of commands) {
         assert.deepEqual(registry.requests, [], `dryRun: ${dryRun}`);
       }
       assert.deepEqual(await snapshotDirectory(), before);
+    });
+  });
+}
+
+// #1112, owner decision of 2026-11-26: when `eject --yes` keeps the state, it keeps the cache
+// block that state records, so the project stays a consistent applied project and
+// --check-updates has nothing to write back.
+for (const edit of ["the base skill", "the artifact-cache block"]) {
+  test(`when --yes keeps the state because ${edit} was edited, it keeps the cache block, and --check-updates writes nothing`, async () => {
+    await inProject(undefined, async () => {
+      // An applied project with a locked artifact, its cache block, and the base skill.
+      await agentBootstrap({ mcpHarness: "skip", packageManager: "npm" });
+      await writeFile(
+        "calavera.config.json",
+        `${JSON.stringify(recipeWith(["skill-project-goal"]), null, 2)}\n`,
+      );
+      await runArtifactCommand(artifactOptions("install"), registry());
+      const gitignore = await readFile(".gitignore", "utf8");
+      assert.match(gitignore, /# calavera:artifact-cache:start/);
+      if (edit === "the base skill") {
+        await writeFile(".agents/skills/calavera/SKILL.md", "# Edited\n");
+      } else {
+        await writeFile(
+          ".gitignore",
+          gitignore.replace(".calavera/cache/\n", ".calavera/cache/\nmine/\n"),
+        );
+      }
+
+      const yes = await ejectProject(parseArgs(["eject", "--yes"]), { interactive: false });
+      const outcome = (/** @type {string} */ kind) =>
+        yes.items.find((item) => item.kind === kind)?.outcome;
+      assert.equal(outcome("state"), "left");
+      assert.equal(outcome("artifact-cache-block"), "left");
+      assert.match(await readFile(".gitignore", "utf8"), /# calavera:artifact-cache:start/);
+      // The dry run says so before --yes runs (ADR-0017, Decision 5).
+      if (edit === "the base skill") {
+        const block = yes.items.find((item) => item.kind === "artifact-cache-block");
+        assert.equal(block?.keptRecord, true);
+      }
+
+      const gitignoreAfter = await readFile(".gitignore", "utf8");
+      const stateAfter = await readFile(".calavera/state.json", "utf8");
+      const checkUpdates = runArtifactCommand(
+        artifactOptions("status", { checkUpdates: true }),
+        registry(),
+      );
+      if (edit === "the base skill") {
+        // The kept block already holds the cache's line, so the plan leaves it unchanged.
+        const { ignoreChanges } = await checkUpdates;
+        assert.deepEqual(
+          ignoreChanges.filter(({ type }) => type !== "unchanged"),
+          [],
+        );
+      } else {
+        // The edited block stops --check-updates before it writes anything, as it stops apply.
+        await assert.rejects(checkUpdates, /Calavera stopped before writing anything/);
+      }
+      assert.equal(await readFile(".gitignore", "utf8"), gitignoreAfter);
+      assert.equal(await readFile(".calavera/state.json", "utf8"), stateAfter);
     });
   });
 }
