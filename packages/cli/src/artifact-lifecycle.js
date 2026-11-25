@@ -316,7 +316,7 @@ export async function readArtifactStatus(options, services = {}) {
 /**
  * The read-only report while an artifact transaction is pending (ADR-0020, owner decisions 20 and
  * 23; owner decision of 2026-11-22 on #1052). It is a result, not an error, so the phase function
- * that ADR-0020 adds later only adds fields. It carries the fields every status report carries,
+ * the report reads now only adds fields. It carries the fields every status report carries,
  * with no artifacts and `ok: false`, because the records cannot be read yet, and three more:
  * `phase`; `rollbackFiles`, which lists the project paths the rollback would restore from their
  * backups or remove, read from the journal without writing, or is null when the journal cannot be
@@ -929,7 +929,7 @@ async function artifactStatus(
         condition,
       });
     }
-    for (const { id, lockEntry, condition } of phase.artifacts) {
+    for (const { id, lockEntry, condition, outputs } of phase.artifacts) {
       if (lockEntry !== null) continue;
       const selection = /** @type {{ id: string, target?: string }} */ (
         selections.find((candidate) => candidate.id === id)
@@ -963,9 +963,11 @@ async function artifactStatus(
         ...(selection.target ? { target: selection.target } : {}),
         destination: resolvedArtifact.path,
         payloadHash: null,
-        installed: false,
-        managed: false,
-        locallyEdited: false,
+        // From the files, as for a lock entry, so the fields agree with the condition: a
+        // selection whose recorded files were edited is installed, managed, and edited.
+        installed: outputs.every(({ installed }) => installed),
+        managed: outputs.every(({ managed }) => managed),
+        locallyEdited: outputs.some(({ locallyEdited }) => locallyEdited),
         latestVersion: latest?.version ?? null,
         updateAvailable: false,
         releaseNotesUrl: null,

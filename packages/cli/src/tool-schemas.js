@@ -699,7 +699,9 @@ export const mcpOnlyToolSchemas = Object.freeze({
         .looseObject({
           level: z
             .string()
-            .describe("error, warn, or info, at the level artifacts doctor gives it."),
+            .describe(
+              "info, as artifacts status prints every phase line, or error in the pending-transaction result. The phase itself tells how severe it is.",
+            ),
           message: z.string(),
         })
         .optional()

@@ -248,7 +248,8 @@ export function formatArtifactStatus(result) {
     if (artifact.installCommand !== null) {
       lines.push({ level: "warn", message: `${LEFTOVER} ${artifact.installCommand}` });
     } else if (artifact.selected === false) {
-      info(notSelected);
+      // A deselected entry with a problem is a warning, so its note follows it to stderr.
+      lines.push({ level: isDeselectedProblem(artifact) ? "warn" : "info", message: notSelected });
     }
   };
   /** @param {UpdateCheckFailure} failure */
@@ -271,6 +272,14 @@ export function formatArtifactStatus(result) {
     // #1138: a lookup skipped after its registry missed an earlier lookup's deadline never ran.
     const outcome =
       failure?.code === "ELOOKUPSKIPPED" ? "update not checked" : "update check failed";
+    if (artifact.version === null && PROBLEMS.has(artifact.condition.name)) {
+      // A selection without a lock entry whose recorded files were deleted, edited, or cannot be
+      // read fails artifacts doctor (ADR-0020, Decision 3), so its line names the change and its
+      // reason, not an install that would stop on it.
+      info(`${artifact.id}  no lock entry (${artifact.tag}), ${healthNotes(artifact).join(", ")}`);
+      info(`  ${artifact.condition.reason}`);
+      continue;
+    }
     if (artifact.version === null) {
       if (failure) {
         lines.push({
@@ -378,7 +387,9 @@ export function formatArtifactStatus(result) {
 export function artifactDoctorVerdict(result) {
   /** @type {ReportLine[]} */
   const lines = [];
-  const notInstalled = result.artifacts.filter(({ version }) => version === null);
+  const notInstalled = result.artifacts.filter(
+    ({ version, condition }) => version === null && condition.name === "pending",
+  );
   const [one] = notInstalled;
   if (one) {
     const ids = notInstalled.map(({ id }) => id).join(", ");

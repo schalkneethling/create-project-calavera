@@ -1,6 +1,6 @@
 // @ts-check
 import { GITIGNORE_PATH } from "./ignore-lines.js";
-import { LOCK_PATH, STATE_PATH } from "./artifact-lifecycle.js";
+import { LOCK_PATH, PACKAGE_PATH, STATE_PATH } from "./artifact-lifecycle.js";
 import { BASE_SKILL_PATH } from "./ai/artifacts.js";
 import { calaveraCommand } from "./project-local-commands.js";
 
@@ -152,6 +152,7 @@ function incompleteMessage(result, run, config) {
     ...(records.recipe ? [`the recipe ${config}`] : []),
     ...(records.state ? [STATE_PATH] : []),
     ...(records.lockEntries > 0 ? [LOCK_PATH] : []),
+    ...(records.packagesPresent ? [PACKAGE_PATH] : []),
     ...(records.baseSkillPresent ? [BASE_SKILL_PATH] : []),
   ];
   const missing = [

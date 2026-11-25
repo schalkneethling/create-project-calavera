@@ -14,6 +14,7 @@ import {
 import {
   LOCK_PATH,
   normalizePackageSelections,
+  PACKAGE_PATH,
   pendingRollbackFiles,
   readLock,
   readState,
@@ -70,6 +71,8 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {number} lockEntries
  * @property {boolean} baseSkillRecorded The state records the base skill that `--init` installs.
  * @property {boolean} baseSkillPresent The base skill's folder exists.
+ * @property {boolean} packagesPresent `.calavera/packages`, which holds the locked artifact packages,
+ *   exists.
  *
  * @typedef {object} ProjectPhaseResult
  * @property {ProjectPhase} phase
@@ -154,6 +157,7 @@ export async function deriveProjectPhase({ config, runsProjectCode = true }) {
     lockEntries: lock.artifacts.length,
     baseSkillRecorded,
     baseSkillPresent: baseSkillRecorded && (await fileExists(BASE_SKILL_PATH)),
+    packagesPresent: await fileExists(PACKAGE_PATH),
   };
 
   const hashes = new Map(state.aiArtifacts.map(({ path, hash }) => [path, hash]));

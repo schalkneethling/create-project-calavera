@@ -20,7 +20,7 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { readArtifactStatus, runArtifactCommand } from "../src/artifact-lifecycle.js";
-import { formatArtifactStatus } from "../src/artifact-status-report.js";
+import { artifactDoctorVerdict, formatArtifactStatus } from "../src/artifact-status-report.js";
 import { applyRecipeObject } from "../src/index.js";
 import { deriveProjectPhase } from "../src/project-phase.js";
 import { buildRecipe } from "../src/recipe.js";
@@ -186,6 +186,79 @@ test("a deselected lock entry is a warning whatever happened to its files, and a
     // The selected artifact edited fails.
     await writeFile(join(SKILL, "SKILL.md"), "edited\n");
     assert.equal((await run("doctor")).ok, false);
+  });
+});
+
+test("a selection without a lock entry whose recorded files changed names the change, not an install", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    await writeJsonFile(LOCK, { schemaVersion: 1, artifacts: [] });
+    await writeFile(join(SKILL, "SKILL.md"), "edited\n");
+    const doctor = await run("doctor");
+    const [entry] = doctor.artifacts;
+    assert.equal(entry?.condition.name, "edited");
+    // The fields agree with the condition.
+    assert.equal(entry?.installed, true);
+    assert.equal(entry?.managed, true);
+    assert.equal(entry?.locallyEdited, true);
+    assert.equal(doctor.ok, false);
+    const lines = formatArtifactStatus(doctor).map(({ message }) => message);
+    assert.equal(
+      lines.some((line) => line.includes("not installed")),
+      false,
+      lines.join("\n"),
+    );
+    assert.ok(
+      lines.includes(`${ARTIFACT}  no lock entry (latest), locally edited`),
+      lines.join("\n"),
+    );
+    assert.ok(lines.includes(`  ${entry?.condition.reason}`), lines.join("\n"));
+    // The verdict names no selection as not installed yet.
+    const verdict = artifactDoctorVerdict(doctor).map(({ message }) => message);
+    assert.equal(
+      verdict.some((line) => line.startsWith("Selected artifact not installed yet")),
+      false,
+    );
+  });
+});
+
+test("a deselected entry with edited files keeps its line and its note together on stderr", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT, OTHER]);
+    await writeJsonFile(CONFIG, recipeWith([], [ARTIFACT]));
+    await writeFile(join(OTHER_SKILL, "SKILL.md"), "edited\n");
+    const lines = formatArtifactStatus(await run("doctor"));
+    const index = lines.findIndex(({ message }) => message.startsWith(`${OTHER}  `));
+    assert.equal(lines[index]?.level, "warn");
+    assert.equal(lines[index + 1]?.level, "warn");
+    assert.match(lines[index + 1]?.message ?? "", /Not selected/);
+  });
+});
+
+test("--check-updates writes nothing into an incomplete project that still has its state file", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    // The recipe deleted after apply: the state and the lock remain.
+    await rm(CONFIG);
+    await rm(".gitignore", { force: true });
+    const before = await snapshotDirectory();
+    const status = await run("status", { checkUpdates: true });
+    assert.equal(status.phase, "incomplete");
+    assert.deepEqual(status.ignoreChanges, []);
+    assert.deepEqual(await snapshotDirectory(), before);
+  });
+});
+
+test("an incomplete line names the package folders that remain", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    await rm(STATE);
+    const doctor = await run("doctor");
+    assert.equal(doctor.phase, "incomplete");
+    assert.match(
+      doctor.phaseLine.message,
+      /\.calavera\/artifacts\.lock\.json, and \.calavera\/packages remain/,
+    );
   });
 });
 
