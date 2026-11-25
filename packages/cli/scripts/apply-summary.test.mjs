@@ -1055,6 +1055,23 @@ test("apply --dry-run and apply name .claude/settings.json once when two artifac
       Object.hasOwn(JSON.parse(await readFile(".claude/settings.json", "utf8")).hooks, "Stop"),
       false,
     );
+
+    // init --apply prints the same body under its own headline (src/index.js, runInit).
+    const config = "calavera.config.json";
+    const initText = text([
+      info(initRecipeSummary(dryRun.recipe, { dependencies: [], aiArtifacts: [] }, true)),
+      ...initDefaultInputLines(dryRun.artifactInputs, dryRun.integrationInputs, config, true),
+      ...initApplyDryRunLines(dryRun, { config, dryRun: false, noInstall: false }),
+      ...initSummaryLines({
+        command: "init",
+        config,
+        dryRun: false,
+        recipe: dryRun.recipe,
+        applyDryRun: dryRun,
+        applyResult: applied,
+      }),
+    ]);
+    assert.deepEqual(listingViolations(initText, planned, dryRun.vitePlus.lines), [], initText);
   });
 });
 
