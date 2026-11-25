@@ -29,8 +29,11 @@ import {
   spinner,
   text,
 } from "@clack/prompts";
-import { resolvePackageDistTag } from "@schalkneethling/calavera-artifact-core/registry";
-import { ExecaError, execa } from "execa";
+import {
+  resolvePackageDistTag,
+  unsupportedYarnVersion,
+} from "@schalkneethling/calavera-artifact-core/registry";
+import { execa } from "execa";
 import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
 import {
@@ -87,7 +90,6 @@ import {
 } from "./agent-guidance.js";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
-  githubRepositoryControlManagedFiles,
   normalizeGithubRepositoryControlsOptions,
   REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls.js";
@@ -114,7 +116,6 @@ import {
   declaredIgnoreLines,
   GITIGNORE_PATH,
   HTML_VALIDATE_IGNORE_PATH,
-  htmlValidateIgnoreText,
   planGitignoreBlocks,
   planHtmlValidateIgnoreChanges,
 } from "./ignore-lines.js";
@@ -124,12 +125,24 @@ import {
   errorWithLeftovers,
   temporaryFolderLeftovers,
 } from "./utils/cleanup.js";
-import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
+import { unique } from "./utils/unique.js";
+import {
+  createStrykerConfig,
+  formatManagedFilePlans,
+  managedFileDifference,
+  managedFileFormatterLoader,
+  plannedManagedFiles,
+} from "./managed-file-plans.js";
 import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { withDeadline } from "./utils/deadline.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
-import { detectVitePlus } from "./vite-plus-detection.js";
+import {
+  delegatesToVitePlus,
+  detectVitePlus,
+  formatterVitePlusStatus,
+  vitePlusInstallDirectory,
+} from "./vite-plus-detection.js";
 import {
   VERSION_CHECK_DEADLINE_MS,
   checkForNewerVersion,
@@ -176,7 +189,6 @@ import {
   declaredManagedFiles,
   HTML_VALIDATE_WRAPPER_PATH,
   integrationConfigFiles,
-  managedFileDeclarations,
   packageManagerLockfiles,
   projectInspectionFiles,
   STRYKER_CONFIG_PATH,
@@ -211,7 +223,6 @@ import {
   isPathInside,
   JSONParseError,
   parseJSON,
-  readBoundedTemplate,
   readJSON,
   writeJSON,
 } from "./utils/fs.js";
@@ -468,22 +479,6 @@ const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/"
 export function agentBootstrapSkillSources(skillPath = AGENT_BOOTSTRAP_SKILL_PATH) {
   return new Map([["skill-calavera", skillPath]]);
 }
-const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
-// A file that does not exist, so Stryker skips its tsconfig preprocessing (createStrykerConfig).
-const STRYKER_SKIPPED_TSCONFIG = "stryker-skips-tsconfig-preprocessing.json";
-// The arguments the tap runner passes to node for each test file: the tap reporter, which the
-// runner parses, then Stryker's coverage hook and the test file (#736). These are the runner's
-// defaults in 10.1.1 (dist/schema/tap-runner-options.json); the config states them so that the
-// dry run shows them and a change of default cannot change what runs.
-const STRYKER_TAP_NODE_ARGS = ["--test-reporter=tap", "-r", "{{hookFile}}", "{{testFile}}"];
-// With the runner's default, forceBail: true, the tap runner kills a test process once it reads the
-// process's first failure. The coverage hook then writes Stryker's result file into the process's
-// current directory, so when the kill lands while a test is inside another folder, a temporary
-// project for example, the runner cannot find the file and reports the mutant as a runtime error
-// instead of killed (#1088, as in this repository's own config, #985). Turning it off lets each test
-// file run to its end, which costs time on a file that kills a mutant; Stryker still stops at the
-// first failing file.
-const STRYKER_TAP_FORCE_BAIL = false;
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
 
@@ -526,49 +521,6 @@ const packageManagerCommands = {
     run: (script) => `bun run ${script}`,
   },
 };
-
-/**
- * Where vp install installs vite-plus for a directory that has no package.json of its own and
- * follows the Vite+ verdict of the manifest above it (#961): the directory of the manifest that
- * declares vite-plus, which the remedy for a missing vite-plus names (#1084). Nothing when the
- * directory's own manifest decides, or when no manifest above it declares vite-plus.
- *
- * @param {VitePlusDetection} detection
- */
-function vitePlusInstallDirectory(detection) {
-  const declaringManifestPath =
-    detection.status === "unknown" ? detection.ancestor?.declaringManifestPath : undefined;
-  return declaringManifestPath && dirname(declaringManifestPath);
-}
-
-/**
- * Whether apply delegates to Vite+, both for the development dependency
- * install (ADR-0012) and for the checks the generated `quality` script runs
- * (ADR-0013): the project is managed, or it has no manifest of its own and the
- * nearest ancestor that decides is managed, as in a new workspace member of a
- * Vite+ workspace. The second case keeps ADR-0001's `unknown` verdict for
- * reporting, and only keeps the install away from the package manager on
- * `PATH` (ADR-0012, Decision 1).
- *
- * @param {VitePlusDetection} detection
- */
-function delegatesToVitePlus(detection) {
-  return (
-    detection.status === "managed" ||
-    (detection.status === "unknown" && detection.ancestor?.status === "managed")
-  );
-}
-
-/**
- * The Vite+ verdict the formatter for Calavera's generated files follows: "managed" whenever apply
- * delegates to Vite+, so under create-here the parent's vp check accepts those files (#961), and
- * the detected status otherwise. Apply and init both load their formatter with it (#1086).
- *
- * @param {VitePlusDetection} detection
- */
-function formatterVitePlusStatus(detection) {
-  return delegatesToVitePlus(detection) ? "managed" : detection.status;
-}
 
 /**
  * The member globs of the workspace whose root is `directory`, as the package
@@ -1094,55 +1046,18 @@ export function devDependencyInstallCommand(
  * The command that removes development dependencies, which `eject` reports for the
  * `create-project-calavera` dependency and never runs (ADR-0017, Decision 4). It follows
  * `devDependencyInstallCommand`: `vp remove` when Vite+ manages the project, and the package
- * manager's own command otherwise.
- *
- * At the root of a workspace, only Yarn 1 refuses to remove a dependency without `-W`
- * (`--ignore-workspace-root-check`; `src/cli/commands/remove.js` in yarnpkg/yarn). npm, pnpm, Bun,
- * and Yarn 2 or later need no flag there, and Yarn 2 or later rejects `-W`. `vp remove` refuses its
- * own `-w` for every Yarn version and never adds `-W` itself (`remove.rs` in voidzero-dev/vite-plus),
- * so under Vite+ the flag goes to Yarn 1 as a native argument after `--`, which Vite+ passes through
- * unchanged.
+ * manager's own command otherwise. npm, pnpm, Bun, and Yarn 2 or later need no flag at the root of
+ * a workspace, and Calavera does not support Yarn 1, the one that does (ADR-0023).
  *
  * @param {PackageManager} packageManager
  * @param {VitePlusDetection} detection
  * @param {string[]} dependencies
- * @param {{ yarnClassicWorkspaceRoot?: boolean }} [options] `yarnClassicWorkspaceRoot` for a Yarn 1
- *   project's workspace root; it changes only a Yarn command.
  * @returns {[string, string[]]}
  */
-export function devDependencyRemoveCommand(
-  packageManager,
-  detection,
-  dependencies,
-  { yarnClassicWorkspaceRoot = false } = {},
-) {
-  const workspaceRootCheck = packageManager === "yarn" && yarnClassicWorkspaceRoot;
-
-  if (delegatesToVitePlus(detection)) {
-    return ["vp", ["remove", ...dependencies, ...(workspaceRootCheck ? ["--", "-W"] : [])]];
-  }
-
-  return workspaceRootCheck
-    ? ["yarn", ["remove", "-W", ...dependencies]]
+export function devDependencyRemoveCommand(packageManager, detection, dependencies) {
+  return delegatesToVitePlus(detection)
+    ? ["vp", ["remove", ...dependencies]]
     : packageManagerCommands[packageManager].remove(dependencies);
-}
-
-/**
- * The major version of Yarn a project runs: the one its `packageManager` field or
- * `devEngines.packageManager` pins, else 2 when it has a `.yarnrc.yml`, which only Yarn 2 and
- * later read, else 1, the Yarn that Corepack and a global install run without a pin.
- *
- * @param {PackageJSON} packageJSON
- */
-function projectYarnMajor(packageJSON) {
-  const devEngine = [packageJSON.devEngines?.packageManager]
-    .flat()
-    .find((packageManager) => packageManager?.name === "yarn");
-  const pinned =
-    packageJSON.packageManager?.match(/^yarn@(\d+)/)?.[1] ??
-    devEngine?.version?.match(/(\d+)/)?.[1];
-  if (pinned !== undefined) return Number(pinned);
-  return existsSync(".yarnrc.yml") ? 2 : 1;
 }
 
 /**
@@ -1658,14 +1573,6 @@ function recipeFromJSON(recipe, path) {
 }
 
 /**
- * @param {Array<string | null | undefined | false>} values
- * @returns {string[]}
- */
-function unique(values) {
-  return [...new Set(values.filter(isNotEmptyString))];
-}
-
-/**
  * @returns {Promise<CalaveraState>}
  */
 async function readStateIfPresent() {
@@ -2080,14 +1987,6 @@ function qualityScriptRecord(scripts, previousState, quality) {
   return stateShowsCalaveraWroteQuality(previousState, quality) ? quality : null;
 }
 
-function createHtmlValidateWrapper() {
-  return readBoundedTemplate(HTML_VALIDATE_WRAPPER_TEMPLATE, "HTML Validate wrapper");
-}
-
-function createEditorConfig() {
-  return renderEditorConfig(CALAVERA_EDITORCONFIG);
-}
-
 /**
  * Runs one bin of a package through the package manager's runner. The runner
  * names both the package and the bin, because a runner given only the name of
@@ -2156,7 +2055,7 @@ export function createVpCreateCommand(packageManager, forwardedArgs) {
   switch (packageManager) {
     case "pnpm":
     case "yarn":
-      // Not yarn create: under Yarn 1 it installs create-vite-plus globally (#740).
+      // dlx with the package name, not create, as #740 decided.
       return {
         command: packageManager,
         args: ["dlx", "create-vite-plus@latest", ...forwardedArgs],
@@ -2171,109 +2070,22 @@ export function createVpCreateCommand(packageManager, forwardedArgs) {
 }
 
 /**
- * @param {Integration[]} integrations
- * @param {Record<string, unknown>} [integrationOptions]
- * @returns {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }}
- */
-function createStylelintConfig(integrations, integrationOptions = {}) {
-  /** @type {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }} */
-  const config = {
-    extends: [],
-    ignoreFiles: [
-      "coverage/**",
-      "dist/**",
-      "**/dist/**",
-      "**/dist-types/**",
-      "dist-web/**",
-      "node_modules/**",
-      // Agent worktrees are full checkouts of other branches, so their files are not this project's.
-      ".claude/worktrees/**",
-    ],
-    plugins: [],
-    rules: {},
-  };
-
-  for (const integration of integrations) {
-    if (!integration.stylelint) {
-      continue;
-    }
-
-    config.extends.push(...(integration.stylelint.extends ?? []));
-    config.plugins.push(...(integration.stylelint.plugins ?? []));
-    config.rules = {
-      ...config.rules,
-      ...integration.stylelint.rules,
-    };
-  }
-
-  config.extends = unique(config.extends);
-  config.plugins = unique(config.plugins);
-
-  const baselineOptions = integrationOptions["stylelint-baseline"];
-  if (baselineOptions) {
-    config.rules["plugin/use-baseline"] = [true, baselineOptions];
-  }
-
-  return config;
-}
-
-/**
- * @param {Integration[]} integrations
- * @returns {{ extends: string[], rules: Record<string, unknown> }}
- */
-function createHtmlValidateConfig(integrations) {
-  return {
-    extends: unique(integrations.flatMap((integration) => integration.htmlValidate?.extends ?? [])),
-    rules: Object.assign(
-      {},
-      ...integrations.map((integration) => integration.htmlValidate?.rules ?? {}),
-    ),
-  };
-}
-
-function createReactDoctorConfig() {
-  return {
-    offline: true,
-  };
-}
-
-function createKnipConfig() {
-  return {
-    $schema: "https://unpkg.com/knip@6/schema.json",
-    ignore: [".agents/**"],
-    ignoreExportsUsedInFile: true,
-  };
-}
-
-/**
- * The managed `stryker.config.json` (#734), verified with Stryker 10.1.1 in a `vp create` library
- * under pnpm, npm, Yarn 4, and Bun with the Vitest runner, and with the tap runner on node:test
- * tests (#736). The config names the runner the recipe selects, because Stryker's default command
- * runner reports a timeout for every mutant of a slow suite and counts those as detected
- * (ADR-0014), and lists it in `plugins`, because pnpm's strict `node_modules` layout hides it from
- * Stryker's default plugin lookup. The tap runner also gets the test files, the node arguments,
- * and forceBail turned off.
+ * The message that stops a run Yarn 1 started (ADR-0023, Decision 1): one command for each
+ * supported package manager, each of which runs as printed. The CLI's commands are the short
+ * runner forms; npm's is `npx --package`, because `npm create` needs a `--` before flags. The MCP
+ * server's are the forms an MCP host's configuration needs, because its bin is not the package's
+ * name.
  *
- * @param {import("./stryker-options.js").SelectedTestRunner} runner
+ * @param {string} bin `create-project-calavera` or `create-project-calavera-mcp`.
+ * @param {string} version
  */
-function createStrykerConfig(runner) {
-  return {
-    $schema: "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-    testRunner: runner.strykerTestRunner,
-    plugins: runner.dependencies,
-    ...(runner.strykerTestRunner === "tap"
-      ? {
-          tap: {
-            testFiles: runner.testFiles,
-            nodeArgs: STRYKER_TAP_NODE_ARGS,
-            forceBail: STRYKER_TAP_FORCE_BAIL,
-          },
-        }
-      : {}),
-    // WORKAROUND(@stryker-mutator/core): tsconfig preprocessing calls the TypeScript JS API, which TypeScript 7 removed, and vp create projects use TypeScript 7; a missing file skips it | upstream: https://github.com/stryker-mutator/stryker-js/issues/6111
-    tsconfigFile: STRYKER_SKIPPED_TSCONFIG,
-    reporters: ["clear-text", "html"],
-  };
+export function unsupportedYarnMessage(bin, version) {
+  /** @param {PackageManager} packageManager */
+  const command = (packageManager) =>
+    bin === packageJson.name && packageManager !== "npm"
+      ? projectLocalCommandCatalog[packageManager].runCalavera
+      : formatShellCommand(createPackageRunnerCommand(packageManager, packageJson.name, bin));
+  return `${bin} does not support Yarn ${version}. Use Yarn 2 or later (${command("yarn")}), npm (${command("npm")}), pnpm (${command("pnpm")}), or Bun (${command("bun")}).`;
 }
 
 /**
@@ -2387,29 +2199,19 @@ async function assertSafeManagedFileWrite(path, contents, previousState, reownMa
   }
 
   const installedContents = await readFile(path, "utf8");
-  const targetHash = textHash(contents);
-  const installedHash = textHash(installedContents);
-
-  if (installedHash === targetHash) {
-    return;
-  }
-
   const stateFile = managedFileStateForPath(previousState, path);
+  const difference = managedFileDifference(path, installedContents, contents, stateFile);
 
-  if (stateFile?.hash === installedHash) {
+  if (difference === "accepted") {
     return;
   }
 
-  if (jsonContentsMatch(path, installedContents, contents)) {
-    return;
-  }
-
-  if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(path))) {
+  if (difference === "edited" && reownManagedFiles.has(normalizeManagedFilePath(path))) {
     return;
   }
 
   const reason = stateFile
-    ? `It appears to have local edits (installed=${installedHash}, state=${stateFile.hash}).`
+    ? `It appears to have local edits (installed=${textHash(installedContents)}, state=${stateFile.hash}).`
     : "It is not recorded as Calavera-managed.";
 
   throw new Error(`Refusing to overwrite existing managed file: ${path}. ${reason}`);
@@ -2454,47 +2256,6 @@ async function assertSafeManagedFileWrites(filePlans, previousState, reownManage
 }
 
 /**
- * @param {unknown} value
- * @returns {unknown}
- */
-function sortJsonValue(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortJsonValue);
-  }
-
-  if (isPlainObject(value)) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, item]) => [key, sortJsonValue(item)]),
-    );
-  }
-
-  return value;
-}
-
-/**
- * @param {string} path
- * @param {string} installedContents
- * @param {string} targetContents
- * @returns {boolean}
- */
-function jsonContentsMatch(path, installedContents, targetContents) {
-  if (!path.endsWith(".json")) {
-    return false;
-  }
-
-  try {
-    return (
-      JSON.stringify(sortJsonValue(JSON.parse(installedContents))) ===
-      JSON.stringify(sortJsonValue(JSON.parse(targetContents)))
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
  * @param {string} path
  * @param {string} contents
  * @param {boolean} dryRun
@@ -2523,98 +2284,6 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState, 
   }
 
   await writeFile(path, contents);
-}
-
-/**
- * The text of each integration's managed files, by path. Which files exist, and the order apply
- * writes them in, come from `managedFileDeclarations` in project-inspection.js (#458).
- *
- * @type {Record<string, (integration: Integration, integrations: Integration[], integrationOptions: Record<string, unknown>) => Record<string, string>>}
- */
-const managedFileContents = {
-  editorconfig: () => ({ ".editorconfig": createEditorConfig() }),
-  stylelint: (_integration, integrations, integrationOptions) => ({
-    ".stylelintrc.json": `${JSON.stringify(createStylelintConfig(integrations, integrationOptions), null, 2)}\n`,
-  }),
-  "html-validate": (_integration, integrations) => ({
-    ".htmlvalidate.json": `${JSON.stringify(createHtmlValidateConfig(integrations), null, 2)}\n`,
-    [HTML_VALIDATE_IGNORE_PATH]: htmlValidateIgnoreText(integrations),
-    [HTML_VALIDATE_WRAPPER_PATH]: createHtmlValidateWrapper(),
-  }),
-  "react-doctor": () => ({
-    "react-doctor.config.json": `${JSON.stringify(createReactDoctorConfig(), null, 2)}\n`,
-  }),
-  knip: () => ({ "knip.json": `${JSON.stringify(createKnipConfig(), null, 2)}\n` }),
-  stryker: (stryker, _integrations, integrationOptions) => {
-    const runner = /** @type {import("./stryker-options.js").SelectedTestRunner} */ (
-      selectedTestRunner(stryker, integrationOptions)
-    );
-    return {
-      [STRYKER_CONFIG_PATH]: `${JSON.stringify(createStrykerConfig(runner), null, 2)}\n`,
-    };
-  },
-  [GITHUB_REPOSITORY_CONTROLS_ID]: (_integration, integrations, integrationOptions) =>
-    Object.fromEntries(
-      githubRepositoryControlManagedFiles(
-        integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID],
-        integrations,
-      ).map(({ path, contents }) => [path, contents]),
-    ),
-};
-
-/**
- * @param {Integration[]} integrations
- * @param {Record<string, unknown>} [integrationOptions]
- * @returns {{ path: string, contents: string }[]}
- */
-function plannedManagedFiles(integrations, integrationOptions = {}) {
-  return managedFileDeclarations.flatMap(({ integration: id, files }) => {
-    const integration = integrations.find((selected) => selected.id === id);
-    if (!integration) {
-      return [];
-    }
-
-    const createContents = managedFileContents[id];
-    if (!createContents) {
-      throw new Error(`Calavera declares managed files for ${id} but has no contents for them.`);
-    }
-
-    const contentsByPath = createContents(integration, integrations, integrationOptions);
-    // A file with contents but no declaration would never be written, so it stops the plan.
-    const undeclared = Object.keys(contentsByPath).filter(
-      (path) => !files.some((file) => file.path === path),
-    );
-    if (undeclared.length > 0) {
-      throw new Error(
-        `Calavera has contents for ${undeclared.join(", ")} but does not declare them for ${id}.`,
-      );
-    }
-
-    return files.map(({ path }) => {
-      const contents = contentsByPath[path];
-      if (contents === undefined) {
-        throw new Error(`Calavera declares ${path} for ${id} but has no contents for it.`);
-      }
-      return { path, contents };
-    });
-  });
-}
-
-/**
- * The managed files with the text apply writes: each JSON and Markdown file formatted by the
- * project's formatter (#669).
- *
- * @param {{ path: string, contents: string }[]} plans
- * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
- * @returns {Promise<{ path: string, contents: string }[]>}
- */
-async function formatManagedFilePlans(plans, loadFormatter) {
-  return Promise.all(
-    plans.map(async (plan) => ({
-      ...plan,
-      contents: await formatGeneratedText(plan.path, plan.contents, loadFormatter),
-    })),
-  );
 }
 
 /**
@@ -2650,25 +2319,20 @@ async function inspectManagedFilePlan(filePlan, previousState, reownManagedFiles
     return undefined;
   }
 
-  const targetHash = textHash(filePlan.contents);
   const installedContents = await readFile(filePlan.path, "utf8");
-  const installedHash = textHash(installedContents);
-
-  if (installedHash === targetHash) {
-    return undefined;
-  }
-
   const stateFile = managedFileStateForPath(previousState, filePlan.path);
+  const difference = managedFileDifference(
+    filePlan.path,
+    installedContents,
+    filePlan.contents,
+    stateFile,
+  );
 
-  if (stateFile?.hash === installedHash) {
+  if (difference === "accepted") {
     return undefined;
   }
 
-  if (jsonContentsMatch(filePlan.path, installedContents, filePlan.contents)) {
-    return undefined;
-  }
-
-  if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(filePlan.path))) {
+  if (difference === "edited" && reownManagedFiles.has(normalizeManagedFilePath(filePlan.path))) {
     return {
       severity: "warning",
       kind: "managed-file-reown",
@@ -3509,16 +3173,7 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
   // settings the formatter uses, because the formatter can only read the settings on disk.
   // Under create-here the formatter follows the parent's verdict, as the install and the quality
   // script do (#961), so the parent's vp check accepts the files apply writes.
-  const loadFormatter = projectFormatterLoader(
-    process.cwd(),
-    formatterVitePlusStatus(vitePlusDetection),
-    {
-      editorConfig: integrations.some(({ id }) => id === "editorconfig")
-        ? CALAVERA_EDITORCONFIG
-        : undefined,
-      installDirectory: vitePlusInstallDirectory(vitePlusDetection),
-    },
-  );
+  const loadFormatter = managedFileFormatterLoader(process.cwd(), vitePlusDetection, integrations);
   const managedFilePlans = await formatManagedFilePlans(
     plannedManagedFiles(integrations, recipe.integrationOptions),
     loadFormatter,
@@ -5004,9 +4659,8 @@ export const NPM_STALE_CACHE_HINT =
  * and earlier pin unless COREPACK_ENABLE_AUTO_PIN is "0"; Corepack 0.33.0 and
  * later pin only when it is "1". So "0" is the one value that turns auto-pin
  * off in every version, and from Node.js 25 on, users install whichever
- * Corepack they choose from npm. Neither `vp create` (#1080) nor the Yarn reads
- * behind a failure hint (#999) is approval to change a `package.json` outside
- * the new project, so each sets the variable to "0".
+ * Corepack they choose from npm. `vp create` (#1080) is not approval to change
+ * a `package.json` outside the new project, so it sets the variable to "0".
  */
 const NO_COREPACK_AUTO_PIN = { COREPACK_ENABLE_AUTO_PIN: "0" };
 
@@ -5027,7 +4681,7 @@ const NO_COREPACK_AUTO_PIN = { COREPACK_ENABLE_AUTO_PIN: "0" };
  * an inherited value on instead of setting their own. Without its removal,
  * Vite+ would follow the package manager that launched Calavera, not the
  * runner Calavera chose and its confirmation names, whenever Calavera falls
- * back to npm (under Yarn 1 or an unrecognized launcher) and with
+ * back to npm (under an unrecognized launcher) and with
  * `--package-manager npm` or `bun` before `--new` under another launcher. npm reads a `-` for the
  * `_` inside a setting's name as well (`loadEnv` in `@npmcli/config`), so the
  * match accepts both.
@@ -5059,166 +4713,8 @@ export function vpCreateEnvironment(env) {
  * @typedef {{ exitCode: number | null, signal: string | null }} RunnerExit
  * @typedef {object} NewProjectRuntime
  * @property {(invocation: RunnerInvocation) => Promise<RunnerExit>} [spawnRunner]
- * @property {(cwd: string) => Promise<string | undefined>} [readYarnVersion]
- * @property {(cwd: string) => Promise<string>} [readYarnCorepackRoot]
  * @property {Record<string, string | undefined>} [env] Where `npm_config_user_agent` is read, and the base of the environment `vp create` receives; `process.env` by default.
  */
-
-const YARN_DLX_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or later.";
-
-// The runner has already failed, so the version read must not delay its error.
-export const YARN_VERSION_TIMEOUT_MS = 5000;
-
-/**
- * Reads the version of the `yarn` that runs in `cwd`, where Corepack resolves
- * the same Yarn the runner used. Stdin is closed, so a prompt (such as
- * Corepack's download prompt) fails at once instead of waiting, and a time
- * limit stops a yarn that hangs. Corepack's auto-pin is off, as
- * NO_COREPACK_AUTO_PIN explains. It rejects when yarn cannot start, exits
- * non-zero, or times out.
- *
- * @param {string} cwd
- * @returns {Promise<string>}
- */
-async function readInstalledYarnVersion(cwd) {
-  const { stdout } = await execa("yarn", ["--version"], {
-    cwd,
-    env: NO_COREPACK_AUTO_PIN,
-    stdin: "ignore",
-    timeout: YARN_VERSION_TIMEOUT_MS,
-  });
-
-  return stdout;
-}
-
-/**
- * Asks the `yarn` that runs in `cwd` whether Corepack ran it (#936). Corepack
- * sets COREPACK_ROOT in its own process before it runs yarn there, and Yarn 1's
- * `node` command passes that environment to the Node process it starts, so
- * `yarn node` prints a `COREPACK_ROOT=` line whose value is empty unless
- * Corepack ran yarn. COREPACK_ROOT is removed from the environment yarn
- * receives, in any case as Windows reads it, so a value Calavera inherited, for
- * example from a Corepack pnpm that started it, cannot pass for Corepack.
- * Without COREPACK_ROOT, Yarn 1 refuses to run in a project whose
- * `packageManager` names Yarn 2 or later, so SKIP_YARN_COREPACK_CHECK turns
- * that check off, as Yarn 1's cli.js reads it. Stdin, the time limit, and
- * Corepack's auto-pin are as for readInstalledYarnVersion. It rejects when
- * yarn cannot start, exits non-zero, or times out.
- *
- * @param {string} cwd
- * @returns {Promise<string>}
- */
-async function readInstalledYarnCorepackRoot(cwd) {
-  const { stdout } = await execa(
-    "yarn",
-    ["node", "-e", 'console.log("COREPACK_ROOT=" + (process.env.COREPACK_ROOT ?? ""))'],
-    {
-      cwd,
-      // extendEnv: false, so the COREPACK_ROOT removed here is not merged back from process.env.
-      env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "COREPACK_ROOT"),
-        ),
-        SKIP_YARN_COREPACK_CHECK: "1",
-        ...NO_COREPACK_AUTO_PIN,
-      },
-      extendEnv: false,
-      stdin: "ignore",
-      timeout: YARN_VERSION_TIMEOUT_MS,
-    },
-  );
-
-  return stdout;
-}
-
-/**
- * The first line of a failure, for a hint. execa's shortMessage names the
- * command and the failure without its output.
- *
- * @param {unknown} error
- */
-function failureReason(error) {
-  return error instanceof ExecaError
-    ? error.shortMessage.split("\n")[0]
-    : error instanceof Error
-      ? error.message.split("\n")[0]
-      : String(error);
-}
-
-/**
- * The hint for a failed `yarn dlx` run (#911). The runner inherits stdio, so
- * Calavera cannot read Yarn's error; the Yarn version decides instead. Yarn 0
- * and 1 have no dlx command. Yarn 2 or later has one, so the cause is
- * elsewhere and no Yarn hint is added. An unreadable version keeps the hint
- * that states its own condition, with the reason the version was unreadable.
- *
- * Under Yarn 0 or 1, Corepack decides whether that Yarn ran `yarn dlx` (#936).
- * Corepack runs `yarn dlx` with its own Yarn 2 or later unless the project
- * pins a Yarn in its `packageManager` field, while `yarn --version` reports the
- * default Yarn, which can be Yarn 1. So when Corepack ran yarn, the hint does
- * not name Yarn 1 as the cause, and when Calavera cannot tell, it keeps the
- * hint that states its own condition.
- *
- * @param {(cwd: string) => Promise<string | undefined>} readYarnVersion
- * @param {(cwd: string) => Promise<string>} readYarnCorepackRoot
- * @param {string} cwd
- * @returns {Promise<{ hint: string, cause?: unknown }>}
- */
-async function yarnFailureHint(readYarnVersion, readYarnCorepackRoot, cwd) {
-  let output;
-
-  try {
-    output = await readYarnVersion(cwd);
-  } catch (error) {
-    return {
-      hint: ` ${YARN_DLX_HINT} Calavera could not read the Yarn version: ${failureReason(error)}.`,
-      cause: error,
-    };
-  }
-
-  const match = /^((\d+)\.\d+\.\d+\S*)/.exec(output ?? "");
-
-  if (match === null) {
-    const printed = output?.split("\n")[0];
-
-    return {
-      hint: ` ${YARN_DLX_HINT}${
-        printed === undefined
-          ? ""
-          : ` yarn --version printed ${printed === "" ? "nothing" : `"${printed}"`}, which is not a version.`
-      }`,
-    };
-  }
-
-  const [, version, major] = match;
-
-  if (Number(major) >= 2) {
-    return { hint: "" };
-  }
-
-  const unsure = ` ${YARN_DLX_HINT} yarn --version reports Yarn ${version}, but Calavera could not tell whether Corepack ran yarn:`;
-  let probe;
-
-  try {
-    probe = await readYarnCorepackRoot(cwd);
-  } catch (error) {
-    return { hint: `${unsure} ${failureReason(error)}.`, cause: error };
-  }
-
-  // . stops at a line terminator, \r included, so the value ends where its line does.
-  const corepackRoot = /^COREPACK_ROOT=(.*)/m.exec(probe)?.[1];
-
-  if (corepackRoot === undefined) {
-    return { hint: `${unsure} yarn node printed no COREPACK_ROOT line.` };
-  }
-
-  return {
-    hint:
-      corepackRoot === ""
-        ? ` The yarn in this directory is Yarn ${version}, which has no dlx command, so it could not start Vite+. Use Yarn 2 or later, for example through Corepack, or pass another --package-manager before --new.`
-        : ` yarn --version reports Yarn ${version}, but Corepack runs yarn dlx with Yarn 2 or later unless the project pins Yarn 1, for example in the packageManager field of package.json. If it does, pin Yarn 2 or later or pass another --package-manager before --new.`,
-  };
-}
 
 /**
  * Spawns the runner with inherited stdio, so Vite+ asks its own questions.
@@ -5393,8 +4889,12 @@ async function readNewProjectRecipe(source) {
  * `vp create`, per the ADR-0010 amendment "The Launching Package Manager
  * Chooses the Runner" (#909). Its name is the text of `npm_config_user_agent`
  * before the first `/`, as Vite+ reads it for the same decision. Yarn counts
- * only at major version 2 or later, because Yarn 1 has no dlx command; a Yarn
- * whose version cannot be read could be Yarn 1, so it does not count either.
+ * only at major version 2 or later. Calavera stops when Yarn 1 starts it
+ * (ADR-0023), but a `yarn/1` user agent still reaches this function under npm,
+ * whose project `.npmrc` `user-agent` sets the variable while npm_execpath names
+ * npm, so the runner is then npm, which did start Calavera. Yarn sets its own
+ * version in the user agent, so a value without one did not come from Yarn and
+ * counts as an unrecognized launcher.
  *
  * @param {string | undefined} userAgent For example `yarn/4.18.1 npm/? node/v24.22.0 darwin arm64`.
  * @returns {PackageManager | undefined} `undefined` when the caller falls back to npm.
@@ -5581,31 +5081,17 @@ export async function newProject(options, runtime = {}) {
 
     // The runner was not chosen by the user, so name how it was chosen and how to choose another (#909).
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)} No --package-manager came before --new, so Calavera chose ${runnerPackageManager}: the package manager that started Calavera, or npm when that package manager has no runner. Pass --package-manager with npm, pnpm, yarn, or bun before --new to choose another runner.`,
+      `${error instanceof Error ? error.message : String(error)} No --package-manager came before --new, so Calavera chose ${runnerPackageManager}: the package manager that started Calavera, or npm when Calavera does not recognize that package manager. Pass --package-manager with npm, pnpm, yarn, or bun before --new to choose another runner.`,
       { cause: error },
     );
   }
 
   if (exit.exitCode !== 0) {
-    const yarn =
-      runnerCommand.command === "yarn"
-        ? await yarnFailureHint(
-            runtime.readYarnVersion ?? readInstalledYarnVersion,
-            runtime.readYarnCorepackRoot ?? readInstalledYarnCorepackRoot,
-            cwd,
-          )
-        : undefined;
-
     throw new Error(
       `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
-        yarn !== undefined
-          ? yarn.hint
-          : // Exit 127 means a shell did not find a command, which no cache change fixes.
-            runnerCommand.command !== "npm" || exit.exitCode === 127
-            ? ""
-            : ` ${NPM_STALE_CACHE_HINT}`
+        // Exit 127 means a shell did not find a command, which no cache change fixes.
+        runnerCommand.command !== "npm" || exit.exitCode === 127 ? "" : ` ${NPM_STALE_CACHE_HINT}`
       }`,
-      yarn?.cause === undefined ? undefined : { cause: yarn.cause },
     );
   }
 
@@ -7013,17 +6499,9 @@ async function ejectPackageJsonReport({ manifest: packageJSON, problem }) {
     return { scripts };
   }
   const packageManager = detectPackageManager(packageJSON) ?? "npm";
-  const command = devDependencyRemoveCommand(
-    packageManager,
-    await detectVitePlus(process.cwd()),
-    [name],
-    {
-      yarnClassicWorkspaceRoot:
-        packageManager === "yarn" &&
-        projectYarnMajor(packageJSON) === 1 &&
-        (await workspacePackagePatterns(process.cwd(), packageJSON, "yarn")) !== undefined,
-    },
-  );
+  const command = devDependencyRemoveCommand(packageManager, await detectVitePlus(process.cwd()), [
+    name,
+  ]);
   return { scripts, devDependency: { name, removeCommand: formatCommand(command) } };
 }
 
@@ -7633,8 +7111,9 @@ const commandRunners = Object.assign(
         printResult(result, options.json);
         // #994: doctor fails the run when an installed artifact's files are missing, are not
         // managed, or carry a local edit, as `doctor` does for an error (#1030). A selection that
-        // is not installed yet does not fail it. `artifacts status` reports the same problems and
-        // stays informational.
+        // is not installed yet does not fail it, and neither does a lock entry the recipe no
+        // longer selects whose files were deleted (#1111). `artifacts status` reports the same
+        // problems and stays informational.
         if (options.artifactAction === "doctor" && result.ok !== true) {
           process.exitCode = 1;
         }
@@ -7761,6 +7240,18 @@ export async function runCli() {
     // typed `--json`, so the error they get back is JSON.
     const asJSON = calaveraArgs(args).args.includes("--json");
     printStop(asJSON, asJSON ? resultCommandNamedIn(args) : null, errorText(error));
+    process.exitCode = 1;
+    return;
+  }
+
+  // Before the version check and every command, so the stop is the run's only output (ADR-0023).
+  const unsupportedYarn = await unsupportedYarnVersion();
+  if (unsupportedYarn !== undefined) {
+    printStop(
+      options.json,
+      resultCommandFor(options.command, options.artifactAction),
+      unsupportedYarnMessage(packageJson.name, unsupportedYarn),
+    );
     process.exitCode = 1;
     return;
   }

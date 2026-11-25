@@ -2,8 +2,7 @@
 // The resolver is a parameter, so these tests need no network. The CLI adapter, which applies the
 // deadline and prints, is tested as a process in version-notice-process.test.mjs.
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -14,6 +13,7 @@ import {
   versionCheckApplies,
   versionNoticeText,
 } from "../src/version-notice.js";
+import { temporaryFolder } from "../../../scripts/temporary-folder.mjs";
 
 const humanRun = { command: "init", json: false, checkUpdates: false };
 
@@ -197,8 +197,7 @@ test("a failed check prints nothing, unless CALAVERA_DEBUG is on, and then its r
 });
 
 test("as a project dependency, the notice adds one sentence with the update command", async (t) => {
-  const project = await mkdtemp(join(tmpdir(), "calavera-version-notice-"));
-  t.after(() => rm(project, { recursive: true, force: true }));
+  const project = await temporaryFolder(t, "calavera-version-notice-");
   const packageRoot = join(project, "node_modules", "create-project-calavera");
   await mkdir(packageRoot, { recursive: true });
   await writeFile(
@@ -232,8 +231,7 @@ test("as a project dependency, the notice adds one sentence with the update comm
 });
 
 test("a copy inside node_modules counts as a project dependency only when package.json lists it", async (t) => {
-  const root = await mkdtemp(join(tmpdir(), "calavera-version-notice-unlisted-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await temporaryFolder(t, "calavera-version-notice-unlisted-");
   const project = join(root, "project");
   const packageRoot = join(project, "node_modules", "create-project-calavera");
   await mkdir(packageRoot, { recursive: true });
@@ -287,8 +285,7 @@ test("a copy inside node_modules counts as a project dependency only when packag
 });
 
 test("an update command that fails leaves the notice without the dependency sentence", async (t) => {
-  const project = await mkdtemp(join(tmpdir(), "calavera-version-notice-update-fails-"));
-  t.after(() => rm(project, { recursive: true, force: true }));
+  const project = await temporaryFolder(t, "calavera-version-notice-update-fails-");
   const packageRoot = join(project, "node_modules", "create-project-calavera");
   await mkdir(packageRoot, { recursive: true });
   await writeFile(
@@ -346,8 +343,7 @@ test("the adapter names the CLI's package folder and builds apply's install comm
   // The folder that holds package.json, not src/, so the node_modules test sees the package.
   assert.equal(cliPackageRoot, fileURLToPath(new URL("../", import.meta.url)));
 
-  const root = await mkdtemp(join(tmpdir(), "calavera-version-notice-update-"));
-  t.after(() => rm(root, { recursive: true, force: true }));
+  const root = await temporaryFolder(t, "calavera-version-notice-update-");
   /** @param {string} name @param {Record<string, string>} files */
   const project = async (name, files) => {
     const directory = join(root, name);

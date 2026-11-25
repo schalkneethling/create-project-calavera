@@ -5,7 +5,15 @@
 // block, never loads the project's formatter, and resolves `checkUpdates` lookups through a
 // temporary cache outside the project.
 import assert from "node:assert/strict";
-import { mkdtempDisposable, mkdir, readFile, readdir, realpath, writeFile } from "node:fs/promises";
+import {
+  mkdtempDisposable,
+  mkdir,
+  readFile,
+  readdir,
+  realpath,
+  rm,
+  writeFile,
+} from "node:fs/promises";
 import { existsSync } from "node:fs";
 import { createServer } from "node:http";
 import { tmpdir } from "node:os";
@@ -235,6 +243,49 @@ test("artifact_status returns the data artifacts status --json returns, offline"
 
     assert.deepEqual(fromTool, fromCommand);
     assert.equal(fromTool.offline, true);
+  });
+});
+
+// #1111: a lock entry the recipe no longer selects, whose files were deleted, is a leftover record,
+// so the tool reports it as `artifacts doctor` does: `ok` stays true, and the entry carries the
+// command that drops it.
+test("artifact_status reports a deselected lock entry whose files were deleted as ok, with the command that drops it", async () => {
+  await inProject("calavera-mcp-status-leftover-", async () => {
+    await lockedProject();
+    await writeFile(
+      "calavera.config.json",
+      `${JSON.stringify({ ...buildRecipe("minimal", [], "npm"), ai: [] }, null, 2)}\n`,
+    );
+    await rm(".agents/skills/project-goal", { recursive: true });
+
+    const fromTool = await callMcpTool("artifact_status", {}, forbiddenFormatter);
+    const fromDoctor = await runArtifactCommand({
+      ...statusOptions(false),
+      artifactAction: "doctor",
+    });
+
+    assert.equal(fromTool.ok, true);
+    assert.deepEqual(
+      fromTool.artifacts.map(({ id, selected, installed, installCommand }) => ({
+        id,
+        selected,
+        installed,
+        installCommand,
+      })),
+      [
+        {
+          id: ARTIFACT_ID,
+          selected: false,
+          installed: false,
+          installCommand: "npm create project-calavera artifacts install",
+        },
+      ],
+    );
+    assert.deepEqual(
+      fromTool.artifacts,
+      /** @type {{ artifacts: unknown }} */ (fromDoctor).artifacts,
+    );
+    assert.equal(/** @type {{ ok: unknown }} */ (fromDoctor).ok, true);
   });
 });
 

@@ -3,12 +3,14 @@
 // an abort signal, and nothing written to disk.
 import assert from "node:assert/strict";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import test, { afterEach } from "node:test";
 
 import { resolvePackageDistTag } from "../src/registry.js";
+import { removeTemporaryDirectories, temporaryDirectory } from "./temporary-directory.mjs";
+
+afterEach(removeTemporaryDirectories);
 
 const NAME = "create-project-calavera";
 
@@ -58,7 +60,7 @@ function packument(distTags) {
  * @param {string} registry
  */
 async function isolatedContext(registry) {
-  const cwd = await mkdtemp(join(tmpdir(), "calavera-dist-tag-"));
+  const cwd = await temporaryDirectory("calavera-dist-tag-");
   return {
     cwd,
     env: { npm_config_userconfig: join(cwd, "missing.npmrc"), npm_config_registry: registry },
@@ -70,11 +72,8 @@ test("resolves a dist-tag from the configured registry with the abbreviated docu
     response.writeHead(200, { "content-type": "application/json" });
     response.end(packument({ latest: "7.1.0", next: "8.0.0-beta.1" }));
   });
+  t.after(registry.close);
   const context = await isolatedContext(registry.url);
-  t.after(async () => {
-    await registry.close();
-    await rm(context.cwd, { recursive: true, force: true });
-  });
 
   assert.equal(
     await resolvePackageDistTag({ packageName: NAME, tag: "latest", ...context }),
@@ -96,11 +95,8 @@ test("sends no credentials to a plain-http registry", async (t) => {
     response.writeHead(200, { "content-type": "application/json" });
     response.end(packument({ latest: "7.1.0" }));
   });
-  const cwd = await mkdtemp(join(tmpdir(), "calavera-dist-tag-auth-"));
-  t.after(async () => {
-    await registry.close();
-    await rm(cwd, { recursive: true, force: true });
-  });
+  t.after(registry.close);
+  const cwd = await temporaryDirectory("calavera-dist-tag-auth-");
   const userconfig = join(cwd, "user.npmrc");
   await writeFile(userconfig, `registry=${registry.url}\n//${registry.host}/:_authToken=abc123\n`);
 
@@ -119,11 +115,8 @@ test("a failed response is not retried", async (t) => {
     response.writeHead(503, { "content-type": "application/json" });
     response.end("{}");
   });
+  t.after(registry.close);
   const context = await isolatedContext(registry.url);
-  t.after(async () => {
-    await registry.close();
-    await rm(context.cwd, { recursive: true, force: true });
-  });
 
   await assert.rejects(() =>
     resolvePackageDistTag({ packageName: NAME, tag: "latest", ...context }),
@@ -138,11 +131,8 @@ test("an abort signal ends a request the registry never answers", async (t) => {
   const registry = await startRegistry(() => {
     // Accept the connection and never answer.
   });
+  t.after(registry.close);
   const context = await isolatedContext(registry.url);
-  t.after(async () => {
-    await registry.close();
-    await rm(context.cwd, { recursive: true, force: true });
-  });
 
   const started = performance.now();
   await assert.rejects(() =>
@@ -167,11 +157,8 @@ test("a dist-tag that names no valid version is refused", async (t) => {
       }),
     );
   });
+  t.after(registry.close);
   const context = await isolatedContext(registry.url);
-  t.after(async () => {
-    await registry.close();
-    await rm(context.cwd, { recursive: true, force: true });
-  });
 
   await assert.rejects(
     () => resolvePackageDistTag({ packageName: NAME, tag: "latest", ...context }),
@@ -186,7 +173,7 @@ test("a dist-tag that names no valid version is refused", async (t) => {
  * @param {string} npmrc
  */
 async function userNpmrcContext(npmrc) {
-  const cwd = await mkdtemp(join(tmpdir(), "calavera-dist-tag-proxy-"));
+  const cwd = await temporaryDirectory("calavera-dist-tag-proxy-");
   await writeFile(join(cwd, "user.npmrc"), npmrc);
   return { cwd, env: { npm_config_userconfig: join(cwd, "user.npmrc") } };
 }
@@ -197,13 +184,10 @@ test("a proxy set only in the user .npmrc carries the request (#1064)", async (t
     response.end(packument({ latest: "7.1.0" }));
   });
   // The registry host does not resolve, so the answer can only come through the proxy.
+  t.after(proxy.close);
   const context = await userNpmrcContext(
     `registry=http://registry.calavera.invalid/\nproxy=${proxy.url}\n`,
   );
-  t.after(async () => {
-    await proxy.close();
-    await rm(context.cwd, { recursive: true, force: true });
-  });
 
   assert.equal(
     await resolvePackageDistTag({ packageName: NAME, tag: "latest", ...context }),
@@ -225,14 +209,13 @@ test("a host in the .npmrc noproxy skips the .npmrc proxy (#1064)", async (t) =>
     response.writeHead(200, { "content-type": "application/json" });
     response.end(packument({ latest: "7.2.0" }));
   });
-  const context = await userNpmrcContext(
-    `registry=${registry.url}\nproxy=${proxy.url}\nnoproxy=127.0.0.1\n`,
-  );
   t.after(async () => {
     await proxy.close();
     await registry.close();
-    await rm(context.cwd, { recursive: true, force: true });
   });
+  const context = await userNpmrcContext(
+    `registry=${registry.url}\nproxy=${proxy.url}\nnoproxy=127.0.0.1\n`,
+  );
 
   assert.equal(
     await resolvePackageDistTag({ packageName: NAME, tag: "latest", ...context }),
@@ -247,11 +230,8 @@ test("a committed Yarn 4 .env.yarn that sets an http registry gets no credential
     response.writeHead(200, { "content-type": "application/json" });
     response.end(packument({ latest: "7.3.0" }));
   });
-  const cwd = await mkdtemp(join(tmpdir(), "calavera-dist-tag-env-yarn-"));
-  t.after(async () => {
-    await registry.close();
-    await rm(cwd, { recursive: true, force: true });
-  });
+  t.after(registry.close);
+  const cwd = await temporaryDirectory("calavera-dist-tag-env-yarn-");
   // A token for the registry in the user .npmrc, which Calavera does not read.
   await mkdir(join(cwd, "home"));
   await writeFile(join(cwd, "home", ".npmrc"), `//${registry.host}/:_authToken=fake-home-token\n`);
@@ -275,11 +255,8 @@ test("a committed Yarn 4 .env.yarn with an http registry and an http proxy gives
     response.writeHead(200, { "content-type": "application/json" });
     response.end(packument({ latest: "7.4.0" }));
   });
-  const cwd = await mkdtemp(join(tmpdir(), "calavera-dist-tag-env-yarn-proxy-"));
-  t.after(async () => {
-    await proxy.close();
-    await rm(cwd, { recursive: true, force: true });
-  });
+  t.after(proxy.close);
+  const cwd = await temporaryDirectory("calavera-dist-tag-env-yarn-proxy-");
   await mkdir(join(cwd, "home"));
   await writeFile(
     join(cwd, "home", ".npmrc"),
@@ -308,11 +285,8 @@ test("a 401 for the version lookup names the registry and says Calavera sends no
     response.writeHead(401, { "content-type": "application/json" });
     response.end(JSON.stringify({ error: "registry text" }));
   });
+  t.after(registry.close);
   const context = await isolatedContext(registry.url);
-  t.after(async () => {
-    await registry.close();
-    await rm(context.cwd, { recursive: true, force: true });
-  });
 
   const failure = await resolvePackageDistTag({
     packageName: NAME,

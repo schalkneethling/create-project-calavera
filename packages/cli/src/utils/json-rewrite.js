@@ -2,6 +2,7 @@
 import { isDeepStrictEqual } from "node:util";
 
 import { withoutBom } from "./json-edit.js";
+import { FormatterFailure } from "./formatter-failure.js";
 
 /** The remedy for formatted text that holds something Calavera did not send. */
 export const PRINTS_NOTHING =
@@ -86,14 +87,16 @@ export async function formatJSONText(json, path, formatter) {
   try {
     parsed = JSON.parse(withoutBom(text));
   } catch {
-    throw new Error(
+    throw new FormatterFailure(
+      "printed-output",
       `${formatter.description} returned text for ${path} that is not JSON, so something came with the formatted text, such as output that vite.config.ts printed. ${PRINTS_NOTHING}`,
     );
   }
   // Compared with the JSON Calavera sent, parsed again, not with a value it was written from:
   // JSON has no -0, so -0 arrives as 0.
   if (!isDeepStrictEqual(parsed, JSON.parse(withoutBom(json)))) {
-    throw new Error(
+    throw new FormatterFailure(
+      "changed-content",
       `${formatter.description} returned text for ${path} that is JSON but holds other values than the ones Calavera sent. ${CHANGED_CONTENT}`,
     );
   }

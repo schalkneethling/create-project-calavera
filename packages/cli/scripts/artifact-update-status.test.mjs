@@ -1427,6 +1427,72 @@ test("status output names missing, unmanaged, and edited outputs, and an empty s
   );
 });
 
+// #1111: a lock entry the recipe no longer selects, whose files were deleted, is a warning with the
+// command that drops it, whether or not an update check ran, failed, or found an update. A
+// deselected entry whose files are present keeps the "Not selected" note at the info level, and a
+// selected entry whose files were deleted stays an info line that doctor's verdict names.
+test("status output warns about a leftover lock entry, with the command that drops it, in every branch", () => {
+  const leftover = {
+    selected: false,
+    installed: false,
+    installCommand: "npm create project-calavera artifacts install",
+  };
+  const note =
+    "  Not selected, files missing: the recipe no longer selects this artifact, and some or all of its files were deleted, so its lock entry is a leftover. artifacts install removes the entry when it can also install what the recipe selects, and otherwise stops and names the problem: npm create project-calavera artifacts install";
+  const report = {
+    offline: false,
+    updateAllCommand: null,
+    checkUpdatesCommand: null,
+    updateAllBlockedBy: [],
+  };
+  const failure = {
+    code: "E404",
+    type: null,
+    statusCode: 404,
+    origin: null,
+    reason: "the registry has no package",
+    remedy: null,
+    npmDiagnostics: [],
+    unsetVariables: [],
+  };
+  /** @param {Partial<import("../src/artifact-status-report.js").ArtifactStatusEntry>} overrides */
+  const lines = (overrides) =>
+    formatArtifactStatus({ ...report, artifacts: [entry({ ...leftover, ...overrides })] }).slice(
+      0,
+      2,
+    );
+
+  assert.deepEqual(lines({}), [
+    { level: "warn", message: "skill-project-goal  0.2.1, up to date (latest), files missing" },
+    { level: "warn", message: note },
+  ]);
+  assert.deepEqual(lines({ latestVersion: "0.3.0", updateAvailable: true }), [
+    { level: "warn", message: "skill-project-goal  0.2.1 → 0.3.0 (latest), files missing" },
+    { level: "warn", message: note },
+  ]);
+  assert.deepEqual(lines({ updateCheckFailure: failure }), [
+    {
+      level: "warn",
+      message: "skill-project-goal  0.2.1, update check failed (latest), files missing",
+    },
+    { level: "warn", message: note },
+  ]);
+  assert.deepEqual(lines({ installed: true, installCommand: null }), [
+    { level: "info", message: "skill-project-goal  0.2.1, up to date (latest)" },
+    {
+      level: "info",
+      message:
+        "  Not selected: the recipe selects no artifacts, so the next artifacts install removes its lock entry and leaves its installed files in place.",
+    },
+  ]);
+  assert.deepEqual(lines({ selected: true, installCommand: null }).slice(0, 1), [
+    { level: "info", message: "skill-project-goal  0.2.1, up to date (latest), files missing" },
+  ]);
+  assert.deepEqual(lines({ selected: null, installCommand: null }).slice(0, 1), [
+    { level: "info", message: "skill-project-goal  0.2.1, up to date (latest), files missing" },
+  ]);
+});
+
 test("status output explains an update for an artifact the recipe does not select", () => {
   const lines = messages(
     formatArtifactStatus({

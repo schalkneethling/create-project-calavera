@@ -18,7 +18,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { devNull, tmpdir } from "node:os";
+import { devNull } from "node:os";
 import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -62,9 +62,9 @@ import {
   startRegistry,
   upstreamUrl,
 } from "./rehearsal-registry.mjs";
+import { temporaryFolder } from "./temporary-folder.mjs";
 
-const scratch = await mkdtemp(join(tmpdir(), "calavera-rehearsal-test-"));
-after(() => rm(scratch, { recursive: true, force: true }));
+const scratch = await temporaryFolder({ after }, "calavera-rehearsal-test-");
 
 /** A new, empty directory that stands in for the developer's HOME. */
 async function fakeHome() {

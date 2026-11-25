@@ -5,14 +5,14 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createServer } from "node:http";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import packageJson from "../package.json" with { type: "json" };
 import { VERSION_CHECK_DEADLINE_MS } from "../src/version-notice.js";
+import { temporaryFolder } from "../../../scripts/temporary-folder.mjs";
 
 const cliPath = fileURLToPath(new URL("../src/index.js", import.meta.url));
 const NEWER = `${Number(packageJson.version.split(".")[0]) + 1}.0.0`;
@@ -57,8 +57,7 @@ async function startRegistry(latest) {
  * @param {import("node:test").TestContext} t
  */
 async function temporaryProject(t) {
-  const project = await mkdtemp(join(tmpdir(), "calavera-version-notice-process-"));
-  t.after(() => rm(project, { recursive: true, force: true }));
+  const project = await temporaryFolder(t, "calavera-version-notice-process-");
   await writeFile(
     join(project, "package.json"),
     `${JSON.stringify({ name: "version-notice", private: true }, null, 2)}\n`,

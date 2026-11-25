@@ -285,7 +285,7 @@ test("an unparseable .yarnrc.yml is skipped with a warning that names the path a
   assert.doesNotMatch(inspect(warnings), new RegExp(SECRET));
 });
 
-test("Yarn 1 reads .npmrc, so its user agent keeps the npm settings", async () => {
+test("under Yarn 1, the loader refuses instead of reading the npm settings (ADR-0023)", async () => {
   const context = await fixture({
     userAgent: "yarn/1.22.22 npm/? node/v24.3.0 darwin arm64",
     files: {
@@ -293,10 +293,9 @@ test("Yarn 1 reads .npmrc, so its user agent keeps the npm settings", async () =
       "workspace/project/.yarnrc.yml": "npmRegistryServer: https://yarn-mirror.example.com\n",
     },
   });
-  assert.equal(
-    (await loadNpmRegistryOptions(context)).options.registry,
-    "https://npm-mirror.example.com/",
-  );
+  await assert.rejects(loadNpmRegistryOptions({ ...context, runtime: "node" }), {
+    message: "Calavera does not support Yarn 1.22.22. Use Yarn 2 or later, npm, pnpm, or Bun.",
+  });
 });
 
 test("without a launcher user agent, Yarn and Bun files are not read", async () => {
@@ -515,7 +514,6 @@ test("the launcher is read from the start of npm_config_user_agent", () => {
     [undefined, "npm"],
     ["npm/11.20.0 node/v24.3.0 darwin arm64 workspaces/false", "npm"],
     ["pnpm/11.28.10 npm/? node/v24.3.0 darwin arm64", "npm"],
-    ["yarn/1.22.22 npm/? node/v24.3.0 darwin arm64", "npm"],
     ["yarn/2.4.3 npm/? node/v24.3.0 darwin arm64", "yarn"],
     ["yarn/10.0.0 npm/? node/v24.3.0 darwin arm64", "yarn"],
     ["bun/1.3.9 npm/? node/v24.3.0 darwin arm64", "bun"],

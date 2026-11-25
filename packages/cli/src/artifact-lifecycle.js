@@ -34,6 +34,7 @@ import {
 } from "./ai/artifacts.js";
 import { assertFirstSelection, assertNoLegacyEntryNeedsWiring } from "./ai/recipe-items.js";
 import { GITIGNORE_PATH, planGitignoreBlocks } from "./ignore-lines.js";
+import { deriveProjectPhase } from "./project-phase.js";
 import { validateRecipe } from "./recipe.js";
 import { artifactReleaseNotesUrl, isArtifactHealthy } from "./artifact-status-report.js";
 import {
@@ -804,6 +805,7 @@ async function artifactStatus(
   const command = (positionals, flags) =>
     artifactCommand(recipe, options.config, positionals, flags);
   const lock = await readLock();
+  const leftovers = await leftoverLockEntryIndexes(options.config);
   const state = await readState();
   const stateByPath = new Map(state.aiArtifacts.map((item) => [item.path, item]));
   const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
@@ -857,7 +859,7 @@ async function artifactStatus(
   const silentRegistries = new Set();
   try {
     const artifacts = [];
-    for (const entry of lock.artifacts) {
+    for (const [index, entry] of lock.artifacts.entries()) {
       const outputPaths = aiArtifactOutputPaths({ type: entry.type, path: entry.destination });
       const outputs = await Promise.all(
         outputPaths.map(async (path) => {
@@ -910,7 +912,8 @@ async function artifactStatus(
           updateAvailable && selectedIds.has(entry.id)
             ? artifactUpdateCommand(recipe, options.config, entry.id, entry.tag)
             : null,
-        installCommand: null,
+        // #1111: `artifacts install` drops a leftover lock entry, so it is the entry's remedy.
+        installCommand: leftovers.has(index) ? command(["install"]) : null,
         // #992: without a recipe, status cannot say which lock entries an install would drop.
         selected: recipeFound ? selectedIds.has(entry.id) : null,
         updateCheckFailure,
@@ -994,6 +997,38 @@ async function artifactStatus(
   } finally {
     if (temporaryCache) await rm(temporaryCache, { recursive: true, force: true });
   }
+}
+
+/**
+ * The positions in the lock of the entries that the phase function classifies as not selected and
+ * `missing`, the leftover lock entries that both doctors report as a warning (#1111; ADR-0020,
+ * Decisions 4 and 9). The phase function lists the lock entries first, in lock order, so a
+ * position names the same entry in the lock that status reads.
+ *
+ * The phase function stops on records that status still reports on, such as a lock entry whose
+ * version is not valid (Decision 7). Status then keeps reporting as it did before #1111: no entry
+ * is a leftover, so each one that has a problem fails doctor. The #1112 stack decides how status
+ * reports those records, so the refusal is not repeated here; status reads the same records and
+ * stops on its own when it cannot.
+ *
+ * @param {string} config
+ * @returns {Promise<Set<number>>}
+ */
+async function leftoverLockEntryIndexes(config) {
+  let artifacts;
+  try {
+    // Status reads only the artifact conditions here, so it runs no project code: the read-only
+    // status tool must not (ADR-0020, owner decision 24), and status loads the formatter only to
+    // record the cache block.
+    ({ artifacts } = await deriveProjectPhase({ config, runsProjectCode: false }));
+  } catch {
+    return new Set();
+  }
+  return new Set(
+    artifacts.flatMap(({ lockEntry, selected, condition }, index) =>
+      lockEntry !== null && selected === false && condition.name === "missing" ? [index] : [],
+    ),
+  );
 }
 
 /**

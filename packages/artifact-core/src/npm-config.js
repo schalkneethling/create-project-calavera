@@ -11,16 +11,18 @@ import { decode } from "ini";
 import { printable, readConfigText } from "./config-files.js";
 import {
   bunEnvironmentFileChains,
-  environmentFileSources,
   mayHoldVariable,
+  variablesFromBunFiles,
   variablesFromReferences,
 } from "./environment-files.js";
 import {
+  LAUNCHER_VARIABLES,
   YARN_DEFAULT_REGISTRY,
   bunEnvironmentLayer,
   bunfigLayers,
   detectLauncher,
   isAccountFile,
+  unsupportedYarnVersion,
   yarnEnvironmentFiles,
   yarnLayers,
   yarnParentCwd,
@@ -58,8 +60,6 @@ const PROXY_PROTOCOLS = new Set([
 // etc/npmrc is the default).
 const GLOBAL_CONFIG_CHOOSERS = new Set(["globalconfig", "prefix"]);
 const GLOBAL_LAYER = "global npmrc";
-// The variables from which Calavera recognizes the package manager that started it.
-const LAUNCHER_VARIABLES = ["npm_execpath", "npm_config_user_agent"];
 // The folder Calavera started in, before the CLI changes into a new or ancestor project. Yarn and
 // Bun loaded their environment files relative to it (#1186).
 const STARTING_CWD = process.cwd();
@@ -231,8 +231,9 @@ async function userConfigPath(env, home, launcher) {
  * `certfile`, or `keyfile`) is read, expanded, returned, or named (ADR-0021). Registries of other
  * scopes are not read, so a broken one cannot stop an unrelated install.
  *
- * Under npm and pnpm, the settings come from the .npmrc files and npm_config_* variables. Yarn 1
- * counts as npm here, unchanged by #1064; #1175 removes its support.
+ * Under npm and pnpm, the settings come from the .npmrc files and npm_config_* variables. Calavera
+ * does not support Yarn 1: when Yarn 1 started it, this function throws before it reads any
+ * configuration file (`unsupportedYarnVersion`, ADR-0023, Decision 5).
  * Under Yarn 2 or later, they come from .yarnrc.yml files and YARN_* variables only, and no .npmrc
  * file or npm_config_* variable is read. Under Bun, the bunfig.toml registry and then the first
  * valid of BUN_CONFIG_REGISTRY, NPM_CONFIG_REGISTRY, and npm_config_registry override the .npmrc
@@ -276,6 +277,17 @@ export async function loadNpmRegistryOptions({
   // The folder whose environment files Yarn or Bun loaded: the given `cwd`, or else the folder
   // Calavera started in. Yarn also passes its own starting folder as INIT_CWD.
   const startingCwd = cwdOption ?? STARTING_CWD;
+  const unsupportedYarn = await unsupportedYarnVersion({
+    env,
+    runtime,
+    cwd: startingCwd,
+    execArgv,
+  });
+  if (unsupportedYarn !== undefined) {
+    throw new Error(
+      `Calavera does not support Yarn ${unsupportedYarn}. Use Yarn 2 or later, npm, pnpm, or Bun.`,
+    );
+  }
   /** @type {string[]} */
   const warnings = [];
   // Notes for failure messages only; `diagnostics` adds every warning to them.
@@ -294,17 +306,11 @@ export async function loadNpmRegistryOptions({
     runtime === "bun" ? await bunEnvironmentFileChains(startingCwd, env, warnings, execArgv) : [];
   let launcher = detectLauncher(env);
   if (runtime === "bun" && launcher !== "bun") {
-    /** @type {Map<string, string>} */
-    const launcherFromFile = new Map();
-    for (const chain of bunChains) {
-      for (const [name, { path, value }] of await environmentFileSources(chain)) {
-        // Bun keeps a variable that the caller, such as npm starting Bun, already set, so a value
-        // that differs from the file's is the caller's.
-        if (LAUNCHER_VARIABLES.includes(name) && (value === env[name] || mayHoldVariable(value))) {
-          launcherFromFile.set(name, path);
-        }
-      }
-    }
+    const { fromFile: launcherFromFile } = await variablesFromBunFiles(
+      bunChains,
+      env,
+      LAUNCHER_VARIABLES,
+    );
     if (launcherFromFile.size > 0 || LAUNCHER_VARIABLES.every((name) => !env[name])) {
       launcher = "bun";
     }

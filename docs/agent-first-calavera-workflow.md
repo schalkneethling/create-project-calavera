@@ -288,10 +288,11 @@ Calavera runs `vp create` through the package manager given with
 `--package-manager` before `--new`. When none is given, it uses the package
 manager that started Calavera: when pnpm started Calavera, `vp create` runs
 through pnpm. Calavera reads that package manager's name from the
-`npm_config_user_agent` environment variable, as Vite+ does, and uses Yarn only
-at version 2 or later, because Yarn 1 has no `dlx` command. Calavera falls back
-to npm when the variable is unset or empty, names another program, names Yarn 1,
-or names a Yarn whose version it cannot read. The runners are
+`npm_config_user_agent` environment variable, as Vite+ does. Calavera requires
+Yarn 2 or later. Under Yarn 1, Calavera stops and names the commands to use
+instead. Calavera falls back to npm when the variable is unset or empty, names
+another program, or names a Yarn whose version it cannot read, and when a
+project's `.npmrc` makes it name Yarn 1 while npm started Calavera. The runners are
 `npm create vite-plus@latest --`, `pnpm dlx create-vite-plus@latest`,
 `yarn dlx create-vite-plus@latest` (Yarn 2 or later), and
 `bunx create-vite-plus@latest`. Each one runs `create-vite-plus`, the entry
@@ -312,7 +313,8 @@ Vite+ starts for the template, and `npm_config_call` makes
 also removes `npm_config_user_agent`, because Vite+ reads it to choose the
 project's package manager, and `npm create` and `bunx` pass an inherited value
 on. The runner then sets its own value, so Vite+ follows the runner Calavera
-chose, also when Calavera falls back to npm, for example under Yarn 1, and when
+chose, also when Calavera falls back to npm, for example under an unrecognized
+launcher, and when
 `--package-manager npm` or `bun` before `--new` names another package manager
 than the one that started Calavera. Every other variable passes through
 unchanged.
