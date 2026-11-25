@@ -1805,9 +1805,9 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFo
  * Decision 5). While it leaves the cache, which it does only when the cache is a symbolic link, it
  * also keeps the cache's `.gitignore` block, so the cache never shows in `git status`, and it keeps
  * the state only while that block is kept (ADR-0017, Amendment 2). While it keeps the state,
- * whether a left item needs it or `--yes` cannot check it, it keeps that block too, so the project stays a consistent `applied` project and
- * `artifacts status --check-updates` has nothing to write back (owner decision of 2026-11-26 on
- * #1112). The `ejected` block goes along
+ * whether a left item needs it or `--yes` cannot check it, it keeps that block too, so the
+ * project stays a consistent `applied` project and `artifacts status --check-updates` has nothing
+ * to write back (owner decision of 2026-11-26 on #1112). The `ejected` block goes along
  * only when the run leaves nothing, because `eject` writes it only once it has removed everything
  * else (ADR-0017, Amendment 5).
  *
