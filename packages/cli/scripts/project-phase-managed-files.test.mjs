@@ -753,6 +753,8 @@ test("the artifact entries keep the shape #1111 reads", async () => {
       "lockEntry",
       "outputs",
       "selected",
+      // Added by ADR-0020, Decision 3, after #1111; an added field is not breaking.
+      "unrecordedFiles",
     ]);
     assert.deepEqual(Object.keys(artifact?.condition ?? {}).sort(), ["name", "reason"]);
   });

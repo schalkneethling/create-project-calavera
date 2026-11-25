@@ -397,6 +397,7 @@ test("an installed selection without a lock entry keeps its state on a failed up
           selected: true,
           installCommand: "install",
           condition: { name: "pending", reason: "recorded but not locked" },
+          unrecordedFiles: [],
           updateCheckFailure: {
             code: "ETARGET",
             reason: "no tag",

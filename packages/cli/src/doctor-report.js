@@ -1,5 +1,5 @@
 // @ts-check
-import { phaseLine, phaseNotes } from "./phase-lines.js";
+import { phaseLine, phaseNotes, unrecordedFileNote } from "./phase-lines.js";
 import { CONFIG_FILE, artifactCommand, calaveraCommand } from "./project-local-commands.js";
 
 /**
@@ -12,7 +12,8 @@ import { CONFIG_FILE, artifactCommand, calaveraCommand } from "./project-local-c
  *
  * @typedef {{ level: "error" | "warning" | "info", message: string, check: DoctorCheck, artifact?: string, detail?: string }} DoctorIssue
  *   `artifact` names the artifact an artifact or wiring issue is about. `detail` is a wiring
- *   finding without the artifact's ID, which the text output prints under the artifact's line.
+ *   finding, or an unrecorded file's note, without the artifact's ID, which the text output
+ *   prints under the artifact's line.
  */
 
 /** The doctors' phase line levels in doctor's words. */
@@ -68,6 +69,16 @@ export function phaseIssues(result, { recipe, config, pendingMessage, repository
   for (const artifact of result.artifacts) {
     const issue = artifactIssue(artifact, install);
     if (issue) issues.push(issue);
+    // ADR-0020, Decision 3: a note for each output that already exists without a state record,
+    // the same note artifacts doctor prints under the artifact.
+    for (const file of artifact.unrecordedFiles) {
+      issues.push({
+        level: "info",
+        check: "artifact",
+        artifact: artifact.id,
+        ...unrecordedFileNote(artifact.id, file, { recipe, config }),
+      });
+    }
   }
   return { phaseLine: { level, message }, issues };
 }
@@ -192,19 +203,24 @@ function artifactLines(group, logLevel) {
   /** @type {{ level: "error" | "warn" | "info", message: string }[]} */
   const lines = [];
   for (const id of new Set(group.map(({ artifact }) => artifact))) {
-    const own = group.filter((issue) => issue.check === "artifact" && issue.artifact === id);
-    const wiring = group.filter((issue) => issue.check === "wiring" && issue.artifact === id);
+    const own = group.filter(
+      (issue) => issue.check === "artifact" && issue.artifact === id && issue.detail === undefined,
+    );
+    // An artifact's notes and wiring findings carry a detail, which prints under its line.
+    const under = group.filter(
+      (issue) => issue.artifact === id && (issue.check === "wiring" || issue.detail !== undefined),
+    );
     for (const { level, message } of own)
       lines.push({ level: logLevel(level), message: `  ${message}` });
     // Each ID comes from an issue in the group, so an artifact without a line of its own has
-    // wiring findings.
+    // wiring findings; an artifact with a note always has its own line.
     if (own.length === 0) {
       lines.push({
         level: "info",
         message: `  ${id}: Calavera found a problem with the wiring apply recorded for it.`,
       });
     }
-    for (const { level, message, detail } of wiring) {
+    for (const { level, message, detail } of under) {
       lines.push({ level: logLevel(level), message: `    ${detail ?? message}` });
     }
   }

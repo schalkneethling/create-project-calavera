@@ -1414,7 +1414,7 @@ function entry(overrides) {
           : !merged.managed
             ? "unrecorded"
             : "current";
-  return { condition: { name, reason: "" }, ...merged };
+  return { condition: { name, reason: "" }, unrecordedFiles: [], ...merged };
 }
 
 test("status output names missing, unmanaged, and edited outputs, and an empty status", () => {
