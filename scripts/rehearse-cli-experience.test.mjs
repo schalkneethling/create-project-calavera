@@ -1107,6 +1107,61 @@ test("the script-name mask covers only the summary's script lines, not other scr
   );
 });
 
+test("an artifact named on a hook group line under the settings file is not a listing, but a real repeat still fails (#1145)", () => {
+  // The apply summary prints .claude/settings.json once, under Artifacts, with each artifact's
+  // hook groups under it, and each group line names its artifact (owner decision on #1145).
+  const groups = [
+    "  Would update .claude/settings.json",
+    '    Would add a SessionStart group for skill-a: {"hooks":[]}',
+    '    Would replace the PreToolUse group for skill-a: {"hooks":[]} with {"hooks":[1]}',
+    '    Would remove the Stop group for skill-a: {"hooks":[]}',
+    '    Would remove the Stop group for skill-b, because the recipe no longer selects skill-b: {"hooks":[]}',
+    "    Already holds the hook groups for skill-c",
+    '    Added a SessionStart group for skill-a: {"hooks":[]}',
+    '    Replaced the PreToolUse group for skill-a: {"hooks":[]} with {"hooks":[1]}',
+    '    Removed the Stop group for skill-b, because the recipe no longer selects skill-b: {"hooks":[]}',
+  ];
+  const output = [
+    "Artifacts:",
+    "  Would write skill-a to .agents/skills/a",
+    "  skill-b, which the recipe no longer selects",
+    "  Unchanged skill-c at .agents/skills/c",
+    ...groups,
+  ].join("\n");
+  const items = ["skill-a", "skill-b", "skill-c", ".claude/settings.json"];
+  assert.deepEqual(listingViolations(output, items), []);
+
+  // An artifact named twice outside the group lines is still a repeat.
+  assert.deepEqual(listingViolations(`${output}\n  Unchanged skill-a at .agents/skills/a`, items), [
+    "skill-a is printed 2 times",
+  ]);
+  // So is an artifact named only on group lines: they do not list it.
+  assert.deepEqual(listingViolations(["Artifacts:", ...groups].join("\n"), ["skill-a"]), [
+    "skill-a is printed 0 times",
+  ]);
+  // A path in the artifact's place is not an artifact ID, so the mask leaves it counted.
+  assert.deepEqual(
+    listingViolations(
+      "Artifacts:\n  Wrote .agents/x.md\n    Already holds the hook groups for .agents/x.md\n",
+      [".agents/x.md"],
+    ),
+    [".agents/x.md is printed 2 times"],
+  );
+  // A group line outside Artifacts, or of another shape, still counts.
+  for (const line of [
+    'Notes:\n  Would add a SessionStart group for skill-a: {"hooks":[]}',
+    "Artifacts:\n    Would add a SessionStart group for skill-a: unquoted",
+    'Artifacts:\n    Would remove the Stop group for skill-a, because the recipe no longer selects skill-z: {"hooks":[]}',
+    "Artifacts:\n    Already holds the hook groups for skill-a, and more",
+  ]) {
+    assert.deepEqual(
+      listingViolations(`${output}\n${line}`, ["skill-a"]),
+      ["skill-a is printed 2 times"],
+      line,
+    );
+  }
+});
+
 test("an integration input's recipe path is not a listed file, but a real file named twice still fails (#1143)", () => {
   // The apply --dry-run output and the integrationInputs entry --json reports for a recipe that
   // selects github-repository-controls and records its defaultBranch, trimmed from a real run.

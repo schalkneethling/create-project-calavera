@@ -168,7 +168,7 @@ test("Given the guard deselected, apply --dry-run in a terminal says why each bl
       env: { ...process.env, NO_COLOR: "1" },
     });
 
-    // #617: the artifact is named once, and each removal sits under it.
+    // #617: the artifact is named once, and each block removal sits under it.
     assert.match(output, new RegExp(`^ {2}${id}, which the recipe no longer selects$`, "m"));
     for (const hook of hooks) {
       assert.match(
@@ -179,13 +179,14 @@ test("Given the guard deselected, apply --dry-run in a terminal says why each bl
         ),
       );
     }
-    // #1128: the settings file is named once, with each group it would lose under it.
-    assert.match(output, /^ {4}Would update \.claude\/settings\.json:$/m);
+    // #1128, #1145: the settings file is named once, with each group it would lose under it,
+    // and each group line names the artifact whose group it is.
+    assert.match(output, /^ {2}Would update \.claude\/settings\.json$/m);
     for (const event of ["SessionStart", "PreToolUse"]) {
       assert.match(
         output,
         new RegExp(
-          `^ {6}Would remove the ${event} group, because the recipe no longer selects it: `,
+          `^ {4}Would remove the ${event} group for ${id}, because the recipe no longer selects ${id}: `,
           "m",
         ),
       );

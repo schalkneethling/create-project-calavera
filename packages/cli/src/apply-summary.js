@@ -5,7 +5,8 @@
 // it installs in parentheses only where their names differ from the integration's (owner decision
 // of 2026-11-14); each file is one line under Files, with the ignore lines apply writes into it;
 // the scripts sit under Scripts; each artifact is one line with its version and destination, with
-// its inputs and wiring under it. The `--json` and MCP results keep their shape and text; where a
+// its inputs and Vite+ hook blocks under it, and .claude/settings.json is one line after the
+// artifacts, with every artifact's hook groups under it (#1145). The `--json` and MCP results keep their shape and text; where a
 // note there repeats what the summary already names, the summary prints a shorter form of it.
 import { summaryWiringWarning } from "./ai/artifact-wiring.js";
 import { aiArtifactOutputPaths, resolveAiArtifacts } from "./ai/artifacts.js";
@@ -18,7 +19,8 @@ import {
 import { GITIGNORE_PATH } from "./ignore-lines.js";
 import { resolveRecipeIntegrations } from "./recipe.js";
 import { integrationDependencies } from "./stryker-options.js";
-import { DETAIL, ITEM, NESTED_DETAIL, info, pushGroup, tense, warn } from "./summary-lines.js";
+import { hookGroupChangeLine, settingsLayoutLine } from "./hook-group-lines.js";
+import { DETAIL, ITEM, info, pushGroup, tense, warn } from "./summary-lines.js";
 import { temporaryFolderLeftoverLine } from "./utils/cleanup.js";
 import { quoteScriptValue } from "./utils/text.js";
 import { VARLOCK_POINTER, varlockSummaryPointer } from "./varlock.js";
@@ -364,8 +366,9 @@ function scriptLines(result) {
 /**
  * One line per artifact with anything to report: the version apply locks and the destination it
  * writes, or that the files already in the project match, with or without a lock (#749, #956).
- * Its inputs and wiring sit under it. An artifact the recipe no longer selects is named for the
- * wiring apply removes.
+ * Its inputs and Vite+ hook blocks sit under it. An artifact the recipe no longer selects is named
+ * for the wiring apply removes. The settings file follows the artifacts, once, with each artifact's
+ * hook groups under it (#1145).
  *
  * @param {ApplyResult} result
  * @returns {SummaryLine[]}
@@ -384,12 +387,12 @@ function artifactLines(result) {
   const lines = [];
   /** @type {Set<string>} */
   const named = new Set();
-  // The settings files already named by an artifact above, so a later artifact that changes the
-  // same file refers to it instead of naming it again (#1145).
-  /** @type {Set<string>} */
-  const namedSettingsFiles = new Set();
-  const wiringFor = (/** @type {WiringChange[]} */ changes) =>
-    changes.flatMap((change) => wiringLines(change, dryRun, namedSettingsFiles));
+  // The settings file is one line after the artifacts, with every artifact's groups under it, so
+  // an artifact's own lines hold only its Vite+ hook blocks (#1145).
+  const hookBlockLines = (/** @type {WiringChange[]} */ changes) =>
+    changes
+      .filter(({ kind }) => kind === "vite-hook")
+      .flatMap((change) => hookBlockLine(change, dryRun));
 
   // An artifact's catalog ID names it in the lock entries, inputs, and wiring, also for an item the
   // recipe selects by its legacy type and src (#1119).
@@ -418,7 +421,7 @@ function artifactLines(result) {
     for (const { name, ...input } of inputs) {
       lines.push(info(`${DETAIL}${name} = ${formatInputValue(input)}`));
     }
-    lines.push(...wiringFor(wiring));
+    lines.push(...hookBlockLines(wiring));
   }
 
   const deselected = [
@@ -426,8 +429,9 @@ function artifactLines(result) {
   ];
   for (const id of deselected) {
     lines.push(info(`${ITEM}${id}, which the recipe no longer selects`));
-    lines.push(...wiringFor(result.wiringChanges.filter(({ artifact }) => artifact === id)));
+    lines.push(...hookBlockLines(result.wiringChanges.filter(({ artifact }) => artifact === id)));
   }
+  lines.push(...settingsFileLines(result.wiringChanges, dryRun));
 
   return [
     ...(lines.length > 0
@@ -505,75 +509,69 @@ function artifactHeadline(id, locked, written, unchanged, dryRun) {
 }
 
 /**
- * The lines for one artifact's part of a wiring file, under the artifact's own line, so the
- * artifact is not named again; the approval covers the exact text. The groups an artifact adds to,
- * replaces in, or removes from .claude/settings.json sit under one line for the file, so the file
- * is named once for them (#1128). When several artifacts change the file, the first names it and
- * each later one refers to the file listed above, with its own groups under its own line, so the
- * file is named once and each artifact's part stays with that artifact (#1145).
+ * The line for one artifact's block in a Vite+ hook, under the artifact's own line, so the
+ * artifact is not named again; the approval covers the exact text.
  *
  * @param {WiringChange} change
  * @param {boolean} dryRun
- * @param {Set<string>} namedSettingsFiles The settings files an artifact above already named; this
- * call adds `path` to it.
- * @returns {SummaryLine[]}
+ * @returns {SummaryLine}
  */
-function wiringLines(
-  { path, kind, type, block, removedBlock, groupChanges, reformatted, deselected },
-  dryRun,
-  namedSettingsFiles,
-) {
-  const because = deselected
-    ? "because the recipe no longer selects it"
-    : "because it no longer wires that hook";
+function hookBlockLine({ path, type, block, removedBlock, deselected }, dryRun) {
   const detail = (/** @type {string} */ text) => info(`${DETAIL}${text}`);
   if (removedBlock !== undefined) {
-    return [
-      detail(
-        `${tense(dryRun, "Would remove", "Removed")} its block from ${path}, ${because}: ${quoteScriptValue(removedBlock)}`,
-      ),
-    ];
+    const because = deselected
+      ? "because the recipe no longer selects it"
+      : "because it no longer wires that hook";
+    return detail(
+      `${tense(dryRun, "Would remove", "Removed")} its block from ${path}, ${because}: ${quoteScriptValue(removedBlock)}`,
+    );
   }
-  if (kind === "vite-hook") {
-    if (type === "unchanged")
-      return [detail(`${path} already holds its block: ${quoteScriptValue(block)}`)];
-    const action =
-      type === "write"
-        ? tense(dryRun, "Would write", "Wrote")
-        : tense(dryRun, "Would update", "Updated");
-    return [detail(`${action} its block in ${path}: ${quoteScriptValue(block)}`)];
-  }
-  const named = namedSettingsFiles.has(path);
-  namedSettingsFiles.add(path);
-  if (type === "unchanged") {
-    return [
-      detail(
-        `${named ? "The Claude Code settings file listed above" : path} already holds its hook groups`,
-      ),
-    ];
-  }
-  const settingsFile = named ? "the Claude Code settings file listed above" : path;
-  const file =
+  if (type === "unchanged")
+    return detail(`${path} already holds its block: ${quoteScriptValue(block)}`);
+  const action =
     type === "write"
       ? tense(dryRun, "Would write", "Wrote")
       : tense(dryRun, "Would update", "Updated");
-  return [
-    detail(`${file} ${settingsFile}:`),
-    ...[
-      ...(groupChanges ?? []).map(({ event, action, group, previous }) =>
-        action === "add"
-          ? `${tense(dryRun, "Would add", "Added")} a ${event} group: ${quoteScriptValue(group)}`
-          : action === "replace"
-            ? `${tense(dryRun, "Would replace", "Replaced")} the ${event} group: ${quoteScriptValue(previous)} with ${quoteScriptValue(group)}`
-            : `${tense(dryRun, "Would remove", "Removed")} the ${event} group${deselected ? `, ${because}` : ""}: ${quoteScriptValue(previous)}`,
-      ),
-      ...(reformatted
-        ? [
-            `${tense(dryRun, "Would also change", "Also changed")} the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes`,
-          ]
-        : []),
-    ].map((text) => info(`${NESTED_DETAIL}${text}`)),
-  ];
+  return detail(`${action} its block in ${path}: ${quoteScriptValue(block)}`);
+}
+
+/**
+ * Each settings file the artifacts change once, with every artifact's hook groups under its line
+ * and each group line naming its artifact, as the clean summary prints a wiring file (owner
+ * decision on #1145). The groups follow the artifacts' order above. The file is written when the
+ * first artifact writes it, even though each later artifact plans against that new text and so
+ * reports an update. Rewriting the file once can only change its layout once, so the layout note
+ * is printed once, after the groups.
+ *
+ * @param {WiringChange[]} wiringChanges
+ * @param {boolean} dryRun
+ * @returns {SummaryLine[]}
+ */
+function settingsFileLines(wiringChanges, dryRun) {
+  const changes = wiringChanges.filter(({ kind }) => kind === "claude-settings");
+  const paths = [...new Set(changes.map(({ path }) => path))];
+  return paths.flatMap((path) => {
+    const own = changes.filter((change) => change.path === path);
+    const types = new Set(own.map(({ type }) => type));
+    const file = types.has("write")
+      ? `${tense(dryRun, "Would write", "Wrote")} ${path}`
+      : types.has("update")
+        ? `${tense(dryRun, "Would update", "Updated")} ${path}`
+        : `Unchanged ${path}`;
+    return [
+      info(`${ITEM}${file}`),
+      ...own
+        .flatMap(({ artifact, type, groupChanges, deselected }) =>
+          type === "unchanged"
+            ? [`Already holds the hook groups for ${artifact}`]
+            : (groupChanges ?? []).map((change) =>
+                hookGroupChangeLine(change, { artifact, dryRun, deselected }),
+              ),
+        )
+        .concat(own.some(({ reformatted }) => reformatted) ? [settingsLayoutLine(dryRun)] : [])
+        .map((text) => info(`${DETAIL}${text}`)),
+    ];
+  });
 }
 
 /**

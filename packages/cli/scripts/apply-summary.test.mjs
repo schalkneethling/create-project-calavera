@@ -176,12 +176,12 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
         `    Would write its block in .vite-hooks/pre-commit: ${guardBlock("commit")}`,
         `    Would write its block in .vite-hooks/prepare-commit-msg: ${guardBlock("commit")}`,
         `    Would write its block in .vite-hooks/pre-push: ${guardBlock("pre-push")}`,
-        "    Would write .claude/settings.json:",
-        `      Would add a SessionStart group: ${guardGroup("session-start")}`,
-        `      Would add a PreToolUse group: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
         "  Would lock hook-block-dangerous-commands 0.4.0 and write:",
         "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
         "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
+        "  Would write .claude/settings.json",
+        `    Would add a SessionStart group for skill-protected-branch-guard: ${guardGroup("session-start")}`,
+        `    Would add a PreToolUse group for skill-protected-branch-guard: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
         `  ${dispatcherSummary}`,
         "",
         ...notes,
@@ -235,12 +235,12 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
         `    Wrote its block in .vite-hooks/pre-commit: ${guardBlock("commit")}`,
         `    Wrote its block in .vite-hooks/prepare-commit-msg: ${guardBlock("commit")}`,
         `    Wrote its block in .vite-hooks/pre-push: ${guardBlock("pre-push")}`,
-        "    Wrote .claude/settings.json:",
-        `      Added a SessionStart group: ${guardGroup("session-start")}`,
-        `      Added a PreToolUse group: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
         "  Locked hook-block-dangerous-commands 0.4.0 and wrote:",
         "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
         "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
+        "  Wrote .claude/settings.json",
+        `    Added a SessionStart group for skill-protected-branch-guard: ${guardGroup("session-start")}`,
+        `    Added a PreToolUse group for skill-protected-branch-guard: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
         `  ${dispatcherSummary}`,
         "",
         ...notes,
@@ -303,10 +303,11 @@ test("apply --dry-run and apply name each fact once, grouped under headings (#61
           `    .vite-hooks/pre-commit already holds its block: ${guardBlock("commit")}`,
           `    .vite-hooks/prepare-commit-msg already holds its block: ${guardBlock("commit")}`,
           `    .vite-hooks/pre-push already holds its block: ${guardBlock("pre-push")}`,
-          "    .claude/settings.json already holds its hook groups",
           "  Unchanged hook-block-dangerous-commands:",
           "    .agents/hooks/claude-code/block-dangerous-commands.mjs",
           "    .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
+          "  Unchanged .claude/settings.json",
+          "    Already holds the hook groups for skill-protected-branch-guard",
           `  ${dispatcherSummary}`,
           "",
         ]);
@@ -492,9 +493,9 @@ test("apply --dry-run, apply, and init --apply name each file, package, and arti
     assert.ok(
       dryRunText.includes(
         [
-          "    Would write .claude/settings.json:",
-          `      Would add a SessionStart group: ${guardGroup("session-start")}`,
-          `      Would add a PreToolUse group: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
+          "  Would write .claude/settings.json",
+          `    Would add a SessionStart group for skill-protected-branch-guard: ${guardGroup("session-start")}`,
+          `    Would add a PreToolUse group for skill-protected-branch-guard: ${guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit")}`,
           `  ${dispatcherSummary}`,
           "  You are on main, the protectedBranch listed above, so the guard will refuse to commit the applied files here. Create a feature branch first, for example with git switch -c <name>, and commit there.",
         ].join("\n"),
@@ -942,7 +943,7 @@ test("integrations name their packages once and say how the install ran", () => 
   );
 });
 
-test("apply --dry-run and apply name .claude/settings.json once when two artifacts change it, with each artifact's groups under that artifact (#1145)", async () => {
+test("apply --dry-run, apply, and init --apply name .claude/settings.json once when two artifacts change it, with every artifact's groups under the one file line (#1145)", async () => {
   await inManagedProject(async () => {
     // Only the guard declares Claude Code groups today, so the second artifact is one the recipe
     // no longer selects: its recorded Stop group is in the settings file, and apply removes it
@@ -1013,26 +1014,26 @@ test("apply --dry-run and apply name .claude/settings.json once when two artifac
     assert.ok(planned.includes(".claude/settings.json"), planned.join());
     const dryRunText = text(applySummaryLines(dryRun));
     assert.deepEqual(listingViolations(dryRunText, planned, dryRun.vitePlus.lines), [], dryRunText);
-    const removedStop = `Would remove the Stop group, because the recipe no longer selects it: ${JSON.stringify(retiredGroup)}`;
-    assert.ok(
-      dryRunText.includes(
-        [
-          "    Would update .claude/settings.json:",
-          `      Would replace the SessionStart group: ${guardGroup("session-start")} with ${guardGroup("session-start").replace(" main", " develop")}`,
-        ].join("\n"),
-      ),
-      dryRunText,
-    );
-    assert.ok(
-      dryRunText.includes(
-        [
-          "  skill-retired-guard, which the recipe no longer selects",
-          "    Would update the Claude Code settings file listed above:",
-          `      ${removedStop}`,
-        ].join("\n"),
-      ),
-      dryRunText,
-    );
+    // One file line under Artifacts, after the artifacts, with each group line naming its
+    // artifact, as the clean summary prints a wiring file (owner decision on #1145).
+    const guardId = "skill-protected-branch-guard";
+    const develop = (/** @type {string} */ group) => group.replace(" main", " develop");
+    const settingsBlock = (/** @type {boolean} */ planned) => {
+      const [replace, remove, update] = planned
+        ? ["Would replace", "Would remove", "Would update"]
+        : ["Replaced", "Removed", "Updated"];
+      const preToolUse = guardGroup("claude-pre-tool-use", "Write|Edit|MultiEdit|NotebookEdit");
+      return [
+        `  ${update} .claude/settings.json`,
+        `    ${replace} the SessionStart group for ${guardId}: ${guardGroup("session-start")} with ${develop(guardGroup("session-start"))}`,
+        `    ${replace} the PreToolUse group for ${guardId}: ${preToolUse} with ${develop(preToolUse)}`,
+        `    ${remove} the Stop group for skill-retired-guard, because the recipe no longer selects skill-retired-guard: ${JSON.stringify(retiredGroup)}`,
+      ].join("\n");
+    };
+    const settingsMentions = (/** @type {string} */ output) =>
+      output.split(".claude/settings.json").length - 1;
+    assert.ok(dryRunText.includes(settingsBlock(true)), dryRunText);
+    assert.equal(settingsMentions(dryRunText), 1, dryRunText);
 
     const applied = await applyRecipeObject(
       dryRun.recipe,
@@ -1041,16 +1042,8 @@ test("apply --dry-run and apply name .claude/settings.json once when two artifac
     );
     const appliedText = text(applySummaryLines(applied));
     assert.deepEqual(listingViolations(appliedText, planned), [], appliedText);
-    assert.ok(
-      appliedText.includes(
-        [
-          "  skill-retired-guard, which the recipe no longer selects",
-          "    Updated the Claude Code settings file listed above:",
-          `      ${removedStop.replace("Would remove", "Removed")}`,
-        ].join("\n"),
-      ),
-      appliedText,
-    );
+    assert.ok(appliedText.includes(settingsBlock(false)), appliedText);
+    assert.equal(settingsMentions(appliedText), 1, appliedText);
     assert.equal(
       Object.hasOwn(JSON.parse(await readFile(".claude/settings.json", "utf8")).hooks, "Stop"),
       false,
@@ -1072,6 +1065,8 @@ test("apply --dry-run and apply name .claude/settings.json once when two artifac
       }),
     ]);
     assert.deepEqual(listingViolations(initText, planned, dryRun.vitePlus.lines), [], initText);
+    assert.ok(initText.includes(settingsBlock(true)), initText);
+    assert.equal(settingsMentions(initText), 1, initText);
   });
 });
 
@@ -1195,22 +1190,22 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
     "info   Would write hook-block-dangerous-commands:",
     "info     .agents/hooks/claude-code/block-dangerous-commands.mjs",
     "info     .agents/hooks/claude-code/block-dangerous-commands.settings-fragment.json",
-    "info     .claude/settings.json already holds its hook groups",
     "info   skill-code-review",
     "info     branch = main (recorded in the recipe)",
     'info     .vite-hooks/pre-commit already holds its block: "run a"',
     'info     Would update its block in .vite-hooks/pre-push: "run b"',
     'info     Would remove its block from .vite-hooks/pre-push, because it no longer wires that hook: "run c"',
-    // #1145: an artifact after the one that named the settings file refers to it.
-    "info     Would update the Claude Code settings file listed above:",
-    'info       Would replace the SessionStart group: {"a":0} with {"a":1}',
-    'info       Would remove the PreToolUse group: {"b":0}',
-    "info       Would also change the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes",
     "info   Would lock skill-css-tokens 0.3.0; its files in the project already match",
     "info   skill-dropped, which the recipe no longer selects",
     'info     Would remove its block from .vite-hooks/pre-commit, because the recipe no longer selects it: "run d"',
-    "info     Would update the Claude Code settings file listed above:",
-    'info       Would remove the Stop group, because the recipe no longer selects it: {"c":0}',
+    // #1145: the settings file is one line after the artifacts, with each artifact's groups under
+    // it, and the layout note once, after the groups.
+    "info   Would update .claude/settings.json",
+    "info     Already holds the hook groups for hook-block-dangerous-commands",
+    'info     Would replace the SessionStart group for skill-code-review: {"a":0} with {"a":1}',
+    'info     Would remove the PreToolUse group for skill-code-review: {"b":0}',
+    'info     Would remove the Stop group for skill-dropped, because the recipe no longer selects skill-dropped: {"c":0}',
+    "info     Would also change the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes",
     "warn   An npm setting was ignored.",
     "warn   A wiring warning.",
   ]);
@@ -1225,29 +1220,33 @@ test("each artifact is one line, with its outputs, inputs, and wiring under it",
     ),
     true,
   );
-  // An artifact that leaves the settings file as it is, after one that changes it, refers to it.
-  const unchangedSecond = levels(
+  // A settings file that no artifact changes is named as unchanged, with whose groups it holds.
+  const unchangedFile = levels(
+    applySummaryLines({ ...result, wiringChanges: /** @type {any} */ ([wiringChanges[3]]) }),
+  );
+  assert.deepEqual(unchangedFile.slice(-5, -2), [
+    "info   Would lock skill-css-tokens 0.3.0; its files in the project already match",
+    "info   Unchanged .claude/settings.json",
+    "info     Already holds the hook groups for hook-block-dangerous-commands",
+  ]);
+  // A file the first artifact writes is written, though a later artifact only updates it.
+  const written = levels(
     applySummaryLines({
       ...result,
+      dryRun: false,
       wiringChanges: /** @type {any} */ ([
-        { ...wiringChanges[4], artifact: "hook-block-dangerous-commands" },
-        { ...wiringChanges[3], artifact: "skill-code-review" },
+        { ...wiringChanges[4], type: "write", reformatted: false },
+        wiringChanges[6],
       ]),
     }),
   );
-  assert.equal(
-    unchangedSecond.includes(
-      "info     The Claude Code settings file listed above already holds its hook groups",
-    ),
-    true,
-    unchangedSecond.join("\n"),
-  );
-  assert.equal(
-    unchangedSecond.filter((line) => line.includes(".claude/settings.json")).length,
-    1,
-    unchangedSecond.join("\n"),
-  );
-  // The wiring file sits under the artifact, not under Files.
+  assert.deepEqual(written.slice(-6, -2), [
+    "info   Wrote .claude/settings.json",
+    'info     Replaced the SessionStart group for skill-code-review: {"a":0} with {"a":1}',
+    'info     Removed the PreToolUse group for skill-code-review: {"b":0}',
+    'info     Removed the Stop group for skill-dropped, because the recipe no longer selects skill-dropped: {"c":0}',
+  ]);
+  // The wiring file sits under Artifacts, not under Files.
   const lines = applySummaryLines(result).map(({ text }) => text);
   assert.equal(lines.includes("Files:"), false);
   // An artifact with nothing to report has no line, and no group appears without one.
@@ -1434,11 +1433,11 @@ test("the artifact group reads in the past tense after apply, and names the defa
     "  Locked skill-css-tokens 0.3.0; its files in the project already matched",
     '    Updated its block in .vite-hooks/pre-push: "run b"',
     '    Removed its block from .vite-hooks/pre-push, because it no longer wires that hook: "run c"',
-    "    Updated .claude/settings.json:",
-    '      Added a SessionStart group: {"a":1}',
-    '      Replaced the Stop group: {"a":0} with {"a":1}',
-    '      Removed the PreToolUse group: {"b":0}',
-    "      Also changed the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes",
+    "  Updated .claude/settings.json",
+    '    Added a SessionStart group for skill-css-tokens: {"a":1}',
+    '    Replaced the Stop group for skill-css-tokens: {"a":0} with {"a":1}',
+    '    Removed the PreToolUse group for skill-css-tokens: {"b":0}',
+    "    Also changed the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes",
   ]);
 });
 
@@ -1548,7 +1547,7 @@ test("a legacy artifact entry is named by its catalog ID, with the version apply
   });
 });
 
-test("a legacy entry's wiring sits under it, not under an artifact the recipe no longer selects", () => {
+test("a legacy entry's wiring is named for it, not for an artifact the recipe no longer selects", () => {
   const lines = applySummaryLines(
     emptyResult({
       recipe: {
@@ -1569,7 +1568,8 @@ test("a legacy entry's wiring sits under it, not under an artifact the recipe no
   assert.deepEqual(lines.slice(lines.indexOf("Artifacts:")), [
     "Artifacts:",
     "  hook-block-dangerous-commands",
-    "    .claude/settings.json already holds its hook groups",
+    "  Unchanged .claude/settings.json",
+    "    Already holds the hook groups for hook-block-dangerous-commands",
   ]);
 });
 

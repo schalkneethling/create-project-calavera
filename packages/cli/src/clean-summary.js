@@ -6,6 +6,7 @@
 // each wiring file is one line, with each artifact's blocks and groups under it. Each kept item
 // carries its own reason and remedy, so the summary leaves out the sentence the `--json` message
 // adds about kept items. The `--json` result keeps its shape and text.
+import { hookGroupChangeLine, settingsLayoutLine } from "./hook-group-lines.js";
 import { DETAIL, ITEM, info, pushGroup, tense } from "./summary-lines.js";
 import { quoteScriptValue } from "./utils/text.js";
 
@@ -170,14 +171,9 @@ function wiringChangeLines({ artifact, removedBlock, groupChanges, reformatted }
     return [`${removed} the ${artifact} block, ${because}: ${quoteScriptValue(removedBlock)}`];
   }
   return [
-    ...(groupChanges ?? []).map(
-      ({ event, previous }) =>
-        `${removed} the ${event} group for ${artifact}, ${because}: ${quoteScriptValue(previous)}`,
+    ...(groupChanges ?? []).map((change) =>
+      hookGroupChangeLine(change, { artifact, dryRun, deselected: true }),
     ),
-    ...(reformatted
-      ? [
-          `${tense(dryRun, "Would also change", "Also changed")} the layout of the rest of the file, because Calavera writes the whole file in the project's format; no value outside the groups changes`,
-        ]
-      : []),
+    ...(reformatted ? [settingsLayoutLine(dryRun)] : []),
   ];
 }
