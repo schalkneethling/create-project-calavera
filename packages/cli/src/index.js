@@ -90,7 +90,6 @@ import {
 } from "./agent-guidance.js";
 import {
   GITHUB_REPOSITORY_CONTROLS_ID,
-  githubRepositoryControlManagedFiles,
   normalizeGithubRepositoryControlsOptions,
   REPOSITORY_CONTROLS_SCRIPT_PATH,
 } from "./github-repository-controls.js";
@@ -117,7 +116,6 @@ import {
   declaredIgnoreLines,
   GITIGNORE_PATH,
   HTML_VALIDATE_IGNORE_PATH,
-  htmlValidateIgnoreText,
   planGitignoreBlocks,
   planHtmlValidateIgnoreChanges,
 } from "./ignore-lines.js";
@@ -127,7 +125,14 @@ import {
   errorWithLeftovers,
   temporaryFolderLeftovers,
 } from "./utils/cleanup.js";
-import { CALAVERA_EDITORCONFIG, renderEditorConfig } from "./utils/editorconfig.js";
+import { CALAVERA_EDITORCONFIG } from "./utils/editorconfig.js";
+import { unique } from "./utils/unique.js";
+import {
+  createStrykerConfig,
+  formatManagedFilePlans,
+  managedFileDifference,
+  plannedManagedFiles,
+} from "./managed-file-plans.js";
 import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { withDeadline } from "./utils/deadline.js";
@@ -179,7 +184,6 @@ import {
   declaredManagedFiles,
   HTML_VALIDATE_WRAPPER_PATH,
   integrationConfigFiles,
-  managedFileDeclarations,
   packageManagerLockfiles,
   projectInspectionFiles,
   STRYKER_CONFIG_PATH,
@@ -214,7 +218,6 @@ import {
   isPathInside,
   JSONParseError,
   parseJSON,
-  readBoundedTemplate,
   readJSON,
   writeJSON,
 } from "./utils/fs.js";
@@ -471,22 +474,6 @@ const AGENT_BOOTSTRAP_SKILL_PATH = fileURLToPath(new URL("./bootstrap/calavera/"
 export function agentBootstrapSkillSources(skillPath = AGENT_BOOTSTRAP_SKILL_PATH) {
   return new Map([["skill-calavera", skillPath]]);
 }
-const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
-// A file that does not exist, so Stryker skips its tsconfig preprocessing (createStrykerConfig).
-const STRYKER_SKIPPED_TSCONFIG = "stryker-skips-tsconfig-preprocessing.json";
-// The arguments the tap runner passes to node for each test file: the tap reporter, which the
-// runner parses, then Stryker's coverage hook and the test file (#736). These are the runner's
-// defaults in 10.1.1 (dist/schema/tap-runner-options.json); the config states them so that the
-// dry run shows them and a change of default cannot change what runs.
-const STRYKER_TAP_NODE_ARGS = ["--test-reporter=tap", "-r", "{{hookFile}}", "{{testFile}}"];
-// With the runner's default, forceBail: true, the tap runner kills a test process once it reads the
-// process's first failure. The coverage hook then writes Stryker's result file into the process's
-// current directory, so when the kill lands while a test is inside another folder, a temporary
-// project for example, the runner cannot find the file and reports the mutant as a runtime error
-// instead of killed (#1088, as in this repository's own config, #985). Turning it off lets each test
-// file run to its end, which costs time on a file that kills a mutant; Stryker still stops at the
-// first failing file.
-const STRYKER_TAP_FORCE_BAIL = false;
 const VARLOCK_SCHEMA = `# @defaultSensitive=false
 # @defaultRequired=infer
 
@@ -1624,14 +1611,6 @@ function recipeFromJSON(recipe, path) {
 }
 
 /**
- * @param {Array<string | null | undefined | false>} values
- * @returns {string[]}
- */
-function unique(values) {
-  return [...new Set(values.filter(isNotEmptyString))];
-}
-
-/**
  * @returns {Promise<CalaveraState>}
  */
 async function readStateIfPresent() {
@@ -2046,14 +2025,6 @@ function qualityScriptRecord(scripts, previousState, quality) {
   return stateShowsCalaveraWroteQuality(previousState, quality) ? quality : null;
 }
 
-function createHtmlValidateWrapper() {
-  return readBoundedTemplate(HTML_VALIDATE_WRAPPER_TEMPLATE, "HTML Validate wrapper");
-}
-
-function createEditorConfig() {
-  return renderEditorConfig(CALAVERA_EDITORCONFIG);
-}
-
 /**
  * Runs one bin of a package through the package manager's runner. The runner
  * names both the package and the bin, because a runner given only the name of
@@ -2153,112 +2124,6 @@ export function unsupportedYarnMessage(bin, version) {
       ? projectLocalCommandCatalog[packageManager].runCalavera
       : formatShellCommand(createPackageRunnerCommand(packageManager, packageJson.name, bin));
   return `${bin} does not support Yarn ${version}. Use Yarn 2 or later (${command("yarn")}), npm (${command("npm")}), pnpm (${command("pnpm")}), or Bun (${command("bun")}).`;
-}
-
-/**
- * @param {Integration[]} integrations
- * @param {Record<string, unknown>} [integrationOptions]
- * @returns {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }}
- */
-function createStylelintConfig(integrations, integrationOptions = {}) {
-  /** @type {{ extends: string[], ignoreFiles: string[], plugins: string[], rules: Record<string, unknown> }} */
-  const config = {
-    extends: [],
-    ignoreFiles: [
-      "coverage/**",
-      "dist/**",
-      "**/dist/**",
-      "**/dist-types/**",
-      "dist-web/**",
-      "node_modules/**",
-      // Agent worktrees are full checkouts of other branches, so their files are not this project's.
-      ".claude/worktrees/**",
-    ],
-    plugins: [],
-    rules: {},
-  };
-
-  for (const integration of integrations) {
-    if (!integration.stylelint) {
-      continue;
-    }
-
-    config.extends.push(...(integration.stylelint.extends ?? []));
-    config.plugins.push(...(integration.stylelint.plugins ?? []));
-    config.rules = {
-      ...config.rules,
-      ...integration.stylelint.rules,
-    };
-  }
-
-  config.extends = unique(config.extends);
-  config.plugins = unique(config.plugins);
-
-  const baselineOptions = integrationOptions["stylelint-baseline"];
-  if (baselineOptions) {
-    config.rules["plugin/use-baseline"] = [true, baselineOptions];
-  }
-
-  return config;
-}
-
-/**
- * @param {Integration[]} integrations
- * @returns {{ extends: string[], rules: Record<string, unknown> }}
- */
-function createHtmlValidateConfig(integrations) {
-  return {
-    extends: unique(integrations.flatMap((integration) => integration.htmlValidate?.extends ?? [])),
-    rules: Object.assign(
-      {},
-      ...integrations.map((integration) => integration.htmlValidate?.rules ?? {}),
-    ),
-  };
-}
-
-function createReactDoctorConfig() {
-  return {
-    offline: true,
-  };
-}
-
-function createKnipConfig() {
-  return {
-    $schema: "https://unpkg.com/knip@6/schema.json",
-    ignore: [".agents/**"],
-    ignoreExportsUsedInFile: true,
-  };
-}
-
-/**
- * The managed `stryker.config.json` (#734), verified with Stryker 10.1.1 in a `vp create` library
- * under pnpm, npm, Yarn 4, and Bun with the Vitest runner, and with the tap runner on node:test
- * tests (#736). The config names the runner the recipe selects, because Stryker's default command
- * runner reports a timeout for every mutant of a slow suite and counts those as detected
- * (ADR-0014), and lists it in `plugins`, because pnpm's strict `node_modules` layout hides it from
- * Stryker's default plugin lookup. The tap runner also gets the test files, the node arguments,
- * and forceBail turned off.
- *
- * @param {import("./stryker-options.js").SelectedTestRunner} runner
- */
-function createStrykerConfig(runner) {
-  return {
-    $schema: "./node_modules/@stryker-mutator/core/schema/stryker-schema.json",
-    testRunner: runner.strykerTestRunner,
-    plugins: runner.dependencies,
-    ...(runner.strykerTestRunner === "tap"
-      ? {
-          tap: {
-            testFiles: runner.testFiles,
-            nodeArgs: STRYKER_TAP_NODE_ARGS,
-            forceBail: STRYKER_TAP_FORCE_BAIL,
-          },
-        }
-      : {}),
-    // WORKAROUND(@stryker-mutator/core): tsconfig preprocessing calls the TypeScript JS API, which TypeScript 7 removed, and vp create projects use TypeScript 7; a missing file skips it | upstream: https://github.com/stryker-mutator/stryker-js/issues/6111
-    tsconfigFile: STRYKER_SKIPPED_TSCONFIG,
-    reporters: ["clear-text", "html"],
-  };
 }
 
 /**
@@ -2372,29 +2237,19 @@ async function assertSafeManagedFileWrite(path, contents, previousState, reownMa
   }
 
   const installedContents = await readFile(path, "utf8");
-  const targetHash = textHash(contents);
-  const installedHash = textHash(installedContents);
-
-  if (installedHash === targetHash) {
-    return;
-  }
-
   const stateFile = managedFileStateForPath(previousState, path);
+  const difference = managedFileDifference(path, installedContents, contents, stateFile);
 
-  if (stateFile?.hash === installedHash) {
+  if (difference === "accepted") {
     return;
   }
 
-  if (jsonContentsMatch(path, installedContents, contents)) {
-    return;
-  }
-
-  if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(path))) {
+  if (difference === "edited" && reownManagedFiles.has(normalizeManagedFilePath(path))) {
     return;
   }
 
   const reason = stateFile
-    ? `It appears to have local edits (installed=${installedHash}, state=${stateFile.hash}).`
+    ? `It appears to have local edits (installed=${textHash(installedContents)}, state=${stateFile.hash}).`
     : "It is not recorded as Calavera-managed.";
 
   throw new Error(`Refusing to overwrite existing managed file: ${path}. ${reason}`);
@@ -2439,47 +2294,6 @@ async function assertSafeManagedFileWrites(filePlans, previousState, reownManage
 }
 
 /**
- * @param {unknown} value
- * @returns {unknown}
- */
-function sortJsonValue(value) {
-  if (Array.isArray(value)) {
-    return value.map(sortJsonValue);
-  }
-
-  if (isPlainObject(value)) {
-    return Object.fromEntries(
-      Object.entries(value)
-        .sort(([left], [right]) => left.localeCompare(right))
-        .map(([key, item]) => [key, sortJsonValue(item)]),
-    );
-  }
-
-  return value;
-}
-
-/**
- * @param {string} path
- * @param {string} installedContents
- * @param {string} targetContents
- * @returns {boolean}
- */
-function jsonContentsMatch(path, installedContents, targetContents) {
-  if (!path.endsWith(".json")) {
-    return false;
-  }
-
-  try {
-    return (
-      JSON.stringify(sortJsonValue(JSON.parse(installedContents))) ===
-      JSON.stringify(sortJsonValue(JSON.parse(targetContents)))
-    );
-  } catch {
-    return false;
-  }
-}
-
-/**
  * @param {string} path
  * @param {string} contents
  * @param {boolean} dryRun
@@ -2508,98 +2322,6 @@ async function writeManagedFile(path, contents, dryRun, changes, previousState, 
   }
 
   await writeFile(path, contents);
-}
-
-/**
- * The text of each integration's managed files, by path. Which files exist, and the order apply
- * writes them in, come from `managedFileDeclarations` in project-inspection.js (#458).
- *
- * @type {Record<string, (integration: Integration, integrations: Integration[], integrationOptions: Record<string, unknown>) => Record<string, string>>}
- */
-const managedFileContents = {
-  editorconfig: () => ({ ".editorconfig": createEditorConfig() }),
-  stylelint: (_integration, integrations, integrationOptions) => ({
-    ".stylelintrc.json": `${JSON.stringify(createStylelintConfig(integrations, integrationOptions), null, 2)}\n`,
-  }),
-  "html-validate": (_integration, integrations) => ({
-    ".htmlvalidate.json": `${JSON.stringify(createHtmlValidateConfig(integrations), null, 2)}\n`,
-    [HTML_VALIDATE_IGNORE_PATH]: htmlValidateIgnoreText(integrations),
-    [HTML_VALIDATE_WRAPPER_PATH]: createHtmlValidateWrapper(),
-  }),
-  "react-doctor": () => ({
-    "react-doctor.config.json": `${JSON.stringify(createReactDoctorConfig(), null, 2)}\n`,
-  }),
-  knip: () => ({ "knip.json": `${JSON.stringify(createKnipConfig(), null, 2)}\n` }),
-  stryker: (stryker, _integrations, integrationOptions) => {
-    const runner = /** @type {import("./stryker-options.js").SelectedTestRunner} */ (
-      selectedTestRunner(stryker, integrationOptions)
-    );
-    return {
-      [STRYKER_CONFIG_PATH]: `${JSON.stringify(createStrykerConfig(runner), null, 2)}\n`,
-    };
-  },
-  [GITHUB_REPOSITORY_CONTROLS_ID]: (_integration, integrations, integrationOptions) =>
-    Object.fromEntries(
-      githubRepositoryControlManagedFiles(
-        integrationOptions[GITHUB_REPOSITORY_CONTROLS_ID],
-        integrations,
-      ).map(({ path, contents }) => [path, contents]),
-    ),
-};
-
-/**
- * @param {Integration[]} integrations
- * @param {Record<string, unknown>} [integrationOptions]
- * @returns {{ path: string, contents: string }[]}
- */
-function plannedManagedFiles(integrations, integrationOptions = {}) {
-  return managedFileDeclarations.flatMap(({ integration: id, files }) => {
-    const integration = integrations.find((selected) => selected.id === id);
-    if (!integration) {
-      return [];
-    }
-
-    const createContents = managedFileContents[id];
-    if (!createContents) {
-      throw new Error(`Calavera declares managed files for ${id} but has no contents for them.`);
-    }
-
-    const contentsByPath = createContents(integration, integrations, integrationOptions);
-    // A file with contents but no declaration would never be written, so it stops the plan.
-    const undeclared = Object.keys(contentsByPath).filter(
-      (path) => !files.some((file) => file.path === path),
-    );
-    if (undeclared.length > 0) {
-      throw new Error(
-        `Calavera has contents for ${undeclared.join(", ")} but does not declare them for ${id}.`,
-      );
-    }
-
-    return files.map(({ path }) => {
-      const contents = contentsByPath[path];
-      if (contents === undefined) {
-        throw new Error(`Calavera declares ${path} for ${id} but has no contents for it.`);
-      }
-      return { path, contents };
-    });
-  });
-}
-
-/**
- * The managed files with the text apply writes: each JSON and Markdown file formatted by the
- * project's formatter (#669).
- *
- * @param {{ path: string, contents: string }[]} plans
- * @param {() => Promise<import("./utils/project-formatter.js").ProjectFormatter>} loadFormatter
- * @returns {Promise<{ path: string, contents: string }[]>}
- */
-async function formatManagedFilePlans(plans, loadFormatter) {
-  return Promise.all(
-    plans.map(async (plan) => ({
-      ...plan,
-      contents: await formatGeneratedText(plan.path, plan.contents, loadFormatter),
-    })),
-  );
 }
 
 /**
@@ -2635,25 +2357,20 @@ async function inspectManagedFilePlan(filePlan, previousState, reownManagedFiles
     return undefined;
   }
 
-  const targetHash = textHash(filePlan.contents);
   const installedContents = await readFile(filePlan.path, "utf8");
-  const installedHash = textHash(installedContents);
-
-  if (installedHash === targetHash) {
-    return undefined;
-  }
-
   const stateFile = managedFileStateForPath(previousState, filePlan.path);
+  const difference = managedFileDifference(
+    filePlan.path,
+    installedContents,
+    filePlan.contents,
+    stateFile,
+  );
 
-  if (stateFile?.hash === installedHash) {
+  if (difference === "accepted") {
     return undefined;
   }
 
-  if (jsonContentsMatch(filePlan.path, installedContents, filePlan.contents)) {
-    return undefined;
-  }
-
-  if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(filePlan.path))) {
+  if (difference === "edited" && reownManagedFiles.has(normalizeManagedFilePath(filePlan.path))) {
     return {
       severity: "warning",
       kind: "managed-file-reown",
