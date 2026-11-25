@@ -411,11 +411,12 @@ test("--yes removes only items that match Calavera's records, and keeps the reco
         assumeYes: true,
       },
     );
-    // The edited skill stays, so the state that records its hash stays too; the lock checks no
-    // package folder, so it goes.
+    // The edited skill stays, so the state that records its hash stays too, and so does the
+    // artifact-cache block that state records (owner decision of 2026-11-26 on #1112); the lock
+    // checks no package folder, so it goes.
     assert.deepEqual(
       paths(leave),
-      [SKILL_PATH, ".calavera/state.json", "calavera.config.json"].sort(),
+      [SKILL_PATH, ".calavera/state.json", ".gitignore", "calavera.config.json"].sort(),
     );
     assert.ok(paths(remove).includes(".calavera/artifacts.lock.json"));
   });
@@ -1047,9 +1048,10 @@ for (const [label, addUncovered, entry] of [
         `The base Calavera skill matches its record, but the record's hash does not cover symbolic links or empty folders, so edits cannot be detected for: ${entry}.`,
       );
       const { remove, leave } = selectEjectItems(plan, { assumeYes: true });
+      // The state stays for the skill, and the artifact-cache block it records stays with it.
       assert.deepEqual(
         paths(leave),
-        [SKILL_PATH, ".calavera/state.json", "calavera.config.json"].sort(),
+        [SKILL_PATH, ".calavera/state.json", ".gitignore", "calavera.config.json"].sort(),
       );
       assert.equal(paths(remove).includes(SKILL_PATH), false);
     });
@@ -1192,10 +1194,13 @@ test("a .gitignore that leads out of the project is never edited: its block is k
       plan.items.some(({ path }) => path === ".gitignore"),
       false,
     );
+    // One report for the artifact-cache block it keeps, and one for the ejected block it does not
+    // add (ADR-0017, Amendment 5); the summary prints both under the one path.
     assert.deepEqual(
       plan.reported.map(({ path }) => path),
-      [".gitignore"],
+      [".gitignore", ".gitignore"],
     );
+    assert.equal(plan.ejectedBlock, undefined);
     const outcome = await executeEject(selectEjectItems(plan, { assumeYes: false }).remove);
     assert.deepEqual(outcome.failed, []);
   });

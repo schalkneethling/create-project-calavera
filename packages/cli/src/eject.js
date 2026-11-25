@@ -74,7 +74,14 @@ import {
   readState,
   recoverArtifactTransaction,
 } from "./artifact-lifecycle.js";
-import { GITIGNORE_PATH, withoutGitignoreBlock } from "./ignore-lines.js";
+import { EJECTED_BLOCK, EJECTED_LINES } from "./ejected-marker.js";
+import {
+  GITIGNORE_PATH,
+  fixedBlockIn,
+  fixedBlockProblem,
+  planGitignoreBlocks,
+  withoutGitignoreBlock,
+} from "./ignore-lines.js";
 import { CONFIG_FILE } from "./project-local-commands.js";
 import { assertWorkspacePath } from "./utils/fs.js";
 import { positionOf } from "./utils/parse-position.js";
@@ -87,7 +94,7 @@ import {
 import { isPlainObject } from "./utils/guards.js";
 import { withoutBom } from "./utils/json-edit.js";
 import { rewriteLossProblem, toJSONText, writeJSON } from "./utils/json-rewrite.js";
-import { findBlock, findMarkedBlock } from "./utils/marked-block.js";
+import { findBlock, findMarkedBlock, markers } from "./utils/marked-block.js";
 import {
   OPENCODE_CONFIG_SCHEMA,
   calaveraMcpEntries,
@@ -166,12 +173,28 @@ const CANNOT_DETECT = "edits cannot be detected";
  *   `textSeen`, and a package folder that a lock entry names adds its payload hash. The base skill records its installed hash and the entries that hash does not cover.
  *   `executeEject` reads it again and removes nothing when any item changed since the plan.
  *
+ * @typedef {object} EjectedBlockPlan The `ejected` block `eject` adds at the end of `.gitignore`
+ *   once it has removed everything else, so the doctors can tell an ejected project from one
+ *   Calavera never managed (ADR-0017, Amendment 5). It is not a footprint item: the block is
+ *   Calavera's own new text, so it is not counted as work and `--yes` may write it.
+ * @property {string} path `.gitignore`.
+ * @property {"write" | "update"} type `write` creates `.gitignore`; `update` appends to it.
+ * @property {string[]} lines The block's lines, markers included.
+ * @property {string} contents The file's text once the block is added. It stays internal.
+ * @property {string | undefined} base What the file must hold just before the block is written:
+ *   its text after the `artifact-cache` block's removal, or its text at the plan when this run
+ *   removes no block, or undefined when there is no file. It stays internal.
+ * @property {string} seen What the plan read, checked like an item's `seen`. It stays internal.
+ *
  * @typedef {object} EjectOutcome What `executeEject` did with each item it was given.
  * @property {EjectItem[]} removed
  * @property {{ item: EjectItem, error: Error }[]} failed Items whose removal failed, with the cause.
  * @property {{ item: EjectItem, reason: string }[]} skipped Items left because an item they depend
  *   on failed: the record a failed item still needs, or the `.gitignore` block of a cache that
- *   could not be deleted.
+ *   could not be deleted, or the last remaining record while the `ejected` block is not written.
+ * @property {"written" | { error: Error } | { reason: string }} [ejectedBlock] What happened to
+ *   the `ejected` block, when `executeEject` was given one: written, failed with the cause, or not
+ *   written because a removal before it failed or was skipped.
  *
  * @typedef {object} EjectReport Footprint text `eject` keeps, for the person to act on
  *   (ADR-0017, Decision 4). It does not count as work for `eject` (Decision 8).
@@ -183,7 +206,10 @@ const CANNOT_DETECT = "edits cannot be detected";
  * @property {EjectReport[]} reported Footprint text that `eject` keeps and reports.
  * @property {string[]} kept Files in `.calavera/` and `.agents/calavera/` that `eject` does not
  *   name, so it keeps them and the folders that hold them.
- * @property {boolean} nothingToDo Whether no footprint item exists. Reported text does not count.
+ * @property {boolean} nothingToDo Whether no footprint item exists. Reported text does not count,
+ *   and neither does the `ejected` block.
+ * @property {EjectedBlockPlan} [ejectedBlock] The block this run adds, when the plan held the
+ *   recipe, the state, or the lock and `.gitignore` holds no complete block yet.
  *
  * @typedef {object} AgentGuidanceTexts The texts the bootstrap writes now, formatted by the
  *   project's formatter, from `agentBootstrapTexts` in `index.js`.
@@ -586,6 +612,65 @@ async function planCacheBlock(state, stateProblem) {
         : "The artifact-cache block was edited since Calavera wrote it.";
   }
   return { items: [item], reported: [] };
+}
+
+/**
+ * Plans the `ejected` block (ADR-0017, Amendment 5). An edited block, or a broken marker, stops
+ * `eject` before it writes anything, whether or not the project holds Calavera's records, because
+ * the block's contents are fixed text and `eject` changes no line the person wrote. A complete
+ * block is kept, and no second one is planned. Otherwise the block is planned only when the run
+ * started from Calavera's records, at the end of the text the `artifact-cache` block's removal
+ * leaves. A `.gitignore` that leads to a file outside the project is one `eject` never changes, so
+ * it gets no block, and the report says what that means for the doctors.
+ *
+ * @param {boolean} records Whether the plan holds the recipe, the state, or the lock.
+ * @param {EjectItem | undefined} cacheBlock The `artifact-cache` block's item, when there is one.
+ * @returns {Promise<{ block?: EjectedBlockPlan, reported: EjectReport[] }>}
+ */
+async function planEjectedBlock(records, cacheBlock) {
+  const entry = await readTextEntry(GITIGNORE_PATH);
+  const text = entry?.text;
+  if (entry !== undefined && !(await insideProject(GITIGNORE_PATH))) {
+    return {
+      reported: records
+        ? [
+            {
+              path: GITIGNORE_PATH,
+              reason: `${GITIGNORE_PATH} leads to a file outside the project, which eject never changes, so it does not add the ejected block there. Without the block, the doctors read this project as one Calavera never managed.`,
+            },
+          ]
+        : [],
+    };
+  }
+  if (text !== undefined) {
+    const { status } = fixedBlockIn(text, EJECTED_BLOCK, EJECTED_LINES);
+    if (status === "edited" || status === "broken") {
+      throw new Error(
+        `eject stopped before removing anything: ${fixedBlockProblem(EJECTED_BLOCK, status, "eject")}`,
+      );
+    }
+    if (status === "complete") return { reported: [] };
+  }
+  if (!records) return { reported: [] };
+  const base = cacheBlock?.contents ?? text;
+  const { contents } = planGitignoreBlocks({
+    contents: base,
+    declared: [{ integration: EJECTED_BLOCK, lines: EJECTED_LINES }],
+    records: [],
+    command: "eject",
+  });
+  const { start, end } = markers(EJECTED_BLOCK);
+  return {
+    block: {
+      path: GITIGNORE_PATH,
+      type: entry === undefined ? "write" : "update",
+      lines: [start, ...EJECTED_LINES, end],
+      contents: /** @type {string} */ (contents),
+      base,
+      seen: entry === undefined ? textSeen("missing", undefined) : textSeen(entry.identity, text),
+    },
+    reported: [],
+  };
 }
 
 /**
@@ -1613,6 +1698,8 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFo
     ? await readRecord(LOCK_PATH, readCheckedLock)
     : { value: undefined, problem: undefined };
 
+  // ADR-0017, Amendment 5: the block is written only on a run that started from these records.
+  const records = hasState || hasLock || (await present(config));
   /** @type {EjectItem[]} */
   const items = [];
   /**
@@ -1671,6 +1758,7 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFo
   items.push(...(await planBaseSkill(state, stateProblem)));
   const cacheBlock = await planCacheBlock(state, stateProblem);
   items.push(...cacheBlock.items);
+  const ejectedBlock = await planEjectedBlock(records, cacheBlock.items[0]);
   const packages = await planPackageFolders(lock?.artifacts, lockProblem);
   items.push(...packages.items);
   const guidanceItems = await planGuidance(guidance);
@@ -1701,9 +1789,11 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFo
       ...mcpEntries.reported,
       ...codeRabbit.reported,
       ...separate.reported,
+      ...ejectedBlock.reported,
     ],
     kept,
     nothingToDo: items.length === 0,
+    ...(ejectedBlock.block === undefined ? {} : { ejectedBlock: ejectedBlock.block }),
   };
 }
 
@@ -1714,32 +1804,51 @@ export async function planEject({ dryRun, config = CONFIG_FILE, guidance, loadFo
  * or the `artifact-cache` block, and the lock while it leaves a package folder (ADR-0017,
  * Decision 5). While it leaves the cache, which it does only when the cache is a symbolic link, it
  * also keeps the cache's `.gitignore` block, so the cache never shows in `git status`, and it keeps
- * the state only while that block is kept (ADR-0017, Amendment 2).
+ * the state only while that block is kept (ADR-0017, Amendment 2). While it keeps the state,
+ * whether a left item needs it or `--yes` cannot check it, it keeps that block too, so the
+ * project stays a consistent `applied` project and `artifacts status --check-updates` has nothing
+ * to write back (owner decision of 2026-11-26 on #1112). The `ejected` block goes along
+ * only when the run leaves nothing, because `eject` writes it only once it has removed everything
+ * else (ADR-0017, Amendment 5).
  *
  * @param {EjectPlan} plan
  * @param {{ assumeYes: boolean }} options `assumeYes` for a `--yes` run, false for an approved one.
- * @returns {{ remove: EjectItem[], leave: EjectItem[] }}
+ * @returns {{ remove: EjectItem[], leave: EjectItem[], ejectedBlock?: EjectedBlockPlan }}
  */
 export function selectEjectItems(plan, { assumeYes }) {
-  if (!assumeYes) return { remove: plan.items, leave: [] };
+  if (!assumeYes) {
+    return {
+      remove: plan.items,
+      leave: [],
+      ...(plan.ejectedBlock === undefined ? {} : { ejectedBlock: plan.ejectedBlock }),
+    };
+  }
   const unapproved = plan.items.filter(({ matchesRecords }) => !matchesRecords);
   const leftKinds = new Set(unapproved.map(({ kind }) => kind));
   // ADR-0017 Amendment 2: the block keeps the cache out of `git status`, so it stays while a
-  // linked cache does. The state stays while a block that it records stays.
-  const keepBlock = leftKinds.has("cache");
+  // linked cache does. The state stays while a block that it records stays, and the block stays
+  // while the state does, so the records left behind still describe the project.
+  const linkedCache = leftKinds.has("cache");
   const blockStays = plan.items.some(
-    ({ kind, matchesRecords }) => kind === "artifact-cache-block" && (!matchesRecords || keepBlock),
+    ({ kind, matchesRecords }) =>
+      kind === "artifact-cache-block" && (!matchesRecords || linkedCache),
   );
   const keepState = leftKinds.has("base-skill") || blockStays;
+  // The state also stays when --yes cannot check it, such as a symbolic link in its place.
+  const keepBlock = linkedCache || keepState || leftKinds.has("state");
   const keepLock = leftKinds.has("package-folder");
   const leaves = (/** @type {EjectItem} */ item) =>
     !item.matchesRecords ||
     (item.kind === "artifact-cache-block" && keepBlock) ||
     (item.kind === "state" && keepState) ||
     (item.kind === "lock" && keepLock);
+  const leave = plan.items.filter(leaves);
   return {
     remove: plan.items.filter((item) => !leaves(item)),
-    leave: plan.items.filter(leaves),
+    leave,
+    ...(leave.length === 0 && plan.ejectedBlock !== undefined
+      ? { ejectedBlock: plan.ejectedBlock }
+      : {}),
   };
 }
 
@@ -1855,7 +1964,8 @@ async function currentlySeen(item) {
  * The items `item` depends on: removing it while one of them failed would break Decision 7's
  * guarantees. The `.gitignore` block stays while the cache it hides stays, the lock stays while a
  * package folder it checks stays, and the state stays while the base skill or the block it
- * checks stays.
+ * checks stays. The last remaining record also stays while the `ejected` block is not written,
+ * which `executeEject` checks itself (`lastRecordOf`).
  *
  * @param {EjectItem} item
  * @returns {EjectItemKind[]}
@@ -1867,6 +1977,58 @@ function dependsOn(item) {
   return [];
 }
 
+/** The `ejected` block's place among the steps a later item can depend on. */
+const EJECTED_STEP = "ejected-block";
+
+/**
+ * The record `executeEject` deletes last when it writes the `ejected` block: the state, or without
+ * a state the lock, or without a lock the recipe. The block is written just before it, and it
+ * stays when the block is not written, so a failed write or a stop between the two always leaves
+ * a record that makes the next run plan the block again (owner decision of 2026-11-26 on #1112;
+ * ADR-0017, Amendment 5).
+ *
+ * @param {EjectItem[]} items
+ * @returns {EjectItem | undefined}
+ */
+function lastRecordOf(items) {
+  for (const kind of /** @type {const} */ (["state", "lock", "recipe"])) {
+    const record = items.find((item) => item.kind === kind);
+    if (record !== undefined) return record;
+  }
+  return undefined;
+}
+
+/**
+ * Why the last remaining record stays when the `ejected` block was not written. It does not name `.gitignore`,
+ * which the block's own entry names.
+ *
+ * @param {boolean} failed Whether the write failed, rather than being skipped.
+ */
+function keptForEjectedBlock(failed) {
+  return `Kept, because ${failed ? "adding the ejected block failed" : "eject did not add the ejected block after a removal failed"}, and the next run needs this record to add it. Run eject again once that is fixed.`;
+}
+
+/**
+ * Writes the `ejected` block, after every other item and before the last remaining record
+ * (ADR-0017, Amendment 5).
+ * It reads `.gitignore` again first and writes nothing when the file no longer holds the text the
+ * plan expects at this point, so the block never lands in text the list did not show.
+ *
+ * @param {EjectedBlockPlan} block
+ */
+async function writeEjectedBlock(block) {
+  const entry = await readTextEntry(block.path);
+  if (entry?.text !== block.base) {
+    throw new Error(
+      `${block.path} changed since eject listed what it would change, so eject did not add the ejected block. Run eject again to see the new list.`,
+    );
+  }
+  await writeFile(
+    await assertWorkspacePath(block.path, process.cwd(), "Eject path"),
+    block.contents,
+  );
+}
+
 /**
  * Removes `items`, which the person approved or which match Calavera's records, in the order
  * `ejectSteps` gives. First it reads each item's check again, and removes nothing when an item
@@ -1875,12 +2037,16 @@ function dependsOn(item) {
  * removes the package ID folders it emptied, `.calavera/packages/`, `.calavera/.staging/`, and
  * `.calavera/`, when they are empty, and `.agents/calavera/` when it removed the MCP setup notes
  * from it and nothing else remains (ADR-0017, Decision 2). A folder that still holds anything
- * stays.
+ * stays. Given the `ejected` block, it writes the block once every other item is removed and
+ * before the last remaining record (`lastRecordOf`), and only when no removal failed or was
+ * skipped (ADR-0017, Amendment 5).
  *
  * @param {EjectItem[]} items
+ * @param {EjectedBlockPlan} [ejectedBlock] From `selectEjectItems`, which passes it on only when
+ *   the run leaves nothing.
  * @returns {Promise<EjectOutcome>}
  */
-export async function executeEject(items) {
+export async function executeEject(items, ejectedBlock) {
   const changed = [];
   for (const item of items) {
     // An item already gone counts as removed, so its check has nothing left to compare.
@@ -1890,6 +2056,12 @@ export async function executeEject(items) {
       changed.push(item.path);
     }
   }
+  if (ejectedBlock !== undefined && !changed.includes(ejectedBlock.path)) {
+    const entry = await readTextEntry(ejectedBlock.path);
+    const seen =
+      entry === undefined ? textSeen("missing", undefined) : textSeen(entry.identity, entry.text);
+    if (seen !== ejectedBlock.seen) changed.push(ejectedBlock.path);
+  }
   if (changed.length > 0) {
     throw new Error(
       `eject stopped before removing anything, because ${changed.join(", ")} changed since eject listed what it would remove. Run eject again to see the new list.`,
@@ -1898,23 +2070,32 @@ export async function executeEject(items) {
 
   /** @type {EjectOutcome} */
   const outcome = { removed: [], failed: [], skipped: [] };
-  /** @type {Set<EjectItemKind>} */
+  /** @type {Set<EjectItemKind | typeof EJECTED_STEP>} */
   const leftKinds = new Set();
-  for (const item of ejectSteps(items)) {
-    const blocker = dependsOn(item).find((kind) => leftKinds.has(kind));
+  const lastRecord = ejectedBlock === undefined ? undefined : lastRecordOf(items);
+  /** @param {EjectItem} item */
+  const remove = async (item) => {
+    /** @type {(EjectItemKind | typeof EJECTED_STEP)[]} */
+    const needs = item === lastRecord ? [...dependsOn(item), EJECTED_STEP] : dependsOn(item);
+    const blocker = needs.find((kind) => leftKinds.has(kind));
     if (blocker !== undefined) {
       leftKinds.add(item.kind);
       outcome.skipped.push({
         item,
-        reason: `Kept, because removing the ${blocker} item it depends on failed. Run eject again once that is fixed.`,
+        reason:
+          blocker === EJECTED_STEP
+            ? keptForEjectedBlock(
+                typeof outcome.ejectedBlock === "object" && "error" in outcome.ejectedBlock,
+              )
+            : `Kept, because removing the ${blocker} item it depends on failed. Run eject again once that is fixed.`,
       });
-      continue;
+      return;
     }
     // ADR-0017 Decision 2: a footprint item that is already gone counts as removed, so an item the
     // person deleted after the plan is not a failure, and the items that depend on it go too.
     if (await alreadyGone(item)) {
       outcome.removed.push(item);
-      continue;
+      return;
     }
     try {
       const target = await assertEjectPath(item);
@@ -1933,7 +2114,30 @@ export async function executeEject(items) {
         error: error instanceof Error ? error : new Error(String(error)),
       });
     }
+  };
+
+  const steps = ejectSteps(items);
+  // ADR-0017, Amendment 5: every other item goes first, then the `ejected` block, then the last
+  // remaining record. Without a block, the steps keep their own order, the state last.
+  for (const item of steps.filter((step) => step !== lastRecord)) await remove(item);
+  if (ejectedBlock !== undefined) {
+    if (outcome.failed.length > 0 || outcome.skipped.length > 0) {
+      leftKinds.add(EJECTED_STEP);
+      outcome.ejectedBlock = {
+        reason:
+          "Not added, because an item eject removes first could not be removed. Run eject again once that is fixed.",
+      };
+    } else {
+      try {
+        await writeEjectedBlock(ejectedBlock);
+        outcome.ejectedBlock = "written";
+      } catch (error) {
+        leftKinds.add(EJECTED_STEP);
+        outcome.ejectedBlock = { error: error instanceof Error ? error : new Error(String(error)) };
+      }
+    }
   }
+  if (lastRecord !== undefined) await remove(lastRecord);
   if (items.length === 0) return outcome;
 
   const idFolders = new Set(
