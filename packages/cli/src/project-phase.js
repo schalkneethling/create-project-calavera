@@ -1,5 +1,5 @@
 // @ts-check
-import { resolve } from "node:path";
+import { relative, resolve, sep } from "node:path";
 
 import { artifactForId } from "@schalkneethling/calavera-artifact-core";
 import semver from "semver";
@@ -20,14 +20,29 @@ import {
   STATE_PATH,
   TRANSACTION_PATH,
 } from "./artifact-lifecycle.js";
+import { artifactWiringFindings, installedSkillDirectory } from "./ai/artifact-wiring.js";
 import { readEjectedMarker } from "./ejected-marker.js";
-import { stateShowsEarlierApply } from "./state.js";
+import { classifyManagedFiles, DRIFTED_FILE_CONDITIONS } from "./phase-managed-files.js";
+import { optionalStringArray, stateShowsEarlierApply } from "./state.js";
 import { fileExists, isPathInside, readJSON } from "./utils/fs.js";
 import { isPlainObject } from "./utils/guards.js";
 
 /**
  * @typedef {import("./artifact-lifecycle.js").ArtifactLockEntry} ArtifactLockEntry
  * @typedef {import("./ejected-marker.js").EjectedMarker} EjectedMarker
+ * @typedef {import("./phase-managed-files.js").ClassifiedManagedFile} ClassifiedManagedFile
+ * @typedef {import("./phase-managed-files.js").FormatterFailureFinding} FormatterFailureFinding
+ *
+ * @typedef {object} PhaseWiringFinding A finding about the wiring apply recorded for an artifact
+ *   (ADR-0015, Decision 5), as `artifactWiringFindings` words it for `doctor` today, with the
+ *   artifact it is about. Unlike every other reason here, `message` can quote a changed hook
+ *   marker line and the line or group the state records; the pull request that prints the
+ *   phase's findings replaces it with a message that names the file, block, and kind instead
+ *   (tracked on #1112).
+ * @property {string} artifact
+ * @property {boolean} selected Whether the recipe selects the artifact.
+ * @property {"error" | "warning"} level
+ * @property {string} message
  *
  * @typedef {"pending-transaction" | "unmanaged" | "ejected" | "bootstrapped" | "composed" | "applied" | "drifted" | "incomplete"} ProjectPhase
  * @typedef {"pending" | "current" | "missing" | "unreadable" | "edited" | "unrecorded"} ArtifactConditionName
@@ -61,6 +76,14 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {ProjectPhase} phase
  * @property {ClassifiedArtifact[]} artifacts Every lock entry, then every selection without one.
  *   Empty while a transaction is pending.
+ * @property {ClassifiedManagedFile[]} managedFiles Every managed file the recipe declares, in the
+ *   order apply writes them. Empty without a recipe, while a transaction is pending, and when the
+ *   managed files cannot be planned.
+ * @property {FormatterFailureFinding[]} formatterFailures Each failure of the formatter apply would
+ *   use: one with a null path when it cannot load, or one per file it refuses.
+ * @property {string | null} managedFilePlanProblem Why the managed files could not be planned.
+ * @property {PhaseWiringFinding[]} wiringFindings Empty without a recipe and while a transaction
+ *   is pending.
  * @property {EjectedMarker | null} marker Null while a transaction is pending.
  * @property {ProjectRecords | null} records Null while a transaction is pending.
  * @property {string[] | null} rollbackFiles While a transaction is pending, the project paths the
@@ -87,20 +110,28 @@ const ARTIFACT_TYPES = new Set(["skill", "hook", "agent"]);
  * as no marker, and an artifact output that cannot be hashed gives that artifact the `unreadable`
  * condition while every other artifact is still classified.
  *
- * The phase reads the artifacts the records name. Three parts of ADR-0020 join this function in
- * the pull requests that follow it in the #1112 stack, before any command reads it: managed files
- * and the recorded wiring, which also count toward `drifted`, and the per-output notes of
- * Decision 3 for a selection's output that already exists without a state record, which compare
- * the output with an offline copy of the artifact cache.
+ * The phase reads the artifacts, the managed files, and the wiring the records name; each counts
+ * toward `drifted` after `apply`. With a recipe, it loads the project's formatter as apply does,
+ * which runs the project's `vp fmt` without writing anything. The per-output notes of Decision 3,
+ * for a selection's output that already exists without a state record, join this function in a
+ * later pull request of the #1112 stack; they compare the output with an offline copy of the
+ * artifact cache.
  *
- * @param {{ config: string }} options `config` is the recipe path, as `--config` names it.
+ * @param {{ config: string, runsProjectCode?: boolean }} options `config` is the recipe path, as
+ *   `--config` names it. `runsProjectCode: false` keeps the project's formatter from loading, for
+ *   the read-only MCP status tool (ADR-0020, owner decision 24): files that need it are
+ *   `not-checked`.
  * @returns {Promise<ProjectPhaseResult>}
  */
-export async function deriveProjectPhase({ config }) {
+export async function deriveProjectPhase({ config, runsProjectCode = true }) {
   if (await fileExists(TRANSACTION_PATH)) {
     return {
       phase: "pending-transaction",
       artifacts: [],
+      managedFiles: [],
+      formatterFailures: [],
+      managedFilePlanProblem: null,
+      wiringFindings: [],
       marker: null,
       records: null,
       rollbackFiles: await pendingRollbackFiles(),
@@ -108,7 +139,8 @@ export async function deriveProjectPhase({ config }) {
   }
 
   const recipeFound = await fileExists(config);
-  const selections = recipeFound ? await readRecipeSelections(config) : [];
+  const recipe = recipeFound ? await readRecipe(config) : undefined;
+  const selections = recipe ? readRecipeSelections(config, recipe) : [];
   const stateFound = await fileExists(STATE_PATH);
   const state = await readState();
   const lock = await readLock();
@@ -157,9 +189,22 @@ export async function deriveProjectPhase({ config }) {
     });
   }
 
+  const { managedFiles, formatterFailures, planProblem } = recipe
+    ? await classifyManagedFiles({ config, recipe, state, runsProjectCode })
+    : { managedFiles: [], formatterFailures: [], planProblem: null };
+  const wiringFindings = recipe ? await wiringFindingsFor(state, selectedIds) : [];
+  const fileDrifted = managedFiles.some(
+    ({ recorded, condition }) => recorded && DRIFTED_FILE_CONDITIONS.has(condition.name),
+  );
+  const wiringDrifted = wiringFindings.some(({ selected }) => selected);
+
   return {
-    phase: phaseFromRecords(records, marker, artifacts),
+    phase: phaseFromRecords(records, marker, artifacts, fileDrifted || wiringDrifted),
     artifacts,
+    managedFiles,
+    formatterFailures,
+    managedFilePlanProblem: planProblem,
+    wiringFindings,
     marker,
     records,
     rollbackFiles: null,
@@ -224,19 +269,31 @@ function inOutputFolder(path) {
 }
 
 /**
- * The recipe's artifact selections. The recipe must be a JSON object whose `ai` field, when
- * present, is a list, and every selection must name an artifact the catalog holds, once. A recipe
- * that breaks one of these rules stops the function with a message that names the recipe file
- * (Amendment 1) and quotes none of it; the selection reader's own message names only catalog IDs
- * and positions, and its error stays the cause. `doctor` validates the whole recipe before it
- * classifies, but `artifacts status` and `artifacts doctor` do not, so the function checks what it
- * reads itself.
+ * The recipe, which must be a JSON object whose `integrations`, when present, is a list of
+ * strings, as `doctor` already requires. A recipe that breaks either rule stops the function with
+ * a message that names the recipe file (Amendment 1) and quotes none of it.
  *
  * @param {string} config
  */
-async function readRecipeSelections(config) {
+async function readRecipe(config) {
   const recipe = await readJSON(config);
   if (!isPlainObject(recipe)) throw new Error(`${config} must hold a JSON object.`);
+  optionalStringArray(recipe.integrations, `${config} integrations`);
+  return recipe;
+}
+
+/**
+ * The recipe's artifact selections. The `ai` field, when present, must be a list, and every
+ * selection must name an artifact the catalog holds, once. A recipe that breaks one of these rules
+ * stops the function with a message that names the recipe file (Amendment 1) and quotes none of
+ * it; the selection reader's own message names only catalog IDs and positions, and its error stays
+ * the cause. `doctor` validates the whole recipe before it classifies, but `artifacts status` and
+ * `artifacts doctor` do not, so the function checks what it reads itself.
+ *
+ * @param {string} config
+ * @param {Record<string, unknown>} recipe
+ */
+function readRecipeSelections(config, recipe) {
   if (recipe.ai !== undefined && !Array.isArray(recipe.ai)) {
     throw new Error(`${config} ai must be a list of artifact selections.`);
   }
@@ -257,9 +314,10 @@ async function readRecipeSelections(config) {
  * @param {ProjectRecords} records
  * @param {EjectedMarker} marker
  * @param {ClassifiedArtifact[]} artifacts
+ * @param {boolean} othersDrifted A recorded managed file or a selected artifact's wiring drifted.
  * @returns {ProjectPhase}
  */
-function phaseFromRecords(records, marker, artifacts) {
+function phaseFromRecords(records, marker, artifacts, othersDrifted) {
   if (!records.recipe) {
     if (!records.state && records.lockEntries === 0) {
       // Any block with paired markers is the marker, edited or not; a broken marker is none.
@@ -276,7 +334,43 @@ function phaseFromRecords(records, marker, artifacts) {
   const drifted = artifacts.some(
     ({ selected, condition }) => selected === true && DRIFTED_CONDITIONS.has(condition.name),
   );
-  return drifted ? "drifted" : "applied";
+  return drifted || othersDrifted ? "drifted" : "applied";
+}
+
+/**
+ * `path` as the state records paths, relative to the project with forward slashes, so a lock
+ * destination such as `./.agents/skills/project-goal` still finds its record.
+ *
+ * @param {string} path
+ */
+function projectPath(path) {
+  return relative(resolve("."), resolve(path)).split(sep).join("/");
+}
+
+/**
+ * The wiring findings for each artifact apply recorded wiring for, with whether the recipe
+ * selects it. Each record is checked on its own, so each finding names its artifact.
+ * `artifactWiringFindings` runs no Git command, and it turns a recorded file it cannot read into
+ * an error finding that names the error code (#1206), so no wiring file stops the function.
+ *
+ * @param {import("./state.js").CalaveraState} state
+ * @param {Set<string>} selectedIds
+ * @returns {Promise<PhaseWiringFinding[]>}
+ */
+async function wiringFindingsFor(state, selectedIds) {
+  /** @type {PhaseWiringFinding[]} */
+  const findings = [];
+  for (const record of state.aiWiring) {
+    const artifact = record.artifact;
+    const selected = selectedIds.has(artifact);
+    const found = await artifactWiringFindings({
+      records: [record],
+      selected: selectedIds,
+      skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
+    });
+    for (const { level, message } of found) findings.push({ artifact, selected, level, message });
+  }
+  return findings;
 }
 
 /**
@@ -291,7 +385,7 @@ function phaseFromRecords(records, marker, artifacts) {
  */
 async function artifactOutputs(type, destination, target, hashes) {
   return Promise.all(
-    aiArtifactOutputPaths({ type, path: destination }).map(async (path) => {
+    aiArtifactOutputPaths({ type, path: projectPath(destination) }).map(async (path) => {
       const recorded = hashes.get(path);
       const installed = await fileExists(path);
       const managed = recorded !== undefined;
