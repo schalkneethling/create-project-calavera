@@ -733,6 +733,13 @@ export const mcpOnlyToolSchemas = Object.freeze({
         .describe(
           "Why the recipe's managed files could not be planned, which apply also refuses, or null.",
         ),
+      cacheBlockProblem: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          "Why the artifact cache block was not recorded, when the project's formatter failed. Always null here, because this tool never records the block.",
+        ),
       rollbackFiles: z
         .array(z.string())
         .nullable()

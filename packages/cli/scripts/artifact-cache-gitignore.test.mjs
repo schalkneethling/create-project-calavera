@@ -741,23 +741,14 @@ for (const { name, rerun, options, setup } of commands) {
             throw new Error("the project formatter cannot load");
           },
         };
-        if (options.artifactAction === "status" || options.artifactAction === "doctor") {
-          // Owner decision of 2026-11-25 on #1112: a report names the cache block it could not
-          // record and goes on through a temporary cache, instead of stopping.
-          const result = await runArtifactCommand({ ...options, dryRun }, services);
-          assert.match(
-            result.cacheBlockProblem ?? "",
-            /did not record the artifact cache block/,
-            `dryRun: ${dryRun}`,
-          );
-          assert.deepEqual(result.ignoreChanges, [], `dryRun: ${dryRun}`);
-        } else {
-          await assert.rejects(
-            runArtifactCommand({ ...options, dryRun }, services),
-            /the project formatter cannot load/,
-          );
-          assert.deepEqual(registry.requests, [], `dryRun: ${dryRun}`);
-        }
+        // A loader error that is not a formatter failure still stops every command where it
+        // would; a report names only a FormatterFailure and goes on (owner decision of
+        // 2026-11-25 on #1112, which artifact-status-phase.test.mjs covers).
+        await assert.rejects(
+          runArtifactCommand({ ...options, dryRun }, services),
+          /the project formatter cannot load/,
+        );
+        assert.deepEqual(registry.requests, [], `dryRun: ${dryRun}`);
       }
       assert.deepEqual(await snapshotDirectory(), before);
     });

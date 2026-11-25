@@ -467,7 +467,7 @@ test("a formatter that cannot format the state skips the cache block: a note in 
     await writeJsonFile("package.json", { scripts: {}, devDependencies: { "vite-plus": "1.0.0" } });
     const before = await snapshotDirectory();
     const problem =
-      "Calavera did not record the artifact cache block in .gitignore, because the project's formatter could not format .calavera/state.json (not-installed), so this report resolved packages through a temporary cache and wrote nothing. This is not a finding about the project's phase or an artifact; the managed-file check above names the cause and its remedy.";
+      "Calavera did not record the artifact cache block in .gitignore, because the project's formatter could not format .calavera/state.json, so this report resolved packages through a temporary cache and wrote nothing. This is not a finding about the project's phase or an artifact. The project uses Vite+, but Calavera cannot find its vite-plus package, so it cannot format the managed files the way apply does, and apply stops on the same thing. Run vp install, then run the command again.";
     const services = registry();
     const status = await run("status", { checkUpdates: true }, services);
     assert.equal(status.cacheBlockProblem, problem);
@@ -488,6 +488,12 @@ test("a formatter that cannot format the state skips the cache block: a note in 
       ),
     );
     assert.match(artifactDoctorVerdict(doctor).at(-1)?.message ?? "", /the artifact cache block/);
+    assert.deepEqual(await snapshotDirectory(), before);
+    // The dry run stops where the command would, so it reports the same problem.
+    assert.equal(
+      (await run("status", { checkUpdates: true, dryRun: true })).cacheBlockProblem,
+      problem,
+    );
     assert.deepEqual(await snapshotDirectory(), before);
     // Without --check-updates, no block is planned, so there is no cache block problem.
     assert.equal((await run("status")).cacheBlockProblem, null);
@@ -567,7 +573,10 @@ test("the pending-transaction line in the text output names the listed files, no
     const doctor = await run("doctor");
     assert.match(doctor.remedy, /files in rollbackFiles/);
     assert.equal(doctor.phaseLine.message.includes("rollbackFiles"), false);
-    assert.match(doctor.phaseLine.message, /Save any edits to the files listed below first/);
+    assert.match(
+      doctor.phaseLine.message,
+      /Save any edits to the files the rollback restores or removes first/,
+    );
   });
 });
 

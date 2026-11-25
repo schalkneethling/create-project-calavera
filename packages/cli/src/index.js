@@ -7097,7 +7097,8 @@ const commandRunners = Object.assign(
         printResult(result, options.json);
         // #994 and ADR-0020, Decision 4: doctor fails the run when a selected artifact's files
         // are missing, cannot be read, are not managed, or carry a local edit, when the phase line
-        // is an error, and when the managed-file check's formatter failed or could not plan, as
+        // is an error, when the managed-file check's formatter failed or could not plan, and when
+        // --check-updates could not record the artifact cache block (cacheBlockProblem), as
         // `doctor` does for an error (#1030). A selection that is not installed yet does not fail
         // it, and neither does a lock entry the recipe no longer selects (#1111, owner decision
         // 6). `artifacts status` reports the same problems and stays informational.

@@ -33,6 +33,7 @@ import {
 } from "./ai/artifacts.js";
 import { assertFirstSelection, assertNoLegacyEntryNeedsWiring } from "./ai/recipe-items.js";
 import { GITIGNORE_PATH, planGitignoreBlocks } from "./ignore-lines.js";
+import { formatterFailure } from "./phase-managed-files.js";
 import { phaseLine, phaseNotes } from "./phase-lines.js";
 import { deriveProjectPhase } from "./project-phase.js";
 import { validateRecipe } from "./recipe.js";
@@ -350,7 +351,12 @@ async function pendingTransactionReport(config, commandName, rollbackFiles) {
   } else {
     files = "Save any edits to the files in rollbackFiles first, then run";
   }
+  const lineFiles =
+    rollbackFiles !== null && rollbackFiles.length > 0
+      ? "Save any edits to the files the rollback restores or removes first, then run"
+      : files;
   const remedy = `An artifact operation stopped before its rollback ran, so this ${commandName === "artifacts doctor" ? "doctor" : "read-only report"} does not read the artifact records, because the rollback may still change them. ${files}: ${command}. It rolls the transaction back and reports the artifact status.`;
+  const phaseLineMessage = `An artifact operation stopped before its rollback ran, so this ${commandName === "artifacts doctor" ? "doctor" : "read-only report"} does not read the artifact records, because the rollback may still change them. ${lineFiles}: ${command}. It rolls the transaction back and reports the artifact status.`;
   return {
     command: commandName,
     dryRun: false,
@@ -365,11 +371,9 @@ async function pendingTransactionReport(config, commandName, rollbackFiles) {
     phase: "pending-transaction",
     rollbackFiles,
     remedy,
-    // The text output lists the files under the line, so it does not name the JSON field.
-    phaseLine: {
-      level: "error",
-      message: remedy.replace("the files in rollbackFiles first", "the files listed below first"),
-    },
+    // The text output lists the files under this line, and the JSON carries rollbackFiles, so the
+    // line names the files by what the rollback does with them rather than by either.
+    phaseLine: { level: "error", message: phaseLineMessage },
     phaseNotes: [],
     formatterFailures: [],
     managedFilePlanProblem: null,
@@ -880,7 +884,9 @@ async function artifactStatus(
     } catch (error) {
       if (!(error instanceof CacheBlockFormatFailure)) throw error;
       recordedBlock = undefined;
-      cacheBlockProblem = `Calavera did not record the artifact cache block in ${GITIGNORE_PATH}, because the project's formatter could not format ${STATE_PATH} (${error.kind ?? "an error that is not a formatter failure"}), so this report resolved packages through a temporary cache and wrote nothing. This is not a finding about the project's phase or an artifact; the managed-file check above names the cause and its remedy.`;
+      // The formatter failure's own reason names its kind and remedy, so the line stands alone
+      // even when the managed-file check did not run the formatter.
+      cacheBlockProblem = `Calavera did not record the artifact cache block in ${GITIGNORE_PATH}, because the project's formatter could not format ${STATE_PATH}, so this report resolved packages through a temporary cache and wrote nothing. This is not a finding about the project's phase or an artifact. ${formatterFailure(STATE_PATH, error.formatterFailure, undefined).reason}`;
     }
     if (leftoverFailures.length > 0) {
       throw errorWithLeftovers(
@@ -1066,20 +1072,18 @@ async function artifactStatus(
 /**
  * The project's formatter could not format the state that records the artifact cache block, so
  * the block was not written. Nothing was written when this is thrown. It keeps the formatter
- * failure's kind, never its message, which can quote a setting from the person's `.editorconfig`.
+ * failure as its cause, whose kind words the report; the report never quotes the failure's
+ * message, which can quote a setting from the person's `.editorconfig`.
  */
 class CacheBlockFormatFailure extends Error {
-  /** @param {unknown} cause */
+  /** @param {FormatterFailure} cause */
   constructor(cause) {
     super(
       "The project's formatter could not format the state that records the artifact cache block.",
-      {
-        cause,
-      },
+      { cause },
     );
     this.name = "CacheBlockFormatFailure";
-    /** @type {string | null} */
-    this.kind = cause instanceof FormatterFailure ? cause.kind : null;
+    this.formatterFailure = cause;
   }
 }
 
@@ -1465,7 +1469,11 @@ async function commitArtifactCacheBlock(
   } catch (error) {
     // Nothing is written yet, so a report can name the failure instead of stopping on it. The
     // commands that change artifacts stop with the formatter's own error, as apply does (#838).
-    throw reportsFormatFailure ? new CacheBlockFormatFailure(error) : error;
+    // Only a formatter failure is reported; any other error still stops the report, so its
+    // cause stays diagnosable.
+    throw reportsFormatFailure && error instanceof FormatterFailure
+      ? new CacheBlockFormatFailure(error)
+      : error;
   }
   if (dryRun) return [];
   // #1193: the state, the journal, and the staging folder all lie in `.calavera`.

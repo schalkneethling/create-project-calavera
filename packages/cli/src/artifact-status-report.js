@@ -35,7 +35,7 @@ import { isPlainObject } from "./utils/guards.js";
  *
  * @typedef {{ level: "info" | "warn" | "error", message: string }} PhaseLine
  * @typedef {{ path: string | null, kind: string | null, reason: string }} FormatterFailureFinding
- * @typedef {{ command: string, artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, updateAllBlockedBy: string[], ok: boolean, phase: string, phaseLine: PhaseLine, phaseNotes: string[], formatterFailures: FormatterFailureFinding[], managedFilePlanProblem: string | null, cacheBlockProblem?: string | null, rollbackFiles?: string[] | null }} ArtifactStatusReport
+ * @typedef {{ command: string, artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, updateAllBlockedBy: string[], ok: boolean, phase: string, phaseLine: PhaseLine, phaseNotes: string[], formatterFailures: FormatterFailureFinding[], managedFilePlanProblem: string | null, cacheBlockProblem: string | null, rollbackFiles?: string[] | null }} ArtifactStatusReport
  * @typedef {{ level: "info" | "success" | "warn" | "error", message: string }} ReportLine
  * @typedef {{ id: string, version: string, tag: "latest" | "next" }} RemovedLockEntry
  */
@@ -221,7 +221,7 @@ export function formatPhaseReport(result) {
   if (result.managedFilePlanProblem !== null) {
     lines.push({ level: checkLevel, message: result.managedFilePlanProblem });
   }
-  if (result.cacheBlockProblem) {
+  if (result.cacheBlockProblem !== null) {
     lines.push({ level: checkLevel, message: result.cacheBlockProblem });
   }
   if (result.phase === "pending-transaction") {

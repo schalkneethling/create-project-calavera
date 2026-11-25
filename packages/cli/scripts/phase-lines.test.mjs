@@ -272,6 +272,7 @@ function report(fields) {
       phaseNotes: [],
       formatterFailures: [],
       managedFilePlanProblem: null,
+      cacheBlockProblem: null,
       ...fields,
     })
   );
@@ -377,4 +378,53 @@ test("a pending transaction prints no artifact lines, only its phase report", ()
     ),
     [],
   );
+});
+
+test("an installed selection without a lock entry keeps its state on a failed update check", () => {
+  const lines = formatArtifactStatus(
+    report({
+      offline: false,
+      updateAllCommand: null,
+      updateAllBlockedBy: [],
+      artifacts: [
+        {
+          id: "skill-a",
+          version: null,
+          tag: "latest",
+          installed: true,
+          managed: true,
+          locallyEdited: false,
+          selected: true,
+          installCommand: "install",
+          condition: { name: "pending", reason: "recorded but not locked" },
+          updateCheckFailure: {
+            code: "ETARGET",
+            reason: "no tag",
+            remedy: null,
+            npmDiagnostics: [],
+            unsetVariables: [],
+          },
+        },
+      ],
+    }),
+  );
+  assert.deepEqual(lines[0], {
+    level: "warn",
+    message: "skill-a  installed, no lock entry, update check failed (latest)",
+  });
+  assert.ok(lines.some(({ message }) => message === "  recorded but not locked"));
+});
+
+test("the phase report prints a cache block problem at each command's level", () => {
+  assert.deepEqual(formatPhaseReport(report({ cacheBlockProblem: "no block" })).at(-1), {
+    level: "error",
+    message: "no block",
+  });
+  assert.deepEqual(
+    formatPhaseReport(report({ command: "artifacts status", cacheBlockProblem: "no block" })).at(
+      -1,
+    ),
+    { level: "info", message: "no block" },
+  );
+  assert.equal(formatPhaseReport(report({})).length, 1);
 });
