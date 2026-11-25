@@ -26,3 +26,11 @@ export function quoteShellToken(token) {
     ? token
     : `'${token.replaceAll("'", `'\\''`)}'`;
 }
+
+/**
+ * @param {{ command: string, args: string[] }} launchCommand
+ * @returns {string}
+ */
+export function formatShellCommand(launchCommand) {
+  return [launchCommand.command, ...launchCommand.args].map(quoteShellToken).join(" ");
+}
