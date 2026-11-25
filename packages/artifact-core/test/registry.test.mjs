@@ -2,10 +2,9 @@ import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
 import { createHash } from "node:crypto";
 import { createServer } from "node:http";
-import { mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
-import test from "node:test";
+import test, { after, afterEach } from "node:test";
 import { fileURLToPath } from "node:url";
 import { inspect, promisify } from "node:util";
 
@@ -17,6 +16,10 @@ import {
   hashArtifactPayload,
   resolveArtifactPackage,
 } from "../src/registry.js";
+import { temporaryFolder } from "../../../scripts/temporary-folder.mjs";
+import { removeTemporaryDirectories, temporaryDirectory } from "./temporary-directory.mjs";
+
+afterEach(removeTemporaryDirectories);
 
 const projectGoalPackageRoot = fileURLToPath(
   new URL("../../artifacts/skill-project-goal/", import.meta.url),
@@ -62,7 +65,7 @@ async function servedTarballUrl(packed, t) {
 }
 
 test("verified extraction checks package identity, manifest compatibility, and payload hash", async (t) => {
-  const destination = await mkdtemp(join(tmpdir(), "calavera-registry-extract-"));
+  const destination = await temporaryDirectory("calavera-registry-extract-");
   const packed = await packFixture(destination);
   const resolved = await servedTarballUrl(packed, t);
   const result = await extractArtifactPackage(
@@ -105,7 +108,7 @@ test("verified extraction checks package identity, manifest compatibility, and p
 });
 
 test("verified extraction rejects a tarball that fails npm integrity", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-integrity-"));
+  const directory = await temporaryDirectory("calavera-registry-integrity-");
   const packed = await packFixture(directory);
   const resolved = await servedTarballUrl(packed, t);
 
@@ -135,7 +138,7 @@ test("prerelease CLIs accept compatible stable-line and prerelease artifacts", a
     ["skill-project-goal", projectGoalPackageRoot],
     ["skill-release-with-confidence", releasePackageRoot],
   ]) {
-    const directory = await mkdtemp(join(tmpdir(), `calavera-registry-${id}-`));
+    const directory = await temporaryDirectory(`calavera-registry-${id}-`);
     const packed = await packFixture(directory, packageRoot);
     const selectedArtifact = artifactForId(id);
     const resolved = await servedTarballUrl(packed, t);
@@ -160,7 +163,7 @@ test("prerelease CLIs accept compatible stable-line and prerelease artifacts", a
 });
 
 test("prerelease CLIs below an artifact minimum remain incompatible", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-prerelease-minimum-"));
+  const directory = await temporaryDirectory("calavera-registry-prerelease-minimum-");
   const packed = await packFixture(directory, releasePackageRoot);
   const resolved = await servedTarballUrl(packed, t);
   const selectedArtifact = artifactForId("skill-release-with-confidence");
@@ -187,7 +190,7 @@ test("prerelease CLIs below an artifact minimum remain incompatible", async (t) 
 });
 
 test("payload hashes include empty directories", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-payload-hash-"));
+  const directory = await temporaryDirectory("calavera-payload-hash-");
   await writeFile(join(directory, "payload.txt"), "payload\n");
   const initialHash = await hashArtifactPayload(directory);
 
@@ -258,7 +261,7 @@ async function startRegistry(
 
 /** @param {string} projectNpmrc @param {string} [userNpmrc] */
 async function npmConfigFixture(projectNpmrc, userNpmrc = "") {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-npmrc-"));
+  const directory = await temporaryDirectory("calavera-registry-npmrc-");
   const project = join(directory, "project");
   await mkdir(project);
   await writeFile(join(project, ".npmrc"), projectNpmrc);
@@ -272,7 +275,7 @@ async function npmConfigFixture(projectNpmrc, userNpmrc = "") {
 }
 
 test("resolution and extraction use the configured scoped registry", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-configured-"));
+  const directory = await temporaryDirectory("calavera-registry-configured-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed);
   try {
@@ -309,7 +312,7 @@ test("resolution and extraction use the configured scoped registry", async () =>
 });
 
 test("a registry.npmjs.org tarball downloads from the artifact scope's registry, and the default registry receives no request", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-scope-download-"));
+  const directory = await temporaryDirectory("calavera-registry-scope-download-");
   const packed = await packFixture(directory);
   // The default registry requires authentication; the scope registry serves anonymously and names
   // a registry.npmjs.org tarball, as a mirror of the public registry does.
@@ -350,7 +353,7 @@ test("a registry.npmjs.org tarball downloads from the artifact scope's registry,
 });
 
 test("without a scope registry, a registry.npmjs.org tarball downloads from the default registry", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-default-download-"));
+  const directory = await temporaryDirectory("calavera-registry-default-download-");
   const packed = await packFixture(directory);
   const mirror = await startRegistry(packed, {
     tarballUrl: () => "https://registry.npmjs.org/-/artifact.tgz",
@@ -403,7 +406,7 @@ test("extractArtifactPackage passes the artifact scope's registry to pacote.extr
 });
 
 test("resolution reports the package's published repository metadata, or null without it", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-repository-"));
+  const directory = await temporaryDirectory("calavera-registry-repository-");
   const packed = await packFixture(directory);
   const repository = {
     type: "git",
@@ -434,7 +437,7 @@ test("resolution reports the package's published repository metadata, or null wi
 });
 
 test("a user .npmrc registry applies and the environment takes precedence over it", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-precedence-"));
+  const directory = await temporaryDirectory("calavera-registry-precedence-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed);
   try {
@@ -469,7 +472,7 @@ test("a user .npmrc registry applies and the environment takes precedence over i
 });
 
 test("npm_config_registry from the environment overrides .npmrc files", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-env-"));
+  const directory = await temporaryDirectory("calavera-registry-env-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed);
   try {
@@ -488,7 +491,7 @@ test("npm_config_registry from the environment overrides .npmrc files", async ()
 });
 
 test("a 401 behind a loader diagnostic keeps the message, the notes, and the origin, setting, and layer", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-unset-failure-"));
+  const directory = await temporaryDirectory("calavera-registry-unset-failure-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed, { status: 401 });
   try {
@@ -529,7 +532,7 @@ test("a 401 behind a loader diagnostic keeps the message, the notes, and the ori
 });
 
 test("a dist-tag the package does not have fails with ETARGET and the tags it does have", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-missing-tag-"));
+  const directory = await temporaryDirectory("calavera-registry-missing-tag-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed);
   try {
@@ -557,7 +560,7 @@ test("a dist-tag the package does not have fails with ETARGET and the tags it do
 test("a fetch failure behind npm configuration notes keeps its kind", async () => {
   // #993: an ignored project proxy is an npm note, so withNpmDiagnostics wraps the failure;
   // minipass-fetch's `type` must survive the wrapping.
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-invalid-json-"));
+  const directory = await temporaryDirectory("calavera-registry-invalid-json-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed, { packument: "{ not json" });
   try {
@@ -585,7 +588,7 @@ test("a fetch failure behind npm configuration notes keeps its kind", async () =
 
 test("a null package document fails with a registry code and keeps the original as cause", async () => {
   // npm-pick-manifest reads `dist-tags` on the parsed body and throws a TypeError with no code.
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-null-packument-"));
+  const directory = await temporaryDirectory("calavera-registry-null-packument-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed, { packument: "null" });
   try {
@@ -615,7 +618,7 @@ test("a null package document fails with a registry code and keeps the original 
 });
 
 test("a missing dist-tag behind npm configuration notes keeps the tags on its cause", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-missing-tag-notes-"));
+  const directory = await temporaryDirectory("calavera-registry-missing-tag-notes-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed);
   try {
@@ -645,7 +648,7 @@ test("a missing dist-tag behind npm configuration notes keeps the tags on its ca
 });
 
 test("a scope registry with a username and password is used without them, so no request carries an authorization header", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-userinfo-"));
+  const directory = await temporaryDirectory("calavera-registry-userinfo-");
   const packed = await packFixture(directory);
   // The package document names a registry.npmjs.org tarball, so pacote rewrites it onto the
   // scope registry: the rewritten URL must not carry the user information either.
@@ -676,7 +679,7 @@ test("a scope registry with a username and password is used without them, so no 
 });
 
 test("integrity verification is unchanged when the registry is configured", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-configured-integrity-"));
+  const directory = await temporaryDirectory("calavera-registry-configured-integrity-");
   const packed = await packFixture(directory);
   const registry = await startRegistry({
     ...packed,
@@ -707,7 +710,7 @@ test("integrity verification is unchanged when the registry is configured", asyn
 });
 
 test("a 401 or 403 from the registry names its origin, says Calavera sends no credentials, and drops the registry's text", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-auth-failure-"));
+  const directory = await temporaryDirectory("calavera-registry-auth-failure-");
   const packed = await packFixture(directory);
   for (const status of [401, 403]) {
     const registry = await startRegistry(packed, { status });
@@ -758,7 +761,7 @@ test("a 401 or 403 from the registry names its origin, says Calavera sends no cr
 });
 
 test("a 403 from a tarball host names the host and the registry setting that named the download", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-tarball-403-"));
+  const directory = await temporaryDirectory("calavera-registry-tarball-403-");
   const packed = await packFixture(directory);
   const tarballHost = await startRegistry(packed, { status: 403 });
   const registry = await startRegistry(packed);
@@ -798,7 +801,7 @@ test("a 403 from a tarball host names the host and the registry setting that nam
 });
 
 test("a lookup that a registry redirects to another host that answers 401 names that host and the registry", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-redirect-401-"));
+  const directory = await temporaryDirectory("calavera-registry-redirect-401-");
   const packed = await packFixture(directory);
   const target = await startRegistry(packed, { status: 401 });
   const registry = await startRegistry(packed, { redirectTo: `http://${target.host}` });
@@ -897,7 +900,7 @@ test("an invalid registry in .npmrc is reported without echoing credentials", as
 });
 
 test("a project .npmrc cannot select an http registry, so no request is made", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-project-http-"));
+  const directory = await temporaryDirectory("calavera-registry-project-http-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed);
   try {
@@ -979,7 +982,7 @@ test("a download failure from another host behind the default registry, without 
 });
 
 test("a user .npmrc registry with a variable stops resolution before any request", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-variable-"));
+  const directory = await temporaryDirectory("calavera-registry-variable-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed);
   try {
@@ -1009,11 +1012,15 @@ test("a user .npmrc registry with a variable stops resolution before any request
 /** @type {ReturnType<typeof packFixture> | undefined} */
 let tarballUrlPack;
 
+/**
+ * The folder for the packed fixture that every #1194 test shares. It is created at the top level,
+ * so node:test's `after` removes it after the file's last test rather than after the first test.
+ */
+const tarballUrlFolder = await temporaryFolder({ after }, "calavera-registry-tarball-url-");
+
 /** One packed fixture for every #1194 test, which reads it without changing it. */
 function packedOnce() {
-  tarballUrlPack ??= mkdtemp(join(tmpdir(), "calavera-registry-tarball-url-")).then((directory) =>
-    packFixture(directory),
-  );
+  tarballUrlPack ??= packFixture(tarballUrlFolder);
   return tarballUrlPack;
 }
 
@@ -1245,7 +1252,7 @@ test(
   "aborting the signal ends a lookup the registry never answers (#1138)",
   { timeout: 30_000 },
   async () => {
-    const directory = await mkdtemp(join(tmpdir(), "calavera-registry-abort-"));
+    const directory = await temporaryDirectory("calavera-registry-abort-");
     const controller = new AbortController();
     /** @type {string[]} */
     const requests = [];
@@ -1275,13 +1282,12 @@ test(
     } finally {
       server.closeAllConnections();
       await new Promise((done) => server.close(() => done(undefined)));
-      await rm(directory, { recursive: true, force: true });
     }
   },
 );
 
 test("beforeLookup receives the registry before any request, and an error it throws sends none (#1138)", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-before-lookup-"));
+  const directory = await temporaryDirectory("calavera-registry-before-lookup-");
   /** @type {string[]} */
   const requests = [];
   const server = createServer((request, response) => {
@@ -1318,7 +1324,6 @@ test("beforeLookup receives the registry before any request, and an error it thr
   } finally {
     server.closeAllConnections();
     await new Promise((done) => server.close(() => done(undefined)));
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -1326,7 +1331,7 @@ test("a proxy variable that .env.yarn sets from a variable is bypassed for the l
   // @npmcli/agent reads the proxy variables from process.env when it loads, so the lookup runs in
   // a child process whose HTTP_PROXY names a closed port, as a Yarn 4 .env.yarn with
   // `HTTP_PROXY=http://${PROXY_HOST}:9` would set it. Without the bypass, both requests fail.
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-env-yarn-proxy-"));
+  const directory = await temporaryDirectory("calavera-registry-env-yarn-proxy-");
   const packed = await packFixture(directory);
   const registry = await startRegistry(packed);
   try {
@@ -1372,7 +1377,6 @@ try {
     assert.equal(registry.requests.length, 2);
   } finally {
     await registry.close();
-    await rm(directory, { recursive: true, force: true });
   }
 });
 
@@ -1380,7 +1384,7 @@ test("a redirect to another host also bypasses a proxy variable that .env.yarn s
   // The registry on 127.0.0.1 redirects to a second registry on localhost, which serves the package
   // document and the tarball. HTTP_PROXY names a closed port, so a request that falls back to it
   // fails.
-  const directory = await mkdtemp(join(tmpdir(), "calavera-registry-env-yarn-redirect-"));
+  const directory = await temporaryDirectory("calavera-registry-env-yarn-redirect-");
   const packed = await packFixture(directory);
   const target = await startRegistry(packed, {
     listenHost: "localhost",
@@ -1431,6 +1435,5 @@ try {
   } finally {
     await registry.close();
     await target.close();
-    await rm(directory, { recursive: true, force: true });
   }
 });

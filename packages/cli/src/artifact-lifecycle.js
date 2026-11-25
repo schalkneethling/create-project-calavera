@@ -1017,7 +1017,10 @@ async function artifactStatus(
 async function leftoverLockEntryIndexes(config) {
   let artifacts;
   try {
-    ({ artifacts } = await deriveProjectPhase({ config }));
+    // Status reads only the artifact conditions here, so it runs no project code: the read-only
+    // status tool must not (ADR-0020, owner decision 24), and status loads the formatter only to
+    // record the cache block.
+    ({ artifacts } = await deriveProjectPhase({ config, runsProjectCode: false }));
   } catch {
     return new Set();
   }

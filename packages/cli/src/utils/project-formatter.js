@@ -11,6 +11,7 @@ import {
   editorConfigRemovalChange,
   renderEditorConfig,
 } from "./editorconfig.js";
+import { FormatterFailure } from "./formatter-failure.js";
 
 // A file Calavera writes into a Vite+ project must already be in the shape `vp check` expects, or
 // the project fails its own check right after apply (#669). Formatting it after the write would
@@ -75,7 +76,8 @@ export async function loadProjectFormatter(
     manifestPath = require.resolve("vite-plus/package.json");
   } catch (error) {
     const install = installDirectory ? `vp install in ${installDirectory}` : "vp install";
-    throw new Error(
+    throw new FormatterFailure(
+      "not-installed",
       `${projectDirectory} uses Vite+, but Calavera cannot find its vite-plus package, so it cannot format the files it writes the way vp check expects. Run ${install}, then run Calavera again.`,
       { cause: error },
     );
@@ -85,7 +87,8 @@ export async function loadProjectFormatter(
   const name = `vite-plus ${manifest.version}`;
   const bin = typeof manifest.bin === "string" ? manifest.bin : manifest.bin?.vp;
   if (typeof bin !== "string") {
-    throw new Error(
+    throw new FormatterFailure(
+      "no-vp-command",
       `${name} in ${dirname(manifestPath)} has no vp command, so Calavera cannot format the files it writes the way vp check expects. Run vp install, then run Calavera again.`,
     );
   }
@@ -114,12 +117,14 @@ export async function loadProjectFormatter(
       // #1157: neither error quotes vp fmt's output or keeps the result as its cause, because
       // vp fmt quotes the text it cannot parse, and vite.config.ts can print anything.
       if (result.timedOut) {
-        throw new Error(
+        throw new FormatterFailure(
+          "timeout",
           `${description} did not finish formatting ${path} within ${timeout / 1000} seconds, so Calavera stopped it. Check that vite.config.ts does not wait on anything when vp fmt loads it, then run Calavera again.`,
         );
       }
       if (result.exitCode !== 0 || result.failed) {
-        throw new Error(
+        throw new FormatterFailure(
+          "failed",
           `${description} could not format ${path}: ${howItEnded(result)}. Calavera does not show vp fmt's output, because it can quote the file. Check that vite.config.ts loads without errors, which vp fmt --check in the project reports, then run Calavera again.`,
         );
       }
@@ -181,7 +186,8 @@ async function assertEditorConfigKeepsSettings(projectDirectory, path, editorCon
     change.sources.length > 0
       ? `from ${change.sources.join(" and ")}`
       : "because no .editorconfig sets it";
-  throw new Error(
+  throw new FormatterFailure(
+    "editorconfig-change",
     `Calavera's .editorconfig would change how vp fmt formats ${path}: ${change.property} is ${String(change.current)} now (${read}) and ${String(change.planned)} after apply. Calavera formats the files it writes before it writes any of them, so it cannot use settings that do not exist yet. Save this as .editorconfig in the project root, or leave editorconfig out of the recipe, then run Calavera again:\n\n${renderEditorConfig(editorConfig)}`,
   );
 }
@@ -201,7 +207,8 @@ async function assertEditorConfigRemovalKeepsSettings(projectDirectory, path) {
     change.sources.length > 0
       ? `from ${change.sources.join(" and ")}`
       : "because no .editorconfig sets it";
-  throw new Error(
+  throw new FormatterFailure(
+    "editorconfig-removal",
     `Removing Calavera's .editorconfig would change how vp fmt formats ${path}: ${change.property} is ${String(change.current)} now and ${String(change.planned)} after clean (${read}). Calavera formats the files it writes before it changes anything, so it cannot use settings that apply only after clean. Delete .editorconfig yourself, or keep editorconfig in the recipe, then run clean again.`,
   );
 }

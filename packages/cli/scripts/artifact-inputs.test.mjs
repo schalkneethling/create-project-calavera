@@ -1,8 +1,5 @@
 import assert from "node:assert/strict";
 import { execFile } from "node:child_process";
-import { mkdtemp, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
@@ -12,6 +9,7 @@ import {
   resolveArtifactInputs,
 } from "../src/ai/artifact-inputs.js";
 import { isolateGitConfiguration } from "./git-isolation.mjs";
+import { temporaryFolder } from "../../../scripts/temporary-folder.mjs";
 
 const execFileAsync = promisify(execFile);
 // #846: the default depends on init.defaultBranch, so no machine configuration may reach Git.
@@ -46,8 +44,7 @@ async function git(cwd, args) {
 
 /** @param {string} branch */
 async function repository(t, branch) {
-  const cwd = await mkdtemp(join(tmpdir(), "calavera-inputs-"));
-  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const cwd = await temporaryFolder(t, "calavera-inputs-");
   await git(cwd, ["init", "--quiet", `--initial-branch=${branch}`]);
   return cwd;
 }
@@ -192,8 +189,7 @@ test("Given a recorded value Git refuses, when inputs resolve, then apply stops 
 });
 
 test("Given a directory outside Git, when inputs resolve without a prompt, then the stop keeps Git's own reason", async (t) => {
-  const cwd = await mkdtemp(join(tmpdir(), "calavera-inputs-no-git-"));
-  t.after(() => rm(cwd, { recursive: true, force: true }));
+  const cwd = await temporaryFolder(t, "calavera-inputs-no-git-");
 
   await assert.rejects(
     resolveArtifactInputs(recipe({ id: "skill-protected-branch-guard" }), {
