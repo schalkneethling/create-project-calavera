@@ -558,6 +558,7 @@ test("a deleted recipe after apply is incomplete, with every artifact still clas
       lockEntries: 1,
       baseSkillRecorded: false,
       baseSkillPresent: false,
+      packagesPresent: true,
     });
     assert.deepEqual(conditionOf(result, ARTIFACT), {
       selected: null,
@@ -863,6 +864,7 @@ test("a bootstrapped project with lock entries reads incomplete once its recipe 
       lockEntries: 1,
       baseSkillRecorded: true,
       baseSkillPresent: true,
+      packagesPresent: true,
     });
   });
 });

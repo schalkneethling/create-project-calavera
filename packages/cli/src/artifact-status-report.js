@@ -20,6 +20,7 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {string | null} updateCommand
  * @property {string | null} installCommand The `artifacts install` command, for a selection without a lock entry, which it installs, and for a lock entry that the phase function classifies as not selected and `missing`, which it drops when it can also install the recipe's selections (#1111). Null otherwise.
  * @property {UpdateCheckFailure | null} updateCheckFailure Why `--check-updates` could not look up this artifact's channel, or null when the lookup succeeded or did not run (#993).
+ * @property {{ name: string, reason: string }} condition The artifact's condition and its reason, from the phase function (ADR-0020, Decision 3). It decides the artifact's level in both doctors.
  * @property {boolean | null} selected False for a lock entry the recipe no longer selects, which the next `artifacts install`, or `artifacts update` while the recipe selects any artifact, removes (#992). Null when there is no recipe to compare the lock with.
  *
  * @typedef {object} UpdateCheckFailure
@@ -32,7 +33,9 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {string[]} npmDiagnostics The npm configuration entries Calavera ignored, which may explain the failure. They never contain a value.
  * @property {string[]} unsetVariables The environment variables those entries name that are not set.
  *
- * @typedef {{ artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, updateAllBlockedBy: string[], ok: boolean }} ArtifactStatusReport
+ * @typedef {{ level: "info" | "warn" | "error", message: string }} PhaseLine
+ * @typedef {{ path: string | null, kind: string | null, reason: string }} FormatterFailureFinding
+ * @typedef {{ command: string, artifacts: ArtifactStatusEntry[], offline: boolean, updateAllCommand: string | null, checkUpdatesCommand: string | null, updateAllBlockedBy: string[], ok: boolean, phase: string, phaseLine: PhaseLine, phaseNotes: string[], formatterFailures: FormatterFailureFinding[], managedFilePlanProblem: string | null, cacheBlockProblem: string | null, rollbackFiles?: string[] | null }} ArtifactStatusReport
  * @typedef {{ level: "info" | "success" | "warn" | "error", message: string }} ReportLine
  * @typedef {{ id: string, version: string, tag: "latest" | "next" }} RemovedLockEntry
  */
@@ -140,44 +143,93 @@ export function artifactReleaseNotesUrl(repository, version) {
 /**
  * The words after an artifact's version that name a problem `artifacts doctor` checks for.
  *
- * @param {Pick<ArtifactStatusEntry, "installed" | "managed" | "locallyEdited">} artifact
+ * @param {Pick<ArtifactStatusEntry, "installed" | "managed" | "locallyEdited" | "condition">} artifact
  */
 function healthNotes(artifact) {
   return [
+    ...(artifact.condition.name === "unreadable" ? ["files cannot be read"] : []),
     ...(artifact.installed ? [] : ["files missing"]),
     ...(artifact.managed ? [] : ["not managed by Calavera"]),
     ...(artifact.locallyEdited ? ["locally edited"] : []),
   ];
 }
 
+/** The conditions that are a problem for a lock entry or a recorded selection. */
+const PROBLEMS = new Set(["missing", "unreadable", "edited", "unrecorded"]);
+
 /**
- * Whether an artifact is a lock entry the recipe no longer selects, whose files were deleted
- * (#1111). It is a leftover record, not a broken project (owner decision of 2026-11-21 on #994),
- * so both commands print it as a warning with the command that drops the entry. The phase
- * function decides it (ADR-0020, Decisions 4 and 9): status gives a lock entry an install command
- * only when the phase function classifies the entry as not selected and `missing`, so this reads
- * that decision rather than making its own. Both callers handle a selection without a lock entry
- * (`version` is null), whose install command installs it, before they ask.
+ * Whether an artifact is a lock entry the recipe no longer selects whose files were deleted,
+ * edited, or are not recorded, or cannot be read. It is a leftover record, not a broken project,
+ * so both commands print it as a warning (owner decision of 2026-11-21 on #994, #1111, and owner
+ * decision 6 of ADR-0020). Only a leftover whose files were deleted carries the install command
+ * that drops it (#1111).
  *
- * @param {Pick<ArtifactStatusEntry, "installCommand">} artifact
+ * @param {Pick<ArtifactStatusEntry, "selected" | "condition">} artifact
  */
-function isLeftoverLockEntry(artifact) {
-  return artifact.installCommand !== null;
+function isDeselectedProblem(artifact) {
+  return artifact.selected === false && PROBLEMS.has(artifact.condition.name);
 }
 
 /**
- * Whether `artifacts doctor` finds no problem with an artifact. The status result's `ok`, which
- * sets doctor's exit status, and doctor's verdict line both use it, so the two cannot disagree
- * (#994). A selection without a lock entry (`version` is null) is the normal state between init
- * and apply, so it is not a problem; doctor names it in a note instead (owner decision on #994).
- * A leftover lock entry is not a problem either; both commands print it as a warning (#1111).
+ * Whether a selection without a lock entry is installed: its files are present and match what the
+ * state records, so only its lock entry is missing (ADR-0020, Decision 3).
  *
- * @param {Pick<ArtifactStatusEntry, "version" | "installed" | "managed" | "locallyEdited" | "installCommand">} artifact
+ * @param {Pick<ArtifactStatusEntry, "version" | "installed" | "managed" | "condition">} artifact
+ */
+function isInstalledWithoutLockEntry(artifact) {
+  return (
+    artifact.version === null &&
+    artifact.condition.name === "pending" &&
+    artifact.installed &&
+    artifact.managed
+  );
+}
+
+/**
+ * Whether `artifacts doctor` finds no problem with an artifact, read from its condition (ADR-0020,
+ * Decision 4). The status result's `ok`, which sets doctor's exit status, and doctor's verdict line
+ * both use it, so the two cannot disagree (#994). A selected artifact fails when its files are
+ * missing, cannot be read, are edited, or are not recorded; one that is pending, such as a
+ * selection that is not installed yet, passes with a note. A lock entry the recipe no longer
+ * selects is a warning at most, and without a recipe an artifact has no level of its own, because
+ * the phase line's error decides the verdict.
+ *
+ * @param {Pick<ArtifactStatusEntry, "selected" | "condition">} artifact
  */
 export function isArtifactHealthy(artifact) {
-  return (
-    artifact.version === null || isLeftoverLockEntry(artifact) || healthNotes(artifact).length === 0
-  );
+  return artifact.selected !== true || !PROBLEMS.has(artifact.condition.name);
+}
+
+/**
+ * The lines `artifacts status` and `artifacts doctor` print first (ADR-0020, Decision 4): the phase
+ * line, the notes about the `ejected` marker, and the managed-file check's formatter failures and
+ * plan problem, which artifacts doctor reports as errors and status as notes. During a pending
+ * transaction, each file the rollback would replace or remove follows the phase line.
+ *
+ * @param {Pick<ArtifactStatusReport, "command" | "phase" | "phaseLine" | "phaseNotes" | "formatterFailures" | "managedFilePlanProblem" | "cacheBlockProblem" | "rollbackFiles">} result
+ * @returns {ReportLine[]}
+ */
+export function formatPhaseReport(result) {
+  /** @type {ReportLine[]} */
+  const lines = [{ level: result.phaseLine.level, message: result.phaseLine.message }];
+  for (const message of result.phaseNotes) lines.push({ level: "info", message });
+  /** @type {ReportLine["level"]} */
+  const checkLevel = result.command === "artifacts doctor" ? "error" : "info";
+  for (const { reason } of result.formatterFailures) {
+    lines.push({ level: checkLevel, message: reason });
+  }
+  if (result.managedFilePlanProblem !== null) {
+    lines.push({ level: checkLevel, message: result.managedFilePlanProblem });
+  }
+  if (result.cacheBlockProblem !== null) {
+    lines.push({ level: checkLevel, message: result.cacheBlockProblem });
+  }
+  if (result.phase === "pending-transaction") {
+    for (const path of result.rollbackFiles ?? []) {
+      lines.push({ level: "info", message: `  The rollback restores or removes ${path}.` });
+    }
+  }
+  return lines;
 }
 
 /**
@@ -192,6 +244,9 @@ export function formatArtifactStatus(result) {
   const lines = [];
   /** @param {string} message */
   const info = (message) => lines.push({ level: "info", message });
+
+  // A pending transaction lists no artifacts; its phase report says what to do instead.
+  if (result.phase === "pending-transaction") return lines;
 
   if (result.artifacts.length === 0) {
     info("The recipe selects no artifacts, and the artifact lock holds none.");
@@ -208,10 +263,11 @@ export function formatArtifactStatus(result) {
    * @param {ArtifactStatusEntry} artifact
    */
   const notSelectedNote = (artifact) => {
-    if (isLeftoverLockEntry(artifact)) {
+    if (artifact.installCommand !== null) {
       lines.push({ level: "warn", message: `${LEFTOVER} ${artifact.installCommand}` });
     } else if (artifact.selected === false) {
-      info(notSelected);
+      // A deselected entry with a problem is a warning, so its note follows it to stderr.
+      lines.push({ level: isDeselectedProblem(artifact) ? "warn" : "info", message: notSelected });
     }
   };
   /** @param {UpdateCheckFailure} failure */
@@ -234,25 +290,42 @@ export function formatArtifactStatus(result) {
     // #1138: a lookup skipped after its registry missed an earlier lookup's deadline never ran.
     const outcome =
       failure?.code === "ELOOKUPSKIPPED" ? "update not checked" : "update check failed";
+    if (artifact.version === null && PROBLEMS.has(artifact.condition.name)) {
+      // A selection without a lock entry whose recorded files were deleted, edited, or cannot be
+      // read fails artifacts doctor (ADR-0020, Decision 3), so its line names the change and its
+      // reason, not an install that would stop on it.
+      info(`${artifact.id}  no lock entry (${artifact.tag}), ${healthNotes(artifact).join(", ")}`);
+      info(`  ${artifact.condition.reason}`);
+      continue;
+    }
     if (artifact.version === null) {
+      // ADR-0020, Decision 3: a selection whose files are present and match the state is pending
+      // only for its lock entry, so its line does not call an installed artifact missing.
+      const present = isInstalledWithoutLockEntry(artifact);
+      const state = present ? "installed, no lock entry" : "not installed";
       if (failure) {
         lines.push({
           level: "warn",
-          message: `${artifact.id}  not installed, ${outcome} (${artifact.tag})`,
+          message: `${artifact.id}  ${state}, ${outcome} (${artifact.tag})`,
         });
         failureLines(failure);
       } else {
         const latest = result.offline ? "" : `, latest ${artifact.latestVersion}`;
-        info(`${artifact.id}  not installed${latest} (${artifact.tag})`);
+        info(`${artifact.id}  ${state}${latest} (${artifact.tag})`);
       }
-      info(`  Install: ${artifact.installCommand}`);
+      if (present) {
+        info(`  ${artifact.condition.reason}`);
+        info(`  Record it in the lock: ${artifact.installCommand}`);
+      } else {
+        info(`  Install: ${artifact.installCommand}`);
+      }
       continue;
     }
 
     const notes = healthNotes(artifact);
     const health = notes.length > 0 ? `, ${notes.join(", ")}` : "";
     /** @type {ReportLine["level"]} */
-    const level = isLeftoverLockEntry(artifact) ? "warn" : "info";
+    const level = isDeselectedProblem(artifact) ? "warn" : "info";
     if (failure) {
       lines.push({
         level: "warn",
@@ -332,16 +405,21 @@ export function formatArtifactStatus(result) {
  * The lines ordinary output prints last for `artifacts doctor` (#994): a note that names the
  * selections that are not installed yet, as `doctor` warns about a missing managed AI artifact,
  * and then the overall verdict. The verdict follows `ok`, which also sets the exit status, and
- * names each artifact with a problem, so a person or an agent can tell a healthy project from a
- * broken one without reading every line.
+ * names each artifact with a problem and each other check that failed, so a person or an agent
+ * can tell a healthy project from a broken one without reading every line.
  *
- * @param {Pick<ArtifactStatusReport, "ok" | "artifacts">} result
+ * @param {Pick<ArtifactStatusReport, "ok" | "artifacts" | "phase" | "phaseLine" | "formatterFailures" | "managedFilePlanProblem" | "cacheBlockProblem">} result
  * @returns {ReportLine[]}
  */
 export function artifactDoctorVerdict(result) {
   /** @type {ReportLine[]} */
   const lines = [];
-  const notInstalled = result.artifacts.filter(({ version }) => version === null);
+  const notInstalled = result.artifacts.filter(
+    (artifact) =>
+      artifact.version === null &&
+      artifact.condition.name === "pending" &&
+      !isInstalledWithoutLockEntry(artifact),
+  );
   const [one] = notInstalled;
   if (one) {
     const ids = notInstalled.map(({ id }) => id).join(", ");
@@ -367,13 +445,33 @@ export function artifactDoctorVerdict(result) {
     lines.push({ level: "success", message: "Calavera artifacts doctor found no problems." });
     return lines;
   }
+  // ADR-0020, Decision 5: the verdict names each check that failed, so a person who sees
+  // artifacts doctor and doctor exit differently can tell which check caused it.
   const failing = result.artifacts
     .filter((artifact) => !isArtifactHealthy(artifact))
     .map(({ id }) => id);
-  const noun = failing.length === 1 ? "artifact" : "artifacts";
+  const checks = [
+    ...(result.phaseLine.level === "error" ? [`the project phase, ${result.phase}`] : []),
+    ...(result.formatterFailures.length > 0
+      ? ["the managed-file check, whose formatter failed"]
+      : []),
+    ...(result.managedFilePlanProblem !== null
+      ? ["the managed-file check, which could not plan the managed files"]
+      : []),
+    ...(result.cacheBlockProblem
+      ? [
+          "the artifact cache block, which it did not record, and which is not a finding about the phase or an artifact",
+        ]
+      : []),
+    ...(failing.length > 0
+      ? [
+          `${failing.length} ${failing.length === 1 ? "artifact" : "artifacts"}: ${failing.join(", ")}`,
+        ]
+      : []),
+  ];
   lines.push({
     level: "error",
-    message: `Calavera artifacts doctor found problems with ${failing.length} ${noun}: ${failing.join(", ")}.`,
+    message: `Calavera artifacts doctor found problems with ${new Intl.ListFormat("en", { type: "conjunction" }).format(checks)}.`,
   });
   return lines;
 }

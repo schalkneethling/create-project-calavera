@@ -958,10 +958,16 @@ test("doctor's verdict names the artifacts whose update check failed", async () 
       assert.ok(failed);
       assert.deepEqual(
         artifactDoctorVerdict({
+          ...result,
           ok: false,
           artifacts: [
             { ...failed, id: "skill-a" },
-            { ...failed, id: "skill-b", installed: false },
+            {
+              ...failed,
+              id: "skill-b",
+              installed: false,
+              condition: { name: "missing", reason: "" },
+            },
           ],
         }),
         [
@@ -1379,12 +1385,14 @@ test("release notes normalize the directory and anchor the version heading", () 
  * @returns {import("../src/artifact-status-report.js").ArtifactStatusEntry}
  */
 function entry(overrides) {
-  return {
+  // A selection without a lock entry is not installed unless the test says its files are present.
+  const unlocked = overrides.version === null;
+  const merged = {
     id: "skill-project-goal",
     version: "0.2.1",
     tag: "latest",
-    installed: true,
-    managed: true,
+    installed: !unlocked,
+    managed: !unlocked,
     locallyEdited: false,
     latestVersion: null,
     updateAvailable: false,
@@ -1394,6 +1402,19 @@ function entry(overrides) {
     selected: true,
     ...overrides,
   };
+  // The condition the phase function gives these fields (ADR-0020, Decision 3), unless the test
+  // names one.
+  const name =
+    merged.version === null
+      ? "pending"
+      : !merged.installed
+        ? "missing"
+        : merged.locallyEdited
+          ? "edited"
+          : !merged.managed
+            ? "unrecorded"
+            : "current";
+  return { condition: { name, reason: "" }, ...merged };
 }
 
 test("status output names missing, unmanaged, and edited outputs, and an empty status", () => {

@@ -408,7 +408,7 @@ test("without running project code, a project without Vite+ is classified in ful
   });
 });
 
-test("artifacts status, artifacts doctor, and the read-only status tool run no project code to find leftover lock entries", async () => {
+test("the read-only status tool runs no project code, and the artifact commands load the formatter as apply does", async () => {
   await inProject(async (directory) => {
     await applied(["knip"], [ARTIFACT]);
     await declareVitePlus();
@@ -421,20 +421,15 @@ test("artifacts status, artifacts doctor, and the read-only status tool run no p
     );
     const knip = await readJsonFile(KNIP);
     await writeJsonFile(KNIP, { ...knip, entry: ["src/main.ts"] });
+    // ADR-0020, owner decision 24: the read-only tool never runs the project's formatter.
     await readArtifactStatus({ config: CONFIG });
-    for (const artifactAction of ["status", "doctor"]) {
-      await runArtifactCommand(
-        { config: CONFIG, dryRun: false, artifactAction },
-        {
-          ...registry(),
-          loadFormatter: async () => assert.fail(`${artifactAction} loads no formatter`),
-        },
-      );
-    }
     await assert.rejects(access(ran), { code: "ENOENT" });
-    // The same stand-in runs when the formatter loads, so the check above can fail.
-    await derive();
-    await access(ran);
+    // ADR-0020, Decision 3: artifacts status and artifacts doctor load it whenever apply would.
+    for (const artifactAction of ["status", "doctor"]) {
+      await rm(ran, { force: true });
+      await runArtifactCommand({ config: CONFIG, dryRun: false, artifactAction }, registry());
+      await access(ran);
+    }
   });
 });
 
@@ -646,10 +641,14 @@ test("a wiring finding about a selected artifact drifts the project; about a des
       result.wiringFindings.map(({ artifact, selected, level }) => [artifact, selected, level]),
       [[ARTIFACT, true, "warning"]],
     );
-    assert.match(
-      result.wiringFindings[0]?.message ?? "",
-      /block that Calavera recorded is missing/,
-    );
+    assert.deepEqual(result.wiringFindings[0], {
+      artifact: ARTIFACT,
+      selected: true,
+      level: "warning",
+      kind: "block-missing",
+      path: ".vite-hooks/pre-commit",
+      reason: `.vite-hooks/pre-commit: the ${ARTIFACT} block that apply recorded is missing, so the next apply writes it again.`,
+    });
 
     await writeJsonFile(CONFIG, recipeWith([]));
     result = await derive();
@@ -658,6 +657,44 @@ test("a wiring finding about a selected artifact drifts the project; about a des
       result.wiringFindings.map(({ artifact, selected }) => [artifact, selected]),
       [[ARTIFACT, false]],
     );
+  });
+});
+
+test("a wiring finding's reason never quotes a changed marker line or a recorded line", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    const recorded = "node .agents/skills/project-goal/check.mjs --secret-recorded-text";
+    const state = await readJsonFile(STATE);
+    state.aiWiring = [{ artifact: ARTIFACT, viteHooks: { "pre-commit": recorded } }];
+    await writeJsonFile(STATE, state);
+    await mkdir(".vite-hooks");
+    // A changed marker line, which findBlock's own reason quotes.
+    await writeFile(
+      ".vite-hooks/pre-commit",
+      `  # calavera:${ARTIFACT}:start person-text\n${recorded}\n# calavera:${ARTIFACT}:end\n`,
+    );
+    let [finding] = (await derive()).wiringFindings;
+    assert.equal(finding?.kind, "marker-problem");
+    assert.equal(
+      finding?.reason,
+      `.vite-hooks/pre-commit: a marker of the ${ARTIFACT} block was changed or is unpaired, so apply stops on it. Restore the markers, or remove the block with both markers, then run apply.`,
+    );
+
+    // An edited block, whose doctor remedy quotes the recorded line.
+    await writeFile(
+      ".vite-hooks/pre-commit",
+      `# calavera:${ARTIFACT}:start\necho person-text\n# calavera:${ARTIFACT}:end\n`,
+    );
+    [finding] = (await derive()).wiringFindings;
+    assert.equal(finding?.kind, "block-edited");
+    assert.equal(
+      finding?.reason,
+      `.vite-hooks/pre-commit: the ${ARTIFACT} block was edited since apply wrote it, so the next apply stops on it.`,
+    );
+    for (const { reason } of (await derive()).wiringFindings) {
+      assert.equal(reason.includes("person-text"), false);
+      assert.equal(reason.includes("secret-recorded-text"), false);
+    }
   });
 });
 

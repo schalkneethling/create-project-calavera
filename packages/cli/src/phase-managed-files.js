@@ -296,7 +296,7 @@ async function managedFileCondition(path, formatted, stateFile) {
  *   not the project directory (#1084), as apply's own remedy names it.
  * @returns {FormatterFailureFinding}
  */
-function formatterFailure(path, error, installDirectory) {
+export function formatterFailure(path, error, installDirectory) {
   const kind = error instanceof FormatterFailure ? error.kind : null;
   const file = path ?? "the managed files";
   const stops = "so apply stops on the same thing";

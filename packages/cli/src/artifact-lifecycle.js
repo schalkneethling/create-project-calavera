@@ -29,11 +29,12 @@ import {
   aiArtifactOutputPaths,
   buildAiApplyResult,
   CODE_RABBIT_CONFIG_PATH,
-  hashAiInstall,
   resolveAiArtifacts,
 } from "./ai/artifacts.js";
 import { assertFirstSelection, assertNoLegacyEntryNeedsWiring } from "./ai/recipe-items.js";
 import { GITIGNORE_PATH, planGitignoreBlocks } from "./ignore-lines.js";
+import { formatterFailure } from "./phase-managed-files.js";
+import { phaseLine, phaseNotes } from "./phase-lines.js";
 import { deriveProjectPhase } from "./project-phase.js";
 import { validateRecipe } from "./recipe.js";
 import { artifactReleaseNotesUrl, isArtifactHealthy } from "./artifact-status-report.js";
@@ -53,6 +54,7 @@ import {
   temporaryFolderLeftovers,
 } from "./utils/cleanup.js";
 import { fileExists, isPathInside, parseJSON, readJSON } from "./utils/fs.js";
+import { FormatterFailure } from "./utils/formatter-failure.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { rewriteLossProblem } from "./utils/json-rewrite.js";
 import { withDeadline } from "./utils/deadline.js";
@@ -267,8 +269,10 @@ export const ARTIFACT_ACTIONS = Object.freeze(Object.keys(ARTIFACT_ACTION_RUNNER
  * @param {ArtifactServices} [services]
  */
 export async function runArtifactCommand(options, services = {}) {
-  await recoverArtifactTransaction();
   const action = options.artifactAction ?? "";
+  // ADR-0020, owner decision 20: artifacts doctor reports a pending transaction instead of
+  // recovering it, because the recovery writes files; every other action recovers it first.
+  if (action !== "doctor") await recoverArtifactTransaction();
   // Object.hasOwn, so a name such as "constructor" is not an action.
   const run = Object.hasOwn(ARTIFACT_ACTION_RUNNERS, action)
     ? ARTIFACT_ACTION_RUNNERS[action]
@@ -296,7 +300,6 @@ export async function runArtifactCommand(options, services = {}) {
  *   formatter is never loaded.
  */
 export async function readArtifactStatus(options, services = {}) {
-  if (await fileExists(TRANSACTION_PATH)) return pendingTransactionReport(options.config);
   return artifactStatus(
     {
       config: options.config,
@@ -315,7 +318,7 @@ export async function readArtifactStatus(options, services = {}) {
 /**
  * The read-only report while an artifact transaction is pending (ADR-0020, owner decisions 20 and
  * 23; owner decision of 2026-11-22 on #1052). It is a result, not an error, so the phase function
- * that ADR-0020 adds later only adds fields. It carries the fields every status report carries,
+ * the report reads now only adds fields. It carries the fields every status report carries,
  * with no artifacts and `ok: false`, because the records cannot be read yet, and three more:
  * `phase`; `rollbackFiles`, which lists the project paths the rollback would restore from their
  * backups or remove, read from the journal without writing, or is null when the journal cannot be
@@ -325,16 +328,20 @@ export async function readArtifactStatus(options, services = {}) {
  * text from the recipe or the journal reaches it; the journal's paths stay in `rollbackFiles`. A
  * recipe it cannot read only makes the command use the npm runner.
  *
+ * `artifacts doctor` returns the same report under its own command name (owner decision 20), and
+ * both carry the phase line, an error.
+ *
  * @param {string} config
+ * @param {"artifacts status" | "artifacts doctor"} commandName
+ * @param {string[] | null} rollbackFiles From the phase function, read from the journal.
  */
-async function pendingTransactionReport(config) {
+async function pendingTransactionReport(config, commandName, rollbackFiles) {
   let recipe = {};
   try {
     recipe = await readJson(config);
   } catch {
     // A missing or unreadable recipe only changes the runner the command names.
   }
-  const rollbackFiles = await pendingRollbackFiles();
   const command = artifactCommand(recipe, config, ["status"]);
   let files;
   if (rollbackFiles === null) {
@@ -344,8 +351,14 @@ async function pendingTransactionReport(config) {
   } else {
     files = "Save any edits to the files in rollbackFiles first, then run";
   }
+  const lineFiles =
+    rollbackFiles !== null && rollbackFiles.length > 0
+      ? "Save any edits to the files the rollback restores or removes first, then run"
+      : files;
+  const remedy = `An artifact operation stopped before its rollback ran, so this ${commandName === "artifacts doctor" ? "doctor" : "read-only report"} does not read the artifact records, because the rollback may still change them. ${files}: ${command}. It rolls the transaction back and reports the artifact status.`;
+  const phaseLineMessage = `An artifact operation stopped before its rollback ran, so this ${commandName === "artifacts doctor" ? "doctor" : "read-only report"} does not read the artifact records, because the rollback may still change them. ${lineFiles}: ${command}. It rolls the transaction back and reports the artifact status.`;
   return {
-    command: "artifacts status",
+    command: commandName,
     dryRun: false,
     offline: true,
     updateAllCommand: null,
@@ -357,7 +370,14 @@ async function pendingTransactionReport(config) {
     pointers: [],
     phase: "pending-transaction",
     rollbackFiles,
-    remedy: `An artifact operation stopped before its rollback ran, so this read-only report does not read the artifact records, because the rollback may still change them. ${files}: ${command}. It rolls the transaction back and reports the artifact status.`,
+    remedy,
+    // The text output lists the files under this line, and the JSON carries rollbackFiles, so the
+    // line names the files by what the rollback does with them rather than by either.
+    phaseLine: { level: "error", message: phaseLineMessage },
+    phaseNotes: [],
+    formatterFailures: [],
+    managedFilePlanProblem: null,
+    cacheBlockProblem: null,
   };
 }
 
@@ -797,47 +817,77 @@ async function artifactStatus(
   loadFormatter,
   { readOnly = false, updateCheckDeadlineMs = UPDATE_CHECK_DEADLINE_MS } = {},
 ) {
-  const recipeFound = await fileExists(options.config);
+  const commandName = /** @type {"artifacts status" | "artifacts doctor"} */ (
+    `artifacts ${options.artifactAction ?? "status"}`
+  );
+  // ADR-0020, Decision 1: the phase function classifies the project first, and writes nothing. The
+  // read-only report runs no project code, so the project's formatter never loads for it (owner
+  // decision 24); the commands load it as apply does.
+  const phase = await deriveProjectPhase({ config: options.config, runsProjectCode: !readOnly });
+  if (phase.phase === "pending-transaction") {
+    // Only artifacts doctor and the read-only report get here: artifacts status recovers the
+    // transaction before it reports (owner decision 20). Nothing is planned, written, or resolved.
+    return pendingTransactionReport(options.config, commandName, phase.rollbackFiles);
+  }
+  const recipeFound = phase.records?.recipe === true;
   const recipe = recipeFound ? await readJson(options.config) : {};
   const selections = normalizePackageSelections(recipe.ai);
   const selectedIds = new Set(selections.map(({ id }) => id));
   /** @param {string[]} positionals @param {string[]} [flags] */
   const command = (positionals, flags) =>
     artifactCommand(recipe, options.config, positionals, flags);
-  const lock = await readLock();
-  const leftovers = await leftoverLockEntryIndexes(options.config);
   const state = await readState();
-  const stateByPath = new Map(state.aiArtifacts.map((item) => [item.path, item]));
-  const lockedIds = new Set(lock.artifacts.map(({ id }) => id));
-  const unlockedSelections = selections.filter(({ id }) => !lockedIds.has(id));
-  // #960: checking for updates resolves every lock entry and unlocked selection through the cache,
-  // so the cache block is written first. A dry run plans it and resolves through a temporary
-  // cache, so it writes nothing. A read-only report (#1052) does not plan it at all, because it
-  // neither writes the block nor reports a change to it, and resolves through a temporary cache.
-  const resolvesPackages = Boolean(
-    options.checkUpdates && lock.artifacts.length + unlockedSelections.length > 0,
-  );
+  const lockEntries = phase.artifacts.filter(({ lockEntry }) => lockEntry !== null);
+  // #960: checking for updates resolves every lock entry and unlocked selection through the cache.
+  const resolvesPackages = Boolean(options.checkUpdates && phase.artifacts.length > 0);
+  // ADR-0020, Decision 1: the cache block belongs to a project whose records it joins, so it is
+  // planned and the project's cache used only with a state file, in composed, applied, or drifted.
+  // In any other phase, such as what eject --yes leaves, the report resolves through a temporary
+  // cache, as a dry run does, and writes nothing. A read-only report (#1052) never plans it.
+  const writesCache =
+    !readOnly &&
+    phase.records?.state === true &&
+    ["composed", "applied", "drifted"].includes(phase.phase);
   // #1209: the update check fills the registry cache in `.calavera/cache` even when the cache block
   // is already recorded and `commitArtifactCacheBlock` writes nothing, so a linked `.calavera` stops
   // the report and its dry run here, as it stops an install.
-  if (resolvesPackages && !readOnly) await refuseLinkedArtifactFolders([dirname(CACHE_ROOT)]);
+  if (resolvesPackages && writesCache) await refuseLinkedArtifactFolders([dirname(CACHE_ROOT)]);
   const cacheBlock =
-    resolvesPackages && !readOnly
+    resolvesPackages && writesCache
       ? await planArtifactCacheBlock(
           state,
           await artifactCacheIgnoreLines(recipe, { resolvesPackages }),
           `artifacts ${options.artifactAction} --check-updates`,
         )
       : undefined;
+  // Owner decision of 2026-11-25 on #1112: when the formatter cannot format the state that
+  // records the block, the report writes no block, resolves through a temporary cache, and says
+  // so: a note in artifacts status, which exits 0, and an error in artifacts doctor, which names
+  // the cache block and says it is not a finding about the phase or an artifact (Decision 5).
+  /** @type {string | null} */
+  let cacheBlockProblem = null;
+  /** @type {typeof cacheBlock} */
+  let recordedBlock = cacheBlock;
   if (cacheBlock) {
     // The status report has no field for a folder left behind (#1172), so a staging folder that
     // stays still stops the report, now with the folder and its remedy (#1136).
-    const leftoverFailures = await commitArtifactCacheBlock(
-      cacheBlock,
-      state,
-      loadFormatter,
-      options.dryRun,
-    );
+    /** @type {Awaited<ReturnType<typeof commitArtifactCacheBlock>>} */
+    let leftoverFailures = [];
+    try {
+      leftoverFailures = await commitArtifactCacheBlock(
+        cacheBlock,
+        state,
+        loadFormatter,
+        options.dryRun,
+        { reportsFormatFailure: true },
+      );
+    } catch (error) {
+      if (!(error instanceof CacheBlockFormatFailure)) throw error;
+      recordedBlock = undefined;
+      // The formatter failure's own reason names its kind and remedy, so the line stands alone
+      // even when the managed-file check did not run the formatter.
+      cacheBlockProblem = `Calavera did not record the artifact cache block in ${GITIGNORE_PATH}, because the project's formatter could not format ${STATE_PATH}, so this report resolved packages through a temporary cache and wrote nothing. This is not a finding about the project's phase or an artifact. ${formatterFailure(STATE_PATH, error.formatterFailure, undefined).reason}`;
+    }
     if (leftoverFailures.length > 0) {
       throw errorWithLeftovers(
         new Error("Calavera could not remove the staging folder of the artifact cache block."),
@@ -846,7 +896,7 @@ async function artifactStatus(
     }
   }
   const temporaryCache =
-    resolvesPackages && (options.dryRun || readOnly)
+    resolvesPackages && (options.dryRun || !writesCache || cacheBlockProblem !== null)
       ? await mkdtemp(join(tmpdir(), "calavera-artifact-status-"))
       : undefined;
   const cache = temporaryCache ?? resolve(CACHE_PATH);
@@ -859,22 +909,9 @@ async function artifactStatus(
   const silentRegistries = new Set();
   try {
     const artifacts = [];
-    for (const [index, entry] of lock.artifacts.entries()) {
-      const outputPaths = aiArtifactOutputPaths({ type: entry.type, path: entry.destination });
-      const outputs = await Promise.all(
-        outputPaths.map(async (path) => {
-          const managed = stateByPath.get(path);
-          const installed = await fileExists(path);
-          const installedHash = installed
-            ? await hashAiInstall(entry.type, path, entry.target)
-            : null;
-          return {
-            installed,
-            managed: Boolean(managed),
-            locallyEdited: Boolean(installedHash && managed && installedHash !== managed.hash),
-          };
-        }),
-      );
+    for (const classified of phase.artifacts) {
+      const { lockEntry: entry, outputs, condition, selected } = classified;
+      if (entry === null) continue;
       const { latest, updateCheckFailure } = await checkForUpdate(
         options.checkUpdates,
         (signal, beforeLookup) =>
@@ -913,21 +950,27 @@ async function artifactStatus(
             ? artifactUpdateCommand(recipe, options.config, entry.id, entry.tag)
             : null,
         // #1111: `artifacts install` drops a leftover lock entry, so it is the entry's remedy.
-        installCommand: leftovers.has(index) ? command(["install"]) : null,
+        installCommand:
+          selected === false && condition.name === "missing" ? command(["install"]) : null,
         // #992: without a recipe, status cannot say which lock entries an install would drop.
-        selected: recipeFound ? selectedIds.has(entry.id) : null,
+        selected,
         updateCheckFailure,
+        condition,
       });
     }
-    for (const selection of unlockedSelections) {
-      const artifact = artifactForId(selection.id);
-      if (!artifact) throw new Error(`Unknown Calavera artifact: ${selection.id}.`);
+    for (const { id, lockEntry, condition, outputs } of phase.artifacts) {
+      if (lockEntry !== null) continue;
+      const selection = /** @type {{ id: string, target?: string }} */ (
+        selections.find((candidate) => candidate.id === id)
+      );
+      const artifact = artifactForId(id);
+      if (!artifact) throw new Error(`Unknown Calavera artifact: ${id}.`);
       const resolvedArtifact = resolveAiArtifacts({ ai: [selection] })[0];
-      if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${selection.id}.`);
+      if (!resolvedArtifact) throw new Error(`Could not resolve artifact ${id}.`);
       const { latest, updateCheckFailure } = await checkForUpdate(
         options.checkUpdates,
         (signal, beforeLookup) =>
-          registry.resolve({ id: selection.id, tag: "latest", cache, signal, beforeLookup }),
+          registry.resolve({ id, tag: "latest", cache, signal, beforeLookup }),
         {
           packageName: artifact.packageName,
           tag: "latest",
@@ -938,7 +981,7 @@ async function artifactStatus(
         },
       );
       artifacts.push({
-        id: selection.id,
+        id,
         type: artifact.type,
         package: artifact.packageName,
         version: null,
@@ -949,9 +992,11 @@ async function artifactStatus(
         ...(selection.target ? { target: selection.target } : {}),
         destination: resolvedArtifact.path,
         payloadHash: null,
-        installed: false,
-        managed: false,
-        locallyEdited: false,
+        // From the files, as for a lock entry, so the fields agree with the condition: a
+        // selection whose recorded files were edited is installed, managed, and edited.
+        installed: outputs.every(({ installed }) => installed),
+        managed: outputs.every(({ managed }) => managed),
+        locallyEdited: outputs.some(({ locallyEdited }) => locallyEdited),
         latestVersion: latest?.version ?? null,
         updateAvailable: false,
         releaseNotesUrl: null,
@@ -959,12 +1004,16 @@ async function artifactStatus(
         installCommand: command(["install"]),
         selected: true,
         updateCheckFailure,
+        condition,
       });
     }
     // `--all` moves every selected artifact to the one channel `--tag` names, so it is offered only
     // while every locked selection follows the same channel.
     const selectedChannels = new Set(
-      lock.artifacts.filter(({ id }) => selectedIds.has(id)).map(({ tag }) => tag),
+      lockEntries
+        .map(({ lockEntry }) => /** @type {ArtifactLockEntry} */ (lockEntry))
+        .filter(({ id }) => selectedIds.has(id))
+        .map(({ tag }) => tag),
     );
     // Only a selected artifact has an update command, so an offered `--all` has one channel.
     const [channel] = selectedChannels;
@@ -989,10 +1038,31 @@ async function artifactStatus(
         : null,
       checkUpdatesCommand: options.checkUpdates ? null : command(["status"], ["--check-updates"]),
       updateAllBlockedBy,
-      ok: artifacts.every(isArtifactHealthy),
+      // ADR-0020, Decisions 4 and 5: artifacts doctor's verdict, which artifacts status reports
+      // too: each artifact's condition, the phase line at the doctors' level, and the managed-file
+      // check's formatter failures and plan problem, which apply stops on (owner decisions 15, 16,
+      // and of 2026-11-25).
+      ok:
+        artifacts.every(isArtifactHealthy) &&
+        phaseLine(phase, { command: "artifacts doctor", recipe, config: options.config }).level !==
+          "error" &&
+        phase.formatterFailures.length === 0 &&
+        phase.managedFilePlanProblem === null &&
+        cacheBlockProblem === null,
       artifacts,
-      ignoreChanges: cacheBlock?.changes ?? [],
-      pointers: artifactCachePointers(cacheBlock?.changes ?? []),
+      ignoreChanges: recordedBlock?.changes ?? [],
+      pointers: artifactCachePointers(recordedBlock?.changes ?? []),
+      phase: phase.phase,
+      phaseLine: phaseLine(phase, {
+        command: commandName,
+        recipe,
+        config: options.config,
+        readOnly,
+      }),
+      phaseNotes: phaseNotes(phase),
+      formatterFailures: phase.formatterFailures,
+      managedFilePlanProblem: phase.managedFilePlanProblem,
+      cacheBlockProblem,
     };
   } finally {
     if (temporaryCache) await rm(temporaryCache, { recursive: true, force: true });
@@ -1000,35 +1070,21 @@ async function artifactStatus(
 }
 
 /**
- * The positions in the lock of the entries that the phase function classifies as not selected and
- * `missing`, the leftover lock entries that both doctors report as a warning (#1111; ADR-0020,
- * Decisions 4 and 9). The phase function lists the lock entries first, in lock order, so a
- * position names the same entry in the lock that status reads.
- *
- * The phase function stops on records that status still reports on, such as a lock entry whose
- * version is not valid (Decision 7). Status then keeps reporting as it did before #1111: no entry
- * is a leftover, so each one that has a problem fails doctor. The #1112 stack decides how status
- * reports those records, so the refusal is not repeated here; status reads the same records and
- * stops on its own when it cannot.
- *
- * @param {string} config
- * @returns {Promise<Set<number>>}
+ * The project's formatter could not format the state that records the artifact cache block, so
+ * the block was not written. Nothing was written when this is thrown. It keeps the formatter
+ * failure as its cause, whose kind words the report; the report never quotes the failure's
+ * message, which can quote a setting from the person's `.editorconfig`.
  */
-async function leftoverLockEntryIndexes(config) {
-  let artifacts;
-  try {
-    // Status reads only the artifact conditions here, so it runs no project code: the read-only
-    // status tool must not (ADR-0020, owner decision 24), and status loads the formatter only to
-    // record the cache block.
-    ({ artifacts } = await deriveProjectPhase({ config, runsProjectCode: false }));
-  } catch {
-    return new Set();
+class CacheBlockFormatFailure extends Error {
+  /** @param {FormatterFailure} cause */
+  constructor(cause) {
+    super(
+      "The project's formatter could not format the state that records the artifact cache block.",
+      { cause },
+    );
+    this.name = "CacheBlockFormatFailure";
+    this.formatterFailure = cause;
   }
-  return new Set(
-    artifacts.flatMap(({ lockEntry, selected, condition }, index) =>
-      lockEntry !== null && selected === false && condition.name === "missing" ? [index] : [],
-    ),
-  );
 }
 
 /**
@@ -1389,16 +1445,36 @@ function refusedRedirect(error, packageName, retryCommand) {
  * @param {ReturnType<typeof createEmptyState>} state
  * @param {() => Promise<ProjectFormatter>} loadFormatter
  * @param {boolean} dryRun
+ * @param {{ reportsFormatFailure?: boolean }} [options] With `reportsFormatFailure`, as the status
+ *   report passes it, a formatter that cannot format the state stops with a
+ *   `CacheBlockFormatFailure`, so the report can name it and go on (owner decision of 2026-11-25).
  * @returns {Promise<unknown[]>} Each failure to remove the transaction's staging folder after the
  *   block committed, for `temporaryFolderLeftovers`.
  */
-async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun) {
+async function commitArtifactCacheBlock(
+  cacheBlock,
+  state,
+  loadFormatter,
+  dryRun,
+  { reportsFormatFailure = false } = {},
+) {
   if (!cacheBlock.writesState) return [];
-  const stateText = await formatRecordText(
-    STATE_PATH,
-    { ...state, gitignoreBlocks: cacheBlock.gitignoreBlocks },
-    loadFormatter,
-  );
+  let stateText;
+  try {
+    stateText = await formatRecordText(
+      STATE_PATH,
+      { ...state, gitignoreBlocks: cacheBlock.gitignoreBlocks },
+      loadFormatter,
+    );
+  } catch (error) {
+    // Nothing is written yet, so a report can name the failure instead of stopping on it. The
+    // commands that change artifacts stop with the formatter's own error, as apply does (#838).
+    // Only a formatter failure is reported; any other error still stops the report, so its
+    // cause stays diagnosable.
+    throw reportsFormatFailure && error instanceof FormatterFailure
+      ? new CacheBlockFormatFailure(error)
+      : error;
+  }
   if (dryRun) return [];
   // #1193: the state, the journal, and the staging folder all lie in `.calavera`.
   await refuseLinkedArtifactFolders([TRANSACTION_ROOT]);

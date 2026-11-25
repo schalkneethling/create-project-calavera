@@ -624,6 +624,10 @@ test("artifacts status --check-updates writes the block for a selection that is 
       "calavera.config.json",
       `${JSON.stringify(recipeWith(["skill-project-goal"]), null, 2)}\n`,
     );
+    // ADR-0020, Decision 1: --check-updates records the cache block only with a state file, so the
+    // project gets one, as artifacts install or --init would write it.
+    await mkdir(".calavera", { recursive: true });
+    await writeFile(".calavera/state.json", `${JSON.stringify({ version: 1 }, null, 2)}\n`);
 
     const result = await runArtifactCommand(
       artifactOptions("status", { checkUpdates: true }),
@@ -731,16 +735,17 @@ for (const { name, rerun, options, setup } of commands) {
 
       for (const dryRun of [true, false]) {
         const registry = cachingRegistry();
+        const services = {
+          ...registry,
+          loadFormatter: async () => {
+            throw new Error("the project formatter cannot load");
+          },
+        };
+        // A loader error that is not a formatter failure still stops every command where it
+        // would; a report names only a FormatterFailure and goes on (owner decision of
+        // 2026-11-25 on #1112, which artifact-status-phase.test.mjs covers).
         await assert.rejects(
-          runArtifactCommand(
-            { ...options, dryRun },
-            {
-              ...registry,
-              loadFormatter: async () => {
-                throw new Error("the project formatter cannot load");
-              },
-            },
-          ),
+          runArtifactCommand({ ...options, dryRun }, services),
           /the project formatter cannot load/,
         );
         assert.deepEqual(registry.requests, [], `dryRun: ${dryRun}`);

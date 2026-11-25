@@ -71,6 +71,7 @@ import {
 import {
   artifactDoctorVerdict,
   formatArtifactStatus,
+  formatPhaseReport,
   formatRemovedLockEntries,
   formatTemporaryFolderLeftovers,
 } from "./artifact-status-report.js";
@@ -5894,13 +5895,14 @@ export async function doctor(options) {
       const state = await readStateIfPresent().catch((error) => {
         throw new Error(`doctor cannot use ${STATE_FILE}.`, { cause: error });
       });
-      issues.push(
-        ...(await artifactWiringFindings({
-          records: state.aiWiring,
-          selected: selectedAiIds,
-          skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
-        })),
-      );
+      // Doctor's issues keep their two fields until its report redesign (ADR-0020, Decision 4).
+      for (const { level, message } of await artifactWiringFindings({
+        records: state.aiWiring,
+        selected: selectedAiIds,
+        skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
+      })) {
+        issues.push({ level, message });
+      }
     } catch (error) {
       issues.push({ level: "error", message: errorText(error) });
       return { command: "doctor", ok: false, issues };
@@ -6889,20 +6891,18 @@ function printResult(result, asJSON = false, { dryRun: commandDryRun = false, no
   }
 
   if (result.command === "artifacts status" || result.command === "artifacts doctor") {
-    for (const { level, message } of formatArtifactStatus(
-      /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
-        /** @type {unknown} */ (result)
-      ),
-    )) {
+    const report = /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
+      /** @type {unknown} */ (result)
+    );
+    for (const { level, message } of [
+      ...formatPhaseReport(report),
+      ...formatArtifactStatus(report),
+    ]) {
       logger[level](message);
     }
     printArtifactCacheBlock(result);
     if (result.command === "artifacts doctor") {
-      for (const { level, message } of artifactDoctorVerdict(
-        /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
-          /** @type {unknown} */ (result)
-        ),
-      )) {
+      for (const { level, message } of artifactDoctorVerdict(report)) {
         logger[level](message);
       }
     }
@@ -7095,11 +7095,13 @@ const commandRunners = Object.assign(
       run: async (options) => {
         const result = /** @type {ArtifactCommandResult} */ (await runArtifactCommand(options));
         printResult(result, options.json);
-        // #994: doctor fails the run when an installed artifact's files are missing, are not
-        // managed, or carry a local edit, as `doctor` does for an error (#1030). A selection that
-        // is not installed yet does not fail it, and neither does a lock entry the recipe no
-        // longer selects whose files were deleted (#1111). `artifacts status` reports the same
-        // problems and stays informational.
+        // #994 and ADR-0020, Decision 4: doctor fails the run when a selected artifact's files
+        // are missing, cannot be read, are not managed, or carry a local edit, when the phase line
+        // is an error, when the managed-file check's formatter failed or could not plan, and when
+        // --check-updates could not record the artifact cache block (cacheBlockProblem), as
+        // `doctor` does for an error (#1030). A selection that is not installed yet does not fail
+        // it, and neither does a lock entry the recipe no longer selects (#1111, owner decision
+        // 6). `artifacts status` reports the same problems and stays informational.
         if (options.artifactAction === "doctor" && result.ok !== true) {
           process.exitCode = 1;
         }

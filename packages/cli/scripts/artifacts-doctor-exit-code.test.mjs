@@ -50,6 +50,18 @@ function runCli(cwd, args) {
 }
 
 /**
+ * Runs apply on a project whose artifacts are installed and locked, so it reads as `applied`
+ * (ADR-0020, Decision 2), and these tests check an applied project. Without a profile in the
+ * state, the phase is `composed`, and artifacts doctor warns that the recipe is not applied yet.
+ *
+ * @param {string} root
+ */
+async function applyLocked(root) {
+  const { code, stdout, stderr } = await runCli(root, ["apply", "--yes", "--no-install"]);
+  assert.equal(code, 0, `apply exited ${code}\n${stdout}\n${stderr}`);
+}
+
+/**
  * A project whose recipe selects one skill, installed through the workspace payload, so the CLI
  * run that follows finds a lock entry, managed state, and the installed file.
  *
@@ -72,6 +84,7 @@ async function installedProject(label) {
   } finally {
     process.chdir(originalDirectory);
   }
+  await applyLocked(fixture.root);
   return fixture;
 }
 
@@ -177,6 +190,7 @@ test("artifacts doctor exits 1 when one of two artifacts has a problem", async (
   } finally {
     process.chdir(originalDirectory);
   }
+  await applyLocked(fixture.root);
   await writeFile(join(fixture.root, SKILL_FILE), "local edit\n");
 
   const { code, stdout, stderr } = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
@@ -218,8 +232,12 @@ test("artifacts doctor exits 0 with a note on a selected artifact that is not in
     `artifacts doctor exited ${text.code}\n${text.stdout}\n${text.stderr}`,
   );
   assert.match(text.stdout, new RegExp(`${ARTIFACT} +not installed`));
-  // The note is a warning, so it goes to stderr; the healthy verdict closes stdout.
-  assert.equal(text.stderr.trimEnd(), NOT_INSTALLED_NOTE);
+  // The phase line and the note are warnings, so they go to stderr; the healthy verdict closes
+  // stdout (ADR-0020, Decision 4: composed is a warning that does not fail artifacts doctor).
+  assert.deepEqual(text.stderr.trimEnd().split("\n"), [
+    "The recipe in calavera.config.json is not applied yet, so run npm create project-calavera apply.",
+    NOT_INSTALLED_NOTE,
+  ]);
   assert.equal(text.stdout.trimEnd().split("\n").at(-1), HEALTHY);
 
   const asJson = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
@@ -259,22 +277,37 @@ test("a selection that is not installed yet does not hide a broken installed art
 
 test("the verdict names every artifact with a problem, and only those", () => {
   /** @param {string} id @param {Partial<{ installed: boolean, managed: boolean, locallyEdited: boolean, selected: boolean | null, installCommand: string | null }>} health */
-  const entry = (id, health) => ({
-    id,
-    version: /** @type {string | null} */ ("0.2.1"),
-    installCommand: /** @type {string | null} */ (null),
-    selected: /** @type {boolean | null} */ (true),
-    installed: true,
-    managed: true,
-    locallyEdited: false,
-    ...health,
-  });
+  const entry = (id, health) => {
+    const merged = {
+      id,
+      version: /** @type {string | null} */ ("0.2.1"),
+      installCommand: /** @type {string | null} */ (null),
+      selected: /** @type {boolean | null} */ (true),
+      installed: true,
+      managed: true,
+      locallyEdited: false,
+      ...health,
+    };
+    // The condition the phase function gives these fields (ADR-0020, Decision 3).
+    const name = !merged.installed
+      ? "missing"
+      : merged.locallyEdited
+        ? "edited"
+        : !merged.managed
+          ? "unrecorded"
+          : "current";
+    return { ...merged, condition: { name, reason: "" } };
+  };
   const verdict = (/** @type {ReturnType<typeof entry>[]} */ artifacts) =>
     artifactDoctorVerdict(
       /** @type {Parameters<typeof artifactDoctorVerdict>[0]} */ (
         /** @type {unknown} */ ({
           ok: artifacts.every(isArtifactHealthy),
           artifacts,
+          phase: "applied",
+          phaseLine: { level: "info", message: "The phase is applied." },
+          formatterFailures: [],
+          managedFilePlanProblem: null,
         })
       ),
     );
@@ -284,37 +317,25 @@ test("the verdict names every artifact with a problem, and only those", () => {
     ...entry(id, { installed: false, managed: false }),
     version: null,
     installCommand: "pnpm dlx create-project-calavera artifacts install",
+    condition: { name: "pending", reason: "" },
   });
   assert.equal(isArtifactHealthy(entry("a", {})), true);
   assert.equal(isArtifactHealthy(notInstalled("a")), true);
-  for (const problem of [
-    { installed: false },
-    { managed: false },
-    { locallyEdited: true },
-    // #1111 covers only a deselected entry whose files were deleted. Without a recipe, `selected`
-    // is null, so Calavera cannot tell a leftover entry from a broken one.
-    // A deselected entry that is edited or unrecorded is left to the #1112 stack (ADR-0020,
-    // Decision 4, owner decision 6), so this test does not pin it either way.
-    { installed: false, selected: null },
-    // The leftover warning comes from the phase function, which status records as the entry's
-    // install command, so a deselected entry with missing files and no command still fails.
-    { installed: false, selected: false },
-  ]) {
+  // ADR-0020, Decision 4: a selected artifact fails when its condition is a problem.
+  for (const problem of [{ installed: false }, { managed: false }, { locallyEdited: true }]) {
     assert.equal(isArtifactHealthy(entry("a", problem)), false, JSON.stringify(problem));
   }
-  // #1111: a lock entry the recipe no longer selects, whose files were deleted, is a leftover
-  // record, whether or not `clean` also removed its state record.
-  const drop = "pnpm dlx create-project-calavera artifacts install";
   assert.equal(
-    isArtifactHealthy(entry("a", { installed: false, selected: false, installCommand: drop })),
-    true,
+    isArtifactHealthy({ ...entry("a", {}), condition: { name: "unreadable", reason: "" } }),
+    false,
   );
-  assert.equal(
-    isArtifactHealthy(
-      entry("a", { installed: false, managed: false, selected: false, installCommand: drop }),
-    ),
-    true,
-  );
+  // #1111 and owner decision 6: a lock entry the recipe no longer selects is a warning, whether
+  // its files were deleted, edited, or are not recorded.
+  for (const problem of [{ installed: false }, { managed: false }, { locallyEdited: true }]) {
+    assert.equal(isArtifactHealthy(entry("a", { ...problem, selected: false })), true);
+  }
+  // Without a recipe, `selected` is null, and the phase line's error decides the verdict.
+  assert.equal(isArtifactHealthy(entry("a", { installed: false, selected: null })), true);
   assert.deepEqual(verdict([]), [{ level: "success", message: HEALTHY }]);
   assert.deepEqual(verdict([entry("a", {})]), [{ level: "success", message: HEALTHY }]);
   assert.deepEqual(verdict([notInstalled("b")]), [
@@ -469,6 +490,7 @@ test("a deselected lock entry whose files were deleted does not hide a selected 
   } finally {
     process.chdir(originalDirectory);
   }
+  await applyLocked(fixture.root);
   await writeFile(
     join(fixture.root, "calavera.config.json"),
     json({ ...buildRecipe("minimal", [], "npm"), ai: [{ id: "skill-code-review" }] }),
@@ -510,6 +532,7 @@ test("a deselected hook with one of its two files deleted is a warning, not a fa
   } finally {
     process.chdir(originalDirectory);
   }
+  await applyLocked(fixture.root);
   await writeFile(
     join(fixture.root, "calavera.config.json"),
     json({ ...buildRecipe("minimal", [], "npm"), ai: [] }),
@@ -543,46 +566,38 @@ test("a deselected hook with one of its two files deleted is a warning, not a fa
   assert.equal(text.stdout.trimEnd().split("\n").at(-1), HEALTHY);
 });
 
-// ADR-0020 Decision 9: the leftover warning comes from the phase function. When the phase function
-// refuses a record that status still reads, here a lock entry whose version is not valid, status
-// keeps reporting as it did before #1111, and the entry fails, until the #1112 stack settles it.
-test("when the phase function refuses the lock, status still reports and the deselected entry fails", async () => {
+// ADR-0020, Decision 7: a lock that fails the phase function's shape check stops every artifact
+// command with the same error, which names the entry by its position, and both commands exit 1.
+// Before the phase, status reported such a lock and the deselected entry failed; that fallback is
+// gone.
+test("a lock entry the phase function refuses stops artifacts status and artifacts doctor alike", async () => {
   await using fixture = await leftoverProject("artifacts-doctor-leftover-refused");
   const lockPath = join(fixture.root, ".calavera/artifacts.lock.json");
   const lock = JSON.parse(await readFile(lockPath, "utf8"));
   lock.artifacts[0].version = "not-a-version";
   await writeFile(lockPath, json(lock));
+  const refusal =
+    ".calavera/artifacts.lock.json artifacts[0] has no valid version, so Calavera cannot check it. Restore the lock from version control, or run artifacts install to write it again.";
 
   // In process as well, so mutation testing sees which code the report runs.
   const originalDirectory = process.cwd();
   process.chdir(fixture.root);
   try {
-    const inProcess =
-      /** @type {{ ok: boolean, artifacts: { installCommand: string | null }[] }} */ (
-        await runArtifactCommand({
-          config: "calavera.config.json",
-          dryRun: false,
-          artifactAction: "doctor",
-        })
+    for (const artifactAction of ["status", "doctor"]) {
+      await assert.rejects(
+        runArtifactCommand({ config: "calavera.config.json", dryRun: false, artifactAction }),
+        { message: refusal },
       );
-    assert.equal(inProcess.ok, false);
-    assert.equal(inProcess.artifacts[0]?.installCommand, null);
+    }
   } finally {
     process.chdir(originalDirectory);
   }
 
-  const doctor = await runCli(fixture.root, ["artifacts", "doctor", "--json"]);
-  assert.equal(doctor.code, 1, doctor.stdout + doctor.stderr);
-  const report = JSON.parse(doctor.stdout);
-  assert.equal(report.ok, false);
-  assert.deepEqual(
-    report.artifacts.map(({ id, installCommand }) => ({ id, installCommand })),
-    [{ id: ARTIFACT, installCommand: null }],
-  );
-
-  const status = await runCli(fixture.root, ["artifacts", "status", "--json"]);
-  assert.equal(status.code, 0, status.stdout + status.stderr);
-  assert.equal(JSON.parse(status.stdout).ok, false);
+  for (const action of ["status", "doctor"]) {
+    const run = await runCli(fixture.root, ["artifacts", action, "--json"]);
+    assert.equal(run.code, 1, run.stdout + run.stderr);
+    assert.ok(`${run.stdout}${run.stderr}`.includes(refusal), run.stdout + run.stderr);
+  }
 });
 
 // The remedy does not promise more than `artifacts install` does: the install stops when a
