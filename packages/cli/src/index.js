@@ -29,8 +29,11 @@ import {
   spinner,
   text,
 } from "@clack/prompts";
-import { resolvePackageDistTag } from "@schalkneethling/calavera-artifact-core/registry";
-import { ExecaError, execa } from "execa";
+import {
+  resolvePackageDistTag,
+  unsupportedYarnVersion,
+} from "@schalkneethling/calavera-artifact-core/registry";
+import { execa } from "execa";
 import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
 import {
@@ -1094,55 +1097,18 @@ export function devDependencyInstallCommand(
  * The command that removes development dependencies, which `eject` reports for the
  * `create-project-calavera` dependency and never runs (ADR-0017, Decision 4). It follows
  * `devDependencyInstallCommand`: `vp remove` when Vite+ manages the project, and the package
- * manager's own command otherwise.
- *
- * At the root of a workspace, only Yarn 1 refuses to remove a dependency without `-W`
- * (`--ignore-workspace-root-check`; `src/cli/commands/remove.js` in yarnpkg/yarn). npm, pnpm, Bun,
- * and Yarn 2 or later need no flag there, and Yarn 2 or later rejects `-W`. `vp remove` refuses its
- * own `-w` for every Yarn version and never adds `-W` itself (`remove.rs` in voidzero-dev/vite-plus),
- * so under Vite+ the flag goes to Yarn 1 as a native argument after `--`, which Vite+ passes through
- * unchanged.
+ * manager's own command otherwise. npm, pnpm, Bun, and Yarn 2 or later need no flag at the root of
+ * a workspace, and Calavera does not support Yarn 1, the one that does (ADR-0023).
  *
  * @param {PackageManager} packageManager
  * @param {VitePlusDetection} detection
  * @param {string[]} dependencies
- * @param {{ yarnClassicWorkspaceRoot?: boolean }} [options] `yarnClassicWorkspaceRoot` for a Yarn 1
- *   project's workspace root; it changes only a Yarn command.
  * @returns {[string, string[]]}
  */
-export function devDependencyRemoveCommand(
-  packageManager,
-  detection,
-  dependencies,
-  { yarnClassicWorkspaceRoot = false } = {},
-) {
-  const workspaceRootCheck = packageManager === "yarn" && yarnClassicWorkspaceRoot;
-
-  if (delegatesToVitePlus(detection)) {
-    return ["vp", ["remove", ...dependencies, ...(workspaceRootCheck ? ["--", "-W"] : [])]];
-  }
-
-  return workspaceRootCheck
-    ? ["yarn", ["remove", "-W", ...dependencies]]
+export function devDependencyRemoveCommand(packageManager, detection, dependencies) {
+  return delegatesToVitePlus(detection)
+    ? ["vp", ["remove", ...dependencies]]
     : packageManagerCommands[packageManager].remove(dependencies);
-}
-
-/**
- * The major version of Yarn a project runs: the one its `packageManager` field or
- * `devEngines.packageManager` pins, else 2 when it has a `.yarnrc.yml`, which only Yarn 2 and
- * later read, else 1, the Yarn that Corepack and a global install run without a pin.
- *
- * @param {PackageJSON} packageJSON
- */
-function projectYarnMajor(packageJSON) {
-  const devEngine = [packageJSON.devEngines?.packageManager]
-    .flat()
-    .find((packageManager) => packageManager?.name === "yarn");
-  const pinned =
-    packageJSON.packageManager?.match(/^yarn@(\d+)/)?.[1] ??
-    devEngine?.version?.match(/(\d+)/)?.[1];
-  if (pinned !== undefined) return Number(pinned);
-  return existsSync(".yarnrc.yml") ? 2 : 1;
 }
 
 /**
@@ -2156,7 +2122,7 @@ export function createVpCreateCommand(packageManager, forwardedArgs) {
   switch (packageManager) {
     case "pnpm":
     case "yarn":
-      // Not yarn create: under Yarn 1 it installs create-vite-plus globally (#740).
+      // dlx with the package name, as for pnpm and Bun, so every runner names the package it runs (#740).
       return {
         command: packageManager,
         args: ["dlx", "create-vite-plus@latest", ...forwardedArgs],
@@ -2168,6 +2134,25 @@ export function createVpCreateCommand(packageManager, forwardedArgs) {
       // npm create consumes the first --, so a forwarded -- still reaches Vite+.
       return { command: "npm", args: ["create", "vite-plus@latest", "--", ...forwardedArgs] };
   }
+}
+
+/**
+ * The message that stops a run Yarn 1 started (ADR-0023, Decision 1): one command for each
+ * supported package manager, each of which runs as printed. The CLI's commands are the short
+ * runner forms; npm's is `npx --package`, because `npm create` needs a `--` before flags. The MCP
+ * server's are the forms an MCP host's configuration needs, because its bin is not the package's
+ * name.
+ *
+ * @param {string} bin `create-project-calavera` or `create-project-calavera-mcp`.
+ * @param {string} version
+ */
+export function unsupportedYarnMessage(bin, version) {
+  /** @param {PackageManager} packageManager */
+  const command = (packageManager) =>
+    bin === packageJson.name && packageManager !== "npm"
+      ? projectLocalCommandCatalog[packageManager].runCalavera
+      : formatShellCommand(createPackageRunnerCommand(packageManager, packageJson.name, bin));
+  return `${bin} does not support Yarn ${version}. Use Yarn 2 or later (${command("yarn")}), npm (${command("npm")}), pnpm (${command("pnpm")}), or Bun (${command("bun")}).`;
 }
 
 /**
@@ -5004,9 +4989,8 @@ export const NPM_STALE_CACHE_HINT =
  * and earlier pin unless COREPACK_ENABLE_AUTO_PIN is "0"; Corepack 0.33.0 and
  * later pin only when it is "1". So "0" is the one value that turns auto-pin
  * off in every version, and from Node.js 25 on, users install whichever
- * Corepack they choose from npm. Neither `vp create` (#1080) nor the Yarn reads
- * behind a failure hint (#999) is approval to change a `package.json` outside
- * the new project, so each sets the variable to "0".
+ * Corepack they choose from npm. `vp create` (#1080) is not approval to change
+ * a `package.json` outside the new project, so it sets the variable to "0".
  */
 const NO_COREPACK_AUTO_PIN = { COREPACK_ENABLE_AUTO_PIN: "0" };
 
@@ -5027,7 +5011,7 @@ const NO_COREPACK_AUTO_PIN = { COREPACK_ENABLE_AUTO_PIN: "0" };
  * an inherited value on instead of setting their own. Without its removal,
  * Vite+ would follow the package manager that launched Calavera, not the
  * runner Calavera chose and its confirmation names, whenever Calavera falls
- * back to npm (under Yarn 1 or an unrecognized launcher) and with
+ * back to npm (under an unrecognized launcher) and with
  * `--package-manager npm` or `bun` before `--new` under another launcher. npm reads a `-` for the
  * `_` inside a setting's name as well (`loadEnv` in `@npmcli/config`), so the
  * match accepts both.
@@ -5059,166 +5043,8 @@ export function vpCreateEnvironment(env) {
  * @typedef {{ exitCode: number | null, signal: string | null }} RunnerExit
  * @typedef {object} NewProjectRuntime
  * @property {(invocation: RunnerInvocation) => Promise<RunnerExit>} [spawnRunner]
- * @property {(cwd: string) => Promise<string | undefined>} [readYarnVersion]
- * @property {(cwd: string) => Promise<string>} [readYarnCorepackRoot]
  * @property {Record<string, string | undefined>} [env] Where `npm_config_user_agent` is read, and the base of the environment `vp create` receives; `process.env` by default.
  */
-
-const YARN_DLX_HINT = "If yarn itself failed, note that yarn dlx needs Yarn 2 or later.";
-
-// The runner has already failed, so the version read must not delay its error.
-export const YARN_VERSION_TIMEOUT_MS = 5000;
-
-/**
- * Reads the version of the `yarn` that runs in `cwd`, where Corepack resolves
- * the same Yarn the runner used. Stdin is closed, so a prompt (such as
- * Corepack's download prompt) fails at once instead of waiting, and a time
- * limit stops a yarn that hangs. Corepack's auto-pin is off, as
- * NO_COREPACK_AUTO_PIN explains. It rejects when yarn cannot start, exits
- * non-zero, or times out.
- *
- * @param {string} cwd
- * @returns {Promise<string>}
- */
-async function readInstalledYarnVersion(cwd) {
-  const { stdout } = await execa("yarn", ["--version"], {
-    cwd,
-    env: NO_COREPACK_AUTO_PIN,
-    stdin: "ignore",
-    timeout: YARN_VERSION_TIMEOUT_MS,
-  });
-
-  return stdout;
-}
-
-/**
- * Asks the `yarn` that runs in `cwd` whether Corepack ran it (#936). Corepack
- * sets COREPACK_ROOT in its own process before it runs yarn there, and Yarn 1's
- * `node` command passes that environment to the Node process it starts, so
- * `yarn node` prints a `COREPACK_ROOT=` line whose value is empty unless
- * Corepack ran yarn. COREPACK_ROOT is removed from the environment yarn
- * receives, in any case as Windows reads it, so a value Calavera inherited, for
- * example from a Corepack pnpm that started it, cannot pass for Corepack.
- * Without COREPACK_ROOT, Yarn 1 refuses to run in a project whose
- * `packageManager` names Yarn 2 or later, so SKIP_YARN_COREPACK_CHECK turns
- * that check off, as Yarn 1's cli.js reads it. Stdin, the time limit, and
- * Corepack's auto-pin are as for readInstalledYarnVersion. It rejects when
- * yarn cannot start, exits non-zero, or times out.
- *
- * @param {string} cwd
- * @returns {Promise<string>}
- */
-async function readInstalledYarnCorepackRoot(cwd) {
-  const { stdout } = await execa(
-    "yarn",
-    ["node", "-e", 'console.log("COREPACK_ROOT=" + (process.env.COREPACK_ROOT ?? ""))'],
-    {
-      cwd,
-      // extendEnv: false, so the COREPACK_ROOT removed here is not merged back from process.env.
-      env: {
-        ...Object.fromEntries(
-          Object.entries(process.env).filter(([key]) => key.toUpperCase() !== "COREPACK_ROOT"),
-        ),
-        SKIP_YARN_COREPACK_CHECK: "1",
-        ...NO_COREPACK_AUTO_PIN,
-      },
-      extendEnv: false,
-      stdin: "ignore",
-      timeout: YARN_VERSION_TIMEOUT_MS,
-    },
-  );
-
-  return stdout;
-}
-
-/**
- * The first line of a failure, for a hint. execa's shortMessage names the
- * command and the failure without its output.
- *
- * @param {unknown} error
- */
-function failureReason(error) {
-  return error instanceof ExecaError
-    ? error.shortMessage.split("\n")[0]
-    : error instanceof Error
-      ? error.message.split("\n")[0]
-      : String(error);
-}
-
-/**
- * The hint for a failed `yarn dlx` run (#911). The runner inherits stdio, so
- * Calavera cannot read Yarn's error; the Yarn version decides instead. Yarn 0
- * and 1 have no dlx command. Yarn 2 or later has one, so the cause is
- * elsewhere and no Yarn hint is added. An unreadable version keeps the hint
- * that states its own condition, with the reason the version was unreadable.
- *
- * Under Yarn 0 or 1, Corepack decides whether that Yarn ran `yarn dlx` (#936).
- * Corepack runs `yarn dlx` with its own Yarn 2 or later unless the project
- * pins a Yarn in its `packageManager` field, while `yarn --version` reports the
- * default Yarn, which can be Yarn 1. So when Corepack ran yarn, the hint does
- * not name Yarn 1 as the cause, and when Calavera cannot tell, it keeps the
- * hint that states its own condition.
- *
- * @param {(cwd: string) => Promise<string | undefined>} readYarnVersion
- * @param {(cwd: string) => Promise<string>} readYarnCorepackRoot
- * @param {string} cwd
- * @returns {Promise<{ hint: string, cause?: unknown }>}
- */
-async function yarnFailureHint(readYarnVersion, readYarnCorepackRoot, cwd) {
-  let output;
-
-  try {
-    output = await readYarnVersion(cwd);
-  } catch (error) {
-    return {
-      hint: ` ${YARN_DLX_HINT} Calavera could not read the Yarn version: ${failureReason(error)}.`,
-      cause: error,
-    };
-  }
-
-  const match = /^((\d+)\.\d+\.\d+\S*)/.exec(output ?? "");
-
-  if (match === null) {
-    const printed = output?.split("\n")[0];
-
-    return {
-      hint: ` ${YARN_DLX_HINT}${
-        printed === undefined
-          ? ""
-          : ` yarn --version printed ${printed === "" ? "nothing" : `"${printed}"`}, which is not a version.`
-      }`,
-    };
-  }
-
-  const [, version, major] = match;
-
-  if (Number(major) >= 2) {
-    return { hint: "" };
-  }
-
-  const unsure = ` ${YARN_DLX_HINT} yarn --version reports Yarn ${version}, but Calavera could not tell whether Corepack ran yarn:`;
-  let probe;
-
-  try {
-    probe = await readYarnCorepackRoot(cwd);
-  } catch (error) {
-    return { hint: `${unsure} ${failureReason(error)}.`, cause: error };
-  }
-
-  // . stops at a line terminator, \r included, so the value ends where its line does.
-  const corepackRoot = /^COREPACK_ROOT=(.*)/m.exec(probe)?.[1];
-
-  if (corepackRoot === undefined) {
-    return { hint: `${unsure} yarn node printed no COREPACK_ROOT line.` };
-  }
-
-  return {
-    hint:
-      corepackRoot === ""
-        ? ` The yarn in this directory is Yarn ${version}, which has no dlx command, so it could not start Vite+. Use Yarn 2 or later, for example through Corepack, or pass another --package-manager before --new.`
-        : ` yarn --version reports Yarn ${version}, but Corepack runs yarn dlx with Yarn 2 or later unless the project pins Yarn 1, for example in the packageManager field of package.json. If it does, pin Yarn 2 or later or pass another --package-manager before --new.`,
-  };
-}
 
 /**
  * Spawns the runner with inherited stdio, so Vite+ asks its own questions.
@@ -5393,8 +5219,12 @@ async function readNewProjectRecipe(source) {
  * `vp create`, per the ADR-0010 amendment "The Launching Package Manager
  * Chooses the Runner" (#909). Its name is the text of `npm_config_user_agent`
  * before the first `/`, as Vite+ reads it for the same decision. Yarn counts
- * only at major version 2 or later, because Yarn 1 has no dlx command; a Yarn
- * whose version cannot be read could be Yarn 1, so it does not count either.
+ * only at major version 2 or later. Calavera stops when Yarn 1 starts it
+ * (ADR-0023), but a `yarn/1` user agent still reaches this function under npm,
+ * whose project `.npmrc` `user-agent` sets the variable while npm_execpath names
+ * npm, so the runner is then npm, which did start Calavera. Yarn sets its own
+ * version in the user agent, so a value without one did not come from Yarn and
+ * counts as an unrecognized launcher.
  *
  * @param {string | undefined} userAgent For example `yarn/4.18.1 npm/? node/v24.22.0 darwin arm64`.
  * @returns {PackageManager | undefined} `undefined` when the caller falls back to npm.
@@ -5581,31 +5411,17 @@ export async function newProject(options, runtime = {}) {
 
     // The runner was not chosen by the user, so name how it was chosen and how to choose another (#909).
     throw new Error(
-      `${error instanceof Error ? error.message : String(error)} No --package-manager came before --new, so Calavera chose ${runnerPackageManager}: the package manager that started Calavera, or npm when that package manager has no runner. Pass --package-manager with npm, pnpm, yarn, or bun before --new to choose another runner.`,
+      `${error instanceof Error ? error.message : String(error)} No --package-manager came before --new, so Calavera chose ${runnerPackageManager}: the package manager that started Calavera, or npm when Calavera does not recognize that package manager. Pass --package-manager with npm, pnpm, yarn, or bun before --new to choose another runner.`,
       { cause: error },
     );
   }
 
   if (exit.exitCode !== 0) {
-    const yarn =
-      runnerCommand.command === "yarn"
-        ? await yarnFailureHint(
-            runtime.readYarnVersion ?? readInstalledYarnVersion,
-            runtime.readYarnCorepackRoot ?? readInstalledYarnCorepackRoot,
-            cwd,
-          )
-        : undefined;
-
     throw new Error(
       `vp create through ${runnerCommand.command} ${describeRunnerExit(exit)} (run in ${cwd}). ${NEW_HARD_STOP_SUFFIX} ${cwd} may hold a partial scaffold that belongs to Vite+.${
-        yarn !== undefined
-          ? yarn.hint
-          : // Exit 127 means a shell did not find a command, which no cache change fixes.
-            runnerCommand.command !== "npm" || exit.exitCode === 127
-            ? ""
-            : ` ${NPM_STALE_CACHE_HINT}`
+        // Exit 127 means a shell did not find a command, which no cache change fixes.
+        runnerCommand.command !== "npm" || exit.exitCode === 127 ? "" : ` ${NPM_STALE_CACHE_HINT}`
       }`,
-      yarn?.cause === undefined ? undefined : { cause: yarn.cause },
     );
   }
 
@@ -7013,17 +6829,9 @@ async function ejectPackageJsonReport({ manifest: packageJSON, problem }) {
     return { scripts };
   }
   const packageManager = detectPackageManager(packageJSON) ?? "npm";
-  const command = devDependencyRemoveCommand(
-    packageManager,
-    await detectVitePlus(process.cwd()),
-    [name],
-    {
-      yarnClassicWorkspaceRoot:
-        packageManager === "yarn" &&
-        projectYarnMajor(packageJSON) === 1 &&
-        (await workspacePackagePatterns(process.cwd(), packageJSON, "yarn")) !== undefined,
-    },
-  );
+  const command = devDependencyRemoveCommand(packageManager, await detectVitePlus(process.cwd()), [
+    name,
+  ]);
   return { scripts, devDependency: { name, removeCommand: formatCommand(command) } };
 }
 
@@ -7761,6 +7569,18 @@ export async function runCli() {
     // typed `--json`, so the error they get back is JSON.
     const asJSON = calaveraArgs(args).args.includes("--json");
     printStop(asJSON, asJSON ? resultCommandNamedIn(args) : null, errorText(error));
+    process.exitCode = 1;
+    return;
+  }
+
+  // Before the version check and every command, so the stop is the run's only output (ADR-0023).
+  const unsupportedYarn = await unsupportedYarnVersion();
+  if (unsupportedYarn !== undefined) {
+    printStop(
+      options.json,
+      resultCommandFor(options.command, options.artifactAction),
+      unsupportedYarnMessage(packageJson.name, unsupportedYarn),
+    );
     process.exitCode = 1;
     return;
   }

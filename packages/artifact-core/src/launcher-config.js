@@ -7,7 +7,11 @@ import { TomlError, parse as parseToml } from "smol-toml";
 import { parseDocument } from "yaml";
 
 import { printable, readConfigText, unparseableWarning } from "./config-files.js";
-import { parseEnvironmentFile } from "./environment-files.js";
+import {
+  bunEnvironmentFileChains,
+  parseEnvironmentFile,
+  variablesFromBunFiles,
+} from "./environment-files.js";
 
 // Yarn 2 or later and Bun read registry settings of their own. Calavera reads the part of them
 // that picks the registry (and, for Yarn, the proxy), so a lookup asks the registry that
@@ -43,10 +47,23 @@ const YARN_VARIABLES = new Map([
 const NPM_OR_PNPM_EXECPATH = /^(npm-cli\.js|pnpm(\.exe|\.cjs|\.mjs|\.js)?)$/i;
 
 /**
+ * Whether npm_execpath names npm or pnpm, which set it to their own binary whatever a project
+ * file says (#1186).
+ * @param {NodeJS.ProcessEnv} env
+ */
+function npmOrPnpmExecpath(env) {
+  return NPM_OR_PNPM_EXECPATH.test(env.npm_execpath?.split(/[\\/]/).pop() ?? "");
+}
+
+// The variables that name the package manager that started Calavera.
+export const LAUNCHER_VARIABLES = Object.freeze(["npm_execpath", "npm_config_user_agent"]);
+
+/**
  * The package manager that started Calavera, from the user agent it exports. Yarn sets
  * `npm_config_user_agent` to `yarn/<version> npm/? node/...` for scripts and binaries
  * (`makeScriptEnv` in @yarnpkg/core scriptUtils.ts), and Bun to `bun/<version> npm/? node/...`.
- * Yarn 1 reads .npmrc files, so it counts as npm here.
+ * Calavera does not support Yarn 1, and its callers stop first (`unsupportedYarnVersion`,
+ * ADR-0023), so only Yarn 2 or later counts as Yarn here.
  *
  * npm exports a project .npmrc `user-agent`, and pnpm its `userAgent` setting, as the user agent,
  * so repository content can make it name Yarn or Bun (#1186). Both also set npm_execpath to their
@@ -59,13 +76,44 @@ const NPM_OR_PNPM_EXECPATH = /^(npm-cli\.js|pnpm(\.exe|\.cjs|\.mjs|\.js)?)$/i;
  * @returns {Launcher}
  */
 export function detectLauncher(env) {
-  const execFile = env.npm_execpath?.split(/[\\/]/).pop() ?? "";
-  if (NPM_OR_PNPM_EXECPATH.test(execFile)) return "npm";
+  if (npmOrPnpmExecpath(env)) return "npm";
   const agent = env.npm_config_user_agent ?? "";
   const yarn = /^yarn\/(\d+)\./.exec(agent);
   if (yarn && Number(yarn[1]) >= 2) return "yarn";
   if (agent.startsWith("bun/")) return "bun";
   return "npm";
+}
+
+// Yarn 0 and 1 in a user agent, with only the characters a version has, so a crafted value
+// cannot put anything else into a message.
+const UNSUPPORTED_YARN = /^yarn\/([01]\.[0-9A-Za-z.+-]*)/;
+
+/**
+ * The Yarn version when Yarn 1 (or Yarn 0) started Calavera, which Calavera does not support
+ * (ADR-0023, Decision 2), and undefined otherwise. The rule follows detectLauncher: a
+ * npm_execpath that names npm or pnpm wins over the user agent, which a project .npmrc
+ * `user-agent` or pnpm's `userAgent` can set. Under the Bun runtime, a launcher variable that a
+ * `.env` file Bun may have loaded defines is repository content and does not count, and neither
+ * does one when such a file exists but cannot be read. Those files are the only ones read, and
+ * nothing is reported about them, so the caller's stop is the only output.
+ *
+ * Under Yarn 1 this is not a security boundary: a repository's `.yarnrc` can set both variables.
+ * @param {{ env?: NodeJS.ProcessEnv, runtime?: "bun" | "node", cwd?: string, execArgv?: string[] }} [context]
+ * @returns {Promise<string | undefined>}
+ */
+export async function unsupportedYarnVersion({
+  env = process.env,
+  runtime = process.versions.bun ? "bun" : "node",
+  cwd = process.cwd(),
+  execArgv = process.execArgv,
+} = {}) {
+  if (npmOrPnpmExecpath(env)) return undefined;
+  const version = UNSUPPORTED_YARN.exec(env.npm_config_user_agent ?? "")?.[1];
+  if (version === undefined || runtime !== "bun") return version;
+  // Warnings from reading the files are discarded: the loader reports them in its own run.
+  const chains = await bunEnvironmentFileChains(cwd, env, [], execArgv);
+  const { fromFile, unreadable } = await variablesFromBunFiles(chains, env, LAUNCHER_VARIABLES);
+  return fromFile.size > 0 || unreadable ? undefined : version;
 }
 
 // Yarn's interpolation, which Calavera applies to proxy values only; a registry value with a

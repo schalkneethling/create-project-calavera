@@ -14,7 +14,13 @@ import {
 } from "@schalkneethling/calavera-baseline-core";
 
 import { readArtifactStatus } from "./artifact-lifecycle.js";
-import { applyRecipeObject, inspectProject, reportVitePlus } from "./index.js";
+import { unsupportedYarnVersion } from "@schalkneethling/calavera-artifact-core/registry";
+import {
+  applyRecipeObject,
+  inspectProject,
+  reportVitePlus,
+  unsupportedYarnMessage,
+} from "./index.js";
 import {
   CONFIG_FILE,
   composeRecipeResponse,
@@ -596,6 +602,14 @@ export async function runMcpEntrypoint(options = {}) {
     ((code) => {
       process.exitCode = code;
     });
+
+  // Before the start line and the server, so the host's log shows only this line (ADR-0023).
+  const unsupportedYarn = await unsupportedYarnVersion({ env, cwd });
+  if (unsupportedYarn !== undefined) {
+    stderr.write(`${unsupportedYarnMessage("create-project-calavera-mcp", unsupportedYarn)}\n`);
+    setExitCode(1);
+    return;
+  }
 
   stderr.write(
     `[${SERVER_NAME}] starting MCP server v${SERVER_VERSION} (mode=stdio, cwd=${cwd})\n`,

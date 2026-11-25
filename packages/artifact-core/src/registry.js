@@ -8,6 +8,10 @@ import semver from "semver";
 
 import { artifactForId } from "./catalog.js";
 import { loadNpmRegistryOptions, pacoteTarballUrl, requestAgent } from "./npm-config.js";
+
+// The rule that recognizes an unsupported Yarn 1 launcher (ADR-0023), which the CLI and the MCP
+// server check before they run.
+export { unsupportedYarnVersion } from "./launcher-config.js";
 import { redirectGuard } from "./redirect-guard.js";
 import { assertTarballUrl, withTarballRefusal } from "./tarball-url.js";
 
