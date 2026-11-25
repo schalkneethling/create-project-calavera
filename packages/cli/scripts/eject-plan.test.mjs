@@ -411,11 +411,12 @@ test("--yes removes only items that match Calavera's records, and keeps the reco
         assumeYes: true,
       },
     );
-    // The edited skill stays, so the state that records its hash stays too; the lock checks no
-    // package folder, so it goes.
+    // The edited skill stays, so the state that records its hash stays too, and so does the
+    // artifact-cache block that state records (owner decision of 2026-11-26 on #1112); the lock
+    // checks no package folder, so it goes.
     assert.deepEqual(
       paths(leave),
-      [SKILL_PATH, ".calavera/state.json", "calavera.config.json"].sort(),
+      [SKILL_PATH, ".calavera/state.json", ".gitignore", "calavera.config.json"].sort(),
     );
     assert.ok(paths(remove).includes(".calavera/artifacts.lock.json"));
   });
@@ -1047,9 +1048,10 @@ for (const [label, addUncovered, entry] of [
         `The base Calavera skill matches its record, but the record's hash does not cover symbolic links or empty folders, so edits cannot be detected for: ${entry}.`,
       );
       const { remove, leave } = selectEjectItems(plan, { assumeYes: true });
+      // The state stays for the skill, and the artifact-cache block it records stays with it.
       assert.deepEqual(
         paths(leave),
-        [SKILL_PATH, ".calavera/state.json", "calavera.config.json"].sort(),
+        [SKILL_PATH, ".calavera/state.json", ".gitignore", "calavera.config.json"].sort(),
       );
       assert.equal(paths(remove).includes(SKILL_PATH), false);
     });

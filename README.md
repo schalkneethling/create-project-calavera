@@ -749,15 +749,16 @@ With `--yes`, it removes only the items that match Calavera's records exactly.
 It leaves, and lists, everything else: what it cannot check, such as the recipe
 and the extracted artifact packages in `.calavera/packages/`, any item you
 edited, and the records an item it leaves still needs: the state, the lock,
-or the cache block in `.gitignore`. Run
-`eject` in a terminal to approve those.
+or the cache block in `.gitignore`. While it keeps the state, it also keeps the
+cache block, so `artifacts status --check-updates` has nothing to write back.
+Run `eject` in a terminal to approve those.
 
 Once it has removed everything else, `eject` adds a block named `ejected`, with
 one comment line, at the end of `.gitignore`, and creates the file if the
-project has none. The block ignores no path. It tells `artifacts status` and
-`artifacts doctor` that the project left Calavera on purpose. `eject` adds it
-only when nothing is left, so a `--yes` run that leaves items for an approval
-adds no block. `apply` removes the block, because a project it writes into is
+project has none. The block ignores no path. It tells `doctor`,
+`artifacts status`, and `artifacts doctor` that the project left Calavera on
+purpose. `eject` adds it only when nothing is left, so a `--yes` run that
+leaves items for an approval adds no block. `apply` removes the block, because a project it writes into is
 managed again, and `init` leaves it. If you add your own lines inside the
 block, or change its markers, `eject` and `apply` stop before they write
 anything until you move your lines out of the block. The decision record is

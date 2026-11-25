@@ -26,7 +26,13 @@ import { executeEject, planEject, selectEjectItems } from "../src/eject.js";
 import { ejectSummaryLines } from "../src/eject-summary.js";
 import { EJECTED_BLOCK, EJECTED_LINE } from "../src/ejected-marker.js";
 import { planGitignoreBlocks } from "../src/ignore-lines.js";
-import { agentBootstrap, agentBootstrapTexts, ejectProject, parseArgs } from "../src/index.js";
+import {
+  agentBootstrap,
+  agentBootstrapTexts,
+  doctor,
+  ejectProject,
+  parseArgs,
+} from "../src/index.js";
 import { deriveProjectPhase } from "../src/project-phase.js";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 
@@ -791,4 +797,18 @@ test("an edited block or a broken marker stops apply before it writes anything",
       assert.deepEqual(await snapshotDirectory(), before);
     });
   }
+});
+
+// ---------------------------------------------------------------------------------------------
+// The doctors read the block, and --yes keeps the cache block while it keeps the state.
+// ---------------------------------------------------------------------------------------------
+
+test("after eject --yes writes the block, doctor reports the ejected phase", async () => {
+  await inProject(async () => {
+    await agentBootstrap({ mcpHarness: "skip", packageManager: "npm" });
+    assert.equal((await eject(["--yes"])).ejectedBlock?.outcome, "written");
+    const result = await doctor({ config: "calavera.config.json" });
+    assert.equal(result.phase, "ejected");
+    assert.equal(result.ok, false);
+  });
 });
