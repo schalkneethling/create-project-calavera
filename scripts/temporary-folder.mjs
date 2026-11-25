@@ -24,6 +24,36 @@ export async function temporaryFolder(context, prefix) {
 }
 
 /**
+ * Runs `callback`, then removes `folder` whether the callback succeeded or failed, for a fixture
+ * that has no test context. When both fail, the AggregateError it throws keeps the callback's
+ * error first, and as its cause, so the test's own failure is not hidden behind the cleanup's.
+ * When only the removal fails, its error is thrown.
+ * @template T
+ * @param {string} folder
+ * @param {() => Promise<T>} callback
+ */
+export async function removeTemporaryFolderAfter(folder, callback) {
+  /** @type {T} */
+  let result;
+  try {
+    result = await callback();
+  } catch (failure) {
+    try {
+      await removeTemporaryFolder(folder);
+    } catch (removalFailure) {
+      throw new AggregateError(
+        [failure, removalFailure],
+        `The test failed, and removing its temporary folder ${folder} failed too.`,
+        { cause: failure },
+      );
+    }
+    throw failure;
+  }
+  await removeTemporaryFolder(folder);
+  return result;
+}
+
+/**
  * Removes a folder and everything in it. A folder that a test made read-only cannot have its
  * entries removed, so on a permission error this gives the owner full permission on every folder
  * inside, then removes it again.

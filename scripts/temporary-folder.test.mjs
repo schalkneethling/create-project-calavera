@@ -8,7 +8,11 @@ import { basename, dirname, join } from "node:path";
 import test from "node:test";
 import { promisify } from "node:util";
 
-import { removeTemporaryFolder, temporaryFolder } from "./temporary-folder.mjs";
+import {
+  removeTemporaryFolder,
+  removeTemporaryFolderAfter,
+  temporaryFolder,
+} from "./temporary-folder.mjs";
 
 const execFileAsync = promisify(execFile);
 const helperUrl = new URL("./temporary-folder.mjs", import.meta.url).href;
@@ -121,4 +125,70 @@ test("a test that fails part way still removes its folder", async (t) => {
   const folder = failure.stdout.match(/FOLDER=(\S+)/)?.[1];
   assert.ok(folder, "the fixture test printed its folder");
   assert.equal(await exists(folder), false);
+});
+
+/**
+ * A folder that cannot be removed: it sits in a parent without write permission, which giving the
+ * folder itself permission does not change. The parent's own removal restores it after the test.
+ * @param {import("node:test").TestContext} t
+ */
+async function unremovableFolder(t) {
+  const parent = await temporaryFolder(t, "calavera-temporary-folder-parent-");
+  const folder = join(parent, "project");
+  await mkdir(folder);
+  await chmod(parent, 0o500);
+  return folder;
+}
+
+test("removeTemporaryFolderAfter returns the callback's result and removes the folder", async () => {
+  const context = recordingContext();
+  const folder = await temporaryFolder(context, "calavera-temporary-folder-");
+
+  assert.equal(await removeTemporaryFolderAfter(folder, async () => "result"), "result");
+  assert.equal(await exists(folder), false);
+});
+
+test("removeTemporaryFolderAfter rethrows a failing callback's own error and removes the folder", async () => {
+  const context = recordingContext();
+  const folder = await temporaryFolder(context, "calavera-temporary-folder-");
+  const failure = new Error("the test's own failure");
+
+  await assert.rejects(
+    removeTemporaryFolderAfter(folder, async () => {
+      throw failure;
+    }),
+    (error) => error === failure,
+  );
+  assert.equal(await exists(folder), false);
+});
+
+test("a failing callback whose cleanup also fails still reports the callback's error first", async (t) => {
+  const folder = await unremovableFolder(t);
+  const failure = new Error("the test's own failure");
+
+  const error = await removeTemporaryFolderAfter(folder, async () => {
+    throw failure;
+  }).then(
+    () => assert.fail("expected a rejection"),
+    (/** @type {unknown} */ rejection) => rejection,
+  );
+
+  assert.ok(error instanceof AggregateError, "both failures are kept");
+  assert.equal(error.errors.length, 2);
+  assert.equal(error.errors[0], failure);
+  assert.equal(error.errors[1]?.code, "EACCES");
+  assert.equal(error.cause, failure);
+  assert.equal(
+    error.message,
+    `The test failed, and removing its temporary folder ${folder} failed too.`,
+  );
+});
+
+test("when only the cleanup fails, removeTemporaryFolderAfter throws the removal's error", async (t) => {
+  const folder = await unremovableFolder(t);
+
+  await assert.rejects(
+    removeTemporaryFolderAfter(folder, async () => "result"),
+    { code: "EACCES" },
+  );
 });
