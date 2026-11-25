@@ -199,6 +199,31 @@ test("a managed file that cannot be read is unreadable and drifts the project", 
   });
 });
 
+test("an unreadable path with no record never drifts the project", async () => {
+  await inProject(async () => {
+    await applied([]);
+    await writeJsonFile(CONFIG, recipeWith(["knip"]));
+    await mkdir(KNIP);
+    const result = await derive();
+    assert.equal(fileCondition(result, KNIP).name, "unreadable");
+    assert.equal(result.phase, "applied");
+  });
+});
+
+test("formatter failures follow the plan order whichever format run ends first", async () => {
+  await inProject(async (directory) => {
+    await applied(["knip", "react-doctor"]);
+    await declareVitePlus();
+    await writeVitePlusFormatter(directory, { banner: "loaded" });
+    const result = await derive();
+    assert.equal(result.formatterFailures.length, 2);
+    assert.deepEqual(
+      result.formatterFailures.map(({ path }) => path),
+      result.managedFiles.map(({ path }) => path),
+    );
+  });
+});
+
 test("a formatter that cannot load is a finding, and the files that need it are not-checked", async () => {
   await inProject(async () => {
     await applied(["editorconfig", "knip"]);
@@ -222,7 +247,7 @@ test("a formatter that cannot load is a finding, and the files that need it are 
     result = await derive();
     assert.deepEqual(fileCondition(result, KNIP), {
       name: "not-checked",
-      reason: `Calavera could not format what apply writes for ${KNIP}, so it cannot tell whether apply stops on it. The formatter failure names the cause.`,
+      reason: `Calavera could not format what apply writes for ${KNIP} (not-installed), so it cannot tell whether apply stops on it. The formatter failure gives the remedy.`,
     });
     // A not-checked file never drifts the project.
     assert.equal(result.phase, "applied");
@@ -259,7 +284,10 @@ test("a formatter that refuses one file names that file, and the other files are
         reason: `vp fmt could not format ${KNIP}, so apply stops on the same thing. Calavera does not show vp fmt's output, because it can quote the file. Check that vite.config.ts loads without errors, which vp fmt --check in the project reports, then run the command again.`,
       },
     ]);
-    assert.equal(fileCondition(result, KNIP).name, "not-checked");
+    assert.equal(
+      fileCondition(result, KNIP).reason,
+      `Calavera could not format what apply writes for ${KNIP} (failed), so it cannot tell whether apply stops on it. The formatter failure gives the remedy.`,
+    );
     assert.equal(fileCondition(result, "react-doctor.config.json").name, "current");
   });
 });
@@ -391,7 +419,7 @@ test("an invalid integration option is a plan problem, and the phase is still de
     assert.deepEqual(result.managedFiles, []);
     assert.equal(
       result.managedFilePlanProblem,
-      `Calavera cannot plan the managed files for the recipe in ${CONFIG}, so it did not check them. Run apply --dry-run to see what apply refuses, fix the recipe, then run the command again.`,
+      `Calavera cannot plan the managed files for the recipe in ${CONFIG} (TypeError), so it did not check them. Run apply --dry-run to see what apply refuses, fix the recipe or the cause, then run the command again.`,
     );
   });
 });

@@ -16,7 +16,7 @@ import { fileExists } from "./utils/fs.js";
 import { FormatterFailure } from "./utils/formatter-failure.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { textHash } from "./utils/hash.js";
-import { detectVitePlus } from "./vite-plus-detection.js";
+import { detectVitePlus, vitePlusInstallDirectory } from "./vite-plus-detection.js";
 
 /**
  * @typedef {import("./state.js").CalaveraState} CalaveraState
@@ -51,13 +51,19 @@ export const DRIFTED_FILE_CONDITIONS = new Set(["missing", "unreadable", "edited
  * apply's planner, the project's formatter loaded as apply loads it, and the comparison that
  * decides whether apply stops on an existing file. The formatter loads on every run with a recipe,
  * because apply loads it even when no managed file needs it (#838). A formatter that cannot load,
- * or that refuses a file, is a finding, not a stop (Decision 7 with the #1213 correction): the
- * files it was needed for are `not-checked`, and every other file is still classified. A recipe
- * whose managed files cannot be planned, such as one with an invalid integration option, gives a
- * plan problem and no managed files, and the phase is still derived from the other records.
+ * or that refuses a file, is a finding, not a stop (Decision 3, "When the formatter cannot load or
+ * refuses a file"): the files it was needed for are `not-checked`, and every other file is still
+ * classified. Every plan is formatted, as apply formats every file before it writes any, so a
+ * refusal apply would stop on is found even for a file that needs no comparison, and the plans are
+ * formatted together, as apply formats them. A recipe whose managed files cannot be planned, such
+ * as one with an invalid integration option, gives a plan problem and no managed files, and the
+ * phase is still derived from the other records.
  *
- * It writes nothing: the formatter runs `vp fmt --stdin-filepath`, which prints the formatted text
- * and writes no file (`utils/project-formatter.js`), and nothing contacts the network.
+ * Calavera's own code writes nothing and contacts no registry: the formatter runs the project's
+ * `vp fmt --stdin-filepath`, which prints the formatted text and writes no file
+ * (`utils/project-formatter.js`), and integration inputs run only local Git commands to suggest a
+ * default. `vp fmt` loads the project's own `vite.config.ts`, which Calavera does not control, as
+ * apply does.
  *
  * @param {{ config: string, recipe: Record<string, unknown>, state: CalaveraState }} options
  * @returns {Promise<ManagedFileClassification>}
@@ -65,7 +71,6 @@ export const DRIFTED_FILE_CONDITIONS = new Set(["missing", "unreadable", "edited
 export async function classifyManagedFiles({ config, recipe, state }) {
   /** @type {FormatterFailureFinding[]} */
   const formatterFailures = [];
-  const planProblem = `Calavera cannot plan the managed files for the recipe in ${config}, so it did not check them. Run apply --dry-run to see what apply refuses, fix the recipe, then run the command again.`;
   const integrations = resolveRecipeIntegrations(recipe);
   const projectDirectory = process.cwd();
 
@@ -86,18 +91,28 @@ export async function classifyManagedFiles({ config, recipe, state }) {
     if (integrations.some(({ appliesAt }) => appliesAt === "repository-root")) {
       repositoryRoot = findRepositoryRoot(projectDirectory) ?? projectDirectory;
     }
-  } catch {
-    // apply --dry-run reports the exact refusal; its message can quote the recipe.
-    return { managedFiles: [], formatterFailures, planProblem };
+  } catch (error) {
+    // apply --dry-run reports the exact refusal; its message can quote the recipe, so only the
+    // error's code, or its class when it has none, is kept, which tells a missing Git (ENOENT) or a
+    // programming error (TypeError) apart from a recipe apply refuses.
+    const { code, name } = /** @type {NodeJS.ErrnoException} */ (error);
+    const cause = typeof code === "string" ? code : typeof name === "string" ? name : "Error";
+    return {
+      managedFiles: [],
+      formatterFailures,
+      planProblem: `Calavera cannot plan the managed files for the recipe in ${config} (${cause}), so it did not check them. Run apply --dry-run to see what apply refuses, fix the recipe or the cause, then run the command again.`,
+    };
   }
 
   const loadFormatter = managedFileFormatterLoader(projectDirectory, detection, integrations);
-  let loaded = true;
+  const installDirectory = vitePlusInstallDirectory(detection);
+  /** @type {FormatterFailureFinding | undefined} */
+  let loadFailure;
   try {
     await loadFormatter();
   } catch (error) {
-    loaded = false;
-    formatterFailures.push(formatterFailure(null, error));
+    loadFailure = formatterFailure(null, error, installDirectory);
+    formatterFailures.push(loadFailure);
   }
 
   const integrationByPath = new Map(
@@ -110,19 +125,28 @@ export async function classifyManagedFiles({ config, recipe, state }) {
     integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
   );
 
+  const formatted = await Promise.all(
+    plans.map(async (plan) => {
+      try {
+        return { text: await formatGeneratedText(plan.path, plan.contents, loadFormatter) };
+      } catch (error) {
+        // A formatter that could not load is reported once, above.
+        return loadFailure
+          ? { failure: loadFailure }
+          : { failure: formatterFailure(plan.path, error, installDirectory), refused: true };
+      }
+    }),
+  );
+  // Each refusal once, in plan order, whichever format run ended first.
+  for (const { failure, refused } of formatted) {
+    if (failure && refused) formatterFailures.push(failure);
+  }
+
   /** @type {ClassifiedManagedFile[]} */
   const managedFiles = [];
-  for (const plan of plans) {
+  for (const [index, plan] of plans.entries()) {
     // The planner and declaredManagedFiles read the same declarations, so every plan has one.
     const integration = /** @type {string} */ (integrationByPath.get(plan.path));
-    /** @type {string | null} */
-    let formatted = null;
-    try {
-      formatted = await formatGeneratedText(plan.path, plan.contents, loadFormatter);
-    } catch (error) {
-      // A formatter that could not load is reported once, above.
-      if (loaded) formatterFailures.push(formatterFailure(plan.path, error));
-    }
     const path =
       rootOnly.has(integration) && repositoryRoot !== projectDirectory
         ? relative(projectDirectory, join(repositoryRoot, plan.path))
@@ -132,7 +156,11 @@ export async function classifyManagedFiles({ config, recipe, state }) {
       path,
       integration,
       recorded: stateFile !== undefined,
-      condition: await managedFileCondition(path, formatted, stateFile),
+      condition: await managedFileCondition(
+        path,
+        /** @type {{ text?: string, failure?: FormatterFailureFinding }} */ (formatted[index]),
+        stateFile,
+      ),
     });
   }
 
@@ -145,7 +173,8 @@ export async function classifyManagedFiles({ config, recipe, state }) {
  * hash differs, or an existing file without a record, needs the formatted contents.
  *
  * @param {string} path
- * @param {string | null} formatted What apply writes, or null when the formatter failed for it.
+ * @param {{ text?: string, failure?: FormatterFailureFinding }} formatted What apply writes, or
+ *   the formatter failure that kept Calavera from knowing it.
  * @param {import("./state.js").ManagedFileState | undefined} stateFile
  * @returns {Promise<ClassifiedManagedFile["condition"]>}
  */
@@ -174,13 +203,14 @@ async function managedFileCondition(path, formatted, stateFile) {
     reason: `${path} matches what the state records or what apply writes, so apply accepts it.`,
   };
   if (stateFile?.hash === textHash(installed)) return current;
-  if (formatted === null) {
+  if (formatted.text === undefined) {
+    const kind = formatted.failure?.kind ?? "an error that is not a formatter failure";
     return {
       name: "not-checked",
-      reason: `Calavera could not format what apply writes for ${path}, so it cannot tell whether apply stops on it. The formatter failure names the cause.`,
+      reason: `Calavera could not format what apply writes for ${path} (${kind}), so it cannot tell whether apply stops on it. The formatter failure gives the remedy.`,
     };
   }
-  const difference = managedFileDifference(path, installed, formatted, stateFile);
+  const difference = managedFileDifference(path, installed, formatted.text, stateFile);
   if (difference === "accepted") return current;
   if (difference === "edited") {
     return {
@@ -201,16 +231,19 @@ async function managedFileCondition(path, formatted, stateFile) {
  *
  * @param {string | null} path
  * @param {unknown} error
+ * @param {string | undefined} installDirectory Where `vp install` installs vite-plus when that is
+ *   not the project directory (#1084), as apply's own remedy names it.
  * @returns {FormatterFailureFinding}
  */
-function formatterFailure(path, error) {
+function formatterFailure(path, error, installDirectory) {
   const kind = error instanceof FormatterFailure ? error.kind : null;
   const file = path ?? "the managed files";
   const stops = "so apply stops on the same thing";
   const again = "then run the command again";
+  const install = installDirectory ? `vp install in ${installDirectory}` : "vp install";
   /** @type {Record<FormatterFailureKind, string>} */
   const reasons = {
-    "not-installed": `The project uses Vite+, but Calavera cannot find its vite-plus package, so it cannot format the managed files the way apply does, and apply stops on the same thing. Run vp install, ${again}.`,
+    "not-installed": `The project uses Vite+, but Calavera cannot find its vite-plus package, so it cannot format the managed files the way apply does, and apply stops on the same thing. Run ${install}, ${again}.`,
     "no-vp-command": `The project's vite-plus package has no vp command, so Calavera cannot format the managed files the way apply does, and apply stops on the same thing. Run vp install, ${again}.`,
     "editorconfig-change": `Calavera's .editorconfig would change how vp fmt formats ${file}, ${stops}, because Calavera formats every file before it writes any of them. Save the .editorconfig that apply --dry-run prints in the project root, or leave editorconfig out of the recipe, ${again}.`,
     "editorconfig-removal": `Removing Calavera's .editorconfig would change how vp fmt formats ${file}. Delete .editorconfig yourself, or keep editorconfig in the recipe, ${again}.`,
