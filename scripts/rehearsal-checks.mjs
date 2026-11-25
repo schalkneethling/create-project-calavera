@@ -948,8 +948,8 @@ function flowInit(context) {
  * protected-branch guard writes `.claude/settings.json` and wires `.vite-hooks` (#1128).
  * `skill-release-with-confidence` is an artifact installed from the release candidate.
  */
-export const FLOW_TOOLS = ["knip"];
-export const FLOW_AI_ARTIFACTS = ["skill-release-with-confidence", "skill-protected-branch-guard"];
+const FLOW_TOOLS = ["knip"];
+const FLOW_AI_ARTIFACTS = ["skill-release-with-confidence", "skill-protected-branch-guard"];
 
 /**
  * The branch the flow commit is made on. The guard protects `main`, the branch `vp create` makes,
