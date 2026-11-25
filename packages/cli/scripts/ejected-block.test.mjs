@@ -284,6 +284,7 @@ test("each record alone makes eject plan the block, and no record plans none", a
     await write(".calavera/cache/npm/index", "x\n");
     const plan = await planEject({ guidance, loadFormatter, dryRun: true });
     assert.equal(plan.ejectedBlock, undefined);
+    assert.deepEqual(plan.reported, []);
     assert.equal(plan.nothingToDo, false);
   });
 });
@@ -293,6 +294,7 @@ test("a complete block already in .gitignore is kept, and no second one is plann
     await writeRecords({ gitignore: `node_modules/\n${BLOCK}` });
     const plan = await planEject({ guidance, loadFormatter, dryRun: true });
     assert.equal(plan.ejectedBlock, undefined);
+    assert.deepEqual(plan.reported, []);
   });
 });
 
@@ -410,6 +412,15 @@ test("a removal that fails writes no block and keeps the state", async (t) => {
       );
       assert.ok(typeof outcome.ejectedBlock === "object" && "reason" in outcome.ejectedBlock);
       assert.match(outcome.ejectedBlock.reason, /Not added, because an item eject removes first/);
+      assert.deepEqual(
+        outcome.skipped.map(({ item, reason }) => [item.kind, reason]),
+        [
+          [
+            "state",
+            "Kept, because eject did not add the ejected block after a removal failed, and the next run needs this record to add it. Run eject again once that is fixed.",
+          ],
+        ],
+      );
       assert.equal(await readFile(".gitignore", "utf8"), "node_modules/\n");
       assert.equal(await exists(".calavera/state.json"), true);
     } finally {
@@ -445,6 +456,32 @@ test("a .gitignore that leads out of the project gets no block, and eject says s
     assert.equal(plan.ejectedBlock, undefined);
     const report = plan.reported.find(({ path }) => path === ".gitignore");
     assert.match(report?.reason ?? "", /does not add the ejected block/);
+
+    // Without Calavera's records there is no block to add, so there is nothing to report either.
+    await rm("calavera.config.json");
+    await rm(".calavera", { recursive: true });
+    const unmanaged = await planEject({ guidance, loadFormatter, dryRun: true });
+    assert.deepEqual(unmanaged.reported, []);
+  });
+});
+
+test("a .gitignore that an earlier step changed gets no block, and the state stays", async () => {
+  await inProject(async () => {
+    // .gitignore links into the cache, so removing the cache, the first step, changes the file
+    // the block would go into.
+    await writeRecords({ gitignore: null });
+    await write(".calavera/cache/gitignore", "node_modules/\n");
+    const { symlink } = await import("node:fs/promises");
+    await symlink(".calavera/cache/gitignore", ".gitignore");
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
+    const { remove, ejectedBlock } = selectEjectItems(plan, { assumeYes: false });
+    const outcome = await executeEject(remove, ejectedBlock);
+    assert.ok(typeof outcome.ejectedBlock === "object" && "error" in outcome.ejectedBlock);
+    assert.equal(
+      outcome.ejectedBlock.error.message,
+      ".gitignore changed since eject listed what it would change, so eject did not add the ejected block. Run eject again to see the new list.",
+    );
+    assert.equal(await exists(".calavera/state.json"), true);
   });
 });
 
@@ -472,10 +509,89 @@ test("the dry run shows the block's lines once, under .gitignore, and --json car
     assert.match(
       output,
       new RegExp(
-        `\\.gitignore \\(unedited\\)\\n(?: {4}.*\\n)* {4}Once everything else is removed, eject adds this block at the end of the file:\\n {6}"# calavera:ejected:start"\\n {6}${JSON.stringify(EJECTED_LINE).replaceAll(".", "\\.")}\\n {6}"# calavera:ejected:end"`,
+        `\\.gitignore \\(unedited\\)\\n(?: {4}.*\\n)* {4}Once everything else is removed, eject adds this block at the end of the file:\\n {6}"# calavera:ejected:start"\\n {6}${JSON.stringify(EJECTED_LINE).replaceAll(".", "\\.")}\\n {6}"# calavera:ejected:end"\\n {4}--yes leaves items for an interactive approval, so it would not add the block\\.`,
       ),
     );
+    // The block is printed under the .gitignore item, so it gets no heading of its own.
+    assert.doesNotMatch(output, /^Would add:$/m);
     assert.deepEqual(listingViolations(output, namedItems(result)), []);
+  });
+});
+
+test("under the .gitignore item, the summary says what became of the block", async () => {
+  await inProject(async () => {
+    // --yes leaves the recipe, so it removes the artifact-cache block and adds no ejected block.
+    await writeRecords();
+    const yes = await eject(["--yes"]);
+    assert.equal(yes.ejectedBlock?.outcome, "left");
+    assert.match(
+      human(yes),
+      /^Removed:\n(?:.*\n)*? {2}\.gitignore \(unedited\)\n(?: {4}.*\n)*? {4}eject adds the block that marks the project as ejected only once everything else is removed, and --yes left items for an interactive approval\.$/m,
+    );
+  });
+  await inProject(async () => {
+    await writeRecords();
+    const { result } = await ejectInteractively([], true);
+    assert.equal(result.ejectedBlock?.outcome, "written");
+    const output = human(result);
+    assert.match(
+      output,
+      /^ {2}\.gitignore \(unedited\)\n(?: {4}.*\n)*? {4}eject added the block that marks the project as ejected at the end of the file\.$/m,
+    );
+    assert.doesNotMatch(output, /^Added:$/m);
+    assert.deepEqual(listingViolations(output, namedItems(result)), []);
+  });
+});
+
+test("a removal that fails before the block is written says so under the block's own entry", async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip("root ignores folder permissions");
+    return;
+  }
+  await inProject(async () => {
+    await agentBootstrap({ mcpHarness: "skip", packageManager: "npm" });
+    await write(".calavera/.staging/leftover/file", "x\n");
+    await chmod(".calavera/.staging", 0o555);
+    try {
+      const result = await eject(["--yes"]);
+      assert.equal(result.status, "failed");
+      assert.deepEqual(result.ejectedBlock, {
+        path: ".gitignore",
+        type: "write",
+        lines: [START, EJECTED_LINE, END],
+        outcome: "skipped",
+        error:
+          "Not added, because an item eject removes first could not be removed. Run eject again once that is fixed.",
+      });
+      assert.match(
+        result.message,
+        /2 items could not be removed, and eject could not add the ejected block; each one says why below\./,
+      );
+      const output = human(result);
+      assert.match(
+        output,
+        /^Skipped:\n(?:.*\n)*? {2}\.gitignore: Not added, because an item eject removes first could not be removed\./m,
+      );
+      assert.deepEqual(listingViolations(output, namedItems(result)), []);
+      assert.equal(await exists(".gitignore"), false);
+    } finally {
+      await chmod(".calavera/.staging", 0o755);
+    }
+  });
+});
+
+test("a .gitignore that changed during the run is reported in eject's own words", async () => {
+  await inProject(async () => {
+    await agentBootstrap({ mcpHarness: "skip", packageManager: "npm" });
+    await write(".calavera/cache/gitignore", "node_modules/\n");
+    const { symlink } = await import("node:fs/promises");
+    await symlink(".calavera/cache/gitignore", ".gitignore");
+    const { result } = await ejectInteractively([], true);
+    assert.equal(result.ejectedBlock?.outcome, "failed");
+    assert.equal(
+      result.ejectedBlock?.error,
+      ".gitignore changed since eject listed what it would change, so eject did not add the ejected block. Run eject again to see the new list.",
+    );
   });
 });
 
@@ -489,6 +605,15 @@ test("without any other .gitignore change, the dry run lists the block under its
       /^Would add:\n {2}\.gitignore: eject creates the file with the block that marks the project as ejected, once everything else is removed:\n {6}"# calavera:ejected:start"/m,
     );
     assert.deepEqual(listingViolations(output, namedItems(result)), []);
+  });
+  await inProject(async () => {
+    await write("calavera.config.json", "{}\n");
+    await write(".gitignore", "node_modules/\n");
+    const output = human(await eject(["--dry-run"]));
+    assert.match(
+      output,
+      /^ {2}\.gitignore: eject adds at the end of the file the block that marks the project as ejected, once everything else is removed:$/m,
+    );
   });
 });
 
@@ -571,7 +696,10 @@ test("a block that cannot be written fails the run, says why, and keeps the stat
         /1 item could not be removed, and eject could not add the ejected block; each one says why below\./,
       );
       const output = human(result);
-      assert.match(output, /^Failed:\n {2}\.gitignore: eject could not add the ejected block: /m);
+      assert.match(
+        output,
+        /^Failed:\n {2}\.gitignore: eject could not add the ejected block: the write failed \((?:EACCES|EPERM)\)\.\n {4}Fix the cause, then run eject again\.$/m,
+      );
       assert.deepEqual(listingViolations(output, namedItems(result)), []);
       assert.equal(await phase(), "incomplete");
     } finally {
