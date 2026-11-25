@@ -58,6 +58,9 @@ const FINDINGS_IN_PROJECT_GROUP = new Set([
  * it (#1022).
  */
 
+/** The headline of an apply dry run that has changed no files, which `init --apply --dry-run` prints too. */
+export const APPLY_DRY_RUN_HEADLINE = "Calavera apply dry run complete. No files were changed.";
+
 /**
  * The lines `apply --dry-run` and `apply` print for `result`, in order. The caller prints a line
  * with the logger method its level names.
@@ -69,7 +72,7 @@ const FINDINGS_IN_PROJECT_GROUP = new Set([
 export function applySummaryLines(result, options = {}) {
   return [
     result.dryRun
-      ? info("Calavera apply dry run complete. No files were changed.")
+      ? info(APPLY_DRY_RUN_HEADLINE)
       : { level: "success", text: "Calavera apply complete." },
     ...applySummaryBody(result, options),
   ];
@@ -279,30 +282,39 @@ function fileChangeLine(change, dryRun) {
 }
 
 /**
- * One integration's part of an ignore file, under the file's own line, so the path is not named
- * again.
+ * One integration's part of an ignore file. Apply prints it under the file's own line, so the path
+ * is not named again. A summary without that file line, such as the `artifacts` dry run, passes
+ * `namePath` so the line names the file itself, in the same words otherwise (#1135).
  *
  * @param {IgnoreChange} change
  * @param {boolean} dryRun
+ * @param {{ namePath?: boolean }} [options]
  */
-function ignoreChangeLine({ path, integration, type, lines, previousLines, removedLines }, dryRun) {
+export function ignoreChangeLine(
+  { path, integration, type, lines, previousLines, removedLines },
+  dryRun,
+  { namePath = false } = {},
+) {
   const quoted = (/** @type {string[]} */ values) => values.map(quoteScriptValue).join(", ");
+  const inPath = (/** @type {string} */ preposition) => (namePath ? ` ${preposition} ${path}` : "");
   if (removedLines !== undefined) {
     if (integration === undefined) {
-      return `${tense(dryRun, "Would remove", "Removed")} lines no selected integration declares: ${quoted(removedLines)}`;
+      return `${tense(dryRun, "Would remove", "Removed")} lines no selected integration declares${inPath("from")}: ${quoted(removedLines)}`;
     }
     const because =
       integration === ARTIFACT_CACHE_BLOCK
         ? "the recipe selects no artifacts and .calavera/cache/ does not exist"
         : `${integration} no longer adds lines to it`;
-    return `${tense(dryRun, "Would remove", "Removed")} the ${integration} block, because ${because}: ${quoted(removedLines)}`;
+    return `${tense(dryRun, "Would remove", "Removed")} the ${integration} block${inPath("from")}, because ${because}: ${quoted(removedLines)}`;
   }
   const what = path === GITIGNORE_PATH ? `the ${integration} block` : `the ${integration} lines`;
-  if (type === "unchanged") return `Already holds ${what}: ${quoted(lines ?? [])}`;
-  if (previousLines !== undefined) {
-    return `${tense(dryRun, "Would replace", "Replaced")} ${what}: ${quoted(previousLines)} with ${quoted(lines ?? [])}`;
+  if (type === "unchanged") {
+    return `${namePath ? `${path} already holds` : "Already holds"} ${what}: ${quoted(lines ?? [])}`;
   }
-  return `${tense(dryRun, "Would add", "Added")} ${what}: ${quoted(lines ?? [])}`;
+  if (previousLines !== undefined) {
+    return `${tense(dryRun, "Would replace", "Replaced")} ${what}${inPath("in")}: ${quoted(previousLines)} with ${quoted(lines ?? [])}`;
+  }
+  return `${tense(dryRun, "Would add", "Added")} ${what}${inPath("to")}: ${quoted(lines ?? [])}`;
 }
 
 /**

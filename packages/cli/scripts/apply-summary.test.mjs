@@ -11,7 +11,7 @@ import { join } from "node:path";
 import test from "node:test";
 
 import { listingViolations, namedItems } from "../../../scripts/rehearsal-checks.mjs";
-import { applySummaryLines } from "../src/apply-summary.js";
+import { applySummaryLines, ignoreChangeLine } from "../src/apply-summary.js";
 import { applyRecipeObject } from "../src/index.js";
 import {
   initApplyDryRunLines,
@@ -788,33 +788,35 @@ test("nothing to change is said only when every change is unchanged and nothing 
   );
 });
 
+/** One change of each kind apply plans for an ignore file. */
+const IGNORE_CHANGES = [
+  {
+    path: ".gitignore",
+    integration: "stryker",
+    type: "update",
+    lines: ["b/"],
+    previousLines: ["a/"],
+  },
+  { path: ".gitignore", integration: "stryker", type: "unchanged", lines: ["c/"] },
+  { path: ".gitignore", integration: "stryker", type: "update", removedLines: ["d/"] },
+  {
+    path: ".gitignore",
+    integration: "artifact-cache",
+    type: "update",
+    removedLines: [".calavera/cache/"],
+  },
+  { path: ".htmlvalidateignore", type: "update", removedLines: ["e/"] },
+  { path: ".htmlvalidateignore", integration: "html-validate", type: "update", lines: ["f/"] },
+  { path: ".other-ignore", integration: "stryker", type: "write", lines: ["g/", "h/"] },
+];
+
 test("each ignore file is named once, with each owner's lines under it", () => {
-  const ignoreChanges = [
-    {
-      path: ".gitignore",
-      integration: "stryker",
-      type: "update",
-      lines: ["b/"],
-      previousLines: ["a/"],
-    },
-    { path: ".gitignore", integration: "stryker", type: "unchanged", lines: ["c/"] },
-    { path: ".gitignore", integration: "stryker", type: "update", removedLines: ["d/"] },
-    {
-      path: ".gitignore",
-      integration: "artifact-cache",
-      type: "update",
-      removedLines: [".calavera/cache/"],
-    },
-    { path: ".htmlvalidateignore", type: "update", removedLines: ["e/"] },
-    { path: ".htmlvalidateignore", integration: "html-validate", type: "update", lines: ["f/"] },
-    { path: ".other-ignore", integration: "stryker", type: "write", lines: ["g/"] },
-  ];
   const result = emptyResult({
     changes: [
       { type: "update", path: ".gitignore", action: "merge", ownership: "project" },
       { type: "write", path: ".htmlvalidateignore", action: "write", ownership: "calavera" },
     ],
-    ignoreChanges: /** @type {any} */ (ignoreChanges),
+    ignoreChanges: /** @type {any} */ (IGNORE_CHANGES),
   });
 
   const expected = (/** @type {boolean} */ dryRun) => {
@@ -831,7 +833,7 @@ test("each ignore file is named once, with each owner's lines under it", () => {
       `    ${verb("Would remove", "Removed")} lines no selected integration declares: "e/"`,
       `    ${verb("Would add", "Added")} the html-validate lines: "f/"`,
       "  .other-ignore",
-      `    ${verb("Would add", "Added")} the stryker lines: "g/"`,
+      `    ${verb("Would add", "Added")} the stryker lines: "g/", "h/"`,
     ];
   };
   const files = (/** @type {import("../src/index.js").ApplyResult} */ value) => {
@@ -841,6 +843,25 @@ test("each ignore file is named once, with each owner's lines under it", () => {
 
   assert.deepEqual(files(result), expected(true));
   assert.deepEqual(files({ ...result, dryRun: false }), expected(false));
+});
+
+// #1135: the artifacts dry run prints its .gitignore lines without a file line above them, so it
+// names the path in each line, and otherwise uses apply's words for the same change.
+test("the artifacts dry run words each ignore change as apply does, with the path named", () => {
+  assert.deepEqual(
+    IGNORE_CHANGES.map((change) =>
+      ignoreChangeLine(/** @type {any} */ (change), true, { namePath: true }),
+    ),
+    [
+      'Would replace the stryker block in .gitignore: "a/" with "b/"',
+      '.gitignore already holds the stryker block: "c/"',
+      'Would remove the stryker block from .gitignore, because stryker no longer adds lines to it: "d/"',
+      'Would remove the artifact-cache block from .gitignore, because the recipe selects no artifacts and .calavera/cache/ does not exist: ".calavera/cache/"',
+      'Would remove lines no selected integration declares from .htmlvalidateignore: "e/"',
+      'Would add the html-validate lines to .htmlvalidateignore: "f/"',
+      'Would add the stryker lines to .other-ignore: "g/", "h/"',
+    ],
+  );
 });
 
 test("integrations name their packages once and say how the install ran", () => {

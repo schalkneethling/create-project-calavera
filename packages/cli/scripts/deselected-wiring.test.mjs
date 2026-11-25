@@ -981,3 +981,31 @@ test("Given a guard kept for two reasons and another item kept for a third, clea
     assert.equal(await exists(script), true);
   });
 });
+
+// #1135: the reason for a link that cannot be followed has one wording for any number of items.
+test("Given two deselected skills and a hook link that cannot be followed, clean names both in one sentence with the same reason", async () => {
+  await inWiredProject(async () => {
+    const goal = { id: "skill-project-goal", directory: ".agents/skills/project-goal" };
+    const registry = stubRegistry(
+      new Map([
+        [id, "0.1.0"],
+        [goal.id, "0.1.0"],
+      ]),
+    );
+    const both = { ...guardRecipe(), ai: [...guardRecipe().ai, { id: goal.id }] };
+    await callMcpTool("apply_recipe", { recipe: both, noInstall: true }, registry);
+    await writeConfig(deselectedRecipe());
+    await callMcpTool("apply_recipe", { recipe: deselectedRecipe(), noInstall: true }, registry);
+    await symlink("../scripts/missing.sh", ".vite-hooks/post-merge");
+
+    const result = cleanJson(["--dry-run"]);
+    const kept = result.changes
+      .filter(({ skipReasons }) => skipReasons?.includes("unfollowable-link"))
+      .map(({ path }) => path);
+    assert.deepEqual(kept, [skillDirectory, goal.directory]);
+    assert.equal(
+      result.message,
+      `No stale managed items were safe to remove. Kept ${kept.join(", ")}, because a hook is a symbolic link that Calavera cannot follow. Repair or remove the links each item's reason names, then run clean again.`,
+    );
+  });
+});

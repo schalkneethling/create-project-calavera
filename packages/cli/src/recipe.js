@@ -577,15 +577,17 @@ export function resolveRecipeIntegrations(recipe) {
   return integrationCatalog.filter((integration) => selected.has(integration.id));
 }
 
+/** The refusal for a recipe that selects the repository controls integration without its options. */
+const REPOSITORY_CONTROLS_OPTIONS_REQUIRED =
+  "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.";
+
 export function normalizeIntegrationOptions(integrationOptions, integrationIds) {
   const resolvedIds = new Set(
     resolveRecipeIntegrations({ integrations: integrationIds }).map(({ id }) => id),
   );
   if (integrationOptions === undefined) {
     if (resolvedIds.has(GITHUB_REPOSITORY_CONTROLS_ID)) {
-      throw new Error(
-        "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.",
-      );
+      throw new Error(REPOSITORY_CONTROLS_OPTIONS_REQUIRED);
     }
     return undefined;
   }
@@ -676,9 +678,7 @@ export function normalizeIntegrationOptions(integrationOptions, integrationIds) 
       ? repositoryControls
       : { ...repositoryControls, requireCodeqlResults };
   } else if (resolvedIds.has(GITHUB_REPOSITORY_CONTROLS_ID)) {
-    throw new Error(
-      "integrationOptions.github-repository-controls is required when the github-repository-controls integration is selected.",
-    );
+    throw new Error(REPOSITORY_CONTROLS_OPTIONS_REQUIRED);
   }
 
   if (Object.hasOwn(integrationOptions, STRYKER_ID)) {
