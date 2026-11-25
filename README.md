@@ -102,9 +102,9 @@ applies it.
 
 `npm create` needs the `--` separator before Calavera flags such as `--init`
 and `--dry-run`. Do not use `npm create project-calavera --init`; npm treats
-`--init` as its own option and Calavera falls back to the recipe CLI. Yarn
-requires Yarn 2+ for `dlx`; Yarn 1.x users can use
-`npx --package create-project-calavera create-project-calavera --init`.
+`--init` as its own option and Calavera falls back to the recipe CLI.
+Calavera requires Yarn 2 or later. Under Yarn 1, Calavera stops and names the
+commands to use instead.
 
 Direct binary launchers such as `npx --package` do not need an extra `--` before
 Calavera flags: use
@@ -676,9 +676,8 @@ Calavera falls back to the recipe CLI. With other package managers, use
 `pnpm dlx create-project-calavera --init`,
 `yarn dlx create-project-calavera --init`, or
 `bunx create-project-calavera --init`.
-The Yarn command requires Yarn 2+ because Yarn 1.x does not support `dlx`; Yarn
-1.x users can use `npx --package create-project-calavera create-project-calavera --init`
-or install `create-project-calavera` globally.
+Calavera requires Yarn 2 or later. Under Yarn 1, Calavera stops and names the
+commands to use instead.
 
 The `--init` bootstrap installs the base Calavera skill, adds concise project
 guidance, optionally writes one project-local MCP config, and prints a

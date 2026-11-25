@@ -68,14 +68,16 @@ export async function variablesFromReferences(paths, hasReference, warnings) {
  * The file of `paths` that defines each variable last, so a later file replaces an earlier one,
  * with the value Bun gives it: without surrounding quotes, and with `\\n`, `\\r`, and `\\t` in a
  * double-quoted value turned into the characters they name (probed with Bun 1.3.9). A file that
- * does not exist or cannot be read is skipped; variablesFromReferences warns about the second.
+ * does not exist or cannot be read is skipped; one that cannot be read adds a warning to
+ * `unreadable`, which callers that do not report it leave empty and discard.
  * @param {string[]} paths Lowest precedence first.
+ * @param {string[]} [unreadable]
  */
-export async function environmentFileSources(paths) {
+export async function environmentFileSources(paths, unreadable = []) {
   /** @type {Map<string, { path: string, value: string }>} */
   const sources = new Map();
   for (const path of paths) {
-    const text = await readConfigText(path, "environment file", []);
+    const text = await readConfigText(path, "environment file", unreadable);
     if (text === undefined) continue;
     for (const [name, raw] of parseEnvironmentFile(text)) {
       const trimmed = raw.trim();
@@ -130,4 +132,30 @@ export async function bunEnvironmentFileChains(cwd, env, warnings, execArgv) {
     }
   }
   return [chain(mode), ...extra];
+}
+
+/**
+ * Which of `names` a `.env` file that Bun may have loaded defines, mapped to that file, and whether
+ * one of the files exists but could not be read, in which case any of `names` may come from it.
+ * Bun keeps a variable that the caller, such as npm starting Bun, already set, so a file value
+ * that differs from the one in `env` is not where that value came from; a value with a `$` may
+ * have been expanded from the caller's environment, so it counts in any case (#1186).
+ * @param {string[][]} chains From bunEnvironmentFileChains.
+ * @param {NodeJS.ProcessEnv} env
+ * @param {readonly string[]} names
+ * @returns {Promise<{ fromFile: Map<string, string>, unreadable: boolean }>}
+ */
+export async function variablesFromBunFiles(chains, env, names) {
+  /** @type {Map<string, string>} */
+  const fromFile = new Map();
+  /** @type {string[]} */
+  const unreadable = [];
+  for (const chain of chains) {
+    for (const [name, { path, value }] of await environmentFileSources(chain, unreadable)) {
+      if (names.includes(name) && (value === env[name] || mayHoldVariable(value))) {
+        fromFile.set(name, path);
+      }
+    }
+  }
+  return { fromFile, unreadable: unreadable.length > 0 };
 }

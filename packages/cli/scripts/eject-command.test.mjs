@@ -1239,7 +1239,7 @@ test("the skill keeps its apply fallback pinned to the MCP version and sends eje
   }
 });
 
-test("Yarn 1 needs -W to remove a dependency at a workspace root, and Vite+ passes it through after --", () => {
+test("the reported remove command has no workspace-root flag for Yarn, with or without Vite+", () => {
   /** @type {import("../src/vite-plus-detection.js").VitePlusDetection} */
   const notManaged = { status: "unmanaged", corroborating: [] };
   /** @type {import("../src/vite-plus-detection.js").VitePlusDetection} */
@@ -1250,38 +1250,30 @@ test("Yarn 1 needs -W to remove a dependency at a workspace root, and Vite+ pass
     corroborating: [],
   };
   const name = ["create-project-calavera"];
-  const root = { yarnClassicWorkspaceRoot: true };
-  assert.deepEqual(devDependencyRemoveCommand("yarn", notManaged, name, root), [
+  // Calavera does not support Yarn 1, the one Yarn that needs -W at a workspace root (ADR-0023).
+  assert.deepEqual(devDependencyRemoveCommand("yarn", notManaged, name), [
     "yarn",
-    ["remove", "-W", ...name],
+    ["remove", ...name],
   ]);
-  // vp remove refuses its own -w for Yarn, so Yarn 1's flag goes through as a native argument.
-  assert.deepEqual(devDependencyRemoveCommand("yarn", managed, name, root), [
-    "vp",
-    ["remove", ...name, "--", "-W"],
-  ]);
-  // Only Yarn has the check.
-  assert.deepEqual(devDependencyRemoveCommand("pnpm", notManaged, name, root), [
+  assert.deepEqual(devDependencyRemoveCommand("yarn", managed, name), ["vp", ["remove", ...name]]);
+  assert.deepEqual(devDependencyRemoveCommand("pnpm", notManaged, name), [
     "pnpm",
     ["remove", ...name],
   ]);
 });
 
-test("the reported Yarn command follows the project's Yarn version at a workspace root", async () => {
-  /** @type {[object, string | undefined, string][]} */
+test("the reported Yarn command is the same whatever Yarn the project pins, at a workspace root or not", async () => {
+  /** @type {[object, string | undefined][]} */
   const cases = [
-    [{ packageManager: "yarn@1.22.22" }, undefined, "yarn remove -W create-project-calavera"],
-    [{ packageManager: "yarn@4.5.3" }, undefined, "yarn remove create-project-calavera"],
-    [
-      { devEngines: { packageManager: { name: "yarn", version: "^4.0.0" } } },
-      undefined,
-      "yarn remove create-project-calavera",
-    ],
-    // No pin: a Yarn 2 or later project has .yarnrc.yml, and Yarn 1 is what Corepack runs otherwise.
-    [{}, "nodeLinker: node-modules\n", "yarn remove create-project-calavera"],
-    [{}, undefined, "yarn remove -W create-project-calavera"],
+    // A Yarn 1 pin gets the Yarn 2 or later command too: only the package manager that started
+    // Calavera decides what it supports (ADR-0023, owner decision 2).
+    [{ packageManager: "yarn@1.22.22" }, undefined],
+    [{ packageManager: "yarn@4.5.3" }, undefined],
+    [{ devEngines: { packageManager: { name: "yarn", version: "^4.0.0" } } }, undefined],
+    [{}, "nodeLinker: node-modules\n"],
+    [{}, undefined],
   ];
-  for (const [manifest, yarnrc, expected] of cases) {
+  for (const [manifest, yarnrc] of cases) {
     await inProject(
       async () => {
         await writeFile("yarn.lock", "");
@@ -1289,7 +1281,7 @@ test("the reported Yarn command follows the project's Yarn version at a workspac
         const result = await eject(["--dry-run"]);
         assert.equal(
           result.packageJson.devDependency?.removeCommand,
-          expected,
+          "yarn remove create-project-calavera",
           JSON.stringify(manifest),
         );
       },
@@ -1301,7 +1293,7 @@ test("the reported Yarn command follows the project's Yarn version at a workspac
       },
     );
   }
-  // Outside a workspace root, Yarn 1 needs no flag.
+  // Outside a workspace root.
   await inProject(
     async () => {
       const result = await eject(["--dry-run"]);
