@@ -352,6 +352,9 @@ test(
   async (t) => {
     await inProject(async () => {
       const stagingFolder = await stickCacheBlockStaging(t);
+      // ADR-0020, Decision 1: --check-updates records the cache block only with a state file, so the
+      // project gets one, as artifacts install or --init would write it.
+      await writeFile(".calavera/state.json", `${JSON.stringify({ version: 1 }, null, 2)}\n`);
 
       await assert.rejects(
         runArtifactCommand(

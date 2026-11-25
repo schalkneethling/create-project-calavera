@@ -6,7 +6,7 @@
 // command writes. The tests below cover install and status; update and the bootstrap build their
 // state the same way, by carrying the earlier state through.
 import assert from "node:assert/strict";
-import { readFile, writeFile } from "node:fs/promises";
+import { mkdir, readFile, writeFile } from "node:fs/promises";
 import test from "node:test";
 
 import { runArtifactCommand } from "../src/artifact-lifecycle.js";
@@ -67,8 +67,12 @@ const commandsThatWriteState = [
   },
   {
     name: "artifacts status --check-updates",
-    run: () =>
-      runArtifactCommand(
+    // ADR-0020, Decision 1: --check-updates records the cache block only into an existing state
+    // file, so the state starts as --init leaves it, without a profile.
+    run: async () => {
+      await mkdir(".calavera", { recursive: true });
+      await writeFile(".calavera/state.json", `${JSON.stringify({ version: 1 }, null, 2)}\n`);
+      return runArtifactCommand(
         {
           config: "calavera.config.json",
           dryRun: false,
@@ -76,7 +80,8 @@ const commandsThatWriteState = [
           checkUpdates: true,
         },
         registry(),
-      ),
+      );
+    },
   },
 ];
 

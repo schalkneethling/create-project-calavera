@@ -339,6 +339,9 @@ test("artifact_status writes nothing into the project, with or without checkUpda
   });
 });
 
+const PENDING_REMEDY =
+  "An artifact operation stopped before its rollback ran, so this read-only report does not read the artifact records, because the rollback may still change them. Save any edits to the files in rollbackFiles first, then run: npm create project-calavera artifacts status. It rolls the transaction back and reports the artifact status.";
+
 test("artifact_status returns the pending-transaction phase instead of recovering it, and writes nothing", async () => {
   await inProject("calavera-mcp-status-pending-", async () => {
     await lockedProject();
@@ -366,8 +369,12 @@ test("artifact_status returns the pending-transaction phase instead of recoverin
       pointers: [],
       phase: "pending-transaction",
       rollbackFiles: [".calavera/state.json"],
-      remedy:
-        "An artifact operation stopped before its rollback ran, so this read-only report does not read the artifact records, because the rollback may still change them. Save any edits to the files in rollbackFiles first, then run: npm create project-calavera artifacts status. It rolls the transaction back and reports the artifact status.",
+      remedy: PENDING_REMEDY,
+      // ADR-0020: the phase line, at the doctors' level, with the same text as the remedy.
+      phaseLine: { level: "error", message: PENDING_REMEDY },
+      phaseNotes: [],
+      formatterFailures: [],
+      managedFilePlanProblem: null,
     });
     assert.deepEqual(await snapshotDirectory(), before);
     assert.deepEqual(registry.requests, [], "a pending transaction must resolve no package");
@@ -375,13 +382,17 @@ test("artifact_status returns the pending-transaction phase instead of recoverin
   });
 });
 
-test("artifact_status carries phase only in the pending-transaction report", async () => {
+// ADR-0020, Decision 8: every result carries the phase; only the pending-transaction report
+// carries rollbackFiles and remedy.
+test("artifact_status carries the phase in every report, and the rollback fields only while a transaction is pending", async () => {
   await inProject("calavera-mcp-status-no-phase-", async () => {
     await lockedProject();
 
     const report = await callMcpTool("artifact_status", {}, forbiddenFormatter);
 
-    for (const field of ["phase", "rollbackFiles", "remedy"]) {
+    assert.equal(report.phase, "composed");
+    assert.equal(report.phaseLine.level, "info");
+    for (const field of ["rollbackFiles", "remedy"]) {
       assert.equal(Object.hasOwn(report, field), false, `${field} is present`);
     }
   });

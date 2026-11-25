@@ -71,17 +71,30 @@ export function runnerCommand(commands, positionals, flags) {
  * @param {string[]} [flags]
  */
 export function artifactCommand(recipe, config, positionals, flags = []) {
+  return calaveraCommand(recipe, config, ["artifacts", ...positionals], flags);
+}
+
+/**
+ * A `create-project-calavera` command, such as `apply` or `init`, built as `artifactCommand`
+ * builds an `artifacts` command: through the recipe's package manager, npm when it names none,
+ * and naming the recipe when it is not at the default path.
+ *
+ * @param {unknown} recipe The parsed recipe, or undefined when there is none.
+ * @param {string} config The recipe path, as `--config` names it.
+ * @param {string[]} positionals Words after the runner, such as `["apply"]`.
+ * @param {string[]} [flags]
+ */
+export function calaveraCommand(recipe, config, positionals, flags = []) {
   const packageManager =
     isPlainObject(recipe) &&
     Object.hasOwn(projectLocalCommandCatalog, String(recipe.packageManager))
       ? /** @type {keyof typeof projectLocalCommandCatalog} */ (String(recipe.packageManager))
       : "npm";
   const configFlags = config === CONFIG_FILE ? [] : ["--config", config];
-  return runnerCommand(
-    projectLocalCommandCatalog[packageManager],
-    ["artifacts", ...positionals],
-    [...flags, ...configFlags],
-  );
+  return runnerCommand(projectLocalCommandCatalog[packageManager], positionals, [
+    ...flags,
+    ...configFlags,
+  ]);
 }
 
 /**

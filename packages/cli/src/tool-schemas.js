@@ -634,6 +634,18 @@ const artifactStatusEntrySchema = z.looseObject({
   updateCheckFailure: updateCheckFailureSchema
     .nullable()
     .describe("Why the update check could not look up this artifact's channel, or null."),
+  condition: z
+    .looseObject({
+      name: z
+        .string()
+        .describe(
+          "pending, current, missing, unreadable, edited, or unrecorded, as the project phase classifies the artifact.",
+        ),
+      reason: z
+        .string()
+        .describe("What Calavera found and what resolves it. It names paths and IDs only."),
+    })
+    .describe("The artifact's condition, computed on every call and never stored (ADR-0020)."),
 });
 
 /**
@@ -666,7 +678,7 @@ export const mcpOnlyToolSchemas = Object.freeze({
       ok: z
         .boolean()
         .describe(
-          "True when every installed artifact is healthy. False in the pending-transaction result, whose artifacts cannot be read yet.",
+          "The verdict artifacts doctor gives: true when every selected artifact is healthy, the phase line is no error, and the managed files could be planned and formatted. False in the pending-transaction result, whose artifacts cannot be read yet.",
         ),
       artifacts: z
         .array(artifactStatusEntrySchema)
@@ -681,7 +693,43 @@ export const mcpOnlyToolSchemas = Object.freeze({
         .string()
         .optional()
         .describe(
-          "Where the project is in Calavera's lifecycle. Present only as pending-transaction for now: an artifact operation stopped before its rollback ran, so the report lists no artifacts.",
+          "Where the project is in Calavera's lifecycle: pending-transaction, unmanaged, ejected, bootstrapped, composed, applied, drifted, or incomplete (ADR-0020). With pending-transaction, an artifact operation stopped before its rollback ran, so the report lists no artifacts.",
+        ),
+      phaseLine: z
+        .looseObject({
+          level: z
+            .string()
+            .describe("error, warn, or info, at the level artifacts doctor gives it."),
+          message: z.string(),
+        })
+        .optional()
+        .describe(
+          "The line the report starts with, which names the phase and what resolves it. This tool runs no project code, so it says when a managed file needs the project's formatter to be checked.",
+        ),
+      phaseNotes: z
+        .array(z.string())
+        .optional()
+        .describe(
+          "Notes about the marker eject leaves in .gitignore, which apply stops on when it was edited or broken.",
+        ),
+      formatterFailures: z
+        .array(
+          z.looseObject({
+            path: z.string().nullable(),
+            kind: z.string().nullable(),
+            reason: z.string(),
+          }),
+        )
+        .optional()
+        .describe(
+          "Each failure of the formatter apply would use. Always empty here, because this tool never loads it.",
+        ),
+      managedFilePlanProblem: z
+        .string()
+        .nullable()
+        .optional()
+        .describe(
+          "Why the recipe's managed files could not be planned, which apply also refuses, or null.",
         ),
       rollbackFiles: z
         .array(z.string())

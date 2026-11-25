@@ -71,6 +71,7 @@ import {
 import {
   artifactDoctorVerdict,
   formatArtifactStatus,
+  formatPhaseReport,
   formatRemovedLockEntries,
   formatTemporaryFolderLeftovers,
 } from "./artifact-status-report.js";
@@ -6890,20 +6891,18 @@ function printResult(result, asJSON = false, { dryRun: commandDryRun = false, no
   }
 
   if (result.command === "artifacts status" || result.command === "artifacts doctor") {
-    for (const { level, message } of formatArtifactStatus(
-      /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
-        /** @type {unknown} */ (result)
-      ),
-    )) {
+    const report = /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
+      /** @type {unknown} */ (result)
+    );
+    for (const { level, message } of [
+      ...formatPhaseReport(report),
+      ...formatArtifactStatus(report),
+    ]) {
       logger[level](message);
     }
     printArtifactCacheBlock(result);
     if (result.command === "artifacts doctor") {
-      for (const { level, message } of artifactDoctorVerdict(
-        /** @type {import("./artifact-status-report.js").ArtifactStatusReport} */ (
-          /** @type {unknown} */ (result)
-        ),
-      )) {
+      for (const { level, message } of artifactDoctorVerdict(report)) {
         logger[level](message);
       }
     }

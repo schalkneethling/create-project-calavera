@@ -408,7 +408,7 @@ test("without running project code, a project without Vite+ is classified in ful
   });
 });
 
-test("artifacts status, artifacts doctor, and the read-only status tool run no project code to find leftover lock entries", async () => {
+test("the read-only status tool runs no project code, and the artifact commands load the formatter as apply does", async () => {
   await inProject(async (directory) => {
     await applied(["knip"], [ARTIFACT]);
     await declareVitePlus();
@@ -421,20 +421,15 @@ test("artifacts status, artifacts doctor, and the read-only status tool run no p
     );
     const knip = await readJsonFile(KNIP);
     await writeJsonFile(KNIP, { ...knip, entry: ["src/main.ts"] });
+    // ADR-0020, owner decision 24: the read-only tool never runs the project's formatter.
     await readArtifactStatus({ config: CONFIG });
-    for (const artifactAction of ["status", "doctor"]) {
-      await runArtifactCommand(
-        { config: CONFIG, dryRun: false, artifactAction },
-        {
-          ...registry(),
-          loadFormatter: async () => assert.fail(`${artifactAction} loads no formatter`),
-        },
-      );
-    }
     await assert.rejects(access(ran), { code: "ENOENT" });
-    // The same stand-in runs when the formatter loads, so the check above can fail.
-    await derive();
-    await access(ran);
+    // ADR-0020, Decision 3: artifacts status and artifacts doctor load it whenever apply would.
+    for (const artifactAction of ["status", "doctor"]) {
+      await rm(ran, { force: true });
+      await runArtifactCommand({ config: CONFIG, dryRun: false, artifactAction }, registry());
+      await access(ran);
+    }
   });
 });
 

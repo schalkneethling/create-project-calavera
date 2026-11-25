@@ -138,6 +138,9 @@ for (const { link, item } of CASES) {
 // before it stages anything.
 test("artifacts status --check-updates refuses to record the cache block through a linked .calavera", async () => {
   await inProject({ id: "skill-code-review" }, async ({ project, outside }) => {
+    // ADR-0020, Decision 1: --check-updates records the cache block only with a state file, so the
+    // project gets one, as artifacts install or --init would write it.
+    await writeFile(join(outside, "state.json"), `${JSON.stringify({ version: 1 }, null, 2)}\n`);
     await symlink(outside, join(project, ".calavera"));
     const projectBefore = await snapshotDirectory(project);
     const outsideBefore = await snapshotDirectory(outside);
@@ -374,6 +377,12 @@ for (const dryRun of [false, true]) {
 test("artifacts status --check-updates refuses to record the cache block through a linked .calavera/.transactions", async () => {
   await inProject({ id: "skill-code-review" }, async ({ project, outside }) => {
     await mkdir(join(project, ".calavera"));
+    // ADR-0020, Decision 1: --check-updates records the cache block only with a state file, so the
+    // project gets one, as artifacts install or --init would write it.
+    await writeFile(
+      join(project, ".calavera/state.json"),
+      `${JSON.stringify({ version: 1 }, null, 2)}\n`,
+    );
     await symlink(outside, join(project, ".calavera/.transactions"));
     await chmod(outside, 0o555);
     const projectBefore = await snapshotDirectory(project);

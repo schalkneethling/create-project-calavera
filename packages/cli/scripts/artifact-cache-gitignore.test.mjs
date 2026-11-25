@@ -624,6 +624,10 @@ test("artifacts status --check-updates writes the block for a selection that is 
       "calavera.config.json",
       `${JSON.stringify(recipeWith(["skill-project-goal"]), null, 2)}\n`,
     );
+    // ADR-0020, Decision 1: --check-updates records the cache block only with a state file, so the
+    // project gets one, as artifacts install or --init would write it.
+    await mkdir(".calavera", { recursive: true });
+    await writeFile(".calavera/state.json", `${JSON.stringify({ version: 1 }, null, 2)}\n`);
 
     const result = await runArtifactCommand(
       artifactOptions("status", { checkUpdates: true }),
