@@ -89,6 +89,7 @@ test("Given a legacy skill entry apply has not installed, doctor reports it as p
         {
           level: "info",
           check: "artifact",
+          artifact: "skill-project-goal",
           message:
             "The recipe selects skill-project-goal, which has no lock entry yet, so artifacts install or apply installs it.",
         },

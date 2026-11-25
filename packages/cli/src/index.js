@@ -108,9 +108,9 @@ import { resolveArtifactInputs } from "./ai/artifact-inputs.js";
 import { assertNoLegacyEntryNeedsWiring, legacyEntryWiringRefusal } from "./ai/recipe-items.js";
 import { defaultBranchWarnings, resolveIntegrationInputs } from "./integration-inputs.js";
 import {
-  artifactWiringFindings,
   artifactWiringWarnings,
   gitHookArtifactIds,
+  artifactWiringFindings,
   installedSkillDirectory,
   planArtifactWiring,
   wiringFilesThatMention,
@@ -5688,28 +5688,31 @@ function vitePlusRemovedToolchainSelections(recipe, detection) {
  * apply refuses the recipe while `resolveRecipeIntegrations` drops them silently. Detection is the
  * same ADR-0001 function `inspect_project` reads; any status other than `managed` yields nothing.
  *
+ * The warning says "the recipe" rather than its path, because doctor names the path once, in the
+ * heading of its recipe group, so the release's listing check finds it once (ADR-0020,
+ * Amendment 2).
+ *
  * @param {Recipe} recipe
  * @param {VitePlusDetection} detection
- * @param {string} configPath
  * @returns {{ level: "warning", message: string }[]}
  */
-export function removedToolchainWarnings(recipe, detection, configPath) {
+export function removedToolchainWarnings(recipe, detection) {
   return vitePlusRemovedToolchainSelections(recipe, detection).map(({ id, provides }) => ({
     level: "warning",
-    message: `${configPath} selects ${id}, a JavaScript and TypeScript ${provides} integration that Calavera removed. Vite+ manages this project (${detection.signal} signal at ${detection.manifestPath}) and provides ${provides}, so remove ${id} from ${configPath}; apply refuses the recipe until you do.`,
+    message: `The recipe selects ${id}, a JavaScript and TypeScript ${provides} integration that Calavera removed. Vite+ manages this project (${detection.signal} signal at ${detection.manifestPath}) and provides ${provides}, so remove ${id} from the recipe; apply refuses the recipe until you do.`,
   }));
 }
 
 /**
  * One warning when a recipe names a profile that ADR-0011 removed (#1082), because apply's recipe
  * validation refuses it. The warning names the profile by its fixed key in
- * `removedProfileReplacements`, never by the recipe's text.
+ * `removedProfileReplacements`, never by the recipe's text. Like the other recipe warnings, it says
+ * "the recipe" rather than its path, which doctor names in the recipe group's heading.
  *
  * @param {Recipe} recipe
- * @param {string} configPath
  * @returns {{ level: "warning", message: string }[]}
  */
-export function removedProfileWarnings(recipe, configPath) {
+export function removedProfileWarnings(recipe) {
   const removed = Object.entries(removedProfileReplacements).find(
     ([profile]) => profile === recipe.profile,
   );
@@ -5721,7 +5724,7 @@ export function removedProfileWarnings(recipe, configPath) {
   return [
     {
       level: "warning",
-      message: `${configPath} names the ${profile} profile, which Calavera removed (ADR-0011), so change profile to ${replacement} in ${configPath}; apply refuses the recipe until you do.`,
+      message: `The recipe names the ${profile} profile, which Calavera removed (ADR-0011), so change profile to ${replacement} in the recipe; apply refuses the recipe until you do.`,
     },
   ];
 }
@@ -5732,14 +5735,14 @@ export function removedProfileWarnings(recipe, configPath) {
  * removed toolchain id that the #431 warning already covers gets no second warning. A removed id
  * is named by its catalog entry, with the ADR that removed it and ADR-0009's advice for a project
  * without Vite+; any other id is text from the person's file, so the warning names its position in
- * `integrations` instead of echoing it.
+ * `integrations` instead of echoing it. It says "the recipe" rather than its path, which doctor
+ * names in the recipe group's heading.
  *
  * @param {Recipe} recipe
  * @param {VitePlusDetection} detection
- * @param {string} configPath
  * @returns {{ level: "warning", message: string }[]}
  */
-export function unknownIntegrationWarnings(recipe, detection, configPath) {
+export function unknownIntegrationWarnings(recipe, detection) {
   const covered = new Set(
     vitePlusRemovedToolchainSelections(recipe, detection).map(({ id }) => id),
   );
@@ -5759,8 +5762,8 @@ export function unknownIntegrationWarnings(recipe, detection, configPath) {
     warnings.push({
       level: "warning",
       message: removed
-        ? `${configPath} selects ${removed.id}, a JavaScript and TypeScript ${removed.provides} integration that Calavera removed (${removed.adr}). Vite+ provides ${removed.provides}, and a project without Vite+ runs vp create or vp migrate first (ADR-0009). Remove ${removed.id} from ${configPath}; apply refuses the recipe until you do.`
-        : `${configPath} integrations[${index}] is not an integration Calavera knows, so remove it from ${configPath}; apply refuses the recipe until you do.`,
+        ? `The recipe selects ${removed.id}, a JavaScript and TypeScript ${removed.provides} integration that Calavera removed (${removed.adr}). Vite+ provides ${removed.provides}, and a project without Vite+ runs vp create or vp migrate first (ADR-0009). Remove ${removed.id} from the recipe; apply refuses the recipe until you do.`
+        : `The recipe's integrations[${index}] is not an integration Calavera knows, so remove it from the recipe; apply refuses the recipe until you do.`,
     });
   }
 
@@ -5788,13 +5791,21 @@ export async function doctor(options) {
   const hasPackageJSON = await fileExists("package.json");
   /** @type {DoctorIssue[]} */
   const issues = [];
+  /** @type {DoctorIssue[]} */
+  const recipeIssues = [];
+  /** @type {DoctorIssue[]} */
+  const laterIssues = [];
   /** @param {unknown} error @returns {DoctorResult} */
   const stop = (error) => {
     // #1141 and #1206: a recipe or record doctor cannot read, parse, or resolve is an error issue
     // that stops doctor before it classifies, so `doctor --json` still prints a result for a CI
     // step to parse (ADR-0020 Amendment 1). The issue keeps the issues found before it and the
     // error's causes; a JSONParseError names the file and position without quoting it (#1157).
-    issues.push({ level: "error", message: errorText(error), check: "records" });
+    issues.push(...recipeIssues, ...laterIssues, {
+      level: "error",
+      message: errorText(error),
+      check: "records",
+    });
     return { command: "doctor", ok: false, issues };
   };
 
@@ -5813,10 +5824,8 @@ export async function doctor(options) {
 
   /** @type {Recipe | undefined} */
   let recipe;
-  /** @type {DoctorIssue[]} */
-  const recipeIssues = [];
-  /** @type {DoctorIssue[]} */
-  const laterIssues = [];
+  /** @type {string | undefined} */
+  let rootForRemedy;
   if (hasConfig) {
     const projectDirectory = process.cwd();
     try {
@@ -5828,9 +5837,9 @@ export async function doctor(options) {
       const withCheck = (check) => (issue) => ({ ...issue, check });
       recipeIssues.push(
         // apply's validation checks the profile before the integrations, so doctor lists it first.
-        ...removedProfileWarnings(recipe, options.config).map(withCheck("recipe")),
-        ...removedToolchainWarnings(recipe, detection, options.config).map(withCheck("recipe")),
-        ...unknownIntegrationWarnings(recipe, detection, options.config).map(withCheck("recipe")),
+        ...removedProfileWarnings(recipe).map(withCheck("recipe")),
+        ...removedToolchainWarnings(recipe, detection).map(withCheck("recipe")),
+        ...unknownIntegrationWarnings(recipe, detection).map(withCheck("recipe")),
       );
       // #1140: right after validating the recipe, apply refuses a legacy entry that selects an
       // artifact with wiring or inputs (#1125), so doctor reports that refusal, with apply's
@@ -5856,6 +5865,7 @@ export async function doctor(options) {
           ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
           : projectDirectory;
       if (repositoryRoot !== projectDirectory) {
+        rootForRemedy = repositoryRoot;
         // package.json is read only here. One that cannot be parsed is a finding, not a stop,
         // because it is not one of the records Decision 7 names (the 2026-11-24 drift item on
         // #1112), so doctor goes on to classify. resolveApplyPackageManager refuses a recipe
@@ -5903,22 +5913,30 @@ export async function doctor(options) {
         }
 
         // ADR-0015, Decision 5: the hook blocks and Claude Code groups apply recorded, in the
-        // words doctor has always used (ADR-0020, Decision 4). An unreadable state stops doctor
-        // here with its own error, before the phase function reads the state.
+        // words doctor has always used, remedies included (ADR-0020, Decision 4). An unreadable
+        // state stops doctor here with its own error, before the phase function reads the state.
+        // Each record is checked on its own, so each finding names the artifact it prints under.
         const selectedAiIds = new Set(aiArtifacts.map(({ id }) => id));
         const state = await readStateIfPresent().catch((error) => {
           throw new Error(`doctor cannot use ${STATE_FILE}.`, { cause: error });
         });
-        for (const { level, message } of await artifactWiringFindings({
-          records: state.aiWiring,
-          selected: selectedAiIds,
-          skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
-        })) {
-          laterIssues.push({ level, message, check: "wiring" });
+        for (const record of state.aiWiring) {
+          for (const { level, message, detail } of await artifactWiringFindings({
+            records: [record],
+            selected: selectedAiIds,
+            skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
+          })) {
+            laterIssues.push({
+              level,
+              message,
+              check: "wiring",
+              artifact: record.artifact,
+              detail,
+            });
+          }
         }
       }
     } catch (error) {
-      issues.push(...recipeIssues);
       return stop(error);
     }
   }
@@ -5927,7 +5945,6 @@ export async function doctor(options) {
   try {
     phase = await deriveProjectPhase({ config: options.config });
   } catch (error) {
-    issues.push(...recipeIssues);
     return stop(error);
   }
 
@@ -5939,6 +5956,7 @@ export async function doctor(options) {
     recipe,
     config: options.config,
     pendingMessage,
+    repositoryRoot: rootForRemedy,
   });
   const [phaseIssue, ...items] = fromPhase;
   const allIssues = [
@@ -6802,17 +6820,21 @@ function printSummaryLines(lines) {
 /**
  * @param {CommandResult} result
  * @param {boolean} [asJSON]
- * @param {{ dryRun?: boolean, noInstall?: boolean }} [command] The options the command ran with,
+ * @param {{ dryRun?: boolean, noInstall?: boolean, config?: string }} [command] The options the command ran with,
  * where its result does not record them.
  */
-function printResult(result, asJSON = false, { dryRun: commandDryRun = false, noInstall } = {}) {
+function printResult(
+  result,
+  asJSON = false,
+  { dryRun: commandDryRun = false, noInstall, config } = {},
+) {
   if (asJSON) {
     console.info(JSON.stringify(result, null, 2));
     return;
   }
 
   if (result.command === "doctor") {
-    for (const { level, message } of doctorReportLines(result)) {
+    for (const { level, message } of doctorReportLines({ ...result, config })) {
       logger[level](message);
     }
     return;
@@ -7100,7 +7122,7 @@ const commandRunners = Object.assign(
       result: "doctor",
       run: async (options) => {
         const result = await doctor(options);
-        printResult(result, options.json);
+        printResult(result, options.json, { config: options.config });
         // #1030: `ok` is false only when an issue has the level "error", so warnings stay advisory
         // and a CI step that runs doctor fails only on an error.
         if (!result.ok) {

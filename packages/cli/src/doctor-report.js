@@ -1,6 +1,6 @@
 // @ts-check
 import { phaseLine, phaseNotes } from "./phase-lines.js";
-import { artifactCommand, calaveraCommand } from "./project-local-commands.js";
+import { CONFIG_FILE, artifactCommand, calaveraCommand } from "./project-local-commands.js";
 
 /**
  * @typedef {import("./project-phase.js").ProjectPhaseResult} ProjectPhaseResult
@@ -10,7 +10,9 @@ import { artifactCommand, calaveraCommand } from "./project-local-commands.js";
  *   condition, which only doctor reports; `managed-file-check` is the formatter failures and the
  *   plan problem of the managed-file classification, which artifacts doctor reports too.
  *
- * @typedef {{ level: "error" | "warning" | "info", message: string, check: DoctorCheck }} DoctorIssue
+ * @typedef {{ level: "error" | "warning" | "info", message: string, check: DoctorCheck, artifact?: string, detail?: string }} DoctorIssue
+ *   `artifact` names the artifact an artifact or wiring issue is about. `detail` is a wiring
+ *   finding without the artifact's ID, which the text output prints under the artifact's line.
  */
 
 /** The doctors' phase line levels in doctor's words. */
@@ -26,12 +28,13 @@ const PROBLEMS = new Set(["missing", "unreadable", "edited", "unrecorded"]);
  * change (owner decision 20).
  *
  * @param {ProjectPhaseResult} result
- * @param {{ recipe: unknown, config: string, pendingMessage?: string }} options `pendingMessage`
- *   is the phase line during a pending transaction, which names the remedy.
+ * @param {{ recipe: unknown, config: string, pendingMessage?: string, repositoryRoot?: string }} options
+ *   `pendingMessage` is the phase line during a pending transaction, which names the remedy.
+ *   `repositoryRoot` is where a root-only integration's files are, from a workspace member.
  * @returns {{ phaseLine: { level: DoctorIssue["level"], message: string }, issues: DoctorIssue[] }}
  */
-export function phaseIssues(result, { recipe, config, pendingMessage }) {
-  const line = phaseLine(result, { command: "artifacts doctor", recipe, config });
+export function phaseIssues(result, { recipe, config, pendingMessage, repositoryRoot }) {
+  const line = phaseLine(result, { command: "artifacts doctor", recipe, config, forDoctor: true });
   const level = LEVELS[line.level];
   const message =
     result.phase === "pending-transaction" && pendingMessage ? pendingMessage : line.message;
@@ -44,8 +47,11 @@ export function phaseIssues(result, { recipe, config, pendingMessage }) {
   for (const note of phaseNotes(result)) {
     issues.push({ level: "info", message: note, check: "marker" });
   }
+  // From the repository root a recipe saved elsewhere needs its own --config path, so the
+  // command names none and the remedy says to add it.
+  const rootApply = calaveraCommand(recipe, CONFIG_FILE, ["apply"]);
   for (const file of result.managedFiles) {
-    const issue = managedFileIssue(file, apply);
+    const issue = managedFileIssue(file, apply, { rootApply, repositoryRoot });
     if (issue) issues.push(issue);
   }
   for (const { reason } of result.formatterFailures) {
@@ -75,17 +81,21 @@ export function phaseIssues(result, { recipe, config, pendingMessage }) {
  *
  * @param {import("./phase-managed-files.js").ClassifiedManagedFile} file
  * @param {string} apply
+ * @param {{ rootApply: string, repositoryRoot?: string }} root
  * @returns {DoctorIssue | undefined}
  */
-function managedFileIssue({ path, condition }, apply) {
+function managedFileIssue({ path, condition }, apply, { rootApply, repositoryRoot }) {
   const { name, reason } = condition;
   /** @type {(level: DoctorIssue["level"], message: string) => DoctorIssue} */
   const issue = (level, message) => ({ level, message, check: "managed-file" });
   // A root-only integration's file in a workspace member is classified at the repository root, so
   // its apply runs there (#925).
-  const where = path.startsWith("../") ? " from the repository root" : "";
-  if (name === "pending") return issue("warning", `${reason} Run ${apply}${where}.`);
-  if (name === "missing") return issue("error", `${reason} Run ${apply}${where}.`);
+  const run =
+    path.startsWith("../") && repositoryRoot
+      ? `Run ${rootApply} from the repository root, ${repositoryRoot}, adding --config <path> when the recipe is saved elsewhere.`
+      : `Run ${apply}.`;
+  if (name === "pending") return issue("warning", `${reason} ${run}`);
+  if (name === "missing") return issue("error", `${reason} ${run}`);
   if (name === "unreadable") {
     return issue("error", `${reason} apply stops on it too, so make it a readable file.`);
   }
@@ -115,13 +125,15 @@ function managedFileIssue({ path, condition }, apply) {
  * @param {string} install
  * @returns {DoctorIssue | undefined}
  */
-function artifactIssue({ selected, condition }, install) {
+function artifactIssue({ id, selected, condition }, install) {
   const { name, reason } = condition;
   /** @type {(level: DoctorIssue["level"], message: string) => DoctorIssue} */
-  const issue = (level, message) => ({ level, message, check: "artifact" });
+  const issue = (level, message) => ({ level, message, check: "artifact", artifact: id });
   if (name === "current") return undefined;
   if (selected === true) return issue(PROBLEMS.has(name) ? "error" : "info", reason);
   if (selected === false) {
+    // As artifacts doctor warns only about a deselected entry with a problem (owner decision 6).
+    if (!PROBLEMS.has(name)) return undefined;
     return name === "missing"
       ? issue("warning", `${reason} Run ${install}.`)
       : issue("warning", reason);
@@ -133,7 +145,9 @@ function artifactIssue({ selected, condition }, install) {
  * The heading each check's issues are printed under, in the order the groups print, so every
  * managed file and artifact is named once, under a heading, as the release's listing check
  * requires (`listingViolations` in `scripts/rehearsal-checks.mjs`). The names match the apply
- * summary's groups, and "Artifacts:" is the heading #1315 gives the artifact commands.
+ * summary's groups. The recipe group's heading names the recipe path, which its lines then do
+ * not repeat. The wiring findings print under their artifact in the Artifacts group, so an
+ * artifact with both an artifact line and wiring findings is named once.
  *
  * @type {[string, DoctorCheck[]][]}
  */
@@ -141,8 +155,7 @@ const GROUPS = [
   ["Project:", ["project", "repository-root", "marker"]],
   ["Recipe:", ["recipe"]],
   ["Managed files:", ["managed-file", "managed-file-check"]],
-  ["Artifacts:", ["artifact"]],
-  ["Wiring:", ["wiring"]],
+  ["Artifacts:", ["artifact", "wiring"]],
   ["Records:", ["records"]],
 ];
 
@@ -165,20 +178,53 @@ const CHECKS = {
 };
 
 const LIST = new Intl.ListFormat("en", { type: "conjunction" });
+// After "does not report", the list joins with "or".
+const EITHER = new Intl.ListFormat("en", { type: "disjunction" });
+
+/**
+ * The lines of the Artifacts group: each artifact's own line, and under it each wiring finding
+ * about it without its ID; an artifact with wiring findings and no line of its own gets a line
+ * that names it.
+ *
+ * @param {DoctorIssue[]} group
+ * @param {(level: DoctorIssue["level"]) => "error" | "warn" | "info"} logLevel
+ */
+function artifactLines(group, logLevel) {
+  /** @type {{ level: "error" | "warn" | "info", message: string }[]} */
+  const lines = [];
+  for (const id of new Set(group.map(({ artifact }) => artifact))) {
+    const own = group.filter((issue) => issue.check === "artifact" && issue.artifact === id);
+    const wiring = group.filter((issue) => issue.check === "wiring" && issue.artifact === id);
+    for (const { level, message } of own)
+      lines.push({ level: logLevel(level), message: `  ${message}` });
+    // Each ID comes from an issue in the group, so an artifact without a line of its own has
+    // wiring findings.
+    if (own.length === 0) {
+      lines.push({
+        level: "info",
+        message: `  ${id}: Calavera found a problem with the wiring apply recorded for it.`,
+      });
+    }
+    for (const { level, message, detail } of wiring) {
+      lines.push({ level: logLevel(level), message: `    ${detail ?? message}` });
+    }
+  }
+  return lines;
+}
 
 /**
  * The lines doctor's text output prints: the phase line first, then, during a pending
  * transaction, each file the rollback would restore or remove, then each group under its heading,
- * and last the verdict, which names each check that failed and says which of them artifacts
- * doctor does not make (ADR-0020, Decision 5).
+ * and last the verdict, which names each check that failed and, in a sentence of its own, the
+ * ones artifacts doctor does not make (ADR-0020, Decision 5).
  *
- * @param {{ ok: boolean, issues: DoctorIssue[], rollbackFiles?: string[] | null }} result
+ * @param {{ ok: boolean, issues: DoctorIssue[], rollbackFiles?: string[] | null, config?: string }} result
  * @returns {{ level: "error" | "warn" | "info" | "success", message: string }[]}
  */
 export function doctorReportLines(result) {
   /** @type {{ level: "error" | "warn" | "info" | "success", message: string }[]} */
   const lines = [];
-  /** @param {DoctorIssue["level"]} level */
+  /** @param {DoctorIssue["level"]} level @returns {"error" | "warn" | "info"} */
   const logLevel = (level) => (level === "warning" ? "warn" : level);
   const [first, ...rest] = result.issues;
   const phase = first?.check === "phase" ? first : undefined;
@@ -190,7 +236,14 @@ export function doctorReportLines(result) {
   for (const [heading, checks] of GROUPS) {
     const group = items.filter(({ check }) => checks.includes(check));
     if (group.length === 0) continue;
-    lines.push({ level: "info", message: heading });
+    lines.push({
+      level: "info",
+      message: heading === "Recipe:" && result.config ? `Recipe ${result.config}:` : heading,
+    });
+    if (heading === "Artifacts:") {
+      lines.push(...artifactLines(group, logLevel));
+      continue;
+    }
     for (const { level, message } of group) {
       lines.push({ level: logLevel(level), message: `  ${message}` });
     }
@@ -203,16 +256,15 @@ export function doctorReportLines(result) {
     }
     return lines;
   }
-  const failed = [...new Set(errors.map(({ check }) => check))];
-  const shared = failed.filter((check) => CHECKS[check].shared).map((check) => CHECKS[check].label);
-  const only = failed.filter((check) => !CHECKS[check].shared).map((check) => CHECKS[check].label);
-  const parts = [
-    ...shared,
-    ...(only.length > 0 ? [`${LIST.format(only)}, which artifacts doctor does not report`] : []),
-  ];
+  const failed = [...new Set(errors.map(({ check }) => check))].map((check) => CHECKS[check]);
+  const only = failed.filter(({ shared }) => !shared).map(({ label }) => label);
+  const summary = `Calavera doctor found ${errors.length} ${errors.length === 1 ? "error" : "errors"}: ${LIST.format(failed.map(({ label }) => label))}.`;
   lines.push({
     level: "error",
-    message: `Calavera doctor found ${errors.length} ${errors.length === 1 ? "error" : "errors"}: ${LIST.format(parts)}.`,
+    message:
+      only.length > 0
+        ? `${summary} artifacts doctor does not report ${EITHER.format(only)}.`
+        : summary,
   });
   return lines;
 }

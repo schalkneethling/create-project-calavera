@@ -249,9 +249,8 @@ test("doctor run from a workspace member checks the repository-controls files at
   assert.equal(pending.length, 1, pending.join("\n"));
   assert.equal(
     pending[0],
-    `../../${missingFile} does not exist yet, so apply writes it. Run npm create project-calavera apply from the repository root.`,
+    `../../${missingFile} does not exist yet, so apply writes it. Run npm create project-calavera apply from the repository root, ${await realpath(root)}, adding --config <path> when the recipe is saved elsewhere.`,
   );
-  assert.ok(await realpath(root));
 });
 
 test("every integration that writes a managed file appears exactly once in the one declaration", () => {

@@ -2,7 +2,7 @@
 "create-project-calavera": minor
 ---
 
-`doctor` now reads the project's phase, as `artifacts doctor` does (ADR-0020). Its report starts with a line that names the phase and what resolves it, and lists what it found under headings. Its `--json` result gains `phase`, `phaseLine`, `artifacts`, and `managedFiles`. Each issue gains `check`, which names the check it comes from, and `level` gains `info`. No field was renamed or removed. The closing line names each check that failed, and says which of them `artifacts doctor` does not make.
+`doctor` now reads the project's phase, as `artifacts doctor` does (ADR-0020). Its report starts with a line that names the phase and what resolves it, and lists what it found under headings. The recipe heading names the recipe path, and each wiring finding prints under its artifact's line. Its `--json` result gains `phase`, `phaseLine`, `artifacts`, and `managedFiles`. Each issue gains `check`, which names the check it comes from, an artifact or wiring issue gains `artifact`, a wiring issue gains `detail`, the finding without the artifact's ID, and `level` gains `info`. No field was renamed or removed. The closing line names each check that failed, and says which of them `artifacts doctor` does not make.
 
 `doctor` now fails in these cases:
 
@@ -23,4 +23,4 @@ The "Missing managed file" and "Missing managed AI skill" warnings are replaced:
 - An edited managed file that the next `apply` would stop on is a note that lists the ways to keep the edit first.
 - A file of your own at a managed path is a note whose remedies keep your file.
 
-A `package.json` that cannot be parsed in a workspace member is now a finding instead of a stop, and `doctor` goes on to classify.
+A `package.json` that cannot be parsed in a workspace member is now a finding instead of a stop, and `doctor` goes on to classify. A deselected artifact is reported only when it has a problem, as `artifacts doctor` reports it.

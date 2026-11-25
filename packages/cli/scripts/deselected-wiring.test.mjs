@@ -365,6 +365,29 @@ test("Given the skill directory deleted by hand, doctor reports each block whose
   });
 });
 
+test("Given the skill directory deleted by hand, doctor's text output names the artifact once, with its wiring findings under it", async () => {
+  await inWiredProject(async () => {
+    await rm(skillDirectory, { recursive: true });
+
+    const { status, stdout, stderr } = spawnSync(process.execPath, [cli, "doctor"], {
+      encoding: "utf8",
+    });
+    assert.equal(status, 1, `${stdout}\n${stderr}`);
+    // The artifact line and the wiring findings share one item: the findings print under it,
+    // without the artifact's ID, so the listing check finds the ID once, under Artifacts.
+    assert.deepEqual(listingViolations(`${stdout}${stderr}`, [id]), []);
+    for (const hook of hooks) {
+      assert.match(
+        stderr,
+        new RegExp(
+          String.raw`^ {4}\.vite-hooks/${hook}: the block runs \.agents/skills/protected-branch-guard/scripts/guard\.mjs, which does not exist`,
+          "m",
+        ),
+      );
+    }
+  });
+});
+
 test("Given only the guard's script deleted from a committed skill folder, apply refuses to reinstall the skill, and doctor's remedy restores the script from Git", async () => {
   await inWiredProject(async (registry) => {
     git(["add", "--all"]);

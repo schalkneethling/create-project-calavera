@@ -423,7 +423,7 @@ PR #1197 implements this amendment for `doctor` when the recipe cannot be read, 
 
 ## Amendment 2: What the Implementation Settled
 
-- **Date:** 2026-11-26
+- **Date:** 2026-11-25
 - **Issue:** https://github.com/schalkneethling/create-project-calavera/issues/1112
 
 The implementation landed in a stack of pull requests: #1300, #1316, #1326, and the pull request that adds this amendment. The owner ruled on the questions the implementation raised on 2026-11-25, recorded on #1112, and four places where this ADR no longer matched `main` were found on 2026-11-24. This amendment records each answer and each correction, so the ADR and the code agree.
@@ -432,7 +432,7 @@ The implementation landed in a stack of pull requests: #1300, #1316, #1326, and 
 
 - **A hook with one recorded output out of two.** The recorded output decides the artifact's condition: `missing` or `edited` when that output is, and otherwise `pending`. This settles the first item of "Items for the implementation issues".
 - **A pending transaction whose journal cannot be read.** The phase stays `pending-transaction`, and the list of files a rollback would replace is null. This settles the fourth item of "Items for the implementation issues".
-- **A file that exists and cannot be read.** An artifact output or a managed file that exists, has a state record, and cannot be read, such as a folder where a file belongs, gets a new condition, `unreadable`. Its reason names the path and the error code and quotes no file text. After `apply`, it drifts the project, like `missing` and `edited`. Both doctors report it as an error, because `apply` stops on it.
+- **A file that exists and cannot be read.** An artifact output or a managed file that exists and cannot be read, such as a folder where a file belongs, gets a new condition, `unreadable`, whether or not the state records it. Its reason names the path and the error code and quotes no file text. After `apply`, it drifts the project, like `missing` and `edited`. Both doctors report an unreadable artifact as an error, because `apply` stops on it, and `doctor` reports an unreadable managed file as an error for the same reason. `artifacts doctor` does not report managed files.
 - **A recipe whose managed files cannot be planned.** No managed file is classified, and both doctors report the plan problem as an error, so a phase of `applied` never hides a recipe that `apply` refuses. The problem names the step that failed and the error's code or class, never the recipe's text.
 - **After one formatter refusal.** Only the refused file is `not-checked`, and the other files are still compared. A formatter that cannot load makes every file that needs it `not-checked`. This settles the fifth item of "Items for the implementation issues".
 - **A formatter failure while `--check-updates` would record the cache block.** `artifacts status --check-updates` reports the failure as a note, writes no block, and exits 0. `artifacts doctor --check-updates` reports it as an error and exits 1. Both resolve packages through a temporary cache. This settles the sixth item of "Items for the implementation issues".
@@ -442,23 +442,25 @@ The implementation landed in a stack of pull requests: #1300, #1316, #1326, and 
 - **The MCP status tool's pending-transaction answer.** The tool returns a successful result with `phase: "pending-transaction"`, `rollbackFiles`, and `remedy`, as the owner decided on PR #1184. Only the two doctors report the phase as an error. The Decision 6 row "An artifact operation stopped before its rollback" reads that way.
 - **The legacy-entry refusal.** `doctor` also keeps `apply`'s refusal of a legacy entry that selects an artifact with wiring or inputs (#1140), as an error with the `artifacts migrate` remedy. It joins the list of `doctor`'s other checks in Decision 4.
 - **What stops `doctor` before it classifies.** Only a recipe, a state, or a lock that cannot be read, parsed, or resolved stops it, as Amendment 1 says, and so does a recipe `packageManager` that Calavera does not support. A `package.json` that cannot be parsed, which `doctor` reads in a workspace member to name `apply`'s package manager, is an error finding, and `doctor` goes on to classify. `doctor`'s own checks run no Git command, and a missing `git` that the integration inputs need is the plan problem above. Any other error, such as a programming error, still stops `doctor` with an error issue and no `phase`.
-- **The listing check.** `doctor`'s text output prints the phase line first, then its issues under the headings "Project:", "Recipe:", "Managed files:", "Artifacts:", "Wiring:", and "Records:", and the verdict last. Each managed file and artifact it reports is named once, so the release rehearsal's listing check (`listingViolations`) passes on its output. In `composed`, the phase line therefore does not name the pending managed files, as Decision 4 described. Each one has its own warning under "Managed files:" instead. A managed file or artifact whose condition `doctor` does not report, such as `current`, is not printed.
+- **The listing check.** `doctor`'s text output prints the phase line first, then its issues under the headings "Project:", "Recipe:", "Managed files:", "Artifacts:", and "Records:", and the verdict last. The recipe heading names the recipe path, such as "Recipe calavera.config.json:", so the phase line and the recipe warnings say "the recipe" and name the path only in a command's `--config` option. The wiring findings print under their artifact's line in "Artifacts:", without the artifact's ID, and an artifact with wiring findings but no line of its own gets a line that names it. Each managed file and artifact `doctor` reports is therefore named once, so the release rehearsal's listing check (`listingViolations`) passes on its output. In `composed`, the phase line does not name the pending managed files, as Decision 4 described. Each one has its own warning under "Managed files:" instead. A managed file or artifact whose condition `doctor` does not report, such as `current`, is not printed. As in `artifacts doctor`, a deselected artifact is reported only when it has a problem.
 
 ### The checks `doctor` names
 
 Decision 5 left the names of the checks to the implementation. Each issue in `doctor --json` carries one of these values in `check`:
 
-| `check`              | What it reports                                                                                        | `artifacts doctor` reports it too |
-| -------------------- | ------------------------------------------------------------------------------------------------------ | --------------------------------- |
-| `phase`              | The phase line                                                                                         | Yes                               |
-| `project`            | A missing `package.json`                                                                               | No                                |
-| `recipe`             | The removed-profile, removed-toolchain, and unknown-integration warnings, and the legacy-entry refusal | No                                |
-| `repository-root`    | The root-only and Git-hook refusals, and a `package.json` that cannot be parsed there                  | No                                |
-| `managed-file`       | Each managed file's condition, and the missing Varlock schema                                          | No                                |
-| `managed-file-check` | The formatter failures and the plan problem of the managed-file classification                         | Yes                               |
-| `artifact`           | Each artifact's condition                                                                              | Yes                               |
-| `wiring`             | The recorded wiring, in the words `doctor` already used                                                | No                                |
-| `marker`             | A note about an edited or broken `ejected` block                                                       | No                                |
-| `records`            | A record that stopped `doctor` before it classified                                                    | Yes                               |
+| `check`              | What it reports                                                                                                                           | `artifacts doctor` reports it too |
+| -------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------- |
+| `phase`              | The phase line                                                                                                                            | Yes                               |
+| `project`            | A missing `package.json`                                                                                                                  | No                                |
+| `recipe`             | The removed-profile, removed-toolchain, and unknown-integration warnings, and the legacy-entry refusal                                    | No                                |
+| `repository-root`    | The root-only and Git-hook refusals, and a `package.json` that cannot be parsed there                                                     | No                                |
+| `managed-file`       | Each managed file's condition, and the missing Varlock schema                                                                             | No                                |
+| `managed-file-check` | The formatter failures and the plan problem of the managed-file classification                                                            | Yes                               |
+| `artifact`           | Each artifact's condition; each issue names its `artifact`                                                                                | Yes                               |
+| `wiring`             | The recorded wiring, in the words `doctor` already used, with the remedies; each issue names its `artifact` and a `detail` without the ID | No                                |
+| `marker`             | A note about an edited or broken `ejected` block                                                                                          | No                                |
+| `records`            | A record that stopped `doctor` before it classified                                                                                       | Yes                               |
 
-The text verdict names each check that failed, and names the ones that `artifacts doctor` does not make, such as "Calavera doctor found 2 errors: an artifact's condition and a managed file's condition, which artifacts doctor does not report."
+The text verdict names each check that failed and then, in a sentence of its own, the ones that `artifacts doctor` does not make, such as "Calavera doctor found 2 errors: an artifact's condition and a managed file's condition. artifacts doctor does not report a managed file's condition."
+
+The headings match the groups of the `apply` summary. #1315, which adds headings to `artifacts status` and `artifacts doctor`, is to use "Artifacts:" for their artifact lines too, so the reports share their heading names.

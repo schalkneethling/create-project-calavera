@@ -39,9 +39,9 @@ function phase(fields) {
   });
 }
 
-/** @param {Record<string, unknown>} fields */
-const issues = (fields) =>
-  phaseIssues(phase(fields), { recipe, config: "calavera.config.json" }).issues;
+/** @param {Record<string, unknown>} fields @param {string} [repositoryRoot] */
+const issues = (fields, repositoryRoot) =>
+  phaseIssues(phase(fields), { recipe, config: "calavera.config.json", repositoryRoot }).issues;
 
 /** @param {string} path @param {string} name */
 const file = (path, name) => ({
@@ -61,11 +61,11 @@ const artifact = (selected, name) => ({
 });
 
 test("the phase line comes first, at the doctors' level in doctor's words", () => {
+  // The recipe heading names the path, so doctor's phase line says "the recipe".
   assert.deepEqual(issues({ phase: "composed" })[0], {
     level: "warning",
     check: "phase",
-    message:
-      "The recipe in calavera.config.json is not applied yet, so run pnpm dlx create-project-calavera apply.",
+    message: "The recipe is not applied yet, so run pnpm dlx create-project-calavera apply.",
   });
   assert.equal(issues({ phase: "unmanaged" })[0]?.level, "error");
   assert.equal(issues({ phase: "applied" })[0]?.level, "info");
@@ -91,21 +91,35 @@ test("a pending transaction reports the remedy as its phase line and nothing els
 });
 
 test("each managed file condition has its level and remedy", () => {
-  const rest = (/** @type {string} */ name, path = "knip.json") =>
-    issues({ managedFiles: [file(path, name)] }).slice(1);
+  const rest = (
+    /** @type {string} */ name,
+    path = "knip.json",
+    /** @type {string | undefined} */ root = undefined,
+  ) => issues({ managedFiles: [file(path, name)] }, root).slice(1);
   assert.deepEqual(rest("pending"), [
     { level: "warning", check: "managed-file", message: `knip.json reason. Run ${APPLY}.` },
   ]);
   assert.deepEqual(rest("missing"), [
     { level: "error", check: "managed-file", message: `knip.json reason. Run ${APPLY}.` },
   ]);
-  assert.deepEqual(rest("missing", "../../knip.json"), [
+  // A root-only file, seen from a workspace member, names the root and leaves --config to the
+  // person, because the member's recipe path does not hold there.
+  assert.deepEqual(rest("missing", "../../knip.json", "/work/repo"), [
     {
       level: "error",
       check: "managed-file",
-      message: `../../knip.json reason. Run ${APPLY} from the repository root.`,
+      message: `../../knip.json reason. Run ${APPLY} from the repository root, /work/repo, adding --config <path> when the recipe is saved elsewhere.`,
     },
   ]);
+  // Only a path outside the project, with the root known, gets the root remedy.
+  assert.equal(
+    rest("missing", "../../knip.json")[0]?.message,
+    `../../knip.json reason. Run ${APPLY}.`,
+  );
+  assert.equal(
+    rest("missing", "knip.json", "/work/repo")[0]?.message,
+    `knip.json reason. Run ${APPLY}.`,
+  );
   assert.deepEqual(rest("unreadable"), [
     {
       level: "error",
@@ -150,22 +164,29 @@ test("each artifact condition has the level #994 set, and the marker notes come 
   for (const name of ["missing", "unreadable", "edited", "unrecorded"]) {
     assert.deepEqual(
       rest(true, name),
-      [{ level: "error", check: "artifact", message: "skill-a reason." }],
+      [{ level: "error", check: "artifact", artifact: "skill-a", message: "skill-a reason." }],
       name,
     );
     assert.equal(rest(false, name)[0]?.level, "warning", name);
     assert.equal(rest(null, name)[0]?.level, "info", name);
   }
   assert.deepEqual(rest(true, "pending"), [
-    { level: "info", check: "artifact", message: "skill-a reason." },
+    { level: "info", check: "artifact", artifact: "skill-a", message: "skill-a reason." },
   ]);
   // A deselected entry whose files are missing names the command that drops its lock entry.
   assert.deepEqual(rest(false, "missing"), [
-    { level: "warning", check: "artifact", message: `skill-a reason. Run ${INSTALL}.` },
+    {
+      level: "warning",
+      check: "artifact",
+      artifact: "skill-a",
+      message: `skill-a reason. Run ${INSTALL}.`,
+    },
   ]);
   assert.deepEqual(rest(false, "edited"), [
-    { level: "warning", check: "artifact", message: "skill-a reason." },
+    { level: "warning", check: "artifact", artifact: "skill-a", message: "skill-a reason." },
   ]);
+  // As artifacts doctor does (owner decision 6), a deselected entry without a problem is silent.
+  assert.deepEqual(rest(false, "pending"), []);
   for (const selected of [true, false, null]) assert.deepEqual(rest(selected, "current"), []);
   assert.deepEqual(
     issues({ phase: "composed", marker: { status: "broken" } })
@@ -176,22 +197,24 @@ test("each artifact condition has the level #994 set, and the marker notes come 
 });
 
 /**
- * @param {{ level: "error" | "warning" | "info", message: string, check: import("../src/doctor-report.js").DoctorCheck }[]} list
+ * @param {import("../src/doctor-report.js").DoctorIssue[]} list
  * @param {string[] | null} [rollbackFiles]
+ * @param {string} [config]
  */
-const lines = (list, rollbackFiles) =>
+const lines = (list, rollbackFiles, config) =>
   doctorReportLines({
     ok: !list.some(({ level }) => level === "error"),
     issues: list,
     rollbackFiles,
+    config,
   });
 
 test("the text output groups each check under its heading, in a fixed order", () => {
   assert.deepEqual(
     lines([
       { level: "info", check: "phase", message: "The phase is drifted." },
-      { level: "warning", check: "wiring", message: "w" },
-      { level: "warning", check: "artifact", message: "a" },
+      { level: "warning", check: "wiring", message: "skill-a w", artifact: "skill-a", detail: "w" },
+      { level: "warning", check: "artifact", message: "a", artifact: "skill-a" },
       { level: "warning", check: "managed-file", message: "m" },
       { level: "info", check: "managed-file-check", message: "c" },
       { level: "warning", check: "recipe", message: "r" },
@@ -211,9 +234,36 @@ test("the text output groups each check under its heading, in a fixed order", ()
       { level: "warn", message: "  m" },
       { level: "info", message: "  c" },
       { level: "info", message: "Artifacts:" },
+      // The wiring finding prints under its artifact's line, without the artifact's ID.
       { level: "warn", message: "  a" },
-      { level: "info", message: "Wiring:" },
-      { level: "warn", message: "  w" },
+      { level: "warn", message: "    w" },
+    ],
+  );
+});
+
+test("the recipe heading names the recipe path, and wiring without an artifact line names the artifact once", () => {
+  assert.deepEqual(
+    lines(
+      [
+        { level: "info", check: "phase", message: "The phase is drifted." },
+        { level: "warning", check: "recipe", message: "r" },
+        { level: "error", check: "wiring", message: "x w1", artifact: "skill-x", detail: "w1" },
+        { level: "warning", check: "wiring", message: "x w2", artifact: "skill-x", detail: "w2" },
+      ],
+      undefined,
+      "config/recipe.json",
+    ).slice(0, 7),
+    [
+      { level: "info", message: "The phase is drifted." },
+      { level: "info", message: "Recipe config/recipe.json:" },
+      { level: "warn", message: "  r" },
+      { level: "info", message: "Artifacts:" },
+      {
+        level: "info",
+        message: "  skill-x: Calavera found a problem with the wiring apply recorded for it.",
+      },
+      { level: "error", message: "    w1" },
+      { level: "warn", message: "    w2" },
     ],
   );
 });
@@ -236,6 +286,10 @@ test("the success line follows an info phase line only when nothing else is repo
   assert.deepEqual(lines([{ level: "warning", check: "phase", message: "Not applied yet." }]), [
     { level: "warn", message: "Not applied yet." },
   ]);
+});
+
+test("an empty result prints nothing", () => {
+  assert.deepEqual(lines([]), []);
 });
 
 test("the rollback's files follow the phase line", () => {
@@ -263,7 +317,7 @@ test("the verdict counts the errors and names the checks artifacts doctor does n
     {
       level: "error",
       message:
-        "Calavera doctor found 3 errors: an artifact's condition and a managed file's condition, which artifacts doctor does not report.",
+        "Calavera doctor found 3 errors: an artifact's condition and a managed file's condition. artifacts doctor does not report a managed file's condition.",
     },
   );
   assert.deepEqual(verdict([{ level: "error", check: "phase", message: "x" }]), {
@@ -281,7 +335,7 @@ test("the verdict counts the errors and names the checks artifacts doctor does n
     {
       level: "error",
       message:
-        "Calavera doctor found 5 errors: the recipe, the recorded wiring, the repository-root refusals, the project, and the eject marker, which artifacts doctor does not report.",
+        "Calavera doctor found 5 errors: the recipe, the recorded wiring, the repository-root refusals, the project, and the eject marker. artifacts doctor does not report the recipe, the recorded wiring, the repository-root refusals, the project, or the eject marker.",
     },
   );
   assert.deepEqual(

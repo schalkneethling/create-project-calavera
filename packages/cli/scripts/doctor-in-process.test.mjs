@@ -4,7 +4,7 @@
 // the CLI's output and exit code.
 import assert from "node:assert/strict";
 import { mkdir, writeFile } from "node:fs/promises";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import { legacyEntryWiringRefusal } from "../src/ai/recipe-items.js";
@@ -102,10 +102,10 @@ test("doctor reads the recipe from options.config", async () => {
   const result = await doctorIn(fixture.root, { config: "config/recipe.json" });
   assert.equal(result.ok, true);
   assert.equal(result.phase, "composed");
-  // The phase line names the recipe path doctor read.
-  assert.match(
-    result.phaseLine?.message ?? "",
-    /^The recipe in config\/recipe\.json is not applied yet/,
+  // The recipe heading names the path, so the phase line names it only in the command it gives.
+  assert.equal(
+    result.phaseLine?.message,
+    "The recipe is not applied yet, so run npm create project-calavera apply -- --config config/recipe.json.",
   );
   assert.deepEqual(findings(result), []);
 });
@@ -148,9 +148,9 @@ test("doctor lists the removed profile, removed toolchain, and unknown integrati
   assert.equal(detection.status, "managed", "the fixture must be a Vite+ project");
   const parsed = /** @type {import("../src/index.js").Recipe} */ ({ version: 1, ...recipe });
   const expected = [
-    ...removedProfileWarnings(parsed, RECIPE),
-    ...removedToolchainWarnings(parsed, detection, RECIPE),
-    ...unknownIntegrationWarnings(parsed, detection, RECIPE),
+    ...removedProfileWarnings(parsed),
+    ...removedToolchainWarnings(parsed, detection),
+    ...unknownIntegrationWarnings(parsed, detection),
   ];
   // Each helper contributes, so dropping any one of them from doctor changes the result.
   assert.equal(expected.length, 3, JSON.stringify(expected));
@@ -240,6 +240,27 @@ test("Given Varlock without its schema, doctor warns until the schema exists", a
   );
 });
 
+test("Given a state doctor cannot use, the stop keeps the warnings doctor found before it", async () => {
+  await using fixture = await createTemporaryFixture("doctor-in-process-stop-keeps", {
+    "package.json": json({ name: "fixture" }),
+    [RECIPE]: recipeFile({ profile: "default", integrations: ["varlock"] }),
+    ".calavera/state.json": "{",
+  });
+
+  // The Varlock warning comes before the state read, and the stop keeps it (ADR-0020 Amendment 1).
+  const result = await doctorIn(fixture.root);
+  assert.equal(result.ok, false);
+  assert.equal("phase" in result, false);
+  assert.deepEqual(
+    result.issues.map(({ level, check }) => [level, check]),
+    [
+      ["warning", "managed-file"],
+      ["error", "records"],
+    ],
+  );
+  assert.match(result.issues[1]?.message ?? "", /^doctor cannot use \.calavera\/state\.json\./);
+});
+
 test("Given a selected AI artifact that is not installed, doctor reports it as pending in a note", async () => {
   await using fixture = await createTemporaryFixture("doctor-in-process-ai-output", {
     "package.json": json({ name: "fixture" }),
@@ -257,6 +278,7 @@ test("Given a selected AI artifact that is not installed, doctor reports it as p
     {
       level: "info",
       check: "artifact",
+      artifact: "skill-project-goal",
       message:
         "The recipe selects skill-project-goal, which has no lock entry yet, so artifacts install or apply installs it.",
     },
@@ -305,7 +327,8 @@ test("From a workspace member, doctor reports apply's root-only refusal and chec
   // The refusal names the recipe's package manager, which doctor resolves only from a member.
   assert.match(errors[0]?.message ?? "", /pnpm dlx create-project-calavera apply --dry-run/);
   // editorconfig is not root-only, so doctor checks its file in the member; the root-only files
-  // are checked at the repository root, and their remedy runs apply from there.
+  // are checked at the repository root, and their remedy runs apply from there, by its path, with
+  // the recipe path left to the person, because a member's --config path does not hold there.
   const managed = issues.filter(({ check }) => check === "managed-file");
   const [editorconfig, ...rootOnlyWarnings] = managed;
   assert.deepEqual(editorconfig, {
@@ -319,8 +342,9 @@ test("From a workspace member, doctor reports apply's root-only refusal and chec
     assert.equal(level, "warning");
     assert.match(
       message,
-      /^\.\.\/\.\.\/\S+ does not exist yet, so apply writes it\. Run pnpm dlx create-project-calavera apply from the repository root\.$/,
+      /^\.\.\/\.\.\/\S+ does not exist yet, so apply writes it\. Run pnpm dlx create-project-calavera apply from the repository root, \/\S+, adding --config <path> when the recipe is saved elsewhere\.$/,
     );
+    assert.ok(message.includes(`${basename(fixture.root)},`), message);
   }
 });
 

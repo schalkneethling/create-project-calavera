@@ -438,8 +438,10 @@ test("doctor's text output starts with the phase line, groups items under headin
     }
     assert.deepEqual(listingViolations(output, [EDITORCONFIG, ARTIFACT, OTHER]), []);
     // The verdict names the checks artifacts doctor does not make.
-    assert.match(stderr.trimEnd().split("\n").at(-1) ?? "", /^Calavera doctor found 2 errors/);
-    assert.match(stderr, /which artifacts doctor does not report/);
+    assert.equal(
+      stderr.trimEnd().split("\n").at(-1),
+      "Calavera doctor found 2 errors: a managed file's condition and an artifact's condition. artifacts doctor does not report a managed file's condition.",
+    );
   });
 });
 
@@ -449,9 +451,9 @@ test("the listing check passes on doctor's output in composed, incomplete, and p
     await writeJsonFile(CONFIG, recipeWith(["editorconfig", "knip"], [ARTIFACT]));
     let { stdout, stderr } = await runCli(directory, ["doctor"]);
     let output = `${stdout}${stderr}`;
-    assert.match(
-      stderr.split("\n")[0] ?? "",
-      /^The recipe in calavera\.config\.json is not applied yet/,
+    assert.equal(
+      stderr.split("\n")[0],
+      "The recipe is not applied yet, so run npm create project-calavera apply.",
     );
     assert.deepEqual(listingViolations(output, [EDITORCONFIG, KNIP, ARTIFACT]), []);
 

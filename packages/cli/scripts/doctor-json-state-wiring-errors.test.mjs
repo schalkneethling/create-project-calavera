@@ -142,7 +142,19 @@ for (const { label, files, setup, expected, stops = false } of cases) {
     const { code, stdout, stderr } = await runDoctor(fixture.root, []);
 
     assert.equal(code, 1, `doctor exited ${code}\n${stdout}\n${stderr}`);
-    assert.match(stderr, new RegExp(expected.source.replace(/^\^/, ""), expected.flags));
+    // The text output prints the finding under the artifact's line, without the artifact's ID.
+    assert.match(
+      stderr,
+      new RegExp(
+        expected.source.replace(/^\^/, "").replace("the skill-protected-branch-guard ", "the "),
+        expected.flags,
+      ),
+    );
+    if (!stops)
+      assert.match(
+        stdout,
+        /^Artifacts:\n {2}skill-protected-branch-guard: Calavera found a problem with the wiring apply recorded for it\.$/m,
+      );
     assert.ok(!`${stdout}${stderr}`.includes(SECRET), `The output quotes the file:\n${stdout}`);
   });
 }

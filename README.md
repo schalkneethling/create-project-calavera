@@ -641,7 +641,8 @@ npm create project-calavera doctor
 `doctor` starts with a line that names the project's phase, such as `composed`
 before the first `apply` or `applied` after it, and what resolves it (ADR-0020).
 It then lists what it found under headings: the project, the recipe, each managed
-file, each artifact, and the wiring Calavera recorded. It reports a managed file
+file, and each artifact, with the problems in the wiring Calavera recorded for an
+artifact under that artifact's line. It reports a managed file
 that `apply` wrote and someone deleted, or that cannot be read, as an error, and
 an edited file that the next `apply` would stop on as a note. It reports each
 artifact at the same level as `artifacts doctor`, and the two never disagree
