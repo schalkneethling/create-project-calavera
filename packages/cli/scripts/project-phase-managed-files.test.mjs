@@ -1,0 +1,498 @@
+// #1112 (ADR-0020, Decisions 1 to 3): the phase function classifies each managed file the recipe
+// declares by the rule apply uses, with apply's planner and the project's formatter, and reads the
+// wiring apply recorded. A managed file that apply wrote and someone deleted or edited drifts the
+// project; a file the person owns at a managed path does not. A formatter that cannot load, or
+// refuses a file, is a finding that names the file and the kind of failure, never a stop, and the
+// files it was needed for are `not-checked`. The function stays read-only.
+import assert from "node:assert/strict";
+import { mkdir, mkdtempDisposable, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import test from "node:test";
+
+import { applyRecipeObject } from "../src/index.js";
+import { deriveProjectPhase } from "../src/project-phase.js";
+import { buildRecipe } from "../src/recipe.js";
+import { stubRegistry } from "./artifact-registry-stub.mjs";
+import { snapshotDirectory } from "./project-snapshot.mjs";
+import { writeVitePlusFormatter } from "./vite-plus-fixtures.mjs";
+
+const CONFIG = "calavera.config.json";
+const STATE = ".calavera/state.json";
+const LOCK = ".calavera/artifacts.lock.json";
+const EDITORCONFIG = ".editorconfig";
+const KNIP = "knip.json";
+const ARTIFACT = "skill-project-goal";
+const applyOptions = { json: true, noInstall: true, assumeYes: true };
+const registry = () => stubRegistry(new Map([[ARTIFACT, "0.1.0"]]));
+
+/** @param {(directory: string) => Promise<void>} callback */
+async function inProject(callback) {
+  await using project = await mkdtempDisposable(join(tmpdir(), "calavera-phase-managed-"));
+  const directory = await realpath(project.path);
+  const originalDirectory = process.cwd();
+  process.chdir(directory);
+  try {
+    await writeJsonFile("package.json", { scripts: {} });
+    await callback(directory);
+  } finally {
+    process.chdir(originalDirectory);
+  }
+}
+
+/** @param {string[]} integrations @param {string[]} [ai] */
+const recipeWith = (integrations, ai = []) => ({
+  ...buildRecipe("minimal", integrations, "npm"),
+  ai: ai.map((id) => ({ id })),
+});
+
+/** @param {string} path @param {unknown} value */
+async function writeJsonFile(path, value) {
+  await writeFile(path, `${JSON.stringify(value, null, 2)}\n`);
+}
+
+/** @param {string} path */
+async function readJsonFile(path) {
+  return JSON.parse(await readFile(path, "utf8"));
+}
+
+/** @param {string[]} integrations @param {string[]} [ai] */
+async function applied(integrations, ai = []) {
+  await writeJsonFile(CONFIG, recipeWith(integrations, ai));
+  await applyRecipeObject(recipeWith(integrations, ai), applyOptions, registry());
+}
+
+/** Declares vite-plus in package.json, so the formatter apply uses is the project's vp fmt. */
+async function declareVitePlus() {
+  await writeJsonFile("package.json", { scripts: {}, devDependencies: { "vite-plus": "1.0.0" } });
+}
+
+const derive = () => deriveProjectPhase({ config: CONFIG });
+
+/** @param {Awaited<ReturnType<typeof derive>>} result @param {string} path */
+function fileCondition(result, path) {
+  const file = result.managedFiles.find((item) => item.path === path);
+  assert.ok(file, `no managed file ${path}`);
+  return file.condition;
+}
+
+test("before apply, each declared managed file is pending", async () => {
+  await inProject(async () => {
+    await writeJsonFile(CONFIG, recipeWith(["editorconfig", "knip"]));
+    const result = await derive();
+    assert.equal(result.phase, "composed");
+    assert.deepEqual(
+      result.managedFiles.map(({ path, integration, condition }) => [path, integration, condition]),
+      [
+        [
+          EDITORCONFIG,
+          "editorconfig",
+          { name: "pending", reason: `${EDITORCONFIG} does not exist yet, so apply writes it.` },
+        ],
+        [
+          KNIP,
+          "knip",
+          { name: "pending", reason: `${KNIP} does not exist yet, so apply writes it.` },
+        ],
+      ],
+    );
+    assert.deepEqual(
+      result.managedFiles.map(({ recorded }) => recorded),
+      [false, false],
+    );
+    assert.deepEqual(result.formatterFailures, []);
+    assert.equal(result.managedFilePlanProblem, null);
+  });
+});
+
+test("apply makes every managed file current, and a deleted or edited one drifts the project", async () => {
+  await inProject(async () => {
+    await applied(["editorconfig", "knip"]);
+    let result = await derive();
+    assert.equal(result.phase, "applied");
+    assert.deepEqual(fileCondition(result, KNIP), {
+      name: "current",
+      reason: `${KNIP} matches what the state records or what apply writes, so apply accepts it.`,
+    });
+
+    await rm(EDITORCONFIG);
+    result = await derive();
+    assert.equal(result.phase, "drifted");
+    assert.deepEqual(fileCondition(result, EDITORCONFIG), {
+      name: "missing",
+      reason: `The state records ${EDITORCONFIG}, and it does not exist, so apply writes it again.`,
+    });
+
+    await applyRecipeObject(recipeWith(["editorconfig", "knip"]), applyOptions, registry());
+    assert.equal((await derive()).phase, "applied");
+
+    const knip = await readJsonFile(KNIP);
+    await writeJsonFile(KNIP, { ...knip, entry: ["src/main.ts"] });
+    result = await derive();
+    assert.equal(result.phase, "drifted");
+    assert.deepEqual(fileCondition(result, KNIP), {
+      name: "edited",
+      reason: `${KNIP} differs from what the state records and from what apply writes, so the next apply or update keeps it and stops on it.`,
+    });
+    assert.equal(result.managedFiles.find(({ path }) => path === KNIP)?.recorded, true);
+  });
+});
+
+test("an edit apply accepts, such as equal JSON, keeps the file current", async () => {
+  await inProject(async () => {
+    await applied(["knip"]);
+    const knip = await readJsonFile(KNIP);
+    // The same values in another key order.
+    const reordered = Object.fromEntries(Object.entries(knip).reverse());
+    await writeFile(KNIP, JSON.stringify(reordered));
+    const result = await derive();
+    assert.equal(result.phase, "applied");
+    assert.equal(fileCondition(result, KNIP).name, "current");
+  });
+});
+
+test("the person's own file at a managed path is unrecorded and never drifts the project", async () => {
+  await inProject(async () => {
+    await writeJsonFile(CONFIG, recipeWith(["knip"]));
+    await writeJsonFile(KNIP, { entry: ["src/main.ts"] });
+    let result = await derive();
+    assert.equal(result.phase, "composed");
+    assert.deepEqual(fileCondition(result, KNIP), {
+      name: "unrecorded",
+      reason: `${KNIP} already exists without a state record and differs from what apply writes, so apply stops on it as not recorded as Calavera-managed.`,
+    });
+
+    // After apply, a newly declared file that already exists is unrecorded too (owner decision 22).
+    await rm(KNIP);
+    await applied([]);
+    await writeJsonFile(CONFIG, recipeWith(["knip"]));
+    await writeJsonFile(KNIP, { entry: ["src/main.ts"] });
+    result = await derive();
+    assert.equal(result.phase, "applied");
+    assert.equal(fileCondition(result, KNIP).name, "unrecorded");
+  });
+});
+
+test("a file without a record that matches what apply writes is current", async () => {
+  await inProject(async () => {
+    await applied(["knip"]);
+    const state = await readJsonFile(STATE);
+    state.managedFiles = [];
+    await writeJsonFile(STATE, state);
+    const result = await derive();
+    assert.equal(fileCondition(result, KNIP).name, "current");
+    assert.equal(result.phase, "applied");
+  });
+});
+
+test("a managed file that cannot be read is unreadable and drifts the project", async () => {
+  await inProject(async () => {
+    await applied(["knip"]);
+    await rm(KNIP);
+    await mkdir(KNIP);
+    const result = await derive();
+    assert.equal(result.phase, "drifted");
+    assert.deepEqual(fileCondition(result, KNIP), {
+      name: "unreadable",
+      reason: `Calavera cannot read ${KNIP} (EISDIR), so it cannot compare it with what apply writes.`,
+    });
+  });
+});
+
+test("a formatter that cannot load is a finding, and the files that need it are not-checked", async () => {
+  await inProject(async () => {
+    await applied(["editorconfig", "knip"]);
+    // Vite+ declared but not installed: apply would stop on loading the formatter.
+    await declareVitePlus();
+    let result = await derive();
+    assert.deepEqual(result.formatterFailures, [
+      {
+        path: null,
+        kind: "not-installed",
+        reason:
+          "The project uses Vite+, but Calavera cannot find its vite-plus package, so it cannot format the managed files the way apply does, and apply stops on the same thing. Run vp install, then run the command again.",
+      },
+    ]);
+    // An unedited file needs no formatter.
+    assert.equal(fileCondition(result, KNIP).name, "current");
+    assert.equal(result.phase, "applied");
+
+    const knip = await readJsonFile(KNIP);
+    await writeJsonFile(KNIP, { ...knip, entry: ["src/main.ts"] });
+    result = await derive();
+    assert.deepEqual(fileCondition(result, KNIP), {
+      name: "not-checked",
+      reason: `Calavera could not format what apply writes for ${KNIP}, so it cannot tell whether apply stops on it. The formatter failure names the cause.`,
+    });
+    // A not-checked file never drifts the project.
+    assert.equal(result.phase, "applied");
+    // A file the formatter is not used for is still classified.
+    assert.equal(fileCondition(result, EDITORCONFIG).name, "current");
+  });
+});
+
+test("the formatter loads on every run with a recipe, as apply's does, even with no managed file", async () => {
+  await inProject(async () => {
+    await writeJsonFile(CONFIG, recipeWith([]));
+    await declareVitePlus();
+    const result = await derive();
+    assert.equal(result.phase, "composed");
+    assert.deepEqual(
+      result.formatterFailures.map(({ path, kind }) => [path, kind]),
+      [[null, "not-installed"]],
+    );
+  });
+});
+
+test("a formatter that refuses one file names that file, and the other files are classified", async () => {
+  await inProject(async (directory) => {
+    await applied(["knip", "react-doctor"]);
+    await declareVitePlus();
+    await writeVitePlusFormatter(directory, { failFor: KNIP });
+    const knip = await readJsonFile(KNIP);
+    await writeJsonFile(KNIP, { ...knip, entry: ["src/main.ts"] });
+    const result = await derive();
+    assert.deepEqual(result.formatterFailures, [
+      {
+        path: KNIP,
+        kind: "failed",
+        reason: `vp fmt could not format ${KNIP}, so apply stops on the same thing. Calavera does not show vp fmt's output, because it can quote the file. Check that vite.config.ts loads without errors, which vp fmt --check in the project reports, then run the command again.`,
+      },
+    ]);
+    assert.equal(fileCondition(result, KNIP).name, "not-checked");
+    assert.equal(fileCondition(result, "react-doctor.config.json").name, "current");
+  });
+});
+
+test("a formatter that prints output with the formatted text is a printed-output finding", async () => {
+  await inProject(async (directory) => {
+    await applied(["knip"]);
+    await declareVitePlus();
+    await writeVitePlusFormatter(directory, { banner: "dotenv loaded 3 secrets" });
+    const result = await derive();
+    assert.deepEqual(result.formatterFailures, [
+      {
+        path: KNIP,
+        kind: "printed-output",
+        reason: `vp fmt returned something with the formatted text of ${KNIP}, such as output that vite.config.ts printed, so apply stops on the same thing. Make vite.config.ts print nothing when it loads, then run the command again.`,
+      },
+    ]);
+    // No reason quotes what the formatter printed.
+    assert.equal(JSON.stringify(result).includes("dotenv"), false);
+  });
+});
+
+const CONTROLS = "github-repository-controls";
+const controlsRecipe = () =>
+  buildRecipe("minimal", [CONTROLS], "npm", [], {
+    [CONTROLS]: { repository: "example/phase", defaultBranch: "main" },
+  });
+
+test("a root-only integration's files in a workspace member are classified at the repository root", async () => {
+  await inProject(async (directory) => {
+    await mkdir(".git");
+    await mkdir("packages/app", { recursive: true });
+    process.chdir(join(directory, "packages/app"));
+    await writeJsonFile("package.json", { scripts: {} });
+    await writeJsonFile(CONFIG, { ...controlsRecipe(), integrations: [CONTROLS, "knip"] });
+    const result = await derive();
+    assert.equal(result.managedFilePlanProblem, null);
+    assert.deepEqual(
+      result.managedFiles.map(({ path, integration }) => [path, integration]),
+      [
+        // Only a root-only integration's files move to the repository root; apply's write order
+        // puts knip first.
+        [KNIP, "knip"],
+        ["../../.github/repository-controls.json", CONTROLS],
+        ["../../.github/dependabot.yml", CONTROLS],
+        ["../../scripts/repository-controls.mjs", CONTROLS],
+        ["../../docs/repository-controls.md", CONTROLS],
+      ],
+    );
+  });
+});
+
+test("a root-only integration at the repository root, or outside a repository, keeps its paths", async () => {
+  await inProject(async () => {
+    await writeJsonFile(CONFIG, controlsRecipe());
+    const outside = (await derive()).managedFiles.map(({ path }) => path);
+    assert.equal(outside[0], ".github/repository-controls.json");
+    await mkdir(".git");
+    const atRoot = (await derive()).managedFiles.map(({ path }) => path);
+    assert.deepEqual(atRoot, outside);
+  });
+});
+
+test("an integration whose required options are missing is a plan problem", async () => {
+  await inProject(async () => {
+    // Written by hand, as buildRecipe refuses the missing options.
+    await writeJsonFile(CONFIG, { ...recipeWith([]), integrations: [CONTROLS] });
+    const result = await derive();
+    assert.deepEqual(result.managedFiles, []);
+    assert.match(result.managedFilePlanProblem ?? "", /^Calavera cannot plan the managed files/);
+  });
+});
+
+test("without a recipe, no managed file is classified and no formatter is loaded", async () => {
+  await inProject(async () => {
+    await applied(["knip"]);
+    await rm(CONFIG);
+    await declareVitePlus();
+    const result = await derive();
+    assert.equal(result.phase, "incomplete");
+    assert.deepEqual(result.managedFiles, []);
+    assert.deepEqual(result.formatterFailures, []);
+    assert.deepEqual(result.wiringFindings, []);
+    assert.equal(result.managedFilePlanProblem, null);
+  });
+});
+
+test("a vite-plus package without a vp command is a no-vp-command finding", async () => {
+  await inProject(async (directory) => {
+    await writeJsonFile(CONFIG, recipeWith(["knip"]));
+    await declareVitePlus();
+    await writeVitePlusFormatter(directory, { bin: {} });
+    assert.deepEqual((await derive()).formatterFailures, [
+      {
+        path: null,
+        kind: "no-vp-command",
+        reason:
+          "The project's vite-plus package has no vp command, so Calavera cannot format the managed files the way apply does, and apply stops on the same thing. Run vp install, then run the command again.",
+      },
+    ]);
+  });
+});
+
+test("an .editorconfig that would change how vp fmt formats a file is an editorconfig-change finding", async () => {
+  await inProject(async (directory) => {
+    await writeJsonFile(CONFIG, recipeWith(["editorconfig", "knip"]));
+    await declareVitePlus();
+    await writeVitePlusFormatter(directory);
+    // Tabs now; Calavera's .editorconfig sets spaces.
+    await writeFile(".editorconfig", "root = true\n\n[*]\nindent_style = tab\n");
+    const result = await derive();
+    assert.deepEqual(result.formatterFailures, [
+      {
+        path: KNIP,
+        kind: "editorconfig-change",
+        reason: `Calavera's .editorconfig would change how vp fmt formats ${KNIP}, so apply stops on the same thing, because Calavera formats every file before it writes any of them. Save the .editorconfig that apply --dry-run prints in the project root, or leave editorconfig out of the recipe, then run the command again.`,
+      },
+    ]);
+    // The reason quotes no setting from the person's file.
+    assert.equal(JSON.stringify(result.formatterFailures).includes("tab"), false);
+  });
+});
+
+test("an invalid integration option is a plan problem, and the phase is still derived", async () => {
+  await inProject(async () => {
+    await writeJsonFile(CONFIG, { ...recipeWith(["knip"]), integrationOptions: "not an object" });
+    const result = await derive();
+    assert.equal(result.phase, "composed");
+    assert.deepEqual(result.managedFiles, []);
+    assert.equal(
+      result.managedFilePlanProblem,
+      `Calavera cannot plan the managed files for the recipe in ${CONFIG}, so it did not check them. Run apply --dry-run to see what apply refuses, fix the recipe, then run the command again.`,
+    );
+  });
+});
+
+test("a recipe whose integrations are not a list of strings stops the function", async () => {
+  await inProject(async () => {
+    await writeJsonFile(CONFIG, { ...recipeWith([]), integrations: "knip" });
+    await assert.rejects(derive(), {
+      message: `${CONFIG} integrations must be an array of strings.`,
+    });
+  });
+});
+
+test("a wiring finding about a selected artifact drifts the project; about a deselected one, it does not", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    const state = await readJsonFile(STATE);
+    state.aiWiring = [
+      {
+        artifact: ARTIFACT,
+        viteHooks: { "pre-commit": "node .agents/skills/project-goal/check.mjs" },
+      },
+    ];
+    await writeJsonFile(STATE, state);
+    let result = await derive();
+    assert.equal(result.phase, "drifted");
+    assert.deepEqual(
+      result.wiringFindings.map(({ artifact, selected, level }) => [artifact, selected, level]),
+      [[ARTIFACT, true, "warning"]],
+    );
+    assert.match(
+      result.wiringFindings[0]?.message ?? "",
+      /block that Calavera recorded is missing/,
+    );
+
+    await writeJsonFile(CONFIG, recipeWith([]));
+    result = await derive();
+    assert.equal(result.phase, "applied");
+    assert.deepEqual(
+      result.wiringFindings.map(({ artifact, selected }) => [artifact, selected]),
+      [[ARTIFACT, false]],
+    );
+  });
+});
+
+test("a lock destination that is not normalized still finds its state record", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    const lock = await readJsonFile(LOCK);
+    lock.artifacts[0].destination = `./${lock.artifacts[0].destination}`;
+    await writeJsonFile(LOCK, lock);
+    const result = await derive();
+    assert.equal(result.phase, "applied");
+    const [artifact] = result.artifacts;
+    assert.equal(artifact?.condition.name, "current");
+    assert.deepEqual(
+      artifact?.outputs.map(({ path }) => path),
+      [".agents/skills/project-goal"],
+    );
+  });
+});
+
+test("while a transaction is pending, no managed file, formatter, or wiring is read", async () => {
+  await inProject(async () => {
+    await applied(["knip"]);
+    await declareVitePlus();
+    await writeFile(".calavera/artifact-transaction.json", "{ not json");
+    const result = await derive();
+    assert.equal(result.phase, "pending-transaction");
+    assert.deepEqual(result.managedFiles, []);
+    assert.deepEqual(result.formatterFailures, []);
+    assert.deepEqual(result.wiringFindings, []);
+    assert.equal(result.managedFilePlanProblem, null);
+  });
+});
+
+test("classifying managed files with the formatter writes nothing into the project", async () => {
+  await inProject(async (directory) => {
+    await applied(["knip", "editorconfig"]);
+    await declareVitePlus();
+    await writeVitePlusFormatter(directory);
+    const knip = await readJsonFile(KNIP);
+    await writeJsonFile(KNIP, { ...knip, entry: ["src/main.ts"] });
+    const before = await snapshotDirectory();
+    const result = await derive();
+    assert.deepEqual(await snapshotDirectory(), before);
+    assert.equal(fileCondition(result, KNIP).name, "edited");
+  });
+});
+
+test("the artifact entries keep the shape #1111 reads", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    const [artifact] = (await derive()).artifacts;
+    assert.deepEqual(Object.keys(artifact ?? {}).sort(), [
+      "condition",
+      "id",
+      "lockEntry",
+      "outputs",
+      "selected",
+    ]);
+    assert.deepEqual(Object.keys(artifact?.condition ?? {}).sort(), ["name", "reason"]);
+  });
+});
