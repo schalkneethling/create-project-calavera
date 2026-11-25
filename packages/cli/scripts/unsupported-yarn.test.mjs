@@ -96,6 +96,9 @@ function runCli(cwd, args, registry, env) {
   });
 }
 
+// The registry stays unasked for two reasons: runCli stops before startVersionCheck, and the
+// version check's loader refuses under Yarn 1 too (Decision 5). This test cannot tell the two
+// apart, so it proves the outcome, not the order inside runCli.
 test("under Yarn 1, the CLI prints one message, exits 1, writes nothing, and asks no registry", async (t) => {
   const project = await temporaryProject(t);
   const registry = await startRegistry();
@@ -175,7 +178,6 @@ test("a Yarn 1 user agent under npm or pnpm, which a project file can set, does 
     const result = await runCli(project, ["--help"], registry.url, {
       ...yarn1,
       npm_execpath: execpath,
-      CALAVERA_NO_VERSION_CHECK: "1",
     });
     assert.equal(result.code, 0, `${execpath}: ${result.stderr}`);
     assert.doesNotMatch(result.stderr, /does not support Yarn/);
@@ -190,7 +192,6 @@ test("Yarn 2 or later does not stop the CLI", async (t) => {
   const result = await runCli(project, ["--help"], registry.url, {
     ...yarn1,
     npm_config_user_agent: "yarn/4.19.0 npm/? node/v24.3.0 darwin arm64",
-    CALAVERA_NO_VERSION_CHECK: "1",
   });
   assert.equal(result.code, 0, result.stderr);
 });

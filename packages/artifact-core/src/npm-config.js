@@ -16,10 +16,10 @@ import {
   variablesFromReferences,
 } from "./environment-files.js";
 import {
+  LAUNCHER_VARIABLES,
   YARN_DEFAULT_REGISTRY,
   bunEnvironmentLayer,
   bunfigLayers,
-  LAUNCHER_VARIABLES,
   detectLauncher,
   isAccountFile,
   unsupportedYarnVersion,
@@ -60,7 +60,6 @@ const PROXY_PROTOCOLS = new Set([
 // etc/npmrc is the default).
 const GLOBAL_CONFIG_CHOOSERS = new Set(["globalconfig", "prefix"]);
 const GLOBAL_LAYER = "global npmrc";
-// The variables from which Calavera recognizes the package manager that started it.
 // The folder Calavera started in, before the CLI changes into a new or ancestor project. Yarn and
 // Bun loaded their environment files relative to it (#1186).
 const STARTING_CWD = process.cwd();

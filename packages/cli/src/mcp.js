@@ -12,9 +12,9 @@ import {
   recommendBaselineTarget,
   searchBaselineFeatures,
 } from "@schalkneethling/calavera-baseline-core";
+import { unsupportedYarnVersion } from "@schalkneethling/calavera-artifact-core/registry";
 
 import { readArtifactStatus } from "./artifact-lifecycle.js";
-import { unsupportedYarnVersion } from "@schalkneethling/calavera-artifact-core/registry";
 import {
   applyRecipeObject,
   inspectProject,

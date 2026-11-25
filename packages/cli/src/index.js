@@ -2122,7 +2122,7 @@ export function createVpCreateCommand(packageManager, forwardedArgs) {
   switch (packageManager) {
     case "pnpm":
     case "yarn":
-      // dlx with the package name, as for pnpm and Bun, so every runner names the package it runs (#740).
+      // dlx with the package name, not create, as #740 decided.
       return {
         command: packageManager,
         args: ["dlx", "create-vite-plus@latest", ...forwardedArgs],

@@ -202,8 +202,12 @@ test("under Node.js, no .env file counts, because no Bun process loaded one", as
 });
 
 test("the registry settings loader refuses to run under Yarn 1 before it reads any configuration file", async () => {
-  // Each file would fail to parse or be unreadable, which the loader reports as a warning when it reads it.
-  const cwd = await project({ ".npmrc": "registry=\n", ".yarnrc.yml": "npmRegistryServer: [" });
+  // Reading this .npmrc makes the loader throw an error of its own, because its registry holds a
+  // variable (ADR-0021, Decision 2), so only a refusal that comes first gives the Yarn 1 message.
+  const cwd = await project({
+    ".npmrc": "registry=https://${CALAVERA_UNSET_REGISTRY_HOST}/\n",
+    ".yarnrc.yml": "npmRegistryServer: [",
+  });
   await mkdir(join(cwd, "home", ".npmrc"), { recursive: true });
   await assert.rejects(
     loadNpmRegistryOptions({

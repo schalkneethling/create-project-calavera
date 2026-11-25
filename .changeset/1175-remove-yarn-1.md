@@ -3,7 +3,7 @@
 "@schalkneethling/calavera-artifact-core": major
 ---
 
-Calavera requires Yarn 2 or later and no longer runs under Yarn 1 (Yarn Classic) (ADR-0023). When Yarn 1 starts Calavera, for example with `yarn create project-calavera`, every command stops before it does anything and exits 1 with one message:
+Calavera requires Yarn 2 or later and no longer runs under Yarn 1 (Yarn Classic) (ADR-0023). When Yarn 1 starts Calavera, for example with `yarn create project-calavera`, every command stops before it does anything, after only the check of its arguments, and exits 1 with one message:
 
 ```text
 create-project-calavera does not support Yarn 1.22.22. Use Yarn 2 or later (yarn dlx create-project-calavera), npm (npx --package create-project-calavera create-project-calavera), pnpm (pnpm dlx create-project-calavera), or Bun (bunx create-project-calavera).
