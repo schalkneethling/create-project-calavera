@@ -1570,6 +1570,8 @@ test("the flow commits on a feature branch, so the guard's pre-commit hook lets 
   // The guard refuses a commit on main, which is where the flow project is when apply finishes.
   const onMain = await git(["commit", "--allow-empty", "--message", "refused"]);
   assert.notEqual(onMain.exitCode, 0, onMain.output);
+  // The guard itself refused, not an unrelated failure, so a broken setup cannot pass this step.
+  assert.match(onMain.output, /Protected branch guard/);
 
   const context = {
     dirs: { projects: join(root, "projects"), tmp: join(root, "tmp") },
