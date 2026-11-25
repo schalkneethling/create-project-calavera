@@ -7,6 +7,7 @@ import { spawnSync } from "node:child_process";
 import { once } from "node:events";
 import {
   chmod,
+  cp,
   mkdir,
   mkdtemp,
   readFile,
@@ -18,7 +19,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { devNull, tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
 import { Worker } from "node:worker_threads";
@@ -1546,15 +1547,23 @@ test("the flow commits on a feature branch, so the guard's pre-commit hook lets 
   await writeFile(join(project, "package.json"), "{}\n");
   assert.equal((await git(["add", "--all"])).exitCode, 0);
   assert.equal((await git(["commit", "--quiet", "--message", "init"])).exitCode, 0);
-  // The guard's own script, protecting main as init records it, run as the pre-commit hook.
-  const guard = fileURLToPath(
-    new URL(
-      "../packages/artifacts/skill-protected-branch-guard/payload/protected-branch-guard/scripts/guard.mjs",
-      import.meta.url,
-    ),
+  // The guard's own payload, installed where apply puts it, and its own pre-commit command from the
+  // catalog, protecting main as init records it.
+  const guardPackage = new URL(
+    "../packages/artifacts/skill-protected-branch-guard/",
+    import.meta.url,
   );
+  const manifest = JSON.parse(
+    await readFile(new URL("calavera-artifact.json", guardPackage), "utf8"),
+  );
+  await cp(
+    fileURLToPath(new URL(manifest.payload, guardPackage)),
+    join(project, ".agents", "skills", "protected-branch-guard"),
+    { recursive: true },
+  );
+  const preCommit = manifest.wiring.viteHooks["pre-commit"].replace("{{protectedBranch}}", "main");
   const hook = join(root, "hooks", "pre-commit");
-  await writeFile(hook, `#!/bin/sh\nexec "${process.execPath}" "${guard}" commit main\n`);
+  await writeFile(hook, `#!/bin/sh\nPATH="${dirname(process.execPath)}:$PATH"\n${preCommit}\n`);
   await chmod(hook, 0o755);
   assert.equal((await git(["config", "core.hooksPath", join(root, "hooks")])).exitCode, 0);
   await writeFile(join(project, "calavera.config.json"), "{}\n");

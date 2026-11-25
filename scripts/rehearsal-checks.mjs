@@ -945,16 +945,17 @@ function flowInit(context) {
 /**
  * What the flow recipe adds to the default profile, so the listing checks also cover output that
  * names them (#1146). Knip adds a `knip` script, which shares its name with the package, and the
- * protected-branch guard writes `.claude/settings.json` and wires `.vite-hooks` (#1128).
- * `skill-release-with-confidence` is an artifact installed from the release candidate.
+ * protected-branch guard writes `.claude/settings.json` and wires `.vite-hooks` (#1128). Both
+ * artifacts are installed from the release candidate, which packs every artifact package.
  */
 const FLOW_TOOLS = ["knip"];
 const FLOW_AI_ARTIFACTS = ["skill-release-with-confidence", "skill-protected-branch-guard"];
 
 /**
- * The branch the flow commit is made on. The guard protects `main`, the branch `vp create` makes,
- * and refuses a commit there, so the rehearsal does what the apply summary tells a person to do:
- * create a feature branch and commit there.
+ * The branch the flow commit is made on. `vp create` makes `main`, because the run's Git
+ * configuration sets init.defaultBranch to main, so the guard protects `main` and refuses a commit
+ * there. The rehearsal does what the apply summary tells a person to do: create a feature branch
+ * and commit there.
  */
 export const FLOW_BRANCH = "apply-calavera";
 
