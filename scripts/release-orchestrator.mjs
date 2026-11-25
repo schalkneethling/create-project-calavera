@@ -341,6 +341,7 @@ function assertPackagesMinted(packages) {
       `  ${fledglingCommand(names, false)}`,
       "",
       `The first release of each minted package must be a stable version so it replaces the ${placeholderVersion} placeholder on latest.`,
+      'On npmjs.com, enable Allow npm dist-tag on each minted package\'s trusted publisher, so the publish workflow can move its next tag (see "Move a stale next tag" in docs/release-runbook.md).',
       "Then rerun pnpm release:prepare.",
     ].join("\n"),
   );
@@ -674,6 +675,26 @@ async function smokePublishedArtifacts(plan) {
   }
 }
 
+// The publish job fails after publishing when a next tag did not move, so a failed run does not
+// mean nothing reached npm. The run's log names each cause.
+function watchPublishRun(workflowRun, options) {
+  try {
+    (options.watchRun ?? watchRun)(workflowRun);
+  } catch (error) {
+    if (!(error instanceof ReleaseError)) throw error;
+    const id = workflowRun.databaseId;
+    throw new ReleaseError(
+      [
+        error.message,
+        `Read the run's log with gh run view ${id} --repo ${repository} --log-failed. Packages it published stay published.`,
+        `If the log says "Could not move next", follow its remedy, then rerun the failed job with gh run rerun ${id} --repo ${repository} --failed.`,
+        "Once the run passes, rerun pnpm release:publish -- --yes to verify the release.",
+      ].join("\n"),
+      { cause: error },
+    );
+  }
+}
+
 function watchRun(workflowRun) {
   console.info(`Watching ${workflowRun.url}`);
   run("gh", [
@@ -689,8 +710,9 @@ function watchRun(workflowRun) {
 }
 
 // After a stable release, `next` must not trail `latest`: `npm install pkg@next` would then
-// install an older build than `npm install pkg`. Trusted publishing does not remove the tag
-// unless the publisher opts in to "Allow npm dist-tag", so this reports instead of fixing.
+// install an older build than `npm install pkg`. publish.yml moves `next` to each stable release
+// through scripts/move-next-tag.mjs (#1126); this check confirms the result and names the command
+// that repairs a tag the workflow could not move.
 export async function staleNextTags(plan, options = {}) {
   const stale = [];
   const unparseable = [];
@@ -703,14 +725,21 @@ export async function staleNextTags(plan, options = {}) {
       throw new ReleaseError(`npm view ${name} dist-tags --json returned malformed JSON.`);
     }
     const { latest, next } = tags;
-    if (next === undefined) continue;
+    if (next === undefined) {
+      // The workflow creates `next` for every stable version it publishes, so a missing tag on
+      // one of this release's stable packages means the move failed.
+      if (channel === "latest" && published === false && latest === version) {
+        stale.push({ name, latest, next, command: `npm dist-tag add ${name}@${latest} next` });
+      }
+      continue;
+    }
     // A prerelease publish sets next to this very version, which may sit below latest on a
     // maintenance line. That tag is intentional.
     if (channel === "next" && !published && next === version) continue;
     if (!semver.valid(latest) || !semver.valid(next)) {
       unparseable.push({ name, latest, next });
     } else if (semver.lt(next, latest)) {
-      stale.push({ name, latest, next, command: `npm dist-tag rm ${name} next` });
+      stale.push({ name, latest, next, command: `npm dist-tag add ${name}@${latest} next` });
     }
   }
   return { stale, unparseable };
@@ -719,10 +748,14 @@ export async function staleNextTags(plan, options = {}) {
 export function reportNextTags({ stale, unparseable }, report = console.info) {
   if (stale.length > 0) {
     report(
-      `ACTION REQUIRED: ${stale.length} stale next tag(s). The release itself succeeded. Remove each tag (see docs/release-runbook.md):`,
+      `ACTION REQUIRED: ${stale.length} stale next tag(s). The release itself succeeded. Move each tag to latest (see "Move a stale next tag" in docs/release-runbook.md):`,
     );
     for (const { name, latest, next, command } of stale) {
-      report(`${name}: next ${next} is behind latest ${latest}. Run:`);
+      report(
+        next === undefined
+          ? `${name}: next is missing, but latest is ${latest}. Run:`
+          : `${name}: next ${next} is behind latest ${latest}. Run:`,
+      );
       report(`  ${command}`);
     }
   }
@@ -744,7 +777,7 @@ export async function checkNextTags(plan, options = {}) {
     reportNextTags(await staleNextTags(plan, options), report);
   } catch (error) {
     report(
-      `The release succeeded, but could not check next dist-tags: ${error instanceof Error ? error.message : String(error)}. Check each public package by hand with npm view <pkg> dist-tags --json; a next tag below latest needs npm dist-tag rm <pkg> next.`,
+      `The release succeeded, but could not check next dist-tags: ${error instanceof Error ? error.message : String(error)}. Check each public package by hand with npm view <pkg> dist-tags --json; a next tag below latest needs npm dist-tag add <pkg>@<latest> next.`,
     );
   }
 }
@@ -802,7 +835,7 @@ export async function publishRelease(options = {}) {
     };
     // waitForRun returns the run as soon as it exists; a rerun can find it still in progress.
     const workflowRun = await waitForRun(tag, plan.sha, options);
-    (options.watchRun ?? watchRun)(workflowRun);
+    watchPublishRun(workflowRun, options);
     await verifyPublishedPackages(verificationPlan, workflowRun.databaseId, options);
     await (options.smokePublishedArtifacts ?? smokePublishedArtifacts)(verificationPlan);
     report(`Release ${tag} and its package inventory are already published and verified.`);
@@ -823,7 +856,7 @@ export async function publishRelease(options = {}) {
   ]);
 
   const workflowRun = await waitForRun(tag, plan.sha, options);
-  (options.watchRun ?? watchRun)(workflowRun);
+  watchPublishRun(workflowRun, options);
   await verifyPublishedPackages(plan, workflowRun.databaseId, options);
   await (options.smokePublishedArtifacts ?? smokePublishedArtifacts)(plan);
   (options.assertCandidateUnchanged ?? assertCandidateUnchanged)(plan.sha);
