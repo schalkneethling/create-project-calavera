@@ -8,9 +8,12 @@ import {
   mkdir,
   mkdtempDisposable,
   readFile,
+  lstat,
   readdir,
   realpath,
   rm,
+  symlink,
+  chmod,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -49,15 +52,19 @@ function recordingRegistry({ fail } = {}) {
   );
   /** @type {{ id: string, tag?: string, version?: string, cache: string, offline?: boolean }[]} */
   const requests = [];
-  return {
+  const registry = {
     requests,
+    /** @type {boolean[]} */
+    cacheWasLink: [],
     resolve: async (/** @type {(typeof requests)[number]} */ request) => {
       requests.push(request);
+      registry.cacheWasLink.push((await lstat(request.cache)).isSymbolicLink());
       if (fail) throw fail;
       return stub.resolve(request);
     },
     extract: stub.extract,
   };
+  return registry;
 }
 
 /** @param {(directory: string) => Promise<void>} callback */
@@ -115,7 +122,12 @@ test("without an artifact cache, an unrecorded output is listed with nothing com
     const result = await deriveProjectPhase({ config: CONFIG, registry });
 
     assert.deepEqual(unrecordedFilesOf(result, SKILL_ID), [
-      { path: SKILL, comparedVersion: null, matches: null },
+      {
+        path: SKILL,
+        comparedVersion: null,
+        matches: null,
+        notCompared: "there is no artifact cache",
+      },
     ]);
     assert.deepEqual(registry.requests, []);
     // The phase stays as the selection without a lock entry makes it.
@@ -135,7 +147,7 @@ test("with an artifact cache, an unrecorded output is compared offline against a
     const result = await deriveProjectPhase({ config: CONFIG, registry });
 
     assert.deepEqual(unrecordedFilesOf(result, SKILL_ID), [
-      { path: SKILL, comparedVersion: "0.1.0", matches: true },
+      { path: SKILL, comparedVersion: "0.1.0", matches: true, notCompared: null },
     ]);
     // One offline lookup on the artifact's channel, against a cache outside the project.
     assert.equal(registry.requests.length, 1);
@@ -165,7 +177,7 @@ test("an unrecorded output that differs from the cached package is listed as not
     const result = await deriveProjectPhase({ config: CONFIG, registry: recordingRegistry() });
 
     assert.deepEqual(unrecordedFilesOf(result, SKILL_ID), [
-      { path: SKILL, comparedVersion: "0.1.0", matches: false },
+      { path: SKILL, comparedVersion: "0.1.0", matches: false, notCompared: null },
     ]);
   });
 });
@@ -181,7 +193,12 @@ test("a cache that does not hold the package leaves the output uncompared, and t
     const result = await deriveProjectPhase({ config: CONFIG, registry });
 
     assert.deepEqual(unrecordedFilesOf(result, SKILL_ID), [
-      { path: SKILL, comparedVersion: null, matches: null },
+      {
+        path: SKILL,
+        comparedVersion: null,
+        matches: null,
+        notCompared: "the artifact cache cannot supply it offline (ENOTCACHED)",
+      },
     ]);
     const [request] = registry.requests;
     assert.ok(request);
@@ -201,11 +218,20 @@ test("an unlocked artifact with no file on disk lists nothing and reads no cache
 });
 
 test("a registry or cache error with a code, or an error that is not a programming error, leaves the output uncompared", async () => {
-  for (const fail of [
+  for (const { fail, notCompared } of [
     // npm-pick-manifest's TypeError, which the registry client gives a code (#993).
-    Object.assign(new TypeError("unreadable package document"), { code: "EBADPACKUMENT" }),
-    // artifact-core's own refusal of a cached package, which has no code.
-    new Error("Resolved package identity mismatch."),
+    {
+      fail: Object.assign(new TypeError("unreadable package document"), {
+        code: "EBADPACKUMENT",
+      }),
+      notCompared: "the artifact cache cannot supply it offline (EBADPACKUMENT)",
+    },
+    // artifact-core's own refusal of a cached package, which has no code: it is told apart from
+    // a cache miss, so a tampered cache does not read like one.
+    {
+      fail: new Error("Resolved package identity mismatch."),
+      notCompared: "Calavera refused the package the artifact cache holds",
+    },
   ]) {
     await inProject(async () => {
       await writeRecipe([SKILL_ID]);
@@ -217,12 +243,58 @@ test("a registry or cache error with a code, or an error that is not a programmi
       });
       assert.deepEqual(
         unrecordedFilesOf(result, SKILL_ID),
-        [{ path: SKILL, comparedVersion: null, matches: null }],
+        [{ path: SKILL, comparedVersion: null, matches: null, notCompared }],
         fail.message,
       );
     });
   }
 });
+
+test("a linked cache is copied as files, so the lookup never reads the project's cache", async () => {
+  await using elsewhere = await mkdtempDisposable(join(tmpdir(), "calavera-linked-cache-"));
+  await inProject(async () => {
+    await writeRecipe([SKILL_ID]);
+    await writeFile(join(elsewhere.path, "index-v5"), "cached\n");
+    await mkdir(".calavera/cache", { recursive: true });
+    await symlink(elsewhere.path, CACHE, "dir");
+    await writePackagedSkill();
+    const registry = recordingRegistry();
+
+    const result = await deriveProjectPhase({ config: CONFIG, registry });
+
+    assert.deepEqual(registry.cacheWasLink, [false]);
+    assert.equal(unrecordedFilesOf(result, SKILL_ID)[0]?.matches, true);
+  });
+});
+
+test(
+  "a cache that cannot be copied leaves every output uncompared, with the error code, and does not stop the function",
+  { skip: process.getuid?.() === 0 ? "root reads every file" : false },
+  async () => {
+    await inProject(async () => {
+      await writeRecipe([SKILL_ID]);
+      await writeCache();
+      await writePackagedSkill();
+      const locked = join(CACHE, "index-v5");
+      await chmod(locked, 0o000);
+      try {
+        const registry = recordingRegistry();
+        const result = await deriveProjectPhase({ config: CONFIG, registry });
+        assert.deepEqual(unrecordedFilesOf(result, SKILL_ID), [
+          {
+            path: SKILL,
+            comparedVersion: null,
+            matches: null,
+            notCompared: "Calavera could not copy the artifact cache (EACCES)",
+          },
+        ]);
+        assert.deepEqual(registry.requests, []);
+      } finally {
+        await chmod(locked, 0o644);
+      }
+    });
+  },
+);
 
 test("an error without a code, such as a programming error, still stops the function", async () => {
   await inProject(async () => {
@@ -256,15 +328,15 @@ test("each output of a hook is compared on its own", async () => {
         await deriveProjectPhase({ config: CONFIG, registry: recordingRegistry() }),
         HOOK_ID,
       ),
-      [{ path: script, comparedVersion: "0.3.0", matches: true }],
+      [{ path: script, comparedVersion: "0.3.0", matches: true, notCompared: null }],
     );
     await writeFile(fragment, "{}\n");
 
     const result = await deriveProjectPhase({ config: CONFIG, registry: recordingRegistry() });
 
     assert.deepEqual(unrecordedFilesOf(result, HOOK_ID), [
-      { path: script, comparedVersion: "0.3.0", matches: true },
-      { path: fragment, comparedVersion: "0.3.0", matches: false },
+      { path: script, comparedVersion: "0.3.0", matches: true, notCompared: null },
+      { path: fragment, comparedVersion: "0.3.0", matches: false, notCompared: null },
     ]);
 
     // An output that cannot be read, such as a folder where the fragment belongs, is listed
@@ -273,8 +345,13 @@ test("each output of a hook is compared on its own", async () => {
     await mkdir(fragment);
     const unreadable = await deriveProjectPhase({ config: CONFIG, registry: recordingRegistry() });
     assert.deepEqual(unrecordedFilesOf(unreadable, HOOK_ID), [
-      { path: script, comparedVersion: "0.3.0", matches: true },
-      { path: fragment, comparedVersion: "0.3.0", matches: null },
+      { path: script, comparedVersion: "0.3.0", matches: true, notCompared: null },
+      {
+        path: fragment,
+        comparedVersion: "0.3.0",
+        matches: null,
+        notCompared: "it cannot be read (EISDIR)",
+      },
     ]);
   });
 });

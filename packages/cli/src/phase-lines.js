@@ -193,15 +193,22 @@ function capitalize(text) {
  * @param {{ recipe: unknown, config: string }} options
  * @returns {{ message: string, detail: string }}
  */
-export function unrecordedFileNote(id, { path, comparedVersion, matches }, { recipe, config }) {
+export function unrecordedFileNote(
+  id,
+  { path, comparedVersion, matches, notCompared },
+  { recipe, config },
+) {
   const dryRun = calaveraCommand(recipe, config, ["apply"], ["--dry-run"]);
   /** @param {string | undefined} name */
   const words = (name) => {
     const artifact = name ? `the ${name} package` : "the package";
     const keep = `To keep your file, rename or move it, deselect ${name ?? "the artifact"}, or move its contents into a file of your own.`;
     const check = `Run ${dryRun} to see whether apply accepts it, without writing to the project.`;
-    if (comparedVersion === null || matches === null) {
-      return `${path} already exists without a state record, and apply stops on it unless it matches ${artifact}, which the artifact cache cannot supply offline. ${keep} ${check}`;
+    if (comparedVersion === null) {
+      return `${path} already exists without a state record, and apply stops on it unless it matches ${artifact}. Calavera could not compare it offline, because ${notCompared}. ${keep} ${check}`;
+    }
+    if (matches === null) {
+      return `${path} already exists without a state record, and Calavera could not compare it with version ${comparedVersion} of ${artifact} in the artifact cache, because ${notCompared}. apply stops on it too, so make it a readable file, or ${keep.charAt(0).toLowerCase()}${keep.slice(1)} ${check}`;
     }
     if (matches) {
       return `${path} already exists without a state record and matches version ${comparedVersion} of ${artifact} in the artifact cache. apply resolves the current version online and accepts the file only if that version matches too. ${check}`;

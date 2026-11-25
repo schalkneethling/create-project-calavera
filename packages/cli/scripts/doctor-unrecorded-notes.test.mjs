@@ -27,30 +27,47 @@ test("the note keeps the person's file in every case and names the artifact only
   const note = (
     /** @type {string | null} */ comparedVersion,
     /** @type {boolean | null} */ matches,
+    /** @type {string | null} */ notCompared = null,
   ) =>
-    unrecordedFileNote(ID, { path: SKILL, comparedVersion, matches }, { recipe, config: CONFIG });
+    unrecordedFileNote(
+      ID,
+      { path: SKILL, comparedVersion, matches, notCompared },
+      { recipe, config: CONFIG },
+    );
+  const keep = (/** @type {string} */ name) =>
+    `To keep your file, rename or move it, deselect ${name}, or move its contents into a file of your own.`;
+  const check = `Run ${DRY_RUN} to see whether apply accepts it, without writing to the project.`;
 
-  assert.deepEqual(note(null, null), {
-    message: `${SKILL} already exists without a state record, and apply stops on it unless it matches the ${ID} package, which the artifact cache cannot supply offline. To keep your file, rename or move it, deselect ${ID}, or move its contents into a file of your own. Run ${DRY_RUN} to see whether apply accepts it, without writing to the project.`,
-    detail: `${SKILL} already exists without a state record, and apply stops on it unless it matches the package, which the artifact cache cannot supply offline. To keep your file, rename or move it, deselect the artifact, or move its contents into a file of your own. Run ${DRY_RUN} to see whether apply accepts it, without writing to the project.`,
+  // Not compared: the note says why, in Calavera's words with the error code.
+  assert.deepEqual(note(null, null, "the artifact cache cannot supply it offline (ENOTCACHED)"), {
+    message: `${SKILL} already exists without a state record, and apply stops on it unless it matches the ${ID} package. Calavera could not compare it offline, because the artifact cache cannot supply it offline (ENOTCACHED). ${keep(ID)} ${check}`,
+    detail: `${SKILL} already exists without a state record, and apply stops on it unless it matches the package. Calavera could not compare it offline, because the artifact cache cannot supply it offline (ENOTCACHED). ${keep("the artifact")} ${check}`,
   });
+  // The cache supplied the package, but the file cannot be read: the note says so, not that the
+  // cache failed.
+  assert.equal(
+    note("0.1.0", null, "it cannot be read (EISDIR)").detail,
+    `${SKILL} already exists without a state record, and Calavera could not compare it with version 0.1.0 of the package in the artifact cache, because it cannot be read (EISDIR). apply stops on it too, so make it a readable file, or to keep your file, rename or move it, deselect the artifact, or move its contents into a file of your own. ${check}`,
+  );
   assert.equal(
     note("0.1.0", false).detail,
-    `${SKILL} already exists without a state record and differs from version 0.1.0 of the package in the artifact cache, so apply stops on it unless the version it resolves online matches the file. To keep your file, rename or move it, deselect the artifact, or move its contents into a file of your own. Run ${DRY_RUN} to see whether apply accepts it, without writing to the project.`,
+    `${SKILL} already exists without a state record and differs from version 0.1.0 of the package in the artifact cache, so apply stops on it unless the version it resolves online matches the file. ${keep("the artifact")} ${check}`,
   );
   // A match is still a note, because apply resolves the current version online.
   assert.equal(
     note("0.1.0", true).detail,
-    `${SKILL} already exists without a state record and matches version 0.1.0 of the package in the artifact cache. apply resolves the current version online and accepts the file only if that version matches too. Run ${DRY_RUN} to see whether apply accepts it, without writing to the project.`,
+    `${SKILL} already exists without a state record and matches version 0.1.0 of the package in the artifact cache. apply resolves the current version online and accepts the file only if that version matches too. ${check}`,
   );
-  for (const [version, matches] of [
-    [null, null],
-    ["0.1.0", false],
-    ["0.1.0", true],
+  for (const [version, matches, why] of [
+    [null, null, "there is no artifact cache"],
+    ["0.1.0", null, "it cannot be read (EISDIR)"],
+    ["0.1.0", false, null],
+    ["0.1.0", true, null],
   ]) {
     const { message, detail } = note(
       /** @type {string | null} */ (version),
       /** @type {boolean | null} */ (matches),
+      /** @type {string | null} */ (why),
     );
     assert.ok(!detail.includes(ID), detail);
     assert.ok(!message.includes("--reown-managed-file"), message);
@@ -59,7 +76,12 @@ test("the note keeps the person's file in every case and names the artifact only
   assert.match(
     unrecordedFileNote(
       ID,
-      { path: SKILL, comparedVersion: null, matches: null },
+      {
+        path: SKILL,
+        comparedVersion: null,
+        matches: null,
+        notCompared: "there is no artifact cache",
+      },
       { recipe, config: "c/r.json" },
     ).message,
     /Run npm create project-calavera apply -- --dry-run --config c\/r\.json to see/,
@@ -130,7 +152,12 @@ test("both doctors print the same note for an unrecorded file, offline, and writ
   const before = await snapshotDirectory(directory);
   const expected = unrecordedFileNote(
     ID,
-    { path: SKILL, comparedVersion: null, matches: null },
+    {
+      path: SKILL,
+      comparedVersion: null,
+      matches: null,
+      notCompared: "the artifact cache cannot supply it offline (ENOTCACHED)",
+    },
     { recipe: { packageManager: "npm" }, config: CONFIG },
   );
 
@@ -143,7 +170,13 @@ test("both doctors print the same note for an unrecorded file, offline, and writ
   assert.deepEqual(await snapshotDirectory(directory), before, "a doctor changed the project");
 
   // The JSON results carry the same comparison and the same words.
-  const entry = { path: SKILL, comparedVersion: null, matches: null, reason: expected.detail };
+  const entry = {
+    path: SKILL,
+    comparedVersion: null,
+    matches: null,
+    notCompared: "the artifact cache cannot supply it offline (ENOTCACHED)",
+    reason: expected.detail,
+  };
   const fromArtifacts = JSON.parse(artifactsDoctor.stdout);
   assert.deepEqual(
     fromArtifacts.artifacts.find((/** @type {{ id: string }} */ { id }) => id === ID)

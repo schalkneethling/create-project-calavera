@@ -401,7 +401,7 @@ import { VARLOCK_POINTER, VARLOCK_SCHEMA_PATH } from "./varlock.js";
  * @property {string} [phase] The project phase (ADR-0020). Absent when a record doctor cannot read
  *   stopped it before it classified (Amendment 1).
  * @property {{ level: DoctorIssue["level"], message: string }} [phaseLine]
- * @property {{ id: string, selected: boolean | null, condition: { name: string, reason: string }, unrecordedFiles: { path: string, comparedVersion: string | null, matches: boolean | null, reason: string }[] }[]} [artifacts]
+ * @property {{ id: string, selected: boolean | null, condition: { name: string, reason: string }, unrecordedFiles: { path: string, comparedVersion: string | null, matches: boolean | null, notCompared: string | null, reason: string }[] }[]} [artifacts]
  *   Each artifact the phase function classifies, as artifacts doctor reports it.
  * @property {{ path: string, integration: string, selected: boolean, condition: { name: string, reason: string } }[]} [managedFiles]
  *   Each managed file the recipe declares.

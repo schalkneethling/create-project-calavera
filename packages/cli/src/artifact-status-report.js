@@ -21,7 +21,7 @@ import { isPlainObject } from "./utils/guards.js";
  * @property {string | null} installCommand The `artifacts install` command, for a selection without a lock entry, which it installs, and for a lock entry that the phase function classifies as not selected and `missing`, which it drops when it can also install the recipe's selections (#1111). Null otherwise.
  * @property {UpdateCheckFailure | null} updateCheckFailure Why `--check-updates` could not look up this artifact's channel, or null when the lookup succeeded or did not run (#993).
  * @property {{ name: string, reason: string }} condition The artifact's condition and its reason, from the phase function (ADR-0020, Decision 3). It decides the artifact's level in both doctors.
- * @property {{ path: string, comparedVersion: string | null, matches: boolean | null, reason: string }[]} unrecordedFiles Each output of a selection without a lock entry that already exists without a state record, compared offline against the artifact cache, with the note's words (ADR-0020, Decision 3). Always present, and empty for a lock entry.
+ * @property {{ path: string, comparedVersion: string | null, matches: boolean | null, notCompared: string | null, reason: string }[]} unrecordedFiles Each output of a selection without a lock entry that already exists without a state record, compared offline against the artifact cache, with the note's words (ADR-0020, Decision 3). Always present, and empty for a lock entry.
  * @property {boolean | null} selected False for a lock entry the recipe no longer selects, which the next `artifacts install`, or `artifacts update` while the recipe selects any artifact, removes (#992). Null when there is no recipe to compare the lock with.
  *
  * @typedef {object} UpdateCheckFailure
