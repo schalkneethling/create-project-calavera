@@ -807,7 +807,7 @@ const IGNORE_CHANGES = [
   },
   { path: ".htmlvalidateignore", type: "update", removedLines: ["e/"] },
   { path: ".htmlvalidateignore", integration: "html-validate", type: "update", lines: ["f/"] },
-  { path: ".other-ignore", integration: "stryker", type: "write", lines: ["g/"] },
+  { path: ".other-ignore", integration: "stryker", type: "write", lines: ["g/", "h/"] },
 ];
 
 test("each ignore file is named once, with each owner's lines under it", () => {
@@ -833,7 +833,7 @@ test("each ignore file is named once, with each owner's lines under it", () => {
       `    ${verb("Would remove", "Removed")} lines no selected integration declares: "e/"`,
       `    ${verb("Would add", "Added")} the html-validate lines: "f/"`,
       "  .other-ignore",
-      `    ${verb("Would add", "Added")} the stryker lines: "g/"`,
+      `    ${verb("Would add", "Added")} the stryker lines: "g/", "h/"`,
     ];
   };
   const files = (/** @type {import("../src/index.js").ApplyResult} */ value) => {
@@ -859,7 +859,7 @@ test("the artifacts dry run words each ignore change as apply does, with the pat
       'Would remove the artifact-cache block from .gitignore, because the recipe selects no artifacts and .calavera/cache/ does not exist: ".calavera/cache/"',
       'Would remove lines no selected integration declares from .htmlvalidateignore: "e/"',
       'Would add the html-validate lines to .htmlvalidateignore: "f/"',
-      'Would add the stryker lines to .other-ignore: "g/"',
+      'Would add the stryker lines to .other-ignore: "g/", "h/"',
     ],
   );
 });
