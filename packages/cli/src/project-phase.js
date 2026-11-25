@@ -34,7 +34,11 @@ import { isPlainObject } from "./utils/guards.js";
  * @typedef {import("./phase-managed-files.js").FormatterFailureFinding} FormatterFailureFinding
  *
  * @typedef {object} PhaseWiringFinding A finding about the wiring apply recorded for an artifact
- *   (ADR-0015, Decision 5), as `artifactWiringFindings` words it, with the artifact it is about.
+ *   (ADR-0015, Decision 5), as `artifactWiringFindings` words it for `doctor` today, with the
+ *   artifact it is about. Unlike every other reason here, `message` can quote a changed hook
+ *   marker line and the line or group the state records; the pull request that prints the
+ *   phase's findings replaces it with a message that names the file, block, and kind instead
+ *   (tracked on #1112).
  * @property {string} artifact
  * @property {boolean} selected Whether the recipe selects the artifact.
  * @property {"error" | "warning"} level
@@ -113,10 +117,13 @@ const ARTIFACT_TYPES = new Set(["skill", "hook", "agent"]);
  * later pull request of the #1112 stack; they compare the output with an offline copy of the
  * artifact cache.
  *
- * @param {{ config: string }} options `config` is the recipe path, as `--config` names it.
+ * @param {{ config: string, runsProjectCode?: boolean }} options `config` is the recipe path, as
+ *   `--config` names it. `runsProjectCode: false` keeps the project's formatter from loading, for
+ *   the read-only MCP status tool (ADR-0020, owner decision 24): files that need it are
+ *   `not-checked`.
  * @returns {Promise<ProjectPhaseResult>}
  */
-export async function deriveProjectPhase({ config }) {
+export async function deriveProjectPhase({ config, runsProjectCode = true }) {
   if (await fileExists(TRANSACTION_PATH)) {
     return {
       phase: "pending-transaction",
@@ -183,7 +190,7 @@ export async function deriveProjectPhase({ config }) {
   }
 
   const { managedFiles, formatterFailures, planProblem } = recipe
-    ? await classifyManagedFiles({ config, recipe, state })
+    ? await classifyManagedFiles({ config, recipe, state, runsProjectCode })
     : { managedFiles: [], formatterFailures: [], planProblem: null };
   const wiringFindings = recipe ? await wiringFindingsFor(state, selectedIds) : [];
   const fileDrifted = managedFiles.some(

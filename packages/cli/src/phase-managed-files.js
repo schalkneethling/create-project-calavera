@@ -65,54 +65,39 @@ export const DRIFTED_FILE_CONDITIONS = new Set(["missing", "unreadable", "edited
  * default. `vp fmt` loads the project's own `vite.config.ts`, which Calavera does not control, as
  * apply does.
  *
- * @param {{ config: string, recipe: Record<string, unknown>, state: CalaveraState }} options
+ * With `runsProjectCode: false`, as the read-only MCP status tool needs (ADR-0020, Decision 1 and
+ * owner decision 24), the formatter never loads: no formatter failure is reported, and each file
+ * whose classification needs the formatted contents is `not-checked`, with the remedy to run
+ * `doctor`.
+ *
+ * @param {{ config: string, recipe: Record<string, unknown>, state: CalaveraState, runsProjectCode?: boolean }} options
  * @returns {Promise<ManagedFileClassification>}
  */
-export async function classifyManagedFiles({ config, recipe, state }) {
+export async function classifyManagedFiles({ config, recipe, state, runsProjectCode = true }) {
   /** @type {FormatterFailureFinding[]} */
   const formatterFailures = [];
   const integrations = resolveRecipeIntegrations(recipe);
   const projectDirectory = process.cwd();
 
-  let detection;
-  let plans;
-  let repositoryRoot = projectDirectory;
-  try {
-    detection = await detectVitePlus(projectDirectory);
-    const integrationIds = integrations.map(({ id }) => id);
-    // A run that cannot prompt uses each input's default, as the dry run does. The options are
-    // then checked as recipe validation checks them, so an invalid option is a plan problem.
-    const { recipe: withInputs } = await resolveIntegrationInputs(recipe);
-    plans = plannedManagedFiles(
-      integrations,
-      normalizeIntegrationOptions(withInputs.integrationOptions, integrationIds),
-    );
-    // A root-only integration writes its files at the repository root (#925), as doctor checks.
-    if (integrations.some(({ appliesAt }) => appliesAt === "repository-root")) {
-      repositoryRoot = findRepositoryRoot(projectDirectory) ?? projectDirectory;
-    }
-  } catch (error) {
-    // apply --dry-run reports the exact refusal; its message can quote the recipe, so only the
-    // error's code, or its class when it has none, is kept, which tells a missing Git (ENOENT) or a
-    // programming error (TypeError) apart from a recipe apply refuses.
-    const { code, name } = /** @type {NodeJS.ErrnoException} */ (error);
-    const cause = typeof code === "string" ? code : typeof name === "string" ? name : "Error";
-    return {
-      managedFiles: [],
-      formatterFailures,
-      planProblem: `Calavera cannot plan the managed files for the recipe in ${config} (${cause}), so it did not check them. Run apply --dry-run to see what apply refuses, fix the recipe or the cause, then run the command again.`,
-    };
-  }
+  const plan = await planStages(config, recipe, integrations, projectDirectory);
+  if ("problem" in plan) return { managedFiles: [], formatterFailures, planProblem: plan.problem };
+  const { detection, plans, repositoryRoot } = plan;
 
-  const loadFormatter = managedFileFormatterLoader(projectDirectory, detection, integrations);
+  const loadFormatter = runsProjectCode
+    ? managedFileFormatterLoader(projectDirectory, detection, integrations)
+    : // The read-only MCP status tool runs no project code (ADR-0020, owner decision 24), so a file
+      // that needs the formatter cannot be formatted, and that is not a formatter failure.
+      () => Promise.reject(new Error("This report runs no project code."));
   const installDirectory = vitePlusInstallDirectory(detection);
   /** @type {FormatterFailureFinding | undefined} */
   let loadFailure;
-  try {
-    await loadFormatter();
-  } catch (error) {
-    loadFailure = formatterFailure(null, error, installDirectory);
-    formatterFailures.push(loadFailure);
+  if (runsProjectCode) {
+    try {
+      await loadFormatter();
+    } catch (error) {
+      loadFailure = formatterFailure(null, error, installDirectory);
+      formatterFailures.push(loadFailure);
+    }
   }
 
   const integrationByPath = new Map(
@@ -131,6 +116,7 @@ export async function classifyManagedFiles({ config, recipe, state }) {
         return { text: await formatGeneratedText(plan.path, plan.contents, loadFormatter) };
       } catch (error) {
         // A formatter that could not load is reported once, above.
+        if (!runsProjectCode) return { notRun: true };
         return loadFailure
           ? { failure: loadFailure }
           : { failure: formatterFailure(plan.path, error, installDirectory), refused: true };
@@ -158,7 +144,9 @@ export async function classifyManagedFiles({ config, recipe, state }) {
       recorded: stateFile !== undefined,
       condition: await managedFileCondition(
         path,
-        /** @type {{ text?: string, failure?: FormatterFailureFinding }} */ (formatted[index]),
+        /** @type {{ text?: string, failure?: FormatterFailureFinding, notRun?: boolean }} */ (
+          formatted[index]
+        ),
         stateFile,
       ),
     });
@@ -168,13 +156,72 @@ export async function classifyManagedFiles({ config, recipe, state }) {
 }
 
 /**
+ * Plans the managed files as apply does, in apply's order, and names the stage that failed when
+ * one does. apply --dry-run reports the exact refusal, and its message can quote the recipe, so a
+ * problem keeps only the stage and the error's code, or its class when it has none. The class
+ * alone cannot tell a recipe apply refuses from a programming error, because recipe validation
+ * throws TypeError too, so the stage is what tells them apart.
+ *
+ * @param {string} config
+ * @param {Record<string, unknown>} recipe
+ * @param {import("./index.js").Integration[]} integrations
+ * @param {string} projectDirectory
+ * @returns {Promise<{ problem: string } | { detection: import("./vite-plus-detection.js").VitePlusDetection, plans: { path: string, contents: string }[], repositoryRoot: string }>}
+ */
+async function planStages(config, recipe, integrations, projectDirectory) {
+  const subject = `Calavera cannot plan the managed files for the recipe in ${config}, because`;
+  /** @param {unknown} error */
+  const cause = (error) => {
+    const { code, name } = /** @type {NodeJS.ErrnoException} */ (error);
+    return typeof code === "string" ? code : typeof name === "string" ? name : "Error";
+  };
+  let stage = "project";
+  try {
+    const detection = await detectVitePlus(projectDirectory);
+    // A root-only integration writes its files at the repository root (#925), as doctor checks.
+    const repositoryRoot = integrations.some(({ appliesAt }) => appliesAt === "repository-root")
+      ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
+      : projectDirectory;
+    stage = "options";
+    // Recipe validation checks the options before apply fills in any input.
+    normalizeIntegrationOptions(
+      recipe.integrationOptions,
+      integrations.map(({ id }) => id),
+    );
+    stage = "inputs";
+    // A run that cannot prompt uses each input's default, as the dry run does.
+    const { recipe: withInputs } = await resolveIntegrationInputs(recipe);
+    stage = "planner";
+    const plans = plannedManagedFiles(
+      integrations,
+      // Normalized again, as recipe validation leaves the options apply plans with.
+      normalizeIntegrationOptions(
+        withInputs.integrationOptions,
+        integrations.map(({ id }) => id),
+      ),
+    );
+    return { detection, plans, repositoryRoot };
+  } catch (error) {
+    /** @type {Record<string, string>} */
+    const problems = {
+      project: `${subject} it cannot read the project folder (${cause(error)}). Check that the folder and package.json can be read, then run the command again.`,
+      options: `${subject} apply refuses its integrationOptions (${cause(error)}). Run apply --dry-run to see the refusal, fix the recipe, then run the command again.`,
+      inputs: `${subject} it cannot fill in an integration input the way apply does (${cause(error)}). Run apply --dry-run to see why, record the value in the recipe or fix the cause, then run the command again.`,
+      planner: `${subject} the planner failed after the recipe passed its checks (${cause(error)}), so the cause is most likely in the Calavera installation. Run apply --dry-run for the details, then run the command again.`,
+    };
+    return { problem: /** @type {string} */ (problems[stage]) };
+  }
+}
+
+/**
  * The condition of one managed file (ADR-0020, Decision 3). A recorded file whose hash equals its
  * record is `current` without the formatter, because apply accepts it; only a recorded file whose
  * hash differs, or an existing file without a record, needs the formatted contents.
  *
  * @param {string} path
- * @param {{ text?: string, failure?: FormatterFailureFinding }} formatted What apply writes, or
- *   the formatter failure that kept Calavera from knowing it.
+ * @param {{ text?: string, failure?: FormatterFailureFinding, notRun?: boolean }} formatted What
+ *   apply writes, or the formatter failure that kept Calavera from knowing it, or that the
+ *   formatter was not run.
  * @param {import("./state.js").ManagedFileState | undefined} stateFile
  * @returns {Promise<ClassifiedManagedFile["condition"]>}
  */
@@ -203,6 +250,12 @@ async function managedFileCondition(path, formatted, stateFile) {
     reason: `${path} matches what the state records or what apply writes, so apply accepts it.`,
   };
   if (stateFile?.hash === textHash(installed)) return current;
+  if (formatted.notRun) {
+    return {
+      name: "not-checked",
+      reason: `Calavera did not format what apply writes for ${path}, because this report runs no project code, so it cannot tell whether apply stops on it. Run doctor to check it.`,
+    };
+  }
   if (formatted.text === undefined) {
     const kind = formatted.failure?.kind ?? "an error that is not a formatter failure";
     return {
