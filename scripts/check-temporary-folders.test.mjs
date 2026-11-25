@@ -104,3 +104,10 @@ test("the first failing command stops the run with its exit code, and leftovers 
   assert.equal(result.leftovers.length, 1);
   assert.match(result.leftovers[0] ?? "", /^calavera-before-failure-/);
 });
+
+test("a leftover name without mkdtemp's six random characters is reported whole", () => {
+  assert.match(
+    leftoverReport(["calavera-registry", "calavera-registry-abc123"]),
+    /^ {2}calavera-registry\* \(1\)\n {2}calavera-registry-\* \(1\)$/m,
+  );
+});

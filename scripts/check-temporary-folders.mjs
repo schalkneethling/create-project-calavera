@@ -53,7 +53,8 @@ export function leftoverReport(leftovers) {
   /** @type {Map<string, number>} */
   const counts = new Map();
   for (const name of leftovers) {
-    const prefix = name.replace(/[A-Za-z0-9]{6}$/, "");
+    // Only six characters after a hyphen are mkdtemp's; a name without them is kept whole.
+    const prefix = name.replace(/(?<=-)[A-Za-z0-9]{6}$/, "");
     counts.set(prefix, (counts.get(prefix) ?? 0) + 1);
   }
   const lines = [...counts].map(([prefix, count]) => `  ${prefix}* (${count})`);

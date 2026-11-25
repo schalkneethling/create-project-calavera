@@ -28,6 +28,7 @@ import {
   writtenFingerprint,
 } from "../src/artifact-lifecycle.js";
 import { snapshotDirectory } from "./project-snapshot.mjs";
+import { removeTemporaryFolder } from "../../../scripts/temporary-folder.mjs";
 
 /**
  * Runs `callback` in a new temporary project that has one staged file,
@@ -48,7 +49,8 @@ async function inTransactionProject(callback) {
     await callback({ project, root, staged });
   } finally {
     process.chdir(originalDirectory);
-    await rm(project, { force: true, recursive: true });
+    // A test that fails part way can leave a folder in the project without write permission.
+    await removeTemporaryFolder(project);
   }
 }
 

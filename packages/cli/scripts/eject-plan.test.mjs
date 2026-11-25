@@ -8,6 +8,7 @@ import {
   cp,
   lstat,
   mkdir,
+  mkdtemp,
   mkdtempDisposable,
   readFile,
   realpath,
@@ -26,6 +27,7 @@ import { hashAiInstall } from "../src/ai/artifacts.js";
 import { ejectSteps, executeEject, planEject, selectEjectItems } from "../src/eject.js";
 import { agentBootstrapTexts } from "../src/index.js";
 import { snapshotDirectory } from "./project-snapshot.mjs";
+import { removeTemporaryFolder } from "../../../scripts/temporary-folder.mjs";
 
 const SKILL_PATH = ".agents/skills/calavera";
 const CACHE_BLOCK =
@@ -47,14 +49,16 @@ const guidance = await agentBootstrapTexts(loadFormatter);
  * @param {() => Promise<void>} callback
  */
 async function inProject(callback) {
-  await using project = await mkdtempDisposable(join(tmpdir(), "calavera-eject-"));
+  const project = await mkdtemp(join(tmpdir(), "calavera-eject-"));
   const originalDirectory = process.cwd();
-  process.chdir(await realpath(project.path));
   try {
+    process.chdir(await realpath(project));
     await writeFile("package.json", "{}\n");
     await callback();
   } finally {
     process.chdir(originalDirectory);
+    // A test that fails part way can leave .calavera/packages/<id>/<version>/locked read-only.
+    await removeTemporaryFolder(project);
   }
 }
 
