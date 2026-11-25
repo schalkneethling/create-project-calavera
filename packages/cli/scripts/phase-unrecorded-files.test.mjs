@@ -9,7 +9,6 @@ import {
   mkdtempDisposable,
   readFile,
   lstat,
-  readdir,
   realpath,
   rm,
   symlink,
@@ -17,7 +16,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, dirname, join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
 
@@ -339,6 +338,20 @@ test("each output of a hook is compared on its own", async () => {
       { path: fragment, comparedVersion: "0.3.0", matches: false, notCompared: null },
     ]);
 
+    // The package's own fragment matches, so each output is compared with its own file in the
+    // package, not with the script's.
+    await cp(join(payload, "settings-fragment.json"), fragment);
+    assert.deepEqual(
+      unrecordedFilesOf(
+        await deriveProjectPhase({ config: CONFIG, registry: recordingRegistry() }),
+        HOOK_ID,
+      ),
+      [
+        { path: script, comparedVersion: "0.3.0", matches: true, notCompared: null },
+        { path: fragment, comparedVersion: "0.3.0", matches: true, notCompared: null },
+      ],
+    );
+
     // An output that cannot be read, such as a folder where the fragment belongs, is listed
     // without a verdict, and the function goes on.
     await rm(fragment);
@@ -381,6 +394,28 @@ test("an artifact whose outputs are recorded, or that has a lock entry, lists no
   });
 });
 
+test("a selection without a lock entry whose outputs the state records lists no unrecorded output", async () => {
+  await inProject(async () => {
+    await writeRecipe([SKILL_ID]);
+    await applyRecipeObject(
+      recipeWith([SKILL_ID]),
+      { json: true, noInstall: true, assumeYes: true },
+      stubRegistry(new Map([[SKILL_ID, "0.1.0"]])),
+    );
+    // The state still records the skill, but the lock has no entry for it, as after the lock
+    // was deleted: the recorded output is not unrecorded, so it gets no note and no lookup.
+    await rm(".calavera/artifacts.lock.json");
+    await writeCache();
+    const registry = recordingRegistry();
+    const result = await deriveProjectPhase({ config: CONFIG, registry });
+    const artifact = result.artifacts.find(({ id }) => id === SKILL_ID);
+    assert.equal(artifact?.lockEntry, null);
+    assert.equal(artifact?.condition.name, "pending");
+    assert.deepEqual(unrecordedFilesOf(result, SKILL_ID), []);
+    assert.deepEqual(registry.requests, []);
+  });
+});
+
 test("a pending transaction reads no cache", async () => {
   await inProject(async () => {
     await writeRecipe([SKILL_ID]);
@@ -399,11 +434,14 @@ test("the function leaves no temporary folder behind", async () => {
     await writeRecipe([SKILL_ID]);
     await writeCache();
     await writePackagedSkill();
-    const prefix = "calavera-phase-cache-";
-    const leftovers = async () =>
-      (await readdir(tmpdir())).filter((name) => name.startsWith(prefix)).length;
-    const before = await leftovers();
-    await deriveProjectPhase({ config: CONFIG, registry: recordingRegistry() });
-    assert.equal(await leftovers(), before);
+    const registry = recordingRegistry();
+    await deriveProjectPhase({ config: CONFIG, registry });
+    // The exact folder this call made, which holds the cache copy and the staged package, so
+    // other runs that make the same kind of folder in parallel cannot change the result.
+    const [request] = registry.requests;
+    assert.ok(request);
+    const folder = dirname(request.cache);
+    assert.match(basename(folder), /^calavera-phase-cache-/);
+    assert.equal(await fileExists(folder), false, folder);
   });
 });

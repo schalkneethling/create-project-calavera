@@ -12,8 +12,13 @@ import test from "node:test";
 import { fileURLToPath } from "node:url";
 
 import { listingViolations } from "../../../scripts/rehearsal-checks.mjs";
+import { hashAiInstall } from "../src/ai/artifacts.js";
+import { runArtifactCommand } from "../src/artifact-lifecycle.js";
+import { formatArtifactStatus } from "../src/artifact-status-report.js";
 import { unrecordedFileNote } from "../src/phase-lines.js";
+import { deriveProjectPhase } from "../src/project-phase.js";
 import { buildRecipe } from "../src/recipe.js";
+import { stubRegistry } from "./artifact-registry-stub.mjs";
 import { snapshotDirectory } from "./project-snapshot.mjs";
 
 const cli = fileURLToPath(new URL("../src/index.js", import.meta.url));
@@ -207,4 +212,57 @@ test("both doctors print the same note for an unrecorded file, offline, and writ
     ),
   );
   assert.deepEqual(listingViolations(`${doctorText.stdout}${doctorText.stderr}`, [ID]), []);
+});
+
+test("an artifact without a lock entry that has a problem still lists its unrecorded files' notes", async () => {
+  await using project = await mkdtempDisposable(join(tmpdir(), "calavera-unrecorded-problem-"));
+  const directory = await realpath(project.path);
+  const originalDirectory = process.cwd();
+  process.chdir(directory);
+  try {
+    const hook = "hook-block-dangerous-commands";
+    await writeFile("package.json", `${JSON.stringify({ scripts: {} })}\n`);
+    await writeFile(
+      CONFIG,
+      `${JSON.stringify({ ...buildRecipe("minimal", [], "npm"), ai: [{ id: hook }] }, null, 2)}\n`,
+    );
+    const [entry] = (await deriveProjectPhase({ config: CONFIG })).artifacts;
+    const [script, fragment] = entry?.outputs.map(({ path }) => path) ?? [];
+    assert.ok(script && fragment);
+    // The script has a state record and was edited since; the fragment has no record.
+    await mkdir(join(script, ".."), { recursive: true });
+    await writeFile(script, "original\n");
+    const hash = await hashAiInstall("hook", script);
+    await writeFile(script, "edited\n");
+    await writeFile(fragment, "{}\n");
+    await mkdir(".calavera", { recursive: true });
+    await writeFile(
+      ".calavera/state.json",
+      `${JSON.stringify({ version: 1, aiArtifacts: [{ type: "hook", name: "block-dangerous-commands", source: hook, path: script, hash }] })}\n`,
+    );
+
+    const report = /** @type {import("../src/artifact-status-report.js").ArtifactStatusReport} */ (
+      await runArtifactCommand(
+        { config: CONFIG, dryRun: false, artifactAction: "doctor" },
+        stubRegistry(new Map([[hook, "0.3.0"]])),
+      )
+    );
+
+    const artifact = report.artifacts.find(({ id }) => id === hook);
+    assert.equal(artifact?.condition.name, "edited");
+    assert.deepEqual(
+      artifact?.unrecordedFiles.map(({ path }) => path),
+      [fragment],
+    );
+    const [file] = artifact?.unrecordedFiles ?? [];
+    assert.ok(file);
+    const messages = formatArtifactStatus(report).map(({ message }) => message);
+    // The note follows the artifact's line and its condition's reason, in the problem branch.
+    const at = messages.findIndex((message) => message.startsWith(`${hook}  no lock entry`));
+    assert.ok(at >= 0, messages.join("\n"));
+    assert.equal(messages[at + 1], `  ${artifact?.condition.reason}`);
+    assert.equal(messages[at + 2], `  ${file.reason}`);
+  } finally {
+    process.chdir(originalDirectory);
+  }
 });
