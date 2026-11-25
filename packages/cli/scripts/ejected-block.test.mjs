@@ -407,6 +407,104 @@ test("a block that cannot be written keeps the state, and the next run writes it
   });
 });
 
+// Owner decision of 2026-11-26 on #1112: without a state file, the block goes before the last
+// remaining record, which is deleted last, so a failed write or a crash always leaves a record
+// that makes the next run retry.
+for (const { label, write: writeRecord, path } of [
+  {
+    label: "a recipe",
+    write: () => write("calavera.config.json", "{}\n"),
+    path: "calavera.config.json",
+  },
+  {
+    label: "a lock",
+    write: () =>
+      write(".calavera/artifacts.lock.json", '{ "schemaVersion": 1, "artifacts": [] }\n'),
+    path: ".calavera/artifacts.lock.json",
+  },
+]) {
+  test(`with only ${label} and no state, a block that cannot be written keeps that record, and the next run writes it`, async (t) => {
+    if (process.getuid?.() === 0) {
+      t.skip("root ignores file permissions");
+      return;
+    }
+    await inProject(async () => {
+      await writeRecord();
+      await writeFile(".gitignore", "node_modules/\n");
+      await chmod(".gitignore", 0o444);
+      try {
+        const plan = await planEject({ guidance, loadFormatter, dryRun: false });
+        const { remove, ejectedBlock } = selectEjectItems(plan, { assumeYes: false });
+        const outcome = await executeEject(remove, ejectedBlock);
+        assert.ok(typeof outcome.ejectedBlock === "object" && "error" in outcome.ejectedBlock);
+        assert.deepEqual(
+          outcome.skipped.map(({ item }) => item.path),
+          [path],
+        );
+        assert.match(outcome.skipped[0]?.reason ?? "", /adding the ejected block failed/);
+        assert.equal(await exists(path), true);
+      } finally {
+        await chmod(".gitignore", 0o644);
+      }
+      // The record that stayed makes the next run plan the block again. The recipe needs an
+      // interactive approval, so the retry is an approved run.
+      const { result: retry } = await ejectInteractively([], true);
+      assert.equal(retry.status, "ejected");
+      assert.equal(retry.ejectedBlock?.outcome, "written");
+      assert.equal(await exists(path), false);
+      assert.equal(await readFile(".gitignore", "utf8"), `node_modules/\n${BLOCK}`);
+      assert.equal(await phase(), "ejected");
+    });
+  });
+}
+
+test("without a state, the recipe is deleted after the block, so a stop between them leaves the recipe", async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip("root ignores folder permissions");
+    return;
+  }
+  await inProject(async () => {
+    // The recipe sits in a folder eject cannot change, so its deletion fails as a crash would
+    // stop the run after the block is written.
+    const config = "recipe/calavera.config.json";
+    await write(config, "{}\n");
+    await write(".agents/calavera/mcp.md", guidance.mcp[0] ?? "");
+    await chmod("recipe", 0o555);
+    try {
+      const plan = await planEject({ guidance, loadFormatter, dryRun: false, config });
+      const { remove, ejectedBlock } = selectEjectItems(plan, { assumeYes: false });
+      const outcome = await executeEject(remove, ejectedBlock);
+      assert.equal(outcome.ejectedBlock, "written");
+      assert.deepEqual(
+        outcome.failed.map(({ item }) => item.path),
+        [config],
+      );
+      // Every other item went before the block.
+      assert.equal(await exists(".agents/calavera/mcp.md"), false);
+      assert.equal(await readFile(".gitignore", "utf8"), BLOCK);
+    } finally {
+      await chmod("recipe", 0o755);
+    }
+  });
+});
+
+test("after a stop between the block and the last record, the next run keeps the block and deletes the record", async () => {
+  await inProject(async () => {
+    // What a crash after the block's write leaves: the block and the recipe.
+    await write("calavera.config.json", "{}\n");
+    await write(".gitignore", BLOCK);
+    const result = await eject(["--yes", "--config", "calavera.config.json"]);
+    // --yes leaves the recipe for an interactive approval, and an approved run removes it.
+    assert.equal(result.ejectedBlock, undefined);
+    const { result: approved } = await ejectInteractively([], true);
+    assert.equal(approved.status, "ejected");
+    assert.equal(approved.ejectedBlock, undefined);
+    assert.equal(await exists("calavera.config.json"), false);
+    assert.equal(await readFile(".gitignore", "utf8"), BLOCK);
+    assert.equal(await phase(), "ejected");
+  });
+});
+
 test("a removal that fails writes no block and keeps the state", async (t) => {
   if (process.getuid?.() === 0) {
     t.skip("root ignores folder permissions");

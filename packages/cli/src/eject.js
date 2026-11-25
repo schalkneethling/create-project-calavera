@@ -191,7 +191,7 @@ const CANNOT_DETECT = "edits cannot be detected";
  * @property {{ item: EjectItem, error: Error }[]} failed Items whose removal failed, with the cause.
  * @property {{ item: EjectItem, reason: string }[]} skipped Items left because an item they depend
  *   on failed: the record a failed item still needs, or the `.gitignore` block of a cache that
- *   could not be deleted, or the state while the `ejected` block is not written.
+ *   could not be deleted, or the last remaining record while the `ejected` block is not written.
  * @property {"written" | { error: Error } | { reason: string }} [ejectedBlock] What happened to
  *   the `ejected` block, when `executeEject` was given one: written, failed with the cause, or not
  *   written because a removal before it failed or was skipped.
@@ -1963,16 +1963,16 @@ async function currentlySeen(item) {
  * The items `item` depends on: removing it while one of them failed would break Decision 7's
  * guarantees. The `.gitignore` block stays while the cache it hides stays, the lock stays while a
  * package folder it checks stays, and the state stays while the base skill or the block it
- * checks stays, and while the `ejected` block is not written (ADR-0017, Amendment 5), so the
- * project reads `incomplete` and the next run writes the block.
+ * checks stays. The last remaining record also stays while the `ejected` block is not written,
+ * which `executeEject` checks itself (`lastRecordOf`).
  *
  * @param {EjectItem} item
- * @returns {(EjectItemKind | typeof EJECTED_STEP)[]}
+ * @returns {EjectItemKind[]}
  */
 function dependsOn(item) {
   if (item.kind === "artifact-cache-block") return ["cache"];
   if (item.kind === "lock") return ["package-folder"];
-  if (item.kind === "state") return ["base-skill", "artifact-cache-block", EJECTED_STEP];
+  if (item.kind === "state") return ["base-skill", "artifact-cache-block"];
   return [];
 }
 
@@ -1980,7 +1980,25 @@ function dependsOn(item) {
 const EJECTED_STEP = "ejected-block";
 
 /**
- * Why the state stays when the `ejected` block was not written. It does not name `.gitignore`,
+ * The record `executeEject` deletes last when it writes the `ejected` block: the state, or without
+ * a state the lock, or without a lock the recipe. The block is written just before it, and it
+ * stays when the block is not written, so a failed write or a stop between the two always leaves
+ * a record that makes the next run plan the block again (owner decision of 2026-11-26 on #1112;
+ * ADR-0017, Amendment 5).
+ *
+ * @param {EjectItem[]} items
+ * @returns {EjectItem | undefined}
+ */
+function lastRecordOf(items) {
+  for (const kind of /** @type {const} */ (["state", "lock", "recipe"])) {
+    const record = items.find((item) => item.kind === kind);
+    if (record !== undefined) return record;
+  }
+  return undefined;
+}
+
+/**
+ * Why the last remaining record stays when the `ejected` block was not written. It does not name `.gitignore`,
  * which the block's own entry names.
  *
  * @param {boolean} failed Whether the write failed, rather than being skipped.
@@ -1990,7 +2008,8 @@ function keptForEjectedBlock(failed) {
 }
 
 /**
- * Writes the `ejected` block, after every other item and before the state (ADR-0017, Amendment 5).
+ * Writes the `ejected` block, after every other item and before the last remaining record
+ * (ADR-0017, Amendment 5).
  * It reads `.gitignore` again first and writes nothing when the file no longer holds the text the
  * plan expects at this point, so the block never lands in text the list did not show.
  *
@@ -2018,7 +2037,8 @@ async function writeEjectedBlock(block) {
  * `.calavera/`, when they are empty, and `.agents/calavera/` when it removed the MCP setup notes
  * from it and nothing else remains (ADR-0017, Decision 2). A folder that still holds anything
  * stays. Given the `ejected` block, it writes the block once every other item is removed and
- * before the state, and only when no removal failed or was skipped (ADR-0017, Amendment 5).
+ * before the last remaining record (`lastRecordOf`), and only when no removal failed or was
+ * skipped (ADR-0017, Amendment 5).
  *
  * @param {EjectItem[]} items
  * @param {EjectedBlockPlan} [ejectedBlock] From `selectEjectItems`, which passes it on only when
@@ -2051,9 +2071,12 @@ export async function executeEject(items, ejectedBlock) {
   const outcome = { removed: [], failed: [], skipped: [] };
   /** @type {Set<EjectItemKind | typeof EJECTED_STEP>} */
   const leftKinds = new Set();
+  const lastRecord = ejectedBlock === undefined ? undefined : lastRecordOf(items);
   /** @param {EjectItem} item */
   const remove = async (item) => {
-    const blocker = dependsOn(item).find((kind) => leftKinds.has(kind));
+    /** @type {(EjectItemKind | typeof EJECTED_STEP)[]} */
+    const needs = item === lastRecord ? [...dependsOn(item), EJECTED_STEP] : dependsOn(item);
+    const blocker = needs.find((kind) => leftKinds.has(kind));
     if (blocker !== undefined) {
       leftKinds.add(item.kind);
       outcome.skipped.push({
@@ -2093,8 +2116,9 @@ export async function executeEject(items, ejectedBlock) {
   };
 
   const steps = ejectSteps(items);
-  // ADR-0017, Amendment 5: every other item goes first, then the `ejected` block, then the state.
-  for (const item of steps.filter(({ kind }) => kind !== "state")) await remove(item);
+  // ADR-0017, Amendment 5: every other item goes first, then the `ejected` block, then the last
+  // remaining record. Without a block, the steps keep their own order, the state last.
+  for (const item of steps.filter((step) => step !== lastRecord)) await remove(item);
   if (ejectedBlock !== undefined) {
     if (outcome.failed.length > 0 || outcome.skipped.length > 0) {
       leftKinds.add(EJECTED_STEP);
@@ -2112,7 +2136,7 @@ export async function executeEject(items, ejectedBlock) {
       }
     }
   }
-  for (const item of steps.filter(({ kind }) => kind === "state")) await remove(item);
+  if (lastRecord !== undefined) await remove(lastRecord);
   if (items.length === 0) return outcome;
 
   const idFolders = new Set(
