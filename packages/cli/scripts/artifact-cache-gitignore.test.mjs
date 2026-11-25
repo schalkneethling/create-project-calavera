@@ -735,19 +735,29 @@ for (const { name, rerun, options, setup } of commands) {
 
       for (const dryRun of [true, false]) {
         const registry = cachingRegistry();
-        await assert.rejects(
-          runArtifactCommand(
-            { ...options, dryRun },
-            {
-              ...registry,
-              loadFormatter: async () => {
-                throw new Error("the project formatter cannot load");
-              },
-            },
-          ),
-          /the project formatter cannot load/,
-        );
-        assert.deepEqual(registry.requests, [], `dryRun: ${dryRun}`);
+        const services = {
+          ...registry,
+          loadFormatter: async () => {
+            throw new Error("the project formatter cannot load");
+          },
+        };
+        if (options.artifactAction === "status" || options.artifactAction === "doctor") {
+          // Owner decision of 2026-11-25 on #1112: a report names the cache block it could not
+          // record and goes on through a temporary cache, instead of stopping.
+          const result = await runArtifactCommand({ ...options, dryRun }, services);
+          assert.match(
+            result.cacheBlockProblem ?? "",
+            /did not record the artifact cache block/,
+            `dryRun: ${dryRun}`,
+          );
+          assert.deepEqual(result.ignoreChanges, [], `dryRun: ${dryRun}`);
+        } else {
+          await assert.rejects(
+            runArtifactCommand({ ...options, dryRun }, services),
+            /the project formatter cannot load/,
+          );
+          assert.deepEqual(registry.requests, [], `dryRun: ${dryRun}`);
+        }
       }
       assert.deepEqual(await snapshotDirectory(), before);
     });

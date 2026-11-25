@@ -875,6 +875,7 @@ async function artifactStatus(
         state,
         loadFormatter,
         options.dryRun,
+        { reportsFormatFailure: true },
       );
     } catch (error) {
       if (!(error instanceof CacheBlockFormatFailure)) throw error;
@@ -1440,10 +1441,19 @@ function refusedRedirect(error, packageName, retryCommand) {
  * @param {ReturnType<typeof createEmptyState>} state
  * @param {() => Promise<ProjectFormatter>} loadFormatter
  * @param {boolean} dryRun
+ * @param {{ reportsFormatFailure?: boolean }} [options] With `reportsFormatFailure`, as the status
+ *   report passes it, a formatter that cannot format the state stops with a
+ *   `CacheBlockFormatFailure`, so the report can name it and go on (owner decision of 2026-11-25).
  * @returns {Promise<unknown[]>} Each failure to remove the transaction's staging folder after the
  *   block committed, for `temporaryFolderLeftovers`.
  */
-async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun) {
+async function commitArtifactCacheBlock(
+  cacheBlock,
+  state,
+  loadFormatter,
+  dryRun,
+  { reportsFormatFailure = false } = {},
+) {
   if (!cacheBlock.writesState) return [];
   let stateText;
   try {
@@ -1453,8 +1463,9 @@ async function commitArtifactCacheBlock(cacheBlock, state, loadFormatter, dryRun
       loadFormatter,
     );
   } catch (error) {
-    // Nothing is written yet, so the caller can report the failure instead of stopping.
-    throw new CacheBlockFormatFailure(error);
+    // Nothing is written yet, so a report can name the failure instead of stopping on it. The
+    // commands that change artifacts stop with the formatter's own error, as apply does (#838).
+    throw reportsFormatFailure ? new CacheBlockFormatFailure(error) : error;
   }
   if (dryRun) return [];
   // #1193: the state, the journal, and the staging folder all lie in `.calavera`.
