@@ -458,6 +458,52 @@ for (const { label, write: writeRecord, path } of [
   });
 }
 
+test("with a recipe and a lock but no state, the lock is the last record, so a failed block write keeps it", async (t) => {
+  if (process.getuid?.() === 0) {
+    t.skip("root ignores file permissions");
+    return;
+  }
+  await inProject(async () => {
+    // ADR-0017, Amendment 5: the last remaining record is the state, or the lock, or the recipe.
+    await write("calavera.config.json", "{}\n");
+    await write(".calavera/artifacts.lock.json", '{ "schemaVersion": 1, "artifacts": [] }\n');
+    await writeFile(".gitignore", "node_modules/\n");
+    await chmod(".gitignore", 0o444);
+    try {
+      const plan = await planEject({ guidance, loadFormatter, dryRun: false });
+      const { remove, ejectedBlock } = selectEjectItems(plan, { assumeYes: false });
+      const outcome = await executeEject(remove, ejectedBlock);
+      assert.deepEqual(
+        outcome.skipped.map(({ item }) => item.path),
+        [".calavera/artifacts.lock.json"],
+      );
+      assert.equal(await exists("calavera.config.json"), false);
+      assert.equal(await exists(".calavera/artifacts.lock.json"), true);
+    } finally {
+      await chmod(".gitignore", 0o644);
+    }
+  });
+});
+
+test("--yes keeps the cache block while it leaves a state it cannot check", async () => {
+  await inProject(async () => {
+    // A symbolic link at the state leads to content no record covers, so --yes leaves it, and the
+    // block that state records stays with it (owner decision of 2026-11-26 on #1334).
+    await writeRecords();
+    await write("records/state.json", await readFile(".calavera/state.json", "utf8"));
+    await rm(".calavera/state.json");
+    const { symlink } = await import("node:fs/promises");
+    await symlink("../records/state.json", ".calavera/state.json");
+    const plan = await planEject({ guidance, loadFormatter, dryRun: false });
+    const { leave } = selectEjectItems(plan, { assumeYes: true });
+    assert.deepEqual(leave.map(({ path }) => path).sort(), [
+      ".calavera/state.json",
+      ".gitignore",
+      "calavera.config.json",
+    ]);
+  });
+});
+
 test("without a state, the recipe is deleted after the block, so a stop between them leaves the recipe", async (t) => {
   if (process.getuid?.() === 0) {
     t.skip("root ignores folder permissions");

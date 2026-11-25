@@ -757,13 +757,14 @@ Once it has removed everything else, `eject` adds a block named `ejected`, with
 one comment line, at the end of `.gitignore`, and creates the file if the
 project has none. It deletes its last remaining record, the state, the lock, or
 the recipe, only after the block is written, so a run that stops or fails in
-between leaves a record and the next `eject` adds the block. The block ignores no path. It tells `doctor`,
-`artifacts status`, and `artifacts doctor` that the project left Calavera on
-purpose. `eject` adds it only when nothing is left, so a `--yes` run that
-leaves items for an approval adds no block. `apply` removes the block, because a project it writes into is
-managed again, and `init` leaves it. If you add your own lines inside the
-block, or change its markers, `eject` and `apply` stop before they write
-anything until you move your lines out of the block. The decision record is
+between leaves a record and the next `eject` adds the block. The block ignores
+no path. It tells `doctor`, `artifacts status`, and `artifacts doctor` that the
+project left Calavera on purpose. `eject` adds it only when nothing is left, so
+a `--yes` run that leaves items for an approval adds no block. `apply` removes
+the block, because a project it writes into is managed again, and `init` leaves
+it. If you add your own lines inside the block, or change its markers, `eject`
+and `apply` stop before they write anything until you move your lines out of the
+block. The decision record is
 [ADR-0017, Amendment 5](docs/adr/0017-eject-removes-calavera-management-footprint.md#amendment-5-eject-leaves-a-marker-block-in-gitignore).
 
 `eject` never changes `package.json`. It reports each script that runs
