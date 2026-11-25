@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -12,6 +11,7 @@ import {
   planViteHookBlockRemoval,
   viteHookCommandProblem,
 } from "../src/ai/vite-hook-blocks.js";
+import { temporaryFolder } from "../../../scripts/temporary-folder.mjs";
 
 const repositoryRoot = fileURLToPath(new URL("../../../", import.meta.url));
 const artifactId = "skill-protected-branch-guard";
@@ -219,8 +219,7 @@ test("A hook command must run a script from the artifact's own skill directory, 
 });
 
 test("Oxfmt does not format an extensionless hook script, so vp staged leaves a written one unchanged", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-vite-hooks-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await temporaryFolder(t, "calavera-vite-hooks-");
   await mkdir(join(directory, ".vite-hooks"));
   const path = join(directory, ".vite-hooks", "pre-commit");
   const contents = plan({ contents: "vp staged\n" }).contents;
@@ -237,8 +236,7 @@ test("Oxfmt does not format an extensionless hook script, so vp staged leaves a 
 });
 
 test("A written block runs first under sh -e, so a refusing guard stops the lines after it", async (t) => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-vite-hooks-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await temporaryFolder(t, "calavera-vite-hooks-");
   const scripts = join(directory, skillDirectory, "scripts");
   await mkdir(scripts, { recursive: true });
   await writeFile(join(scripts, "guard.mjs"), "process.exitCode = Number(process.argv[2]);\n");

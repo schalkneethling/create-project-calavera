@@ -20,6 +20,7 @@ import { createMcpServer, runMcpEntrypoint, toolErrorResult } from "../src/mcp.j
 import { buildRecipe } from "../src/recipe.js";
 import { errorChain, formatErrorChain } from "../src/utils/error-chain.js";
 import { json, libraryManifest, vitePlusConfig } from "./vite-plus-fixtures.mjs";
+import { temporaryFolder } from "../../../scripts/temporary-folder.mjs";
 
 // These tests expect the output without the debug switch from #663, also when a developer
 // has CALAVERA_DEBUG set in their shell; the CLI child processes inherit this environment.
@@ -777,8 +778,7 @@ test("a registry 401 shows its redacted cause only with CALAVERA_DEBUG, and neve
   await new Promise((done) => server.listen(0, "127.0.0.1", () => done(undefined)));
   t.after(() => new Promise((done) => server.close(() => done(undefined))));
   const { port } = /** @type {import("node:net").AddressInfo} */ (server.address());
-  const directory = await mkdtemp(join(tmpdir(), "calavera-debug-only-cause-"));
-  t.after(() => rm(directory, { recursive: true, force: true }));
+  const directory = await temporaryFolder(t, "calavera-debug-only-cause-");
   const userconfig = join(directory, "user.npmrc");
   await writeFile(userconfig, `@schalkneethling:registry=http://127.0.0.1:${port}/secret-path/\n`);
   const failure = await resolveArtifactPackage({
