@@ -387,6 +387,130 @@ test("during a pending transaction doctor reports the phase error, the rollback'
   });
 });
 
+/** A journal for a transaction that stopped before its rollback ran. */
+async function writePendingJournal() {
+  const root = ".calavera/.transactions/stopped";
+  await mkdir(`${root}/backup`, { recursive: true });
+  await writeJsonFile(JOURNAL, {
+    schemaVersion: 1,
+    transactionRoot: root,
+    operations: [
+      {
+        staged: `${root}/staged/x`,
+        target: ".agents/skills/x",
+        backup: `${root}/backup/x`,
+        hadTarget: false,
+      },
+    ],
+  });
+}
+
+// ADR-0020, Decisions 1 and 5: a pending transaction wins over every other finding, including an
+// unreadable record, so a recipe doctor cannot use is a finding then, not a stop, and both doctors
+// report the phase pending-transaction.
+for (const { label, expected, setup } of [
+  {
+    label: "a recipe that cannot be parsed",
+    expected: /calavera\.config\.json cannot be parsed as JSON/,
+    setup: async () => writeFile(CONFIG, "{ not json"),
+  },
+  {
+    label: "a recipe whose artifact source no catalog provides",
+    expected: /names a legacy src that Calavera does not know/,
+    setup: async () =>
+      writeJsonFile(CONFIG, {
+        ...recipeWith([], []),
+        ai: [{ type: "skill", src: "skills/not-in-any-catalog" }],
+      }),
+  },
+  {
+    label: "a workspace member's recipe with a package manager Calavera does not support",
+    expected: /deno/,
+    setup: async (/** @type {string} */ directory) => {
+      await mkdir(".git");
+      await mkdir("packages/app/.calavera", { recursive: true });
+      process.chdir(join(directory, "packages/app"));
+      await writeJsonFile("package.json", { name: "app" });
+      await writeJsonFile(CONFIG, {
+        ...buildRecipe("minimal", ["github-repository-controls"], "npm", [], {
+          "github-repository-controls": { repository: "example/phase", defaultBranch: "main" },
+        }),
+        packageManager: "deno",
+      });
+    },
+  },
+]) {
+  test(`with a pending transaction, ${label} is a finding, and both doctors report the phase`, async () => {
+    await inProject(async (directory) => {
+      await setup(directory);
+      await writePendingJournal();
+      const before = await snapshotDirectory();
+
+      const result = await runDoctor();
+      const artifacts = /** @type {{ phase: string }} */ (await runArtifactsDoctor());
+
+      assert.deepEqual(await snapshotDirectory(), before);
+      assert.equal(result.phase, "pending-transaction", JSON.stringify(result.issues));
+      assert.equal(artifacts.phase, result.phase);
+      assert.equal(result.ok, false);
+      assert.equal(result.issues[0]?.check, "phase");
+      const recipe = issuesOf(result, "recipe").filter(({ level }) => level === "error");
+      assert.equal(recipe.length, 1, JSON.stringify(result.issues));
+      assert.match(recipe[0]?.message ?? "", expected);
+      assert.deepEqual(issuesOf(result, "records"), []);
+    });
+  });
+}
+
+test("with only a managed file drifted, doctor's phase line is the bare drifted line, which points nowhere else", async () => {
+  await inProject(async () => {
+    await applied(["editorconfig"], []);
+    await rm(EDITORCONFIG);
+
+    const result = await runDoctor();
+    const artifacts = /** @type {{ phaseLine: { message: string } }} */ (
+      await runArtifactsDoctor()
+    );
+
+    assert.equal(result.phase, "drifted");
+    // doctor lists the file itself, under "Managed files:", so its line does not send the person
+    // to doctor, as the artifact commands' line does.
+    assert.equal(result.phaseLine?.message, "The phase is drifted.");
+    assert.notEqual(artifacts.phaseLine.message, "The phase is drifted.");
+    assert.match(artifacts.phaseLine.message, /\.editorconfig/);
+    assert.deepEqual(
+      issuesOf(result, "managed-file").map(({ level }) => level),
+      ["error"],
+    );
+  });
+});
+
+test("doctor names a changed hook marker line without printing it back", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    const recorded = "node .agents/skills/project-goal/check.mjs";
+    const state = await readJsonFile(STATE);
+    state.aiWiring = [{ artifact: ARTIFACT, viteHooks: { "pre-commit": recorded } }];
+    await writeJsonFile(STATE, state);
+    await mkdir(".vite-hooks");
+    // A token the person appended to the start marker, which findBlock's own reason quotes.
+    await writeFile(
+      ".vite-hooks/pre-commit",
+      `# calavera:${ARTIFACT}:start person-text\n${recorded}\n# calavera:${ARTIFACT}:end\n`,
+    );
+
+    const [finding] = (await runDoctor()).issues.filter(({ check }) => check === "wiring");
+
+    assert.deepEqual(finding, {
+      level: "warning",
+      check: "wiring",
+      artifact: ARTIFACT,
+      message: `.vite-hooks/pre-commit: a marker line of the ${ARTIFACT} block was changed, so apply stops on it. Calavera only recognizes "# calavera:${ARTIFACT}:start" and "# calavera:${ARTIFACT}:end" as whole lines. Restore them, or remove the block, both markers included, and run create-project-calavera apply again.`,
+      detail: `.vite-hooks/pre-commit: a marker line of the block was changed, so apply stops on it. Calavera only recognizes "# calavera:${ARTIFACT}:start" and "# calavera:${ARTIFACT}:end" as whole lines. Restore them, or remove the block, both markers included, and run create-project-calavera apply again.`,
+    });
+  });
+});
+
 test("a record the phase cannot read stops doctor with a result that has no phase", async () => {
   await inProject(async () => {
     await applied([], [ARTIFACT]);

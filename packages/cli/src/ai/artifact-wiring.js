@@ -26,6 +26,7 @@ import {
   readViteHookBlock,
   viteHookCommandProblem,
 } from "./vite-hook-blocks.js";
+import { markers } from "../utils/marked-block.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -646,11 +647,19 @@ export async function artifactWiringFindings({
           ? /** @type {const} */ ({ found: false })
           : readViteHookBlock(path, contents, id);
       if ("reason" in block) {
-        // The reason names the block by its label, "the Calavera block for <id>", and quotes the
-        // markers, which name the artifact inside quotation marks.
-        const { reason } = block;
+        // The reason for unpaired markers names the block by its label, "the Calavera block for
+        // <id>", and quotes only Calavera's own markers, which name the artifact inside quotation
+        // marks. The reason for a changed marker line quotes that line, which is the person's
+        // text, so this finding words that case itself: the file, the block, and that a marker
+        // line changed (#1112).
+        const { reason, changedMarker } = block;
+        const { start, end } = markers(id);
         warn(id, "marker-problem", path, (name) =>
-          name ? reason : reason.replace(`the Calavera block for ${id}`, "the Calavera block"),
+          changedMarker
+            ? `${path}: a marker line of ${theBlock(name)} was changed, so apply stops on it. Calavera only recognizes "${start}" and "${end}" as whole lines. Restore them, or remove the block, both markers included, and run ${apply} again.`
+            : name
+              ? reason
+              : reason.replace(`the Calavera block for ${id}`, "the Calavera block"),
         );
       } else if (!block.found) {
         warn(id, "block-missing", path, (name) =>

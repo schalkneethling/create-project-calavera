@@ -5934,7 +5934,11 @@ export async function doctor(options) {
         }
       }
     } catch (error) {
-      return stop(error);
+      // ADR-0020, Decisions 1 and 5: a pending transaction wins over every other finding,
+      // including a recipe doctor cannot read, parse, or resolve, so that recipe is then a finding
+      // and both doctors report the phase pending-transaction.
+      if (!pending) return stop(error);
+      recipeIssues.push({ level: "error", message: errorText(error), check: "recipe" });
     }
   }
 

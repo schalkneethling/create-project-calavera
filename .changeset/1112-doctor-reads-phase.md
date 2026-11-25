@@ -23,4 +23,4 @@ The "Missing managed file" and "Missing managed AI skill" warnings are replaced:
 - An edited managed file that the next `apply` would stop on is a note that lists the ways to keep the edit first.
 - A file of your own at a managed path is a note whose remedies keep your file.
 
-A `package.json` that cannot be parsed in a workspace member is now a finding instead of a stop, and `doctor` goes on to classify. A deselected artifact is reported only when it has a problem, as `artifacts doctor` reports it.
+A `package.json` that cannot be parsed in a workspace member is now a finding instead of a stop, and `doctor` goes on to classify. During a pending artifact transaction, a recipe that `doctor` cannot read, parse, or resolve is an error finding too, so `doctor` reports the phase `pending-transaction`, as `artifacts doctor` does. A changed hook marker line is named, not printed back. A deselected artifact is reported only when it has a problem, as `artifacts doctor` reports it.

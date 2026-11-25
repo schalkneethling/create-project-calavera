@@ -652,7 +652,9 @@ and so does one whose records are only partly there.
 `doctor` exits with status 1 when it reports an error, with or without `--json`,
 so a CI step that runs it fails. Warnings and notes do not change the exit status.
 A recipe or `.calavera/state.json` that `doctor` cannot read, parse, or resolve
-stops it before it classifies, so its `--json` result has no `phase`. A wiring
+stops it before it classifies, so its `--json` result has no `phase`, except during a pending
+artifact transaction: then such a recipe is an error finding, and `doctor` still reports the
+phase as `pending-transaction`, as `artifacts doctor` does. A wiring
 file Calavera recorded that it cannot read is reported as an error, and `doctor`
 goes on. `doctor --json` always prints a result for the step to parse: `phase`,
 `phaseLine`, an `issues` list whose entries each name their `check`, and the
