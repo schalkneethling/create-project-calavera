@@ -1,8 +1,7 @@
 // @ts-check
 import { readFile } from "node:fs/promises";
 
-import { GITIGNORE_PATH } from "./ignore-lines.js";
-import { findBlock } from "./utils/marked-block.js";
+import { GITIGNORE_PATH, fixedBlockIn } from "./ignore-lines.js";
 
 /**
  * The owner ID of the block `eject` leaves at the end of `.gitignore` once it has removed
@@ -17,6 +16,9 @@ export const EJECTED_BLOCK = "ejected";
  */
 export const EJECTED_LINE =
   "# create-project-calavera eject removed Calavera's records from this project.";
+
+/** The block's lines between its markers, as the `.gitignore` planner takes them. */
+export const EJECTED_LINES = [EJECTED_LINE];
 
 /**
  * What `.gitignore` holds of the `ejected` block. `complete` and `edited` both have paired
@@ -45,10 +47,6 @@ export async function readEjectedMarker() {
     if (code === "ENOENT") return { status: "absent" };
     return { status: "unreadable", code: code ?? null };
   }
-  const block = findBlock(GITIGNORE_PATH, contents, EJECTED_BLOCK);
-  // findBlock's reason quotes a changed marker line, which is the person's text, so only the
-  // fact that the markers cannot be trusted is kept.
-  if ("reason" in block) return { status: "broken" };
-  if (block.startIndex === -1) return { status: "absent" };
-  return { status: block.current === EJECTED_LINE ? "complete" : "edited" };
+  // fixedBlockIn keeps no line of the file, only the fact that the markers cannot be trusted.
+  return { status: fixedBlockIn(contents, EJECTED_BLOCK, EJECTED_LINES).status };
 }

@@ -1518,7 +1518,7 @@ function flowEject(context) {
  * `contents` stay out of the JSON (ADR-0017, Amendment 3), so only the path rule covers it.
  *
  * @param {string} project
- * @param {{ items?: Array<{ kind: string, path: string, action?: string, matchesRecords: boolean, keptRecord?: true, contents?: string }> }} report
+ * @param {{ items?: Array<{ kind: string, path: string, action?: string, matchesRecords: boolean, keptRecord?: true, contents?: string }>, ejectedBlock?: { path: string } }} report
  * @param {Record<string, string>} before The snapshot after the dry run.
  * @param {Record<string, string>} after The snapshot after `--yes`.
  */
@@ -1529,7 +1529,9 @@ async function unplannedEjectChanges(project, report, before, after) {
   /** @param {string} path @param {string} itemPath */
   const atOrUnder = (path, itemPath) => path === itemPath || path.startsWith(`${itemPath}/`);
   /** @param {string} path */
-  const planned = (path) => items.some((item) => atOrUnder(path, item.path));
+  // ADR-0017, Amendment 5: the `ejected` block is no item, but it changes the file it names.
+  const blockPath = report.ejectedBlock?.path;
+  const planned = (path) => items.some((item) => atOrUnder(path, item.path)) || path === blockPath;
   /** @param {string} key */
   const removedFolderAllowed = (key) => {
     const files = Object.keys(before).filter(

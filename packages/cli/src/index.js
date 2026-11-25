@@ -118,6 +118,7 @@ import {
   wiringFilesThatMention,
   writeArtifactWiring,
 } from "./ai/artifact-wiring.js";
+import { EJECTED_BLOCK, EJECTED_LINES } from "./ejected-marker.js";
 import {
   declaredIgnoreLines,
   GITIGNORE_PATH,
@@ -467,6 +468,14 @@ import { VARLOCK_POINTER, VARLOCK_SCHEMA_PATH } from "./varlock.js";
  *   What `eject` reports in `package.json` and never changes (ADR-0017, Decision 4).
  * @property {{ directory: string, paths: string[] }[]} elsewhere A footprint in another directory
  *   of the workspace, relative to this one, which `eject` names and does not remove (Decision 8).
+ * @property {EjectedBlockResult} [ejectedBlock] The block that marks the project as ejected,
+ *   when this run plans it (ADR-0017, Amendment 5).
+ *
+ * @typedef {Pick<import("./eject.js").EjectedBlockPlan, "path" | "type" | "lines"> & { outcome: "planned" | "written" | "left" | "skipped" | "failed", error?: string }} EjectedBlockResult
+ *   The `ejected` block and what this run did with it: `planned` before the removal, `written`,
+ *   `left` when `--yes` left items for an interactive approval, `skipped` when a removal before it
+ *   failed, and `failed` with the cause. `error` says why it was skipped or failed. The file's text
+ *   and the check value stay internal.
  *
  * @typedef {object} EjectRuntime
  * @property {boolean} [interactive] Whether eject can ask for approval; `canPrompt` by default.
@@ -3197,9 +3206,9 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
   // #838: the state apply writes last is formatted too, so a project whose formatter cannot load
   // stops here, with nothing written, even when no other file needs the formatter.
   await loadFormatter();
-  // ADR-0016: the integrations' .gitignore blocks, and the block that keeps the artifact cache out
-  // of Git (#841), are planned before anything is written, so an edited block stops the dry run
-  // and apply alike. The person's lines are never rewritten.
+  // ADR-0016: the integrations' .gitignore blocks, the block that keeps the artifact cache out
+  // of Git (#841), and the removal of the `ejected` block are planned before anything is
+  // written, so an edited block stops the dry run and apply alike. The person's lines are never rewritten.
   const gitignorePlan = planGitignoreBlocks({
     contents: (await fileExists(GITIGNORE_PATH))
       ? await readFile(GITIGNORE_PATH, "utf8")
@@ -3209,6 +3218,9 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
       ...(await artifactCacheIgnoreLines(recipe)),
     ],
     records: previousState.gitignoreBlocks,
+    // ADR-0017, Amendment 5: a project apply writes into is managed again, so the block `eject`
+    // left goes, and an edited one stops apply here, before anything is written.
+    remove: [{ integration: EJECTED_BLOCK, lines: EJECTED_LINES }],
   });
   const ignoreChanges = [
     ...gitignorePlan.changes,
@@ -6328,6 +6340,13 @@ const EJECT_RECOVERED_PREFIX =
   "eject recovered the pending artifact transaction first, as every artifacts command does. ";
 
 /**
+ * What the headline adds when a run plans the `ejected` block (ADR-0017, Amendment 5). It does not
+ * name `.gitignore`, because the list below names it once, under its heading.
+ */
+const EJECT_ADDS_BLOCK = " and then add the block that marks the project as ejected";
+const EJECT_ADDED_BLOCK = " and added the block that marks the project as ejected";
+
+/**
  * `eject` (#678, ADR-0017): removes Calavera's footprint from the current directory and keeps the
  * tooling it installed. The planner and the removal are in `eject.js`; this function chooses how
  * the person approves the list. A dry run lists and changes nothing. An interactive run shows the
@@ -6348,7 +6367,7 @@ export async function ejectProject(options, runtime = {}) {
   assertEjectConfig(options.config);
   const packageJSON = await readEjectPackageJSON();
   const pendingTransaction = await fileExists(EJECT_TRANSACTION_PATH);
-  /** @param {EjectResult["status"]} status @param {string} message @param {EjectResultItem[]} items @param {Pick<EjectResult, "reported" | "kept">} [found] */
+  /** @param {EjectResult["status"]} status @param {string} message @param {EjectResultItem[]} items @param {Pick<EjectResult, "reported" | "kept" | "ejectedBlock">} [found] */
   const result = async (status, message, items, found = { reported: [], kept: [] }) => ({
     command: /** @type {const} */ ("eject"),
     dryRun: options.dryRun,
@@ -6379,7 +6398,29 @@ export async function ejectProject(options, runtime = {}) {
     guidance,
     loadFormatter,
   });
-  const found = { reported: plan.reported, kept: plan.kept };
+  /**
+   * The `ejected` block as the result shows it.
+   *
+   * @param {import("./eject.js").EjectedBlockPlan} block
+   * @param {EjectedBlockResult["outcome"]} outcome
+   * @param {string} [error]
+   * @returns {EjectedBlockResult}
+   */
+  const describeBlock = ({ path, type, lines }, outcome, error) => ({
+    path,
+    type,
+    lines,
+    outcome,
+    ...(error === undefined ? {} : { error }),
+  });
+  const found = {
+    reported: plan.reported,
+    kept: plan.kept,
+    ...(plan.ejectedBlock === undefined
+      ? {}
+      : { ejectedBlock: describeBlock(plan.ejectedBlock, "planned") }),
+  };
+  const addsBlock = plan.ejectedBlock === undefined ? "" : EJECT_ADDS_BLOCK;
   // What --yes would do, so the list the person sees says it: the items it leaves for an
   // approval, and the records it keeps while one of those items needs them (Decision 5).
   const yesLeaves = new Set(selectEjectItems(plan, { assumeYes: true }).leave);
@@ -6408,7 +6449,7 @@ export async function ejectProject(options, runtime = {}) {
     };
   };
   const planned = plan.items.map((item) => describe(item, "planned"));
-  const listed = `eject would remove ${pluralizeCount(plan.items.length, "item")}${yesSummary(
+  const listed = `eject would remove ${pluralizeCount(plan.items.length, "item")}${addsBlock}${yesSummary(
     plan.items.filter((item) => yesLeaves.has(item)),
     false,
   )}.`;
@@ -6446,7 +6487,7 @@ export async function ejectProject(options, runtime = {}) {
         return answer === true && !isCancel(answer);
       });
     const approved = await ask(
-      `Remove the ${pluralizeCount(plan.items.length, "item")} listed above, including any marked edited?`,
+      `Remove the ${pluralizeCount(plan.items.length, "item")} listed above, including any marked edited${plan.ejectedBlock === undefined ? "" : EJECT_ADDS_BLOCK.replace(" and then", ", and")}?`,
     );
     if (!approved) {
       return result(
@@ -6460,8 +6501,10 @@ export async function ejectProject(options, runtime = {}) {
     }
   }
 
-  const { remove, leave } = selectEjectItems(plan, { assumeYes: options.assumeYes });
-  const outcome = await executeEject(remove);
+  const { remove, leave, ejectedBlock } = selectEjectItems(plan, {
+    assumeYes: options.assumeYes,
+  });
+  const outcome = await executeEject(remove, ejectedBlock);
   /** @type {Map<import("./eject.js").EjectItem, EjectResultItem>} */
   const done = new Map();
   for (const item of outcome.removed) done.set(item, describe(item, "removed"));
@@ -6470,19 +6513,52 @@ export async function ejectProject(options, runtime = {}) {
   for (const { item, reason } of outcome.skipped) done.set(item, describe(item, "skipped", reason));
   for (const item of leave) done.set(item, describe(item, "left"));
   const items = plan.items.flatMap((item) => done.get(item) ?? []);
+  const blockOutcome = outcome.ejectedBlock;
+  const block =
+    plan.ejectedBlock === undefined
+      ? undefined
+      : blockOutcome === undefined
+        ? describeBlock(plan.ejectedBlock, "left")
+        : blockOutcome === "written"
+          ? describeBlock(plan.ejectedBlock, "written")
+          : "error" in blockOutcome
+            ? describeBlock(plan.ejectedBlock, "failed", ejectedBlockError(blockOutcome.error))
+            : describeBlock(plan.ejectedBlock, "skipped", blockOutcome.reason);
+  const finished = { ...found, ...(block === undefined ? {} : { ejectedBlock: block }) };
   const notRemoved = outcome.failed.length + outcome.skipped.length;
-  const removed = `${recovered ? EJECT_RECOVERED_PREFIX : ""}Removed ${pluralizeCount(outcome.removed.length, "item")}${yesSummary(leave, true)}.`;
+  const blockNotAdded = block?.outcome === "failed" || block?.outcome === "skipped";
+  const removed = `${recovered ? EJECT_RECOVERED_PREFIX : ""}Removed ${pluralizeCount(outcome.removed.length, "item")}${block?.outcome === "written" ? EJECT_ADDED_BLOCK : ""}${yesSummary(leave, true)}.`;
   const approveLeft =
     leave.length > 0 ? " Run eject in a terminal to review and approve what is left." : "";
-  if (notRemoved > 0) {
+  if (notRemoved > 0 || blockNotAdded) {
+    const problems = [
+      notRemoved > 0 ? `${pluralizeCount(notRemoved, "item")} could not be removed` : "",
+      blockNotAdded ? "eject could not add the ejected block" : "",
+    ]
+      .filter(isNotEmptyString)
+      .join(", and ");
     return result(
       "failed",
-      `${removed} ${pluralizeCount(notRemoved, "item")} could not be removed; each one says why below. Fix the cause, then run eject again.${approveLeft}`,
+      `${removed} ${problems}; each one says why below. Fix the cause, then run eject again.${approveLeft}`,
       items,
-      found,
+      finished,
     );
   }
-  return result("ejected", `${removed}${approveLeft}`, items, found);
+  return result("ejected", `${removed}${approveLeft}`, items, finished);
+}
+
+/**
+ * Why the `ejected` block could not be written, in words. A file system error is named by its
+ * system call and code, because its message repeats the path the block's entry already names;
+ * any other error, such as a `.gitignore` that changed since the list, keeps its own words.
+ *
+ * @param {Error} error
+ */
+function ejectedBlockError(error) {
+  const { code, syscall } = /** @type {NodeJS.ErrnoException} */ (error);
+  return typeof code === "string"
+    ? `the file system refused it (${syscall ?? "unknown call"}, ${code}).`
+    : error.message;
 }
 
 /**
