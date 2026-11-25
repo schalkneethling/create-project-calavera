@@ -54,17 +54,20 @@ async function runDoctor(cwd, args = []) {
 }
 
 /**
- * The doctor issues other than missing managed files.
+ * The doctor issues from the recipe check, without the check field, so a test pins the
+ * warnings it is about. The phase line and the managed files have their own checks (ADR-0020).
  *
  * @param {string} cwd
  */
 async function recipeIssues(cwd) {
   const report = JSON.parse((await runDoctor(cwd, ["--json"])).stdout);
   assert.equal(report.ok, true, "an unknown integration warning must not make doctor fail");
-  return report.issues.filter(
-    (/** @type {{ message: string }} */ { message }) =>
-      !message.startsWith("Missing managed file:"),
-  );
+  return report.issues
+    .filter((/** @type {{ check: string }} */ { check }) => check === "recipe")
+    .map((/** @type {{ level: string, message: string }} */ { level, message }) => ({
+      level,
+      message,
+    }));
 }
 
 const unmanaged = { status: "unmanaged", corroborating: [] };
@@ -163,14 +166,15 @@ test("doctor prints the unknown integration warning in its human output and exit
 
   const { stdout, stderr } = await runDoctor(fixture.root);
 
+  assert.ok(stdout.split("\n").includes("Recipe:"), stdout);
   assert.match(
-    `${stdout}${stderr}`,
-    /calavera\.config\.json selects prettier, a JavaScript and TypeScript formatting integration that Calavera removed \(ADR-0006\)\. Vite\+ provides formatting, and a project without Vite\+ runs vp create or vp migrate first \(ADR-0009\)\./,
+    stderr,
+    /^ {2}calavera\.config\.json selects prettier, a JavaScript and TypeScript formatting integration that Calavera removed \(ADR-0006\)\. Vite\+ provides formatting, and a project without Vite\+ runs vp create or vp migrate first \(ADR-0009\)\./m,
   );
 });
 
 test("doctor gives a removed id in a vp create project the #431 warning only, and still warns about an unrecognized id", async () => {
-  await using fixture = await copyReleaseFixture("library", { vitePlus: false });
+  await using fixture = await copyReleaseFixture("library");
   await writeFile(join(fixture.root, "calavera.config.json"), recipe(["oxlint", "made-up"]));
 
   assert.deepEqual(await recipeIssues(fixture.root), [
@@ -205,7 +209,7 @@ test("removedProfileWarnings returns nothing for a current profile or none", () 
 });
 
 test("doctor warns about a removed profile before the integration warnings, as apply checks it first, and exits 0", async () => {
-  await using fixture = await copyReleaseFixture("library", { vitePlus: false });
+  await using fixture = await copyReleaseFixture("library");
   await writeFile(
     join(fixture.root, "calavera.config.json"),
     recipe(["editorconfig", "oxfmt"], "modern"),

@@ -26,6 +26,7 @@ import {
   readViteHookBlock,
   viteHookCommandProblem,
 } from "./vite-hook-blocks.js";
+import { markers } from "../utils/marked-block.js";
 
 const execFileAsync = promisify(execFile);
 
@@ -87,6 +88,8 @@ const VITE_HOOKS_DISPATCHER = ".vite-hooks/_";
  * @property {string} [code] The error code, for a file that cannot be read.
  * @property {string} message Names the file and the remedy. It can quote a changed marker line
  *   and what the state records, so only doctor's own report prints it.
+ * @property {string} detail The message without the artifact's ID, for a report that prints the
+ *   finding under its artifact's line, so the listing names the artifact once (#1112).
  */
 
 /** @param {string} id @returns {ArtifactWiring | undefined} */
@@ -586,18 +589,30 @@ export async function artifactWiringFindings({
   const apply = "create-project-calavera apply";
   /** @type {WiringFinding[]} */
   const findings = [];
-  /** @param {WiringFindingKind} kind @param {string} path @param {string} message */
-  const warn = (kind, path, message) => findings.push({ level: "warning", kind, path, message });
+  /**
+   * Each message is written once, as a function of the name the artifact goes by: its ID in
+   * `message`, and none in `detail`, which a report prints under the artifact's own line (#1112).
+   *
+   * @typedef {(id: string | undefined) => string} Words
+   */
+  /** @param {string} id @param {Words} words */
+  const worded = (id, words) => ({ message: words(id), detail: words(undefined) });
+  /** @param {string} id @param {WiringFindingKind} kind @param {string} path @param {Words} words */
+  const warn = (id, kind, path, words) =>
+    findings.push({ level: "warning", kind, path, ...worded(id, words) });
+  /** @param {string | undefined} id */
+  const theBlock = (id) => (id ? `the ${id} block` : "the block");
   const unreadable = Symbol("unreadable");
   /**
    * #1206: a recorded file that exists but cannot be read, such as a directory, is an error
    * finding, because the next apply stops on it too, and doctor goes on to check the other files.
    * The finding names the error code, never the error's message or the file's text (#1157).
    *
+   * @param {string} id
    * @param {string} path The file, relative to the project root.
-   * @param {string} what What Calavera recorded in it.
+   * @param {Words} what What Calavera recorded in it.
    */
-  const readRecorded = async (path, what) => {
+  const readRecorded = async (id, path, what) => {
     try {
       return await readIfPresent(resolve(cwd, path));
     } catch (error) {
@@ -607,7 +622,11 @@ export async function artifactWiringFindings({
         kind: "unreadable",
         path,
         code,
-        message: `${path} cannot be read (${code}), so doctor cannot check ${what} Calavera recorded there, and the next apply stops. Make ${path} a readable file and run doctor again.`,
+        ...worded(
+          id,
+          (name) =>
+            `${path} cannot be read (${code}), so doctor cannot check ${what(name)} Calavera recorded there, and the next apply stops. Make ${path} a readable file and run doctor again.`,
+        ),
       });
       return unreadable;
     }
@@ -615,34 +634,44 @@ export async function artifactWiringFindings({
 
   for (const { artifact: id, viteHooks, claudeCode } of records) {
     const isSelected = selected.has(id);
-    const deselectedNote = `the recipe no longer selects ${id}`;
+    /** @param {string | undefined} name */
+    const deselectedNote = (name) => `the recipe no longer selects ${name ?? "it"}`;
     const directory = skillDirectoryFor(id);
 
     for (const [hook, recorded] of Object.entries(viteHooks ?? {})) {
       const path = `.vite-hooks/${hook}`;
-      const contents = await readRecorded(path, `the ${id} block`);
+      const contents = await readRecorded(id, path, theBlock);
       if (contents === unreadable) continue;
       const block =
         contents === undefined
           ? /** @type {const} */ ({ found: false })
           : readViteHookBlock(path, contents, id);
       if ("reason" in block) {
-        warn("marker-problem", path, block.reason);
+        // The reason for unpaired markers names the block by its label, "the Calavera block for
+        // <id>", and quotes only Calavera's own markers, which name the artifact inside quotation
+        // marks. The reason for a changed marker line quotes that line, which is the person's
+        // text, so this finding words that case itself: the file, the block, and that a marker
+        // line changed (#1112).
+        const { reason, changedMarker } = block;
+        const { start, end } = markers(id);
+        warn(id, "marker-problem", path, (name) =>
+          changedMarker
+            ? `${path}: a marker line of ${theBlock(name)} was changed, so apply stops on it. Calavera only recognizes "${start}" and "${end}" as whole lines. Restore them, or remove the block, both markers included, and run ${apply} again.`
+            : name
+              ? reason
+              : reason.replace(`the Calavera block for ${id}`, "the Calavera block"),
+        );
       } else if (!block.found) {
-        warn(
-          "block-missing",
-          path,
+        warn(id, "block-missing", path, (name) =>
           isSelected
-            ? `${path}: the ${id} block that Calavera recorded is missing, so Git does not run it. Run ${apply} to write it again; the dry run shows it first.`
-            : `${path}: the ${id} block that Calavera recorded is missing, and ${deselectedNote}, so nothing needs to run there. Run ${apply} to drop the record.`,
+            ? `${path}: ${theBlock(name)} that Calavera recorded is missing, so Git does not run it. Run ${apply} to write it again; the dry run shows it first.`
+            : `${path}: ${theBlock(name)} that Calavera recorded is missing, and ${deselectedNote(name)}, so nothing needs to run there. Run ${apply} to drop the record.`,
         );
       } else if (block.text !== recorded) {
-        warn(
-          "block-edited",
-          path,
+        warn(id, "block-edited", path, (name) =>
           isSelected
-            ? `${path}: the ${id} block was edited since Calavera wrote it, so the next apply stops with a conflict. Restore it to "${recorded}", or remove the block, both markers included, and run ${apply} to write it again.`
-            : `${path}: the ${id} block was edited since Calavera wrote it, and ${deselectedNote}, so the next apply stops with a conflict instead of removing it. Restore it to "${recorded}" so apply removes it, or remove the block yourself, both markers included, or delete its markers to keep it as your own, and run ${apply}.`,
+            ? `${path}: ${theBlock(name)} was edited since Calavera wrote it, so the next apply stops with a conflict. Restore it to "${recorded}", or remove the block, both markers included, and run ${apply} to write it again.`
+            : `${path}: ${theBlock(name)} was edited since Calavera wrote it, and ${deselectedNote(name)}, so the next apply stops with a conflict instead of removing it. Restore it to "${recorded}" so apply removes it, or remove the block yourself, both markers included, or delete its markers to keep it as your own, and run ${apply}.`,
         );
       } else {
         // The state file can be edited by hand, so the recorded line is checked again before its
@@ -653,17 +682,31 @@ export async function artifactWiringFindings({
             : viteHookCommandProblem(recorded, directory);
         const script = recorded.split(" ")[1];
         if (problem !== undefined) {
+          const shown =
+            directory === undefined
+              ? (/** @type {string | undefined} */ name) =>
+                  `doctor does not know where ${name ?? "it"} is installed.`
+              : () => problem;
           warn(
+            id,
             "record-invalid",
             path,
-            `${path}: the ${id} block holds what Calavera recorded, but the record is not a command Calavera writes: ${problem} Check the block and .calavera/state.json before you run ${apply}.`,
+            (name) =>
+              `${path}: ${theBlock(name)} holds what Calavera recorded, but the record is not a command Calavera writes: ${shown(name)} Check the block and .calavera/state.json before you run ${apply}.`,
           );
         } else if (script !== undefined && !(await exists(resolve(cwd, script)))) {
+          const remedy = isSelected
+            ? await missingScriptRemedy(script, directory, apply, cwd)
+            : undefined;
           findings.push({
             level: "error",
             kind: "script-missing",
             path,
-            message: `${path}: the ${id} block runs ${script}, which does not exist, so the ${hook} hook fails and Git refuses every ${hook === "pre-push" ? "push" : "commit"}. ${isSelected ? await missingScriptRemedy(script, directory, apply, cwd) : `Because ${deselectedNote}, ${apply} removes the block; the dry run lists the removal first.`}`,
+            ...worded(
+              id,
+              (name) =>
+                `${path}: ${theBlock(name)} runs ${script}, which does not exist, so the ${hook} hook fails and Git refuses every ${hook === "pre-push" ? "push" : "commit"}. ${remedy ?? `Because ${deselectedNote(name)}, ${apply} removes the block; the dry run lists the removal first.`}`,
+            ),
           });
         }
       }
@@ -671,7 +714,9 @@ export async function artifactWiringFindings({
 
     if (!claudeCode) continue;
     const path = CLAUDE_SETTINGS_PATH;
-    const contents = await readRecorded(path, `the ${id} groups`);
+    const contents = await readRecorded(id, path, (name) =>
+      name ? `the ${name} groups` : "the groups",
+    );
     if (contents === unreadable) continue;
     /** @type {Record<string, unknown>} */
     let hooks = {};
@@ -681,10 +726,13 @@ export async function artifactWiringFindings({
         if (isObject(settings) && isObject(settings.hooks)) hooks = settings.hooks;
       } catch {
         // #1157: what is wrong, and where, never JSON.parse's message, which quotes the file.
+        const problem = jsonSyntaxProblem(contents);
         warn(
+          id,
           "settings-unparsable",
           path,
-          `${path} cannot be parsed as JSON: ${jsonSyntaxProblem(contents)}, so doctor cannot check the ${id} groups Calavera recorded there, and the next apply stops. Fix the JSON and run doctor again.`,
+          (name) =>
+            `${path} cannot be parsed as JSON: ${problem}, so doctor cannot check ${name ? `the ${name} groups` : "the groups"} Calavera recorded there, and the next apply stops. Fix the JSON and run doctor again.`,
         );
         continue;
       }
@@ -707,20 +755,16 @@ export async function artifactWiringFindings({
             );
       const wrote = JSON.stringify(missing[0]);
       if (edited.length > 0) {
-        warn(
-          "group-edited",
-          path,
+        warn(id, "group-edited", path, (name) =>
           isSelected
             ? `${path}: a ${event} group that runs ${directory}/ was edited since Calavera wrote it, so the next apply stops with a conflict. Restore it to ${wrote}, or remove that group, and run ${apply} to write it again.`
-            : `${path}: a ${event} group that runs ${directory}/ was edited since Calavera wrote it, and ${deselectedNote}, so the next apply stops with a conflict instead of removing it. Restore it to ${wrote} so apply removes it, or remove that group yourself, and run ${apply}.`,
+            : `${path}: a ${event} group that runs ${directory}/ was edited since Calavera wrote it, and ${deselectedNote(name)}, so the next apply stops with a conflict instead of removing it. Restore it to ${wrote} so apply removes it, or remove that group yourself, and run ${apply}.`,
         );
       } else {
-        warn(
-          "group-missing",
-          path,
+        warn(id, "group-missing", path, (name) =>
           isSelected
-            ? `${path}: the ${event} group for ${id} that Calavera recorded is missing, so Claude Code does not run it. Run ${apply} to add it again; the dry run shows it first.`
-            : `${path}: the ${event} group for ${id} that Calavera recorded is missing, and ${deselectedNote}, so nothing needs to run there. Run ${apply} to drop the record.`,
+            ? `${path}: the ${event} group${name ? ` for ${name}` : ""} that Calavera recorded is missing, so Claude Code does not run it. Run ${apply} to add it again; the dry run shows it first.`
+            : `${path}: the ${event} group${name ? ` for ${name}` : ""} that Calavera recorded is missing, and ${deselectedNote(name)}, so nothing needs to run there. Run ${apply} to drop the record.`,
         );
       }
     }

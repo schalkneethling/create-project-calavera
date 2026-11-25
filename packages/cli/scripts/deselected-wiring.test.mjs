@@ -99,7 +99,7 @@ async function inWiredProject(callback) {
  * The issues `doctor --json` reports. doctor exits 1 when it reports an error (#1030), so the exit
  * code is checked against `ok` instead of being treated as a failure.
  *
- * @returns {Promise<{ level: string, message: string }[]>}
+ * @returns {Promise<{ level: string, message: string, check: string }[]>}
  */
 async function doctorIssues() {
   const { status, stdout, stderr } = spawnSync(process.execPath, [cli, "doctor", "--json"], {
@@ -345,7 +345,9 @@ test("Given the skill directory deleted by hand, doctor reports each block whose
   await inWiredProject(async (registry) => {
     await rm(skillDirectory, { recursive: true });
 
-    const issues = (await doctorIssues()).filter(({ message }) => message.includes("not exist"));
+    const issues = (await doctorIssues()).filter(
+      ({ check, message }) => check === "wiring" && message.includes("not exist"),
+    );
     assert.deepEqual(
       issues.map(({ level, message }) => [level, message.split(":")[0]]),
       hooks.map((hook) => ["error", `.vite-hooks/${hook}`]),
@@ -360,6 +362,29 @@ test("Given the skill directory deleted by hand, doctor reports each block whose
     // The remedy works: with the folder gone, apply installs the skill again.
     await callMcpTool("apply_recipe", { recipe: guardRecipe(), noInstall: true }, registry);
     assert.deepEqual(await missingScriptErrors(), []);
+  });
+});
+
+test("Given the skill directory deleted by hand, doctor's text output names the artifact once, with its wiring findings under it", async () => {
+  await inWiredProject(async () => {
+    await rm(skillDirectory, { recursive: true });
+
+    const { status, stdout, stderr } = spawnSync(process.execPath, [cli, "doctor"], {
+      encoding: "utf8",
+    });
+    assert.equal(status, 1, `${stdout}\n${stderr}`);
+    // The artifact line and the wiring findings share one item: the findings print under it,
+    // without the artifact's ID, so the listing check finds the ID once, under Artifacts.
+    assert.deepEqual(listingViolations(`${stdout}${stderr}`, [id]), []);
+    for (const hook of hooks) {
+      assert.match(
+        stderr,
+        new RegExp(
+          String.raw`^ {4}\.vite-hooks/${hook}: the block runs \.agents/skills/protected-branch-guard/scripts/guard\.mjs, which does not exist`,
+          "m",
+        ),
+      );
+    }
   });
 });
 
@@ -422,7 +447,9 @@ test("Given the skill directory deleted by hand and the guard deselected, doctor
     await rm(skillDirectory, { recursive: true });
     await writeFile("calavera.config.json", `${JSON.stringify(deselectedRecipe(), null, 2)}\n`);
 
-    const issues = (await doctorIssues()).filter(({ message }) => message.includes("not exist"));
+    const issues = (await doctorIssues()).filter(
+      ({ check, message }) => check === "wiring" && message.includes("not exist"),
+    );
     assert.equal(issues.length, 3);
     for (const { message } of issues) {
       assert.match(
