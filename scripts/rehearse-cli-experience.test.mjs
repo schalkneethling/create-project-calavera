@@ -985,6 +985,128 @@ test("a package.json script name is not a listing of the package it shares a nam
   );
 });
 
+test("the script-name mask covers only the summary's script lines, not other script prose (#1144)", () => {
+  // Every shape scriptLines in apply-summary.js prints, in both tenses, each naming a script that
+  // shares its name with a package the Integrations group lists once.
+  const scriptGroup = [
+    "Scripts:",
+    '  Would add script knip: "knip"',
+    '  Added script stylelint: "stylelint"',
+    '  Would rename script knip to stylelint: "stylelint"',
+    '  Renamed script stylelint to knip: "knip"',
+    '  Would change script knip from "knip" to "knip --strict"',
+    '  Changed script stylelint from "stylelint" to "stylelint --fix"',
+    "  Scripts already set: knip, stylelint",
+    '  Would remove script knip: "knip"',
+    '  Removed script stylelint: "stylelint"',
+    "  Would omit script knip: no file to check",
+    "  Omitted script stylelint: no CSS files",
+    "  Would omit vp check from script knip: Vite+ is not installed",
+    "  Omitted vp check from script stylelint: Vite+ is not installed",
+  ];
+  const listed = [
+    "Integrations:",
+    "  knip",
+    "  stylelint",
+    "Files:",
+    "  Would update package.json",
+    "Artifacts:",
+    "  Would lock skill-protected-branch-guard 1.0.0",
+  ];
+  const items = ["knip", "stylelint", "package.json", "skill-protected-branch-guard"];
+  const run = (/** @type {string[]} */ extra, group = scriptGroup) =>
+    listingViolations([...listed, ...group, ...extra].join("\n"), items);
+  assert.deepEqual(run([]), []);
+  // The CLI prints the summary without a Clack frame today; should it print one, the same shapes
+  // inside it are still script lines.
+  assert.deepEqual(
+    run(
+      [],
+      scriptGroup.map((line) => `│  ${line.trim()}`),
+    ),
+    [],
+  );
+
+  // Script prose in any other shape names the package, inside the Scripts group or out of it.
+  assert.deepEqual(run(["  The script knip from the old recipe stays as it is"]), [
+    "knip is printed 2 times",
+  ]);
+  assert.deepEqual(run(["Notes:", "  Kept the script stylelint from the old recipe"]), [
+    "stylelint is printed 2 times",
+  ]);
+  assert.deepEqual(run(["Notes:", "  Run the script knip: it checks for unused files"]), [
+    "knip is printed 2 times",
+  ]);
+  // A shape that starts or ends inside other prose is not a script line, even in the Scripts group.
+  for (const line of [
+    '  Before, Would add script knip: ""',
+    '  Before, Would rename script knip to lint: ""',
+    '  Before, Would change script knip from "" to ""',
+    "  Before, Would omit script knip: no reason",
+    "  Before, Would omit vp check from script knip: no reason",
+    "  Before, Scripts already set: knip",
+  ]) {
+    assert.deepEqual(run([line]), ["knip is printed 2 times"], line);
+  }
+  for (const line of [
+    '  Would add script knip: "" for stylelint',
+    '  Removed script knip: "" for stylelint',
+    '  Would rename script knip to lint: "" for stylelint',
+    '  Would change script knip from "" to "" for stylelint',
+  ]) {
+    assert.deepEqual(
+      run([line]),
+      ["knip is printed 2 times", "stylelint is printed 2 times"],
+      line,
+    );
+  }
+  // A script-line shape outside the Scripts group is not a script line, nor is one above every
+  // heading.
+  assert.deepEqual(
+    listingViolations(['Would add script knip: ""', ...listed, ...scriptGroup].join("\n"), items),
+    ["knip is printed 2 times"],
+  );
+  assert.deepEqual(run(["Notes:", '  Would add script knip: "knip"']), ["knip is printed 2 times"]);
+  assert.deepEqual(run(["Notes:", "  Scripts already set: stylelint"]), [
+    "stylelint is printed 2 times",
+  ]);
+
+  // A file, a dependency, or an artifact named twice outside the script lines is still a repeat.
+  assert.deepEqual(
+    run([
+      "Notes:",
+      "  package.json keeps its scripts",
+      "  Dev dependencies: knip",
+      "  skill-protected-branch-guard is locked",
+    ]),
+    [
+      "knip is printed 2 times",
+      "package.json is printed 2 times",
+      "skill-protected-branch-guard is printed 2 times",
+    ],
+  );
+  // The reason after a script line's name is not masked, so a package it names still counts.
+  assert.deepEqual(run(["  Would omit script lint: knip is not selected"]), [
+    "knip is printed 2 times",
+  ]);
+  // The mask cuts each name where the shape holds it, not the first text that matches it: here
+  // that would be the "ad" inside "add" and the "d" before "ad".
+  assert.deepEqual(
+    listingViolations(
+      [
+        "Integrations:",
+        "  ad",
+        "  d",
+        "Scripts:",
+        '  Would add script ad: "ad"',
+        '  Would rename script d to ad: "ad"',
+      ].join("\n"),
+      ["ad", "d"],
+    ),
+    [],
+  );
+});
+
 test("an integration input's recipe path is not a listed file, but a real file named twice still fails (#1143)", () => {
   // The apply --dry-run output and the integrationInputs entry --json reports for a recipe that
   // selects github-repository-controls and records its defaultBranch, trimmed from a real run.

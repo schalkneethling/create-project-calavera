@@ -504,13 +504,19 @@ export function listingViolations(output, items, statements = []) {
   // command or the lines of an ignore block, so a name inside it does not count either. A
   // package.json script's name is a key in the manifest, not the package it may share a name with,
   // such as the knip script that runs the knip package (#1128), so it does not count either.
+  // The mask applies only to a line in the Scripts group that has one of the exact shapes
+  // scriptLines in apply-summary.js prints, so other prose that mentions a script still counts
+  // (#1144).
   const fixed = new Set(statements);
+  let inScripts = false;
   const lines = output
     .split("\n")
     .filter((line) => !isCommandLine(line) && !fixed.has(line.trim()))
-    .map((line) =>
-      line.replace(QUOTED_VALUE, '""').replace(SCRIPT_NAMES, "").replace(SCRIPT_NAME, ""),
-    );
+    .map((line) => {
+      if (isHeading(line)) inScripts = plainLine(line) === "Scripts:";
+      const masked = line.replace(QUOTED_VALUE, '""');
+      return inScripts ? withoutScriptNames(masked) : masked;
+    });
   output = lines.join("\n");
   const firstHeading = lines.findIndex(isHeading);
   // An empty item names nothing the output could print, so it is reported, not looked for (#1226).
@@ -539,12 +545,42 @@ export function listingViolations(output, items, statements = []) {
 // A JSON string literal, as Calavera quotes a script value or an ignore line.
 const QUOTED_VALUE = /"(?:[^"\\]|\\.)*"/g;
 
-// A script the summaries name after the word "script", up to the colon or the word that follows
-// the name: "script knip:", "script knip from", or "script knip to knip:check:", which renames it.
-// A name can hold colons, as lint:styles does, so only a colon before a space ends it.
-const SCRIPT_NAME = /\bscript \S+?(?: to \S+?)?(?::\s| from )/g;
-// The list of scripts a summary leaves as they are.
-const SCRIPT_NAMES = /Scripts already set:.*/;
+// The lines scriptLines in apply-summary.js prints, once a quoted value is reduced to "", with the
+// script names they hold in named groups, "name" and a rename's "target": "Would add script knip:
+// \"\"", "Renamed script lint to lint:styles: \"\"", "Changed script knip from \"\" to \"\"", "Would
+// omit script knip: <reason>", "Would omit vp check from script quality: <reason>", or "Scripts
+// already set: knip, lint:styles". A name can hold colons, as lint:styles does, so only a colon
+// before a space ends it.
+const SCRIPT_LINES = [
+  /^(?:Would add|Added|Would remove|Removed) script (?<name>\S+?): ""$/d,
+  /^(?:Would omit|Omitted) script (?<name>\S+?): /d,
+  /^(?:Would rename|Renamed) script (?<name>\S+?) to (?<target>\S+?): ""$/d,
+  /^(?:Would change|Changed) script (?<name>\S+?) from "" to ""$/d,
+  /^(?:Would omit|Omitted) \S.*? from script (?<name>\S+?): /d,
+  /^Scripts already set: (?<name>.+)/d,
+];
+
+/**
+ * A line of the Scripts group with the script names it holds removed, or the line as it is when it
+ * has none of the shapes scriptLines prints. A package.json script's name is a key in the
+ * manifest, not the package it may share a name with (#1128).
+ *
+ * @param {string} line
+ */
+function withoutScriptNames(line) {
+  const text = plainLine(line);
+  for (const shape of SCRIPT_LINES) {
+    const spans = shape.exec(text)?.indices.groups;
+    if (spans === undefined) continue;
+    // From the last name back, so cutting one does not move the start of the one before it. The
+    // match's own positions, not a search for the name, because a script can share its name with
+    // a word of the line, such as a script named add.
+    return Object.values(spans)
+      .sort(([a], [b]) => b - a)
+      .reduce((rest, [start, end]) => rest.slice(0, start) + rest.slice(end), text);
+  }
+  return line;
+}
 
 /**
  * Whether a line is a command, with an optional label such as "Dev dependency install command:".
