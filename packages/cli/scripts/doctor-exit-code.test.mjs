@@ -50,7 +50,7 @@ const outputModes = [
 
 for (const { label, args } of outputModes) {
   test(`doctor exits 1 when it reports an error (${label} output)`, async () => {
-    // No calavera.config.json: doctor reports "Missing calavera.config.json" as an error.
+    // No recipe, state, or lock: the project is unmanaged, an error (ADR-0020, owner decision 2).
     await using fixture = await createTemporaryFixture("doctor-exit-error", {
       "package.json": json({ name: "doctor-exit-error", private: true }),
     });
@@ -63,12 +63,13 @@ for (const { label, args } of outputModes) {
       assert.equal(report.ok, false);
       assert.ok(report.issues.some(({ level }) => level === "error"));
     } else {
-      assert.match(stderr + stdout, /Missing calavera\.config\.json/);
+      assert.match(stderr + stdout, /Calavera does not manage this project/);
     }
   });
 
   test(`doctor exits 0 when it reports only warnings (${label} output)`, async () => {
-    // No package.json: doctor reports it as a warning, which stays advisory.
+    // No package.json, and a recipe apply has not applied yet: doctor reports both as warnings,
+    // which stay advisory.
     await using fixture = await createTemporaryFixture("doctor-exit-warning", {
       "calavera.config.json": emptyRecipe,
     });
@@ -80,8 +81,11 @@ for (const { label, args } of outputModes) {
       const report = JSON.parse(stdout);
       assert.equal(report.ok, true);
       assert.deepEqual(
-        report.issues.map(({ level }) => level),
-        ["warning"],
+        report.issues.map(({ level, check }) => [level, check]),
+        [
+          ["warning", "phase"],
+          ["warning", "project"],
+        ],
       );
     } else {
       assert.match(stderr + stdout, /Missing package\.json/);
@@ -89,18 +93,29 @@ for (const { label, args } of outputModes) {
   });
 
   test(`doctor exits 0 when the project is healthy (${label} output)`, async () => {
+    // An applied project: the state records the profile, and nothing apply recorded changed.
     await using fixture = await createTemporaryFixture("doctor-exit-healthy", {
       "calavera.config.json": emptyRecipe,
       "package.json": json({ name: "doctor-exit-healthy", private: true }),
+      ".calavera/state.json": json({ version: 1, profile: "default" }),
     });
 
     const { code, stdout, stderr } = await runDoctor(fixture.root, args);
 
     assert.equal(code, 0, `doctor exited ${code}\n${stdout}\n${stderr}`);
     if (label === "--json") {
-      assert.deepEqual(JSON.parse(stdout), { command: "doctor", ok: true, issues: [] });
+      assert.deepEqual(JSON.parse(stdout), {
+        command: "doctor",
+        ok: true,
+        phase: "applied",
+        phaseLine: { level: "info", message: "The phase is applied." },
+        issues: [{ level: "info", message: "The phase is applied.", check: "phase" }],
+        artifacts: [],
+        managedFiles: [],
+      });
     } else {
-      assert.match(stdout + stderr, /Calavera doctor found no issues\./);
+      assert.equal(stdout, "The phase is applied.\nCalavera doctor found no issues.\n");
+      assert.equal(stderr, "");
     }
   });
 }

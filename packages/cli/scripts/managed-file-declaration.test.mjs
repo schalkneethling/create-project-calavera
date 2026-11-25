@@ -186,18 +186,21 @@ test("doctor checks every planned file", async () => {
     })}\n`,
   );
 
-  const prefix = "Missing managed file: ";
-  // Missing managed files are warnings and nothing else is an error, so doctor exits 0.
+  // Managed files apply has not written yet are warnings and nothing else is an error, so doctor
+  // exits 0 (ADR-0020, Decision 4).
   const messages = (await runDoctorJson(directory.path, 0)).issues
+    .filter(({ check }) => check === "managed-file")
     .map(({ message }) => message)
-    .filter((message) => message.startsWith(prefix));
+    // The Varlock schema is scaffolded, not a managed file, so its warning is left out here.
+    .filter((message) => !message.startsWith("Missing Varlock schema"));
 
   // #925: the github-repository-controls files are checked like every other managed file, and at
   // the repository root the remedy is the plain one.
   assert.deepEqual(
     messages,
     plannedPaths.map(
-      (path) => `${prefix}${path}. Run create-project-calavera apply to regenerate managed files.`,
+      (path) =>
+        `${path} does not exist yet, so apply writes it. Run npm create project-calavera apply.`,
     ),
   );
 });
@@ -237,16 +240,18 @@ test("doctor run from a workspace member checks the repository-controls files at
     ),
     errors[0],
   );
-  const messages = issues
-    .map(({ message }) => message)
-    .filter((message) => message.startsWith("Missing managed file: "));
+  // The files present at the repository root have no record, so each is a note; the missing one
+  // is pending, a warning whose remedy runs apply from the repository root (ADR-0020).
+  const pending = issues
+    .filter(({ check, level }) => check === "managed-file" && level === "warning")
+    .map(({ message }) => message);
 
-  assert.equal(messages.length, 1, messages.join("\n"));
-  // process.cwd() is the real path, so on macOS the root is /private/var/..., not /var/....
+  assert.equal(pending.length, 1, pending.join("\n"));
   assert.equal(
-    messages[0],
-    `Missing managed file: ../../${missingFile}. Run create-project-calavera apply from the repository root, ${await realpath(root)}, to regenerate managed files, adding --config <path> when the recipe is saved elsewhere.`,
+    pending[0],
+    `../../${missingFile} does not exist yet, so apply writes it. Run npm create project-calavera apply from the repository root.`,
   );
+  assert.ok(await realpath(root));
 });
 
 test("every integration that writes a managed file appears exactly once in the one declaration", () => {

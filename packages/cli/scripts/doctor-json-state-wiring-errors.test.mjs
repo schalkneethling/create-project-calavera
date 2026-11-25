@@ -208,7 +208,10 @@ test("doctor --json keeps checking the wiring after a recorded file it cannot re
   assert.equal(code, 1, `doctor exited ${code}\n${stdout}\n${stderr}`);
   const report = JSON.parse(stdout);
   assert.deepEqual(
-    report.issues.map(({ level, message }) => [level, message.split(/[ :]/)[0]]),
+    // The wiring findings, after the phase line doctor reports first (ADR-0020, Decision 4).
+    report.issues
+      .filter((/** @type {{ check: string }} */ { check }) => check === "wiring")
+      .map(({ level, message }) => [level, message.split(/[ :]/)[0]]),
     [
       ["error", ".vite-hooks/pre-commit"],
       ["warning", ".vite-hooks/pre-push"],

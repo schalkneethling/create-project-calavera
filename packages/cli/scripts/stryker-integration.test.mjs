@@ -4,7 +4,7 @@
 // file matches Vitest's default test pattern. Each case applies to a temporary copy of a
 // committed vp create fixture, never to the fixture itself.
 import assert from "node:assert/strict";
-import { execFileSync } from "node:child_process";
+import { spawnSync } from "node:child_process";
 import { mkdir, readFile, readdir, rm, writeFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import test from "node:test";
@@ -435,14 +435,14 @@ test("vp create library: doctor reports a missing stryker.config.json", async ()
     await callMcpTool("apply_recipe", { recipe, noInstall: true });
     const missing = (/** @type {{ issues: Array<{ message: string }> }} */ report) =>
       report.issues.some(({ message }) =>
-        message.startsWith("Missing managed file: stryker.config.json."),
+        message.startsWith("The state records stryker.config.json, and it does not exist"),
       );
     const doctor = () =>
       JSON.parse(
-        execFileSync(process.execPath, [cliPath, "doctor", "--json"], {
+        spawnSync(process.execPath, [cliPath, "doctor", "--json"], {
           encoding: "utf8",
           env: { ...process.env, NO_COLOR: "1" },
-        }),
+        }).stdout,
       );
 
     assert.equal(missing(doctor()), false);

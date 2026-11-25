@@ -34,6 +34,7 @@ import {
   monorepoRootManifest,
   plainViteConfig,
   plainViteManifest,
+  writeVitePlusFormatter,
 } from "./vite-plus-fixtures.mjs";
 
 const execFileAsync = promisify(execFile);
@@ -49,6 +50,15 @@ function recipe(integrations) {
     packageManager: "pnpm",
     integrations,
     scripts: {},
+    // apply requires these options for github-repository-controls, so doctor, which plans the
+    // managed files as apply does, reports a plan problem without them (ADR-0020).
+    ...(integrations.includes("github-repository-controls")
+      ? {
+          integrationOptions: {
+            "github-repository-controls": { repository: "example/doctor", defaultBranch: "main" },
+          },
+        }
+      : {}),
   });
 }
 
@@ -68,7 +78,7 @@ async function runDoctor(cwd, args = []) {
 
 /**
  * @param {string} cwd
- * @returns {Promise<{ ok: boolean, issues: { level: string, message: string }[] }>}
+ * @returns {Promise<{ ok: boolean, issues: { level: string, message: string, check: string }[] }>}
  */
 async function doctorReport(cwd) {
   return JSON.parse((await runDoctor(cwd, ["--json"])).stdout);
@@ -78,20 +88,22 @@ async function doctorReport(cwd) {
  * The doctor issues that name a removed toolchain integration, which in a project Vite+ manages is
  * the #431 warning and elsewhere the #1082 unknown integration warning.
  *
- * @param {{ issues: { level: string, message: string }[] }} report
+ * @param {{ issues: { level: string, message: string, check: string }[] }} report
  */
 function toolchainIssues(report) {
-  return report.issues.filter(({ message }) =>
-    removedToolchainIntegrations.some(({ id }) =>
-      message.startsWith(`calavera.config.json selects ${id},`),
-    ),
-  );
+  return report.issues
+    .filter(({ message }) =>
+      removedToolchainIntegrations.some(({ id }) =>
+        message.startsWith(`calavera.config.json selects ${id},`),
+      ),
+    )
+    .map(({ level, message }) => ({ level, message }));
 }
 
 /**
  * The #431 warnings only: those that say Vite+ manages the project.
  *
- * @param {{ issues: { level: string, message: string }[] }} report
+ * @param {{ issues: { level: string, message: string, check: string }[] }} report
  */
 function vitePlusToolchainIssues(report) {
   return toolchainIssues(report).filter(({ message }) =>
@@ -197,7 +209,7 @@ for (const detection of [
 }
 
 test("doctor warns about each removed toolchain integration in a vp create project", async () => {
-  await using fixture = await copyReleaseFixture("library", { vitePlus: false });
+  await using fixture = await copyReleaseFixture("library");
   await writeFile(
     join(fixture.root, "calavera.config.json"),
     recipe(["editorconfig", "oxlint", "typescript", "oxlint"]),
@@ -223,7 +235,7 @@ test("doctor warns about each removed toolchain integration in a vp create proje
 });
 
 test("doctor prints the toolchain warning in its human output and exits 0", async () => {
-  await using fixture = await copyReleaseFixture("library", { vitePlus: false });
+  await using fixture = await copyReleaseFixture("library");
   await writeFile(join(fixture.root, "calavera.config.json"), recipe(["prettier"]));
   const before = await snapshotDirectory(fixture.root);
 
@@ -237,16 +249,19 @@ test("doctor prints the toolchain warning in its human output and exits 0", asyn
 });
 
 test("doctor reports no toolchain warning for a recipe of kept integrations in a vp create project", async () => {
-  await using fixture = await copyReleaseFixture("library", { vitePlus: false });
+  await using fixture = await copyReleaseFixture("library");
   await writeFile(join(fixture.root, "calavera.config.json"), recipe(keptIntegrations));
   assert.equal((await detectVitePlus(fixture.root)).status, "managed");
 
   const report = await doctorReport(fixture.root);
 
-  // doctor read the recipe: it names the kept integrations' missing files, and nothing else.
-  assert.ok(report.issues.length > 0, "doctor reported no missing managed file");
-  for (const { message } of report.issues) {
-    assert.match(message, /^Missing managed file: /);
+  // doctor read the recipe: it names the kept integrations' files that apply has not written yet,
+  // after the phase line, and nothing else.
+  const [phase, ...rest] = report.issues;
+  assert.equal(phase?.check, "phase");
+  assert.ok(rest.length > 0, "doctor reported no managed file");
+  for (const { check } of rest) {
+    assert.equal(check, "managed-file");
   }
 });
 
@@ -256,6 +271,9 @@ test("doctor run from a workspace member names the ancestor manifest that matche
     "packages/member/package.json": json({ name: "member", version: "0.0.0" }),
     "packages/member/calavera.config.json": recipe(["eslint"]),
   });
+  // The root declares vite-plus, so its formatter must be installed for doctor's managed-file
+  // check to load it, as apply's does (ADR-0020, owner decision 17).
+  await writeVitePlusFormatter(fixture.root);
   const member = join(fixture.root, "packages", "member");
 
   assert.deepEqual(toolchainIssues(await doctorReport(member)), [
@@ -289,10 +307,9 @@ for (const integrations of [
         .map((id) => `calavera.config.json selects ${id}`),
     );
     assert.equal(report.ok, true);
-    for (const { message } of report.issues.filter(
-      (issue) => !toolchainIssues(report).includes(issue),
-    )) {
-      assert.match(message, /^Missing managed file: /);
+    const toolchain = toolchainIssues(report).map(({ message }) => message);
+    for (const { check } of report.issues.filter(({ message }) => !toolchain.includes(message))) {
+      assert.ok(["phase", "managed-file"].includes(check), check);
     }
   });
 }

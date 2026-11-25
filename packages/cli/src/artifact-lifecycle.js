@@ -336,27 +336,11 @@ export async function readArtifactStatus(options, services = {}) {
  * @param {string[] | null} rollbackFiles From the phase function, read from the journal.
  */
 async function pendingTransactionReport(config, commandName, rollbackFiles) {
-  let recipe = {};
-  try {
-    recipe = await readJson(config);
-  } catch {
-    // A missing or unreadable recipe only changes the runner the command names.
-  }
-  const command = artifactCommand(recipe, config, ["status"]);
-  let files;
-  if (rollbackFiles === null) {
-    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, or the journal fails the rollback's checks, so it cannot list the files the rollback would restore or remove. Save any edits to the files the stopped operation was changing, then run`;
-  } else if (rollbackFiles.length === 0) {
-    files = "The rollback restores or removes no file, so run";
-  } else {
-    files = "Save any edits to the files in rollbackFiles first, then run";
-  }
-  const lineFiles =
-    rollbackFiles !== null && rollbackFiles.length > 0
-      ? "Save any edits to the files the rollback restores or removes first, then run"
-      : files;
-  const remedy = `An artifact operation stopped before its rollback ran, so this ${commandName === "artifacts doctor" ? "doctor" : "read-only report"} does not read the artifact records, because the rollback may still change them. ${files}: ${command}. It rolls the transaction back and reports the artifact status.`;
-  const phaseLineMessage = `An artifact operation stopped before its rollback ran, so this ${commandName === "artifacts doctor" ? "doctor" : "read-only report"} does not read the artifact records, because the rollback may still change them. ${lineFiles}: ${command}. It rolls the transaction back and reports the artifact status.`;
+  const { remedy, phaseLineMessage } = await pendingTransactionRemedy(
+    config,
+    commandName,
+    rollbackFiles,
+  );
   return {
     command: commandName,
     dryRun: false,
@@ -379,6 +363,45 @@ async function pendingTransactionReport(config, commandName, rollbackFiles) {
     managedFilePlanProblem: null,
     cacheBlockProblem: null,
   };
+}
+
+/**
+ * What a report says about a pending transaction (ADR-0020, owner decisions 20 and 23): the
+ * `remedy` the JSON carries, which names `rollbackFiles` beside it, and the phase line, which the
+ * text output prints above the list of files, so it names the files by what the rollback does with
+ * them. `doctor` and `artifacts doctor` say "this doctor", the read-only report "this read-only
+ * report". The command is built from the recipe's package manager, which only selects a runner
+ * from a fixed list; a recipe it cannot read only makes the command use the npm runner.
+ *
+ * @param {string} config
+ * @param {"artifacts status" | "artifacts doctor" | "doctor"} commandName
+ * @param {string[] | null} rollbackFiles
+ */
+export async function pendingTransactionRemedy(config, commandName, rollbackFiles) {
+  let recipe = {};
+  try {
+    recipe = await readJson(config);
+  } catch {
+    // A missing or unreadable recipe only changes the runner the command names.
+  }
+  const command = artifactCommand(recipe, config, ["status"]);
+  let files;
+  if (rollbackFiles === null) {
+    files = `Calavera cannot read the journal, ${TRANSACTION_PATH}, or the journal fails the rollback's checks, so it cannot list the files the rollback would restore or remove. Save any edits to the files the stopped operation was changing, then run`;
+  } else if (rollbackFiles.length === 0) {
+    files = "The rollback restores or removes no file, so run";
+  } else {
+    files = "Save any edits to the files in rollbackFiles first, then run";
+  }
+  const lineFiles =
+    rollbackFiles !== null && rollbackFiles.length > 0
+      ? "Save any edits to the files the rollback restores or removes first, then run"
+      : files;
+  const reader = commandName === "artifacts status" ? "read-only report" : "doctor";
+  /** @param {string} filesText */
+  const sentence = (filesText) =>
+    `An artifact operation stopped before its rollback ran, so this ${reader} does not read the artifact records, because the rollback may still change them. ${filesText}: ${command}. It rolls the transaction back and reports the artifact status.`;
+  return { remedy: sentence(files), phaseLineMessage: sentence(lineFiles) };
 }
 
 /**

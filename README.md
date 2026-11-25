@@ -638,11 +638,24 @@ Inspect the current project:
 npm create project-calavera doctor
 ```
 
+`doctor` starts with a line that names the project's phase, such as `composed`
+before the first `apply` or `applied` after it, and what resolves it (ADR-0020).
+It then lists what it found under headings: the project, the recipe, each managed
+file, each artifact, and the wiring Calavera recorded. It reports a managed file
+that `apply` wrote and someone deleted, or that cannot be read, as an error, and
+an edited file that the next `apply` would stop on as a note. It reports each
+artifact at the same level as `artifacts doctor`, and the two never disagree
+about an artifact or the phase. A project with no recipe, state, or lock fails,
+and so does one whose records are only partly there.
+
 `doctor` exits with status 1 when it reports an error, with or without `--json`,
-so a CI step that runs it fails. Warnings do not change the exit status.
-A recipe or `.calavera/state.json` that `doctor` cannot read, parse, or resolve,
-and a wiring file Calavera recorded that it cannot read, are reported as errors,
-so `doctor --json` always prints a result for the step to parse.
+so a CI step that runs it fails. Warnings and notes do not change the exit status.
+A recipe or `.calavera/state.json` that `doctor` cannot read, parse, or resolve
+stops it before it classifies, so its `--json` result has no `phase`. A wiring
+file Calavera recorded that it cannot read is reported as an error, and `doctor`
+goes on. `doctor --json` always prints a result for the step to parse: `phase`,
+`phaseLine`, an `issues` list whose entries each name their `check`, and the
+`artifacts` and `managedFiles` it classified.
 
 Update managed tooling from the recipe:
 

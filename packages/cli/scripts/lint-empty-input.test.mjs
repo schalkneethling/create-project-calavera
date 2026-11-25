@@ -113,15 +113,17 @@ test("doctor reports a missing HTML Validate wrapper", async () => {
     await applyRecipeObject(recipeFor(), applyOptions);
     await rm("scripts/lint-html.mjs");
 
+    // A managed file apply wrote and someone deleted is an error, so doctor exits 1 (ADR-0020,
+    // owner decision 4); its JSON result is on standard output either way.
     const { stdout } = await execFileAsync(process.execPath, [cliPath, "doctor", "--json"], {
       env: { ...process.env, NO_COLOR: "1" },
-    });
+    }).catch((/** @type {{ stdout: string }} */ error) => error);
 
     assert.ok(
       JSON.parse(stdout).issues.some(
         ({ message }) =>
           message ===
-          "Missing managed file: scripts/lint-html.mjs. Run create-project-calavera apply to regenerate managed files.",
+          "The state records scripts/lint-html.mjs, and it does not exist, so apply writes it again. Run npm create project-calavera apply.",
       ),
       stdout,
     );

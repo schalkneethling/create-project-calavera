@@ -41,10 +41,13 @@ import {
   TRANSACTION_PATH as EJECT_TRANSACTION_PATH,
   artifactCacheIgnoreLines,
   artifactCachePointers,
+  pendingTransactionRemedy,
   prepareArtifactSources,
   refuseLinkedArtifactFolders,
   runArtifactCommand,
 } from "./artifact-lifecycle.js";
+import { doctorReportLines, phaseIssues } from "./doctor-report.js";
+import { deriveProjectPhase } from "./project-phase.js";
 import { integrationCatalog, removedToolchainIntegrations } from "./catalog.js";
 import {
   applySummaryLines,
@@ -187,7 +190,6 @@ import {
 } from "./state.js";
 import { planStagingLeftovers, removeStagingLeftovers } from "./staging-leftovers.js";
 import {
-  declaredManagedFiles,
   HTML_VALIDATE_WRAPPER_PATH,
   integrationConfigFiles,
   packageManagerLockfiles,
@@ -388,10 +390,21 @@ import { VARLOCK_POINTER, VARLOCK_SCHEMA_PATH } from "./varlock.js";
  * @property {WiringChange[]} wiringChanges Each hook block and settings group clean removes because the recipe no longer selects the artifact that wired it, so the dry run shows the exact text.
  * @property {string} message
  *
+ * @typedef {import("./doctor-report.js").DoctorIssue} DoctorIssue
+ *
  * @typedef {object} DoctorResult
  * @property {"doctor"} command
- * @property {boolean} ok
- * @property {{ level: "error" | "warning", message: string }[]} issues
+ * @property {boolean} ok False when any issue, item, or the phase line is an error.
+ * @property {DoctorIssue[]} issues The phase line first, then each finding, each with its check.
+ * @property {string} [phase] The project phase (ADR-0020). Absent when a record doctor cannot read
+ *   stopped it before it classified (Amendment 1).
+ * @property {{ level: DoctorIssue["level"], message: string }} [phaseLine]
+ * @property {{ id: string, selected: boolean | null, condition: { name: string, reason: string } }[]} [artifacts]
+ *   Each artifact the phase function classifies, as artifacts doctor reports it.
+ * @property {{ path: string, integration: string, selected: boolean, condition: { name: string, reason: string } }[]} [managedFiles]
+ *   Each managed file the recipe declares.
+ * @property {string[] | null} [rollbackFiles] During a pending transaction, the files its rollback
+ *   would restore or remove, or null when the journal cannot be read.
  *
  * @typedef {object} InitResult
  * @property {"init"} command
@@ -5756,8 +5769,16 @@ export function unknownIntegrationWarnings(recipe, detection, configPath) {
 
 /**
  * Checks the project in the current directory against the recipe at `options.config`. It writes
- * nothing, prompts for nothing, and spawns nothing, so tests call it in-process (#1148); the CLI
- * prints the result and sets the exit code.
+ * nothing and prompts for nothing, so tests call it in-process (#1148); the CLI prints the result
+ * and sets the exit code. It reads the project phase from `deriveProjectPhase`, as artifacts doctor
+ * does, so the two doctors agree about every artifact and about the phase (ADR-0020, Decision 5).
+ * Classifying the managed files loads the project's formatter as apply does, which runs the
+ * project's `vp fmt` in a Vite+ project without writing anything.
+ *
+ * Only a record the phase function or doctor cannot read, parse, or resolve stops doctor before it
+ * classifies (ADR-0020, Decision 7 and Amendment 1): the result then has no `phase`. Every other
+ * problem, such as a `package.json` that cannot be parsed in a workspace member, is a finding, and
+ * doctor goes on.
  *
  * @param {Pick<CliOptions, "config" | "packageManager">} options
  * @returns {Promise<DoctorResult>}
@@ -5765,39 +5786,51 @@ export function unknownIntegrationWarnings(recipe, detection, configPath) {
 export async function doctor(options) {
   const hasConfig = await fileExists(options.config);
   const hasPackageJSON = await fileExists("package.json");
-  /** @type {{ level: "error" | "warning", message: string }[]} */
+  /** @type {DoctorIssue[]} */
   const issues = [];
-
-  if (!hasConfig) {
-    issues.push({
-      level: "error",
-      message: `Missing ${options.config}. Run create-project-calavera init first.`,
-    });
-  }
+  /** @param {unknown} error @returns {DoctorResult} */
+  const stop = (error) => {
+    // #1141 and #1206: a recipe or record doctor cannot read, parse, or resolve is an error issue
+    // that stops doctor before it classifies, so `doctor --json` still prints a result for a CI
+    // step to parse (ADR-0020 Amendment 1). The issue keeps the issues found before it and the
+    // error's causes; a JSONParseError names the file and position without quoting it (#1157).
+    issues.push({ level: "error", message: errorText(error), check: "records" });
+    return { command: "doctor", ok: false, issues };
+  };
 
   if (!hasPackageJSON) {
     issues.push({
       level: "warning",
+      check: "project",
       message:
         "Missing package.json. apply creates one; when a manifest above this directory exists, apply asks whether to create one here, apply there, or stop.",
     });
   }
 
+  // The phase function checks for a pending transaction first and then reads no record, so doctor
+  // reads the state only without one.
+  const pending = await fileExists(EJECT_TRANSACTION_PATH);
+
+  /** @type {Recipe | undefined} */
+  let recipe;
+  /** @type {DoctorIssue[]} */
+  const recipeIssues = [];
+  /** @type {DoctorIssue[]} */
+  const laterIssues = [];
   if (hasConfig) {
     const projectDirectory = process.cwd();
-    // #1141 and #1206: a recipe or state file doctor cannot read, parse, or resolve, including the
-    // recipe's package manager, is an error issue that stops doctor before it classifies, so
-    // `doctor --json` still prints a result for a CI step to parse (ADR-0020 Amendment 1). The
-    // issue keeps the issues found before it and the error's causes; a JSONParseError names the
-    // file and position without quoting it (#1157).
     try {
-      const recipe = await readRecipe(options.config);
+      // Doctor reads and resolves the recipe with its own readers before the phase function does,
+      // so an unreadable recipe stops it with the error it has always given (ADR-0020, Decision 7).
+      recipe = await readRecipe(options.config);
       const detection = await detectVitePlus(projectDirectory);
-      issues.push(
+      /** @param {DoctorIssue["check"]} check @returns {(issue: { level: "error" | "warning", message: string }) => DoctorIssue} */
+      const withCheck = (check) => (issue) => ({ ...issue, check });
+      recipeIssues.push(
         // apply's validation checks the profile before the integrations, so doctor lists it first.
-        ...removedProfileWarnings(recipe, options.config),
-        ...removedToolchainWarnings(recipe, detection, options.config),
-        ...unknownIntegrationWarnings(recipe, detection, options.config),
+        ...removedProfileWarnings(recipe, options.config).map(withCheck("recipe")),
+        ...removedToolchainWarnings(recipe, detection, options.config).map(withCheck("recipe")),
+        ...unknownIntegrationWarnings(recipe, detection, options.config).map(withCheck("recipe")),
       );
       // #1140: right after validating the recipe, apply refuses a legacy entry that selects an
       // artifact with wiring or inputs (#1125), so doctor reports that refusal, with apply's
@@ -5808,111 +5841,127 @@ export async function doctor(options) {
         "apply stops before writing anything",
       );
       if (legacyRefusal !== undefined) {
-        issues.push({ level: "error", message: legacyRefusal });
+        recipeIssues.push({ level: "error", message: legacyRefusal, check: "recipe" });
       }
       const integrations = resolveRecipeIntegrations(recipe);
       const aiArtifacts = resolveAiArtifacts(recipe);
-      // A root-only integration (catalog `appliesAt: "repository-root"`) writes its files at the
-      // repository root, so doctor run from a workspace member checks them there (#925).
-      const rootOnlyIds = new Set(
-        integrations.filter(({ appliesAt }) => appliesAt === "repository-root").map(({ id }) => id),
-      );
+      // A root-only integration (catalog `appliesAt: "repository-root"`) and an artifact that
+      // writes Git hooks apply at the repository root, so doctor run from a workspace member
+      // reports apply's refusals (#925, #997, #1031). The phase function classifies the root-only
+      // integration's files at the repository root.
+      const rootOnly = integrations.some(({ appliesAt }) => appliesAt === "repository-root");
       const gitHookIds = gitHookArtifactIds(recipe);
       const repositoryRoot =
-        rootOnlyIds.size > 0 || gitHookIds.length > 0
+        rootOnly || gitHookIds.length > 0
           ? (findRepositoryRoot(projectDirectory) ?? projectDirectory)
           : projectDirectory;
-      // package.json is read only here, so a recipe that selects neither a root-only integration
-      // nor a Git hook artifact is checked as before. resolveApplyPackageManager refuses a recipe
-      // packageManager that Calavera does not support, as apply does.
-      const packageManager =
-        repositoryRoot === projectDirectory
-          ? undefined
-          : resolveApplyPackageManager(recipe, options, await readPackageJSONIfPresent());
-
-      // #997 and #1031: apply refuses a root-only integration and an artifact that writes Git hooks
-      // outside the repository root, so doctor reports apply's own refusals, naming the package
-      // manager apply would name. apply stops at the first; doctor reports both, so one run names
-      // every change the recipe needs.
-      if (packageManager !== undefined) {
-        for (const refusal of [
-          rootOnlyIntegrationRefusal(integrations, projectDirectory, packageManager),
-          gitHookArtifactRefusal(gitHookIds, projectDirectory, packageManager),
-        ]) {
-          if (refusal !== undefined) {
-            issues.push({ level: "error", message: refusal });
-          }
-        }
-      }
-
-      for (const { integration, path } of declaredManagedFiles(integrations.map(({ id }) => id))) {
-        const atRepositoryRoot =
-          rootOnlyIds.has(integration) && repositoryRoot !== projectDirectory;
-        const file = atRepositoryRoot
-          ? relative(projectDirectory, join(repositoryRoot, path))
-          : path;
-
-        if (!(await fileExists(file))) {
-          issues.push({
-            level: "warning",
-            message: atRepositoryRoot
-              ? `Missing managed file: ${file}. Run create-project-calavera apply from the repository root, ${repositoryRoot}, to regenerate managed files, adding --config <path> when the recipe is saved elsewhere.`
-              : `Missing managed file: ${file}. Run create-project-calavera apply to regenerate managed files.`,
+      if (repositoryRoot !== projectDirectory) {
+        // package.json is read only here. One that cannot be parsed is a finding, not a stop,
+        // because it is not one of the records Decision 7 names (the 2026-11-24 drift item on
+        // #1112), so doctor goes on to classify. resolveApplyPackageManager refuses a recipe
+        // packageManager that Calavera does not support, as apply does, and that still stops.
+        let packageJSON;
+        try {
+          packageJSON = await readPackageJSONIfPresent();
+        } catch (error) {
+          recipeIssues.push({
+            level: "error",
+            check: "repository-root",
+            message:
+              error instanceof JSONParseError
+                ? `${error.message} doctor needs it to tell which package manager apply names for a root-only integration or an artifact that writes Git hooks.`
+                : `package.json cannot be read (${/** @type {NodeJS.ErrnoException} */ (error).code ?? "an error without a code"}), so doctor cannot tell which package manager apply names for a root-only integration or an artifact that writes Git hooks.`,
           });
         }
-      }
-
-      if (
-        integrations.some((integration) => integration.id === "varlock") &&
-        !(await fileExists(VARLOCK_SCHEMA_PATH))
-      ) {
-        issues.push({
-          level: "warning",
-          message: `Missing Varlock schema: ${VARLOCK_SCHEMA_PATH}. Run create-project-calavera apply to scaffold it.`,
-        });
-      }
-
-      // #1101: every artifact the recipe selects is a packaged catalog artifact, whether an entry
-      // names it by ID or by its legacy type and src: resolveAiArtifacts throws for a source that
-      // no catalog artifact provides. Its payload comes from the lock and .calavera/packages, not
-      // from the legacy source path, which no project holds, so doctor does not look for that path;
-      // `artifacts status` checks the lock. A legacy entry is named by its catalog ID below, as apply
-      // names it in the lock and in its wiring records.
-      const selectedAiIds = new Set(aiArtifacts.map(({ id }) => id));
-
-      for (const artifact of aiArtifacts) {
-        for (const path of aiArtifactOutputPaths(artifact)) {
-          if (!(await fileExists(path))) {
-            issues.push({
-              level: "warning",
-              message: `Missing managed AI ${artifact.type}: ${path}. Run create-project-calavera apply to regenerate managed AI artifacts.`,
-            });
+        if (packageJSON !== undefined) {
+          const packageManager = resolveApplyPackageManager(recipe, options, packageJSON);
+          // apply stops at the first refusal; doctor reports both, so one run names every change
+          // the recipe needs.
+          for (const refusal of [
+            rootOnlyIntegrationRefusal(integrations, projectDirectory, packageManager),
+            gitHookArtifactRefusal(gitHookIds, projectDirectory, packageManager),
+          ]) {
+            if (refusal !== undefined) {
+              recipeIssues.push({ level: "error", message: refusal, check: "repository-root" });
+            }
           }
         }
       }
 
-      // ADR-0015, Decision 5: the hook blocks and Claude Code groups apply recorded.
-      const state = await readStateIfPresent().catch((error) => {
-        throw new Error(`doctor cannot use ${STATE_FILE}.`, { cause: error });
-      });
-      // Doctor's issues keep their two fields until its report redesign (ADR-0020, Decision 4).
-      for (const { level, message } of await artifactWiringFindings({
-        records: state.aiWiring,
-        selected: selectedAiIds,
-        skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
-      })) {
-        issues.push({ level, message });
+      // While a transaction is pending, doctor reads no record, file, or wiring, because the
+      // rollback may still change them (owner decision 20).
+      if (!pending) {
+        if (
+          integrations.some((integration) => integration.id === "varlock") &&
+          !(await fileExists(VARLOCK_SCHEMA_PATH))
+        ) {
+          laterIssues.push({
+            level: "warning",
+            check: "managed-file",
+            message: `Missing Varlock schema: ${VARLOCK_SCHEMA_PATH}. Run create-project-calavera apply to scaffold it.`,
+          });
+        }
+
+        // ADR-0015, Decision 5: the hook blocks and Claude Code groups apply recorded, in the
+        // words doctor has always used (ADR-0020, Decision 4). An unreadable state stops doctor
+        // here with its own error, before the phase function reads the state.
+        const selectedAiIds = new Set(aiArtifacts.map(({ id }) => id));
+        const state = await readStateIfPresent().catch((error) => {
+          throw new Error(`doctor cannot use ${STATE_FILE}.`, { cause: error });
+        });
+        for (const { level, message } of await artifactWiringFindings({
+          records: state.aiWiring,
+          selected: selectedAiIds,
+          skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
+        })) {
+          laterIssues.push({ level, message, check: "wiring" });
+        }
       }
     } catch (error) {
-      issues.push({ level: "error", message: errorText(error) });
-      return { command: "doctor", ok: false, issues };
+      issues.push(...recipeIssues);
+      return stop(error);
     }
   }
 
+  let phase;
+  try {
+    phase = await deriveProjectPhase({ config: options.config });
+  } catch (error) {
+    issues.push(...recipeIssues);
+    return stop(error);
+  }
+
+  const pendingMessage = pending
+    ? (await pendingTransactionRemedy(options.config, "doctor", phase.rollbackFiles))
+        .phaseLineMessage
+    : undefined;
+  const { phaseLine, issues: fromPhase } = phaseIssues(phase, {
+    recipe,
+    config: options.config,
+    pendingMessage,
+  });
+  const [phaseIssue, ...items] = fromPhase;
+  const allIssues = [
+    /** @type {DoctorIssue} */ (phaseIssue),
+    ...issues,
+    ...recipeIssues,
+    ...items,
+    ...laterIssues,
+  ];
   return {
     command: "doctor",
-    ok: issues.every((issue) => issue.level !== "error"),
-    issues,
+    ok: allIssues.every(({ level }) => level !== "error"),
+    phase: phase.phase,
+    phaseLine,
+    issues: allIssues,
+    artifacts: phase.artifacts.map(({ id, selected, condition }) => ({ id, selected, condition })),
+    managedFiles: phase.managedFiles.map(({ path, integration, condition }) => ({
+      path,
+      integration,
+      selected: true,
+      condition,
+    })),
+    ...(pending ? { rollbackFiles: phase.rollbackFiles } : {}),
   };
 }
 
@@ -6763,13 +6812,8 @@ function printResult(result, asJSON = false, { dryRun: commandDryRun = false, no
   }
 
   if (result.command === "doctor") {
-    if (result.issues.length === 0) {
-      logger.success("Calavera doctor found no issues.");
-      return;
-    }
-
-    for (const issue of result.issues) {
-      logger[issue.level === "error" ? "error" : "warn"](issue.message);
+    for (const { level, message } of doctorReportLines(result)) {
+      logger[level](message);
     }
     return;
   }
