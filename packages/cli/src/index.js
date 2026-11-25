@@ -2222,10 +2222,16 @@ function createReactDoctorConfig() {
   };
 }
 
+/**
+ * Knip reports files nothing imports, so it ignores the folders Calavera installs into: the agent
+ * files under `.agents/` (#747) and the extracted artifact packages under `.calavera/packages/`
+ * (#1320). An unedited `knip.json` an earlier release wrote matches the hash its state recorded, so
+ * apply updates it like any other managed file.
+ */
 function createKnipConfig() {
   return {
     $schema: "https://unpkg.com/knip@6/schema.json",
-    ignore: [".agents/**"],
+    ignore: [".agents/**", ".calavera/**"],
     ignoreExportsUsedInFile: true,
   };
 }

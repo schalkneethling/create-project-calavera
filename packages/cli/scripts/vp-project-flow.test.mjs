@@ -675,10 +675,10 @@ for (const flowCase of rootCases) {
 }
 
 for (const flowCase of cases) {
-  test(`vp create ${flowCase.name}: Given the case after apply, when knip.json is read, then its ignore equals [".agents/**"]`, async () => {
+  test(`vp create ${flowCase.name}: Given the case after apply, when knip.json is read, then its ignore equals [".agents/**", ".calavera/**"]`, async () => {
     await afterApply(flowCase, async ({ project }) => {
       const knip = JSON.parse(await readFile(join(project, "knip.json"), "utf8"));
-      assert.deepEqual(knip.ignore, [".agents/**"]);
+      assert.deepEqual(knip.ignore, [".agents/**", ".calavera/**"]);
     });
   });
 
