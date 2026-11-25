@@ -6502,10 +6502,14 @@ export function unknownIntegrationWarnings(recipe, detection, configPath) {
 }
 
 /**
- * @param {CliOptions} options
+ * Checks the project in the current directory against the recipe at `options.config`. It writes
+ * nothing, prompts for nothing, and spawns nothing, so tests call it in-process (#1148); the CLI
+ * prints the result and sets the exit code.
+ *
+ * @param {Pick<CliOptions, "config" | "packageManager">} options
  * @returns {Promise<DoctorResult>}
  */
-async function doctor(options) {
+export async function doctor(options) {
   const hasConfig = await fileExists(options.config);
   const hasPackageJSON = await fileExists("package.json");
   /** @type {{ level: "error" | "warning", message: string }[]} */
