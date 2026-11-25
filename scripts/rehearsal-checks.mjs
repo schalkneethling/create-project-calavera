@@ -942,12 +942,52 @@ function flowInit(context) {
   });
 }
 
+/**
+ * What the flow recipe adds to the default profile, so the listing checks also cover output that
+ * names them (#1146). Knip adds a `knip` script, which shares its name with the package, and the
+ * protected-branch guard writes `.claude/settings.json` and wires `.vite-hooks` (#1128).
+ * `skill-release-with-confidence` is an artifact installed from the release candidate.
+ */
+export const FLOW_TOOLS = ["knip"];
+export const FLOW_AI_ARTIFACTS = ["skill-release-with-confidence", "skill-protected-branch-guard"];
+
+/**
+ * The branch the flow commit is made on. The guard protects `main`, the branch `vp create` makes,
+ * and refuses a commit there, so the rehearsal does what the apply summary tells a person to do:
+ * create a feature branch and commit there.
+ */
+export const FLOW_BRANCH = "apply-calavera";
+
+/**
+ * What a recipe is missing of the tools and artifacts the flow asked init for. A selection that
+ * init drops would leave the listing checks passing without covering it.
+ *
+ * @param {string} text The recipe init wrote.
+ * @returns {string[]}
+ */
+export function missingFlowSelections(text) {
+  /** @type {{ integrations?: unknown, ai?: unknown }} */
+  let recipe;
+  try {
+    recipe = JSON.parse(text);
+  } catch {
+    return ["calavera.config.json is not JSON"];
+  }
+  const integrations = Array.isArray(recipe?.integrations) ? recipe.integrations : [];
+  const artifacts = Array.isArray(recipe?.ai) ? recipe.ai : [];
+  return [
+    ...FLOW_TOOLS.filter((id) => !integrations.includes(id)).map((id) => `integration ${id}`),
+    ...FLOW_AI_ARTIFACTS.filter(
+      (id) => !artifacts.some((/** @type {{ id?: unknown }} */ entry) => entry?.id === id),
+    ).map((id) => `AI artifact ${id}`),
+  ];
+}
+
 /** The recipe the apply checks use: written by `init --yes`, which composes the default recipe. @param {RehearsalContext} context */
 function flowRecipe(context) {
   return shared(context, "flow-recipe", async () => {
     const { project } = await flowInit(context);
-    // --profile is needed: without it, init asks for one even with --yes. One artifact is added so
-    // the apply checks also cover an artifact installed from the release candidate.
+    // --profile is needed: without it, init asks for one even with --yes.
     const result = await context.runOrThrow(
       context.calavera.bin,
       [
@@ -957,8 +997,8 @@ function flowRecipe(context) {
         "default",
         "--package-manager",
         "pnpm",
-        "--ai-artifact",
-        "skill-release-with-confidence",
+        ...FLOW_TOOLS.flatMap((id) => ["--tool", id]),
+        ...FLOW_AI_ARTIFACTS.flatMap((id) => ["--ai-artifact", id]),
       ],
       { cwd: project },
     );
@@ -969,6 +1009,14 @@ function flowRecipe(context) {
       throw new CheckFailure({
         expected: "init to write calavera.config.json",
         actual: `no calavera.config.json\n${tail(result.output)}`,
+        command: result.display,
+      });
+    }
+    const missing = missingFlowSelections(written);
+    if (missing.length > 0) {
+      throw new CheckFailure({
+        expected: `calavera.config.json to select ${[...FLOW_TOOLS, ...FLOW_AI_ARTIFACTS].join(", ")}`,
+        actual: `missing: ${missing.join(", ")}`,
         command: result.display,
       });
     }
@@ -1011,6 +1059,7 @@ function flowApply(context) {
 function flowCommit(context) {
   return shared(context, "flow-commit", async () => {
     const { project } = await flowApply(context);
+    await context.runOrThrow("git", ["switch", "--create", FLOW_BRANCH], { cwd: project });
     await context.runOrThrow("git", ["add", "--all"], { cwd: project });
     // No --no-verify: the commit goes through the Vite+ pre-commit hook. Git's trace2 event log
     // records every hook it runs, which proves the hook ran rather than only that one is configured.

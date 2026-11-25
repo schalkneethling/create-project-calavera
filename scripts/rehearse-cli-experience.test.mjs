@@ -17,7 +17,7 @@ import {
   symlink,
   writeFile,
 } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { devNull, tmpdir } from "node:os";
 import { join } from "node:path";
 import { after, test } from "node:test";
 import { fileURLToPath } from "node:url";
@@ -31,6 +31,7 @@ import {
   isolationViolations,
   parseOptions,
   prerequisiteProblems,
+  runCommand,
   runDirectories,
   runRehearsal,
   watchDeveloperState,
@@ -39,9 +40,13 @@ import {
   cacheIgnoreProblem,
   cliExperienceChecks,
   countMentions,
+  FLOW_AI_ARTIFACTS,
+  FLOW_BRANCH,
+  FLOW_TOOLS,
   isCommandLine,
   isHeading,
   listingViolations,
+  missingFlowSelections,
   namedItems,
   nextStepCommands,
   pastedCommandWorked,
@@ -49,6 +54,7 @@ import {
   summaryExplainsCache,
   tapCounts,
 } from "./rehearsal-checks.mjs";
+import { isolatedGitEnv } from "../packages/cli/scripts/git-isolation.mjs";
 import { CheckFailure } from "./rehearsal-failure.mjs";
 import {
   localPackument,
@@ -1402,6 +1408,188 @@ test("apply-summary-cache reports a git check-ignore error as an error, with its
     assert.match(error.actual, /exit code 128\nfatal: not a git repository/);
     return true;
   });
+});
+
+// ---------------------------------------------------------------------------------------------
+// The flow recipe includes Knip and the protected-branch guard, and the flow commits on a feature
+// branch, because the guard refuses a commit on main (#1146).
+
+/**
+ * The apply --dry-run check over a stubbed init that writes `recipe` (nothing when undefined), and
+ * whose apply --dry-run fails, so a run that gets past the recipe stops at a known place.
+ *
+ * @param {Record<string, unknown> | undefined} recipe
+ */
+async function flowRecipeFixture(recipe) {
+  const root = await mkdtemp(join(scratch, "flow-recipe-"));
+  /** @type {Array<{ args: string[], cwd?: string }>} */
+  const inits = [];
+  /** @type {string[][]} */
+  const applies = [];
+  const context = {
+    shared: new Map([["flow-init", Promise.resolve({ project: root })]]),
+    calavera: { bin: "create-project-calavera" },
+    runOrThrow: async (
+      /** @type {string} */ command,
+      /** @type {string[]} */ args,
+      /** @type {{ cwd?: string }} */ options = {},
+    ) => {
+      inits.push({ args, cwd: options.cwd });
+      if (recipe) await writeFile(join(root, "calavera.config.json"), JSON.stringify(recipe));
+      return { exitCode: 0, output: "init ran", display: `${command} ${args.join(" ")}` };
+    },
+    run: async (/** @type {string} */ command, /** @type {string[]} */ args) => {
+      applies.push(args);
+      const display = `${command} ${args.join(" ")}`;
+      return {
+        exitCode: 1,
+        signal: null,
+        timedOut: false,
+        stdout: "",
+        stderr: "",
+        output: "",
+        display,
+      };
+    },
+  };
+  const check = cliExperienceChecks.find(({ id }) => id === "apply-dry-run-output");
+  assert.ok(check);
+  return { root, inits, applies, run: () => check.run(context) };
+}
+
+test("the flow recipe asks init for Knip and the guard, and stops when the recipe drops one (#1146)", async () => {
+  const dropped = await flowRecipeFixture({ ai: [{ id: "skill-release-with-confidence" }] });
+  await assertCheckFails(
+    dropped.run(),
+    /^calavera\.config\.json to select knip, skill-release-with-confidence, skill-protected-branch-guard$/,
+    /^missing: integration knip, AI artifact skill-protected-branch-guard$/,
+  );
+  assert.deepEqual(dropped.inits, [
+    {
+      args: [
+        "init",
+        "--yes",
+        "--profile",
+        "default",
+        "--package-manager",
+        "pnpm",
+        "--tool",
+        "knip",
+        "--ai-artifact",
+        "skill-release-with-confidence",
+        "--ai-artifact",
+        "skill-protected-branch-guard",
+      ],
+      cwd: dropped.root,
+    },
+  ]);
+  // Nothing past the recipe ran, so a dropped selection cannot reach the listing checks.
+  assert.deepEqual(dropped.applies, []);
+
+  const unwritten = await flowRecipeFixture(undefined);
+  await assertCheckFails(
+    unwritten.run(),
+    /^init to write calavera\.config\.json$/,
+    /^no calavera\.config\.json\ninit ran/,
+  );
+
+  // With every selection recorded, the flow goes on to apply --dry-run.
+  const complete = await flowRecipeFixture({
+    integrations: ["knip"],
+    ai: [{ id: "skill-release-with-confidence" }, { id: "skill-protected-branch-guard" }],
+  });
+  await assertCheckFails(complete.run(), /^exit code 0$/, /exit code 1/);
+  assert.deepEqual(complete.applies[0], ["apply", "--dry-run", "--json"]);
+});
+
+test("a recipe misses a flow selection that is absent, misplaced, or unreadable (#1146)", () => {
+  const everyFlowSelection = [
+    "integration knip",
+    "AI artifact skill-release-with-confidence",
+    "AI artifact skill-protected-branch-guard",
+  ];
+  const complete = JSON.stringify({
+    integrations: ["knip"],
+    ai: [
+      { id: "skill-release-with-confidence" },
+      { id: "skill-protected-branch-guard", inputs: { protectedBranch: "main" } },
+    ],
+  });
+  assert.deepEqual(missingFlowSelections(complete), []);
+  assert.deepEqual(missingFlowSelections(JSON.stringify({ ai: [] })), everyFlowSelection);
+  // An artifact ID in the integrations list, or a tool ID among the artifacts, is not a selection.
+  const swapped = JSON.stringify({
+    integrations: ["skill-release-with-confidence", "skill-protected-branch-guard"],
+    ai: [{ id: "knip" }],
+  });
+  assert.deepEqual(missingFlowSelections(swapped), everyFlowSelection);
+  assert.deepEqual(missingFlowSelections("{"), ["calavera.config.json is not JSON"]);
+  assert.deepEqual(missingFlowSelections("null"), everyFlowSelection);
+  // A recipe whose lists are not lists, or hold a null entry, selects nothing.
+  assert.deepEqual(
+    missingFlowSelections(JSON.stringify({ integrations: "knip", ai: [null] })),
+    everyFlowSelection,
+  );
+});
+
+test("the flow commits on a feature branch, so the guard's pre-commit hook lets it through (#1146)", async () => {
+  const root = await mkdtemp(join(scratch, "flow-commit-"));
+  const project = join(root, "app");
+  for (const dir of ["projects", "tmp", "hooks", "app"]) await mkdir(join(root, dir));
+  const env = isolatedGitEnv(devNull, {
+    "init.defaultBranch": "main",
+    "user.name": "Calavera Rehearsal",
+    "user.email": "rehearsal@example.invalid",
+    "commit.gpgSign": "false",
+  });
+  const git = (/** @type {string[]} */ args) => runCommand("git", args, { cwd: project, env });
+  // The project as vp create leaves it: one commit on main, made before the guard is wired.
+  assert.equal((await git(["init", "--quiet"])).exitCode, 0);
+  await writeFile(join(project, "package.json"), "{}\n");
+  assert.equal((await git(["add", "--all"])).exitCode, 0);
+  assert.equal((await git(["commit", "--quiet", "--message", "init"])).exitCode, 0);
+  // The guard's own script, protecting main as init records it, run as the pre-commit hook.
+  const guard = fileURLToPath(
+    new URL(
+      "../packages/artifacts/skill-protected-branch-guard/payload/protected-branch-guard/scripts/guard.mjs",
+      import.meta.url,
+    ),
+  );
+  const hook = join(root, "hooks", "pre-commit");
+  await writeFile(hook, `#!/bin/sh\nexec "${process.execPath}" "${guard}" commit main\n`);
+  await chmod(hook, 0o755);
+  assert.equal((await git(["config", "core.hooksPath", join(root, "hooks")])).exitCode, 0);
+  await writeFile(join(project, "calavera.config.json"), "{}\n");
+  // The guard refuses a commit on main, which is where the flow project is when apply finishes.
+  const onMain = await git(["commit", "--allow-empty", "--message", "refused"]);
+  assert.notEqual(onMain.exitCode, 0, onMain.output);
+
+  const context = {
+    dirs: { projects: join(root, "projects"), tmp: join(root, "tmp") },
+    env,
+    shared: new Map([["flow-apply", Promise.resolve({ project, planned: [], stateHash: "" })]]),
+    calavera: { bin: "create-project-calavera" },
+    run: (
+      /** @type {string} */ command,
+      /** @type {string[]} */ args,
+      /** @type {{ cwd?: string, env?: NodeJS.ProcessEnv }} */ options = {},
+    ) => runCommand(command, args, { cwd: options.cwd ?? root, env: options.env ?? env }),
+    runOrThrow: async (
+      /** @type {string} */ command,
+      /** @type {string[]} */ args,
+      /** @type {{ cwd?: string }} */ options = {},
+    ) => {
+      const result = await runCommand(command, args, { cwd: options.cwd ?? root, env });
+      assert.equal(result.exitCode, 0, `${result.display}\n${result.output}`);
+      return result;
+    },
+  };
+  const check = cliExperienceChecks.find(({ id }) => id === "hook-commit-clean");
+  assert.ok(check);
+  await check.run(context);
+  assert.equal((await git(["symbolic-ref", "--short", "HEAD"])).stdout.trim(), FLOW_BRANCH);
+  assert.equal((await git(["log", "-1", "--format=%s"])).stdout.trim(), "Apply Calavera");
+  assert.equal((await git(["show", "HEAD:calavera.config.json"])).exitCode, 0);
 });
 
 // ---------------------------------------------------------------------------------------------
