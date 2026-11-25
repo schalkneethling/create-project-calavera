@@ -3192,8 +3192,8 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
   // stops here, with nothing written, even when no other file needs the formatter.
   await loadFormatter();
   // ADR-0016: the integrations' .gitignore blocks, the block that keeps the artifact cache out
-  // of Git (#841), and the removal of the `ejected` block are planned before anything is written, so an edited block stops the dry run
-  // and apply alike. The person's lines are never rewritten.
+  // of Git (#841), and the removal of the `ejected` block are planned before anything is
+  // written, so an edited block stops the dry run and apply alike. The person's lines are never rewritten.
   const gitignorePlan = planGitignoreBlocks({
     contents: (await fileExists(GITIGNORE_PATH))
       ? await readFile(GITIGNORE_PATH, "utf8")
@@ -6407,7 +6407,7 @@ export async function ejectProject(options, runtime = {}) {
         return answer === true && !isCancel(answer);
       });
     const approved = await ask(
-      `Remove the ${pluralizeCount(plan.items.length, "item")} listed above, including any marked edited${plan.ejectedBlock === undefined ? "" : `, and add the ejected block to ${GITIGNORE_PATH}`}?`,
+      `Remove the ${pluralizeCount(plan.items.length, "item")} listed above, including any marked edited${plan.ejectedBlock === undefined ? "" : EJECT_ADDS_BLOCK.replace(" and then", ", and")}?`,
     );
     if (!approved) {
       return result(
@@ -6469,14 +6469,16 @@ export async function ejectProject(options, runtime = {}) {
 
 /**
  * Why the `ejected` block could not be written, in words. A file system error is named by its
- * code, because its message repeats the path the block's entry already names; any other error,
- * such as a `.gitignore` that changed since the list, keeps its own words.
+ * system call and code, because its message repeats the path the block's entry already names;
+ * any other error, such as a `.gitignore` that changed since the list, keeps its own words.
  *
  * @param {Error} error
  */
 function ejectedBlockError(error) {
-  const { code } = /** @type {NodeJS.ErrnoException} */ (error);
-  return typeof code === "string" ? `the write failed (${code}).` : error.message;
+  const { code, syscall } = /** @type {NodeJS.ErrnoException} */ (error);
+  return typeof code === "string"
+    ? `the file system refused it (${syscall ?? "unknown call"}, ${code}).`
+    : error.message;
 }
 
 /**

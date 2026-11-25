@@ -738,7 +738,7 @@ or the cache block in `.gitignore`. Run
 
 Once it has removed everything else, `eject` adds a block named `ejected`, with
 one comment line, at the end of `.gitignore`, and creates the file if the
-project has none. The block ignores no path. It tells `doctor` and
+project has none. The block ignores no path. It tells `artifacts status` and
 `artifacts doctor` that the project left Calavera on purpose. `eject` adds it
 only when nothing is left, so a `--yes` run that leaves items for an approval
 adds no block. `apply` removes the block, because a project it writes into is

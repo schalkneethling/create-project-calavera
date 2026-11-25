@@ -714,7 +714,7 @@ test("the headline counts what a run removes and what --yes leaves", async () =>
     );
     const { asked, result: cancelled } = await ejectInteractively([], false);
     assert.deepEqual(asked, [
-      `Remove the ${count} items listed above, including any marked edited, and add the ejected block to .gitignore?`,
+      `Remove the ${count} items listed above, including any marked edited, and add the block that marks the project as ejected?`,
     ]);
     assert.equal(cancelled.message, "eject cancelled. Nothing was changed.");
 
@@ -983,7 +983,7 @@ test("after an approved run, the summary lists each removed item without its tex
   });
 });
 
-test("after --init and apply, an approved eject leaves no footprint and changes nothing else", async () => {
+test("after --init and apply, an approved eject leaves no footprint and changes nothing but the ejected block", async () => {
   await inProject(
     async (root) => {
       for (const args of [
@@ -1013,8 +1013,8 @@ test("after --init and apply, an approved eject leaves no footprint and changes 
 
       const { result } = await ejectInteractively([], true);
       assert.equal(result.status, "ejected");
-      // ADR-0017, Amendment 5: the one change outside the footprint is the ejected block, added at
-      // the end of .gitignore after the person's lines and the integrations' blocks.
+      // ADR-0017, Amendment 5: the one change outside the footprint is the ejected block, in the
+      // .gitignore eject creates for it.
       const { ".gitignore": _gitignore, ...rest } = await outside();
       const { ".gitignore": _before, ...restBefore } = before;
       assert.deepEqual(rest, restBefore);

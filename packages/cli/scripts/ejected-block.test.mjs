@@ -159,6 +159,14 @@ test("the planner removes the fixed block before it appends a declared block", (
   );
 });
 
+test("removing a fixed block that is the whole file leaves an empty .gitignore, which apply keeps", () => {
+  // eject creates .gitignore for the block when the project has none. apply keeps the file it
+  // empties, as it keeps any file it removes a block from, because no record says who created it.
+  const plan = planGitignoreBlocks({ contents: BLOCK, declared: [], records: [], remove: REMOVE });
+  assert.equal(plan.contents, "");
+  assert.equal(plan.type, "update");
+});
+
 test("without a fixed block, or without a .gitignore, the planner changes nothing for it", () => {
   for (const contents of [undefined, "node_modules/\n"]) {
     const plan = planGitignoreBlocks({ contents, declared: [], records: [], remove: REMOVE });
@@ -622,7 +630,7 @@ test("an approved run writes the block, the project reads ejected, and a second 
     await agentBootstrap({ mcpHarness: "skip", packageManager: "npm" });
     await write("calavera.config.json", '{ "profile": "minimal" }\n');
     const { result, asked } = await ejectInteractively([], true);
-    assert.match(asked[0] ?? "", /and add the ejected block to \.gitignore\?$/);
+    assert.match(asked[0] ?? "", /, and add the block that marks the project as ejected\?$/);
     assert.equal(result.status, "ejected");
     assert.equal(result.ejectedBlock?.outcome, "written");
     assert.match(result.message, /and added the block that marks the project as ejected\.$/);
@@ -688,7 +696,10 @@ test("a block that cannot be written fails the run, says why, and keeps the stat
       const result = await eject(["--yes"]);
       assert.equal(result.status, "failed");
       assert.equal(result.ejectedBlock?.outcome, "failed");
-      assert.match(result.ejectedBlock?.error ?? "", /^the write failed \((?:EACCES|EPERM)\)\.$/);
+      assert.match(
+        result.ejectedBlock?.error ?? "",
+        /^the file system refused it \(open, (?:EACCES|EPERM)\)\.$/,
+      );
       const state = result.items.find(({ kind }) => kind === "state");
       assert.equal(state?.outcome, "skipped");
       assert.match(
@@ -698,7 +709,7 @@ test("a block that cannot be written fails the run, says why, and keeps the stat
       const output = human(result);
       assert.match(
         output,
-        /^Failed:\n {2}\.gitignore: eject could not add the ejected block: the write failed \((?:EACCES|EPERM)\)\.\n {4}Fix the cause, then run eject again\.$/m,
+        /^Failed:\n {2}\.gitignore: eject could not add the ejected block: the file system refused it \(open, (?:EACCES|EPERM)\)\.\n {4}Fix the cause, then run eject again\.$/m,
       );
       assert.deepEqual(listingViolations(output, namedItems(result)), []);
       assert.equal(await phase(), "incomplete");
