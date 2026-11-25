@@ -5,7 +5,7 @@
 // lines as one marked block per integration and never touches a line outside a block. The
 // `.htmlvalidateignore` lines go into the managed file, which apply already writes as a whole.
 
-import { findBlock, indent, markers } from "./utils/marked-block.js";
+import { UNRECORDED_BLOCK, findBlock, indent, markers } from "./utils/marked-block.js";
 
 export const GITIGNORE_PATH = ".gitignore";
 export const HTML_VALIDATE_IGNORE_PATH = ".htmlvalidateignore";
@@ -198,7 +198,7 @@ export function planGitignoreBlocks({ contents, declared, records, command = "ap
       });
     } else {
       conflicts.push(
-        `${GITIGNORE_PATH}: the Calavera block for ${integration} ${recorded === undefined ? "is already in the file, and Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\n${recorded === undefined ? "" : `Calavera wrote:\n${indent(recorded.lines.join("\n"))}\n`}The file now holds:\n${indent(found.current)}\nCalavera would write:\n${indent(wanted)}\nTo let Calavera write it, remove the block, both markers included, and run ${command} again.`,
+        `${GITIGNORE_PATH}: the Calavera block for ${integration} ${recorded === undefined ? UNRECORDED_BLOCK : "was edited since Calavera wrote it"}.\n${recorded === undefined ? "" : `Calavera wrote:\n${indent(recorded.lines.join("\n"))}\n`}The file now holds:\n${indent(found.current)}\nCalavera would write:\n${indent(wanted)}\nTo let Calavera write it, remove the block, both markers included, and run ${command} again.`,
       );
       continue;
     }

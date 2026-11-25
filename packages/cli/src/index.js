@@ -38,7 +38,6 @@ import { parse as parseYAML } from "yaml";
 import packageJson from "../package.json" with { type: "json" };
 import {
   ARTIFACT_ACTIONS,
-  ARTIFACT_CACHE_BLOCK,
   TRANSACTION_PATH as EJECT_TRANSACTION_PATH,
   artifactCacheIgnoreLines,
   artifactCachePointers,
@@ -50,6 +49,7 @@ import { integrationCatalog, removedToolchainIntegrations } from "./catalog.js";
 import {
   applySummaryLines,
   formatArtifactRegistry,
+  ignoreChangeLine,
   VP_RUNNER_NOTE_PREFIX,
 } from "./apply-summary.js";
 import { cleanHeadline, cleanSummaryLines } from "./clean-summary.js";
@@ -5205,35 +5205,6 @@ function exitIfCancel(value) {
 }
 
 /**
- * The line a dry run shows for one integration's part of an ignore file, so the approval covers
- * the exact lines.
- *
- * @param {IgnoreChange} change
- * @returns {string}
- */
-function formatIgnoreChange({ path, integration, type, lines, previousLines, removedLines }) {
-  const quoted = (/** @type {string[]} */ values) => values.map(quoteScriptValue).join(", ");
-  if (removedLines !== undefined) {
-    if (integration === undefined) {
-      return `Would remove from ${path}, because no selected integration declares them: ${quoted(removedLines)}`;
-    }
-    const because =
-      integration === ARTIFACT_CACHE_BLOCK
-        ? "the recipe selects no artifacts and .calavera/cache/ does not exist"
-        : `${integration} no longer adds lines to it`;
-    return `Would remove the ${integration} block from ${path}, because ${because}: ${quoted(removedLines)}`;
-  }
-  const what = path === GITIGNORE_PATH ? `the ${integration} block` : `the ${integration} lines`;
-  if (type === "unchanged") {
-    return `${path} already holds ${what}: ${quoted(lines ?? [])}`;
-  }
-  if (previousLines !== undefined) {
-    return `Would replace ${what} in ${path}: ${quoted(previousLines)} with ${quoted(lines ?? [])}`;
-  }
-  return `Would add ${what} to ${path}: ${quoted(lines ?? [])}`;
-}
-
-/**
  * @param {{ json?: boolean, assumeYes?: boolean }} options
  * @returns {boolean}
  */
@@ -5513,6 +5484,11 @@ async function promptForAiArtifacts(options) {
 }
 
 /**
+ * The question `init --apply` asks after its dry run, and names when it refuses to ask it.
+ */
+const APPLY_NOW_QUESTION = "Apply these Calavera-managed changes now?";
+
+/**
  * @param {CliOptions} options
  * @returns {Promise<InitResult>}
  */
@@ -5559,7 +5535,7 @@ export async function initRecipe(options) {
   if (options.apply && !options.assumeYes) {
     assertInitCanAsk(
       options,
-      "Apply these Calavera-managed changes now?",
+      APPLY_NOW_QUESTION,
       "Pass --yes to apply after the dry run without asking, or remove --apply to only write the recipe.",
     );
   }
@@ -5634,7 +5610,7 @@ export async function initRecipe(options) {
     const shouldApply =
       options.assumeYes ||
       (await (options.initPrompts ?? terminalInitPrompts).confirm({
-        message: "Apply these Calavera-managed changes now?",
+        message: APPLY_NOW_QUESTION,
         initialValue: false,
       }));
 
@@ -6263,6 +6239,13 @@ async function clean(options) {
 }
 
 /**
+ * The start of an eject summary when eject first finished an artifact transaction that an earlier
+ * command left pending, so the person knows what that change was.
+ */
+const EJECT_RECOVERED_PREFIX =
+  "eject recovered the pending artifact transaction first, as every artifacts command does. ";
+
+/**
  * `eject` (#678, ADR-0017): removes Calavera's footprint from the current directory and keeps the
  * tooling it installed. The planner and the removal are in `eject.js`; this function chooses how
  * the person approves the list. A dry run lists and changes nothing. An interactive run shows the
@@ -6352,7 +6335,7 @@ export async function ejectProject(options, runtime = {}) {
   if (plan.nothingToDo) {
     return result(
       "nothing-to-do",
-      `${recovered ? "eject recovered the pending artifact transaction first, as every artifacts command does. " : ""}eject found no Calavera footprint to remove here.`,
+      `${recovered ? EJECT_RECOVERED_PREFIX : ""}eject found no Calavera footprint to remove here.`,
       [],
       found,
     );
@@ -6406,7 +6389,7 @@ export async function ejectProject(options, runtime = {}) {
   for (const item of leave) done.set(item, describe(item, "left"));
   const items = plan.items.flatMap((item) => done.get(item) ?? []);
   const notRemoved = outcome.failed.length + outcome.skipped.length;
-  const removed = `${recovered ? "eject recovered the pending artifact transaction first, as every artifacts command does. " : ""}Removed ${pluralizeCount(outcome.removed.length, "item")}${yesSummary(leave, true)}.`;
+  const removed = `${recovered ? EJECT_RECOVERED_PREFIX : ""}Removed ${pluralizeCount(outcome.removed.length, "item")}${yesSummary(leave, true)}.`;
   const approveLeft =
     leave.length > 0 ? " Run eject in a terminal to review and approve what is left." : "";
   if (notRemoved > 0) {
@@ -6576,9 +6559,10 @@ const KEEP_YOUR_VERSION =
 
 /**
  * For each reason clean keeps a stale item, the words for the summary: why, for one item and for
- * several, then what to do. Each kept item's own `reason` names the exact file, link, or hash.
+ * several, then what to do. `several` is left out where the words for one item fit several too.
+ * Each kept item's own `reason` names the exact file, link, or hash.
  *
- * @type {Record<CleanSkipReason, { one: string, several: string, action: string }>}
+ * @type {Record<CleanSkipReason, { one: string, several?: string, action: string }>}
  */
 const KEPT_SUMMARY = {
   "local-edits": {
@@ -6600,7 +6584,6 @@ const KEPT_SUMMARY = {
   },
   "unfollowable-link": {
     one: "a hook is a symbolic link that Calavera cannot follow",
-    several: "a hook is a symbolic link that Calavera cannot follow",
     action: "Repair or remove the links each item's reason names, then run clean again.",
   },
   unreadable: {
@@ -6623,7 +6606,7 @@ function keptSummary(keptItems) {
         .filter(({ skipReasons }) => skipReasons.includes(/** @type {CleanSkipReason} */ (code)))
         .map(({ path }) => path);
       if (paths.length === 0) return "";
-      return `Kept ${paths.join(", ")}, because ${paths.length === 1 ? one : several}. ${action}`;
+      return `Kept ${paths.join(", ")}, because ${paths.length === 1 ? one : (several ?? one)}. ${action}`;
     })
     .filter(isNotEmptyString)
     .join(" ");
@@ -6969,7 +6952,10 @@ function printResult(result, asJSON = false, { dryRun: commandDryRun = false, no
 function printArtifactCacheBlock(result) {
   if (result.dryRun) {
     for (const change of /** @type {IgnoreChange[]} */ (result.ignoreChanges ?? [])) {
-      if (change.type !== "unchanged") logger.info(formatIgnoreChange(change));
+      // No file line above it, so the line names the file (#1135).
+      if (change.type !== "unchanged") {
+        logger.info(ignoreChangeLine(change, true, { namePath: true }));
+      }
     }
   }
   for (const pointer of /** @type {string[]} */ (result.pointers ?? [])) {

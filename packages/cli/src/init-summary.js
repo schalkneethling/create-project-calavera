@@ -4,7 +4,7 @@
 // before it and the closing lines after it leave out what that summary names: the package
 // manager, each integration with its packages, each artifact, and the notes. The `--json` result
 // keeps its shape.
-import { applySummaryBody } from "./apply-summary.js";
+import { APPLY_DRY_RUN_HEADLINE, applySummaryBody } from "./apply-summary.js";
 import { ITEM, info, pushGroup, warn } from "./summary-lines.js";
 import { temporaryFolderLeftoverLine } from "./utils/cleanup.js";
 import { pluralizeCount, style } from "./utils/text.js";
@@ -99,7 +99,7 @@ export function initApplyDryRunLines(applyDryRun, { config, dryRun, noInstall })
   return [
     info(
       dryRun
-        ? "Calavera apply dry run complete. No files were changed."
+        ? APPLY_DRY_RUN_HEADLINE
         : `Calavera apply dry run complete. Apply has not changed any files yet; init wrote only ${config}.`,
     ),
     ...applySummaryBody(applyDryRun, { noInstall }),

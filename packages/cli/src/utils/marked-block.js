@@ -6,6 +6,13 @@
 // same in each. Apply never touches a line outside a block.
 
 /**
+ * Why apply refuses a block it finds in the file but has no record of writing, completing "the
+ * Calavera block for <owner> …", so a person sees the same words for a .gitignore block and a
+ * .vite-hooks block.
+ */
+export const UNRECORDED_BLOCK = "is already in the file, and Calavera has no record of writing it";
+
+/**
  * @param {string} owner The artifact or integration id the block belongs to.
  */
 export function markers(owner) {

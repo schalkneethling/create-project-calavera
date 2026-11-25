@@ -4,7 +4,7 @@
 // never touches a line outside it. Vite+ owns the dispatcher under .vite-hooks/_ and runs each
 // script with `sh -e`, so a block placed first stops the commit before `vp staged` runs.
 
-import { findBlock, indent, markers } from "../utils/marked-block.js";
+import { UNRECORDED_BLOCK, findBlock, indent, markers } from "../utils/marked-block.js";
 
 // Placeholder names follow the input names the artifact manifest schema allows.
 const PLACEHOLDER = /\{\{([a-z][A-Za-z0-9]*)\}\}/g;
@@ -146,7 +146,7 @@ export function planViteHookBlock({ path, contents, artifactId, line, recorded }
     type: "conflict",
     block: line,
     previousBlock: current,
-    reason: `${path}: the Calavera block for ${artifactId} ${recorded === undefined ? "is already in the file, and Calavera has no record of writing it" : "was edited since Calavera wrote it"}.\n${recorded === undefined ? "" : `Calavera wrote:\n${indent(recorded)}\n`}The file now holds:\n${indent(current)}\nCalavera would write:\n${indent(line)}\nTo let Calavera write it, remove the block, both markers included, and run apply again.`,
+    reason: `${path}: the Calavera block for ${artifactId} ${recorded === undefined ? UNRECORDED_BLOCK : "was edited since Calavera wrote it"}.\n${recorded === undefined ? "" : `Calavera wrote:\n${indent(recorded)}\n`}The file now holds:\n${indent(current)}\nCalavera would write:\n${indent(line)}\nTo let Calavera write it, remove the block, both markers included, and run apply again.`,
   };
 }
 
