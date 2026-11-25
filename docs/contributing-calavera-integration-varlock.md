@@ -346,21 +346,52 @@ A useful dry-run result for a fresh project would therefore include changes like
 }
 ```
 
-The corresponding human output should follow the current dry-run printer:
+For the same project, `apply --dry-run` without `--json` prints the grouped
+summary from
+[`packages/cli/src/apply-summary.js`](../packages/cli/src/apply-summary.js). It
+names each file, script, and integration once, under a heading:
 
 ```text
-Would update package.json
-Would add script lint:styles: "stylelint \"**/*.{css,scss}\" --allow-empty-input"
-Would add script lint:styles:fix: "stylelint \"**/*.{css,scss}\" --allow-empty-input --fix"
-Would add script knip: "knip"
-Would add script env:load: "varlock load"
-Would add script quality: "pnpm lint:styles && pnpm knip && pnpm env:load"
-Would write and own .editorconfig
-Would write and own .stylelintrc.json
-Would write and own knip.json
-Would scaffold .env.schema
-Would update .gitignore
+Calavera apply dry run complete. No files were changed.
+
+Project:
+  Package manager: pnpm
+  Vite+ detection: unmanaged. No vite-plus dependency was found in this manifest or any ancestor manifest.
+  Calavera provides no JavaScript or TypeScript toolchain; run vp create or vp migrate to adopt Vite+.
+
+Integrations:
+  editorconfig
+  knip
+  varlock
+  stylelint
+  Install command: pnpm add --save-dev knip varlock stylelint
+
+Files:
+  Would update package.json
+  Would write and own .editorconfig
+  Would write and own .stylelintrc.json
+  Would write and own knip.json
+  Would scaffold .env.schema
+  Would update .gitignore
+
+Scripts:
+  Would add script lint:styles: "stylelint \"**/*.{css,scss}\" --allow-empty-input"
+  Would add script lint:styles:fix: "stylelint \"**/*.{css,scss}\" --allow-empty-input --fix"
+  Would add script knip: "knip"
+  Would add script env:load: "varlock load"
+  Would add script quality: "pnpm lint:styles && pnpm knip && pnpm env:load"
+
+Notes:
+  Review the Varlock schema and the ignore file listed under Files, including its existing rules. Varlock recommends committing non-local .env.* files while keeping .env.local and .env.*.local private.
 ```
+
+This example comes from a pnpm project that does not use Vite+, which is why the
+Project group reports it as unmanaged and the `quality` script has no Vite+
+steps. In a Vite+-managed project with a single package, the Project group
+reports "Vite+ detection: managed", the install command is
+`vp add -D knip varlock stylelint`, and `quality` starts with
+`vp check && vp test --passWithNoTests`. A workspace root gets a different
+test step, and a pnpm workspace root also gets `-w` on the install command.
 
 ## Add Doctor Coverage
 
