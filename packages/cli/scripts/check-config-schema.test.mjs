@@ -2802,6 +2802,85 @@ for (const previousKnipContents of earlierKnipContents) {
       await rm(projectDirectory, { force: true, recursive: true });
     }
   });
+
+  // Releases 5.0.1 to 6.0.0 recorded the hash of the unformatted text, and a person's `vp fmt` then
+  // put the ignore array on one line, so the recorded hash no longer matches the file (#1320).
+  test(`Knip config: a reformatted knip.json an earlier release wrote is updated, and a hand-edited one is refused: ${JSON.stringify(JSON.parse(previousKnipContents).ignore ?? null)}`, async () => {
+    const originalDirectory = process.cwd();
+    const projectDirectory = await mkdtemp(join(tmpdir(), "calavera-knip-reformatted-"));
+    const recipe = buildRecipe("minimal", ["knip"], "npm");
+    const options = { json: true, noInstall: true, assumeYes: true };
+    const earlierValue = JSON.parse(previousKnipContents);
+    // What `vp fmt` makes of the .agents text; the text without ignore is reindented instead.
+    const reformattedContents = earlierValue.ignore
+      ? previousKnipContents.replace('[\n    ".agents/**"\n  ]', '[".agents/**"]')
+      : `${JSON.stringify(earlierValue, null, 4)}\n`;
+    assert.notEqual(reformattedContents, previousKnipContents);
+
+    /** @param {string} contents @param {boolean} recorded */
+    const placeEarlierFile = async (contents, recorded) => {
+      await writeFile("knip.json", contents);
+      const state = JSON.parse(await readFile(".calavera/state.json", "utf8"));
+      state.managedFiles = state.managedFiles.filter(({ path }) => path !== "knip.json");
+      if (recorded) {
+        state.managedFiles.push({ path: "knip.json", hash: textHash(previousKnipContents) });
+      }
+      await writeFile(".calavera/state.json", `${JSON.stringify(state, null, 2)}\n`);
+    };
+
+    try {
+      process.chdir(projectDirectory);
+      await writeFile("package.json", `${JSON.stringify({ scripts: {} }, null, 2)}\n`);
+      await writeFile("calavera.config.json", `${JSON.stringify(recipe, null, 2)}\n`);
+      await applyRecipeObject(recipe, options);
+      const recordedEntry = JSON.parse(
+        await readFile(".calavera/state.json", "utf8"),
+      ).managedFiles.find(({ path }) => path === "knip.json");
+      assert.deepEqual(Object.keys(recordedEntry).sort(), ["hash", "path"]);
+
+      // Given a reformatted earlier file whose recorded hash is of the unformatted text, when a dry
+      // run happens, then it is planned as a write and nothing changes on disk.
+      await placeEarlierFile(reformattedContents, true);
+      /** @returns {Promise<boolean>} */
+      const inspectionReportsConflict = async () =>
+        (await inspectProject(recipe)).findings.some(
+          ({ kind, path }) => kind === "managed-file-conflict" && path === "knip.json",
+        );
+      assert.equal(await inspectionReportsConflict(), false);
+      const dryRun = await applyRecipeObject(recipe, { ...options, dryRun: true });
+      assert.equal(dryRun.changes.find(({ path }) => path === "knip.json").type, "write");
+      assert.equal(await readFile("knip.json", "utf8"), reformattedContents);
+
+      // When apply runs, then it gains both ignore entries.
+      await applyRecipeObject(recipe, options);
+      assert.deepEqual(JSON.parse(await readFile("knip.json", "utf8")).ignore, [
+        ".agents/**",
+        ".calavera/**",
+      ]);
+
+      // Given an earlier file with a hand edit, when apply runs, then it refuses and keeps the file.
+      const handEdited = `${JSON.stringify({ ...earlierValue, ignoreDependencies: ["left-pad"] }, null, 2)}\n`;
+      await placeEarlierFile(handEdited, true);
+      assert.equal(await inspectionReportsConflict(), true);
+      await assert.rejects(
+        () => applyRecipeObject(recipe, options),
+        /Refusing to overwrite existing managed file: knip\.json\. It appears to have local edits/,
+      );
+      assert.equal(await readFile("knip.json", "utf8"), handEdited);
+
+      // Given an earlier value that Calavera never recorded, when apply runs, then it refuses and keeps the file.
+      await placeEarlierFile(reformattedContents, false);
+      assert.equal(await inspectionReportsConflict(), true);
+      await assert.rejects(
+        () => applyRecipeObject(recipe, options),
+        /Refusing to overwrite existing managed file: knip\.json\. It is not recorded/,
+      );
+      assert.equal(await readFile("knip.json", "utf8"), reformattedContents);
+    } finally {
+      process.chdir(originalDirectory);
+      await rm(projectDirectory, { force: true, recursive: true });
+    }
+  });
 }
 
 test("a project from an earlier release gains the worktree ignores in Stylelint and HTML Validate, and local edits are kept", async () => {

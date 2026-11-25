@@ -2225,8 +2225,8 @@ function createReactDoctorConfig() {
 /**
  * Knip reports files nothing imports, so it ignores the folders Calavera installs into: the agent
  * files under `.agents/` (#747) and the extracted artifact packages under `.calavera/packages/`
- * (#1320). An unedited `knip.json` an earlier release wrote matches the hash its state recorded, so
- * apply updates it like any other managed file.
+ * (#1320). An earlier release's `knip.json` is updated when it matches the hash its state recorded,
+ * or, for a file the state records, when its JSON equals one of `EARLIER_KNIP_CONFIGS`.
  */
 function createKnipConfig() {
   return {
@@ -2235,6 +2235,25 @@ function createKnipConfig() {
     ignoreExportsUsedInFile: true,
   };
 }
+
+/**
+ * The `knip.json` values earlier releases wrote, read from their published tarballs. Releases 5.0.1
+ * to 6.0.0 recorded the hash of the text before the project's formatter ran, so after a person's
+ * `vp fmt` only the JSON value still identifies the file as unedited (#1320).
+ */
+const EARLIER_KNIP_CONFIGS = [
+  // 2.3.0 to 5.0.0
+  { $schema: "https://unpkg.com/knip@6/schema.json", ignoreExportsUsedInFile: true },
+  // 5.0.1 to 6.2.1
+  {
+    $schema: "https://unpkg.com/knip@6/schema.json",
+    ignore: [".agents/**"],
+    ignoreExportsUsedInFile: true,
+  },
+];
+
+/** The managed JSON files whose earlier values count as unedited, by project-relative path. */
+const EARLIER_MANAGED_JSON_VALUES = new Map([["knip.json", EARLIER_KNIP_CONFIGS]]);
 
 /**
  * The managed `stryker.config.json` (#734), verified with Stryker 10.1.1 in a `vp create` library
@@ -2395,6 +2414,10 @@ async function assertSafeManagedFileWrite(path, contents, previousState, reownMa
     return;
   }
 
+  if (stateFile && matchesEarlierManagedJson(path, installedContents)) {
+    return;
+  }
+
   if (stateFile && reownManagedFiles.has(normalizeManagedFilePath(path))) {
     return;
   }
@@ -2483,6 +2506,19 @@ function jsonContentsMatch(path, installedContents, targetContents) {
   } catch {
     return false;
   }
+}
+
+/**
+ * Whether a managed JSON file's contents equal a value an earlier release wrote for that path.
+ *
+ * @param {string} path
+ * @param {string} installedContents
+ */
+function matchesEarlierManagedJson(path, installedContents) {
+  const earlierValues = EARLIER_MANAGED_JSON_VALUES.get(normalizeManagedFilePath(path)) ?? [];
+  return earlierValues.some((value) =>
+    jsonContentsMatch(path, installedContents, JSON.stringify(value)),
+  );
 }
 
 /**
@@ -2656,6 +2692,10 @@ async function inspectManagedFilePlan(filePlan, previousState, reownManagedFiles
   }
 
   if (jsonContentsMatch(filePlan.path, installedContents, filePlan.contents)) {
+    return undefined;
+  }
+
+  if (stateFile && matchesEarlierManagedJson(filePlan.path, installedContents)) {
     return undefined;
   }
 
