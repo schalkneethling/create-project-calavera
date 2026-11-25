@@ -391,7 +391,7 @@ steps. In a Vite+-managed project with a single package, the Project group
 reports "Vite+ detection: managed", the install command is
 `vp add -D knip varlock stylelint`, and `quality` starts with
 `vp check && vp test --passWithNoTests`. A workspace root gets a different
-install command and test step.
+test step, and a pnpm workspace root also gets `-w` on the install command.
 
 ## Add Doctor Coverage
 
