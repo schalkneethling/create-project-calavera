@@ -1,5 +1,6 @@
 // @ts-check
 import { CHANGED_CONTENT, PRINTS_NOTHING, writeJSON } from "./json-rewrite.js";
+import { FormatterFailure } from "./formatter-failure.js";
 
 // The JSON and Markdown files Calavera generates pass through the project's formatter before the
 // dry run, so a Vite+ project's `vp check` accepts them as written (#669). Nothing formats them
@@ -65,12 +66,14 @@ export async function formatGeneratedText(path, text, loadFormatter) {
     // #1157: neither error quotes a line, because either one can hold the file's text or
     // whatever vite.config.ts printed.
     if (formattedFirstLine !== firstLine) {
-      throw new Error(
+      throw new FormatterFailure(
+        "printed-output",
         `${formatter.description} returned text for ${path} that does not start with the first line Calavera sent, so something came before the formatted text, such as output that vite.config.ts printed. ${PRINTS_NOTHING}`,
       );
     }
     if (formattedFirstLine.length === formatted.length) {
-      throw new Error(
+      throw new FormatterFailure(
+        "changed-content",
         `${formatter.description} returned text for ${path} that ends after the first line, so it lost the rest of what Calavera sent. ${CHANGED_CONTENT}`,
       );
     }

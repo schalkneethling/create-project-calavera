@@ -17,11 +17,14 @@ import { readBoundedTemplate } from "./utils/fs.js";
 import { formatGeneratedText } from "./utils/generated-text.js";
 import { isPlainObject } from "./utils/guards.js";
 import { textHash } from "./utils/hash.js";
+import { projectFormatterLoader } from "./utils/project-formatter.js";
 import { unique } from "./utils/unique.js";
+import { formatterVitePlusStatus, vitePlusInstallDirectory } from "./vite-plus-detection.js";
 
 /**
  * @typedef {import("./index.js").Integration} Integration
  * @typedef {import("./state.js").ManagedFileState} ManagedFileState
+ * @typedef {import("./vite-plus-detection.js").VitePlusDetection} VitePlusDetection
  */
 
 const HTML_VALIDATE_WRAPPER_TEMPLATE = new URL("./templates/lint-html.mjs", import.meta.url);
@@ -311,4 +314,25 @@ export function managedFileDifference(path, installedContents, plannedContents, 
     return "accepted";
   }
   return stateFile ? "edited" : "unrecorded";
+}
+
+/**
+ * The formatter loader for the managed files apply writes into `directory`, which the phase
+ * function also uses, so the doctors load the formatter whenever apply would (ADR-0020, Decision
+ * 3). Under create-here the formatter follows the parent's verdict, as the install and the quality
+ * script do (#961), so the parent's vp check accepts the files apply writes. When apply also
+ * writes Calavera's .editorconfig, formatting stops if that file would change the settings the
+ * formatter uses, because the formatter can only read the settings on disk.
+ *
+ * @param {string} directory
+ * @param {VitePlusDetection} detection
+ * @param {{ id: string }[]} integrations
+ */
+export function managedFileFormatterLoader(directory, detection, integrations) {
+  return projectFormatterLoader(directory, formatterVitePlusStatus(detection), {
+    editorConfig: integrations.some(({ id }) => id === "editorconfig")
+      ? CALAVERA_EDITORCONFIG
+      : undefined,
+    installDirectory: vitePlusInstallDirectory(detection),
+  });
 }

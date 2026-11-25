@@ -125,19 +125,24 @@ import {
   errorWithLeftovers,
   temporaryFolderLeftovers,
 } from "./utils/cleanup.js";
-import { CALAVERA_EDITORCONFIG } from "./utils/editorconfig.js";
 import { unique } from "./utils/unique.js";
 import {
   createStrykerConfig,
   formatManagedFilePlans,
   managedFileDifference,
+  managedFileFormatterLoader,
   plannedManagedFiles,
 } from "./managed-file-plans.js";
 import { findEarlierGuidance } from "./utils/earlier-guidance.js";
 import { formatGeneratedText, generatedJSONFormatter } from "./utils/generated-text.js";
 import { withDeadline } from "./utils/deadline.js";
 import { projectFormatterLoader } from "./utils/project-formatter.js";
-import { detectVitePlus } from "./vite-plus-detection.js";
+import {
+  delegatesToVitePlus,
+  detectVitePlus,
+  formatterVitePlusStatus,
+  vitePlusInstallDirectory,
+} from "./vite-plus-detection.js";
 import {
   VERSION_CHECK_DEADLINE_MS,
   checkForNewerVersion,
@@ -516,49 +521,6 @@ const packageManagerCommands = {
     run: (script) => `bun run ${script}`,
   },
 };
-
-/**
- * Where vp install installs vite-plus for a directory that has no package.json of its own and
- * follows the Vite+ verdict of the manifest above it (#961): the directory of the manifest that
- * declares vite-plus, which the remedy for a missing vite-plus names (#1084). Nothing when the
- * directory's own manifest decides, or when no manifest above it declares vite-plus.
- *
- * @param {VitePlusDetection} detection
- */
-function vitePlusInstallDirectory(detection) {
-  const declaringManifestPath =
-    detection.status === "unknown" ? detection.ancestor?.declaringManifestPath : undefined;
-  return declaringManifestPath && dirname(declaringManifestPath);
-}
-
-/**
- * Whether apply delegates to Vite+, both for the development dependency
- * install (ADR-0012) and for the checks the generated `quality` script runs
- * (ADR-0013): the project is managed, or it has no manifest of its own and the
- * nearest ancestor that decides is managed, as in a new workspace member of a
- * Vite+ workspace. The second case keeps ADR-0001's `unknown` verdict for
- * reporting, and only keeps the install away from the package manager on
- * `PATH` (ADR-0012, Decision 1).
- *
- * @param {VitePlusDetection} detection
- */
-function delegatesToVitePlus(detection) {
-  return (
-    detection.status === "managed" ||
-    (detection.status === "unknown" && detection.ancestor?.status === "managed")
-  );
-}
-
-/**
- * The Vite+ verdict the formatter for Calavera's generated files follows: "managed" whenever apply
- * delegates to Vite+, so under create-here the parent's vp check accepts those files (#961), and
- * the detected status otherwise. Apply and init both load their formatter with it (#1086).
- *
- * @param {VitePlusDetection} detection
- */
-function formatterVitePlusStatus(detection) {
-  return delegatesToVitePlus(detection) ? "managed" : detection.status;
-}
 
 /**
  * The member globs of the workspace whose root is `directory`, as the package
@@ -3211,16 +3173,7 @@ async function planAndApplyRecipe(recipeInput, options, artifactServices, leftov
   // settings the formatter uses, because the formatter can only read the settings on disk.
   // Under create-here the formatter follows the parent's verdict, as the install and the quality
   // script do (#961), so the parent's vp check accepts the files apply writes.
-  const loadFormatter = projectFormatterLoader(
-    process.cwd(),
-    formatterVitePlusStatus(vitePlusDetection),
-    {
-      editorConfig: integrations.some(({ id }) => id === "editorconfig")
-        ? CALAVERA_EDITORCONFIG
-        : undefined,
-      installDirectory: vitePlusInstallDirectory(vitePlusDetection),
-    },
-  );
+  const loadFormatter = managedFileFormatterLoader(process.cwd(), vitePlusDetection, integrations);
   const managedFilePlans = await formatManagedFilePlans(
     plannedManagedFiles(integrations, recipe.integrationOptions),
     loadFormatter,
