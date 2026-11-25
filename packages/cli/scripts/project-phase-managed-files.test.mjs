@@ -373,6 +373,32 @@ test("without running project code, files that need the formatter are not-checke
   });
 });
 
+test("without running project code, a working Vite+ formatter is still never run", async () => {
+  await inProject(async (directory) => {
+    await applied(["knip"]);
+    await declareVitePlus();
+    // A formatter that would succeed, so a run would make the edited file edited, not not-checked.
+    await writeVitePlusFormatter(directory);
+    const knip = await readJsonFile(KNIP);
+    await writeJsonFile(KNIP, { ...knip, entry: ["src/main.ts"] });
+    assert.equal((await derive()).managedFiles[0]?.condition.name, "edited");
+    const result = await deriveProjectPhase({ config: CONFIG, runsProjectCode: false });
+    assert.equal(fileCondition(result, KNIP).name, "not-checked");
+  });
+});
+
+test("without running project code, a project without Vite+ is classified in full", async () => {
+  await inProject(async () => {
+    // No formatter runs outside a Vite+ project, so nothing needs project code.
+    await applied(["knip"]);
+    const knip = await readJsonFile(KNIP);
+    await writeJsonFile(KNIP, { ...knip, entry: ["src/main.ts"] });
+    const result = await deriveProjectPhase({ config: CONFIG, runsProjectCode: false });
+    assert.equal(fileCondition(result, KNIP).name, "edited");
+    assert.equal(result.phase, "drifted");
+  });
+});
+
 test("without running project code, a project whose formatter cannot load has no formatter finding", async () => {
   await inProject(async () => {
     await applied(["knip"]);
@@ -391,7 +417,7 @@ test("an integration whose required options are missing is a plan problem", asyn
     assert.deepEqual(result.managedFiles, []);
     assert.equal(
       result.managedFilePlanProblem,
-      `Calavera cannot plan the managed files for the recipe in ${CONFIG}, because apply refuses its integrationOptions (Error). Run apply --dry-run to see the refusal, fix the recipe, then run the command again.`,
+      `Calavera cannot plan the managed files for the recipe in ${CONFIG}, because apply's check of its integrationOptions refuses them (Error). Run apply --dry-run to see the refusal, fix the recipe, then run the command again.`,
     );
   });
 });
@@ -432,6 +458,21 @@ function git(args) {
   );
   assert.equal(run.status, 0, run.stderr);
 }
+
+test("a recorded option that recipe validation trims is planned as apply plans it", async () => {
+  await inProject(async () => {
+    git(["init", "--quiet", "--initial-branch=main"]);
+    git(["commit", "--quiet", "--allow-empty", "-m", "start"]);
+    await writeJsonFile(CONFIG, {
+      ...recipeWith([]),
+      integrations: [CONTROLS],
+      integrationOptions: { [CONTROLS]: { repository: "example/phase", defaultBranch: " main " } },
+    });
+    const result = await derive();
+    assert.equal(result.managedFilePlanProblem, null);
+    assert.equal(fileCondition(result, ".github/repository-controls.json").name, "pending");
+  });
+});
 
 test("an omitted defaultBranch is planned with the value apply --dry-run uses", async () => {
   await inProject(async () => {
@@ -535,7 +576,7 @@ test("an invalid integration option is a plan problem, and the phase is still de
     assert.deepEqual(result.managedFiles, []);
     assert.equal(
       result.managedFilePlanProblem,
-      `Calavera cannot plan the managed files for the recipe in ${CONFIG}, because apply refuses its integrationOptions (TypeError). Run apply --dry-run to see the refusal, fix the recipe, then run the command again.`,
+      `Calavera cannot plan the managed files for the recipe in ${CONFIG}, because apply's check of its integrationOptions refuses them (TypeError). Run apply --dry-run to see the refusal, fix the recipe, then run the command again.`,
     );
   });
 });
