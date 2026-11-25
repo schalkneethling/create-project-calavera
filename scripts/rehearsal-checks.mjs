@@ -506,16 +506,22 @@ export function listingViolations(output, items, statements = []) {
   // such as the knip script that runs the knip package (#1128), so it does not count either.
   // The mask applies only to a line in the Scripts group that has one of the exact shapes
   // scriptLines in apply-summary.js prints, so other prose that mentions a script still counts
-  // (#1144).
+  // (#1144). A hook group line under the settings file names the artifact whose group it is,
+  // because every artifact's groups sit under the file's one line (owner decision on #1145), so
+  // the artifact named there does not count either. That mask applies only to a line in the
+  // Artifacts group with one of the exact shapes hookGroupChangeLine in hook-group-lines.js, or
+  // settingsFileLines in apply-summary.js, prints.
   const fixed = new Set(statements);
-  let inScripts = false;
+  let group = "";
   const lines = output
     .split("\n")
     .filter((line) => !isCommandLine(line) && !fixed.has(line.trim()))
     .map((line) => {
-      if (isHeading(line)) inScripts = plainLine(line) === "Scripts:";
+      if (isHeading(line)) group = plainLine(line);
       const masked = line.replace(QUOTED_VALUE, '""');
-      return inScripts ? withoutScriptNames(masked) : masked;
+      if (group === "Scripts:") return withoutNamedSpans(masked, SCRIPT_LINES);
+      if (group === "Artifacts:") return withoutNamedSpans(masked, HOOK_GROUP_LINES);
+      return masked;
     });
   output = lines.join("\n");
   const firstHeading = lines.findIndex(isHeading);
@@ -560,16 +566,34 @@ const SCRIPT_LINES = [
   /^Scripts already set: (?<name>.+)/d,
 ];
 
+// The lines the apply summary prints under the settings file for each artifact's hook groups,
+// with the artifact ID in the named group "artifact", and in "again" where a removal says the
+// recipe no longer selects that same artifact. A group is printed as JSON, so once its strings are
+// reduced to "" it reads as an object such as {"":[{"":""}]}: "Would add a SessionStart group for
+// skill-a: {...}", "Replaced the PreToolUse group for skill-a: {...} with {...}", "Would remove
+// the Stop group for skill-a, because the recipe no longer selects skill-a: {...}", or "Already
+// holds the hook groups for skill-a" (#1145). An artifact ID holds no slash, so a path in its
+// place is left counted.
+const HOOK_GROUP_LINES = [
+  /^(?:Would add|Added) a \S+ group for (?<artifact>[^\s/]+): \{.*\}$/d,
+  /^(?:Would replace|Replaced) the \S+ group for (?<artifact>[^\s/]+): \{.*\} with \{.*\}$/d,
+  /^(?:Would remove|Removed) the \S+ group for (?<artifact>[^\s/]+): \{.*\}$/d,
+  /^(?:Would remove|Removed) the \S+ group for (?<artifact>[^\s/]+), because the recipe no longer selects (?<again>\k<artifact>): \{.*\}$/d,
+  /^Already holds the hook groups for (?<artifact>[^\s/]+)$/d,
+];
+
 /**
- * A line of the Scripts group with the script names it holds removed, or the line as it is when it
- * has none of the shapes scriptLines prints. A package.json script's name is a key in the
- * manifest, not the package it may share a name with (#1128).
+ * A line with the names one of `shapes` holds in its named groups removed, or the line as it is
+ * when it has none of the shapes: a script line of the Scripts group, whose script names are keys
+ * in the manifest, not the package one may share a name with, or a hook group line of the
+ * Artifacts group, whose artifact the summary lists elsewhere (#1128, #1145).
  *
  * @param {string} line
+ * @param {RegExp[]} shapes
  */
-function withoutScriptNames(line) {
+function withoutNamedSpans(line, shapes) {
   const text = plainLine(line);
-  for (const shape of SCRIPT_LINES) {
+  for (const shape of shapes) {
     const spans = shape.exec(text)?.indices.groups;
     if (spans === undefined) continue;
     // From the last name back, so cutting one does not move the start of the one before it. The
