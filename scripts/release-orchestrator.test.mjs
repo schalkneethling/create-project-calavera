@@ -1,7 +1,6 @@
 import assert from "node:assert/strict";
 import { execFileSync, spawnSync } from "node:child_process";
-import { access, cp, mkdir, mkdtemp, readFile, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { access, cp, mkdir, readFile, readdir, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 import test from "node:test";
 import { fileURLToPath } from "node:url";
@@ -34,6 +33,7 @@ import {
   waitForRun,
 } from "./release-orchestrator.mjs";
 import { generatedFormatPaths, versionPackages } from "./release-version.mjs";
+import { temporaryFolder } from "./temporary-folder.mjs";
 
 const root = fileURLToPath(new URL("..", import.meta.url));
 
@@ -320,8 +320,12 @@ test("publishRelease lets an explicit --tag win over the release found for the c
   assert.deepEqual(events, ["read v3.0.1"]);
 });
 
-async function contractFixture(fledglingSpec) {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-release-contracts-"));
+/**
+ * @param {import("node:test").TestContext} t
+ * @param {string} fledglingSpec
+ */
+async function contractFixture(t, fledglingSpec) {
+  const directory = await temporaryFolder(t, "calavera-release-contracts-");
   for (const path of [
     "knip.json",
     "pnpm-workspace.yaml",
@@ -350,25 +354,25 @@ async function contractFixture(fledglingSpec) {
   return directory;
 }
 
-async function runContracts(fledglingSpec) {
-  const directory = await contractFixture(fledglingSpec);
-  try {
-    return spawnSync(process.execPath, [join(root, "scripts", "check-release-contracts.mjs")], {
-      cwd: directory,
-      encoding: "utf8",
-    });
-  } finally {
-    await rm(directory, { recursive: true, force: true });
-  }
+/**
+ * @param {import("node:test").TestContext} t
+ * @param {string} fledglingSpec
+ */
+async function runContracts(t, fledglingSpec) {
+  const directory = await contractFixture(t, fledglingSpec);
+  return spawnSync(process.execPath, [join(root, "scripts", "check-release-contracts.mjs")], {
+    cwd: directory,
+    encoding: "utf8",
+  });
 }
 
-test("release contracts accept any exact Fledgling pin and reject anything else", async () => {
+test("release contracts accept any exact Fledgling pin and reject anything else", async (t) => {
   for (const spec of ["1.2.1", "1.3.1", "2.0.0-beta.1"]) {
-    const result = await runContracts(spec);
+    const result = await runContracts(t, spec);
     assert.equal(result.status, 0, `${spec} must pass:\n${result.stderr}`);
   }
   for (const spec of ["^1.2.1", "~1.2.1", "v1.2.1", "01.2.1", "1.2"]) {
-    const result = await runContracts(spec);
+    const result = await runContracts(t, spec);
     assert.notEqual(result.status, 0, `${spec} must fail`);
     assert.match(result.stderr, /must be exact so pnpm exec fledgling runs a reviewed binary/);
   }
@@ -925,8 +929,8 @@ test("version formatting is limited to changed generated documents", () => {
   );
 });
 
-test("version generation formats one-item prerelease state deterministically", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-version-fixture-"));
+test("version generation formats one-item prerelease state deterministically", async (t) => {
+  const directory = await temporaryFolder(t, "calavera-version-fixture-");
   await mkdir(join(directory, ".changeset"));
   await mkdir(join(directory, "packages", "fixture"), { recursive: true });
   await mkdir(join(directory, "apps", "private"), { recursive: true });
@@ -1051,8 +1055,8 @@ test("version generation formats one-item prerelease state deterministically", a
   assert.equal(await readFile(join(directory, ".changeset", "pre.json"), "utf8"), preState);
 });
 
-test("stable version generation preserves ignored private applications", async () => {
-  const directory = await mkdtemp(join(tmpdir(), "calavera-version-exit-fixture-"));
+test("stable version generation preserves ignored private applications", async (t) => {
+  const directory = await temporaryFolder(t, "calavera-version-exit-fixture-");
   await mkdir(join(directory, ".changeset"));
   await mkdir(join(directory, "packages", "fixture"), { recursive: true });
   await mkdir(join(directory, "apps", "unversioned"), { recursive: true });

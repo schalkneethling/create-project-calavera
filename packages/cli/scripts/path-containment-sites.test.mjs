@@ -12,8 +12,7 @@
  */
 
 import assert from "node:assert/strict";
-import { mkdir, mkdtemp, realpath, rm, symlink, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, realpath, symlink, writeFile } from "node:fs/promises";
 import { basename, dirname, join, resolve, win32 } from "node:path";
 import test from "node:test";
 
@@ -23,6 +22,7 @@ import { CALAVERA_EDITORCONFIG, editorConfigFormattingChange } from "../src/util
 import { assertSafeRelativePath, assertWorkspacePath } from "../src/utils/fs.js";
 import { checkForNewerVersion } from "../src/version-notice.js";
 import { createTemporaryFixture } from "./vite-plus-fixtures.mjs";
+import { temporaryFolder } from "../../../scripts/temporary-folder.mjs";
 
 const outsideWorkspace = { message: "Path must stay inside the current project workspace." };
 
@@ -58,8 +58,7 @@ test("assertSafeRelativePath refuses, with Windows path rules, a path on another
 });
 
 test("assertWorkspacePath follows links, and keeps a name that only starts with ..", async (t) => {
-  const parent = await realpath(await mkdtemp(join(tmpdir(), "calavera-1130-workspace-")));
-  t.after(() => rm(parent, { recursive: true, force: true }));
+  const parent = await realpath(await temporaryFolder(t, "calavera-1130-workspace-"));
   const root = join(parent, "project");
   await mkdir(join(root, "..cache"), { recursive: true });
   await mkdir(join(parent, "project-two"));
@@ -98,8 +97,7 @@ test("temporaryFolderLeftovers notes a folder that only starts with .. as inside
 });
 
 test("a copy in a folder inside node_modules whose name starts with .. is a project dependency", async (t) => {
-  const project = await realpath(await mkdtemp(join(tmpdir(), "calavera-1130-dependency-")));
-  t.after(() => rm(project, { recursive: true, force: true }));
+  const project = await realpath(await temporaryFolder(t, "calavera-1130-dependency-"));
   await writeFile(
     join(project, "package.json"),
     JSON.stringify({ devDependencies: { "create-project-calavera": "6.2.1" } }),
@@ -124,8 +122,7 @@ test("a copy in a folder inside node_modules whose name starts with .. is a proj
 
   assert.equal(await updateFor(join(project, "node_modules", "..store", "calavera")), update);
   // A link out of node_modules is followed, so its target is not the project's dependency.
-  const elsewhere = await realpath(await mkdtemp(join(tmpdir(), "calavera-1130-elsewhere-")));
-  t.after(() => rm(elsewhere, { recursive: true, force: true }));
+  const elsewhere = await realpath(await temporaryFolder(t, "calavera-1130-elsewhere-"));
   await symlink(elsewhere, join(project, "node_modules", "linked"));
   assert.equal(await updateFor(join(project, "node_modules", "linked")), undefined);
   assert.equal(await updateFor(join(project, "node_modules", "..", "calavera")), undefined);
