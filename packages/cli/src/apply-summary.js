@@ -6,8 +6,9 @@
 // of 2026-11-14); each file is one line under Files, with the ignore lines apply writes into it;
 // the scripts sit under Scripts; each artifact is one line with its version and destination, with
 // its inputs and Vite+ hook blocks under it, and .claude/settings.json is one line after the
-// artifacts, with every artifact's hook groups under it (#1145). The `--json` and MCP results keep their shape and text; where a
-// note there repeats what the summary already names, the summary prints a shorter form of it.
+// artifacts, with every artifact's hook groups under it (#1145). The `--json` and MCP results
+// keep their shape and text; where a note there repeats what the summary already names, the
+// summary prints a shorter form of it.
 import { summaryWiringWarning } from "./ai/artifact-wiring.js";
 import { aiArtifactOutputPaths, resolveAiArtifacts } from "./ai/artifacts.js";
 import {
