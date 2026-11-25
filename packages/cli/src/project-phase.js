@@ -34,15 +34,14 @@ import { isPlainObject } from "./utils/guards.js";
  * @typedef {import("./phase-managed-files.js").FormatterFailureFinding} FormatterFailureFinding
  *
  * @typedef {object} PhaseWiringFinding A finding about the wiring apply recorded for an artifact
- *   (ADR-0015, Decision 5), as `artifactWiringFindings` words it for `doctor` today, with the
- *   artifact it is about. Unlike every other reason here, `message` can quote a changed hook
- *   marker line and the line or group the state records; the pull request that prints the
- *   phase's findings replaces it with a message that names the file, block, and kind instead
- *   (tracked on #1112).
+ *   (ADR-0015, Decision 5), with the artifact it is about, in the phase's own words.
  * @property {string} artifact
  * @property {boolean} selected Whether the recipe selects the artifact.
  * @property {"error" | "warning"} level
- * @property {string} message
+ * @property {import("./ai/artifact-wiring.js").WiringFindingKind} kind
+ * @property {string} path The file the finding is about.
+ * @property {string} reason Names the file, the artifact, and the kind of problem, and quotes no
+ *   marker line and nothing the state records (#1112).
  *
  * @typedef {"pending-transaction" | "unmanaged" | "ejected" | "bootstrapped" | "composed" | "applied" | "drifted" | "incomplete"} ProjectPhase
  * @typedef {"pending" | "current" | "missing" | "unreadable" | "edited" | "unrecorded"} ArtifactConditionName
@@ -368,9 +367,43 @@ async function wiringFindingsFor(state, selectedIds) {
       selected: selectedIds,
       skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
     });
-    for (const { level, message } of found) findings.push({ artifact, selected, level, message });
+    for (const { level, kind, path, code } of found) {
+      findings.push({
+        artifact,
+        selected,
+        level,
+        kind,
+        path,
+        reason: wiringReason(kind, path, artifact, code),
+      });
+    }
   }
   return findings;
+}
+
+/**
+ * A wiring finding in Calavera's own words, from its kind, path, and artifact. Unlike the message
+ * `artifactWiringFindings` gives doctor, it quotes no marker line and nothing the state records.
+ *
+ * @param {import("./ai/artifact-wiring.js").WiringFindingKind} kind
+ * @param {string} path
+ * @param {string} artifact
+ * @param {string | undefined} code
+ */
+function wiringReason(kind, path, artifact, code) {
+  /** @type {Record<import("./ai/artifact-wiring.js").WiringFindingKind, string>} */
+  const reasons = {
+    unreadable: `${path} cannot be read (${code ?? "an error without a code"}), so Calavera cannot check the ${artifact} wiring it recorded there, and the next apply stops on it.`,
+    "marker-problem": `${path}: a marker of the ${artifact} block was changed or is unpaired, so apply stops on it. Restore the markers, or remove the block with both markers, then run apply.`,
+    "block-missing": `${path}: the ${artifact} block that apply recorded is missing, so the next apply writes it again.`,
+    "block-edited": `${path}: the ${artifact} block was edited since apply wrote it, so the next apply stops on it.`,
+    "record-invalid": `${path}: the ${artifact} block matches what the state records, but that record is not a command Calavera writes, so check the block and the state before you run apply.`,
+    "script-missing": `${path}: the ${artifact} block runs a script that does not exist, so Git refuses the commit or push that runs the hook.`,
+    "settings-unparsable": `${path} cannot be parsed as JSON, so Calavera cannot check the ${artifact} groups it recorded there, and the next apply stops on it.`,
+    "group-edited": `${path}: a group of ${artifact} was edited since apply wrote it, so the next apply stops on it.`,
+    "group-missing": `${path}: a group of ${artifact} that apply recorded is missing, so the next apply writes it again.`,
+  };
+  return reasons[kind];
 }
 
 /**

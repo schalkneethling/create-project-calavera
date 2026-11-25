@@ -646,10 +646,14 @@ test("a wiring finding about a selected artifact drifts the project; about a des
       result.wiringFindings.map(({ artifact, selected, level }) => [artifact, selected, level]),
       [[ARTIFACT, true, "warning"]],
     );
-    assert.match(
-      result.wiringFindings[0]?.message ?? "",
-      /block that Calavera recorded is missing/,
-    );
+    assert.deepEqual(result.wiringFindings[0], {
+      artifact: ARTIFACT,
+      selected: true,
+      level: "warning",
+      kind: "block-missing",
+      path: ".vite-hooks/pre-commit",
+      reason: `.vite-hooks/pre-commit: the ${ARTIFACT} block that apply recorded is missing, so the next apply writes it again.`,
+    });
 
     await writeJsonFile(CONFIG, recipeWith([]));
     result = await derive();
@@ -658,6 +662,44 @@ test("a wiring finding about a selected artifact drifts the project; about a des
       result.wiringFindings.map(({ artifact, selected }) => [artifact, selected]),
       [[ARTIFACT, false]],
     );
+  });
+});
+
+test("a wiring finding's reason never quotes a changed marker line or a recorded line", async () => {
+  await inProject(async () => {
+    await applied([], [ARTIFACT]);
+    const recorded = "node .agents/skills/project-goal/check.mjs --secret-recorded-text";
+    const state = await readJsonFile(STATE);
+    state.aiWiring = [{ artifact: ARTIFACT, viteHooks: { "pre-commit": recorded } }];
+    await writeJsonFile(STATE, state);
+    await mkdir(".vite-hooks");
+    // A changed marker line, which findBlock's own reason quotes.
+    await writeFile(
+      ".vite-hooks/pre-commit",
+      `  # calavera:${ARTIFACT}:start person-text\n${recorded}\n# calavera:${ARTIFACT}:end\n`,
+    );
+    let [finding] = (await derive()).wiringFindings;
+    assert.equal(finding?.kind, "marker-problem");
+    assert.equal(
+      finding?.reason,
+      `.vite-hooks/pre-commit: a marker of the ${ARTIFACT} block was changed or is unpaired, so apply stops on it. Restore the markers, or remove the block with both markers, then run apply.`,
+    );
+
+    // An edited block, whose doctor remedy quotes the recorded line.
+    await writeFile(
+      ".vite-hooks/pre-commit",
+      `# calavera:${ARTIFACT}:start\necho person-text\n# calavera:${ARTIFACT}:end\n`,
+    );
+    [finding] = (await derive()).wiringFindings;
+    assert.equal(finding?.kind, "block-edited");
+    assert.equal(
+      finding?.reason,
+      `.vite-hooks/pre-commit: the ${ARTIFACT} block was edited since apply wrote it, so the next apply stops on it.`,
+    );
+    for (const { reason } of (await derive()).wiringFindings) {
+      assert.equal(reason.includes("person-text"), false);
+      assert.equal(reason.includes("secret-recorded-text"), false);
+    }
   });
 });
 

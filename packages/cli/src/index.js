@@ -5894,13 +5894,14 @@ export async function doctor(options) {
       const state = await readStateIfPresent().catch((error) => {
         throw new Error(`doctor cannot use ${STATE_FILE}.`, { cause: error });
       });
-      issues.push(
-        ...(await artifactWiringFindings({
-          records: state.aiWiring,
-          selected: selectedAiIds,
-          skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
-        })),
-      );
+      // Doctor's issues keep their two fields until its report redesign (ADR-0020, Decision 4).
+      for (const { level, message } of await artifactWiringFindings({
+        records: state.aiWiring,
+        selected: selectedAiIds,
+        skillDirectoryFor: (id) => installedSkillDirectory(id, state.aiArtifacts),
+      })) {
+        issues.push({ level, message });
+      }
     } catch (error) {
       issues.push({ level: "error", message: errorText(error) });
       return { command: "doctor", ok: false, issues };
