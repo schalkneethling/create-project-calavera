@@ -478,6 +478,39 @@ test("the text output of an artifacts command shows the cache block it adds and 
   });
 });
 
+// #1135: the dry run prints the replaced cache block through apply's formatter, with the file
+// named in the line, because no file line stands above it.
+test("the text output of artifacts install --dry-run shows a replaced cache block with the lines it had and gets", async () => {
+  const oldBlock =
+    "# calavera:artifact-cache:start\n.calavera/cache/npm/\n# calavera:artifact-cache:end\n";
+  await inProject(`node_modules/\n${oldBlock}`, async (directory) => {
+    await writeFile("calavera.config.json", `${JSON.stringify(recipeWith([]), null, 2)}\n`);
+    await mkdir(".calavera/cache/npm", { recursive: true });
+    await writeFile(
+      ".calavera/state.json",
+      `${JSON.stringify({
+        version: 1,
+        integrations: [],
+        managedFiles: [],
+        gitignoreBlocks: [{ integration: "artifact-cache", lines: [".calavera/cache/npm/"] }],
+      })}\n`,
+    );
+
+    const ran = spawnSync(process.execPath, [cli, "artifacts", "install", "--dry-run"], {
+      cwd: directory,
+      encoding: "utf8",
+      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
+    });
+
+    assert.equal(ran.status, 0, `${ran.stdout}${ran.stderr}`);
+    assert.match(
+      ran.stdout,
+      /^Would replace the artifact-cache block in \.gitignore: "\.calavera\/cache\/npm\/" with "\.calavera\/cache\/"$/m,
+    );
+    assert.equal(await readFile(".gitignore", "utf8"), `node_modules/\n${oldBlock}`);
+  });
+});
+
 for (const { name, options, setup } of commands) {
   test(`${name} creates .gitignore with the cache block alone when the project has none`, async () => {
     await inProject(undefined, async () => {
