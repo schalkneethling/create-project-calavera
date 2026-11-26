@@ -277,7 +277,7 @@ test("a first apply of a Composer-built recipe with artifacts installs them thro
   const runCli = (args) =>
     execFileAsync(process.execPath, ["--import", packedRegistryPreload, cliPath, ...args], {
       cwd: projectDirectory,
-      env: { ...process.env, NO_COLOR: "1" },
+      env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" },
     });
 
   const preview = await runCli(["apply", "--dry-run"]);
@@ -366,7 +366,7 @@ test("init --apply lists the artifacts it would lock in its approval summary", a
       "--ai-artifact",
       id,
     ],
-    { cwd: projectDirectory, env: { ...process.env, NO_COLOR: "1" } },
+    { cwd: projectDirectory, env: { ...process.env, NO_COLOR: "1", FORCE_COLOR: "0" } },
   );
 
   // Compare the text without the Clack frame around the recipe summary. A FORCE_COLOR in the
